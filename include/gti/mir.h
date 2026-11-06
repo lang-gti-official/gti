@@ -1406,6 +1406,8 @@ struct MirClassTypeAlias {
 };
 
 struct MirClassInstance {
+  NominalVariance variance;
+  LifetimeSignatureContract lifetimeContract;
   HirClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ClassId declaration = 0;
@@ -1684,6 +1686,7 @@ struct MirDestructorDispatchState {
 struct MirDestructorInstance {
   HirDestructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
+  LifetimeSignatureContract lifetimeContract;
   MirDefinitionKind definitionKind = MirDefinitionKind::Declaration;
   bool mayRaiseDefinedFailure = true;
   MirEffectSummary effectSummary;
@@ -1701,6 +1704,7 @@ struct MirLambdaInstance {
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<HirBindingId> parameterBindings;
   std::vector<SemanticType> captureTypes;
   std::vector<LambdaCaptureMode> captureModes;
@@ -1945,6 +1949,8 @@ struct MirHostedStartupPlan {
 
 // Exact numeric representation selected by semantics for a payload-free enum.
 struct MirIntegralEnum {
+  NominalVariance variance;
+  LifetimeSignatureContract lifetimeContract;
   EnumId declaration = 0;
   SemanticType type = SemanticType::Unknown;
   SourceUnitId sourceUnit = 0;
@@ -1968,6 +1974,8 @@ struct MirPayloadEnumVariant {
 };
 
 struct MirPayloadEnum {
+  NominalVariance variance;
+  LifetimeSignatureContract lifetimeContract;
   EnumId declaration = 0;
   SourceUnitId sourceUnit = 0;
   SemanticType type = SemanticType::Unknown;

@@ -411,6 +411,10 @@ public:
       output << "integral-enum @" << enumeration.declaration
              << " source-unit=" << enumeration.sourceUnit << " type=";
       type(enumeration.type);
+      output << " variance=";
+      variance(enumeration.variance);
+      output << " lifetime-contract=";
+      lifetimeContract(enumeration.lifetimeContract);
       output << " underlying=";
       type(enumeration.underlyingType);
       output << '\n';
@@ -420,6 +424,10 @@ public:
       output << "payload-enum @" << enumeration.declaration
              << " source-unit=" << enumeration.sourceUnit << " type=";
       type(enumeration.type);
+      output << " variance=";
+      variance(enumeration.variance);
+      output << " lifetime-contract=";
+      lifetimeContract(enumeration.lifetimeContract);
       output << " active-cleanup=" << enumeration.requiresActiveCleanup << ' ';
       traits(enumeration.traits);
       output << " variants=[";
@@ -450,6 +458,10 @@ public:
              << " source-unit=" << instance.sourceUnit
              << " declaration=" << instance.declaration << " type=";
       type(instance.type);
+      output << " variance=";
+      variance(instance.variance);
+      output << " lifetime-contract=";
+      lifetimeContract(instance.lifetimeContract);
       output << ' ';
       traits(instance.traits);
       output << " transfer-policy=" << number(instance.transferPolicy)
@@ -869,7 +881,9 @@ public:
     for (const MirDestructorInstance &instance :
          program.destructorInstances()) {
       output << "destructor @" << instance.id << " owner=" << instance.owner
-             << " definition=";
+             << " lifetime-contract=";
+      lifetimeContract(instance.lifetimeContract);
+      output << " definition=";
       switch (instance.definitionKind) {
       case MirDefinitionKind::Source:
         output << "source";
@@ -898,6 +912,8 @@ public:
       type(instance.type);
       output << " returns=";
       type(instance.returnType);
+      output << " lifetime-contract=";
+      lifetimeContract(instance.lifetimeContract);
       output << " invocation=" << number(instance.capability)
              << " parameters=[";
       for (std::size_t index = 0; index < instance.parameterTypes.size();
@@ -1174,6 +1190,20 @@ private:
           }
         },
         value);
+  }
+
+  void variance(const NominalVariance &value) {
+    output << "{complete=" << value.complete << ",types=[";
+    for (std::size_t index = 0; index < value.types.size(); ++index) {
+      separator(index);
+      output << number(value.types[index]);
+    }
+    output << "],lifetimes=[";
+    for (std::size_t index = 0; index < value.lifetimes.size(); ++index) {
+      separator(index);
+      output << number(value.lifetimes[index]);
+    }
+    output << "]}";
   }
 
   void lifetime(Lifetime value) {

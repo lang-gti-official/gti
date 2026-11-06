@@ -128,4 +128,11 @@ writePersistentLifetimeContract(const LifetimeSignatureContract &,
 [[nodiscard]] LifetimeSignatureContract
 readPersistentLifetimeContract(std::string_view, const PersistentTypeRegistry &,
                                const PersistentLifetimeBindings &);
+// Interface content, separate from declaration identity. Imported descriptors
+// supply the exact compact declaration-slot counts (a final pack is one slot).
+[[nodiscard]] std::string
+writePersistentNominalVariance(const NominalVariance &);
+[[nodiscard]] NominalVariance
+readPersistentNominalVariance(std::string_view, std::size_t typeSlots,
+                              std::size_t lifetimeSlots);
 } // namespace lang

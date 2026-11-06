@@ -395,6 +395,7 @@ lowerGenericParameters(const std::vector<GenericParameterInfo> &parameters) {
          .pack = parameter.pack,
          .value = parameter.value,
          .lifetime = parameter.lifetime,
+         .implicit = parameter.implicit,
          .constraints = parameter.constraints,
          .constraintName = parameter.constraintName
                                ? lowerNamePath(*parameter.constraintName)
@@ -800,6 +801,8 @@ private:
         row.source = tokenSpan(declaration->name());
         row.semanticIdentity = instance.declaration;
         LoweredEnumDeclaration payload{
+            .variance = instance.variance,
+            .lifetimeContract = instance.lifetimeContract,
             .explicitlyExported =
                 inheritedExport || declaration->exportKeyword().has_value(),
             .id = instance.declaration,
@@ -888,6 +891,8 @@ private:
         childNamespace = row.namespaceScope;
         childOwner = info->id;
         LoweredClassDeclaration payload{
+            .variance = info->variance,
+            .lifetimeContract = info->lifetimeContract,
             .explicitlyExported =
                 inheritedExport || declaration->exportKeyword().has_value(),
             .id = info->id,
@@ -1055,6 +1060,7 @@ private:
         row.payload = LoweredDestructorDeclaration{
             .owner = info->owner,
             .access = info->access,
+            .lifetimeContract = info->lifetimeContract,
             .specifier =
                 declaration->specifier()
                     ? std::optional<
@@ -1197,10 +1203,18 @@ private:
   }
   for (const HirEnum &source : hir.enumDeclarations()) {
     if (!source.payload) {
+      const auto *lowered = mir.findIntegralEnum(source.type);
+      if (!lowered || source.sourceUnit != lowered->sourceUnit ||
+          source.variance != lowered->variance ||
+          source.lifetimeContract != lowered->lifetimeContract ||
+          source.underlyingType != lowered->underlyingType)
+        return reject("integral enum differs between HIR and MIR");
       continue;
     }
     const MirPayloadEnum *lowered = mir.findPayloadEnum(source.type);
     if (lowered == nullptr || source.sourceUnit != lowered->sourceUnit ||
+        source.variance != lowered->variance ||
+        source.lifetimeContract != lowered->lifetimeContract ||
         source.traits != lowered->traits ||
         source.requiresActiveCleanup != lowered->requiresActiveCleanup ||
         source.enumerators.size() != lowered->variants.size()) {
@@ -1228,6 +1242,8 @@ private:
                                     : semantics.findClassType(*source.source);
     if (source.id != lowered.id || source.declaration != lowered.declaration ||
         source.type != lowered.type || source.kind != lowered.kind ||
+        source.variance != lowered.variance ||
+        source.lifetimeContract != lowered.lifetimeContract ||
         source.traits != lowered.traits ||
         source.generatedDefaultRequiresSchedule !=
             lowered.generatedDefaultRequiresSchedule ||
@@ -1514,6 +1530,7 @@ private:
     const HirDestructorInstance &source = hir.destructorInstances()[index];
     const MirDestructorInstance &lowered = mir.destructorInstances()[index];
     if (source.id != lowered.id || source.owner != lowered.owner ||
+        source.lifetimeContract != lowered.lifetimeContract ||
         source.body.placeDomain != lowered.body.placeDomain) {
       return reject("destructor instance " + std::to_string(index + 1) +
                     " differs");
@@ -1526,6 +1543,7 @@ private:
         source.type != lowered.type ||
         source.returnType != lowered.returnType ||
         source.parameterTypes != lowered.parameterTypes ||
+        source.lifetimeContract != lowered.lifetimeContract ||
         source.parameterBindings != lowered.parameterBindings ||
         source.body.placeDomain != lowered.body.placeDomain) {
       return reject("lambda instance " + std::to_string(index + 1) +
@@ -2209,7 +2227,9 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   lowered.classInstances_.reserve(hir.classInstances().size());
   for (const HirClassInstance &instance : hir.classInstances()) {
     lowered.classInstances_.push_back(
-        {.id = instance.id,
+        {.variance = instance.variance,
+         .lifetimeContract = instance.lifetimeContract,
+         .id = instance.id,
          .sourceUnit = instance.sourceUnit,
          .declaration = instance.declaration,
          .typeArguments = instance.typeArguments,
@@ -2258,6 +2278,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
         {.id = instance.id,
          .sourceUnit = instance.sourceUnit,
          .owner = instance.owner,
+         .lifetimeContract = instance.lifetimeContract,
          .source = instance.source == nullptr
                        ? SourceSpan{}
                        : tokenSpan(instance.source->tilde())});
@@ -2269,6 +2290,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
         .declaration = instance.declaration,
         .type = instance.type,
         .returnType = instance.returnType,
+        .lifetimeContract = instance.lifetimeContract,
         .parameters = lowerLambdaParameters(instance),
         .traits = instance.traits,
         .source = instance.source == nullptr

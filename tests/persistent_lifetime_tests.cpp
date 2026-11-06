@@ -49,8 +49,8 @@ LifetimeSignatureContract contract(GenericParameterId first,
 }
 void typeRecipes() {
   PersistentTypeRegistry registry;
-  const PersistentLifetimeBindings source{{11}, {12}};
-  const PersistentLifetimeBindings target{{101}, {102}};
+  const PersistentLifetimeBindings source{{11}, {12}, {}};
+  const PersistentLifetimeBindings target{{101}, {102}, {}};
   auto type = callable(11, 12);
   auto bytes = writePersistentType(type, registry, source);
   expect(bytes.starts_with("gti.type.3:"), "region recipes must use version 3");
@@ -58,7 +58,7 @@ void typeRecipes() {
          "alpha-renaming must not change persisted type bytes");
   expect(readPersistentType(bytes, registry, target) == callable(101, 102),
          "type decoding must remap every external and quantified region");
-  expect(writePersistentType(type, registry, {{11}, {}}) == bytes,
+  expect(writePersistentType(type, registry, {{11}, {}, {}}) == bytes,
          "explicit binding context may discover quantified declaration IDs");
   auto changed = type;
   changed.arguments[0].referenceLifetime = Lifetime::parameter(11);
@@ -86,16 +86,20 @@ void typeRecipes() {
       "no-context writer must reject declaration regions");
   rejects([&] { (void)readPersistentType(bytes, registry); },
           "reader must never invent quantified region identities");
-  rejects([&] { (void)readPersistentType(bytes, registry, {{101}, {}}); },
+  rejects([&] { (void)readPersistentType(bytes, registry, {{101}, {}, {}}); },
           "missing quantified IDs must reject");
   rejects(
-      [&] { (void)readPersistentType(bytes, registry, {{101}, {102, 103}}); },
+      [&] {
+        (void)readPersistentType(bytes, registry, {{101}, {102, 103}, {}});
+      },
       "unused quantified IDs must reject");
-  rejects([&] { (void)readPersistentType(bytes, registry, {{101}, {101}}); },
-          "overlapping declaration and quantified IDs must reject");
-  rejects([&] { (void)writePersistentType(type, registry, {{11, 11}, {12}}); },
-          "duplicate declaration IDs must reject");
-  rejects([&] { (void)writePersistentType(type, registry, {{11}, {13}}); },
+  rejects(
+      [&] { (void)readPersistentType(bytes, registry, {{101}, {101}, {}}); },
+      "overlapping declaration and quantified IDs must reject");
+  rejects(
+      [&] { (void)writePersistentType(type, registry, {{11, 11}, {12}, {}}); },
+      "duplicate declaration IDs must reject");
+  rejects([&] { (void)writePersistentType(type, registry, {{11}, {13}, {}}); },
           "writer's quantified bindings must match the type");
   rejects(
       [&] {
@@ -121,13 +125,13 @@ void typeRecipes() {
           "old wire version must not acquire new meaning");
   auto invalid = type;
   invalid.quantifiedLifetimes = {12, 12};
-  rejects([&] { (void)writePersistentType(invalid, registry, {{11}, {}}); },
+  rejects([&] { (void)writePersistentType(invalid, registry, {{11}, {}, {}}); },
           "duplicate live quantified IDs must reject");
 
   auto nested = SemanticType::functionSignature(type, {onlyQuantified});
-  auto nestedBytes = writePersistentType(nested, registry, {{11}, {}});
+  auto nestedBytes = writePersistentType(nested, registry, {{11}, {}, {}});
   auto nestedResult =
-      readPersistentType(nestedBytes, registry, {{101}, {102, 103}});
+      readPersistentType(nestedBytes, registry, {{101}, {102, 103}, {}});
   expect(nestedResult.arguments[0] == callable(101, 102),
          "nested result must use the first preorder quantified binding");
   expect(nestedResult.arguments[1].quantifiedLifetimes ==
@@ -162,19 +166,51 @@ void nominalRecipes() {
   auto expected =
       SemanticType::classType(imported.id, {SemanticType(SemanticType::Int32)});
   expected.lifetimeArguments = {Lifetime::parameter(122)};
-  auto bytes = writePersistentType(type, from, {{22}, {}});
-  expect(readPersistentType(bytes, to, {{122}, {}}) == expected,
+  auto bytes = writePersistentType(type, from, {{22}, {}, {}});
+  expect(readPersistentType(bytes, to, {{122}, {}, {}}) == expected,
          "nominal IDs and compact lifetime arguments must remap together");
-  expect(writePersistentType(expected, to, {{122}, {}}) == bytes,
+  expect(writePersistentType(expected, to, {{122}, {}, {}}) == bytes,
          "nominal lifetime parameter identities cannot enter wire bytes");
+  auto anonymous = original;
+  anonymous.genericParameters[1].implicit = true;
+  expect(persistentClassKey(anonymous, owner) !=
+             persistentClassKey(original, owner),
+         "anonymous and source-addressable lifetime slots have different "
+         "declaration shapes");
+  auto anonymousImported = anonymous;
+  anonymousImported.id = imported.id;
+  anonymousImported.genericParameters = imported.genericParameters;
+  anonymousImported.genericParameters[1].implicit = true;
+  PersistentTypeRegistry anonymousFrom, anonymousTo;
+  anonymousFrom.bind(anonymous, owner);
+  anonymousTo.bind(anonymousImported, owner);
+  const auto anonymousBytes =
+      writePersistentType(type, anonymousFrom, {{22}, {}, {}});
+  expect(readPersistentType(anonymousBytes, anonymousTo, {{122}, {}, {}}) ==
+             expected,
+         "anonymous lifetime slots preserve compact type arity and imported "
+         "binder mapping");
+  auto packed = anonymous;
+  packed.genericParameters[0].pack = true;
+  PersistentTypeRegistry packRegistry;
+  packRegistry.bind(packed, owner);
+  auto packedType = type;
+  packedType.arguments.push_back(SemanticType::Float);
+  const auto packedBytes =
+      writePersistentType(packedType, packRegistry, {{22}, {}, {}});
+  expect(readPersistentType(packedBytes, packRegistry, {{22}, {}, {}}) ==
+             packedType,
+         "a final source type pack remains expandable before synthesized "
+         "lifetime slots");
   auto wrongArity = type;
   wrongArity.lifetimeArguments.clear();
-  rejects([&] { (void)writePersistentType(wrongArity, from, {{22}, {}}); },
+  rejects([&] { (void)writePersistentType(wrongArity, from, {{22}, {}, {}}); },
           "nominal declaration lifetime arity must be checked");
   auto absentRegion = type;
   absentRegion.lifetimeArguments = {{}};
-  rejects([&] { (void)writePersistentType(absentRegion, from, {{22}, {}}); },
-          "a required generic lifetime cannot persist as an absent annotation");
+  rejects(
+      [&] { (void)writePersistentType(absentRegion, from, {{22}, {}, {}}); },
+      "a required generic lifetime cannot persist as an absent annotation");
   auto reversed = original;
   reversed.genericParameters = {lifetime, element};
   expect(persistentClassKey(reversed, owner) !=
@@ -182,14 +218,14 @@ void nominalRecipes() {
          "declaration kind order must participate in nominal identity");
   SemanticType textView(SemanticType::StringView);
   textView.lifetimeArguments = {Lifetime::parameter(22)};
-  auto viewBytes = writePersistentType(textView, from, {{22}, {}});
+  auto viewBytes = writePersistentType(textView, from, {{22}, {}, {}});
   textView.lifetimeArguments = {Lifetime::parameter(122)};
-  expect(readPersistentType(viewBytes, to, {{122}, {}}) == textView,
+  expect(readPersistentType(viewBytes, to, {{122}, {}, {}}) == textView,
          "builtin borrowing view regions must survive persistence");
 }
 void contracts() {
-  const PersistentLifetimeBindings source{{31, 32}, {}};
-  const PersistentLifetimeBindings target{{301, 302}, {}};
+  const PersistentLifetimeBindings source{{31, 32}, {}, {}};
+  const PersistentLifetimeBindings target{{301, 302}, {}, {}};
   auto value = contract(31, 32);
   auto bytes = writePersistentLifetimeContract(value, source);
   expect(writePersistentLifetimeContract(contract(301, 302), target) == bytes,
@@ -222,12 +258,15 @@ void contracts() {
             "unbound and body-local contract regions must reject");
   }
   value = contract(31, 32);
-  rejects([&] { (void)writePersistentLifetimeContract(value, {{31, 31}, {}}); },
-          "duplicate binding context must reject");
   rejects(
-      [&] { (void)writePersistentLifetimeContract(value, {{31, 32}, {33}}); },
+      [&] { (void)writePersistentLifetimeContract(value, {{31, 31}, {}, {}}); },
+      "duplicate binding context must reject");
+  rejects(
+      [&] {
+        (void)writePersistentLifetimeContract(value, {{31, 32}, {33}, {}});
+      },
       "signature contract cannot absorb an unused type quantifier");
-  rejects([&] { (void)readPersistentLifetimeContract(bytes, {{301}, {}}); },
+  rejects([&] { (void)readPersistentLifetimeContract(bytes, {{301}, {}, {}}); },
           "wrong contract binding count must reject");
   rejects([&] { (void)readPersistentLifetimeContract(bytes + "0:", target); },
           "trailing contract data must reject");
@@ -415,5 +454,22 @@ int main() {
   contracts();
   exactTypeBounds();
   associatedTypeBounds();
+  const NominalVariance variance{
+      .types = {TypeVariance::Covariant, TypeVariance::Contravariant},
+      .lifetimes = {TypeVariance::Invariant, TypeVariance::Bivariant},
+      .complete = true};
+  const auto varianceBytes = writePersistentNominalVariance(variance);
+  expect(readPersistentNominalVariance(varianceBytes, 2, 2) == variance,
+         "variance interface content preserves every generic slot's direction");
+  auto incompleteVariance = variance;
+  incompleteVariance.complete = false;
+  rejects([&] { (void)writePersistentNominalVariance(incompleteVariance); },
+          "incomplete variance is not an imported proof");
+  rejects([&] { (void)readPersistentNominalVariance(varianceBytes, 1, 2); },
+          "variance arity must match the imported declaration");
+  auto corruptVariance = varianceBytes;
+  corruptVariance.back() = 'x';
+  rejects([&] { (void)readPersistentNominalVariance(corruptVariance, 2, 2); },
+          "corrupt variance cannot grant a conversion");
   std::cout << "persistent lifetime recipes and contracts passed\n";
 }

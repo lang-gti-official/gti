@@ -188,7 +188,7 @@ public:
         parameter = lookup(lifetime.id);
       }
       if (parameter != nullptr)
-        return parameter->name.lexeme;
+        return parameter->implicit ? "_" : parameter->name.lexeme;
       for (const auto &symbol : semantics.database().symbols())
         if (symbol.kind == SymbolKind::LifetimeParameter &&
             symbol.genericParameter == lifetime.id)
@@ -231,10 +231,11 @@ private:
         lifetimeArguments.empty()) {
       return result;
     }
-    result += '<';
     bool first = true;
     const auto append = [&](const std::string &argument) {
-      if (!first) {
+      if (first) {
+        result += '<';
+      } else {
         result += ", ";
       }
       first = false;
@@ -244,6 +245,11 @@ private:
     std::size_t valueIndex = 0;
     std::size_t lifetimeIndex = 0;
     for (const GenericParameterInfo &parameter : parameters) {
+      if (parameter.implicit) {
+        if (parameter.lifetime && lifetimeIndex < lifetimeArguments.size())
+          ++lifetimeIndex;
+        continue;
+      }
       if (parameter.lifetime) {
         if (lifetimeIndex < lifetimeArguments.size()) {
           const std::string name =
@@ -275,7 +281,8 @@ private:
           printLifetime(lifetimeArguments[lifetimeIndex++]);
       append(name.empty() ? "_" : name);
     }
-    result += '>';
+    if (!first)
+      result += '>';
     return result;
   }
 

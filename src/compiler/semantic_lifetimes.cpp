@@ -1,5 +1,6 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
+#include <array>
 
 namespace lang {
 namespace {
@@ -134,17 +135,11 @@ auto SemanticVisitor::Impl::normalizeFunctionLifetimeContract(
   const auto &syntax = *function.declaration;
   LifetimeSignatureContract contract;
   contract.receiver = function.record().lifetimeContract.receiver;
-  bool valid = true;
-  bool ambiguousResult = false;
   std::size_t nextSlot = 1; // slot zero is the implicit receiver, when present.
   const auto fresh = [&] {
     const auto slot = nextSlot++;
     return implicitFunctionLifetime(syntax, slot,
                                     "_input" + std::to_string(slot));
-  };
-  const auto isHole = [](Lifetime region) {
-    return region.kind == Lifetime::Kind::Unspecified ||
-           region.kind == Lifetime::Kind::Inference;
   };
   const auto addParameter = [&](Lifetime region) {
     if (region.kind == Lifetime::Kind::Parameter && region.specified())
@@ -161,6 +156,148 @@ auto SemanticVisitor::Impl::normalizeFunctionLifetimeContract(
       addParameter(Lifetime::parameter(parameter.id));
       contract.origin = LifetimeContractOrigin::Declared;
     }
+  std::optional<std::size_t> borrowedParameter;
+  bool borrowedReceiver = false;
+  if (const auto *attribute = syntax.findFunctionAttribute("borrowed_from");
+      attribute && attribute->argument) {
+    contract.origin = LifetimeContractOrigin::Declared;
+    borrowedReceiver = attribute->argument->kind == TokenKind::THIS;
+    for (std::size_t index = 0; index < syntax.parameters().size(); ++index)
+      if (syntax.parameters()[index].name.lexeme == attribute->argument->lexeme)
+        borrowedParameter = index;
+  }
+  auto normalized = normalizeLifetimeSignature(
+      function.returnType, function.parameterTypes, std::move(contract),
+      function.requirements, fresh, borrowedParameter, borrowedReceiver);
+  if (normalized.contract.receiver.specified() && function.ownerClass)
+    appendUnique(normalized.contract.typeBounds,
+                 LifetimeTypeBound{openClassType(function.ownerClass),
+                                   normalized.contract.receiver});
+  if (normalized.ambiguousResult) {
+    auto diagnostic = makeDiagnostic(
+        "GTI-S2127", DiagnosticPhase::Semantics, syntax.returnType().name.last(),
+        "The returned borrow has no unambiguous input lifetime; name its "
+        "relationship with a lifetime parameter.");
+    for (std::size_t index = 0; index < syntax.parameters().size() &&
+                                index < function.parameterTypes.size(); ++index)
+      if (!freeTypeLifetimes(function.parameterTypes[index]).empty())
+        diagnostic.related.push_back({tokenSpan(syntax.parameters()[index].sourceAnchor()),
+                                      "This input contributes a lifetime."});
+    diagnostic.hints.emplace_back(
+        "Declare 'lifetime a' and use '&<a>' or '<a>' on the input and result "
+        "that share the borrow. Use 'static' only for storage proved to be static.");
+    diagnostics.push_back(std::move(diagnostic));
+  }
+  function.lifetimeContract = std::move(normalized.contract);
+}
+
+auto SemanticVisitor::Impl::implicitSyntaxLifetime(
+    const Token &site, std::size_t slot, std::string_view name) const -> Lifetime {
+  auto &parameters = lifetimeBinders[lifetimeSyntaxKey(
+      site, std::numeric_limits<std::size_t>::max())];
+  if (parameters.size() <= slot)
+    parameters.resize(slot + 1);
+  auto &parameter = parameters[slot];
+  if (parameter.id == 0) {
+    Token token = site;
+    token.kind = TokenKind::IDENTIFIER;
+    token.lexeme = std::string(name);
+    token.generated = true;
+    parameter = {.id = nextGenericParameterId++, .name = std::move(token),
+                 .lifetime = true};
+  }
+  semanticModel.recordGenericParameter(parameter);
+  return Lifetime::parameter(parameter.id);
+}
+
+auto SemanticVisitor::Impl::normalizeConstructorLifetimeContract(
+    ConstructorInfo &constructor) -> void {
+  const auto &owner = classInfo(constructor.owner);
+  const Token site = constructor.declaration ? constructor.declaration->name()
+                                           : owner.name;
+  LifetimeSignatureContract contract;
+  for (const auto *parameters : std::array<const std::vector<GenericParameterInfo> *, 2>{
+                                   &owner.genericParameters,
+                                   &constructor.genericParameters})
+    for (const auto &parameter : *parameters)
+      if (parameter.lifetime) {
+        appendUnique(contract.parameters, Lifetime::parameter(parameter.id));
+        contract.origin = LifetimeContractOrigin::Declared;
+      }
+  std::size_t slot = 0;
+  const auto fresh = [&] {
+    ++slot;
+    return implicitSyntaxLifetime(site, slot, "_input" + std::to_string(slot));
+  };
+  SemanticType result = openClassType(constructor.owner);
+  auto normalized = normalizeLifetimeSignature(
+      result, constructor.parameterTypes, std::move(contract),
+      constructor.requirements, fresh);
+  constructor.lifetimeContract = std::move(normalized.contract);
+  if (normalized.ambiguousResult)
+    report(site, "A constructed borrowed type needs a declared relationship "
+                 "between its stored lifetimes and constructor inputs.",
+           "GTI-S2127");
+}
+
+auto SemanticVisitor::Impl::normalizeDestructorLifetimeContract(
+    DestructorInfo &destructor) -> void {
+  const auto &owner = classInfo(destructor.owner);
+  const Token site = destructor.declaration ? destructor.declaration->tilde()
+                                          : owner.name;
+  LifetimeSignatureContract contract;
+  contract.receiver = implicitSyntaxLifetime(site, 0, "this");
+  contract.parameters.push_back(contract.receiver);
+  for (const auto &parameter : owner.genericParameters)
+    if (parameter.lifetime)
+      appendUnique(contract.parameters, Lifetime::parameter(parameter.id));
+  contract.typeBounds.push_back({openClassType(owner.id), contract.receiver});
+  contract.complete = true;
+  destructor.lifetimeContract = std::move(contract);
+}
+
+auto SemanticVisitor::Impl::normalizeCallableLifetimeType(
+    SemanticType &type, const Token &site) const -> bool {
+  std::size_t slot = 0;
+  const auto fresh = [&] {
+    ++slot;
+    return implicitSyntaxLifetime(site, slot, "_input" + std::to_string(slot));
+  };
+  const auto normalize = [&](auto &&self, SemanticType &current) -> bool {
+    if (current.kind == SemanticType::FunctionSignature) {
+      SemanticType unused = SemanticType::Void;
+      std::vector<SemanticType> parameters{current};
+      auto result = normalizeLifetimeSignature(unused, parameters, {}, {}, fresh);
+      current = std::move(parameters.front());
+      return result.contract.valid();
+    }
+    bool valid = true;
+    lifetime_detail::children(current, [&](SemanticType &child) {
+      valid = self(self, child) && valid;
+    });
+    return valid;
+  };
+  return normalize(normalize, type);
+}
+
+auto SemanticVisitor::Impl::normalizeLifetimeSignature(
+    SemanticType &returnType, std::vector<SemanticType> &parameterTypes,
+    LifetimeSignatureContract contract,
+    std::span<const AppliedConceptRequirement> requirements,
+    const std::function<Lifetime()> &fresh,
+    std::optional<std::size_t> borrowedParameter, bool borrowedReceiver) const
+    -> LifetimeSignatureNormalization {
+  bool valid = true;
+  bool ambiguousResult = false;
+  const auto isHole = [](Lifetime region) {
+    return region.kind == Lifetime::Kind::Unspecified ||
+           region.kind == Lifetime::Kind::Inference;
+  };
+  const auto addParameter = [&](Lifetime region) {
+    if (region.kind == Lifetime::Kind::Parameter && region.specified())
+      appendUnique(contract.parameters, region);
+  };
+  addParameter(contract.receiver);
 
   // A callable nested in a signature has its own elision scope. Its inferred
   // input regions become higher-ranked binders, never outer call inputs.
@@ -211,7 +348,7 @@ auto SemanticVisitor::Impl::normalizeFunctionLifetimeContract(
     });
   };
   std::vector<Lifetime> inputRegions;
-  for (auto &parameter : function.parameterTypes) {
+  for (auto &parameter : parameterTypes) {
     normalize(normalize, parameter, true, {}, nullptr);
     for (const auto region : freeTypeLifetimes(parameter)) {
       appendUnique(inputRegions, region);
@@ -223,32 +360,23 @@ auto SemanticVisitor::Impl::normalizeFunctionLifetimeContract(
     resultRegion = inputRegions.front();
   // Translate the existing one-origin source spelling into the same region
   // interface; it is never a second solver or permission to ignore a bound.
-  if (const auto *attribute = syntax.findFunctionAttribute("borrowed_from");
-      attribute && attribute->argument) {
-    contract.origin = LifetimeContractOrigin::Declared;
-    if (attribute->argument->kind == TokenKind::THIS) {
-      resultRegion = contract.receiver;
-    } else {
-      for (std::size_t index = 0; index < syntax.parameters().size() &&
-                                  index < function.parameterTypes.size(); ++index) {
-        if (syntax.parameters()[index].name.lexeme != attribute->argument->lexeme)
-          continue;
-        const auto regions = freeTypeLifetimes(function.parameterTypes[index]);
-        if (regions.size() == 1) {
-          resultRegion = regions.front();
-        } else if (!regions.empty()) {
-          resultRegion = fresh();
-          addParameter(resultRegion);
-          for (const auto region : regions)
-            appendUnique(contract.bounds, LifetimeBound{region, resultRegion});
-        }
-      }
+  if (borrowedReceiver) {
+    resultRegion = contract.receiver;
+  } else if (borrowedParameter && *borrowedParameter < parameterTypes.size()) {
+    const auto regions = freeTypeLifetimes(parameterTypes[*borrowedParameter]);
+    if (regions.size() == 1) {
+      resultRegion = regions.front();
+    } else if (!regions.empty()) {
+      resultRegion = fresh();
+      addParameter(resultRegion);
+      for (const auto region : regions)
+        appendUnique(contract.bounds, LifetimeBound{region, resultRegion});
     }
   }
-  normalize(normalize, function.returnType, false, resultRegion, nullptr);
-  for (const auto region : freeTypeLifetimes(function.returnType))
+  normalize(normalize, returnType, false, resultRegion, nullptr);
+  for (const auto region : freeTypeLifetimes(returnType))
     addParameter(region);
-  const auto assumptions = guaranteedLifetimeAssumptions(function.requirements);
+  const auto assumptions = guaranteedLifetimeAssumptions(requirements);
   for (const auto bound : assumptions.regions)
     appendUnique(contract.bounds, bound);
   for (const auto &bound : assumptions.types)
@@ -268,36 +396,82 @@ auto SemanticVisitor::Impl::normalizeFunctionLifetimeContract(
       self(self, child);
     });
   };
-  for (const auto &parameter : function.parameterTypes)
+  for (const auto &parameter : parameterTypes)
     implied(implied, parameter);
   contract.complete = valid;
-  if (ambiguousResult) {
-    auto diagnostic = makeDiagnostic(
-        "GTI-S2127", DiagnosticPhase::Semantics, syntax.returnType().name.last(),
-        "The returned borrow has no unambiguous input lifetime; name its "
-        "relationship with a lifetime parameter.");
-    for (std::size_t index = 0; index < syntax.parameters().size() &&
-                                index < function.parameterTypes.size(); ++index)
-      if (!freeTypeLifetimes(function.parameterTypes[index]).empty())
-        diagnostic.related.push_back({tokenSpan(syntax.parameters()[index].sourceAnchor()),
-                                      "This input contributes a lifetime."});
-    diagnostic.hints.emplace_back(
-        "Declare 'lifetime a' and use '&<a>' or '<a>' on the input and result "
-        "that share the borrow. Use 'static' only for storage proved to be static.");
-    diagnostics.push_back(std::move(diagnostic));
+  return {.contract = std::move(contract), .ambiguousResult = ambiguousResult};
+}
+
+auto SemanticVisitor::Impl::lifetimeBoundsForContract(
+    const LifetimeSignatureContract &contract) const -> LifetimeBounds {
+  LifetimeBounds result;
+  for (const auto bound : contract.bounds)
+    (void)result.assume(bound.longer, bound.shorter);
+  std::vector<LifetimeTypeBound> pending = contract.typeBounds;
+  std::vector<LifetimeTypeBound> visited;
+  for (std::size_t index = 0; index < pending.size() && visited.size() < 256; ++index) {
+    const auto bound = pending[index];
+    if (std::find(visited.begin(), visited.end(), bound) != visited.end())
+      continue;
+    visited.push_back(bound);
+    const auto &type = bound.type;
+    const auto add = [&](const SemanticType &child) {
+      appendUnique(pending, LifetimeTypeBound{child, bound.region});
+    };
+    if (type.kind == SemanticType::TypeParameter ||
+        type.kind == SemanticType::RawPointer ||
+        type.kind == SemanticType::FunctionSignature)
+      continue; // Opaque types and raw pointees imply no checked storage facts.
+    if (type.kind == SemanticType::Reference) {
+      (void)result.assume(type.referenceLifetime, bound.region);
+      // A well-formed incoming reference also establishes its referent's
+      // validity for the borrow. Do not infer this from an unchecked pointer.
+      if (type.arguments.size() == 1)
+        add(type.arguments.front());
+    } else if (type.kind == SemanticType::StringView) {
+      for (const auto region : type.lifetimeArguments)
+        (void)result.assume(region, bound.region);
+    } else if (type.kind == SemanticType::Class) {
+      if (const auto *owner = classInfo(type)) {
+        const auto substitution = classSubstitution(type);
+        for (const auto &field : owner->fields) {
+          const auto member = owner->members.find(field.declaration->name().lexeme);
+          if (member != owner->members.end())
+            add(substituteType(member->second.symbol.type, substitution));
+        }
+        for (const auto &base : owner->bases)
+          if (!base.interface)
+            add(substituteType(base.type, substitution));
+      }
+    } else if (type.kind == SemanticType::Enum) {
+      if (const auto enumeration = enumTypeFor(type))
+        for (const auto &variant : enumeration->enumerators)
+          for (const auto &field : variant.payloadTypes)
+            add(field);
+    } else {
+      lifetime_detail::children(type, add);
+    }
   }
-  function.lifetimeContract = std::move(contract);
+  // Expansion is only an implication aid. Exhaustion contributes no guessed
+  // facts; exact opaque type bounds remain available to the outlives checker.
+  return result;
 }
 
 auto SemanticVisitor::Impl::currentLifetimeBounds() const -> LifetimeBounds {
-  LifetimeBounds result;
-  if (const auto *function = currentFunctionInfo())
-    for (const auto bound : function->lifetimeContract.bounds)
-      (void)result.assume(bound.longer, bound.shorter);
-  for (const auto &scope : requirementScopes)
-    for (const auto bound : guaranteedLifetimeAssumptions(scope).regions)
-      (void)result.assume(bound.longer, bound.shorter);
-  return result;
+  const auto *function = currentFunctionInfo();
+  const auto *contract = loanFlow.lifetimeContract.valid()
+                             ? &loanFlow.lifetimeContract
+                             : function ? &function->lifetimeContract : nullptr;
+  LifetimeSignatureContract assumptions = contract ? *contract
+                                                  : LifetimeSignatureContract{};
+  for (const auto &scope : requirementScopes) {
+    const auto known = guaranteedLifetimeAssumptions(scope);
+    for (const auto bound : known.regions)
+      appendUnique(assumptions.bounds, bound);
+    for (const auto &bound : known.types)
+      appendUnique(assumptions.typeBounds, bound);
+  }
+  return lifetimeBoundsForContract(assumptions);
 }
 
 auto SemanticVisitor::Impl::lifetimeOfOriginPlace(
@@ -307,13 +481,16 @@ auto SemanticVisitor::Impl::lifetimeOfOriginPlace(
   SemanticType type;
   Lifetime region;
   if (place.receiver) {
+    region = loanFlow.lifetimeContract.receiver;
     if (const auto *function = currentFunctionInfo();
         function && function->ownerClass && !function->staticMember) {
       type = openClassType(function->ownerClass);
-      region = function->lifetimeContract.receiver;
+      if (!region.specified())
+        region = function->lifetimeContract.receiver;
     } else if (currentClass) {
       type = openClassType(*currentClass);
-      region = currentReceiverLifetime;
+      if (!region.specified())
+        region = currentReceiverLifetime;
     }
   } else if (const auto *symbol = semanticModel.database().findSymbol(place.root)) {
     type = symbol->type;
@@ -321,6 +498,12 @@ auto SemanticVisitor::Impl::lifetimeOfOriginPlace(
         (symbol->kind == SymbolKind::GlobalVariable || symbol->staticMember))
       region = Lifetime::staticLifetime();
   }
+  if (!place.receiver)
+    for (const auto &[symbol, declared] : loanFlow.lifetimeInputTypes)
+      if (symbol == place.root) {
+        type = declared;
+        break;
+      }
   if (!place.receiver)
     if (const auto *function = currentFunctionInfo();
         function && function->bodyDeclaration())
@@ -370,6 +553,92 @@ auto SemanticVisitor::Impl::requirementsAwaitLifetimeApplication(
   });
 }
 
+auto SemanticVisitor::Impl::borrowedExpressionLifetime(const Expr *expression) const
+    -> Lifetime {
+  std::unordered_set<const Expr *> visited;
+  while (expression && visited.insert(expression).second) {
+    if (const auto *alias = semanticModel.findExpressionAlias(*expression)) {
+      expression = alias;
+      continue;
+    }
+    if (const auto *group = exprAs<Grouping>(expression)) {
+      expression = group->expression().get();
+      continue;
+    }
+    if (const auto *binary = exprAs<Binary>(expression);
+        binary && binary->oper().kind == TokenKind::COMMA) {
+      expression = binary->right().get();
+      continue;
+    }
+    const SemanticType *type = nullptr;
+    if (const auto *call = exprAs<Call>(expression)) {
+      if (const auto *resolved = semanticModel.findCall(*call))
+        type = &resolved->returnType;
+      else if (const auto *resolved = semanticModel.findLambdaCall(*call))
+        type = &resolved->returnType;
+    }
+    if (!type)
+      if (const auto *resolved = semanticModel.findOperator(*expression))
+        type = &resolved->returnType;
+    if (type && type->kind == SemanticType::Reference)
+      return type->referenceLifetime;
+    if (const auto *variable = exprAs<Variable>(expression))
+      if (const auto *symbol = resolve(variable->name());
+          symbol && symbol->type.kind == SemanticType::Reference &&
+          symbol->type.referenceLifetime.specified()) {
+        const auto region = symbol->type.referenceLifetime;
+        if (symbol->parameterDeclaration ||
+            std::any_of(loanFlow.lifetimeObligations.begin(),
+                        loanFlow.lifetimeObligations.end(),
+                        [&](const auto bound) { return bound.shorter == region; }))
+          return region;
+      }
+    break;
+  }
+  return {};
+}
+
+auto SemanticVisitor::Impl::requireLifetimeRelationship(
+    Lifetime source, Lifetime target, const Token &site, bool diagnose) -> bool {
+  LifetimeInferenceConstraints graph(currentLifetimeBounds());
+  bool valid = true;
+  for (const auto bound : loanFlow.lifetimeObligations)
+    valid = graph.require(bound.longer, bound.shorter) && valid;
+  valid = graph.require(source, target) && valid;
+  if (!valid || graph.failure()) {
+    if (diagnose)
+      report(site, "The borrowed value does not satisfy the destination's "
+                   "lifetime contract.", "GTI-S2127");
+    return false;
+  }
+  appendUnique(loanFlow.lifetimeObligations, LifetimeBound{source, target});
+  if (target.kind == Lifetime::Kind::Inference)
+    appendUnique(loanFlow.lifetimeVariables, target);
+  return true;
+}
+
+auto SemanticVisitor::Impl::recordReferenceLifetimeBinding(
+    const SemanticType &reference, const ExprPtr &initializer) -> void {
+  if (!initializer || reference.kind != SemanticType::Reference ||
+      expressionNeverReturns(initializer.get()))
+    return;
+  auto source = borrowedExpressionLifetime(initializer.get());
+  if (!source.specified()) {
+    const auto place = retainedLoanPlace(initializer);
+    source = lifetimeOfOriginPlace(place);
+    if (!source.specified() && place.valid()) {
+      source = Lifetime::local(inferredLifetime(
+          expressionToken(initializer), std::numeric_limits<std::size_t>::max()).id);
+      appendUnique(loanFlow.lifetimeOrigins,
+                   SemanticLifetimeOrigin{.region = source, .place = place,
+                                          .source = initializer.get()});
+    }
+  }
+  if (reference.referenceLifetime.specified())
+    (void)requireLifetimeRelationship(source, reference.referenceLifetime,
+                                      expressionToken(initializer));
+}
+
 auto SemanticVisitor::Impl::firstRequirementFailureBeforeLifetimeApplication(
     std::span<const AppliedConceptRequirement> requirements) const
     -> std::optional<ConstraintFailure> {
@@ -407,10 +676,185 @@ auto SemanticVisitor::Impl::commitLifetimeApplication(
     appendUnique(loanFlow.lifetimeOrigins, origin);
 }
 
+auto SemanticVisitor::Impl::constrainLifetimeType(
+    const SemanticType &actual, const SemanticType &expected, int variance,
+    std::vector<LifetimeBound> &obligations) const
+    -> std::optional<SemanticType> {
+  std::vector<std::pair<SemanticType, SemanticType>> active;
+  const auto relate = [&](auto &&self, const SemanticType &source,
+                          const SemanticType &target, int mode)
+      -> std::optional<SemanticType> {
+    if (source.kind != target.kind)
+      return source; // The ordinary conversion rules still own type shape.
+    if (!source.quantifiedLifetimes.empty() ||
+        !target.quantifiedLifetimes.empty())
+      return equivalentLifetimeTypes(source, target)
+                 ? std::optional<SemanticType>{target} : std::nullopt;
+    const auto key = std::pair{source, target};
+    if (active.size() >= 256 ||
+        std::find(active.begin(), active.end(), key) != active.end())
+      return std::nullopt;
+    active.push_back(key);
+    struct Pop {
+      decltype(active) &values;
+      ~Pop() { values.pop_back(); }
+    } pop{active};
+    if (source.kind == SemanticType::Class && source.classId != target.classId) {
+      std::vector<SemanticType> matches;
+      std::vector<SemanticType> visited;
+      const auto project = [&](auto &&walk, const SemanticType &type) -> void {
+        if (visited.size() >= 256 ||
+            std::find(visited.begin(), visited.end(), type) != visited.end())
+          return;
+        visited.push_back(type);
+        if (type.classId == target.classId) {
+          appendUnique(matches, type);
+          return;
+        }
+        if (const auto *owner = classInfo(type)) {
+          const auto substitution = classSubstitution(type);
+          for (const auto &base : owner->bases)
+            if (!base.interface)
+              walk(walk, substituteType(base.type, substitution));
+        }
+      };
+      project(project, source);
+      // Unrelated nominal types must never relate their slots by position.
+      if (matches.empty())
+        return source;
+      if (matches.size() != 1)
+        return std::nullopt;
+      return self(self, matches.front(), target, mode);
+    }
+    if (source.kind == SemanticType::Enum && source.enumId != target.enumId)
+      return source;
+    SemanticType adjusted = source;
+    const auto region = [&](Lifetime from, Lifetime to, int direction) {
+      if (!from.specified() && !to.specified())
+        return true;
+      if (!from.specified() || !to.specified())
+        return false;
+      appendUnique(obligations, direction < 0 ? LifetimeBound{to, from}
+                                             : LifetimeBound{from, to});
+      if (direction == 0)
+        appendUnique(obligations, LifetimeBound{to, from});
+      return true;
+    };
+    if (source.kind == SemanticType::Reference) {
+      if (!region(source.referenceLifetime, target.referenceLifetime, mode))
+        return std::nullopt;
+      adjusted.referenceLifetime = target.referenceLifetime;
+    }
+    if (source.arguments.size() != target.arguments.size() ||
+        source.lifetimeArguments.size() != target.lifetimeArguments.size())
+      return source;
+    const bool nominal = source.kind == SemanticType::Class ||
+                         source.kind == SemanticType::Enum;
+    const auto descriptor = nominal ? nominalVariance(target) : NominalVariance{};
+    if (nominal &&
+        (!descriptor.complete || descriptor.types.size() != target.arguments.size() ||
+         descriptor.lifetimes.size() != target.lifetimeArguments.size()))
+      return std::nullopt;
+    const auto compose = [&](TypeVariance nested) {
+      return nested == TypeVariance::Invariant ? 0
+           : nested == TypeVariance::Contravariant ? -mode : mode;
+    };
+    for (std::size_t index = 0; index < source.lifetimeArguments.size(); ++index) {
+      const auto direction = nominal ? descriptor.lifetimes[index]
+          : source.kind == SemanticType::StringView ? TypeVariance::Covariant
+                                                   : TypeVariance::Invariant;
+      if (direction != TypeVariance::Bivariant &&
+          !region(source.lifetimeArguments[index], target.lifetimeArguments[index],
+                  compose(direction)))
+        return std::nullopt;
+      adjusted.lifetimeArguments[index] = target.lifetimeArguments[index];
+    }
+    for (std::size_t index = 0; index < source.arguments.size(); ++index) {
+      auto direction = nominal ? descriptor.types[index] : TypeVariance::Covariant;
+      if (!nominal &&
+          ((target.kind == SemanticType::Reference &&
+            target.referenceAccess == AccessMode::Mutable) ||
+           target.kind == SemanticType::RawPointer))
+        direction = TypeVariance::Invariant;
+      else if (target.kind == SemanticType::FunctionSignature && index != 0)
+        direction = TypeVariance::Contravariant;
+      if (direction == TypeVariance::Bivariant) {
+        // Ignored parameters may vary in their regions, never in their
+        // unrelated runtime type identity. Recurse invariantly for shape,
+        // then discard only this position's lifetime obligations.
+        std::vector<LifetimeBound> saved = obligations;
+        auto child = self(self, source.arguments[index], target.arguments[index], 0);
+        obligations = std::move(saved);
+        if (!child)
+          return std::nullopt;
+        adjusted.arguments[index] = std::move(*child);
+      } else {
+        auto child = self(self, source.arguments[index], target.arguments[index],
+                          compose(direction));
+        if (!child)
+          return std::nullopt;
+        adjusted.arguments[index] = std::move(*child);
+      }
+    }
+    return adjusted;
+  };
+  return relate(relate, actual, expected, variance);
+}
+
+auto SemanticVisitor::Impl::callLifetimeArgumentType(
+    const CallableCandidate &function, const SemanticType &actual,
+    const SemanticType &expected) const -> std::optional<SemanticType> {
+  if (!function.lifetimeApplication.complete)
+    return std::nullopt;
+  std::vector<LifetimeBound> obligations;
+  const auto &target = actual.kind != SemanticType::Reference &&
+                               expected.kind == SemanticType::Reference &&
+                               expected.arguments.size() == 1
+                           ? expected.arguments.front() : expected;
+  const int variance = expected.kind == SemanticType::Reference &&
+                               expected.referenceAccess == AccessMode::Mutable
+                           ? 0 : 1;
+  auto adjusted = constrainLifetimeType(actual, target, variance, obligations);
+  if (!adjusted)
+    return std::nullopt;
+  LifetimeInferenceConstraints graph(currentLifetimeBounds());
+  for (const auto edge : loanFlow.lifetimeObligations)
+    if (!graph.require(edge.longer, edge.shorter))
+      return std::nullopt;
+  for (const auto edge : function.lifetimeApplication.obligations)
+    if (!graph.require(edge.longer, edge.shorter))
+      return std::nullopt;
+  if (graph.failure())
+    return std::nullopt;
+  // Selection may use only relationships proved by the complete application;
+  // it must not silently create an unrecorded inference obligation.
+  for (const auto edge : obligations)
+    if (!graph.proves(edge.longer, edge.shorter))
+      return std::nullopt;
+  return adjusted;
+}
+
 auto SemanticVisitor::Impl::applyCallLifetimeContract(
     CallableCandidate &function, const std::vector<SemanticType> &argumentTypes,
     const ExprList &arguments, const Token &site, const Expr *receiver,
     bool diagnose) -> bool {
+  std::vector<AnalyzedCallArgument> analyzed;
+  for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+    const auto *expression = index < arguments.size() ? &arguments[index] : nullptr;
+    if (expression && argumentTypes[index].kind == SemanticType::TypePack &&
+        argumentTypes[index].concretePack) {
+      if (!appendConcreteCallArgument(argumentTypes[index], *expression, analyzed))
+        return false;
+    } else {
+      analyzed.push_back({.type = argumentTypes[index], .expression = expression});
+    }
+  }
+  return applyCallLifetimeContract(function, analyzed, site, receiver, diagnose);
+}
+
+auto SemanticVisitor::Impl::applyCallLifetimeContract(
+    CallableCandidate &function, std::span<const AnalyzedCallArgument> arguments,
+    const Token &site, const Expr *receiver, bool diagnose) -> bool {
   const auto reject = [&](std::string_view message) {
     if (diagnose)
       report(site, std::string(message), "GTI-S2127");
@@ -474,56 +918,23 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
     if (!require(substitute(bound.longer), substitute(bound.shorter)))
       return reject("The selected lifetime bound contains an unresolved region.");
 
+  std::size_t originSlot = 0;
   const auto actualRegion = [&](const SemanticLoanPlace &place,
-                                const Expr *source, std::size_t slot) {
+                                const Expr *source) {
     if (const auto known = lifetimeOfOriginPlace(place); known.specified())
       return known;
     if (!place.valid() && !source)
       return Lifetime{};
+    for (const auto &origin : application.origins)
+      if (origin.place == place && origin.source == source)
+        return origin.region;
     const Token token = source && place.valid() ? expressionToken(*source) : site;
     const auto region = Lifetime::local(
-        inferredLifetime(token, std::numeric_limits<std::size_t>::max() - slot).id);
+        inferredLifetime(token, std::numeric_limits<std::size_t>::max() - originSlot++).id);
     appendUnique(application.origins,
                  SemanticLifetimeOrigin{.region = region, .place = place,
                                         .source = source});
     return region;
-  };
-  const auto relate = [&](auto &&self, const SemanticType &actual,
-                          const SemanticType &expected, int variance) -> bool {
-    if (actual.kind != expected.kind)
-      return true; // Ordinary conversion selection owns non-region shape.
-    if (!actual.quantifiedLifetimes.empty() || !expected.quantifiedLifetimes.empty())
-      return equivalentLifetimeTypes(actual, expected);
-    const auto regions = [&](Lifetime source, Lifetime target, int mode) {
-      if (!source.specified() && !target.specified())
-        return true;
-      return (mode < 0 ? require(target, source) : require(source, target)) &&
-             (mode != 0 || require(target, source));
-    };
-    if (actual.kind == SemanticType::Reference &&
-        !regions(actual.referenceLifetime, expected.referenceLifetime, variance))
-      return false;
-    if (actual.lifetimeArguments.size() != expected.lifetimeArguments.size())
-      return false;
-    for (std::size_t index = 0; index < actual.lifetimeArguments.size(); ++index)
-      if (!regions(actual.lifetimeArguments[index], expected.lifetimeArguments[index],
-                   actual.kind == SemanticType::StringView ? variance : 0))
-        return false;
-    if (actual.arguments.size() != expected.arguments.size())
-      return true;
-    for (std::size_t index = 0; index < actual.arguments.size(); ++index) {
-      int nested = variance;
-      if ((expected.kind == SemanticType::Reference &&
-           expected.referenceAccess == AccessMode::Mutable) ||
-          expected.kind == SemanticType::RawPointer ||
-          expected.kind == SemanticType::Class || expected.kind == SemanticType::Enum)
-        nested = 0;
-      else if (expected.kind == SemanticType::FunctionSignature && index != 0)
-        nested = -variance;
-      if (!self(self, actual.arguments[index], expected.arguments[index], nested))
-        return false;
-    }
-    return true;
   };
   std::vector<SemanticType> parameters;
   for (const auto &parameter : function.parameterTypes) {
@@ -537,42 +948,65 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
     return reject("A result lifetime substitution would capture a quantified lifetime.");
   for (std::size_t index = 0; index < parameters.size(); ++index) {
     const auto &parameter = parameters[index];
-    const Expr *source = index < arguments.size() ? arguments[index].get() : nullptr;
+    const AnalyzedCallArgument *argument = index < arguments.size() ? &arguments[index]
+                                                                 : nullptr;
+    const Expr *source = argument && argument->expression
+                             ? argument->expression->get() : nullptr;
     if (!source && function.declaration &&
         index < function.declaration->parameters().size())
       if (const auto &argument = function.declaration->parameters()[index].defaultArgument)
         source = argument->expression.get();
-    const auto actual = index < argumentTypes.size()
-                            ? argumentTypes[index]
+    const auto actual = argument
+                            ? argument->type
                             : source ? semanticModel.typeOf(*source)
                                      : SemanticType::Unknown;
     if (parameter.kind == SemanticType::Reference && parameter.arguments.size() == 1) {
+      const auto declaredRegion = actual.kind == SemanticType::Reference
+                                      ? actual.referenceLifetime
+                                      : borrowedExpressionLifetime(source);
       std::vector<SemanticLoanDependency> dependencies;
       // A reference to a carrier borrows its physical shell. Its contents'
       // external owners are distinct obligations in the nested type relation.
       if (source && !typeTraits(actual).containsBorrowedState)
-        dependencies = storedBorrowDependencies(source);
-      if (dependencies.empty())
-        dependencies.push_back({.place = source ? retainedLoanPlace(source)
-                                               : SemanticLoanPlace{}});
-      for (std::size_t dependency = 0; dependency < dependencies.size(); ++dependency)
-        if (!require(actualRegion(dependencies[dependency].place, source, dependency),
-                     parameter.referenceLifetime))
-          return reject("A borrowed argument has no checked lifetime origin.");
+        dependencies = argument ? storedBorrowDependencies(*argument)
+                                : storedBorrowDependencies(source);
+      if (dependencies.empty()) {
+        auto place = source ? retainedLoanPlace(source) : SemanticLoanPlace{};
+        if (argument && argument->forwardedPackElement) {
+          const auto *expansion = exprAs<PackExpansion>(source);
+          const auto *carrier = expansion ? resolve(expansion->name()) : nullptr;
+          place = carrier ? SemanticLoanPlace{.root = toolingSymbolFor(*carrier)}
+                          : SemanticLoanPlace{};
+          for (const auto element : argument->packPath)
+            place.projections.push_back(
+                {.kind = PlaceProjectionKind::ConstantIndex, .index = element});
+        }
+        dependencies.push_back({.place = std::move(place)});
+      }
+      if (declaredRegion.specified()) {
+        if (!require(declaredRegion, parameter.referenceLifetime))
+          return reject("A borrowed argument has no complete lifetime contract.");
+      } else {
+        for (std::size_t dependency = 0; dependency < dependencies.size(); ++dependency)
+          if (!require(actualRegion(dependencies[dependency].place, source),
+                       parameter.referenceLifetime))
+            return reject("A borrowed argument has no checked lifetime origin.");
+      }
       const auto &referent = actual.kind == SemanticType::Reference &&
                                      actual.arguments.size() == 1
                                  ? actual.arguments.front() : actual;
-      if (!relate(relate, referent, parameter.arguments.front(),
-                  parameter.referenceAccess == AccessMode::Mutable ? 0 : 1))
+      if (!constrainLifetimeType(referent, parameter.arguments.front(),
+                                 parameter.referenceAccess == AccessMode::Mutable ? 0 : 1,
+                                 application.obligations))
         return reject("The argument's nested lifetimes do not match the parameter contract.");
-    } else if (!relate(relate, actual, parameter, 1)) {
+    } else if (!constrainLifetimeType(actual, parameter, 1, application.obligations)) {
       return reject("The argument's lifetime contract does not match the parameter.");
     }
   }
   if (function.lifetimeContract.receiver.specified()) {
     const auto place = receiver ? loanPlace(receiver)
                                : SemanticLoanPlace{.receiver = true};
-    if (!require(actualRegion(place, receiver, 0),
+    if (!require(actualRegion(place, receiver),
                  substitute(function.lifetimeContract.receiver)))
       return reject("The method receiver has no checked lifetime origin.");
   }
@@ -680,7 +1114,10 @@ auto SemanticVisitor::Impl::lifetimeRequirementFailure(
   if (!requirement.lifetimeBound)
     return std::nullopt;
   LifetimeAssumptions assumptions;
-  if (const auto *function = currentFunctionInfo()) {
+  if (loanFlow.lifetimeContract.valid()) {
+    assumptions.regions = loanFlow.lifetimeContract.bounds;
+    assumptions.types = loanFlow.lifetimeContract.typeBounds;
+  } else if (const auto *function = currentFunctionInfo()) {
     assumptions.regions = function->lifetimeContract.bounds;
     assumptions.types = function->lifetimeContract.typeBounds;
   }
@@ -691,7 +1128,7 @@ auto SemanticVisitor::Impl::lifetimeRequirementFailure(
     for (const auto &bound : known.types)
       appendUnique(assumptions.types, bound);
   }
-  LifetimeBounds bounds;
+  LifetimeBounds bounds = currentLifetimeBounds();
   bool wellFormed = true;
   for (const auto bound : assumptions.regions)
     wellFormed = bounds.assume(bound.longer, bound.shorter) && wellFormed;

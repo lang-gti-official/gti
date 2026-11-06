@@ -186,6 +186,7 @@ struct LoweredGenericParameter {
   bool pack = false;
   bool value = false;
   bool lifetime = false;
+  bool implicit = false;
   GenericConstraintSet constraints = 0;
   std::vector<std::string> constraintName;
   ConceptId constraintConcept = 0;
@@ -304,6 +305,8 @@ struct LoweredClassBase {
 };
 
 struct LoweredClassDeclaration {
+  NominalVariance variance;
+  LifetimeSignatureContract lifetimeContract;
   bool explicitlyExported = false;
   // Declaration-complete source facts survive executable member pruning.
   std::optional<AccessModifier> defaultedDefaultAccess;
@@ -371,6 +374,8 @@ struct LoweredEnumerator {
 };
 
 struct LoweredEnumDeclaration {
+  NominalVariance variance;
+  LifetimeSignatureContract lifetimeContract;
   bool explicitlyExported = false;
   EnumId id = 0;
   SemanticType type = SemanticType::Unknown;
@@ -469,6 +474,7 @@ struct LoweredConstructorDeclaration {
 struct LoweredDestructorDeclaration {
   ClassId owner = 0;
   AccessModifier access = AccessModifier::Public;
+  LifetimeSignatureContract lifetimeContract;
   std::optional<SpecialMemberSpecifierKind> specifier;
 
   friend bool operator==(const LoweredDestructorDeclaration &,
@@ -598,6 +604,8 @@ struct LoweredVirtualDispatch {
 };
 
 struct LoweredClassInstance {
+  NominalVariance variance;
+  LifetimeSignatureContract lifetimeContract;
   LoweredClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ClassId declaration = 0;
@@ -644,6 +652,7 @@ struct LoweredDestructorInstance {
   LoweredDestructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   LoweredClassInstanceId owner = 0;
+  LifetimeSignatureContract lifetimeContract;
   SourceSpan source;
 
   friend bool operator==(const LoweredDestructorInstance &,
@@ -667,6 +676,7 @@ struct LoweredLambdaInstance {
   LambdaId declaration = 0;
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<LoweredParameter> parameters;
   std::vector<LoweredLambdaCapture> captures;
   SemanticTypeTraits traits;

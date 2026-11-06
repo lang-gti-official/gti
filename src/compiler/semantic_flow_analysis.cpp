@@ -5157,8 +5157,7 @@ auto SemanticVisitor::Impl::analyzeInitializer(
     std::vector<AnalyzedCallArgument> arguments = {
         {.type = result, .expression = &expr}};
     analyzeConstructorCallArguments(
-        *expr, expectedType.classId, expectedType.arguments,
-        expectedType.valueArguments, std::move(arguments),
+        *expr, expectedType, std::move(arguments),
         expressionToken(expr), true);
     result = currentType;
     const ExpressionInfo info = expressionInfo(result);
@@ -5226,8 +5225,7 @@ auto SemanticVisitor::Impl::analyzeDeclarationConstruction(
   const std::size_t diagnosticStart = diagnostics.size();
   const SourceSpan site = tokenSpan(expressionToken(expr));
   analyzeConstructorCallArguments(
-      *expr, declaredType.classId, declaredType.arguments,
-      declaredType.valueArguments,
+      *expr, declaredType,
       {{.type = initializerType, .expression = &expr}}, expressionToken(expr),
       false, true);
   if (!semanticModel.recordsContextualConstruction(*expr)) {
@@ -14716,6 +14714,8 @@ auto SemanticVisitor::Impl::baseTypeOf(
       if (type.lifetimeBinder)
         for (const auto &parameter : lifetimeParametersFor(*type.lifetimeBinder))
           result.quantifiedLifetimes.push_back(parameter.id);
+      if (!normalizeCallableLifetimeType(result, type.name.last()))
+        return SemanticType::Unknown;
       return result;
     }
     return SemanticType::nativeFunctionType(
@@ -14921,6 +14921,12 @@ auto SemanticVisitor::Impl::baseTypeOf(
 auto SemanticVisitor::Impl::typeOf(
     const TypeRef &type, const std::vector<std::string> &fromScope) const
     -> SemanticType {
+  if (const auto normalized = catalog.normalizedNominalTypes.find(&type);
+      normalized != catalog.normalizedNominalTypes.end())
+    return substituteType(normalized->second,
+                          GenericSubstitution{.types = instanceTypeSubstitution,
+                                              .values = instanceValueSubstitution,
+                                              .lifetimes = instanceLifetimeSubstitution});
   SemanticType result = baseTypeOf(type, fromScope);
   for (const auto &pointer : type.pointers) {
     result = SemanticType::rawPointerTo(
@@ -15011,8 +15017,7 @@ auto SemanticVisitor::Impl::parameterBindingType(
         type = substituteType(
             function->parameterTypes[index],
             GenericSubstitution{.types = instanceTypeSubstitution,
-                                .values = instanceValueSubstitution,
-                                .lifetimes = instanceLifetimeSubstitution});
+                                .values = instanceValueSubstitution});
         break;
       }
     }

@@ -22,7 +22,7 @@ int&<first> first<lifetime first>(int&<first> value) {
 int&<second> second<lifetime second>(int&<second> value) {
   return identity<second, int>(value);
 }
-struct Box<lifetime owner, T> { T value; }
+struct Box<lifetime owner, T> { T value; };
 int main() {
   Box<static, int> box;
   int value = 17;

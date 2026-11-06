@@ -27,6 +27,18 @@ namespace lang {
 
 struct FrontendWorkMetrics;
 
+enum class TypeVariance { Bivariant, Covariant, Contravariant, Invariant };
+
+// Declaration descriptors use one compact slot per type/lifetime parameter.
+// A concrete semantic query expands the final type-pack descriptor as needed.
+struct NominalVariance {
+  std::vector<TypeVariance> types;
+  std::vector<TypeVariance> lifetimes;
+  bool complete = false;
+
+  friend bool operator==(const NominalVariance &, const NominalVariance &) = default;
+};
+
 // Optional diagnostics about programmer-owned unsafe obligations. This policy
 // never changes typing, checked loans, MIR verification, or runtime semantics.
 enum class RawPointerAuditMode { Off, Warn, Strict };
@@ -232,6 +244,9 @@ struct GenericParameterInfo {
   bool pack = false;
   bool value = false;
   bool lifetime = false;
+  // Anonymous declaration regions are part of the normalized contract, but
+  // callers cannot supply them as positional source generic arguments.
+  bool implicit = false;
   GenericConstraintSet constraints = 0;
   std::optional<NamePath> constraintName;
   ConceptId conceptId = 0;

@@ -53,7 +53,7 @@ int&<a> wrong<lifetime a, lifetime b>(int&<a> left, int&<b> right) { return righ
 int main() { int left = 3; int right = 8; return wrong(left, right); }
 )gti", false);
   check("subobject-preserves-owner-region", R"gti(
-struct Number { int value = 7; }
+struct Number { int value = 7; };
 int&<a> field<lifetime a>(Number&<a> number) { return number.value; }
 int main() { Number number; return field(number) - 7; }
 )gti", true);
@@ -69,7 +69,7 @@ int&<a> wrong<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
   check("declaration-retains-unused-supplier", R"gti(
 int&<a> first<lifetime a>(int&<a> left, int&<a> right) { return left; }
 int main() {
-  mut int left = 3;
+  int left = 3;
   mut int right = 8;
   int& result = first(left, right);
   right = 9;
@@ -79,7 +79,7 @@ int main() {
   check("declared-suppliers-end-at-last-use", R"gti(
 int&<a> first<lifetime a>(int&<a> left, int&<a> right) { return left; }
 int main() {
-  mut int left = 3;
+  int left = 3;
   mut int right = 8;
   int& result = first(left, right);
   int saved = result;

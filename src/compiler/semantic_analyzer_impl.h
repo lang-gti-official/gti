@@ -309,6 +309,9 @@ public:
 
   [[nodiscard]] SemanticTypeTraits
   traitsFor(const SemanticType &type) const override;
+  [[nodiscard]] NominalVariance nominalVariance(const SemanticType &type) const override;
+  [[nodiscard]] LifetimeSignatureContract
+  nominalLifetimeContract(const SemanticType &type) const override;
 
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
@@ -1324,6 +1327,8 @@ private:
     const BlockStmt *lifetimeBlock = nullptr;
     const Expr *lifetimeExpression = nullptr;
     std::vector<Lifetime> lifetimeVariables;
+    LifetimeSignatureContract lifetimeContract;
+    std::vector<std::pair<SymbolId, SemanticType>> lifetimeInputTypes;
     // Checked call/store constraints share one body graph. Speculative
     // overload candidates never publish facts here; selected applications do.
     std::vector<LifetimeBound> lifetimeObligations;
@@ -1707,6 +1712,8 @@ private:
     SyntaxBinding,
   };
 
+  enum class NominalLifetimeState { Unresolved, Resolving, Resolved, Invalid };
+
   struct ClassInfo {
     enum class DefaultsState { Unresolved, Resolving, Resolved, Invalid };
     ClassId id = 0;
@@ -1726,6 +1733,10 @@ private:
     std::vector<SemanticType> exactTypeArguments;
     std::vector<CompileTimeValue> exactValueArguments;
     std::vector<GenericParameterInfo> genericParameters;
+    NominalLifetimeState lifetimeState = NominalLifetimeState::Unresolved;
+    bool recursiveLifetimeDependency = false;
+    NominalVariance variance;
+    LifetimeSignatureContract lifetimeContract;
     DefaultsState defaultsState = DefaultsState::Unresolved;
     std::vector<SemanticType> genericArgumentPatterns;
     bool argumentPatternsResolving = false;
@@ -1829,6 +1840,10 @@ private:
     Token name;
     std::vector<std::string> namespaceScope;
     std::vector<GenericParameterInfo> genericParameters;
+    NominalLifetimeState lifetimeState = NominalLifetimeState::Unresolved;
+    bool recursiveLifetimeDependency = false;
+    NominalVariance variance;
+    LifetimeSignatureContract lifetimeContract;
     DefaultsState defaultsState = DefaultsState::Unresolved;
     SemanticType underlyingType = SemanticType::Int32;
     std::unordered_map<std::string, EnumeratorRecord> enumerators;
@@ -1867,6 +1882,8 @@ private:
     AccessModifier access = AccessModifier::Public;
     SemanticType type = SemanticType::Unknown;
     std::vector<GenericParameterInfo> genericParameters;
+    std::vector<LifetimeBinding> anonymousLifetimes;
+    bool genericParametersRegistered = false;
     TypeAliasResolution resolution = TypeAliasResolution::Unresolved;
     bool compilerPrivate = false;
   };
@@ -3051,16 +3068,51 @@ private:
   void prepareFunctionLifetimeContract(const FunctionDecl &function,
                                        ClassId ownerClass);
   void normalizeFunctionLifetimeContract(CallableCandidate &function);
+  void normalizeConstructorLifetimeContract(ConstructorInfo &constructor);
+  void normalizeDestructorLifetimeContract(DestructorInfo &destructor);
+  struct LifetimeSignatureNormalization {
+    LifetimeSignatureContract contract;
+    bool ambiguousResult = false;
+  };
+  [[nodiscard]] LifetimeSignatureNormalization normalizeLifetimeSignature(
+      SemanticType &result, std::vector<SemanticType> &parameters,
+      LifetimeSignatureContract contract,
+      std::span<const AppliedConceptRequirement> requirements,
+      const std::function<Lifetime()> &fresh,
+      std::optional<std::size_t> borrowedParameter = std::nullopt,
+      bool borrowedReceiver = false) const;
+  [[nodiscard]] Lifetime implicitSyntaxLifetime(const Token &site,
+                                               std::size_t slot,
+                                               std::string_view name) const;
+  [[nodiscard]] bool normalizeCallableLifetimeType(SemanticType &type,
+                                                 const Token &site) const;
+  [[nodiscard]] std::optional<SemanticType> constrainLifetimeType(
+      const SemanticType &actual, const SemanticType &expected, int variance,
+      std::vector<LifetimeBound> &obligations) const;
+  [[nodiscard]] std::optional<SemanticType> callLifetimeArgumentType(
+      const CallableCandidate &function, const SemanticType &actual,
+      const SemanticType &expected) const;
   [[nodiscard]] bool applyCallLifetimeContract(
       CallableCandidate &function,
       const std::vector<SemanticType> &argumentTypes,
       const ExprList &arguments, const Token &site,
       const Expr *receiver = nullptr, bool diagnose = true);
+  [[nodiscard]] bool applyCallLifetimeContract(
+      CallableCandidate &function, std::span<const AnalyzedCallArgument> arguments,
+      const Token &site, const Expr *receiver = nullptr, bool diagnose = true);
   void commitLifetimeApplication(const SemanticLifetimeApplication &application);
   void finalizeLifetimeBody();
   [[nodiscard]] LifetimeBounds currentLifetimeBounds() const;
+  [[nodiscard]] LifetimeBounds lifetimeBoundsForContract(
+      const LifetimeSignatureContract &contract) const;
   [[nodiscard]] Lifetime lifetimeOfOriginPlace(
       const SemanticLoanPlace &place) const;
+  [[nodiscard]] Lifetime borrowedExpressionLifetime(const Expr *expression) const;
+  [[nodiscard]] bool requireLifetimeRelationship(Lifetime source, Lifetime target,
+                                                const Token &site,
+                                                bool diagnose = true);
+  void recordReferenceLifetimeBinding(const SemanticType &reference,
+                                      const ExprPtr &initializer);
   [[nodiscard]] Lifetime implicitFunctionLifetime(const FunctionDecl &function,
                                                  std::size_t slot,
                                                  std::string_view name);
@@ -4377,9 +4429,7 @@ private:
                           const Token &site, std::string diagnosticCode);
 
   void
-  analyzeConstructorCall(const Expr &construction, ClassId classId,
-                         const std::vector<SemanticType> &typeArguments,
-                         const std::vector<CompileTimeValue> &valueArguments,
+  analyzeConstructorCall(const Expr &construction, const SemanticType &type,
                          const std::vector<SemanticType> &argumentTypes,
                          const ExprList &arguments, const Token &paren);
 
@@ -4390,9 +4440,7 @@ private:
   // A contextual construction consumes `construction` as its sole argument;
   // the selection is recorded beside the expression's own records.
   void analyzeConstructorCallArguments(
-      const Expr &construction, ClassId classId,
-      const std::vector<SemanticType> &typeArguments,
-      const std::vector<CompileTimeValue> &valueArguments,
+      const Expr &construction, const SemanticType &type,
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
       bool requireExactNullParameter = false,
       bool contextualConstruction = false,
@@ -4400,9 +4448,8 @@ private:
       bool checkedArgument = false);
 
   void selectConstructorCallArguments(
-      const Expr *construction, const ReturnStmt *emptyReturn, ClassId classId,
-      const std::vector<SemanticType> &typeArguments,
-      const std::vector<CompileTimeValue> &valueArguments,
+      const Expr *construction, const ReturnStmt *emptyReturn,
+      const SemanticType &type,
       std::vector<AnalyzedCallArgument> arguments, const Token &paren,
       bool requireExactNullParameter, bool contextualConstruction,
       std::vector<const ConstructorInfo *> *candidateProbe,
@@ -4675,6 +4722,13 @@ private:
   void recordLifetimeParameter(const GenericParameterInfo &parameter,
                                std::string_view owner);
   void recordLifetimeUse(const Token &name, Lifetime lifetime);
+  void normalizeNominalLifetimes();
+  void normalizeClassLifetimes(ClassId id);
+  void normalizeEnumLifetimes(EnumId id);
+  void normalizeNominalStoredType(const TypeRef &syntax, const Token &owner,
+                                 std::vector<GenericParameterInfo> &parameters,
+                                 std::size_t *inheritedAnonymous = nullptr);
+  void inferNominalVariances();
 
   struct LifetimeBinderScope {
     std::vector<std::unordered_map<std::string, Lifetime>> &scopes;
@@ -7123,6 +7177,7 @@ private:
     std::vector<ExactClassSpecialization> exactClassSpecializations;
     std::vector<RegisteredConformance> conformances;
     std::vector<EnumInfo> enums;
+    std::unordered_map<const TypeRef *, SemanticType> normalizedNominalTypes;
     std::unordered_set<const VariableDecl *> predeclaredVariables;
     std::unordered_map<const VariableDecl *, const Token *>
         mutableFieldGroupOrigins;
@@ -7225,6 +7280,7 @@ private:
               exactClassSpecializations.size(),
               conformances.size(),
               enums.size(),
+              normalizedNominalTypes.size(),
               predeclaredVariables.size(),
               mutableFieldGroupOrigins.size(),
               recursiveLayoutFields.size(),
@@ -7484,6 +7540,9 @@ private:
     std::vector<std::unordered_map<std::string, Lifetime>> lifetimeParameterScopes;
     std::map<LifetimeSyntaxKey, Lifetime> lifetimeInferences;
     std::map<LifetimeSyntaxKey, std::vector<GenericParameterInfo>> lifetimeBinders;
+    // Declaration-only recursion stack; a cycle with generated lifetime slots
+    // requires explicit parameters instead of unbounded arity expansion.
+    std::vector<std::pair<bool, std::uint64_t>> nominalLifetimeStack;
     std::uint64_t nextLifetimeInferenceId = 1;
     Lifetime currentReceiverLifetime;
     std::vector<std::unordered_map<std::string, GenericParameterId>>

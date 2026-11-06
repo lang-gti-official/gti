@@ -7458,7 +7458,7 @@ auto SemanticVisitor::Impl::checkedArgumentPotential(const ExprPtr &argument,
   std::vector<const ConstructorInfo *> candidates;
   const auto enclosingType = currentType;
   analyzeConstructorCallArguments(
-      *argument, target.classId, target.arguments, target.valueArguments,
+      *argument, target,
       {{.type = source, .expression = &argument}}, expressionToken(argument),
       false, true, &candidates, true);
   currentType = enclosingType;
@@ -7472,7 +7472,7 @@ auto SemanticVisitor::Impl::applyCheckedArgument(const ExprPtr &argument,
     -> bool {
   const auto before = diagnostics.size();
   analyzeConstructorCallArguments(
-      *argument, target.classId, target.arguments, target.valueArguments,
+      *argument, target,
       {{.type = source, .expression = &argument}}, expressionToken(argument),
       false, true, nullptr, true);
   const auto *construction =
@@ -7535,7 +7535,7 @@ auto SemanticVisitor::Impl::conversionConstructorCandidates(
   }
   const SemanticType enclosingType = currentType;
   analyzeConstructorCallArguments(
-      site, target.classId, target.arguments, target.valueArguments,
+      site, target,
       {{.type = argumentType, .expression = &argument}}, token, false,
       implicitOnly, &candidates);
   currentType = enclosingType;
@@ -8454,7 +8454,7 @@ auto SemanticVisitor::Impl::callConversionRank(const SemanticType &parameter,
     return 0;
   }
   if (parameter == SemanticType::CString) {
-    if (argument == SemanticType::StringView) {
+    if (argument.kind == SemanticType::StringView) {
       return 1;
     }
     if (argument == SemanticType::NullPtr) {

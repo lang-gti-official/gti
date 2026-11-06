@@ -168,6 +168,10 @@ public:
   }
 
   void semanticType(const SemanticType &value) { type(value); }
+  void nominalVariance(const NominalVariance &value) { variance(value); }
+  void semanticLifetimeContract(const LifetimeSignatureContract &value) {
+    lifetimeContract(value);
+  }
 
   void semanticTypes(const std::vector<SemanticType> &values) {
     output << '[';
@@ -279,6 +283,22 @@ private:
       print(print, *value.expression);
     }
     output << '}';
+  }
+
+  void variance(const NominalVariance &value) {
+    output << "{complete=" << value.complete << ",types=[";
+    for (std::size_t index = 0; index < value.types.size(); ++index) {
+      if (index != 0)
+        output << ',';
+      output << number(value.types[index]);
+    }
+    output << "],lifetimes=[";
+    for (std::size_t index = 0; index < value.lifetimes.size(); ++index) {
+      if (index != 0)
+        output << ',';
+      output << number(value.lifetimes[index]);
+    }
+    output << "]}";
   }
 
   void lifetime(Lifetime value) {
@@ -495,7 +515,7 @@ private:
   void genericParameter(const LoweredGenericParameter &value) {
     output << "generic(id=" << value.id << ";name=" << std::quoted(value.name)
            << ";pack=" << value.pack << ";value=" << value.value
-           << ";lifetime=" << value.lifetime
+           << ";lifetime=" << value.lifetime << ";implicit=" << value.implicit
            << ";constraints=" << value.constraints << ";constraint=";
     strings(value.constraintName);
     output << ";constraint-concept=" << value.constraintConcept;
@@ -595,6 +615,11 @@ private:
   }
 
   void printValue(const LoweredClassDeclaration &value) {
+    output << "variance=";
+    variance(value.variance);
+    output << " lifetime-contract=";
+    lifetimeContract(value.lifetimeContract);
+    output << ' ';
     output << "class(exported=" << value.explicitlyExported
            << ";id=" << value.id << ";unit=" << value.sourceUnit
            << ";qualified=" << std::quoted(value.qualifiedName)
@@ -694,6 +719,11 @@ private:
   }
 
   void printValue(const LoweredEnumDeclaration &value) {
+    output << "variance=";
+    variance(value.variance);
+    output << " lifetime-contract=";
+    lifetimeContract(value.lifetimeContract);
+    output << ' ';
     output << "enum(exported=" << value.explicitlyExported << ";id=" << value.id
            << ";unit=" << value.sourceUnit
            << ";qualified=" << std::quoted(value.qualifiedName) << ";type=";
@@ -906,7 +936,9 @@ private:
 
   void printValue(const LoweredDestructorDeclaration &value) {
     output << "destructor(owner=" << value.owner
-           << ";access=" << number(value.access) << ";specifier=";
+           << ";access=" << number(value.access) << ";lifetime-contract=";
+    lifetimeContract(value.lifetimeContract);
+    output << ";specifier=";
     if (value.specifier) {
       output << number(*value.specifier);
     } else {
@@ -1178,6 +1210,11 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
 
   output << "class-instances " << program.classInstances().size() << '\n';
   for (const LoweredClassInstance &instance : program.classInstances()) {
+    output << "variance=";
+    values.nominalVariance(instance.variance);
+    output << " lifetime-contract=";
+    values.semanticLifetimeContract(instance.lifetimeContract);
+    output << ' ';
     output << "class-instance " << instance.id
            << " unit=" << instance.sourceUnit
            << " declaration=" << instance.declaration << " types=";
@@ -1269,6 +1306,8 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
            << " unit=" << instance.sourceUnit << " owner=" << instance.owner
            << " source=";
     values.sourceSpan(instance.source);
+    output << " lifetime-contract=";
+    values.semanticLifetimeContract(instance.lifetimeContract);
     output << '\n';
   }
 
@@ -1279,6 +1318,8 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
     values.semanticType(instance.type);
     output << " return=";
     values.semanticType(instance.returnType);
+    output << " lifetime-contract=";
+    values.semanticLifetimeContract(instance.lifetimeContract);
     output << " parameters=";
     values.loweredParameters(instance.parameters);
     output << " captures=[";

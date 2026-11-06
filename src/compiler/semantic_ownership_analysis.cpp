@@ -5449,10 +5449,8 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
     }
     if (function.lifetimeContract.valid() &&
         resultPath->reference.referenceLifetime.declarationRegion()) {
-      LifetimeBounds bounds;
-      for (const auto bound : function.lifetimeContract.bounds)
-        if (!bounds.assume(bound.longer, bound.shorter))
-          return std::nullopt;
+      const LifetimeBounds bounds =
+          lifetimeBoundsForContract(function.lifetimeContract);
       // A body proves a supplier permitted by the declaration. It need not
       // return every supplier, nor may its present choice narrow that public
       // contract. The physical storage, access and cleanup proofs above are
@@ -6051,7 +6049,7 @@ auto SemanticVisitor::Impl::payloadBorrowDependencySet(
     // certify an owner-dependent text value as dependency-free, except a
     // constructor's text input, whose owner each call publishes.
     const auto &inputs = requestSession.constructorTextPayloadArguments;
-    if ((field == SemanticType::StringView || field == SemanticType::CString) &&
+    if ((field.kind == SemanticType::StringView || field == SemanticType::CString) &&
         isOwnerDependentTextExpression(argument) &&
         std::find(inputs.begin(), inputs.end(), argument.get()) == inputs.end())
       return std::nullopt;
@@ -10819,6 +10817,8 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
   if (carrier == nullptr) {
     return;
   }
+  loanFlow.lifetimeInputTypes.emplace_back(toolingSymbolFor(*carrier),
+                                           carrier->type);
   const bool referenceCarrier = carrier->type.kind == SemanticType::Reference &&
                                 carrier->type.arguments.size() == 1;
   const auto &carrierValueType =
@@ -14894,8 +14894,8 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     if ((expr.arguments().size() != 1 && !hasFallback) ||
         declaration.parameterTypes.size() != expr.arguments().size() ||
         (hasFallback &&
-         declaration.parameterTypes.back() != SemanticType::StringView) ||
-        declaration.returnType != SemanticType::StringView ||
+         declaration.parameterTypes.back().kind != SemanticType::StringView) ||
+        declaration.returnType.kind != SemanticType::StringView ||
         expr.typeArguments().size() != 1 ||
         declaration.record().genericParameters.size() != 1 ||
         declaration.record().genericParameters.front().value ||
@@ -14950,7 +14950,7 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
           expr.arguments().back(), context);
       const auto *text =
           constant ? std::get_if<std::string>(&*constant.value) : nullptr;
-      if (fallbackType != SemanticType::StringView || !text) {
+      if (fallbackType.kind != SemanticType::StringView || !text) {
         report(expr.paren(),
                "An expression-text fallback must be compile-time "
                "literal-backed string-view text.",
@@ -15211,7 +15211,7 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       if (concrete) {
         if (element.kind == SemanticType::Class)
           analyzeConstructorCallArguments(
-              expr, element.classId, element.arguments, element.valueArguments,
+              expr, element,
               constructorArguments, expr.paren());
         else if (!containsOpenTypeParameter(element))
           validateStorageValueConstruction(expr, element, constructorArguments);
@@ -15393,8 +15393,8 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       validateType(argument);
     }
     if (!expr.typeArguments().empty() ||
-        (panic ? argumentTypes !=
-                     std::vector<SemanticType>{SemanticType::StringView}
+        (panic ? argumentTypes.size() != 1 ||
+                     argumentTypes.front().kind != SemanticType::StringView
                : !argumentTypes.empty())) {
       report(expr.paren(),
              panic ? "Panic requires one counted text-view message and no type "
@@ -16134,8 +16134,7 @@ auto SemanticVisitor::Impl::analyzeUniqueOwnerIntrinsicCall(
       if (const std::optional<std::vector<AnalyzedCallArgument>> arguments =
               concreteCallArguments(argumentTypes, expr.arguments())) {
         analyzeConstructorCallArguments(
-            expr, pointeeType.classId, pointeeType.arguments,
-            pointeeType.valueArguments, *arguments, expr.paren());
+            expr, pointeeType, *arguments, expr.paren());
       }
     }
 
@@ -16618,8 +16617,7 @@ auto SemanticVisitor::Impl::analyzeOptionalStorageIntrinsicCall(
     if (concreteArguments) {
       if (elementType.kind == SemanticType::Class) {
         analyzeConstructorCallArguments(
-            expr, elementType.classId, elementType.arguments,
-            elementType.valueArguments, constructorArguments, expr.paren());
+            expr, elementType, constructorArguments, expr.paren());
       } else if (elementType != SemanticType::Unknown &&
                  elementType.kind != SemanticType::TypeParameter) {
         validateStorageValueConstruction(expr, elementType,

@@ -45,6 +45,132 @@ const lang::TypeAliasInfo *alias(const lang::FrontendResult &result,
   return nullptr;
 }
 
+const lang::ClassTypeInfo *record(const lang::FrontendResult &result,
+                                 std::string_view name) {
+  for (const auto &declaration : result.program.declarations())
+    if (const auto *syntax = lang::stmtAs<lang::ClassDecl>(declaration.get());
+        syntax && syntax->name().lexeme == name)
+      return result.semantics.findClassType(*syntax);
+  return nullptr;
+}
+
+void testAnonymousNominalRegions() {
+  const auto result = analyze(R"(
+struct PairView { int& first; int& second; };
+using PairAlias = PairView;
+struct Nested { PairAlias left; PairAlias right; };
+struct Derived : public PairView { int& third; };
+struct Packed<Ts...> { int& anchor; };
+enum Event { first(int& value), second(int& value) };
+void inspect(PairView pair, Nested nested, Derived derived, Packed<int, bool> packed, Event event);
+int main() { return 0; }
+)");
+  expectValid(result, "record, alias, inherited, packed, and enum regions normalize before use");
+  for (const auto &[name, count] :
+       {std::pair{"PairView", 2u}, {"Nested", 4u}, {"Derived", 3u}, {"Packed", 1u}}) {
+    const auto *info = record(result, name);
+    expect(info && std::size_t(std::count_if(info->genericParameters.begin(), info->genericParameters.end(),
+                                 [](const auto &parameter) {
+                                   return parameter.lifetime && parameter.implicit;
+                                 })) == count,
+           "each omitted stored occurrence has an independent anonymous declaration slot");
+  }
+  const auto *info = function(result, "inspect");
+  expect(info && info->parameterTypes.size() == 5,
+         "all normalized nominal signatures remain available");
+  if (info && info->parameterTypes.size() == 5) {
+    const std::vector<std::size_t> counts{2, 4, 3, 1, 2};
+    for (std::size_t index = 0; index < counts.size(); ++index)
+      expect(info->parameterTypes[index].lifetimeArguments.size() == counts[index],
+             "normalized signatures carry every anonymous nominal region");
+    expect(info->parameterTypes[3].arguments.size() == 2,
+           "anonymous lifetime slots do not consume explicit type pack arguments");
+  }
+  const auto *pair = record(result, "PairView");
+  expect(pair && pair->fields.size() == 2 &&
+             pair->fields[0].type.referenceLifetime != pair->fields[1].type.referenceLifetime &&
+             pair->fields[0].type.referenceLifetime.declarationRegion() &&
+             pair->fields[1].type.referenceLifetime.declarationRegion(),
+         "field metadata contains declaration binders rather than inference holes");
+}
+
+void testNominalVariance() {
+  const auto result = analyze(R"(
+struct Shared<T, lifetime a> { T&<a> value; };
+struct Exclusive<T, lifetime a> { mut T&<a> value; };
+struct Raw<T> { T* pointer; };
+struct Owned<T> { T value; void replace(T other) mut; };
+struct Unused<T, lifetime a> {};
+struct Node<lifetime a> { Node<a>* next; int&<a> value; };
+int main() { return 0; }
+)");
+  expectValid(result, "explicit recursive types and verified nominal variance resolve");
+  const auto verify = [&](std::string_view name, lang::TypeVariance type,
+                          std::optional<lang::TypeVariance> lifetime) {
+    const auto *info = record(result, name);
+    expect(info && info->variance.complete && info->variance.types == std::vector{type} &&
+               info->variance.lifetimes == (lifetime ? std::vector{*lifetime}
+                                                     : std::vector<lang::TypeVariance>{}),
+           "variance follows verified owned/shared/mutable/raw storage positions");
+  };
+  verify("Shared", lang::TypeVariance::Covariant, lang::TypeVariance::Covariant);
+  verify("Exclusive", lang::TypeVariance::Invariant, lang::TypeVariance::Covariant);
+  verify("Raw", lang::TypeVariance::Invariant, std::nullopt);
+  verify("Owned", lang::TypeVariance::Covariant, std::nullopt);
+  verify("Unused", lang::TypeVariance::Bivariant, lang::TypeVariance::Bivariant);
+  if (const auto *shared = record(result, "Shared");
+      shared && shared->genericParameters.size() == 2) {
+    const auto expected = lang::LifetimeTypeBound{
+        lang::SemanticType::typeParameter(shared->genericParameters[0].id),
+        lang::Lifetime::parameter(shared->genericParameters[1].id)};
+    expect(shared->lifetimeContract.valid() &&
+               std::find(shared->lifetimeContract.typeBounds.begin(),
+                         shared->lifetimeContract.typeBounds.end(), expected) !=
+                   shared->lifetimeContract.typeBounds.end(),
+           "nominal metadata retains the exact referent well-formedness obligation");
+  }
+
+  for (const std::string &source : {
+           std::string("struct Recursive { Recursive* next; int& value; }; int main() { return 0; }"),
+           std::string("using Cycle = Cycle; int main() { return 0; }")}) {
+    const auto invalid = analyze(source);
+    expect(!invalid.semanticValid,
+           "recursive anonymous region expansion and alias cycles are rejected finitely");
+  }
+}
+
+void testSpecializationLifetimeShape() {
+  const auto result = analyze(R"(
+namespace family { struct View<T, lifetime a> { T&<a> value; }; }
+struct family::View<int> { int&<a> value; };
+void inspect<lifetime selected>(family::View<int, selected> value);
+int main() { return 0; }
+)");
+  expectValid(result, "exact specialization retains the primary's universal region shape");
+  const auto *inspect = function(result, "inspect");
+  if (inspect && inspect->parameterTypes.size() == 1 &&
+      inspect->genericParameters.size() == 1) {
+    const auto &type = inspect->parameterTypes.front();
+    const auto *selected = result.semantics.findClassType(type.classId);
+    expect(selected && selected->exactSpecializationPrimary != 0 &&
+               selected->lifetimeContract.valid() &&
+               type.lifetimeArguments == std::vector{
+                   lang::Lifetime::parameter(inspect->genericParameters.front().id)},
+           "selected specialization metadata preserves the actual region argument");
+  } else {
+    expect(false, "specialized lifetime-bearing parameter metadata is available");
+  }
+  for (const std::string &definition : {
+           std::string("struct family::View<int> { int&<a> value; int& extra; };"),
+           std::string("struct family::View<int, static> { int&<static> value; };")}) {
+    const auto invalid = analyze(
+        "namespace family { struct View<T, lifetime a> { T&<a> value; }; } " +
+        definition + " int main() { return 0; }");
+    expect(!invalid.semanticValid,
+           "specializations cannot add hidden region arity or select on a lifetime");
+  }
+}
+
 void testNominalArguments() {
   const auto result = analyze(R"(
 struct Marker<T, lifetime a> { T value; };
@@ -242,5 +368,8 @@ int main() {
   testBinderDiagnostics();
   testProtocolOperationBinders();
   testExplicitFunctionKinds();
+  testAnonymousNominalRegions();
+  testNominalVariance();
+  testSpecializationLifetimeShape();
   return failures == 0 ? 0 : 1;
 }

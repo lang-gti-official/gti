@@ -292,13 +292,17 @@ MirLowerer::lowerProgram(const HirProgram &source,
   for (const HirEnum &enumeration : source.enumDeclarations()) {
     if (!enumeration.payload) {
       result.program.integralEnums_.push_back(
-          {.declaration = enumeration.declaration,
+          {.variance = enumeration.variance,
+           .lifetimeContract = enumeration.lifetimeContract,
+           .declaration = enumeration.declaration,
            .type = enumeration.type,
            .sourceUnit = enumeration.sourceUnit,
            .underlyingType = enumeration.underlyingType});
       continue;
     }
-    MirPayloadEnum lowered{.declaration = enumeration.declaration,
+    MirPayloadEnum lowered{.variance = enumeration.variance,
+                           .lifetimeContract = enumeration.lifetimeContract,
+                           .declaration = enumeration.declaration,
                            .sourceUnit = enumeration.sourceUnit,
                            .type = enumeration.type,
                            .traits = enumeration.traits,
@@ -329,6 +333,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
   result.program.classes.reserve(source.classInstances().size());
   for (const HirClassInstance &instance : source.classInstances()) {
     MirClassInstance lowered{
+        .variance = instance.variance,
+        .lifetimeContract = instance.lifetimeContract,
         .id = instance.id,
         .sourceUnit = instance.sourceUnit,
         .declaration = instance.declaration,
@@ -677,6 +683,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
     result.program.destructors.push_back(
         {.id = instance.id,
          .owner = instance.owner,
+         .lifetimeContract = instance.lifetimeContract,
          .definitionKind =
              instance.source != nullptr && instance.source->body() != nullptr
                  ? MirDefinitionKind::Source
@@ -711,6 +718,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
         .type = instance.type,
         .returnType = instance.returnType,
         .parameterTypes = instance.parameterTypes,
+        .lifetimeContract = instance.lifetimeContract,
         .parameterBindings = instance.parameterBindings,
         .capability = instance.capability,
         .lifecycleBoundBorrowCarrier = instance.lifecycleBoundBorrowCarrier,

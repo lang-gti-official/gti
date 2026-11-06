@@ -217,7 +217,10 @@ void validateShape(std::string_view shape) {
     reject("too many generic declaration parameters");
   for (std::size_t i = 0; i < shape.size(); ++i)
     if (shape[i] != 't' && shape[i] != 'v' && shape[i] != 'l' &&
-        !(shape[i] == 'p' && i + 1 == shape.size()))
+        shape[i] != 'i' &&
+        !(shape[i] == 'p' &&
+          std::all_of(shape.begin() + i + 1, shape.end(),
+                      [](char later) { return later == 'i'; })))
       reject("unsupported generic parameter shape");
 }
 std::string genericShape(const std::vector<GenericParameterInfo> &parameters) {
@@ -226,9 +229,12 @@ std::string genericShape(const std::vector<GenericParameterInfo> &parameters) {
     reject("too many generic declaration parameters");
   for (const auto &p : parameters) {
     if (!p.typeArgumentPath.empty() || (p.pack && (p.value || p.lifetime)) ||
-        (p.value && p.lifetime))
+        (p.value && p.lifetime) || (p.implicit && !p.lifetime))
       reject("unsupported generic parameter projection");
-    shape += p.pack ? 'p' : p.lifetime ? 'l' : p.value ? 'v' : 't';
+    shape += p.pack       ? 'p'
+             : p.lifetime ? (p.implicit ? 'i' : 'l')
+             : p.value    ? 'v'
+                          : 't';
   }
   validateShape(shape);
   return shape;
@@ -262,9 +268,9 @@ void validateArguments(const SemanticType &type, std::string_view shape) {
   for (char p : shape) {
     types += p == 't';
     values += p == 'v';
-    lifetimes += p == 'l';
+    lifetimes += p == 'l' || p == 'i';
   }
-  const bool pack = !shape.empty() && shape.back() == 'p';
+  const bool pack = shape.find('p') != shape.npos;
   if (type.arguments.size() > 256 || type.valueArguments.size() > 256 ||
       type.arguments.size() < types ||
       (!pack && type.arguments.size() != types) ||
@@ -1092,6 +1098,78 @@ readPersistentLifetimeContract(std::string_view bytes,
   if (!reader.bytes.empty() ||
       writePersistentLifetimeContract(result, registry, bindings) != bytes)
     reject("noncanonical persistent lifetime contract");
+  return result;
+}
+std::string writePersistentNominalVariance(const NominalVariance &variance) {
+  if (!variance.complete || variance.types.size() > 256 ||
+      variance.lifetimes.size() > 256)
+    reject("persistent variance must be complete and bounded");
+  const auto sequence = [](std::span<const TypeVariance> entries) {
+    std::string result;
+    for (const auto value : entries) {
+      switch (value) {
+      case TypeVariance::Bivariant:
+        result += 'b';
+        break;
+      case TypeVariance::Covariant:
+        result += 'c';
+        break;
+      case TypeVariance::Contravariant:
+        result += 'n';
+        break;
+      case TypeVariance::Invariant:
+        result += 'i';
+        break;
+      default:
+        reject("invalid persistent variance kind");
+      }
+    }
+    return result;
+  };
+  std::string result = "gti.nominal-variance.1";
+  append(result, sequence(variance.types));
+  append(result, sequence(variance.lifetimes));
+  return result;
+}
+
+NominalVariance readPersistentNominalVariance(std::string_view bytes,
+                                              std::size_t typeSlots,
+                                              std::size_t lifetimeSlots) {
+  constexpr std::string_view magic = "gti.nominal-variance.1";
+  if (!bytes.starts_with(magic) || bytes.size() > byteLimit ||
+      typeSlots > 256 || lifetimeSlots > 256)
+    reject("unsupported persistent variance recipe");
+  Reader reader{bytes.substr(magic.size())};
+  const auto sequence = [&](std::size_t count) {
+    const auto field = reader.field(256);
+    if (field.size() != count)
+      reject("persistent variance does not match declaration arity");
+    std::vector<TypeVariance> result;
+    for (const auto value : field) {
+      switch (value) {
+      case 'b':
+        result.push_back(TypeVariance::Bivariant);
+        break;
+      case 'c':
+        result.push_back(TypeVariance::Covariant);
+        break;
+      case 'n':
+        result.push_back(TypeVariance::Contravariant);
+        break;
+      case 'i':
+        result.push_back(TypeVariance::Invariant);
+        break;
+      default:
+        reject("invalid persistent variance kind");
+      }
+    }
+    return result;
+  };
+  NominalVariance result{.types = sequence(typeSlots),
+                         .lifetimes = sequence(lifetimeSlots),
+                         .complete = true};
+  if (!reader.bytes.empty() || writePersistentNominalVariance(result) != bytes)
+    reject("noncanonical persistent variance recipe");
   return result;
 }
 } // namespace lang

@@ -220,5 +220,176 @@ int main() {
   originBody.places.push_back(secondTemporary);
   expect(!resolveMirLifetimeOrigins(application, originBody),
          "ambiguous temporary materializations must not guess an origin");
+  LifetimeSignatureContract contract{
+      .parameters = {Lifetime::parameter(1), Lifetime::parameter(2)},
+      .bounds = {{Lifetime::parameter(1), Lifetime::parameter(2)}},
+      .typeBounds = {{SemanticType::Int32, Lifetime::parameter(2)}},
+      .complete = true};
+  MirLifetimeApplication applied{
+      .bindings = {{Lifetime::parameter(1), Lifetime::parameter(11)},
+                   {Lifetime::parameter(2), Lifetime::inference(12)}},
+      .variables = {Lifetime::inference(12)},
+      .obligations = {{Lifetime::parameter(11), Lifetime::inference(12)}},
+      .typeObligations = {{SemanticType::Int32, Lifetime::inference(12)}},
+      .complete = true};
+  const std::vector<SemanticType> declaredParameters{reference(1)};
+  const auto instantiated = instantiateMirLifetimeSignature(
+      contract, reference(2), declaredParameters, applied);
+  expect(instantiated &&
+             instantiated->returnType.referenceLifetime ==
+                 Lifetime::inference(12) &&
+             instantiated->parameterTypes[0].referenceLifetime ==
+                 Lifetime::parameter(11),
+         "MIR must instantiate every declared region without changing its "
+         "signature shape");
+  auto invalidApplication = applied;
+  invalidApplication.bindings.pop_back();
+  expect(!instantiateMirLifetimeSignature(
+             contract, reference(2), declaredParameters, invalidApplication),
+         "a missing universal binding is not an instantiated contract");
+  invalidApplication = applied;
+  invalidApplication.bindings[1].first = Lifetime::parameter(1);
+  expect(!instantiateMirLifetimeSignature(
+             contract, reference(2), declaredParameters, invalidApplication),
+         "duplicate binding keys cannot cover a different universal");
+  invalidApplication = applied;
+  invalidApplication.bindings[1].first = Lifetime::parameter(3);
+  expect(!instantiateMirLifetimeSignature(
+             contract, reference(2), declaredParameters, invalidApplication),
+         "unknown binding keys cannot belong to a selected declaration");
+  invalidApplication = applied;
+  invalidApplication.variables.clear();
+  expect(!instantiateMirLifetimeSignature(
+             contract, reference(2), declaredParameters, invalidApplication),
+         "inference IDs need an explicit allocation inventory");
+  invalidApplication = applied;
+  invalidApplication.obligations.clear();
+  expect(!instantiateMirLifetimeSignature(
+             contract, reference(2), declaredParameters, invalidApplication),
+         "callee bounds remain required obligations after instantiation");
+  invalidApplication = applied;
+  invalidApplication.typeObligations[0].type = SemanticType::Int64;
+  expect(!instantiateMirLifetimeSignature(
+             contract, reference(2), declaredParameters, invalidApplication),
+         "an exact type bound cannot be replaced by another type's bound");
+  invalidApplication = applied;
+  invalidApplication.complete = false;
+  expect(!instantiateMirLifetimeSignature(
+             contract, reference(2), declaredParameters, invalidApplication),
+         "incomplete applications cannot authorize lifetime instantiation");
+  auto badDeclaration = contract;
+  badDeclaration.parameters.pop_back();
+  expect(!instantiateMirLifetimeSignature(badDeclaration, reference(2),
+                                          declaredParameters, applied),
+         "free signature regions require declaration-owned binders");
+  auto quantifiedResult =
+      SemanticType::functionSignature(reference(1), {reference(13)});
+  quantifiedResult.quantifiedLifetimes = {13};
+  invalidApplication = applied;
+  invalidApplication.bindings[0].second = Lifetime::parameter(13);
+  invalidApplication.obligations[0].longer = Lifetime::parameter(13);
+  expect(!instantiateMirLifetimeSignature(contract, quantifiedResult,
+                                          declaredParameters,
+                                          invalidApplication),
+         "call substitution cannot capture a higher-ranked binder");
+  expect(instantiateMirLifetimeSignature({}, SemanticType::Int32, {}, {})
+             .has_value(),
+         "region-free legacy signatures retain their exact behavior");
+  MirProgram emptyProgram;
+  LifetimeSignatureContract caller{
+      .parameters = {Lifetime::parameter(21), Lifetime::parameter(22)},
+      .complete = true};
+  MirBody graphBody;
+  graphBody.lifetimeBody = {
+      .variables = {Lifetime::inference(23)},
+      .obligations = {{Lifetime::parameter(21), Lifetime::inference(23)},
+                      {Lifetime::parameter(22), Lifetime::inference(23)}},
+      .complete = true};
+  expect(verifyMirLifetimeBodyFacts(emptyProgram, graphBody, caller).valid(),
+         "two independent inputs may constrain one existential meet");
+  auto forgedGraph = graphBody;
+  forgedGraph.lifetimeBody.obligations.push_back(
+      {Lifetime::inference(23), Lifetime::parameter(22)});
+  expect(!verifyMirLifetimeBodyFacts(emptyProgram, forgedGraph, caller).valid(),
+         "an inference meet must not smuggle an unrelated universal outlives "
+         "proof");
+  auto relatedCaller = caller;
+  relatedCaller.bounds = {{Lifetime::parameter(21), Lifetime::parameter(22)}};
+  expect(verifyMirLifetimeBodyFacts(emptyProgram, forgedGraph, relatedCaller)
+             .valid(),
+         "a declared universal relationship may discharge the required path");
+  forgedGraph = graphBody;
+  forgedGraph.lifetimeBody.variables.clear();
+  expect(!verifyMirLifetimeBodyFacts(emptyProgram, forgedGraph, caller).valid(),
+         "body graph edges cannot invent inference identities");
+  forgedGraph = graphBody;
+  forgedGraph.lifetimeBody.obligations[0].longer = Lifetime::local(24);
+  expect(!verifyMirLifetimeBodyFacts(emptyProgram, forgedGraph, caller).valid(),
+         "a local region requires an exact origin witness");
+  graphBody.lifetimeBody.typeObligations = {
+      {SemanticType::typeParameter(25), Lifetime::inference(23)}};
+  caller.typeBounds = {
+      {SemanticType::typeParameter(25), Lifetime::parameter(21)}};
+  expect(verifyMirLifetimeBodyFacts(emptyProgram, graphBody, caller).valid(),
+         "an exact caller type bound may flow into an existential region");
+  graphBody.lifetimeBody.typeObligations[0].type.projectionConcept = 26;
+  expect(!verifyMirLifetimeBodyFacts(emptyProgram, graphBody, caller).valid(),
+         "a bound on T does not establish a bound on an associated projection "
+         "of T");
+  MirBody initializing;
+  initializing.placeDomain = {1, 2, 0};
+  MirPlace owned;
+  owned.id = 1;
+  owned.root = MirPlaceRootKind::Binding;
+  owned.binding = 1;
+  owned.type = SemanticType::Int32;
+  owned.sourceValue = 7;
+  owned.key = PlaceKey{.domain = initializing.placeDomain, .root = 1};
+  MirPlace alias = owned;
+  alias.id = 2;
+  alias.binding = 2;
+  alias.type = SemanticType::referenceTo(SemanticType::Int32);
+  alias.type.referenceLifetime = Lifetime::inference(8);
+  alias.sourceValue = 9;
+  alias.key->root = 2;
+  initializing.places = {owned, alias};
+  initializing.lifetimeBody = {
+      .variables = {Lifetime::inference(8)},
+      .obligations = {{Lifetime::local(11), Lifetime::inference(8)}},
+      .origins = {{.region = Lifetime::local(11),
+                   .place = 1,
+                   .key = *owned.key,
+                   .source = 7}},
+      .complete = true};
+  MirInstruction initialize;
+  initialize.id = 1;
+  initialize.kind = MirInstructionKind::Initialize;
+  initialize.hirValue = 7;
+  initialize.destination = 2;
+  initialize.operands = {
+      {.kind = MirOperandKind::BorrowRead, .place = 1, .type = alias.type}};
+  MirBlock initializationBlock;
+  initializationBlock.id = 1;
+  initializationBlock.instructions = {initialize};
+  initializing.blocks = {initializationBlock};
+  expect(verifyMirLifetimeApplications(emptyProgram, initializing).valid(),
+         "reference initialization must replay its exact "
+         "source-to-declared-region edge");
+  auto missingInitializationEdge = initializing;
+  missingInitializationEdge.lifetimeBody.obligations.clear();
+  expect(!verifyMirLifetimeApplications(emptyProgram, missingInitializationEdge)
+              .valid(),
+         "dropping a reference initializer edge must invalidate MIR proof");
+  auto escapedLocal = initializing;
+  escapedLocal.returnType = SemanticType::referenceTo(SemanticType::Int32);
+  escapedLocal.returnType.referenceLifetime = Lifetime::staticLifetime();
+  escapedLocal.blocks[0].terminator.kind = MirTerminatorKind::Return;
+  escapedLocal.blocks[0].terminator.hirValue = 7;
+  escapedLocal.blocks[0].terminator.value =
+      MirOperand{.kind = MirOperandKind::BorrowRead,
+                 .place = 1,
+                 .type = escapedLocal.returnType};
+  expect(!verifyMirLifetimeApplications(emptyProgram, escapedLocal).valid(),
+         "MIR return reconstruction cannot promote a local origin to static");
   std::cout << "lifetime IR structural metadata passed\n";
 }

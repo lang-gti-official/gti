@@ -574,7 +574,10 @@ private:
                  : status;
     };
     output.program.classes.push_back(
-        {.id = id,
+        {.variance = instanceProvider->nominalVariance(resolvedType),
+         .lifetimeContract =
+             instanceProvider->nominalLifetimeContract(resolvedType),
+         .id = id,
          .sourceUnit = declaration->sourceUnit,
          .declaration = resolvedType.classId,
          .source = declaration->declaration,
@@ -1057,7 +1060,11 @@ private:
         {.id = id,
          .sourceUnit = classInstance.sourceUnit,
          .source = lifecycle->declaredDestructor->declaration,
-         .owner = owner});
+         .owner = owner,
+         .lifetimeContract = instantiateLifetimeContract(
+             lifecycle->declaredDestructor->lifetimeContract,
+             classSubstitution(*classType, classInstance.typeArguments,
+                               classInstance.valueArguments))});
     instanceIndex.recordDestructor(owner, id);
     return id;
   }
@@ -1125,7 +1132,10 @@ private:
     if (!info) {
       return;
     }
-    HirEnum lowered{.declaration = info->id,
+    HirEnum lowered{.variance = instanceProvider->nominalVariance(type),
+                    .lifetimeContract =
+                        instanceProvider->nominalLifetimeContract(type),
+                    .declaration = info->id,
                     .type = type,
                     .sourceUnit = info->sourceUnit,
                     .source = info->declaration,
@@ -4693,6 +4703,7 @@ private:
         .type = model.typeOf(lambda),
         .returnType = info->returnType,
         .parameterTypes = info->parameterTypes,
+        .lifetimeContract = info->lifetimeContract,
         .parameterBindings = std::move(parameterBindings),
         .captures = info->captures,
         .capability = info->capability,

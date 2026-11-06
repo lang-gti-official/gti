@@ -362,7 +362,7 @@ int main() {
 
 void testCompletionMarkers() {
   for (const bool generic : {false, true}) {
-    for (const std::string prefix : {std::string("sou"), std::string()}) {
+    for (const std::string &prefix : {std::string("sou"), std::string()}) {
       const std::string type =
           generic ? "Box<int, " + prefix + ">" : "int&<" + prefix + ">";
       const std::string source =

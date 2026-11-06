@@ -21,6 +21,14 @@
 
 namespace lang {
 
+namespace {
+bool hasSourceGenericParameters(
+    std::span<const GenericParameterInfo> parameters) {
+  return std::any_of(parameters.begin(), parameters.end(),
+                     [](const auto &parameter) { return !parameter.implicit; });
+}
+} // namespace
+
 SignaturePrinter::SignaturePrinter(const SemanticModel &semantics)
     : semantics(semantics), types(semantics) {}
 
@@ -141,12 +149,12 @@ SignaturePrinter::function(const FunctionInfo &info,
       (!selected->typeArguments.empty() || !selected->valueArguments.empty() ||
        !selected->lifetimeArguments.empty())) {
     result += '<';
-    appendSelectedGenericArguments(result, info.genericParameters,
-                                   selected->typeArguments,
-                                   selected->valueArguments,
-                                   selected->lifetimeArguments);
+    appendSelectedGenericArguments(
+        result, info.genericParameters, selected->typeArguments,
+        selected->valueArguments, selected->lifetimeArguments);
     result += '>';
-  } else if (selected == nullptr && !info.genericParameters.empty()) {
+  } else if (selected == nullptr &&
+             hasSourceGenericParameters(info.genericParameters)) {
     result += '<';
     appendGenericParameters(result, info.genericParameters);
     result += '>';
@@ -291,10 +299,9 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
     if (constructor != nullptr) {
       result += "::" + selected.declaration->name().lexeme;
       result += '<';
-      appendSelectedGenericArguments(result, constructor->genericParameters,
-                                     selected.typeArguments,
-                                     selected.valueArguments,
-                                     selected.lifetimeArguments);
+      appendSelectedGenericArguments(
+          result, constructor->genericParameters, selected.typeArguments,
+          selected.valueArguments, selected.lifetimeArguments);
       result += '>';
     }
   }
@@ -339,7 +346,7 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
           : ownerName;
   if (info.requiresUnsafe)
     result = "unsafe " + result;
-  if (!info.genericParameters.empty()) {
+  if (hasSourceGenericParameters(info.genericParameters)) {
     result += '<';
     appendGenericParameters(result, info.genericParameters);
     result += '>';
@@ -383,7 +390,8 @@ SignaturePrinter::classType(const ClassTypeInfo &info) const {
   } else {
     result += info.qualifiedName;
   }
-  if (info.exactSpecializationPrimary == 0 && !info.genericParameters.empty()) {
+  if (info.exactSpecializationPrimary == 0 &&
+      hasSourceGenericParameters(info.genericParameters)) {
     result += '<';
     if (info.genericArgumentPatterns.empty()) {
       appendGenericParameters(result, info.genericParameters);
@@ -405,7 +413,7 @@ SignaturePrinter::enumType(const EnumTypeInfo &info) const {
     result += "class ";
   }
   result += info.qualifiedName;
-  if (!info.genericParameters.empty()) {
+  if (hasSourceGenericParameters(info.genericParameters)) {
     result += '<';
     appendGenericParameters(result, info.genericParameters);
     result += '>';
@@ -550,6 +558,8 @@ void SignaturePrinter::appendSelectedGenericArguments(
   std::size_t lifetimeIndex = 0;
   bool first = true;
   for (const GenericParameterInfo &parameter : parameters) {
+    if (parameter.implicit)
+      continue;
     if (!first) {
       result += ", ";
     }
@@ -614,11 +624,13 @@ void SignaturePrinter::appendGenericParameters(
     }
     result += ')';
   };
-  for (std::size_t index = 0; index < parameters.size(); ++index) {
-    if (index != 0) {
+  bool first = true;
+  for (const auto &parameter : parameters) {
+    if (parameter.implicit)
+      continue;
+    if (!first)
       result += ", ";
-    }
-    const GenericParameterInfo &parameter = parameters[index];
+    first = false;
     if (parameter.lifetime) {
       result += "lifetime ";
     } else if (parameter.value) {
@@ -1690,8 +1702,9 @@ public:
       return outcome;
     }
     if (core.symbol->kind == SymbolKind::LifetimeParameter && newName == "_") {
-      outcome.failure = "A lifetime parameter cannot be renamed to the inferred "
-                        "lifetime placeholder '_'.";
+      outcome.failure =
+          "A lifetime parameter cannot be renamed to the inferred "
+          "lifetime placeholder '_'.";
       return outcome;
     }
     if (std::string validation = validateNewName(newName);

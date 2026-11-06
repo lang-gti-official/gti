@@ -360,6 +360,7 @@ paths = [
   "src/compiler/semantic_constexpr.cpp",
   "src/compiler/semantic_ownership*",
   "src/compiler/semantic_lifetimes.cpp",
+  "src/compiler/semantic_nominal_lifetimes.cpp",
   "src/compiler/semantic_type*",
 ]
 owners = [
@@ -373,6 +374,7 @@ owners = [
   "lifetime_pipeline",
   "lifetime_ir_metadata",
   "lifetime_hir_signatures",
+  "lifetime_mir_contracts",
   "complete_borrow_summaries",
   "cleanup_bound_borrow",
   "temporary_owner_borrow",

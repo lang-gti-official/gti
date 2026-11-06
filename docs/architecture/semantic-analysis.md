@@ -4160,7 +4160,13 @@ not make a contract callable or extend the compiled-library importer profile.
 
 Complete nominal argument vectors are required: defaults are resolved before
 serialization. The registry checks type/value/lifetime arity and permits
-expanded type arguments only for a final type pack. Symbolic values,
+expanded type arguments only for a final type pack. Anonymous normalized
+lifetime slots have a separate generic-shape tag from source-addressable
+lifetime parameters; both retain their compact region slots. The independent
+`gti.nominal-variance.1` interface record preserves complete type/lifetime slot
+variance in declaration order and checks exact imported arity; it is interface
+content, not declaration identity or an importer authorization.
+Symbolic values,
 unexpanded packs, unresolved nominal identities, extraneous type payloads,
 noncanonical bytes, truncation and trailing data reject. Defaults, visibility,
 capability trust and declaration constraints require separate interface proof.

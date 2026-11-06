@@ -445,6 +445,18 @@ and caching even though it introduces no runtime operand or object field.
 Exact type-outlives bounds retain opaque types rather than reducing them to
 bounds on their spelling's type arguments.
 
+Each application preserves its full universal substitution, explicit existential
+inventory, required region and exact-type obligations, and local origin
+witnesses. Body records collect the selected applications with assignment and
+return obligations. HIR qualifies semantic places to its body and replaces
+source expressions with stable value IDs; MIR maps those witnesses to exact
+places, rejecting stale domains and ambiguous temporary materializations.
+These maps and completion states participate in the sealed fingerprint; a
+completion flag alone is not proof of any outlives relation. Lambda and
+destructor instances retain normalized contracts just as functions and
+constructors do. Authoritative nominal variance is preserved alongside the
+concrete field/base inventory; lowering never derives it from names.
+
 The combined deterministic serialization is currently `mir-v121`/`mir-body-v94`,
 with `lowered-program-v35` declaration metadata. Function instances and sealed
 declarations retain the resolved cold hint and default/hint/never inlining policy;

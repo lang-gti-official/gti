@@ -627,6 +627,7 @@ struct HirLambda {
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<HirBindingId> parameterBindings;
   std::vector<LambdaCaptureInfo> captures;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
@@ -651,6 +652,8 @@ struct HirEnumerator {
 };
 
 struct HirEnum {
+  NominalVariance variance;
+  LifetimeSignatureContract lifetimeContract;
   EnumId declaration = 0;
   SemanticType type = SemanticType::Unknown;
   SourceUnitId sourceUnit = 0;
@@ -702,6 +705,8 @@ struct HirVirtualDispatch {
 };
 
 struct HirClassInstance {
+  NominalVariance variance;
+  LifetimeSignatureContract lifetimeContract;
   HirClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ClassId declaration = 0;
@@ -912,6 +917,7 @@ struct HirDestructorInstance {
   SourceUnitId sourceUnit = 0;
   const DestructorDecl *source = nullptr;
   HirClassInstanceId owner = 0;
+  LifetimeSignatureContract lifetimeContract;
   HirBody body;
 };
 

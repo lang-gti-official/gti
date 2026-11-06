@@ -6,6 +6,7 @@
 #include "gti/optimization/dataflow.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
+#include "mir_lifetimes.h"
 #include "mir_storage_effects.h"
 #include "mir_text_contracts.h"
 #include "mir_thread_local.h"
@@ -2555,9 +2556,11 @@ uniqueMirClassInstanceForType(const MirProgram &program,
         }
       }
       if (exactFunctionCallable &&
-          (!callResultMatches(instruction.info, functionTarget->returnType) ||
-           !exactParameterRoles(instruction.parameterTypes,
-                                functionTarget->parameterTypes))) {
+          (!mirLifetimeCallSignatureMatches(instruction, *functionTarget) ||
+           !mirLifetimeParameterTypesMatch(instruction.parameterTypes,
+                                           functionTarget->parameterTypes,
+                                           functionTarget->lifetimeContract,
+                                           instruction.lifetimeApplication))) {
         return verificationFailure(
             body, owner,
             "operator() invocation does not match its exact target "
@@ -2565,9 +2568,11 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             block.id, instruction.id);
       }
       if (exactLambdaCallable &&
-          (!callResultMatches(instruction.info, lambdaTarget->returnType) ||
-           !exactParameterRoles(instruction.parameterTypes,
-                                lambdaTarget->parameterTypes))) {
+          (!mirLifetimeCallSignatureMatches(instruction, *lambdaTarget) ||
+           !mirLifetimeParameterTypesMatch(instruction.parameterTypes,
+                                           lambdaTarget->parameterTypes,
+                                           lambdaTarget->lifetimeContract,
+                                           instruction.lifetimeApplication))) {
         return verificationFailure(
             body, owner,
             "lambda invocation does not match its exact target "
@@ -3939,8 +3944,9 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                   std::to_string(target->returnBorrowParameter) + ")",
               block.id, instruction.id);
         }
-        if (!exactParameterRoles(instruction.parameterTypes,
-                                 target->parameterTypes)) {
+        if (!mirLifetimeParameterTypesMatch(
+                instruction.parameterTypes, target->parameterTypes,
+                target->lifetimeContract, instruction.lifetimeApplication)) {
           return verificationFailure(
               body, owner,
               "call parameter roles do not match the exact target "
@@ -4160,8 +4166,10 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
               block.id, instruction.id);
         }
         if (instruction.kind == MirInstructionKind::Construct &&
-            !exactParameterRoles(instruction.parameterTypes,
-                                 constructorTarget->parameterTypes)) {
+            !mirLifetimeParameterTypesMatch(instruction.parameterTypes,
+                                            constructorTarget->parameterTypes,
+                                            constructorTarget->lifetimeContract,
+                                            instruction.lifetimeApplication)) {
           return verificationFailure(
               body, owner,
               "construct parameter roles do not match the exact "
@@ -4198,8 +4206,10 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
               instruction.info.type.kind != SemanticType::UniqueOwner ||
               instruction.info.type.arguments !=
                   std::vector<SemanticType>{constructorOwner->type} ||
-              !exactParameterRoles(instruction.parameterTypes,
-                                   constructorTarget->parameterTypes) ||
+              !mirLifetimeParameterTypesMatch(
+                  instruction.parameterTypes, constructorTarget->parameterTypes,
+                  constructorTarget->lifetimeContract,
+                  instruction.lifetimeApplication) ||
               instruction.definedFailure.propagation != expectedPropagation) {
             return verificationFailure(
                 body, owner,
@@ -4221,8 +4231,9 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         const MirLambdaInstance *lambda =
             program.findLambda(*instruction.lambdaTarget);
         if (lambda == nullptr ||
-            !exactParameterRoles(instruction.parameterTypes,
-                                 lambda->parameterTypes)) {
+            !mirLifetimeParameterTypesMatch(
+                instruction.parameterTypes, lambda->parameterTypes,
+                lambda->lifetimeContract, instruction.lifetimeApplication)) {
           return verificationFailure(
               body, owner,
               "lambda-call parameter roles do not match the exact "
@@ -14882,7 +14893,10 @@ completeBorrowSourcePath(const MirProgram &program,
       const auto *target =
           program.findConstructorInstance(*instruction.constructorTarget);
       const auto *summary = callSummary(*instruction.constructorTarget, true);
-      if (target && target->parameterTypes == instruction.parameterTypes &&
+      if (target &&
+          mirLifetimeParameterTypesMatch(
+              instruction.parameterTypes, target->parameterTypes,
+              target->lifetimeContract, instruction.lifetimeApplication) &&
           instruction.operands.size() == instruction.parameterTypes.size()) {
         const auto publication = constructorPublication(program, *target);
         if (publication.returnType == instruction.info.type)
@@ -14900,7 +14914,9 @@ completeBorrowSourcePath(const MirProgram &program,
       bool exact =
           constructor && ownerClass && paths && !paths->empty() &&
           ownerClass->type == instruction.info.type &&
-          constructor->parameterTypes == instruction.parameterTypes &&
+          mirLifetimeParameterTypesMatch(
+              instruction.parameterTypes, constructor->parameterTypes,
+              constructor->lifetimeContract, instruction.lifetimeApplication) &&
           instruction.operands.size() == instruction.parameterTypes.size() &&
           published && published->kind == MirLoanKind::Stored &&
           !published->entry && !published->escapes &&
@@ -14977,13 +14993,7 @@ completeBorrowSourcePath(const MirProgram &program,
       const auto *target =
           program.findFunctionInstance(*instruction.functionTarget);
       const auto *summary =
-          target &&
-                  (target->returnType == instruction.info.type ||
-                   (instruction.info.category == ValueCategory::Place &&
-                    target->returnType ==
-                        SemanticType::referenceTo(instruction.info.type,
-                                                  instruction.info.access))) &&
-                  target->parameterTypes == instruction.parameterTypes
+          target && mirLifetimeCallSignatureMatches(instruction, *target)
               ? callSummary(target->id, false)
               : nullptr;
       if (summary)
@@ -15313,10 +15323,7 @@ completeBorrowSourcePath(const MirProgram &program,
         const auto *summary = target ? callSummary(target->id, false) : nullptr;
         if (target && summary && !target->neverReturns &&
             target->returnType.kind == SemanticType::Reference &&
-            target->parameterTypes == instruction.parameterTypes &&
-            target->returnType ==
-                SemanticType::referenceTo(instruction.info.type,
-                                          instruction.info.access)) {
+            mirLifetimeCallSignatureMatches(instruction, *target)) {
           BorrowResultDomainStatus status = BorrowResultDomainStatus::Unknown;
           (void)callResult(state, instruction, *target, *summary, &status);
           if (status == BorrowResultDomainStatus::NoNormalResult)
@@ -15478,6 +15485,59 @@ completeBorrowSourcePath(const MirProgram &program,
   return source;
 }
 
+// A declaration lifetime may permit the whole borrowed input as a supplier.
+// The particular returned subobject is checked independently by the body flow;
+// it need not be frozen into the public signature of this implementation.
+[[nodiscard]] bool lifetimeRootSupplier(
+    const MirFunctionInstance &function, const BorrowedFieldOrigin &mapping) {
+  if (!function.lifetimeContract.valid() ||
+      function.lifetimeContract.origin == LifetimeContractOrigin::BodyInferred ||
+      function.returnType.kind != SemanticType::Reference ||
+      !mapping.resultFields.empty() || !mapping.resultConditions.empty() ||
+      !mapping.sourceFields.empty() || !mapping.sourceConditions.empty() ||
+      mapping.globalRoot || mapping.access != function.returnType.referenceAccess)
+    return false;
+  Lifetime source;
+  AccessMode access = AccessMode::ReadOnly;
+  if (mapping.origin == BorrowOriginKind::Argument) {
+    if (mapping.parameter >= function.parameterTypes.size())
+      return false;
+    const auto &parameter = function.parameterTypes[mapping.parameter];
+    if (parameter.kind != SemanticType::Reference || parameter.arguments.size() != 1)
+      return false;
+    source = parameter.referenceLifetime;
+    access = parameter.referenceAccess;
+  } else if (mapping.origin == BorrowOriginKind::Receiver) {
+    if (!function.owner || function.staticMember || mapping.parameter)
+      return false;
+    source = function.lifetimeContract.receiver;
+    access = receiverAllowsMutation(function.receiverMutability)
+                 ? AccessMode::Mutable : AccessMode::ReadOnly;
+  } else {
+    return false;
+  }
+  LifetimeBounds bounds;
+  for (const auto bound : function.lifetimeContract.bounds)
+    if (!bounds.assume(bound.longer, bound.shorter))
+      return false;
+  return (mapping.access == AccessMode::ReadOnly || access == AccessMode::Mutable) &&
+         bounds.proves(source, function.returnType.referenceLifetime);
+}
+
+[[nodiscard]] bool permitsCompleteBorrowMapping(
+    const MirFunctionInstance &function, const BorrowedFieldOrigin &allowed,
+    const BorrowedFieldOrigin &actual) {
+  if (allowed == actual)
+    return true;
+  return lifetimeRootSupplier(function, allowed) &&
+         allowed.origin == actual.origin &&
+         allowed.parameter == actual.parameter &&
+         allowed.globalRoot == actual.globalRoot &&
+         allowed.access == actual.access &&
+         allowed.resultFields == actual.resultFields &&
+         allowed.resultConditions == actual.resultConditions;
+}
+
 [[nodiscard]] bool
 completeBorrowMappingIsWellFormed(const MirProgram &program,
                                   const MirFunctionInstance &function,
@@ -15497,7 +15557,13 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
       });
   if (result == resultInventory->end())
     return false;
-  if (function.explicitReturnBorrowOrigin) {
+  const bool permittedLifetimeSupplier =
+      std::any_of(function.returnBorrowFields.begin(),
+                  function.returnBorrowFields.end(), [&](const auto &allowed) {
+                    return lifetimeRootSupplier(function, allowed) &&
+                           permitsCompleteBorrowMapping(function, allowed, mapping);
+                  });
+  if (function.explicitReturnBorrowOrigin && !permittedLifetimeSupplier) {
     if (mapping.origin != function.returnBorrowOrigin ||
         (mapping.origin == BorrowOriginKind::Argument &&
          mapping.parameter != function.returnBorrowParameter &&
@@ -15505,11 +15571,14 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
                    function.returnBorrowParameters.end(), mapping.parameter) ==
              function.returnBorrowParameters.end()) ||
         (!function.returnBorrowFields.empty() &&
-         std::find(function.returnBorrowFields.begin(),
-                   function.returnBorrowFields.end(),
-                   mapping) == function.returnBorrowFields.end()))
+         std::none_of(function.returnBorrowFields.begin(),
+                      function.returnBorrowFields.end(), [&](const auto &allowed) {
+                        return permitsCompleteBorrowMapping(function, allowed, mapping);
+                      })))
       return false;
   }
+  if (lifetimeRootSupplier(function, mapping))
+    return true;
   // Caller storage reached without crossing a stored reference, and holding
   // no stored reference itself, may contain the referent anywhere inside it;
   // an external referent is exact.
@@ -15680,9 +15749,11 @@ public:
           std::all_of(
               observed->dependencies.begin(), observed->dependencies.end(),
               [&](const auto &dependency) {
-                return std::find(claim.dependencies.begin(),
-                                 claim.dependencies.end(),
-                                 dependency) != claim.dependencies.end();
+                return std::any_of(
+                    claim.dependencies.begin(), claim.dependencies.end(),
+                    [&](const auto &allowed) {
+                      return permitsCompleteBorrowMapping(*function, allowed, dependency);
+                    });
               }) &&
           std::all_of(observed->possibleAlternatives.begin(),
                       observed->possibleAlternatives.end(),
@@ -17891,6 +17962,8 @@ verifyMirProgramContracts(const MirProgram &program) {
     initializerStorageSymbols.insert(storage.symbol);
   const auto verifyBody = [&](const MirBody &body, std::size_t owner) {
     const mir_detail::MirBodyReadScope readScope(body);
+    appendVerification(result,
+                       verifyMirLifetimeApplications(program, body, owner));
     const bool noCallerActivation =
         body.kind == MirBodyKind::Module ||
         body.kind == MirBodyKind::ThreadLocalInitializer;

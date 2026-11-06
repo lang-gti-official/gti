@@ -21,6 +21,10 @@ public:
 
   [[nodiscard]] virtual SemanticTypeTraits
   traitsFor(const SemanticType &type) const = 0;
+  [[nodiscard]] virtual NominalVariance
+  nominalVariance(const SemanticType &) const { return {}; }
+  [[nodiscard]] virtual LifetimeSignatureContract
+  nominalLifetimeContract(const SemanticType &) const { return {}; }
   [[nodiscard]] virtual bool
   requiresActiveCleanupFor(const SemanticType &type) const = 0;
   // Concrete enum descriptions are produced by semantic generic substitution;
@@ -137,6 +141,10 @@ public:
   [[nodiscard]] SemanticModel takeModel();
   [[nodiscard]] SemanticTypeTraits
   traitsFor(const SemanticType &type) const override;
+  [[nodiscard]] NominalVariance
+  nominalVariance(const SemanticType &type) const override;
+  [[nodiscard]] LifetimeSignatureContract
+  nominalLifetimeContract(const SemanticType &type) const override;
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
   [[nodiscard]] bool

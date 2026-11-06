@@ -1078,6 +1078,7 @@ struct LambdaInfo {
   const Lambda *declaration = nullptr;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<LambdaCaptureInfo> captures;
   SemanticTypeTraits traits{};
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
@@ -1189,6 +1190,8 @@ struct ClassTypeInfo {
   std::vector<CompileTimeValue> exactValueArguments;
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<SemanticType> genericArgumentPatterns;
+  NominalVariance variance;
+  LifetimeSignatureContract lifetimeContract;
   std::vector<ClassFieldTypeInfo> fields;
   std::vector<ClassFieldTypeInfo> staticFields;
   // Active source declaration order; instance analysis resolves each alias in
@@ -1267,6 +1270,8 @@ struct EnumTypeInfo {
   std::string qualifiedName;
   std::vector<std::string> namespaceScope;
   std::vector<GenericParameterInfo> genericParameters;
+  NominalVariance variance;
+  LifetimeSignatureContract lifetimeContract;
   SemanticType underlyingType = SemanticType::Int32;
   std::vector<EnumeratorInfo> enumerators;
   bool payload = false;
@@ -1398,6 +1403,7 @@ struct DestructorInfo {
   ClassId owner = 0;
   const DestructorDecl *declaration = nullptr;
   AccessModifier access = AccessModifier::Public;
+  LifetimeSignatureContract lifetimeContract;
 };
 
 struct ClassLifecycleInfo {

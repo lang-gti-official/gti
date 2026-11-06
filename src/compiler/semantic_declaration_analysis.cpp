@@ -1266,14 +1266,26 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
   conceptInfo.resolution = ConceptResolution::Resolving;
   const SourceUnitId enclosingSourceUnit = currentSourceUnit;
   const std::vector<std::string> enclosingNamespace = currentNamespace;
+  const auto enclosingClass = currentClass;
+  auto enclosingTypes = std::move(typeParameterScopes);
+  auto enclosingPacks = std::move(typePackScopes);
+  auto enclosingValues = std::move(valueParameterScopes);
+  auto enclosingLifetimes = std::move(lifetimeParameterScopes);
+  auto enclosingRequirements = std::move(requirementScopes);
+  typeParameterScopes.clear();
+  typePackScopes.clear();
+  valueParameterScopes.clear();
+  lifetimeParameterScopes.clear();
+  requirementScopes.clear();
+  currentClass.reset();
   currentSourceUnit = conceptInfo.sourceUnit;
   currentNamespace = conceptInfo.namespaceScope;
 
   const ConceptDecl &declaration = *conceptInfo.declaration;
   typeParameterScopes.emplace_back();
   typePackScopes.emplace_back();
-  LifetimeBinderScope lifetimeScope(lifetimeParameterScopes,
-                                     conceptInfo.genericParameters);
+  std::optional<LifetimeBinderScope> lifetimeScope;
+  lifetimeScope.emplace(lifetimeParameterScopes, conceptInfo.genericParameters);
   for (std::size_t index = 0; index < declaration.typeParameters().size();
        ++index)
     typeParameterScopes.back().emplace(
@@ -1712,6 +1724,13 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
   currentNamespace = enclosingNamespace;
   typeParameterScopes.pop_back();
   typePackScopes.pop_back();
+  lifetimeScope.reset();
+  typeParameterScopes = std::move(enclosingTypes);
+  typePackScopes = std::move(enclosingPacks);
+  valueParameterScopes = std::move(enclosingValues);
+  lifetimeParameterScopes = std::move(enclosingLifetimes);
+  requirementScopes = std::move(enclosingRequirements);
+  currentClass = enclosingClass;
   conceptInfo.parameterConstraints = std::move(parameterConstraints);
   conceptInfo.structuralConstraints = std::move(structuralConstraints);
   if (declaration.compilerBinding()) {
@@ -1762,6 +1781,16 @@ auto SemanticVisitor::Impl::resolveTypeAliasDependencies(
     if (const std::optional<ResolvedTypeAlias> dependency =
             resolveTypeAliasPath(type, scope)) {
       (void)resolveTypeAlias(dependency->id, &type.name.last());
+    } else if (!type.qualifiedOwner) {
+      if (const auto id = resolveClassPath(type.name, scope)) {
+        normalizeClassLifetimes(*id);
+        if (classInfo(*id).lifetimeState != NominalLifetimeState::Resolving)
+          resolveClassGenericDefaults(*id);
+      } else if (const auto id = resolveEnumPath(type.name, scope)) {
+        normalizeEnumLifetimes(*id);
+        if (enums[*id - 1].lifetimeState != NominalLifetimeState::Resolving)
+          resolveEnumGenericDefaults(*id);
+      }
     }
   }
   for (const TypeRef &argument : type.arguments) {
@@ -1819,6 +1848,16 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
   const SourceUnitId enclosingSourceUnit = currentSourceUnit;
   const std::vector<std::string> enclosingNamespace = currentNamespace;
   const std::optional<ClassId> enclosingClass = currentClass;
+  auto enclosingTypes = std::move(typeParameterScopes);
+  auto enclosingPacks = std::move(typePackScopes);
+  auto enclosingValues = std::move(valueParameterScopes);
+  auto enclosingLifetimes = std::move(lifetimeParameterScopes);
+  auto enclosingRequirements = std::move(requirementScopes);
+  typeParameterScopes.clear();
+  typePackScopes.clear();
+  valueParameterScopes.clear();
+  lifetimeParameterScopes.clear();
+  requirementScopes.clear();
   currentSourceUnit = alias.sourceUnit;
   currentNamespace = alias.lookupScope;
   if (alias.ownerClass != 0) {
@@ -1827,11 +1866,14 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
   }
 
   const std::size_t diagnosticsBefore = diagnostics.size();
-  alias.genericParameters = makeGenericParameters(
-      alias.declaration->genericParameters(), alias.declaration->name(),
-      alias.lookupScope);
-  for (const auto &parameter : alias.genericParameters)
-    semanticModel.recordGenericParameter(parameter);
+  if (!alias.genericParametersRegistered) {
+    alias.genericParameters = makeGenericParameters(
+        alias.declaration->genericParameters(), alias.declaration->name(),
+        alias.lookupScope);
+    for (const auto &parameter : alias.genericParameters)
+      semanticModel.recordGenericParameter(parameter);
+    alias.genericParametersRegistered = true;
+  }
   beginTypeParameterScope(alias.genericParameters);
   const TypeRef &target = alias.declaration->target();
   resolveTypeAliasDependencies(target, alias.lookupScope);
@@ -1855,23 +1897,28 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
     validateTypeAliasTarget(target, target.isNativeFunction());
   }
   SemanticType resolved = typeOf(target, alias.lookupScope);
-  std::vector<LifetimeBinding> anonymousLifetimes;
   for (const Lifetime lifetime : freeTypeLifetimes(resolved)) {
     if (lifetime.kind != Lifetime::Kind::Inference)
       continue;
+    if (std::any_of(alias.anonymousLifetimes.begin(), alias.anonymousLifetimes.end(),
+                    [&](const LifetimeBinding &binding) {
+                      return binding.first == lifetime;
+                    }))
+      continue;
     Token name = alias.declaration->name();
-    name.lexeme = "$lifetime" + std::to_string(anonymousLifetimes.size() + 1);
+    name.lexeme = "$lifetime" + std::to_string(alias.anonymousLifetimes.size() + 1);
     name.generated = true;
     GenericParameterInfo parameter{.id = nextGenericParameterId++,
                                     .name = std::move(name),
-                                    .lifetime = true};
+                                    .lifetime = true,
+                                    .implicit = true};
     semanticModel.recordGenericParameter(parameter);
-    anonymousLifetimes.emplace_back(lifetime,
-                                    Lifetime::parameter(parameter.id));
+    alias.anonymousLifetimes.emplace_back(lifetime,
+                                          Lifetime::parameter(parameter.id));
     alias.genericParameters.push_back(std::move(parameter));
   }
-  if (!anonymousLifetimes.empty())
-    resolved = substituteTypeLifetimes(resolved, anonymousLifetimes)
+  if (!alias.anonymousLifetimes.empty())
+    resolved = substituteTypeLifetimes(resolved, alias.anonymousLifetimes)
                    .value_or(SemanticType::Unknown);
   if (!target.reference && !validateTypeAliasReference(target, resolved))
     targetFormValid = false;
@@ -1911,6 +1958,11 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
   if (alias.ownerClass != 0) {
     endTypeParameterScope();
   }
+  typeParameterScopes = std::move(enclosingTypes);
+  typePackScopes = std::move(enclosingPacks);
+  valueParameterScopes = std::move(enclosingValues);
+  lifetimeParameterScopes = std::move(enclosingLifetimes);
+  requirementScopes = std::move(enclosingRequirements);
   currentClass = enclosingClass;
   currentNamespace = enclosingNamespace;
   currentSourceUnit = enclosingSourceUnit;
@@ -2233,10 +2285,12 @@ auto SemanticVisitor::Impl::resolveEnumGenericDefaults(EnumId id) -> void {
   auto enclosingTypes = std::move(typeParameterScopes);
   auto enclosingValues = std::move(valueParameterScopes);
   auto enclosingPacks = std::move(typePackScopes);
+  auto enclosingLifetimes = std::move(lifetimeParameterScopes);
   auto enclosingRequirements = std::move(requirementScopes);
   typeParameterScopes.clear();
   valueParameterScopes.clear();
   typePackScopes.clear();
+  lifetimeParameterScopes.clear();
   requirementScopes.clear();
   currentNamespace = info.namespaceScope;
   currentSourceUnit = info.sourceUnit;
@@ -2251,6 +2305,7 @@ auto SemanticVisitor::Impl::resolveEnumGenericDefaults(EnumId id) -> void {
   typeParameterScopes = std::move(enclosingTypes);
   valueParameterScopes = std::move(enclosingValues);
   typePackScopes = std::move(enclosingPacks);
+  lifetimeParameterScopes = std::move(enclosingLifetimes);
   requirementScopes = std::move(enclosingRequirements);
 }
 
@@ -2340,6 +2395,8 @@ auto SemanticVisitor::Impl::resolveEnumPayloads() -> void {
                          qualifiedName(info.namespaceScope, info.name.lexeme),
                      .namespaceScope = info.namespaceScope,
                      .genericParameters = info.genericParameters,
+                     .variance = info.variance,
+                     .lifetimeContract = info.lifetimeContract,
                      .underlyingType = info.underlyingType,
                      .enumerators = std::move(modelEnumerators),
                      .payload = true,
@@ -3384,10 +3441,12 @@ auto SemanticVisitor::Impl::resolveClassGenericDefaults(ClassId id) -> void {
   auto enclosingTypes = std::move(typeParameterScopes);
   auto enclosingValues = std::move(valueParameterScopes);
   auto enclosingPacks = std::move(typePackScopes);
+  auto enclosingLifetimes = std::move(lifetimeParameterScopes);
   auto enclosingRequirements = std::move(requirementScopes);
   typeParameterScopes.clear();
   valueParameterScopes.clear();
   typePackScopes.clear();
+  lifetimeParameterScopes.clear();
   requirementScopes.clear();
   currentNamespace = info.namespaceScope;
   currentSourceUnit = info.sourceUnit;
@@ -3402,6 +3461,7 @@ auto SemanticVisitor::Impl::resolveClassGenericDefaults(ClassId id) -> void {
   typeParameterScopes = std::move(enclosingTypes);
   valueParameterScopes = std::move(enclosingValues);
   typePackScopes = std::move(enclosingPacks);
+  lifetimeParameterScopes = std::move(enclosingLifetimes);
   requirementScopes = std::move(enclosingRequirements);
 }
 
@@ -3426,7 +3486,7 @@ auto SemanticVisitor::Impl::canonicalExactSpecializationType(
   }
   return canonicalExactSpecializationType(SemanticType::classType(
       owner.exactSpecializationPrimary, owner.exactTypeArguments,
-      owner.exactValueArguments));
+      owner.exactValueArguments, type.lifetimeArguments));
 }
 
 auto SemanticVisitor::Impl::selectClassDefinition(
@@ -4658,12 +4718,17 @@ auto SemanticVisitor::Impl::selectExactClassSpecialization(
       exactClassSpecializations.begin(), exactClassSpecializations.end(),
       [&](const ExactClassSpecialization &candidate) {
         return candidate.primary == key.classId &&
-               candidate.typeArguments == key.arguments &&
+               candidate.typeArguments.size() == key.arguments.size() &&
+               std::equal(candidate.typeArguments.begin(), candidate.typeArguments.end(),
+                          key.arguments.begin(), [](const auto &left, const auto &right) {
+                            return eraseTypeLifetimes(left) == eraseTypeLifetimes(right);
+                          }) &&
                candidate.valueArguments == key.valueArguments;
       });
   return found == exactClassSpecializations.end()
              ? type
-             : SemanticType::classType(found->specialization);
+             : SemanticType::classType(found->specialization, {}, {},
+                                        std::move(type.lifetimeArguments));
 }
 
 auto SemanticVisitor::Impl::isConcreteExactSpecializationType(
@@ -4800,11 +4865,14 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
           &primary);
       valid = false;
     }
-    if (primary.genericParameters.empty()) {
+    if (genericTypeParameterCount(primary.genericParameters) == 0 &&
+        genericValueParameterCount(primary.genericParameters) == 0) {
       reportExactSpecializationError(
           *declaration,
           "Class '" + pathSpelling(targetType.name) +
-              "' is not generic and cannot be specialized.",
+              (primary.genericParameters.empty()
+                   ? "' is not generic and cannot be specialized."
+                   : "' has no type or value parameters and cannot be specialized by lifetime."),
           &primary);
       valid = false;
     }
@@ -4821,6 +4889,21 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
 
     const ResolvedClassArguments resolved = resolveClassArguments(
         *primaryId, targetType.arguments, declaration->name(), "GTI-S2078");
+    std::size_t writtenIndex = 0;
+    for (const auto &parameter : primary.genericParameters) {
+      if (parameter.implicit)
+        continue;
+      if (writtenIndex == targetType.arguments.size())
+        break;
+      const auto &argument = targetType.arguments[writtenIndex++];
+      if (parameter.lifetime && argument.name.last().lexeme != "_") {
+        reportExactSpecializationError(
+            *declaration,
+            "An exact specialization cannot select a lifetime; omit lifetime arguments or write '_' to retain the primary's universal regions.",
+            &primary);
+        valid = false;
+      }
+    }
     valid = resolved.valid && valid;
     if (!resolved.valid) {
       continue;
@@ -4877,7 +4960,11 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
         exactClassSpecializations.begin(), exactClassSpecializations.end(),
         [&](const ExactClassSpecialization &candidate) {
           return candidate.primary == *primaryId &&
-                 candidate.typeArguments == typeArguments &&
+                 candidate.typeArguments.size() == typeArguments.size() &&
+                 std::equal(candidate.typeArguments.begin(), candidate.typeArguments.end(),
+                            typeArguments.begin(), [](const auto &left, const auto &right) {
+                              return eraseTypeLifetimes(left) == eraseTypeLifetimes(right);
+                            }) &&
                  candidate.valueArguments == valueArguments;
         });
     if (duplicate != exactClassSpecializations.end()) {
@@ -4910,6 +4997,10 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
     }
 
     const ClassId specializationId = classes.size() + 1;
+    std::vector<GenericParameterInfo> lifetimeParameters;
+    for (const auto &parameter : primary.genericParameters)
+      if (parameter.lifetime)
+        lifetimeParameters.push_back(parameter);
     classDeclIds.emplace(declaration, specializationId);
     classes.push_back(ClassInfo{
         .id = specializationId,
@@ -4921,6 +5012,7 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
         .exactSpecializationPrimary = *primaryId,
         .exactTypeArguments = typeArguments,
         .exactValueArguments = valueArguments,
+        .genericParameters = std::move(lifetimeParameters),
         .attributeType = capabilityPolicies.attributeType,
         .attributeAttribute = capabilityPolicies.attributeSource,
         .reflectPrivate = capabilityPolicies.reflectPrivate,
@@ -10299,6 +10391,7 @@ auto SemanticVisitor::Impl::registerDesignatedConstructors() -> void {
                            .parameterTypes = std::move(types),
                            .requiredParameterCount =
                                owner.fields.size() + (reversed ? 1 : 0)};
+      normalizeConstructorLifetimeContract(info);
       constructorGenericParameters.emplace(declaration.get(),
                                            std::vector<GenericParameterInfo>{});
       ClassLifecycleInfo lifecycle =
@@ -10636,6 +10729,7 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       for (const Parameter &parameter : constructor->parameters()) {
         info.parameterTypes.emplace_back(typeOf(parameter, memberScope));
       }
+      normalizeConstructorLifetimeContract(info);
       endTypeParameterScope();
       for (const GenericParameterInfo &parameter : info.genericParameters) {
         if (parameter.lifetime)
@@ -10864,6 +10958,7 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       }
       owner.destructor = DestructorInfo{
           .owner = owner.id, .declaration = destructor, .access = access};
+      normalizeDestructorLifetimeContract(*owner.destructor);
       continue;
     }
 
@@ -11402,6 +11497,8 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
             .exactValueArguments = owner.exactValueArguments,
             .genericParameters = owner.genericParameters,
             .genericArgumentPatterns = owner.genericArgumentPatterns,
+            .variance = owner.variance,
+            .lifetimeContract = owner.lifetimeContract,
             .kind = owner.kind,
             .compilerPrivate = owner.compilerPrivate,
             .reflectPrivate = owner.reflectPrivate,
@@ -11528,6 +11625,8 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .exactValueArguments = owner.exactValueArguments,
             .genericParameters = owner.genericParameters,
             .genericArgumentPatterns = owner.genericArgumentPatterns,
+            .variance = owner.variance,
+            .lifetimeContract = owner.lifetimeContract,
             .fields = std::move(fields),
             .staticFields = std::move(staticFields),
             .typeAliases = std::move(aliases),

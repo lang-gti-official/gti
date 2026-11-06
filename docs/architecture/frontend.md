@@ -397,6 +397,38 @@ keep their existing syntax. AST cloning remaps all lifetime and binder tokens;
 debug printing preserves their written relationship. Malformed lifetime
 suffixes and binders recover through the ordinary declaration boundaries.
 
+Semantic registration normalizes nominal lifetime arity before resolving
+generic defaults, aliases and callable signatures. Omitted regions in stored
+fields, inherited bases and enum payloads become independent declaration
+parameters in source order. `GenericParameterInfo::implicit` distinguishes
+these slots from positional source arguments, including around type packs.
+Aliases preserve their binder identities across projection refresh. The
+catalog retains normalized stored types; body analysis substitutes those
+types rather than reinterpreting their omitted annotations. Recursive borrowed
+declarations that would expand anonymous arity require explicit lifetime
+parameters and arguments. Callable type elision has its own higher-ranked
+scope and does not add parameters to the containing record.
+
+Nominal variance is derived from verified fields and bases by a finite fixed
+point over the variance lattice. Shared references and owned storage preserve
+variance; mutable reference referents and unproven raw storage are invariant.
+Compiler-owned storage relaxations use trusted declaration capability identity.
+Ordinary mutation through an exclusive receiver does not imply interior
+mutation. `NominalVariance` records compact type and lifetime descriptors, and
+the semantic instance provider expands a trailing type-pack descriptor for
+each concrete argument. HIR and MIR preserve this result rather than deriving
+variance from layout or emitted code.
+
+The same declaration normalizer collects nominal well-formedness contracts
+from finalized storage: a stored `T&<a>` contributes `outlives<T, a>`, while
+opaque projections remain type obligations. This stage cannot add lifetime
+arity. Exact specializations inherit the primary's normalized region shape;
+selection uses structural type/value identity without region identity, and the
+selected semantic type retains its actual lifetime arguments. A specialization
+cannot add anonymous region slots or strengthen formation obligations. Public
+lifetime variance is conservative across all definitions in the family, so an
+open primary cannot promise a conversion that a selected layout invalidates.
+
 Every final expression and statement node exposes one closed `ExprKind` or
 `StmtKind` tag in addition to the visitor interface. `exprAs<T>`/`stmtAs<T>`
 check that tag before a static cast. This avoids repeated RTTI name comparisons

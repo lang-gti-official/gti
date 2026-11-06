@@ -388,7 +388,18 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
         declaration->genericParameters(), declaration->forKeyword(), enclosing);
     for (const StmtPtr &member : declaration->members()) {
       if (const auto *function = stmtAs<FunctionDecl>(member.get())) {
-        functionGenericParameters.emplace(function, parameters);
+        auto operationParameters = parameters;
+        const auto inherited = std::min(declaration->genericParameters().size(),
+                                         function->genericParameters().size());
+        const std::vector<GenericParameter> localParameters(
+            function->genericParameters().begin() + inherited,
+            function->genericParameters().end());
+        beginTypeParameterScope(parameters);
+        auto local = makeGenericParameters(localParameters, function->name(),
+                                             scope, false);
+        endTypeParameterScope();
+        operationParameters.insert(operationParameters.end(), local.begin(), local.end());
+        functionGenericParameters.emplace(function, std::move(operationParameters));
       }
     }
     const ConceptApplication &target = declaration->target();

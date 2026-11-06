@@ -100,6 +100,15 @@ SemanticTypeTraits SemanticVisitor::traitsFor(const SemanticType &type) const {
   return impl->traitsFor(type);
 }
 
+NominalVariance SemanticVisitor::nominalVariance(const SemanticType &type) const {
+  return impl->nominalVariance(type);
+}
+
+LifetimeSignatureContract SemanticVisitor::nominalLifetimeContract(
+    const SemanticType &type) const {
+  return impl->nominalLifetimeContract(type);
+}
+
 bool SemanticVisitor::requiresActiveCleanupFor(const SemanticType &type) const {
   return impl->requiresActiveCleanupFor(type);
 }
