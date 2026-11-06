@@ -3527,6 +3527,26 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
           "type.");
       continue;
     }
+    if (attribute.lexeme == "inline" || attribute.lexeme == "noinline" ||
+        attribute.lexeme == "cold") {
+      if (!functionAttributeNames.insert(attribute.lexeme).second) {
+        reportContract(attribute, "Duplicate function attribute '" +
+                                      attribute.lexeme + "'.");
+      } else if (stmt.hasFunctionAttribute("inline") &&
+                 stmt.hasFunctionAttribute("noinline") &&
+                 attribute.lexeme == "noinline") {
+        reportContract(attribute, "[[inline]] and [[noinline]] cannot be "
+                                  "combined on the same function.");
+      } else if (contract.argument || functionInfo == nullptr ||
+                 stmt.hasCLinkage() || stmt.runtimeBinding() ||
+                 stmt.isMacro() || stmt.isPure() ||
+                 functionInfo->bodyDeclaration() == nullptr ||
+                 functionInfo->bodyDeclaration()->body() == nullptr) {
+        reportContract(attribute, "Code-generation attributes require a "
+                                  "source-defined GTI function or method.");
+      }
+      continue;
+    }
     if (attribute.lexeme == "test") {
       if (!functionAttributeNames.insert(attribute.lexeme).second) {
         reportContract(attribute, "Duplicate function attribute 'test'.");

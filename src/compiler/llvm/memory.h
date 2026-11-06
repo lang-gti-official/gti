@@ -38,7 +38,7 @@ public:
                                              std::uint64_t alignment) {
     return allocateBytes(size, alignment);
   }
-  void releaseBytes(llvm::Value *address, std::uint64_t alignment);
+  void releaseBytes(llvm::Value *address);
   [[nodiscard]] SharedRelease releaseShared(llvm::Value *handle);
   [[nodiscard]] Result emit(const MirInstruction &instruction,
                             std::span<llvm::Value *const> inputs,

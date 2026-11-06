@@ -8,11 +8,10 @@ import platform
 import shutil
 import subprocess
 import tempfile
-from backend_modes import native_modes, record_symptom, unsupported
+from backend_modes import is_llvm_mode, native_modes, record_symptom, unsupported
 
-# Every fixture executes on both backends. Generated owner storage uses its
-# own runtime family on LLVM as in the C++ profile, so the injected provider
-# observes only source-policy allocations (lang-gti-official/gti#200).
+# LLVM compiler owners and source-policy storage share the process provider.
+# The scheduled C++ backend retains its separate native owner allocation family.
 LLVM_UNSUPPORTED = {}
 
 
@@ -51,7 +50,7 @@ def main():
     parser.add_argument("--installed", action="store_true",
                         help="Use only the staged toolchain's library and runtime resources.")
     parser.add_argument("--mode", action="append",
-                        help="Run selected matrix mode(s); the default runs all eight.")
+                        help="Run selected mode(s) from GTI_TEST_BACKENDS (default: LLVM O0/O3).")
     arguments = parser.parse_args()
     root = pathlib.Path(__file__).resolve().parent.parent
     compiler = shutil.which(str(arguments.compiler)) or str(arguments.compiler.resolve())
@@ -105,6 +104,10 @@ def main():
             ):
                 binary = temporary / f"{fixture}-{label}"
                 native_inputs = [str(native)] if native else []
+                if fixture == "process_storage_policy":
+                    # Specify the expected contract, never infer it from the
+                    # observed counts: a lost LLVM owner route must fail.
+                    native_inputs.append(f"-DGTI_TEST_PROCESS_OWNERS={int(is_llvm_mode(flags))}")
                 run([compiler, str(root / "tests/fixtures" / f"{fixture}.gti"),
                      *flags, "-o", str(binary), "--", *native_inputs,
                      *native_flags], environment)

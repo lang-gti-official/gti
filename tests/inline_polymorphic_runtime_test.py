@@ -2,7 +2,7 @@
 """Inline polymorphic owners move, replace, and clean up their payloads.
 
 The fixture uses an application interface and std::function. It counts the
-no-throw allocations GTI owners use, so the oracle proves that small payloads
+GTI provider and native C++ allocations, so the oracle proves that small payloads
 avoid allocation, that boxed fallback still allocates exactly once, and that
 no block outlives its owner. Failure phases check that each owned object is
 destroyed exactly once. Exhausting the boxed replacement's infallible

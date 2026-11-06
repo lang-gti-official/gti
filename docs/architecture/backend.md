@@ -6128,7 +6128,7 @@ cleanup ownership is independent of whether the representation needs a byte.
 MIR independently follows the destructor with that field known null and requires
 a terminating path containing only the field observation, inert scalar operations
 and empty lifecycle boundaries. Effects, calls, failure, uncertain branches and
-cycles invalidate the witness. The witness is serialized in `mir-v119`.
+cycles invalidate the witness. The witness is serialized in `mir-v120`.
 
 LLVM omits the separate byte for this witness, uses the pointer for cleanup
 observation, and nulls it after transferring all fields to a move destination.
@@ -6308,18 +6308,26 @@ The program contains no GTI heap-allocation operation; process-startup
 allocations were not measured. This bounded probe shows no material regression,
 not a general class-backend speedup claim.
 
-Generated owner storage (unique-owner pointees, shared-owner control blocks,
-task boxes and `ObjectAllocation` raw storage) calls the runtime's
-`gti_rt_owner_allocate_v1`/`gti_rt_owner_release_v1` pair, never the
-source-owned process provider. The pair makes exactly the generated C++
-support code's calls: nothrow `operator new`, aligned only for an over-aligned
-request, and the matching `operator delete`, selected again at release from
-the allocation's alignment. A program that replaces those allocation functions
-therefore observes owners identically on both backends, and only a sealed
-source-policy call reaches `gti_rt_posix_memalign_v1`/`gti_rt_aligned_malloc_v1`.
-The pair's calls carry `noalias` results but no `nounwind` or non-null promise.
-It lives in its own runtime object so a program that supplies the provider
-adapters links without the default adapter object (lang-gti-official/gti#200).
+Generated GTI owner storage (unique-owner pointees, private shared-owner control
+blocks, task boxes and `ObjectAllocation` raw storage) uses the existing sealed
+GTI process-memory provider. Byte-aligned requests, and requests whose target
+extent/alignment admit the source process resource's pointer-layout witness,
+use `gti_rt_malloc_v1`; other POSIX requests use `gti_rt_posix_memalign_v1`.
+Both release through `gti_rt_posix_free_v1`. Windows uses the matched
+`gti_rt_aligned_malloc_v1`/`gti_rt_aligned_free_v1` pair. Target layout, never
+host `sizeof`, selects the route. Nullable failure remains under the caller's
+existing terminal or recoverable policy; verified MIR still owns construction,
+publication, rollback and destruction.
+
+The verified allocation edges inherit the existing provider's freshness and
+removable-allocation facts. The status-writing POSIX adapter retains its output
+contract. Ordinary foreign calls acquire no promises from a matching symbol
+name. The former owner-only `new`/`delete` runtime pair is retired. This
+2026-11-05 owner decision supersedes #200's cross-backend allocation-hook parity;
+it retains #200's independent constructor cleanup fix. The legacy C++ backend
+continues using its native allocation family. Explicit C++ interop continues
+to pair foreign construction/allocation with its foreign destruction/deallocator;
+LLVM does not reinterpret foreign storage as a GTI-owned allocation.
 
 ### LLVM Unions And Payloads
 
@@ -6514,6 +6522,24 @@ storage and externally observes addresses/values; it does not substitute for
 ordinary source construction, publication, transfer and cleanup integration.
 Cleanup-bearing structural relocation, boxed dynamic cleanup, and full callable
 execution remain prerequisites before admitting existing source wrappers.
+
+### Source function optimization policy
+
+Semantics resolves function attributes to `FunctionCodegenAttributes`, containing
+an independent cold hint and a default/hint/never inlining policy. HIR concrete
+instances, MIR instances and sealed lowered declarations retain the same record;
+phase-boundary verification rejects divergence, invalid policy values, or policy
+on a non-source/native declaration. Body cloning and concrete instantiation keep
+the source declaration identity; policy is copied from that semantic declaration,
+not re-derived from a function name.
+The deterministic MIR and lowered-program formats include the record.
+
+LLVM ABI declaration emits `cold`, `inlinehint` and `noinline` directly from
+verified MIR. `inlinehint` is advisory, never `alwaysinline`; coldness adds no
+failure, termination or ownership facts. Other lowering and optimization paths
+must preserve explicit policy and avoid conflicting LLVM attributes. This
+initial slice changes no calling convention or runtime representation and adds
+no C++ backend optimization implementation.
 
 ### LLVM Function Values And Closure Environments
 

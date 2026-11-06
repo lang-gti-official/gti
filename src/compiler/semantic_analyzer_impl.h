@@ -950,6 +950,7 @@ private:
     bool requiresUnsafe = false;
     bool neverReturns = false;
     bool tracksCaller = false;
+    FunctionCodegenAttributes codegenAttributes;
     bool discardableResult = false;
     bool macroExpansion = false;
     bool threadConfinedCallback = false;

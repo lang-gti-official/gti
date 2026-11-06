@@ -1444,6 +1444,7 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
         declaration->requiresUnsafe != mir.requiresUnsafe ||
         declaration->neverReturns != mir.neverReturns ||
         declaration->tracksCaller != mir.tracksCaller ||
+        declaration->codegenAttributes != mir.codegenAttributes ||
         declaration->threadConfinedCallback != mir.threadConfinedCallback ||
         declaration->cThreadOperation != mir.cThreadOperation ||
         (declaration->cThreadOperation != CThreadRuntimeOperation::None &&

@@ -300,6 +300,20 @@ llvm::Function *Abi::declareFunction(HirFunctionInstanceId id) {
   auto *output = llvm::Function::Create(
       plan.type, llvm::GlobalValue::ExternalLinkage, name, session.module());
   plan.applyTo(*output);
+  // Only verified declaration metadata controls source optimization requests.
+  // These are code-generation attributes, not failure or ABI promises.
+  if (function->codegenAttributes.cold)
+    output->addFnAttr(llvm::Attribute::Cold);
+  switch (function->codegenAttributes.inlining) {
+  case FunctionInlining::Default:
+    break;
+  case FunctionInlining::Hint:
+    output->addFnAttr(llvm::Attribute::InlineHint);
+    break;
+  case FunctionInlining::Never:
+    output->addFnAttr(llvm::Attribute::NoInline);
+    break;
+  }
   if (!native && plan.statusResult && plan.resultDestination) {
     const auto result = layouts.get(function->returnType);
     if (!result.addressOnly &&

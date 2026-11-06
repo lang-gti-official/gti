@@ -6914,7 +6914,8 @@ def test_function_contract_diagnostics(executable, root):
                 "publishDiagnostics": {"dataSupport": True}
             }}},
         })
-        session.receive_until(lambda message: message.get("id") == 1)
+        initialized = session.receive_until(lambda message: message.get("id") == 1)
+        token_types = initialized["result"]["capabilities"]["semanticTokensProvider"]["legend"]["tokenTypes"]
         session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
         session.send({
             "jsonrpc": "2.0", "method": "textDocument/didOpen",
@@ -7029,6 +7030,48 @@ def test_function_contract_diagnostics(executable, root):
         })
         hover = session.receive_until(lambda message: message.get("id") == 2)
         assert "[[test]]" in json.dumps(hover), hover
+        annotated = "[[cold, inline]] int hinted() { return 7; }\n[[noinline]] int main() { return hinted() - 7; }\n"
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 7},
+                       "contentChanges": [{"text": annotated}]},
+        })
+        publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 7
+        )["params"]
+        assert not has_error_diagnostics(publication), publication
+        session.send({
+            "jsonrpc": "2.0", "id": 3, "method": "textDocument/semanticTokens/full",
+            "params": {"textDocument": {"uri": uri}},
+        })
+        tokens = semantic_tokens_by_position(session.receive_until(
+            lambda message: message.get("id") == 3)["result"]["data"])
+        for attribute in ("cold", "inline", "noinline"):
+            position = lsp_position(annotated, annotated.index(attribute))
+            token = tokens[(position["line"], position["character"])]
+            assert token["type"] == token_types.index("decorator"), (attribute, token)
+        conflicting = annotated.replace("cold, inline", "inline, noinline")
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 8},
+                       "contentChanges": [{"text": conflicting}]},
+        })
+        publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 8
+        )["params"]
+        conflict = next(item for item in publication["diagnostics"] if item.get("code") == "GTI-S2099")
+        position = conflicting.index("noinline")
+        assert conflict["range"] == {
+            "start": lsp_position(conflicting, position),
+            "end": lsp_position(conflicting, position + len("noinline")),
+        }, conflict
+        assert "cannot be combined" in conflict["message"], conflict
+        assert not conflict["data"].get("fixes"), conflict
+
     finally:
         session.close()
 

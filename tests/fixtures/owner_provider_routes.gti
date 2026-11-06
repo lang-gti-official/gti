@@ -1,0 +1,74 @@
+import std.memory;
+import std.polymorphic;
+
+extern "C" {
+  void owner_audit_begin();
+  void owner_audit_object(const void* address, uint64_t bytes, uint64_t alignment);
+  void owner_audit_finish(int32_t attempts, int32_t acquired);
+}
+
+void observe<T>(std::unique_ptr<T>& owner) requires std::layout_queryable<T> {
+  unsafe {
+    owner_audit_object(std::erase_address(&*owner), std::layout_of<T>().bytes,
+                       std::layout_of<T>().alignment);
+  }
+}
+
+class Empty { public: Empty() {} };
+
+interface Meter { int read(); };
+class Gauge : public Meter {
+  int value;
+public:
+  Gauge(int value) : value(value) {}
+  int read() override { return this.value; }
+};
+
+// The existing inline slot carries its alignment through an ordinary containing
+// class, even while empty. Its inert payload needs no additional heap owner.
+using Slot = std::inline_polymorphic<Meter, 32, 16>;
+class Aligned {
+  mut Slot slot{};
+  std::unique_ptr<int> child;
+public:
+  Aligned(int value) : child(std::make_unique<int>(value)) {
+    observe(this.child);
+    this.slot.replace(Gauge(value));
+  }
+  int read() { return this.slot.get().read() + *this.child; }
+  bool inline_value() { return this.slot.is_inline(); }
+};
+
+int main() {
+  owner_audit_begin();
+  {
+    auto tiny = std::make_unique<uint8_t>(uint8_t(7));
+    auto flag = std::make_unique<bool>(true);
+    auto narrow = std::make_unique<int32_t>(23);
+    auto wide = std::make_unique<uint64_t>(uint64_t(41));
+    auto real = std::make_unique<double>(double(2.5));
+    auto empty = std::make_unique<Empty>();
+    observe(tiny);
+    observe(flag);
+    observe(narrow);
+    observe(wide);
+    observe(real);
+    observe(empty);
+    if (*tiny != uint8_t(7) || !*flag || *narrow != 23 ||
+        *wide != uint64_t(41) || *real != double(2.5)) { return 1; }
+  }
+  owner_audit_finish(6, 6);
+
+  owner_audit_begin();
+  {
+    if (std::layout_of<Aligned>().alignment != uint64_t(16)) { return 2; }
+    auto aligned = std::make_unique<Aligned>(21);
+    observe(aligned);
+    if (!aligned->inline_value() || aligned->read() != 42) { return 3; }
+    auto relocated = std::move(aligned);
+    observe(relocated);
+    if (relocated->read() != 42) { return 4; }
+  }
+  owner_audit_finish(2, 2);
+  return 0;
+}

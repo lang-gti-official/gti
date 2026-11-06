@@ -932,6 +932,46 @@ across movement.
 
 ## 4.5 Control Flow
 
+### Function optimization attributes
+
+`[[inline]]`, `[[noinline]]` and `[[cold]]` annotate a source-defined GTI
+function or method, including generic functions and methods after concrete
+instantiation. They are optimization requests, not type, ownership, ABI,
+constant-evaluation, failure or return-flow contracts.
+
+| Attribute | LLVM behavior | What it does not promise |
+| --- | --- | --- |
+| `[[inline]]` | Adds `inlinehint`, advising the optimizer to inline | Forced inlining, a speedup, or removal of a call at O0 |
+| `[[noinline]]` | Adds `noinline`, preventing function inlining | An externally visible symbol or protection from all other optimizations |
+| `[[cold]]` | Adds `cold`, indicating the function is rarely executed | Non-returning behavior, no allocation, or automatic suppression of inlining |
+
+```gti
+[[inline]] int increment(int value) { return value + 1; }
+[[cold, noinline]] int uncommon_result() { return 7; }
+```
+
+Lists may be combined or repeated, but each attribute appears at most once.
+`inline` and `noinline` conflict; `cold` can combine with either. No attribute
+accepts arguments. Apply an out-of-class method's attributes to its declaration
+inside the class; its definition inherits them. A defined virtual method may
+carry these hints on its own implementation, without changing dispatch rules.
+These hints do not make a function terminate: a cold function may return
+normally, and all checks and cleanup remain required. Inlining is independent
+of `constexpr` evaluation. The deprecated C++ backend does not implement these
+optimization requests.
+
+Native declarations, runtime bindings, bodyless functions, pure interface
+requirements, macros, constructors, destructors, lambdas and call-site
+annotations are outside this first slice. `inline` remains reserved outside
+attribute syntax. See the runnable
+[`codegen-attributes.gti`](../../examples/llvm/codegen-attributes.gti) example.
+
+Future extensions require their own semantic and lowering evidence: forced
+inlining with recursive/unavailable-body diagnostics; profile-guided hot/cold
+regions and outlining; constructor/lambda and call-site policy; cross-module
+propagation through compiled interfaces. None is implied by these three
+function attributes.
+
 ### Function contracts
 
 `[[noreturn]]` declares that a function cannot complete normally. Its body

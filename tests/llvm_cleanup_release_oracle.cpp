@@ -1,7 +1,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <new>
 
 extern "C" void gti_test_cleanup_event_v1(std::uint32_t kind,
                                           std::uint64_t address);
@@ -41,34 +40,22 @@ extern "C" std::uint32_t gti_test_cleanup_release_overflow_v1() {
   return overflow;
 }
 
-// Generated owners allocate through the runtime owner pair. Define the whole
-// pair, with the runtime's exact nothrow new/delete selection, so the runtime's
-// own owner object is never linked beside this recording release.
-namespace {
-bool overAligned(std::uint64_t alignment) {
-  return alignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__;
-}
-} // namespace
-
-extern "C" void *gti_rt_owner_allocate_v1(std::uint64_t bytes,
-                                          std::uint64_t alignment) {
-  if (bytes == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0)
-    return nullptr;
-  if (overAligned(alignment))
-    return ::operator new(static_cast<std::size_t>(bytes),
-                          std::align_val_t(static_cast<std::size_t>(alignment)),
-                          std::nothrow);
-  return ::operator new(static_cast<std::size_t>(bytes), std::nothrow);
-}
-
-extern "C" void gti_rt_owner_release_v1(void *address,
-                                        std::uint64_t alignment) {
-  if (address == nullptr)
+// Intercept only the target process release. The tests allocate their
+// storage independently and check destructor/release ordering and identity.
+#ifdef _WIN32
+#include <malloc.h>
+extern "C" void gti_rt_aligned_free_v1(void *address) {
+  if (!address)
     return;
   record(address);
-  if (overAligned(alignment))
-    ::operator delete(address,
-                      std::align_val_t(static_cast<std::size_t>(alignment)));
-  else
-    ::operator delete(address);
+  _aligned_free(address);
 }
+#else
+#include <cstdlib>
+extern "C" void gti_rt_posix_free_v1(void *address) {
+  if (!address)
+    return;
+  record(address);
+  std::free(address);
+}
+#endif

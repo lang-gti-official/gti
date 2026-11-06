@@ -117,12 +117,43 @@ void providerContracts() {
   expect(!first->onlyReadsMemory() &&
              !first->hasRetAttr(llvm::Attribute::NonNull),
          "freshness does not erase allocation effects or nullable failure");
-  // Generated owner storage uses the runtime owner pair (operator new
-  // family), not the source process provider, and carries no removable
-  // allocation contract of its own.
-  expect(!first->doesNotThrow() &&
-             !first->hasFnAttr(llvm::Attribute::AllocKind),
-         "owner-pair allocation carries no removable process contract");
+  const bool windowsOwner = input->program().mir().target().os == "windows";
+  expect(first->getCalledFunction()->getName() ==
+             (windowsOwner ? "gti_rt_aligned_malloc_v1"
+                           : "gti_rt_posix_memalign_v1"),
+         "over-aligned owners use the selected GTI process allocation family");
+  expect(first->hasFnAttr(llvm::Attribute::AllocKind) == windowsOwner,
+         "the status-writing POSIX path keeps its observable output");
+  const auto pointerBytes = session.dataLayout().getPointerSize(0);
+  auto *ordinaryOwner = llvm::cast<llvm::CallBase>(memory.allocateStorage(
+      pointerBytes, session.dataLayout().getPointerABIAlignment(0).value()));
+  expect(ordinaryOwner->getCalledFunction()->getName() ==
+                 (windowsOwner ? "gti_rt_aligned_malloc_v1"
+                               : "gti_rt_malloc_v1") &&
+             ordinaryOwner->hasFnAttr(llvm::Attribute::AllocKind) &&
+             ordinaryOwner->hasRetAttr(llvm::Attribute::NoAlias) &&
+             !ordinaryOwner->hasRetAttr(llvm::Attribute::NonNull),
+         "ordinary owner storage reuses the nullable removable GTI provider");
+  auto *byteOwner = llvm::cast<llvm::CallBase>(memory.allocateStorage(1, 1));
+  expect(byteOwner->getCalledFunction() == ordinaryOwner->getCalledFunction(),
+         "byte-aligned owners use the ordinary process allocation path");
+  if (!windowsOwner) {
+    auto *tiny = llvm::cast<llvm::CallBase>(memory.allocateStorage(1, 2));
+    expect(tiny->getCalledFunction() == first->getCalledFunction(),
+           "tiny non-byte-aligned owners retain the conservative aligned path");
+  }
+  for (const auto alignment : {std::uint64_t(0), std::uint64_t(3)}) {
+    bool rejectedLayout = false;
+    try {
+      (void)memory.allocateStorage(8, alignment);
+    } catch (const BackendUnsupportedError &) {
+      rejectedLayout = true;
+    }
+    expect(rejectedLayout, "invalid owner alignment rejects before allocation");
+  }
+  expect(!session.module().getFunction("gti_rt_owner_allocate_v1") &&
+             !session.module().getFunction("gti_rt_owner_release_v1"),
+         "owner storage retains no C++-allocation wrapper dependency");
   for (unsigned index = 0; index < first->arg_size(); ++index)
     if (first->getArgOperand(index)->getType()->isPointerTy())
       expect(first->doesNotCapture(index),

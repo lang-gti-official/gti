@@ -19908,6 +19908,20 @@ verifyMirProgramContracts(const MirProgram &program) {
     const MirFunctionInstance &instance = program.functionInstances()[index];
     verifyCallableBodySignature(instance.body, MirBodyKind::Function,
                                 instance.returnType, instance.id);
+    const auto &codegen = instance.codegenAttributes;
+    if ((codegen.inlining != FunctionInlining::Default &&
+         codegen.inlining != FunctionInlining::Hint &&
+         codegen.inlining != FunctionInlining::Never) ||
+        ((codegen.cold || codegen.inlining != FunctionInlining::Default) &&
+         (instance.linkage != LanguageLinkage::Gti ||
+          instance.definitionKind != MirDefinitionKind::Source ||
+          instance.pureVirtual))) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Function,
+           .owner = instance.id,
+           .message = "invalid source function code-generation attributes"});
+    }
+
     if (instance.body.hasCallerLocation != instance.tracksCaller) {
       result.errors.push_back(
           {.bodyKind = MirBodyKind::Function,

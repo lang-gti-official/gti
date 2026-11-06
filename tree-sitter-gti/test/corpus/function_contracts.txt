@@ -107,3 +107,26 @@ struct Holder {
                 (primary_expression
                   (this_expression))
                 (identifier)))))))))
+
+==================
+Function optimization annotations
+==================
+
+[[inline, cold]] int hinted() { return 1; }
+[[noinline]] int boundary() { return hinted(); }
+
+---
+
+(source_file
+  (function_declaration
+    (function_contract_attribute)
+    (type (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block (return_statement (initializer_expression (primary_expression (literal (integer_literal)))))))
+  (function_declaration
+    (function_contract_attribute)
+    (type (primitive_type))
+    (identifier)
+    (parameter_clause)
+    (block (return_statement (initializer_expression (call_expression (primary_expression (identifier)) (argument_list)))))))

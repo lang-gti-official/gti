@@ -101,7 +101,8 @@ int main() { std::map<int, int, Compare> values{}; return 0; }
 if __name__ == "__main__":
     repository = pathlib.Path(__file__).resolve().parent.parent
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
-    reject_invalid_sources(pathlib.Path(sys.argv[1]).resolve())
+    if "--list-modes" not in sys.argv:
+        reject_invalid_sources(pathlib.Path(sys.argv[1]).resolve())
     run_runtime_matrix(names=("associative_map", "associative_map_balancing",
                               "associative_map_iteration", "associative_map_ownership",
                               "associative_map_insert_result"))

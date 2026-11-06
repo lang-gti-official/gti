@@ -12621,17 +12621,18 @@ LLVM gap the audit found, runs on LLVM since PR 421.
   the C++ backend never supported, or are deliberate whole-program errors.
   `llvm_mutex_guard_lifecycle`, `llvm_native_process_storage` and
   `llvm_mutex_source_lifecycle` (a C++ backend `GTI-B0001`) run only on LLVM.
-- **Allocator-hook companions now agree (2026-11-03).** Generated owner
-  storage on LLVM calls the runtime's `gti_rt_owner_allocate_v1`/
-  `gti_rt_owner_release_v1`, which use the same replaceable nothrow
-  `operator new`/`delete` as generated C++, so the injectable process provider
-  (`gti_rt_posix_memalign_v1`) sees only source-policy allocations on both
-  backends (lang-gti-official/gti#200). `process_storage_policy`,
-  `process_allocation_elision`, `unique_scalar_allocation_failure`,
-  `unique_scalar_allocation_cleanup_failure` and `inline_polymorphic_lifecycle`
-  now observe the same allocations, exhaustion and cleanup failure on both
-  backends, including Windows. The runtime-provider fault companion is retired.
-  `scoped_parallel_allocations` therefore runs in every LLVM mode as well.
+- **GTI owner allocation policy revised (2026-11-05, owner approved).** LLVM
+  compiler-created owner storage now shares GTI's process provider with
+  source-defined storage. This replaces #200's C++ allocation-hook parity
+  policy: the retired private owner pair no longer routes GTI storage through
+  replaceable C++ `new`/`delete`. Native C++ objects retain their matching
+  allocation and deletion. Allocation/fault companions observe GTI allocations
+  through the process provider on LLVM, while retaining C++ hooks for the
+  deprecated backend's independent scheduled coverage. The scalar, class,
+  inherited-class, existing-value, polymorphic and task-box probes continue to
+  require exact failure and cleanup behavior; #200's constructor rollback fix
+  is preserved. See the allocation policy in
+  [standard-library-and-runtime](../architecture/standard-library-and-runtime.md).
 - **Recorded C++ lifecycle bug.** In `llvm_dispatch_lifecycle_phases`, a base
   destructor's virtual call on `this` runs the destructor's own class on LLVM,
   the owner's lifecycle-dispatch rule. The C++ backend reaches the destroyed

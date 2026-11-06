@@ -385,6 +385,14 @@ form, or a layout query directly inside the deliberately smaller array-extent
 grammar. Supported layout categories and the resulting constant belong to
 semantics, not this syntax node.
 
+Function optimization annotations `[[inline]]`, `[[noinline]]` and `[[cold]]`
+reuse the function-attribute AST list. The parser accepts the otherwise reserved
+`inline` token only as an annotation name, and rejects attribute arguments.
+Semantics validates eligible source-defined function/method declarations,
+duplicates and conflicting requests, then publishes `FunctionCodegenAttributes`
+independently of return-flow, ownership and ABI contracts. Concrete HIR and MIR
+instances preserve that record; the LLVM backend consumes verified policy.
+
 Class-declaration attributes are retained as written syntax before the class
 kind. The bounded native-record form is `[[c_abi]] struct`; the parser records
 the attribute and kind but does not decide whether the body is a valid passive

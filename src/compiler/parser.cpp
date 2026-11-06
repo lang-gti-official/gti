@@ -965,8 +965,13 @@ private:
                                 std::nullopt, std::nullopt, std::move(keyword),
                                 std::move(functionAttributes));
       }
-      Token first = consume(TokenKind::IDENTIFIER,
-                            "Expect an attribute name after '[['.");
+      const auto attributeName = [&]() {
+        if (check(TokenKind::CPP_RESERVED) && peek().lexeme == "inline")
+          return advance();
+        return consume(TokenKind::IDENTIFIER,
+                       "Expect an attribute name after '[['.");
+      };
+      Token first = attributeName();
       if (first.lexeme == "c_array" || first.lexeme == "link_name") {
         if (std::any_of(functionAttributes.begin(), functionAttributes.end(),
                         [](const FunctionAttribute &attribute) {
@@ -1057,6 +1062,12 @@ private:
           consume(TokenKind::RIGHT_PAREN,
                   "Expect ')' after the capability condition.");
         } else if (check(TokenKind::LEFT_PAREN)) {
+          if (attribute.name.lexeme == "inline" ||
+              attribute.name.lexeme == "noinline" ||
+              attribute.name.lexeme == "cold") {
+            throw error(attribute.name, "[[" + attribute.name.lexeme +
+                                            "]] takes no arguments.");
+          }
           if (attribute.name.lexeme == "test") {
             throw error(attribute.name, "[[test]] takes no arguments; annotate "
                                         "a zero-argument void function.");
@@ -1069,8 +1080,7 @@ private:
       std::vector<FunctionAttribute> attributes;
       attributes.emplace_back(parseAttribute(std::move(first)));
       while (match({TokenKind::COMMA})) {
-        attributes.emplace_back(parseAttribute(consume(
-            TokenKind::IDENTIFIER, "Expect an attribute name after '[['.")));
+        attributes.emplace_back(parseAttribute(attributeName()));
       }
       consume(TokenKind::RIGHT_BRACKET,
               "Expect ']]' after declaration attributes.");
@@ -1126,6 +1136,9 @@ private:
         functionAttributeList =
             functionAttributeList || attribute.name.lexeme == "noreturn" ||
             attribute.name.lexeme == "test" ||
+            attribute.name.lexeme == "inline" ||
+            attribute.name.lexeme == "noinline" ||
+            attribute.name.lexeme == "cold" ||
             attribute.name.lexeme == "track_caller" ||
             attribute.name.lexeme == "thread_confined_callback" ||
             attribute.name.lexeme == "discardable" ||

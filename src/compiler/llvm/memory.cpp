@@ -2,7 +2,6 @@
 
 #include "../mir_verification_queries.h"
 #include "gti/mir_effects.h"
-#include "runtime_abi.h"
 
 #include <algorithm>
 #include <array>
@@ -225,15 +224,31 @@ llvm::Value *Memory::allocateBytes(std::uint64_t size,
       (alignment & (alignment - 1)))
     throw BackendUnsupportedError(
         "LLVM allocation extent/alignment is not representable");
-  // Generated owner representations use the runtime owner pair, which calls
-  // the same replaceable nothrow operator new as the generated C++ support
-  // code; only sealed source-policy calls (processCall) reach the injectable
-  // process provider.
-  auto *call = ir.CreateCall(
-      declareRuntimeService(session, RuntimeService::OwnerAllocate),
-      {ir.getInt64(size), ir.getInt64(alignment)});
-  call->addRetAttr(llvm::Attribute::NoAlias);
-  return call;
+  // Compiler-created owners use the same sealed process provider as GTI
+  // storage. Construction, publication and rollback still belong to MIR.
+  if (session.program().mir().target().os == "windows") {
+    const std::array<llvm::Value *, 2> inputs{ir.getInt64(size),
+                                              ir.getInt64(alignment)};
+    return providerCall(ProcessMemoryRuntimeOperation::AlignedAllocate, inputs);
+  }
+  // Use the target's pointer layout, not the compiler host's alignment. This
+  // is the same conservative malloc witness used by the source process
+  // resource: byte alignment, or an extent that can hold an aligned pointer.
+  const auto pointerSize = session.dataLayout().getPointerSize(0);
+  if (alignment == 1 ||
+      (size >= pointerSize &&
+       alignment <= session.dataLayout().getPointerABIAlignment(0).value())) {
+    const std::array<llvm::Value *, 1> inputs{ir.getInt64(size)};
+    return providerCall(ProcessMemoryRuntimeOperation::PosixMalloc, inputs);
+  }
+  llvm::IRBuilder<> entry(
+      &ir.GetInsertBlock()->getParent()->getEntryBlock(),
+      ir.GetInsertBlock()->getParent()->getEntryBlock().begin());
+  auto *status = entry.CreateAlloca(ir.getInt32Ty());
+  const std::array<llvm::Value *, 3> inputs{
+      ir.getInt64(size),
+      ir.getInt64(std::max<std::uint64_t>(alignment, pointerSize)), status};
+  return providerCall(ProcessMemoryRuntimeOperation::PosixAllocate, inputs);
 }
 
 llvm::Value *Memory::allocateObject(const MirInstruction &instruction) {
@@ -249,11 +264,13 @@ llvm::Value *Memory::allocateObject(const MirInstruction &instruction) {
   return address;
 }
 
-void Memory::releaseBytes(llvm::Value *address, std::uint64_t alignment) {
-  // The release selects the matching (aligned or ordinary) delete from the
-  // same alignment the allocation received.
-  ir.CreateCall(declareRuntimeService(session, RuntimeService::OwnerRelease),
-                {address, ir.getInt64(alignment)});
+void Memory::releaseBytes(llvm::Value *address) {
+  // Both POSIX acquisition routes use free; Windows uses its aligned pair.
+  const std::array<llvm::Value *, 1> inputs{address};
+  (void)providerCall(session.program().mir().target().os == "windows"
+                         ? ProcessMemoryRuntimeOperation::AlignedRelease
+                         : ProcessMemoryRuntimeOperation::PosixRelease,
+                     inputs);
 }
 
 Memory::SharedRelease Memory::releaseShared(llvm::Value *handle) {

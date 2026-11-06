@@ -1,0 +1,1 @@
+The build-tree procedural HTML workflow test keeps the source standard library and runtime paths CTest supplies, because release builds compile in no source-tree fallback. Only the installed-toolchain variant clears them.

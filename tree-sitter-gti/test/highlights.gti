@@ -377,3 +377,6 @@ void explicit_macro_highlight() {
   policy::macro_highlight<int>!(true, 1);
   html!({ <h1>Hello</h1> });
 }
+
+[[inline, cold]] int hinted_highlight() { return 1; }
+[[noinline]] int boundary_highlight() { return hinted_highlight(); }

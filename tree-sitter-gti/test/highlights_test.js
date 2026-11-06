@@ -813,3 +813,8 @@ for (const spelling of ["macro_highlight!(", "policy::macro_highlight<int>!(", "
   const row = fixtureLines.findIndex((line) => line.includes(spelling));
   requireCapture(row, spelling.startsWith("html") ? "html" : "macro_highlight", "function.macro");
 }
+
+const codegenRow = fixtureLines.findIndex((line) => line.includes("int hinted_highlight"));
+requireCapture(codegenRow, "inline", "attribute");
+requireCapture(codegenRow, "cold", "attribute");
+requireCapture(fixtureLines.findIndex((line) => line.includes("int boundary_highlight")), "noinline", "attribute");

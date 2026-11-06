@@ -5080,6 +5080,13 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .requiresUnsafe = function->unsafeKeyword().has_value(),
           .neverReturns = function->hasFunctionAttribute("noreturn"),
           .tracksCaller = function->hasFunctionAttribute("track_caller"),
+          .codegenAttributes = {.inlining =
+                                    function->hasFunctionAttribute("noinline")
+                                        ? FunctionInlining::Never
+                                    : function->hasFunctionAttribute("inline")
+                                        ? FunctionInlining::Hint
+                                        : FunctionInlining::Default,
+                                .cold = function->hasFunctionAttribute("cold")},
           .discardableResult = function->hasFunctionAttribute("discardable"),
           .macroExpansion = function->isMacro(),
           .threadConfinedCallback =
@@ -10958,6 +10965,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .requiresUnsafe = declaration.requiresUnsafe,
       .neverReturns = declaration.neverReturns,
       .tracksCaller = declaration.tracksCaller,
+      .codegenAttributes = declaration.codegenAttributes,
       .discardableResult = declaration.discardableResult,
       .macroExpansion = declaration.macroExpansion,
       .threadConfinedCallback = declaration.threadConfinedCallback,

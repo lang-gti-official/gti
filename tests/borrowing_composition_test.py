@@ -245,7 +245,8 @@ int main() {
 if __name__ == "__main__":
     repository = pathlib.Path(__file__).resolve().parent.parent
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
-    reject_invalid_sources(pathlib.Path(sys.argv[1]).resolve())
+    if "--list-modes" not in sys.argv:
+        reject_invalid_sources(pathlib.Path(sys.argv[1]).resolve())
     nested = repository / "tests/fixtures/nested_owning_constructor_arguments.gti"
     failure_line = next(index for index, text in enumerate(nested.read_text().splitlines(), 1)
                         if text.endswith("// constructor failure"))

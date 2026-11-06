@@ -1,3 +1,4 @@
+#include "process_allocation_test_provider.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -54,5 +55,22 @@ void operator delete(void *value, std::size_t) noexcept {
   ::operator delete(value);
 }
 
-// LLVM-backed owners allocate through the runtime owner pair, which calls the
-// same replaceable nothrow operator new/delete counted above.
+// LLVM owners are observed through the GTI provider, independently of C++.
+
+namespace gti_test_process_provider {
+void *acquire(std::size_t bytes, std::size_t alignment) {
+  void *result = systemAllocate(bytes, alignment);
+  if (enabled) {
+    ++attempts;
+    observed_allocation = result;
+  }
+  return result;
+}
+void release(void *address) {
+  if (enabled && address == observed_allocation) {
+    ++releases;
+    observed_allocation = nullptr;
+  }
+  systemRelease(address);
+}
+} // namespace gti_test_process_provider
