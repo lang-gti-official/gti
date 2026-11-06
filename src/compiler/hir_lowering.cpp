@@ -3105,9 +3105,16 @@ private:
             }
           }
         }
-        if (resolved != nullptr)
+        if (resolved != nullptr) {
           lowered.lifetimeApplication =
               lowerLifetimeApplication(resolved->lifetimeApplication, body);
+          lowered.completeBorrow = resolved->completeBorrow;
+          if (lowered.completeBorrow) {
+            ensurePlaceDomain(body);
+            for (auto &dependency : lowered.completeBorrow->dependencies)
+              dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+          }
+        }
         initializers.push_back(std::move(lowered));
       }
     }
@@ -3268,7 +3275,7 @@ private:
           lowerStatements(snapshot.source->body()->statements(), bodyModel,
                           classArguments, classValueArguments, body);
     finalizeLifetimes(body, bodyModel, {}, initializers);
-    lowerLoans(bodyModel, body);
+    lowerLoans(bodyModel, body, nullptr, {}, initializers);
     if (!snapshot.generatedDefault && snapshot.source->body())
       lowerLifetimeBody(bodyModel.findLifetimeBody(*snapshot.source->body()),
                         body);
@@ -3632,7 +3639,8 @@ private:
 
   void lowerLoans(const SemanticModel &model, HirBody &body,
                   const Stmt *declaration = nullptr,
-                  std::span<const LambdaCaptureInfo> captures = {}) {
+                  std::span<const LambdaCaptureInfo> captures = {},
+                  std::span<const HirConstructorInitializer> initializers = {}) {
     ensurePlaceDomain(body);
     body.loans.clear();
     std::unordered_map<SymbolId, HirBindingId> bindings;
@@ -3664,6 +3672,11 @@ private:
         if (dependency.parent != 0)
           pending.push_back(dependency.parent);
     }
+    for (const auto &initializer : initializers)
+      if (initializer.completeBorrow)
+        for (const auto &dependency : initializer.completeBorrow->dependencies)
+          if (dependency.parent)
+            pending.push_back(dependency.parent);
     while (!pending.empty()) {
       const SemanticLoanId id = pending.back();
       pending.pop_back();

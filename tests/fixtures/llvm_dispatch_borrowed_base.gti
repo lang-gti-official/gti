@@ -1,4 +1,4 @@
-// Source rejection control: inherited borrowed state remains GTI-S2045.
+// Inherited borrowed state preserves inferred regions and ordinary dispatch.
 class BorrowBase {
   int& held;
 public:

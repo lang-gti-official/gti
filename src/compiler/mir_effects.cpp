@@ -2581,7 +2581,7 @@ mirOwnedStoragePayloadInitialization(
       !body.rangeIterations.empty() ||
       !body.programConstantSubstitutions.empty() || body.places.size() != 1 ||
       body.dropObligations.size() != 1 ||
-      !verifyMirBody(body, constructor.id).valid())
+      !verifyMirBody(program, body, constructor.id).valid())
     return std::nullopt;
   const auto &parameter = body.places.front();
   const auto &drop = body.dropObligations.front();

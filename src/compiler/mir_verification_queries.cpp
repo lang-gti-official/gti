@@ -1,5 +1,6 @@
 #include "mir_verification_queries.h"
 #include "gti/mir_dominance.h"
+#include "gti/borrow_conditions.h"
 #include "gti/mir_effects.h"
 #include "mir_verification_support.h"
 #include "mir_lifetimes.h"
@@ -192,10 +193,37 @@ bool nullGuardedDestructor(const MirProgram &program,
   return false;
 }
 
+const MirInstruction *baseConstructorPublicationStage(const MirBody &body,
+                                                      const MirLoan &loan) {
+  if (body.kind != MirBodyKind::Constructor || loan.kind != MirLoanKind::Stored ||
+      !loan.escapes || loan.entry || loan.producedBy || loan.storedDependency ||
+      loan.storedPath.size() != 1 || !isWellFormedBorrowPath(loan.storedPath) ||
+      loan.storedPath.front().kind != PlaceProjectionKind::Base)
+    return nullptr;
+  const MirInstruction *result = nullptr;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions) {
+      if (instruction.tombstone || instruction.loan != loan.id)
+        continue;
+      const auto *destination = instruction.destination
+          ? body.findPlace(*instruction.destination) : nullptr;
+      if (result || instruction.kind != MirInstructionKind::InitializeBase ||
+          !instruction.constructorInitializer || !instruction.constructorTarget ||
+          !destination || destination->root != MirPlaceRootKind::This ||
+          destination->projections.size() != 1 ||
+          destination->projections.front().kind != MirProjectionKind::Base ||
+          destination->projections.front().constantIndex != loan.storedPath.front().index ||
+          !destination->projections.front().selection)
+        return nullptr;
+      result = &instruction;
+    }
+  return result;
+}
+
 std::optional<MirBorrowPathView> walkBorrowPath(
     const MirProgram &program, const SemanticType &root, AccessMode rootAccess,
     std::span<const PlaceProjection> path,
-    std::span<const MirBorrowPathGuard> guards, MirBorrowPathRoot rootRole) {
+    std::span<const BorrowDependencyCondition> guards, MirBorrowPathRoot rootRole) {
   if (path.size() > 256 || guards.size() > 256 ||
       !isWellFormedBorrowPath(path) || root == SemanticType::Unknown ||
       root == SemanticType::Void ||
@@ -379,17 +407,98 @@ std::optional<MirBorrowPathView> walkBorrowPath(
   return std::nullopt;
 }
 
+std::optional<std::size_t> borrowPathProjectionPrefix(
+    std::span<const MirPlaceProjection> projections,
+    std::span<const PlaceProjection> path, bool trailingReference) {
+  if (!isWellFormedBorrowPath(path))
+    return std::nullopt;
+  std::size_t offset = 0;
+  const auto dereference = [&] {
+    if (offset >= projections.size() || projections[offset].kind != MirProjectionKind::Dereference)
+      return true;
+    const auto &value = projections[offset++];
+    return value.field == 0 && value.index == 0 && value.selection == 0 && !value.constantIndex;
+  };
+  for (const auto &step : path) {
+    if (!dereference() || offset >= projections.size())
+      return std::nullopt;
+    const auto &value = projections[offset++];
+    switch (step.kind) {
+    case PlaceProjectionKind::Field:
+      if (value.kind != MirProjectionKind::Field || value.field != step.field ||
+          value.index || value.selection || value.constantIndex)
+        return std::nullopt;
+      break;
+    case PlaceProjectionKind::Base:
+      if (value.kind != MirProjectionKind::Base || value.field || value.index ||
+          !value.selection || value.constantIndex != step.index)
+        return std::nullopt;
+      break;
+    case PlaceProjectionKind::ConstantIndex:
+      if ((value.kind != MirProjectionKind::Index && value.kind != MirProjectionKind::PackElement) ||
+          value.field || value.index || value.selection || value.constantIndex != step.index)
+        return std::nullopt;
+      break;
+    default:
+      return std::nullopt;
+    }
+  }
+  if (trailingReference && (offset >= projections.size() ||
+      projections[offset].kind != MirProjectionKind::Dereference || !dereference()))
+    return std::nullopt;
+  return offset;
+}
+
+std::optional<std::vector<BorrowDependencyCondition>> deriveBorrowPathConditions(
+    const MirProgram &program, const SemanticType &root, AccessMode rootAccess,
+    std::span<const PlaceProjection> path, MirBorrowPathRoot role) {
+  if (!isWellFormedBorrowPath(path) || path.size() > borrowInventoryDepthLimit)
+    return std::nullopt;
+  std::vector<BorrowDependencyCondition> conditions;
+  auto current = walkBorrowPath(program, root, rootAccess, {}, {}, role);
+  if (!current)
+    return std::nullopt;
+  for (std::size_t offset = 0; offset < path.size(); ++offset) {
+    if (current->type.kind == SemanticType::Enum) {
+      const auto view = mirEnumLifetimeView(program, current->type);
+      if (!view || !view->payload || path[offset].kind != PlaceProjectionKind::Field)
+        return std::nullopt;
+      std::optional<std::size_t> selected;
+      for (std::size_t variant = 0; variant < view->payload->variants.size(); ++variant) {
+        const auto &candidate = view->payload->variants[variant];
+        if (candidate.variantIndex != variant ||
+            candidate.payloadTypes.size() != candidate.payloadSymbols.size())
+          return std::nullopt;
+        for (const auto field : candidate.payloadSymbols)
+          if (field == path[offset].field) {
+            if (selected)
+              return std::nullopt;
+            selected = variant;
+          }
+      }
+      if (!selected)
+        return std::nullopt;
+      conditions.push_back({.subobject = BorrowPath(path.begin(), path.begin() + offset),
+                            .enumeration = current->type, .variant = *selected});
+    }
+    current = walkBorrowPath(program, root, rootAccess, path.first(offset + 1), conditions, role);
+    if (!current)
+      return std::nullopt;
+  }
+  return conditions;
+}
+
 std::optional<BorrowPath> borrowPathForProjections(
     const MirProgram &program, const SemanticType &root, AccessMode rootAccess,
     std::span<const MirPlaceProjection> projections,
-    std::span<const MirBorrowPathGuard> guards,
+    std::span<const BorrowDependencyCondition> guards,
     std::span<const MirBorrowPathPayloadSelection> selections,
     MirBorrowPathRoot rootRole) {
   if (projections.size() > 512 || guards.size() > 256 || selections.size() > 256)
     return std::nullopt;
   BorrowPath path;
   const auto replay = [&]() -> std::optional<MirBorrowPathView> {
-    std::vector<MirBorrowPathGuard> prefixGuards;
+    std::vector<BorrowDependencyCondition> prefixGuards;
     for (const auto &guard : guards)
       if (guard.subobject.size() <= path.size())
         prefixGuards.push_back(guard);
@@ -473,7 +582,7 @@ const MirPlace *physicalPayloadSelectionSource(
       (selection.reference.referenceAccess == AccessMode::Mutable &&
        (value->info.access != AccessMode::Mutable ||
         operand.kind != MirOperandKind::BorrowWrite)) ||
-      selection.fields != std::vector<SymbolId>{variant.payloadSymbols[*extract->payloadIndex]} ||
+      selection.fields != BorrowPath{fieldProjection(variant.payloadSymbols[*extract->payloadIndex])} ||
       selection.conditions != std::vector<BorrowDependencyCondition>{
           {.enumeration = operand.type, .variant = *extract->enumVariant}})
     return nullptr;
@@ -523,7 +632,7 @@ std::optional<SemanticType> storedPayloadSelectionReference(
       *field != selection.reference || field->arguments.front() != value->info.type ||
       value->info.category != ValueCategory::Place ||
       (value->info.access == AccessMode::Mutable && field->referenceAccess != AccessMode::Mutable) ||
-      selection.fields != std::vector<SymbolId>{variant.payloadSymbols[*extract->payloadIndex]} ||
+      selection.fields != BorrowPath{fieldProjection(variant.payloadSymbols[*extract->payloadIndex])} ||
       selection.conditions != std::vector<BorrowDependencyCondition>{
           {.enumeration = operand.type, .variant = *extract->enumVariant}})
     return std::nullopt;
@@ -705,7 +814,7 @@ referenceInitializerCall(const MirProgram &program,
           instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
       if (instruction.kind == MirInstructionKind::Borrow && loan &&
           loan->kind == MirLoanKind::Stored &&
-          loan->storedField == initializer.field) {
+          loan->storedPath == BorrowPath{fieldProjection(initializer.field)}) {
         if (publication)
           return nullptr;
         publication = &instruction;
@@ -779,15 +888,16 @@ bool storedReferenceReturnPublication(const MirBody &body,
       !root->projections.empty() || runtime->projections.size() < 2 ||
       runtime->projections.back().kind != MirProjectionKind::Dereference)
     return false;
-  std::vector<SymbolId> fields;
-  for (auto part = runtime->projections.begin(); part != std::prev(runtime->projections.end()); ++part) {
-    if (part->kind != MirProjectionKind::Field || !part->field)
+  // Body-local shape only. The program verifier independently walks the
+  // same typed path through the sealed nominal inventory, proving each base
+  // owner and concrete selection; an executable instance ID is not a source
+  // declaration identity that this body-only helper may invent.
+  const auto matches = [&](const BorrowPath &path, const auto &conditions, AccessMode access) {
+    if (!isWellFormedBorrowPath(path) || path.empty() || !conditions.empty() ||
+        (published->access == AccessMode::Mutable && access != AccessMode::Mutable))
       return false;
-    fields.push_back(part->field);
-  }
-  const auto matches = [&](const auto &path, const auto &conditions, AccessMode access) {
-    return fields == path && conditions.empty() &&
-           (published->access == AccessMode::ReadOnly || access == AccessMode::Mutable);
+    const auto prefix = borrowPathProjectionPrefix(runtime->projections, path, true);
+    return prefix && *prefix == runtime->projections.size();
   };
   if (!matches(entry->designatedFields, entry->conditions, entry->access) &&
       std::none_of(entry->additionalDependencies.begin(), entry->additionalDependencies.end(),
@@ -2364,6 +2474,7 @@ bool textFieldResult(const SemanticType &returnType, BorrowOriginKind origin,
     return false;
   const BorrowedFieldOrigin &mapping = fields.front();
   return mapping.resultFields.empty() && mapping.sourceFields.size() == 1 &&
+         mapping.sourceFields.front().kind == PlaceProjectionKind::Field &&
          mapping.resultConditions.empty() && mapping.sourceConditions.empty() &&
          mapping.access == AccessMode::ReadOnly && mapping.origin == origin &&
          mapping.parameter == parameter &&

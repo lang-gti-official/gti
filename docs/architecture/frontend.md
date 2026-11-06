@@ -439,15 +439,27 @@ instead records its external referent's declared region; the enum shell does
 not supply that lifetime. Both paths preserve nested carrier regions and their
 existing access, guard, parent-loan and cleanup obligations.
 
-The shared place vocabulary also defines a staged `BorrowPath`: a rootless
-sequence of field, direct-base, and constant-index projections. A base records
-its declaring owner and the full direct-base ordinal, including interface
-entries. Shape validation rejects body-only dereferences/dynamic indices and
-mixed selector metadata; the exact instantiated type walk must separately
-prove field identity, base storage and index bounds. The structural overlap
-query preserves ancestor overlap and treats unequal bases conservatively.
-Current stored-dependency records still use field paths until their coordinated
-migration; this vocabulary alone does not admit inherited borrowed state.
+Stored-dependency records share `BorrowPath`: a rootless sequence of field,
+direct-base, and constant-index projections. A base records its declaring owner
+and the full direct-base ordinal, including interface entries. Shape validation
+rejects body-only dereferences/dynamic indices and mixed selector metadata; the
+exact instantiated type walk must separately prove direct field identity, base
+storage and index bounds. It never recovers a missing base step by searching
+inherited fields. The structural overlap query preserves ancestor overlap and
+treats unequal bases conservatively. Raw-pointer audit places preserve the same
+base steps while retaining their separate body-only dereference and dynamic
+index operations.
+
+Reference and alternative inventories share one bounded work budget per query
+(4096 entries, with a depth limit of 256). A failed or exhausted query is unknown,
+not an empty dependency set. Independent enum subobjects keep separate guarded
+domains without forming a Cartesian product of all sibling alternatives.
+Selected base-initializer facts capture complete producer evidence immediately
+after argument checking and lifetime application. Enclosing constructor summaries
+consume that snapshot; later body flow cannot reconstruct or revive moved inputs.
+Inherited storage requires exact constructor publication, independent
+program-aware MIR replay and cleanup validation before code generation; the
+structural path itself grants no lifetime, access or escape permission.
 
 The shared callable contract derivation obtains each nominal application's
 formation formula from the owning phase. Semantics supplies the instantiated

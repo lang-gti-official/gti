@@ -35,15 +35,15 @@ void testBorrowConditionTransport() {
   std::vector<BorrowAlternativePath> to;
   for (const SymbolId field : {SymbolId{10}, SymbolId{20}})
     for (std::size_t variant = 0; variant != 2; ++variant) {
-      from.push_back({.conditions = {{.subobject = {field},
+      from.push_back({.conditions = {{.subobject = {fieldProjection(field)},
           .enumeration = enumeration(a), .variant = variant}}});
-      to.push_back({.conditions = {{.subobject = {field},
+      to.push_back({.conditions = {{.subobject = {fieldProjection(field)},
           .enumeration = enumeration(field == 10 ? x : y), .variant = variant}}});
     }
   const auto transport = BorrowConditionTransport::between(from, to);
   expect(transport.has_value(), "guard transport derives exact typed paths");
   SemanticBorrowDependencySet source{
-      .dependencies = {{.place = {.root = 7}, .designatedFields = {10, 30},
+      .dependencies = {{.place = {.root = 7}, .designatedFields = {fieldProjection(10), fieldProjection(30)},
           .access = AccessMode::Mutable, .protectsStorage = true, .parent = 9,
           .conditions = from[0].conditions}},
       .possibleAlternatives = {from[0], from[2]}};
@@ -52,7 +52,7 @@ void testBorrowConditionTransport() {
              actual->dependencies.front().parent == 9 &&
              actual->dependencies.front().access == AccessMode::Mutable &&
              actual->dependencies.front().protectsStorage &&
-             actual->dependencies.front().designatedFields == std::vector<SymbolId>({10, 30}) &&
+             actual->dependencies.front().designatedFields == BorrowPath({fieldProjection(10), fieldProjection(30)}) &&
              actual->dependencies.front().conditions == to[0].conditions &&
              actual->possibleAlternatives == std::vector<BorrowAlternativePath>({to[0], to[2]}),
          "one source region maps by field path while every origin and active subset stays exact");
@@ -65,27 +65,44 @@ void testBorrowConditionTransport() {
     switch (mutation) {
     case 0: broken[0].conditions.front().enumeration.enumId = 52; break;
     case 1: broken[0].conditions.front().variant = 9; break;
-    case 2: broken[0].conditions.front().subobject = {99}; break;
+    case 2: broken[0].conditions.front().subobject = {fieldProjection(99)}; break;
     case 3: broken.pop_back(); break;
     case 4: broken[1] = broken[0]; break;
     }
     expect(!BorrowConditionTransport::between(from, broken),
            "guard transport rejects changed declarations, variants, paths and incomplete inventories");
   }
+  auto projectedFrom = from;
+  auto projectedTo = to;
+  for (auto *inventory : {&projectedFrom, &projectedTo})
+    for (auto &alternative : *inventory)
+      for (auto &condition : alternative.conditions)
+        condition.subobject.insert(condition.subobject.begin(),
+            {baseProjection(80, 1), constantIndexProjection(2)});
+  expect(BorrowConditionTransport::between(projectedFrom, projectedTo).has_value(),
+         "guard transport preserves base owner, full ordinal and constant element identity");
+  projectedTo.front().conditions.front().subobject.front().index = 0;
+  expect(!BorrowConditionTransport::between(projectedFrom, projectedTo),
+         "a changed base ordinal cannot reuse another subobject's guard transport");
+  projectedTo = projectedFrom;
+  projectedFrom.front().conditions.front().subobject.front().baseOwner = 0;
+  projectedTo.front().conditions.front().subobject.front().baseOwner = 0;
+  expect(!BorrowConditionTransport::between(projectedFrom, projectedTo),
+         "matching malformed Base steps cannot establish typed guard transport");
   source.dependencies.front().conditions.front().enumeration = enumeration(x);
   expect(!transportBorrowDependencyConditions(source, *transport),
          "a stale or forged source guard cannot become target evidence");
   FunctionBorrowDependencySummary summary{
-      .dependencies = {{.resultFields = {30}, .origin = BorrowOriginKind::Argument,
-                        .parameter = 2, .sourceFields = {40}, .access = AccessMode::Mutable,
+      .dependencies = {{.resultFields = {fieldProjection(30)}, .origin = BorrowOriginKind::Argument,
+                        .parameter = 2, .sourceFields = {fieldProjection(40)}, .access = AccessMode::Mutable,
                         .resultConditions = from[0].conditions,
                         .sourceConditions = from[2].conditions}},
       .possibleAlternatives = {from[0]}};
   const auto instantiated = instantiateBorrowSummaryLifetimes(
       summary, std::array{LifetimeBinding{a, x}});
   expect(instantiated && instantiated->dependencies.front().parameter == 2 &&
-             instantiated->dependencies.front().resultFields == std::vector<SymbolId>{30} &&
-             instantiated->dependencies.front().sourceFields == std::vector<SymbolId>{40} &&
+             instantiated->dependencies.front().resultFields == BorrowPath{fieldProjection(30)} &&
+             instantiated->dependencies.front().sourceFields == BorrowPath{fieldProjection(40)} &&
              instantiated->dependencies.front().sourceConditions.front().enumeration == enumeration(x) &&
              instantiated->dependencies.front().resultConditions.front().enumeration == enumeration(x) &&
              instantiated->possibleAlternatives.front().conditions.front().enumeration == enumeration(x),
@@ -96,12 +113,12 @@ void testBorrowAlternativeCoverage() {
   using namespace lang;
   const auto outer = SemanticType::enumType(70);
   const auto inner = SemanticType::enumType(71);
-  const BorrowDependencyCondition first{.subobject = {10}, .enumeration = outer, .variant = 0};
-  const BorrowDependencyCondition empty{.subobject = {10}, .enumeration = outer, .variant = 1};
-  const BorrowDependencyCondition nested{.subobject = {10, 11}, .enumeration = inner, .variant = 0};
-  const BorrowDependencyCondition nestedEmpty{.subobject = {10, 11}, .enumeration = inner, .variant = 1};
-  const BorrowDependencyCondition sibling{.subobject = {20}, .enumeration = outer, .variant = 0};
-  const BorrowDependencyCondition siblingEmpty{.subobject = {20}, .enumeration = outer, .variant = 1};
+  const BorrowDependencyCondition first{.subobject = {fieldProjection(10)}, .enumeration = outer, .variant = 0};
+  const BorrowDependencyCondition empty{.subobject = {fieldProjection(10)}, .enumeration = outer, .variant = 1};
+  const BorrowDependencyCondition nested{.subobject = {fieldProjection(10), fieldProjection(11)}, .enumeration = inner, .variant = 0};
+  const BorrowDependencyCondition nestedEmpty{.subobject = {fieldProjection(10), fieldProjection(11)}, .enumeration = inner, .variant = 1};
+  const BorrowDependencyCondition sibling{.subobject = {fieldProjection(20)}, .enumeration = outer, .variant = 0};
+  const BorrowDependencyCondition siblingEmpty{.subobject = {fieldProjection(20)}, .enumeration = outer, .variant = 1};
   const std::vector<BorrowAlternativePath> inventory{
       {{first}}, {{empty}}, {{first, nested}}, {{first, nestedEmpty}},
       {{sibling}}, {{siblingEmpty}}};

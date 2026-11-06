@@ -5,13 +5,15 @@ import std.string_view;
 import std.iterator;
 // An application wrapper names the public iterator types without importing
 // the library's private implementation namespace.
-class TextRange {
-  std::string_view& text;
+// Keep the borrowed view object and its character storage as distinct
+// lifetimes. Returning an iterator preserves both declared relationships.
+class TextRange<lifetime view_region, lifetime storage> {
+  std::string_view<storage>&<view_region> text;
 public:
-  TextRange(std::string_view& text) : text(text) {}
-  std::string_view_iterator begin() { return this.text.begin(); }
+  TextRange(std::string_view<storage>&<view_region> text) : text(text) {}
+  std::string_view_iterator<view_region, storage> begin() { return this.text.begin(); }
   std::string_view_sentinel end() { return this.text.end(); }
-  std::string_view_reverse_iterator rbegin() { return this.text.rbegin(); }
+  std::string_view_reverse_iterator<view_region, storage> rbegin() { return this.text.rbegin(); }
   std::string_view_sentinel rend() { return this.text.rend(); }
 };
 

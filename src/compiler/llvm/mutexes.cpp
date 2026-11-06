@@ -150,7 +150,7 @@ nativeMutexConstructor(const MirProgram &program,
       (parameterRecipe && escapes) || !body.values.empty() ||
       !body.loans.empty() || !body.fullExpressions.empty() ||
       body.places.size() != 1 || body.dropObligations.size() > 1 ||
-      !verifyMirBody(body, constructor.id).valid())
+      !verifyMirBody(program, body, constructor.id).valid())
     return {};
   const auto &parameter = body.places.front();
   if (parameter.root != MirPlaceRootKind::Binding ||

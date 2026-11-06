@@ -639,15 +639,16 @@ MirLowerer::lowerProgram(const HirProgram &source,
              definedFailureEffects.constructors.empty() || instance.id == 0 ||
              instance.id > definedFailureEffects.constructors.size() ||
              definedFailureEffects.constructors[instance.id - 1],
-         .initializers = std::move(initializers),
+         .initializers = {},
          .body = lowerBody(
              source, failureMetadata, instance.body, MirBodyKind::Constructor,
              SemanticType::Void, instance.initializerValues,
              definedFailureEffects, valid, result.errors, instance.id, false,
              &instance.initializers, nullptr, &instance, nullptr, nullptr,
              nullptr, compilerTrustedSourceUnit(source, instance.sourceUnit),
-             constructorOwner)});
+             constructorOwner, nullptr, &initializers)});
     auto &lowered = result.program.constructors.back();
+    lowered.initializers = std::move(initializers);
     for (auto &initializer : lowered.initializers)
       if (!resolveMirLifetimeOrigins(initializer.lifetimeApplication,
                                      lowered.body)) {

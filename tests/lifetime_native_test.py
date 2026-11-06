@@ -47,6 +47,31 @@ int main() {
 int&<region> identity<lifetime region>(int&<region> value) { return value; }
 int main() { int value = 7; return identity(value) - 7; }
 """,
+    "forwarded_pack_borrow_paths": """
+struct View<lifetime owner> {
+  int&<owner> value;
+  View(int&<owner> source) : value(source) {}
+};
+int&<b> select<lifetime a, lifetime b>(int&<a> ignored, int&<b> selected) {
+  return selected;
+}
+int&<b> select<lifetime a, lifetime b, lifetime shell>(int&<a> ignored, View<b>&<shell> selected) {
+  return selected.value;
+}
+class Relay<R(Args...)> {
+public:
+  Relay() = default;
+  R invoke(Args... values) { return select(values...); }
+};
+using ScalarChoice = for<lifetime a, lifetime b> int&<b>(int&<a>, int&<b>);
+using CarrierChoice = for<lifetime a, lifetime b, lifetime shell> int&<b>(int&<a>, View<b>&<shell>);
+int main() {
+  Relay<ScalarChoice> scalar{}; Relay<CarrierChoice> carrier{};
+  int first = 3; int second = 8; View view{second};
+  if (scalar.invoke(first, second) != 8) { return 1; }
+  return carrier.invoke(first, view) - 8;
+}
+""",
     "elided_identity": """
 int& identity(int& value) { return value; }
 int main() { int value = 7; return identity(value) - 7; }
@@ -225,6 +250,83 @@ int&<a> read<lifetime a>(int&<a> input) {
   return holder.get();
 }
 int main() { int value = 7; return read(value) - 7; }
+""",
+    "inherited_inline_disjoint_fields": """
+struct Base {
+  mut int left = 1;
+  Base() = default;
+};
+struct Derived : public Base {
+  mut int right = 2;
+  Derived() = default;
+};
+int bump(mut int& first, mut int& second) {
+  first = first + 1;
+  second = second + 1;
+  return first + second;
+}
+int main() { mut Derived pair{}; return bump(pair.left, pair.right) - 5; }
+""",
+    "inherited_borrowed_base_cleanup": """
+mut int observed = 0;
+interface Marker { int mark(); };
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+  ~Base() { observed = observed + value; }
+};
+struct Derived<lifetime a> : public Marker, public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+  int mark() override { return 0; }
+  int&<a> get() { return value; }
+};
+int&<a> read<lifetime a>(Derived<a>& view) { return view.value; }
+int main() {
+  int value = 7;
+  { Derived view{value}; if (read(view) + view.get() != 14) { return 1; } }
+  return observed - 7;
+}
+""",
+    "inherited_independent_referents": """
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Pair<lifetime a, lifetime b> : public Base<a> {
+  int&<b> other;
+  Pair(int&<a> first, int&<b> second) : Base<a>(first), other(second) {}
+};
+int&<a> external<lifetime a>(int&<a> input) {
+  int local = 9;
+  Pair pair{input, local};
+  return pair.value;
+}
+int main() { int value = 7; return external(value) - 7; }
+""",
+    "inherited_borrowed_base_rollback": """
+struct Outer {
+  Outer() = default;
+  ~Outer() { std::println("outer"); }
+};
+interface Marker { int mark(); };
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+  ~Base() { std::println(this.value); }
+};
+int later(int divisor) { return 1 / divisor; }
+struct Derived<lifetime a> : public Marker, public Base<a> {
+  int after = 0;
+  Derived(int&<a> input, int divisor) : Base<a>(input), after(later(divisor)) {}
+  ~Derived() { std::println("derived"); }
+  int mark() override { return 0; }
+};
+int main() {
+  Outer outer{};
+  int number = 7;
+  Derived view{number, 0};
+  return 0;
+}
 """,
     "projected_owner_field_defaults": """
 int initial_score() { return 7; }
@@ -500,7 +602,9 @@ def main():
     if args.census:
         checked("public-example-census", lambda: run(
             [args.census.resolve(), root, example.name], "public-example-census"))
-    cases = {"public_example": example.read_text(), **CASES}
+    inherited_example = Path(__file__).resolve().parent / "fixtures/llvm_dispatch_borrowed_base.gti"
+    cases = {"public_example": example.read_text(),
+             "inherited_legacy_elision": inherited_example.read_text(), **CASES}
     for label, source in cases.items():
         path = output / (label + ".gti")
         path.write_text(source)
@@ -510,7 +614,10 @@ def main():
             def execute():
                 binary = output / (label + "-" + mode)
                 run([compiler, path, *flags, "-o", binary], label + "-" + mode + "-build", measure_build=True)
-                failure_case = label == "borrowed_prepared_argument_failure"
+                failure_case = label in {
+                    "borrowed_prepared_argument_failure",
+                    "inherited_borrowed_base_rollback",
+                }
                 executed = run([binary], label + "-" + mode + "-run", expect_success=not failure_case)
                 if failure_case:
                     site = source.index('1 / divisor')
@@ -518,7 +625,7 @@ def main():
                     expected = (f'{path.name}:{line}: runtime error[GTI-R0002]: '
                                 'division_by_zero in integer_division\n')
                     if executed.returncode != 70 or executed.stdout != "7\nouter\n" or executed.stderr != expected:
-                        raise RuntimeError(f"{label}/{mode}: prepared owner must clean up exactly once before outer cleanup")
+                        raise RuntimeError(f"{label}/{mode}: initialized owner must clean up exactly once before outer cleanup")
                 elif executed.stdout or executed.stderr:
                     raise RuntimeError(f"{label}/{mode}: unexpected runtime output")
                 observations[mode] = {"binary_bytes": binary.stat().st_size}

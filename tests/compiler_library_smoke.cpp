@@ -54,7 +54,7 @@ int main() {
   const lang::MirBodyAddress moduleAddress{};
   const lang::MirEffectTraits division =
       lang::effects(lang::MirOperation::Divide);
-  if (mir.find("mir-body-v95") == std::string::npos || !division.mayTrap ||
+  if (mir.find("mir-body-v96") == std::string::npos || !division.mayTrap ||
       moduleAddress.kind != lang::MirBodyKind::Module ||
       lang::name(lang::IntrinsicKind::ObjectDestroy) != "object-destroy") {
     return 4;

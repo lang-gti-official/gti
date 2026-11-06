@@ -26,6 +26,14 @@ struct MirVerificationResult {
 
 [[nodiscard]] MirVerificationResult verifyMirBody(const MirBody &body,
                                                   std::size_t owner = 0);
+// Provisional lowering check: structural identities and instruction shapes
+// only. This is never sufficient to seal, publish or generate a MIR program.
+[[nodiscard]] MirVerificationResult verifyMirBodyStructure(
+    const MirBody &body, std::size_t owner = 0);
+// Replay body flow using this program's exact read-only nominal catalog.
+[[nodiscard]] MirVerificationResult verifyMirBody(
+    const MirProgram &program, const MirBody &body, std::size_t owner = 0);
+
 
 enum class MirDebugReadability { Unknown, Unavailable, DefinitelyReadable };
 enum class MirDebugAvailabilityReason {

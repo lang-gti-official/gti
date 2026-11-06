@@ -1501,7 +1501,7 @@ int main() {
   const std::string indexedMirDump =
       mirMain == nullptr ? std::string{}
                          : lang::MirPrinter().print(mirMain->body);
-  expect(indexedMirDump.starts_with("mir-body-v95\n") &&
+  expect(indexedMirDump.starts_with("mir-body-v96\n") &&
              indexedMirDump.find(" domain=1:") != std::string::npos &&
              indexedMirDump.find(";constant=0;selection=0") !=
                  std::string::npos &&
@@ -3947,7 +3947,7 @@ int main() {
          "full-expression boundary");
 
   const std::string mirDump = lang::MirPrinter().print(valid.mir);
-  expect(mirDump.starts_with("mir-v123 ") &&
+  expect(mirDump.starts_with("mir-v124 ") &&
              mirDump.find("return-borrow-place=origin(root=") !=
                  std::string::npos &&
              mirDump.find("borrow-place=origin(root=") != std::string::npos,
@@ -6462,7 +6462,7 @@ int main() { return 0; }
       foundEscapingFieldLoan =
           foundEscapingFieldLoan ||
           (loan.kind == lang::MirLoanKind::Stored && loan.escapes &&
-           loan.storedField != 0 && loan.source != 0);
+           !loan.storedPath.empty() && loan.source != 0);
     }
   }
   for (const lang::MirFunctionInstance &function :
@@ -7519,7 +7519,7 @@ int main() {
   mutate([](auto &constructor, auto &entry) {
     for (auto &loan : constructor.body.loans) {
       if (loan.kind == lang::MirLoanKind::Stored && loan.escapes) {
-        loan.storedField = entry.designatedFields.back();
+        loan.storedPath = lang::BorrowPath{entry.designatedFields.back()};
       }
     }
   });
@@ -8053,7 +8053,7 @@ int main() {
         const auto shell = std::find_if(
             carrier->declaredFields.begin(), carrier->declaredFields.end(),
             [&](const lang::MirClassFieldInfo &field) {
-              return field.symbol != entryLoan->designatedFields.front() &&
+              return lang::fieldProjection(field.symbol) != entryLoan->designatedFields.front() &&
                      field.type == lang::SemanticType::Int32;
             });
         if (shell != carrier->declaredFields.end()) {
@@ -19273,7 +19273,7 @@ int main() {
       });
   const std::string mirDump = lang::MirPrinter().print(frontend.mir);
   expect(ownedHirFunctions == 2 && ownedMirFunctions == 2 && constructorProof &&
-             mirDump.starts_with("mir-v123 ") &&
+             mirDump.starts_with("mir-v124 ") &&
              mirDump.find("boundary=owned;transport=exact-return") !=
                  std::string::npos &&
              mirDump.find("boundary=owned;transport=exact-field") !=
@@ -19649,7 +19649,7 @@ void testFallibleBorrows() {
         continue;
       for (const auto &loan : constructor.body.loans) {
         if (loan.kind != lang::MirLoanKind::Stored || !loan.escapes ||
-            loan.storedField == 0)
+            loan.storedPath.empty())
           continue;
         for (const auto &block : constructor.body.blocks) {
           for (const auto &instruction : block.instructions) {

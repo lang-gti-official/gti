@@ -2,6 +2,7 @@
 #include "placement.h"
 
 #include "../mir_verification_queries.h"
+#include "../mir_lifetimes.h"
 
 #include <algorithm>
 
@@ -94,11 +95,17 @@ UnstagedConstructorFieldPublicationPlan unstagedConstructorFieldPublication(
     return result;
 
   const auto &initializer = *result.initializer;
+  const auto ownerType = checkedMirCallableOwnerType(program, constructor->owner,
+      constructor->ownerType, constructor->lifetimeContract);
+  const auto view = ownerType ? mirClassLifetimeView(program, *ownerType) : std::nullopt;
+  if (!view || view->instance != owner)
+    return result;
   const auto field =
       std::find_if(owner->declaredFields.begin(), owner->declaredFields.end(),
                    [&](const MirClassFieldInfo &candidate) {
-                     return candidate.symbol == initializer.field &&
-                            candidate.type == initializer.targetType;
+                     const auto actual = view->instantiate(candidate.type);
+                     return candidate.symbol == initializer.field && actual &&
+                            *actual == initializer.targetType;
                    });
   if (initializer.kind != ConstructorInitializerTargetKind::Field ||
       initializer.field == 0 || initializer.storesReference ||
@@ -146,7 +153,7 @@ storedFieldPublication(const MirProgram &program, const MirBody &body,
                        HirConstructorInstanceId constructorId,
                        const MirLoan &loan) {
   StoredFieldPublicationPlan result;
-  result.requested = loan.kind == MirLoanKind::Stored && loan.storedField != 0;
+  result.requested = loan.kind == MirLoanKind::Stored && !loan.storedPath.empty();
   if (!result.requested)
     return result;
 
@@ -157,30 +164,53 @@ storedFieldPublication(const MirProgram &program, const MirBody &body,
       constructor->owner != owner->id)
     return result;
 
+  const auto ownerType = checkedMirCallableOwnerType(program, constructor->owner,
+      constructor->ownerType, constructor->lifetimeContract);
+  const auto view = ownerType ? mirClassLifetimeView(program, *ownerType) : std::nullopt;
+  if (!view || view->instance != owner)
+    return result;
+  if (loan.storedPath.size() == 1 && loan.storedPath.front().kind == PlaceProjectionKind::Base) {
+    const auto *stage = mir_detail::baseConstructorPublicationStage(body, loan);
+    const auto selected = mir_detail::walkBorrowPath(program, *ownerType,
+        AccessMode::Mutable, loan.storedPath, {}, mir_detail::MirBorrowPathRoot::Value);
+    if (!stage || !selected || !stage->constructorInitializer ||
+        stage->constructorInitializer > constructor->initializers.size())
+      return result;
+    const auto &initializer = constructor->initializers[stage->constructorInitializer - 1];
+    const auto *destination = stage->destination ? body.findPlace(*stage->destination) : nullptr;
+    if (initializer.kind != ConstructorInitializerTargetKind::Base ||
+        !initializer.completeBorrow || !destination || destination->projections != selected->projections ||
+        destination->type != selected->type || initializer.targetType != selected->type)
+      return result;
+    result.initializer = &initializer;
+    result.kind = StoredFieldPublicationKind::ProvenanceOnly;
+    result.exact = true;
+    return result;
+  }
   const auto field =
       std::find_if(owner->declaredFields.begin(), owner->declaredFields.end(),
                    [&](const MirClassFieldInfo &candidate) {
-                     return candidate.symbol == loan.storedField;
+                     return BorrowPath{fieldProjection(candidate.symbol)} == loan.storedPath;
                    });
   const auto initializer = std::find_if(
       constructor->initializers.begin(), constructor->initializers.end(),
       [&](const MirConstructorInitializer &candidate) {
         return candidate.kind == ConstructorInitializerTargetKind::Field &&
-               candidate.field == loan.storedField;
+               BorrowPath{fieldProjection(candidate.field)} == loan.storedPath;
       });
   if (field == owner->declaredFields.end() ||
       initializer == constructor->initializers.end() ||
       std::count_if(owner->declaredFields.begin(), owner->declaredFields.end(),
                     [&](const MirClassFieldInfo &candidate) {
-                      return candidate.symbol == loan.storedField;
+                      return BorrowPath{fieldProjection(candidate.symbol)} == loan.storedPath;
                     }) != 1 ||
       std::count_if(
           constructor->initializers.begin(), constructor->initializers.end(),
           [&](const MirConstructorInitializer &candidate) {
             return candidate.kind == ConstructorInitializerTargetKind::Field &&
-                   candidate.field == loan.storedField;
+                   BorrowPath{fieldProjection(candidate.field)} == loan.storedPath;
           }) != 1 ||
-      field->type != initializer->targetType)
+      view->instantiate(field->type) != std::optional<SemanticType>(initializer->targetType))
     return result;
 
   const bool reference = field->type.kind == SemanticType::Reference;

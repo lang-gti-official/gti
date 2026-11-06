@@ -1386,7 +1386,7 @@ int main() {
   MirProgram wrongField = mir;
   auto &wrongFieldConstructor = constructorAt(wrongField, carrier.constructor);
   auto &wrongFieldLoan = loanAt(wrongFieldConstructor.body, carrier.loan);
-  ++wrongFieldLoan.storedField;
+  ++wrongFieldLoan.storedPath.front().field;
   const auto missing = native_llvm::storedFieldPublication(
       wrongField, wrongFieldConstructor.body, carrier.constructor,
       wrongFieldLoan);
@@ -1400,7 +1400,7 @@ int main() {
   const auto field = std::find_if(
       wrongTypeOwner.declaredFields.begin(),
       wrongTypeOwner.declaredFields.end(), [&](const auto &candidate) {
-        return candidate.symbol == wrongTypeLoan.storedField;
+        return lang::BorrowPath{lang::fieldProjection(candidate.symbol)} == wrongTypeLoan.storedPath;
       });
   expect(field != wrongTypeOwner.declaredFields.end(),
          "stored publication mutation retains its declared field");

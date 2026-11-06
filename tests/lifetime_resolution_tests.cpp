@@ -12,6 +12,59 @@ namespace lang {
 // Exercise the real staging key and lookup without exposing cache internals as
 // a product API or relying on a timing-sensitive number of source evaluations.
 struct SemanticLifetimeTestAccess {
+  static bool packProjectionChecks() {
+    SemanticVisitor analyzer;
+    auto &impl = *analyzer.impl;
+    const auto reference = SemanticType::referenceTo(SemanticType::Int32,
+        AccessMode::ReadOnly, Lifetime::staticLifetime());
+    const auto pack = SemanticType::concreteTypePack(1, {reference, reference});
+    SemanticBorrowDependencySet source{.dependencies = {
+        {.place = {.root = 101}, .designatedFields = {constantIndexProjection(0)},
+         .access = AccessMode::ReadOnly, .protectsStorage = true, .parent = 11},
+        {.place = {.root = 202}, .designatedFields = {constantIndexProjection(1)},
+         .access = AccessMode::ReadOnly, .protectsStorage = true, .parent = 22}}};
+    const BorrowPath second{constantIndexProjection(1)};
+    const auto projected = impl.projectBorrowDependencySet(source, pack, second,
+                                                            SemanticType::Int32);
+    if (!projected || projected->dependencies.size() != 1 ||
+        projected->dependencies.front().place.root != 202 ||
+        projected->dependencies.front().parent != 22 ||
+        !projected->dependencies.front().designatedFields.empty())
+      return false;
+    if (impl.projectBorrowDependencySet(source, pack,
+            BorrowPath{constantIndexProjection(2)}, SemanticType::Int32) ||
+        impl.projectBorrowDependencySet(source, pack, second, SemanticType::Bool))
+      return false;
+    const auto nested = SemanticType::concreteTypePack(2, {SemanticType::Int32, pack});
+    auto nestedSource = source;
+    for (auto &dependency : nestedSource.dependencies)
+      dependency.designatedFields.insert(dependency.designatedFields.begin(),
+                                          constantIndexProjection(1));
+    const auto nestedProjection = impl.projectBorrowDependencySet(nestedSource, nested,
+        BorrowPath{constantIndexProjection(1), constantIndexProjection(1)},
+        SemanticType::Int32);
+    if (!nestedProjection || *nestedProjection != *projected)
+      return false;
+    auto ancestor = source;
+    ancestor.dependencies.front().designatedFields.clear();
+    if (impl.projectBorrowDependencySet(ancestor, pack, second,
+                                        SemanticType::Int32))
+      return false;
+    impl.scopes.emplace_back();
+    auto &entry = impl.scopes.back()["values"];
+    const auto invocation = [&] {
+      SemanticVisitor::Impl::PackBorrowInvocationScope scope(impl);
+      entry.entryBorrowInvocation = impl.loanFlow.activePackBorrowInvocation;
+      impl.loanFlow.packBorrowInvocationsWithEntryUses.push_back(entry.entryBorrowInvocation);
+      return entry.entryBorrowInvocation; // Early exit must retire its transient permission.
+    }();
+    if (!invocation.sequence || entry.entryBorrowInvocation.sequence ||
+        impl.loanFlow.activePackBorrowInvocation.sequence)
+      return false;
+    SemanticVisitor::Impl::PackBorrowInvocationScope replay(impl);
+    return impl.loanFlow.activePackBorrowInvocation != invocation;
+  }
+
   struct CacheChecks {
     bool repeatedHit = false;
     bool distinctLifetimeMiss = false;
@@ -1672,9 +1725,152 @@ int main() {
            "fixed closure environments reject incompatible input, local escape and static storage promises");
   }
 }
+void testForwardedPackBorrowPaths() {
+  expect(lang::SemanticLifetimeTestAccess::packProjectionChecks(),
+         "typed pack projection preserves repeated-element identity and rejects wrong or ancestor paths");
+  const std::string declarations = R"(
+struct View<lifetime owner> {
+  int&<owner> value;
+  View(int&<owner> source) : value(source) {}
+};
+int&<b> select<lifetime a, lifetime b>(int&<a> ignored, int&<b> selected) {
+  return selected;
+}
+int&<b> select<lifetime a, lifetime b, lifetime shell>(int&<a> ignored, View<b>&<shell> selected) {
+  return selected.value;
+}
+class Relay<R(Args...)> {
+public:
+  Relay() = default;
+  R invoke(Args... values) { return select(values...); }
+};
+using ScalarChoice = for<lifetime a, lifetime b> int&<b>(int&<a>, int&<b>);
+using CarrierChoice = for<lifetime a, lifetime b, lifetime shell> int&<b>(int&<a>, View<b>&<shell>);
+int&<b> scalarRelay<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
+  Relay<ScalarChoice> relay{};
+  return relay.invoke(first, second);
+}
+int&<b> carrierRelay<lifetime a, lifetime b, lifetime shell>(int&<a> first, View<b>&<shell> second) {
+  Relay<CarrierChoice> relay{};
+  return relay.invoke(first, second);
+}
+)";
+  const auto selected = analyze(declarations + R"(
+int main() {
+  int first = 3; int second = 8; View view{second};
+  return scalarRelay(first, second) + carrierRelay(first, view) - 16;
+}
+)");
+  expectValid(selected, "forwarded packs distinguish scalar reference entries from reference-to-carrier external owners");
+  const auto wrongOwner = analyze(declarations + R"(
+int&<a> invalid<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
+  return scalarRelay(first, second);
+}
+int main() { return 0; }
+)");
+  expect(!wrongOwner.semanticValid,
+         "equal-typed pack elements cannot substitute the wrong lifetime supplier");
+  const auto shellEscape = analyze(declarations + R"(
+int&<shell> invalid<lifetime a, lifetime b, lifetime shell>(int&<a> first, View<b>&<shell> second) {
+  return carrierRelay(first, second);
+}
+int main() { return 0; }
+)");
+  expect(!shellEscape.semanticValid,
+         "a reference-to-carrier pack element never replaces its external owner with the carrier shell");
+  const auto conditional = analyze(R"(
+enum Reading<lifetime owner> { present(int&<owner> value), missing(int code) };
+Reading<a> keep<lifetime a>(Reading<a> value) { return value; }
+class Relay<R(Args...)> {
+public:
+  Relay() = default;
+  R invoke(Args... values) { return keep(values...); }
+};
+using ReadingCall = for<lifetime a> Reading<a>(Reading<a>);
+int main() {
+  Relay<ReadingCall> relay{};
+  int value = 7;
+  Reading first = relay.invoke(Reading::present(value));
+  Reading<static> empty = relay.invoke(Reading<static>::missing(0));
+  switch (first) { case Reading::present(auto& selected): { return selected - 7; } case Reading::missing(auto code): { return 1; } }
+}
+)");
+  expectValid(conditional, "forwarded carrier packs preserve complete guarded and empty alternatives");
+  const auto consumed = analyze(R"(
+struct Owned {
+  Owned() = default;
+  Owned(Owned& other) = delete;
+  Owned(Owned&& other) = default;
+  ~Owned() {}
+};
+void take(Owned value) {}
+void twice<Args...>(Args... values) { take(values...); take(values...); }
+int main() { twice(Owned()); return 0; }
+)");
+  expect(!consumed.semanticValid &&
+             std::any_of(consumed.diagnostics.begin(), consumed.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.message.find("already been moved") != std::string::npos;
+                         }),
+         "entry projection cannot revive a pack consumed by an earlier forwarding call");
+}
+
+void testOwnedPointeeLifetimeAuthority() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto prelude = std::filesystem::weakly_canonical(root / "prelude.gti");
+  const auto capabilities = std::filesystem::weakly_canonical(root / "std/detail/memory_capabilities.gti");
+  const auto entry = std::filesystem::weakly_canonical(root / "__trusted_tests__/lifetime-owned-pointee.gti");
+  const std::string capabilitySource = R"(
+export module detail.memory_capabilities;
+namespace gti_internal {
+export class unique_owner<T> {};
+export unique_owner<T> allocate_unique_owner<T, Args...>(Args... values);
+export T& unique_owner_borrow<T>(unique_owner<T>& value);
+export mut T& unique_owner_borrow_mut<T>(mut unique_owner<T>& value);
+}
+)";
+  const std::string declarations = R"(
+class Vessel<T> {
+  mut gti_internal::unique_owner<T> storage;
+public:
+  Vessel() : storage(gti_internal::allocate_unique_owner<T>()) {}
+  T& read() { return gti_internal::unique_owner_borrow(this.storage); }
+  mut T& edit() mut { return gti_internal::unique_owner_borrow_mut(this.storage); }
+};
+)";
+  const auto check = [&](std::string source) {
+    source.insert(0, "import \"../std/detail/memory_capabilities.gti\";\n");
+    return lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+        entry, source, {prelude, entry},
+        {{prelude.string(), ""}, {capabilities.string(), capabilitySource},
+         {entry.string(), source}}, {root});
+  };
+  const auto valid = check(declarations + R"(
+int main() { mut Vessel<int> owner{}; mut int& element = owner.edit(); element = 7; return owner.read() - 7; }
+)");
+  expectValid(valid, "an unrelated generic owning accessor keeps checked physical pointee authority despite opaque T");
+  const auto escaping = check(declarations + R"(
+int& invalid() { Vessel<int> local{}; return local.read(); }
+int main() { return 0; }
+)");
+  expect(!escaping.semanticValid,
+         "a checked owning projection cannot make a local owner outlive its returned borrow");
+  const auto wrongAccess = check(R"(
+class Vessel<T> {
+  gti_internal::unique_owner<T> storage;
+public:
+  mut T& invalid() { return gti_internal::unique_owner_borrow(this.storage); }
+};
+int main() { return 0; }
+)");
+  expect(!wrongAccess.semanticValid,
+         "physical owned-pointee authority cannot strengthen the trusted borrow operation's access");
+}
 } // namespace
 
 int main() {
+  testForwardedPackBorrowPaths();
+  testOwnedPointeeLifetimeAuthority();
   testNominalArguments();
   testTransparentAliases();
   testHigherRankedAlias();

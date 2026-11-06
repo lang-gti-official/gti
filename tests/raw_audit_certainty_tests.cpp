@@ -163,6 +163,42 @@ int inspect(bool choice, const Address* other) {
 int main() { return 0; }
 )",
         false);
+  const std::string inheritedAddress = R"gti(
+interface Marker { int mark(); };
+struct Address<T> {
+  mut const T* pointer = nullptr;
+public:
+  Address() = default;
+};
+struct Derived : public Marker, public Address<int> {
+public:
+  Derived() = default;
+  int mark() override { return 0; }
+};
+const int* selected(Derived& address) { return address.pointer; }
+void install(mut Derived& address, const int* pointer) {
+  address.pointer = pointer;
+}
+)gti";
+  checkClean("inherited raw field retains substituted base type and exact path",
+             inheritedAddress + R"gti(
+int inspect() {
+  int live = 7;
+  mut Derived address{};
+  address.pointer = &live;
+  unsafe { return *selected(address); }
+}
+int main() { return 0; }
+)gti");
+  check("inherited raw field records expired owner through call write",
+        inheritedAddress + R"gti(
+int inspect() {
+  mut Derived address{};
+  { int dead = 7; install(address, &dead); }
+  unsafe { return *selected(address); }
+}
+int main() { return 0; }
+)gti", true);
   if (failures)
     return 1;
   std::cout << "Raw audit certainty tests passed\n";

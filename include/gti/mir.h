@@ -368,7 +368,7 @@ enum class MirLoanKind {
 struct MirLoanDependency {
   MirPlaceId source = 0;
   MirLoanId parent = 0;
-  std::vector<SymbolId> designatedFields;
+  BorrowPath designatedFields;
   AccessMode access = AccessMode::ReadOnly;
   std::vector<BorrowDependencyCondition> conditions;
 
@@ -398,7 +398,7 @@ struct MirReferenceSelection {
   // Independently matched to the consumed carrier's complete dependency
   // group. Ending that shell does not end transferred external authority.
   MirLoanId transferredFrom = 0;
-  std::vector<SymbolId> fields;
+  BorrowPath fields;
   std::vector<BorrowDependencyCondition> conditions;
   SemanticType reference = SemanticType::Unknown;
 
@@ -424,12 +424,14 @@ struct MirLoan {
   AccessMode access = AccessMode::ReadOnly;
   HirValueId producedBy = 0;
   std::vector<HirBindingId> carriers;
-  SymbolId storedField = 0;
-  // Exact nominal field path ending at the reference this loan designates.
-  // Unlike storedField (a constructor storage target), this is provenance
+  // Exact direct Field or Base destination of constructor publication.
+  // Empty means this is not an initializer publication loan.
+  BorrowPath storedPath;
+  // Exact structural path ending at the reference this loan designates.
+  // Unlike storedPath (a constructor storage target), this is provenance
   // metadata for a by-value carrier dependency and has no backend
   // representation.
-  std::vector<SymbolId> designatedFields;
+  BorrowPath designatedFields;
   // Exact active-alternative requirements for the primary dependency. These
   // are structural provenance, not runtime reads of inactive payloads.
   std::vector<BorrowDependencyCondition> conditions;
@@ -464,9 +466,9 @@ struct MirLoan {
     return result;
   }
 
-  [[nodiscard]] std::vector<std::vector<SymbolId>>
+  [[nodiscard]] std::vector<BorrowPath>
   additionalDesignatedFields() const {
-    std::vector<std::vector<SymbolId>> result;
+    std::vector<BorrowPath> result;
     for (const auto &dependency : additionalDependencies)
       if (!dependency.designatedFields.empty())
         result.push_back(dependency.designatedFields);
@@ -1623,6 +1625,7 @@ struct MirConstructorInitializer {
   std::vector<HirValueId> arguments;
   std::vector<Lifetime> lifetimeArguments;
   MirLifetimeApplication lifetimeApplication;
+  std::optional<MirBorrowDependencySet> completeBorrow;
   std::size_t explicitArgumentCount = 0;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;

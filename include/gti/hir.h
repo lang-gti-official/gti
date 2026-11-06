@@ -174,7 +174,7 @@ struct HirReferenceSelection {
   HirValueId value = 0;
   HirValueId carrier = 0;
   SemanticLoanId transferredFrom = 0;
-  std::vector<SymbolId> fields;
+  BorrowPath fields;
   std::vector<BorrowDependencyCondition> conditions;
   SemanticType reference = SemanticType::Unknown;
 };
@@ -186,7 +186,7 @@ struct HirLoan {
   SemanticLoanId storedDependency = 0;
   SemanticLoanPlace place;
   AccessMode access = AccessMode::ReadOnly;
-  std::vector<SymbolId> designatedFields;
+  BorrowPath designatedFields;
   std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additionalDependencies;
   std::optional<HirReferenceSelection> referenceSelection;
@@ -887,6 +887,7 @@ struct HirConstructorInitializer {
   std::vector<HirValueId> arguments;
   std::vector<Lifetime> lifetimeArguments;
   HirLifetimeApplication lifetimeApplication;
+  std::optional<SemanticBorrowDependencySet> completeBorrow;
   std::size_t explicitArgumentCount = 0;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;

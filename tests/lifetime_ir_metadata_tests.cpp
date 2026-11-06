@@ -634,7 +634,7 @@ int main() {
   const MirPrinter printer;
   const auto original = printer.print(body);
   expect(
-      original.starts_with("mir-body-v95\n"),
+      original.starts_with("mir-body-v96\n"),
       "lifetime-bearing structural metadata requires its own format version");
   auto changed = body;
   changed.blocks[0].instructions[0].lifetimeApplication.callableSignature = fixedProof;

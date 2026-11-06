@@ -689,22 +689,21 @@ auto SemanticVisitor::Impl::lifetimeOfOriginPlace(
         region = currentLambdaReturn->lifetimeContract.receiver;
         break;
       }
+  bool inputType = false;
   if (!place.receiver)
     for (const auto &[symbol, declared] : loanFlow.lifetimeInputTypes)
       if (symbol == place.root) {
         type = declared;
+        inputType = true;
         break;
       }
-  if (!place.receiver)
+  if (!place.receiver && !inputType)
     if (const auto *function = currentFunctionInfo();
         function && function->bodyDeclaration())
-      for (std::size_t index = 0;
-           index < function->parameterTypes.size() &&
-           index < function->bodyDeclaration()->parameters().size(); ++index)
-        if (const auto *binding = semanticModel.findBinding(
-                function->bodyDeclaration()->parameters()[index]);
+      for (const auto &parameter : function->bodyDeclaration()->parameters())
+        if (const auto *binding = semanticModel.findBinding(parameter);
             binding && binding->symbol == place.root) {
-          type = function->parameterTypes[index];
+          type = binding->type;
           break;
         }
   const auto reference = [&] {
@@ -715,25 +714,24 @@ auto SemanticVisitor::Impl::lifetimeOfOriginPlace(
   };
   reference();
   for (const auto &projection : place.projections) {
-    if (projection.kind == PlaceProjectionKind::Field) {
-      const auto *field = semanticModel.database().findSymbol(projection.field);
-      if (!field)
+    if (projection.kind == PlaceProjectionKind::Field ||
+        projection.kind == PlaceProjectionKind::Base ||
+        projection.kind == PlaceProjectionKind::ConstantIndex) {
+      const auto selected = borrowedPathElement(type, projection);
+      if (!selected)
         return {};
-      type = substituteType(field->type, classSubstitution(type));
+      type = *selected;
       reference();
-    } else if ((projection.kind == PlaceProjectionKind::ConstantIndex ||
-                projection.kind == PlaceProjectionKind::DynamicIndex) &&
+    } else if (projection.kind == PlaceProjectionKind::DynamicIndex &&
                type.kind == SemanticType::Array && type.arguments.size() == 1) {
       type = SemanticType(type.arguments.front());
-      reference();
-    } else if (projection.kind == PlaceProjectionKind::ConstantIndex &&
-               type.kind == SemanticType::TypePack && type.concretePack &&
-               projection.index < type.arguments.size()) {
-      type = SemanticType(type.arguments[projection.index]);
       reference();
     } else if (projection.kind == PlaceProjectionKind::Dereference &&
                type.kind == SemanticType::RawPointer) {
       // A raw pointer spelling supplies no checked provenance or region.
+      return {};
+    } else if (projection.kind != PlaceProjectionKind::Dereference ||
+               type.kind != SemanticType::Class) {
       return {};
     }
   }

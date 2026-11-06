@@ -382,7 +382,7 @@ void checkGuardMutations(const MirProgram &program) {
     switch (mutation) {
     case 0: guard.enumeration.lifetimeArguments = {Lifetime::staticLifetime()}; break;
     case 1: guard.variant = 99; break;
-    case 2: guard.subobject.push_back(9999); break;
+    case 2: guard.subobject.push_back(fieldProjection(9999)); break;
     case 3: fact.possibleAlternatives.clear(); break;
     case 4: fact.dependencies.front().parent = body->loans.size() + 1; break;
     }
@@ -395,7 +395,7 @@ void checkConstructorFieldDomains(const MirProgram &program) {
   for (const auto &constructor : program.constructorInstances()) {
     if (!constructor.completeBorrow)
       continue;
-    std::vector<SymbolId> fields;
+    BorrowPath fields;
     for (const auto &dependency : constructor.completeBorrow->dependencies)
       if (!dependency.resultFields.empty() &&
           std::find(fields.begin(), fields.end(), dependency.resultFields.front()) == fields.end())
@@ -419,7 +419,7 @@ void checkConstructorFieldDomains(const MirProgram &program) {
             const auto *target = instruction.destination ? changed->body.findPlace(*instruction.destination) : nullptr;
             if (instruction.kind == MirInstructionKind::Initialize && target &&
                 target->root == MirPlaceRootKind::This && target->projections.size() == 1 &&
-                target->projections.front().field == fields.back()) {
+                fieldProjection(target->projections.front().field) == fields.back()) {
               instruction.tombstone = true;
               mutated = true;
             }
@@ -431,9 +431,9 @@ void checkConstructorFieldDomains(const MirProgram &program) {
         }
       } else {
         for (auto &loan : changed->body.loans)
-          if (loan.escapes && loan.storedField == fields.back()) {
+          if (loan.escapes && loan.storedPath == BorrowPath{fields.back()}) {
             if (mutation == 1) {
-              loan.storedField = fields.front();
+              loan.storedPath = BorrowPath{fields.front()};
               mutated = true;
             } else if (!loan.conditions.empty()) {
               loan.conditions.front().enumeration.lifetimeArguments = {Lifetime::staticLifetime()};

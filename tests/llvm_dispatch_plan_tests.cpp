@@ -256,10 +256,10 @@ void testPlans(const FrontendResult &frontend) {
 
   auto lowered = gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
   const auto text = LoweredProgramPrinter().print(lowered);
-  expect(text.starts_with("lowered-program-v37\n") &&
+  expect(text.starts_with("lowered-program-v38\n") &&
              text.find("virtual-dispatch=[{root=") != std::string::npos &&
              text == LoweredProgramPrinter().print(lowered) &&
-             MirPrinter().print(frontend.mir).starts_with("mir-v123 "),
+             MirPrinter().print(frontend.mir).starts_with("mir-v124 "),
          "dispatch selection and paths serialize deterministically");
   auto &sealed = const_cast<LoweredClassInstance &>(*std::find_if(
       lowered.classInstances().begin(), lowered.classInstances().end(),
@@ -587,15 +587,13 @@ void testExistingBaseBoundaries() {
              "source argument");
     }
   }
-  const auto rejected = Frontend().analyze(
+  const auto inherited = Frontend().analyze(
       root / "tests/fixtures/llvm_dispatch_borrowed_base.gti");
-  expect(!rejected.canGenerateCode() &&
-             std::any_of(rejected.diagnostics.begin(),
-                         rejected.diagnostics.end(),
-                         [](const auto &diagnostic) {
-                           return diagnostic.code == "GTI-S2045";
-                         }),
-         "inherited borrowed state keeps its existing source rejection");
+  expect(inherited.canGenerateCode(),
+         "inherited borrowed state retains its checked base publication and dispatch");
+  if (!inherited.canGenerateCode())
+    for (const auto &diagnostic : inherited.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
 }
 } // namespace
 

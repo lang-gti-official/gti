@@ -1,6 +1,7 @@
 #include "representation.h"
 #include "places.h"
 #include "placement.h"
+#include "../mir_verification_queries.h"
 
 #include <algorithm>
 
@@ -409,12 +410,16 @@ llvm::Value *Places::address(MirPlaceId id) {
       break;
     }
     case MirProjectionKind::Base: {
-      const auto &owner = session.layouts().instance(type);
-      const auto index =
-          session.layouts().baseIndex(type, projection.selection);
-      address = ir.CreateStructGEP(session.layouts().get(type).storage, address,
-                                   index);
-      type = owner.bases.at(index).type;
+      if (type.kind != SemanticType::Class || !projection.constantIndex)
+        throw std::logic_error("LLVM base projection lost its exact typed ordinal");
+      const BorrowPath path{baseProjection(type.classId, *projection.constantIndex)};
+      const auto view = mir_detail::walkBorrowPath(session.program().mir(), type,
+          AccessMode::Mutable, path, {}, mir_detail::MirBorrowPathRoot::Value);
+      if (!view || view->projections != std::vector<MirPlaceProjection>{projection})
+        throw std::logic_error("LLVM base projection lost its exact selected subobject");
+      const auto index = session.layouts().baseIndex(type, projection.selection);
+      address = ir.CreateStructGEP(session.layouts().get(type).storage, address, index);
+      type = view->type;
       break;
     }
     case MirProjectionKind::Dereference:

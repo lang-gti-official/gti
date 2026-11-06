@@ -90,7 +90,7 @@ struct SemanticLifetimeBody {
 // propositions is a conjunction along nested active alternatives; it does not
 // refer to a runtime load of an inactive payload or an arbitrary Boolean fact.
 struct BorrowDependencyCondition {
-  std::vector<SymbolId> subobject;
+  BorrowPath subobject;
   SemanticType enumeration = SemanticType::Unknown;
   std::size_t variant = 0;
 
@@ -110,7 +110,7 @@ struct BorrowAlternativePath {
 // one-owner reference path; these records contain the additional dependencies.
 struct SemanticLoanDependency {
   SemanticLoanPlace place;
-  std::vector<SymbolId> designatedFields;
+  BorrowPath designatedFields;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
   // The exact capability reborrowed to create this dependency, if any.
@@ -143,7 +143,7 @@ struct SemanticReferenceSelection {
   // Exact consumed dependency group whose authority is handed off by the
   // closed arm-entry prefix. This is provenance, not a live reborrow parent.
   SemanticLoanId transferredFrom = 0;
-  std::vector<SymbolId> fields;
+  BorrowPath fields;
   std::vector<BorrowDependencyCondition> conditions;
   SemanticType reference = SemanticType::Unknown;
 };
@@ -176,7 +176,7 @@ struct SemanticLoanInfo {
   bool lifecycleBound = false;
   // For a StoredValue parameter loan, this exact nominal field path ends at
   // the reference designating its external referent. Empty for other loans.
-  std::vector<SymbolId> designatedFields;
+  BorrowPath designatedFields;
   // The primary dependency has the same typed alternative qualification as
   // additionalDependencies. An empty list denotes an unconditional path.
   std::vector<BorrowDependencyCondition> conditions;
@@ -362,7 +362,7 @@ struct ResolvedThreadTaskEntry {
 // origin loans and prove joining before any normal/failure continuation. A
 // successful query never changes the type's ordinary transfer/share traits.
 struct ScopedThreadTaskDependency {
-  std::vector<SymbolId> fields;
+  BorrowPath fields;
   SemanticType reference = SemanticType::Unknown;
 
   friend bool operator==(const ScopedThreadTaskDependency &,
@@ -877,12 +877,12 @@ enum class BorrowOriginKind {
 // The semantic declaration owns this contract; HIR/MIR preserve it verbatim
 // and verification checks it against executable return and call publications.
 struct BorrowedFieldOrigin {
-  std::vector<SymbolId> resultFields;
+  BorrowPath resultFields;
   BorrowOriginKind origin = BorrowOriginKind::None;
   std::size_t parameter = 0;
   // A Global origin's static storage root; sourceFields select within it.
   SymbolId globalRoot = 0;
-  std::vector<SymbolId> sourceFields;
+  BorrowPath sourceFields;
   AccessMode access = AccessMode::ReadOnly;
   std::vector<BorrowDependencyCondition> resultConditions;
   std::vector<BorrowDependencyCondition> sourceConditions;
@@ -926,7 +926,7 @@ struct RestrictedBorrowResultDomain {
 // restoration contract certifies these fields belong to the original object;
 // every dependency remains bounded by the input opaque reference witness.
 struct RestoredBorrowField {
-  std::vector<SymbolId> fields;
+  BorrowPath fields;
   SemanticType referenceType = SemanticType::Unknown;
 
   friend bool operator==(const RestoredBorrowField &,
@@ -949,7 +949,7 @@ struct BorrowOriginPlace {
 // its checked borrow operation. This describes an accessor, not permission to
 // consume an arbitrary reference. MIR independently verifies the source body.
 struct OwnedPointeeProjection {
-  std::vector<SymbolId> fields;
+  BorrowPath fields;
   IntrinsicKind borrowIntrinsic = IntrinsicKind::None;
 
   friend bool operator==(const OwnedPointeeProjection &,
@@ -1556,6 +1556,9 @@ struct ResolvedConstructorInitializerInfo {
   std::vector<SemanticType> parameterTypes;
   std::vector<Lifetime> lifetimeArguments;
   SemanticLifetimeApplication lifetimeApplication;
+  // Complete borrowed-state producer evidence captured at initializer
+  // evaluation, before later argument or body flow can change its inputs.
+  std::optional<SemanticBorrowDependencySet> completeBorrow;
   std::vector<const Expr *> defaultArguments;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;

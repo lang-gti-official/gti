@@ -11,6 +11,21 @@
 
 namespace lang {
 
+inline constexpr std::size_t borrowInventoryWorkLimit = 4096;
+inline constexpr std::size_t borrowInventoryDepthLimit = 256;
+
+// One budget belongs to the entire query, never each array or recursive arm.
+// Exhaustion is unknown evidence and must not become a truncated inventory.
+struct BorrowInventoryBudget {
+  std::size_t remaining = borrowInventoryWorkLimit;
+  [[nodiscard]] bool consume(std::size_t amount = 1) {
+    if (amount > remaining)
+      return false;
+    remaining -= amount;
+    return true;
+  }
+};
+
 // The inventory is an authoritative enumeration of typed enum subobjects,
 // including alternatives with no borrowed payload. A selected subset may
 // narrow each domain, but cannot omit an independently stored sibling or an
@@ -74,7 +89,8 @@ public:
       for (std::size_t index = 0; index < left.conditions.size(); ++index) {
         const auto &from = left.conditions[index];
         const auto &to = right.conditions[index];
-        if (from.enumeration.kind != SemanticType::Enum ||
+        if (!isWellFormedBorrowPath(from.subobject) || !isWellFormedBorrowPath(to.subobject) ||
+            from.enumeration.kind != SemanticType::Enum ||
             to.enumeration.kind != SemanticType::Enum ||
             from.subobject != to.subobject || from.variant != to.variant ||
             !sameLifetimeConversionShape(from.enumeration, to.enumeration))

@@ -1,6 +1,8 @@
 #include "../src/compiler/mir_verification_queries.h"
 #include "gti/lifetime_types.h"
 #include "gti/mir_printer.h"
+#include "gti/mir_verifier.h"
+#include "gti/borrow_conditions.h"
 
 #include <array>
 #include <cstdlib>
@@ -40,7 +42,7 @@ struct Fixture {
                   {.kind = PlaceProjectionKind::Field, .field = 111},
                   {.kind = PlaceProjectionKind::ConstantIndex, .index = 1},
                   {.kind = PlaceProjectionKind::Field, .field = 311}};
-  std::vector<MirBorrowPathGuard> guards{
+  std::vector<BorrowDependencyCondition> guards{
       {.subobject = {path[0], path[1], path[2]},
        .enumeration = enumeration(actualRegion), .variant = 1}};
   Fixture() {
@@ -244,6 +246,34 @@ void packAndCapturePaths() {
   expect(!walkBorrowPath(program, actual, AccessMode::Mutable, field, {}, MirBorrowPathRoot::Value),
          "compatible closure types cannot hide an ambiguous capture inventory");
 }
+void derivedGuardsAndInventoryBudget() {
+  Fixture fixture;
+  const auto guards = deriveBorrowPathConditions(fixture.program, fixture.actual,
+      AccessMode::Mutable, fixture.path, MirBorrowPathRoot::Value);
+  expect(guards && *guards == fixture.guards,
+         "structural guard derivation retains exact Base/index prefixes and actual enum regions");
+  const auto reference = SemanticType::referenceTo(SemanticType::Int32,
+      AccessMode::ReadOnly, fixture.actualRegion);
+  const auto small = SemanticType::arrayOf(reference, std::uint64_t{2});
+  const auto first = walkBorrowPath(fixture.program, small, AccessMode::Mutable,
+      BorrowPath{constantIndexProjection(0)}, {}, MirBorrowPathRoot::Value);
+  const auto second = walkBorrowPath(fixture.program, small, AccessMode::Mutable,
+      BorrowPath{constantIndexProjection(1)}, {}, MirBorrowPathRoot::Value);
+  expect(first && second && first->type == second->type && first->projections != second->projections,
+         "equal array reference types retain distinct exact structural slots");
+  BorrowInventoryBudget budget;
+  expect(budget.consume(borrowInventoryWorkLimit) && !budget.consume(),
+         "an exhausted shared inventory budget never supplies a truncated extra fact");
+  MirBody body;
+  body.kind = MirBodyKind::Function;
+  body.values.push_back({.id = 1, .borrowDependencies = MirBorrowDependencySet{
+      .possibleAlternatives = {{{{.subobject = {baseProjection(13, 1)},
+                                 .enumeration = enumeration(fixture.actualRegion), .variant = 1}}}}}});
+  const auto result = verifyMirBody(body);
+  expect(!result.valid() && !result.errors.empty() &&
+             result.errors.front().message.find("nominal verification context") != std::string::npos,
+         "context-free verification rejects metadata-only Base guards before they can imply authority");
+}
 void serializedOwnerIdentity() {
   MirBody body;
   body.places.push_back({.id = 1, .root = MirPlaceRootKind::Symbol, .symbol = 1,
@@ -260,5 +290,6 @@ int main() {
   malformedPaths();
   reverseForgeryControls();
   packAndCapturePaths();
+  derivedGuardsAndInventoryBudget();
   serializedOwnerIdentity();
 }

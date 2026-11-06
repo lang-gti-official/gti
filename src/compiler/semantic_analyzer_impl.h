@@ -1187,6 +1187,23 @@ private:
     bool active = true;
   };
 
+  struct PackBorrowInvocationId {
+    const std::size_t *session = nullptr;
+    std::size_t sequence = 0;
+    friend bool operator==(const PackBorrowInvocationId &,
+                           const PackBorrowInvocationId &) = default;
+  };
+  class PackBorrowInvocationScope {
+    Impl &owner;
+    PackBorrowInvocationId invocation;
+    PackBorrowInvocationId previous;
+  public:
+    explicit PackBorrowInvocationScope(Impl &owner);
+    ~PackBorrowInvocationScope();
+    PackBorrowInvocationScope(const PackBorrowInvocationScope &) = delete;
+    PackBorrowInvocationScope &operator=(const PackBorrowInvocationScope &) = delete;
+  };
+
   struct RetainedLoanSource {
     SemanticLoanId loan = 0;
     const Variable *carrier = nullptr;
@@ -1355,6 +1372,8 @@ private:
   };
   struct LoanFlowState {
     bool finalized = false;
+    PackBorrowInvocationId activePackBorrowInvocation;
+    std::vector<PackBorrowInvocationId> packBorrowInvocationsWithEntryUses;
     const BlockStmt *lifetimeBlock = nullptr;
     const Expr *lifetimeExpression = nullptr;
     std::vector<Lifetime> lifetimeVariables;
@@ -1536,6 +1555,15 @@ private:
     std::vector<SemanticCatalog> idleCatalogs;
   };
 
+  struct EntryBorrowElement {
+    BorrowPath bindingPrefix;
+    SemanticType type = SemanticType::Unknown;
+    // The element's physical reference and its referent's external storage
+    // are different authorities, even when both originate at this binding.
+    SemanticLoanId reference = 0;
+    std::optional<SemanticBorrowDependencySet> stored;
+  };
+
   struct Symbol {
     SemanticType type = SemanticType::Unknown;
     SemanticRecoveryIdentity recoveryCause;
@@ -1564,6 +1592,14 @@ private:
     // Conditional dependency facts follow value flow. Existing valueState and
     // loan flow remain the authority for availability and liveness.
     std::optional<SemanticBorrowDependencySet> completeBorrowSet;
+    // Immutable concrete pack parameters retain ordinary per-element entry
+    // facts. This does not assert a complete value fact for the whole pack.
+    std::vector<EntryBorrowElement> entryBorrowElements;
+    // A successful expansion may consume its binding before selected-call
+    // result publication. Only this exact expression can use that entry
+    // evidence; a subsequent unavailable expansion clears the token.
+    const PackExpansion *entryBorrowExpansion = nullptr;
+    PackBorrowInvocationId entryBorrowInvocation;
     bool lambdaCapture = false;
     SemanticBindingKind bindingKind = SemanticBindingKind::None;
     std::string qualifiedName;
@@ -2455,6 +2491,15 @@ private:
   // Normalize one already checked return expression before end-of-body
   // summary publication. Failure is unknown/invalid, never an empty proof.
   // The caller still enforces ordinary child-loan escape and availability.
+  struct FormalBorrowInput {
+    std::size_t argument = 0;
+    SymbolId binding = 0;
+    BorrowPath bindingPrefix;
+    SemanticType type = SemanticType::Unknown;
+  };
+  [[nodiscard]] std::optional<std::vector<FormalBorrowInput>>
+  formalBorrowInputs(std::span<const Parameter> parameters,
+                    std::span<const SemanticType> signature) const;
   [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
   normalizedCompleteReturnBorrow(const FunctionInfo &function,
                                  const SemanticBorrowDependencySet &complete,
@@ -2466,6 +2511,9 @@ private:
                            const SemanticBorrowDependencySet &complete,
                            std::vector<LifetimeBound> *requiredLifetimes = nullptr,
                            std::span<const LambdaCaptureInfo> captures = {});
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  completeBaseInitializerBorrow(const ConstructorInitializer &syntax,
+                               const ResolvedConstructorInitializerInfo &selected);
   void recordCompleteConstructorBorrow(const ConstructorDecl &constructor);
   std::optional<FunctionBorrowDependencySummary>
   completeConstructorBorrow(const ResolvedConstructionInfo &construction,
@@ -2493,6 +2541,12 @@ private:
       const ResolvedCallInfo &resolved,
       const FunctionBorrowDependencySummary &summary,
       std::span<const ExprPtr *const> arguments,
+      const ExprPtr *receiver = nullptr, bool *noNormalResult = nullptr);
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  instantiateCompleteBorrowArguments(
+      const ResolvedCallInfo &resolved,
+      const FunctionBorrowDependencySummary &summary,
+      std::span<const AnalyzedCallArgument> arguments,
       const ExprPtr *receiver = nullptr, bool *noNormalResult = nullptr);
 
   // MIR currently materializes both runtime `if` successors even when the
@@ -2630,7 +2684,7 @@ private:
   // The field paths that hold dynamic text in a dependent value that
   // `expression` names: a carrier binding, a publishing construction, a
   // grouping or move of one, or a field of one that the paths go through.
-  [[nodiscard]] std::vector<std::vector<SymbolId>>
+  [[nodiscard]] std::vector<BorrowPath>
   textDependentPaths(const Expr &expression) const;
   // Of those, the direct text fields. A payload reached through a field is
   // observed only by a switch on that field.
@@ -2645,7 +2699,7 @@ private:
   dependentTextPayloadLoan(SemanticLoanId subject,
                            const ResolvedPayloadPatternInfo &pattern,
                            const PayloadBindingInfo &payload,
-                           std::span<const SymbolId> prefix = {}) const;
+                           std::span<const PlaceProjection> prefix = {}) const;
   void finalizeTextDependentValues();
 
   // Whether a construction of `type` may publish dynamic text into a direct
@@ -2670,7 +2724,7 @@ private:
   // or its payload-enum field's payload, text or a nested text class with
   // the rest of the path under it. A path through a class field has none.
   [[nodiscard]] std::optional<OwnerlessTextField>
-  contractPrefix(const SemanticType &type, std::span<const SymbolId> path,
+  contractPrefix(const SemanticType &type, std::span<const PlaceProjection> path,
                  OwnerlessTextField formal) const;
 
   // L-OWN-02 phase 1b: field-level ownerless text contracts. A function
@@ -2725,13 +2779,13 @@ private:
   // The paths of a reference relay's dependent origin under the relayed
   // field or payload, without that prefix: what the returned reference to a
   // nested text class designates.
-  [[nodiscard]] std::optional<std::vector<std::vector<SymbolId>>>
+  [[nodiscard]] std::optional<std::vector<BorrowPath>>
   nestedTextRelay(const FieldSourcedTextResult &relay) const;
   // The field paths, relative to a reference-returning callee's borrowed
   // receiver or argument, that its returns designate: each return is a field
   // path of that origin, or a receiver accessor's result. Nullopt when a
   // return designates anything else.
-  [[nodiscard]] std::optional<std::vector<std::vector<SymbolId>>>
+  [[nodiscard]] std::optional<std::vector<BorrowPath>>
   referenceReturnPrefixes(const FunctionInfo &callee, BorrowOriginKind origin,
                           std::size_t parameter, std::size_t depth = 0) const;
   // A call returning a reference into its receiver or argument when that
@@ -2740,13 +2794,13 @@ private:
   struct DependentReferenceResult {
     const ExprPtr *origin = nullptr;
     // Nullopt when the callee's returns do not name field paths of the origin.
-    std::optional<std::vector<std::vector<SymbolId>>> prefixes;
+    std::optional<std::vector<BorrowPath>> prefixes;
   };
   [[nodiscard]] std::optional<DependentReferenceResult>
   dependentReferenceResult(const Call &call,
                            const ResolvedCallInfo &resolved) const;
   // The origin's dependent paths under the result's prefixes, without them.
-  [[nodiscard]] std::vector<std::vector<SymbolId>>
+  [[nodiscard]] std::vector<BorrowPath>
   dependentReferencePaths(const DependentReferenceResult &result) const;
   [[nodiscard]] std::optional<FieldSourcedTextResult>
   fieldSourcedTextResult(const Call &call,
@@ -2889,7 +2943,7 @@ private:
   textFieldOwnerDependency(const ExprPtr &argument, SymbolId field);
   // Re-roots an argument's sole owner dependency at a published text path.
   void publishTextDependency(SemanticLoanDependency &dependency,
-                             std::vector<SymbolId> path) const;
+                             BorrowPath path) const;
 
   // The owner dependencies that `argument` contributes when a constructor
   // stores it directly in the text field `initializer` names, or in that
@@ -2995,11 +3049,23 @@ private:
     StoredField(const VariableDecl *field) : declaration(field) {}
     StoredField(const LambdaCapture *field) : capture(field) {}
     StoredField(const Parameter *field) : payload(field) {}
+    StoredField(const BaseSpecifier *base, ClassId owner, std::size_t ordinal)
+        : base(base), baseOwner(owner), index(ordinal) {}
+    [[nodiscard]] static StoredField element(std::size_t ordinal, const Token *anchor = nullptr) {
+      StoredField result(static_cast<const VariableDecl *>(nullptr));
+      result.index = ordinal;
+      result.indexed = true;
+      result.anchor = anchor;
+      return result;
+    }
 
     [[nodiscard]] const Token &name() const {
+      static const Token absent;
       return declaration != nullptr ? declaration->name()
              : capture != nullptr   ? capture->name
-                                    : payload->name;
+             : payload != nullptr   ? payload->name
+             : base != nullptr      ? base->type.name.last()
+             : anchor != nullptr    ? *anchor : absent;
     }
     bool operator==(const StoredField &) const = default;
 
@@ -3009,6 +3075,11 @@ private:
     // stable symbol is also the alternative-qualified dependency identity;
     // it is not an ordinary class member or an unconditional field.
     const Parameter *payload = nullptr;
+    const BaseSpecifier *base = nullptr;
+    ClassId baseOwner = 0;
+    std::size_t index = 0;
+    bool indexed = false;
+    const Token *anchor = nullptr;
   };
 
   struct StoredReferenceCondition {
@@ -3038,11 +3109,16 @@ private:
       const SemanticType &type, const ConstructorDecl *constructor,
       std::span<const SemanticType> parameterTypes) const;
 
-  [[nodiscard]] std::vector<SymbolId>
-  storedFieldSymbols(SemanticType type, std::span<const StoredField> fields) const;
+  // Structural type projection only. Origin, access, active alternatives and
+  // lifetime permission remain the calling operation's proof obligations.
+  [[nodiscard]] std::optional<SemanticType>
+  borrowedPathElement(SemanticType type, const PlaceProjection &step) const;
+
+  [[nodiscard]] BorrowPath
+  storedBorrowPath(SemanticType type, std::span<const StoredField> fields) const;
 
   [[nodiscard]] std::optional<std::vector<BorrowDependencyCondition>>
-  storedConditionSymbols(const SemanticType &type,
+  storedBorrowConditions(const SemanticType &type,
                          std::span<const StoredReferenceCondition> conditions) const;
 
   // A present inventory enumerates every independently checked dependency in
@@ -3074,6 +3150,19 @@ private:
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   completeBorrowDependencySetForType(const Expr *expression,
                                      const SemanticType &target);
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  completeBorrowDependencySetForType(const AnalyzedCallArgument &argument,
+                                     const SemanticType &target);
+  [[nodiscard]] const EntryBorrowElement *
+  entryBorrowElement(const AnalyzedCallArgument &argument) const;
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  projectBorrowDependencySet(const SemanticBorrowDependencySet &source,
+                            const SemanticType &sourceType,
+                            std::span<const PlaceProjection> prefix,
+                            const SemanticType &target) const;
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  transportBorrowDependencySet(const SemanticBorrowDependencySet &source,
+                              SemanticType actual, SemanticType target);
 
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   payloadBorrowDependencySet(const Call &call,
@@ -3498,7 +3587,7 @@ private:
       const Expr *origin, SemanticLoanPlace place, SymbolId owner,
       bool receiverOrigin, AccessMode access, bool protectsStorage,
       SemanticLoanId parent = 0, bool entry = false,
-      std::vector<SymbolId> designatedFields = {},
+      BorrowPath designatedFields = {},
       std::vector<BorrowDependencyCondition> conditions = {});
 
   void recordParameterEntryLoan(const Parameter &parameter);
@@ -3506,7 +3595,8 @@ private:
                                              SymbolId carrierSymbol,
                                              const SemanticType &type,
                                              bool receiver,
-                                             const Stmt *declaration = nullptr);
+                                             const Stmt *declaration = nullptr,
+                                             EntryBorrowElement *element = nullptr);
 
   void recordRetainedBorrow(const VariableDecl &binding,
                             const ExprPtr &expression);
@@ -6875,6 +6965,9 @@ private:
 
   [[nodiscard]] Symbol *receiverStateSymbol();
 
+  [[nodiscard]] std::optional<BorrowPath>
+  memberBorrowPath(SemanticType object, const Symbol &field) const;
+
   [[nodiscard]] SemanticPlace placeForSymbol(Symbol &symbol);
 
   [[nodiscard]] std::optional<PlaceProjection>
@@ -6998,6 +7091,8 @@ private:
   rawPointerFields(const Expr *expression);
   [[nodiscard]] std::vector<ProjectedRawPointerOrigins>
   rawPointerFieldsAt(const PlaceKey &place);
+  [[nodiscard]] std::optional<SemanticType>
+  rawPointerPathElement(SemanticType type, const PlaceProjection &projection) const;
   [[nodiscard]] std::vector<std::vector<PlaceProjection>>
   rawPointerFieldPaths(const SemanticType &type);
   [[nodiscard]] std::vector<SemanticType>
@@ -7533,6 +7628,9 @@ private:
   // semantic facts. Speculative expression checks use a model delta rather
   // than copying every earlier expression in the caller's program.
   struct RequestSessionContext {
+    // Shared by request-state copies, never rewound by speculative body
+    // rollback. An independent worker's counter is a different identity.
+    std::shared_ptr<std::size_t> packBorrowInvocationSequence;
     bool collectingPrivateLifetimeContracts = false;
     // Shared only by nested probes of this one declaration. Rejected overload
     // and concept trials still read contracts and therefore remain dependencies.
@@ -7647,7 +7745,7 @@ private:
       const Expr *argument = nullptr;
       FunctionId callee = 0;
       OwnerlessTextField calleeFormal;
-      std::vector<std::vector<SymbolId>> paths;
+      std::vector<BorrowPath> paths;
       bool decided = false;
     };
     struct MutableLocalCandidate {

@@ -97,7 +97,9 @@ namespace std {
           for (const auto &field : fields) {
             std::cerr << " [origin=" << static_cast<int>(field.origin)
                       << " argument=" << field.parameter << " source=";
-            for (const auto part : field.sourceFields) std::cerr << part << '/';
+            for (const auto &part : field.sourceFields)
+              std::cerr << static_cast<int>(part.kind) << ':' << part.field << ':'
+                        << part.baseOwner << ':' << part.index << '/';
             std::cerr << " conditions=" << field.sourceConditions.size() << ']';
           }
           std::cerr << '\n';
@@ -439,6 +441,104 @@ int&<a> read<lifetime a>(int&<a> input) {
 }
 int main() { int value = 7; return read(value) - 7; }
 )gti", true);
+  check("inherited-inline-fields-remain-disjoint", R"gti(
+struct Base {
+  mut int left = 1;
+  Base() = default;
+};
+struct Derived : public Base {
+  mut int right = 2;
+  Derived() = default;
+};
+int bump(mut int& first, mut int& second) {
+  first = first + 1;
+  second = second + 1;
+  return first + second;
+}
+int main() { mut Derived pair{}; return bump(pair.left, pair.right) - 5; }
+)gti", true);
+  check("same-inherited-inline-field-remains-exclusive", R"gti(
+struct Base {
+  mut int left = 1;
+  Base() = default;
+};
+struct Derived : public Base {
+  mut int right = 2;
+  Derived() = default;
+};
+int bump(mut int& first, mut int& second) {
+  first = first + 1;
+  second = second + 1;
+  return first + second;
+}
+int main() { mut Derived pair{}; return bump(pair.left, pair.left) - 5; }
+)gti", false);
+  check("inherited-reference-keeps-declaring-base-path", R"gti(
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+  int&<a> get() { return value; }
+};
+int&<a> read<lifetime a>(Derived<a>& view) { return view.value; }
+int main() { int value = 7; Derived view{value}; return read(view) + view.get() - 14; }
+)gti", true);
+  check("inherited-reference-after-interface-base", R"gti(
+interface Marker { int mark(); };
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Marker, public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+  int mark() override { return 0; }
+};
+int&<a> read<lifetime a>(Derived<a>& view) { return view.value; }
+int main() { int value = 7; Derived view{value}; return read(view) - 7; }
+)gti", true);
+  check("inherited-and-direct-borrows-retain-distinct-origins", R"gti(
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Pair<lifetime a, lifetime b> : public Base<a> {
+  int&<b> other;
+  Pair(int&<a> first, int&<b> second) : Base<a>(first), other(second) {}
+};
+int&<a> external<lifetime a>(int&<a> input) {
+  int local = 9;
+  Pair pair{input, local};
+  return pair.value;
+}
+int main() { int value = 7; return external(value) - 7; }
+)gti", true);
+  check("inherited-and-direct-fields-cannot-duplicate-exclusive-input", R"gti(
+struct Base<lifetime a> {
+  mut int&<a> value;
+  Base(mut int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Base<a> {
+  mut int&<a> other;
+  Derived(mut int&<a> input) : Base<a>(input), other(input) {}
+};
+int main() { return 0; }
+)gti", false, "GTI-S2045");
+  check("inherited-external-owner-cannot-escape", R"gti(
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+};
+Derived<static> invalid() {
+  int value = 7;
+  Derived<static> escaped{value};
+  return escaped;
+}
+)gti", false, "GTI-S2127");
   check("default-field-keeps-constructor-lifetime-universe", R"gti(
 enum Reading<lifetime a> { empty, value(int&<a> item) };
 struct Default<int&<source>> {
@@ -471,7 +571,8 @@ struct Default<int&<source>> {
 };
 Default<int&<static>> invalid() {
   int value = 7;
-  return Default<int&<static>>{value};
+  Default<int&<static>> escaped{value};
+  return escaped;
 }
 )gti", false, "GTI-S2127");
   check("field-default-keeps-declaration-name-lookup", R"gti(

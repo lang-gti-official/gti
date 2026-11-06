@@ -209,7 +209,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         !destructor->body.dropObligations.empty() ||
         !destructor->body.cleanupBoundaries.empty() ||
         !destructor->body.failureRecords.empty() ||
-        !verifyMirBody(destructor->body, destructor->id).valid()) {
+        !verifyMirBody(program, destructor->body, destructor->id).valid()) {
       return false;
     }
     const MirBody &body = destructor->body;
@@ -418,7 +418,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         !body.loans.empty() || !body.failureRecords.empty() ||
         body.cleanupBoundaries.size() != 1 || body.dropObligations.empty() ||
         body.dropObligations.size() % 2 != 0 ||
-        !verifyMirBody(body, function.id).valid()) {
+        !verifyMirBody(program, body, function.id).valid()) {
       return false;
     }
     const std::size_t localCount = body.dropObligations.size() / 2;
@@ -939,7 +939,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         body.kind == MirBodyKind::Function &&
         body.returnType == function.returnType && body.loans.empty() &&
         body.dropObligations.empty() && body.cleanupBoundaries.empty() &&
-        verifyMirBody(body, function.id).valid();
+        verifyMirBody(program, body, function.id).valid();
     for (const MirPlace &place : body.places) {
       const bool ordinaryScalar =
           (place.root == MirPlaceRootKind::Binding ||
@@ -1746,7 +1746,7 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
                                        std::size_t owner,
                                        const MirClassInstance *ownerClass) {
   if (body.kind != kind || body.blocks.empty() || !body.loans.empty() ||
-      !verifyMirBody(body, owner).valid()) {
+      !verifyMirBody(program, body, owner).valid()) {
     return false;
   }
   const bool passiveConstructor = kind == MirBodyKind::Constructor &&
@@ -2284,7 +2284,7 @@ bool MirOwnedFailureClosure::proveSingleFieldTransferConstructor(
       body.places.size() != 3 || !body.loans.empty() ||
       body.fullExpressions.size() != 1 || body.cleanupBoundaries.size() != 1 ||
       body.dropObligations.size() != 3 || !body.failureRecords.empty() ||
-      body.values.size() != 1 || !verifyMirBody(body, constructor.id).valid()) {
+      body.values.size() != 1 || !verifyMirBody(program, body, constructor.id).valid()) {
     return false;
   }
 

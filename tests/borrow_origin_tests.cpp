@@ -929,7 +929,7 @@ void checkLocalCarrierSelections() {
                                 loan.carriers.size() == 1;
                        });
       if (stored == nullptr || stored->kind != lang::MirLoanKind::Stored ||
-          stored->storedField != 0 || selection == function.body.loans.end())
+          !stored->storedPath.empty() || selection == function.body.loans.end())
         continue;
       ++owners;
       expect(supportsSelectedBodyText(frontend.mir, rows, function.id),

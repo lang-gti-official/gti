@@ -46,7 +46,7 @@ auto SemanticVisitor::Impl::restoredReferenceFields(
     -> std::optional<std::vector<RestoredBorrowField>> {
   std::vector<RestoredBorrowField> result;
   for (const auto &path : storedReferencePaths(referent)) {
-    auto fields = storedFieldSymbols(referent, path.fields);
+    auto fields = storedBorrowPath(referent, path.fields);
     if (fields.size() != path.fields.size())
       return std::nullopt;
     result.push_back(

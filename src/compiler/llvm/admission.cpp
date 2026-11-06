@@ -2204,7 +2204,7 @@ private:
   const MirInstruction *selection(const MirBody &body, const MirLoan &loan) {
     const MirInstruction *call = callResult(body, loan);
     if (!call && loan.kind == MirLoanKind::Stored && !loan.entry &&
-        !loan.escapes && !loan.storedDependency && !loan.storedField &&
+        !loan.escapes && !loan.storedDependency && loan.storedPath.empty() &&
         !loan.referenceSelection && loan.additionalDependencies.empty() &&
         loan.conditions.empty() && !loan.twoPhase && !loan.lifecycleBound)
       for (const auto &block : body.blocks)
@@ -2297,7 +2297,7 @@ private:
       return true;
     // A constructor publishing a reference field stores the borrowed address
     // itself; the field's Stored loan is that publication's provenance.
-    if (loan.kind == MirLoanKind::Stored && loan.storedField && loan.escapes &&
+    if (loan.kind == MirLoanKind::Stored && !loan.storedPath.empty() && loan.escapes &&
         !loan.storedDependency)
       return true;
     // A borrow of a carrier, such as an interface or base view of it,
@@ -2667,14 +2667,20 @@ private:
             target->initializers[stage.constructorInitializer - 1];
         const auto *place = body.findPlace(*stage.destination);
         const auto &owner = instance(stage.info.type);
+        const auto targetType = checkedMirCallableOwnerType(program, target->owner,
+            target->ownerType, target->lifetimeContract);
+        const auto ordinal = place && place->projections.size() == 1
+            ? place->projections.front().constantIndex : std::nullopt;
+        const auto baseView = targetType && ordinal ? mir_detail::walkBorrowPath(
+            program, *targetType, AccessMode::Mutable,
+            BorrowPath{baseProjection(targetType->classId, *ordinal)}, {},
+            mir_detail::MirBorrowPathRoot::Value) : std::nullopt;
         if (selected.kind != ConstructorInitializerTargetKind::Base ||
-            selected.base != owner.id || selected.targetType != owner.type ||
+            selected.base != owner.id || selected.targetType != stage.info.type ||
             selected.constructorTarget != stage.constructorTarget || !place ||
-            place->root != MirPlaceRootKind::This ||
-            place->type != owner.type ||
-            place->projections !=
-                std::vector<MirPlaceProjection>{
-                    {.kind = MirProjectionKind::Base, .selection = owner.id}})
+            place->root != MirPlaceRootKind::This || !baseView ||
+            place->type != selected.targetType || baseView->type != place->type ||
+            place->projections != baseView->projections)
           return {};
         if (!stage.constructorTarget)
           static_cast<void>(native_llvm::Lifetimes::preflightGeneratedEmpty(
@@ -4971,7 +4977,7 @@ public:
             std::none_of(
                 mir.loans.begin(), mir.loans.end(), [&](const auto &loan) {
                   return loan.kind == MirLoanKind::Stored &&
-                         loan.storedField == initializer.field &&
+                         loan.storedPath == BorrowPath{fieldProjection(initializer.field)} &&
                          (loan.entry ||
                           std::any_of(
                               mir.blocks.begin(), mir.blocks.end(),

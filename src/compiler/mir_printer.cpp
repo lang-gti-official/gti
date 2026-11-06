@@ -284,7 +284,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v123 valid=" << program.valid() << '\n';
+    output << "mir-v124 valid=" << program.valid() << '\n';
     if (program.requiresNativeObjectLayout())
       output << "native-object-layout\n";
     for (const auto &recipe : program.nominalVarianceRecipes()) {
@@ -804,7 +804,7 @@ public:
         for (std::size_t index = 0;
              index < instance.ownedPointeeProjection->fields.size(); ++index) {
           separator(index);
-          output << instance.ownedPointeeProjection->fields[index];
+          placeProjection(instance.ownedPointeeProjection->fields[index]);
         }
         output << ']';
       } else {
@@ -1058,7 +1058,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v95\n";
+    output << "mir-body-v96\n";
     body(value, 0);
   }
 
@@ -1177,7 +1177,10 @@ private:
   template <typename Value> void list(const std::vector<Value> &values) {
     for (std::size_t index = 0; index < values.size(); ++index) {
       separator(index);
-      output << values[index];
+      if constexpr (std::is_same_v<Value, PlaceProjection>)
+        placeProjection(values[index]);
+      else
+        output << values[index];
     }
   }
 
@@ -1668,7 +1671,7 @@ private:
       output << "field(result=[";
       for (std::size_t path = 0; path < field.resultFields.size(); ++path) {
         separator(path);
-        output << field.resultFields[path];
+        placeProjection(field.resultFields[path]);
       }
       output << "];origin=" << number(field.origin) << ':' << field.parameter;
       if (field.globalRoot != 0)
@@ -1676,7 +1679,7 @@ private:
       output << ";source=[";
       for (std::size_t path = 0; path < field.sourceFields.size(); ++path) {
         separator(path);
-        output << field.sourceFields[path];
+        placeProjection(field.sourceFields[path]);
       }
       output << "];access=" << number(field.access) << ";result-conditions=";
       borrowConditions(field.resultConditions);
@@ -1694,7 +1697,7 @@ private:
       output << "{path=[";
       for (std::size_t part = 0; part < fields[index].fields.size(); ++part) {
         separator(part);
-        output << fields[index].fields[part];
+        placeProjection(fields[index].fields[part]);
       }
       output << "];type=";
       type(fields[index].referenceType);
@@ -1844,11 +1847,13 @@ private:
       separator(index);
       output << value.carriers[index];
     }
-    output << "] field=" << value.storedField << " designated-fields=[";
+    output << "] stored-path=[";
+    list(value.storedPath);
+    output << "] designated-fields=[";
     for (std::size_t index = 0; index < value.designatedFields.size();
          ++index) {
       separator(index);
-      output << value.designatedFields[index];
+      placeProjection(value.designatedFields[index]);
     }
     output << "] conditions=";
     borrowConditions(value.conditions);
@@ -1862,7 +1867,7 @@ private:
              << selection.transferredFrom << " fields=[";
       for (std::size_t index = 0; index < selection.fields.size(); ++index) {
         separator(index);
-        output << selection.fields[index];
+        placeProjection(selection.fields[index]);
       }
       output << "] conditions=";
       borrowConditions(selection.conditions);
@@ -1884,7 +1889,7 @@ private:
       for (std::size_t field = 0; field < dependency.designatedFields.size();
            ++field) {
         separator(field);
-        output << dependency.designatedFields[field];
+        placeProjection(dependency.designatedFields[field]);
       }
       output << "];conditions=";
       borrowConditions(dependency.conditions);
@@ -2521,6 +2526,22 @@ private:
         value.lifetimeApplication != MirLifetimeApplication{}) {
       output << "lifetime-application=";
       lifetimeApplication(value.lifetimeArguments, value.lifetimeApplication);
+    }
+    output << "initializer-complete=";
+    if (!value.completeBorrow) {
+      output << "absent;";
+    } else {
+      output << '[';
+      for (const auto &dependency : value.completeBorrow->dependencies) {
+        output << "p" << dependency.source << ":loan" << dependency.parent
+               << ":access=" << number(dependency.access) << ":path=";
+        list(dependency.designatedFields);
+        borrowConditions(dependency.conditions);
+      }
+      output << "];alternatives=[";
+      for (const auto &alternative : value.completeBorrow->possibleAlternatives)
+        borrowConditions(alternative.conditions);
+      output << "];";
     }
     output << "initializer(kind=" << number(value.kind) << ";type=";
     type(value.targetType);

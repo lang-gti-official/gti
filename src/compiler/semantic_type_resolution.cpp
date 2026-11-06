@@ -3303,11 +3303,11 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
              selected.parameterTypes))
       storedFields.push_back(
           {.resultFields =
-               storedFieldSymbols(constructedType, binding.destination.fields),
+               storedBorrowPath(constructedType, binding.destination.fields),
            .origin = BorrowOriginKind::Argument,
            .parameter = binding.parameter,
            .sourceFields =
-               storedFieldSymbols(selected.parameterTypes[binding.parameter],
+               storedBorrowPath(selected.parameterTypes[binding.parameter],
                                   binding.sourceFields),
            .access = binding.destination.reference.referenceAccess});
   ResolvedConstructionInfo resolved{
@@ -5450,7 +5450,7 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
           break;
         }
         for (const auto &path : *inventory) {
-          const auto conditions = storedConditionSymbols(type, path.conditions);
+          const auto conditions = storedBorrowConditions(type, path.conditions);
           if (!conditions ||
               std::all_of(conditions->begin(), conditions->end(),
                           [&](const auto &condition) {
@@ -5718,7 +5718,7 @@ auto SemanticVisitor::Impl::validateOwnerDependentTextReturn(
           .origin = field->receiver ? BorrowOriginKind::Receiver
                                     : BorrowOriginKind::Argument,
           .parameter = field->receiver ? 0 : field->parameter,
-          .sourceFields = {field->field}};
+          .sourceFields = {fieldProjection(field->field)}};
       if (function->returnBorrowFields.size() != 1 ||
           function->returnBorrowFields.front() != sourced)
         (void)requireOwnerlessTextField(function->declaration, *field);
@@ -6163,10 +6163,8 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
                       return false;
                     for (std::size_t index = 0;
                          index < expected.sourceFields.size(); ++index)
-                      if (dependency.place.projections[index].kind !=
-                              PlaceProjectionKind::Field ||
-                          dependency.place.projections[index].field !=
-                              expected.sourceFields[index])
+                      if (!isWellFormedBorrowPath(std::span(&dependency.place.projections[index], 1)) ||
+                          dependency.place.projections[index] != expected.sourceFields[index])
                         return false;
                     return true;
                   });

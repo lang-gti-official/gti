@@ -1793,15 +1793,15 @@ private:
         const auto owner = mirClassLifetimeView(program, type);
         if (!owner)
           return {};
-        const auto base = std::find_if(owner->instance->structuralBases.begin(),
-                                      owner->instance->structuralBases.end(),
-                                      [&](const auto &candidate) {
-                                        return candidate.instance == projection.selection;
-                                      });
-        if (base == owner->instance->structuralBases.end())
+        if (!projection.constantIndex || projection.field || projection.index ||
+            *projection.constantIndex >= owner->instance->structuralBases.size())
           return {};
-        const auto instantiated = owner->instantiate(base->type);
-        if (!instantiated)
+        const auto &base = owner->instance->structuralBases[*projection.constantIndex];
+        if (base.interface || base.instance != projection.selection)
+          return {};
+        const auto instantiated = owner->instantiate(base.type);
+        const auto selected = instantiated ? mirClassLifetimeView(program, *instantiated) : std::nullopt;
+        if (!selected || selected->instance->id != projection.selection)
           return {};
         type = *instantiated;
       } else {

@@ -1112,8 +1112,7 @@ int main() {
                  child.place.projections.front().kind ==
                      lang::PlaceProjectionKind::Field &&
                  parent->designatedFields ==
-                     std::vector<lang::SymbolId>{
-                         child.place.projections.front().field} &&
+                     lang::BorrowPath{child.place.projections.front()} &&
                  child.designatedFields != parent->designatedFields,
              "shared aliases preserve distinct source and result fields "
              "without duplicating their parent as a shell dependency");
@@ -1373,7 +1372,7 @@ int main() {
     for (const auto &constructor : frontend.mir.constructorInstances()) {
       for (const auto &loan : constructor.body.loans) {
         if (loan.kind != lang::MirLoanKind::Stored || !loan.escapes ||
-            loan.storedField == 0 || loan.storedDependency == 0 ||
+            loan.storedPath.empty() || loan.storedDependency == 0 ||
             loan.access != lang::AccessMode::ReadOnly)
           continue;
         checkedPublication = true;

@@ -1,4 +1,6 @@
 #include "representation.h"
+#include "../mir_verification_queries.h"
+#include "../mir_lifetimes.h"
 #include "lifetimes.h"
 #include "closure_environment.h"
 #include "gti/mir_effects.h"
@@ -849,24 +851,24 @@ Lifetimes::preflightGeneratedEmpty(Session &session, Dispatch &dispatch,
     const auto &selected =
         constructor->initializers[instruction.constructorInitializer - 1];
     const auto *destination = body.findPlace(*instruction.destination);
-    const auto *parent =
-        session.program().mir().findClassInstance(constructor->owner);
+    const auto &program = session.program().mir();
+    const auto parentType = checkedMirCallableOwnerType(program, constructor->owner,
+        constructor->ownerType, constructor->lifetimeContract);
+    const auto ordinal = destination && destination->projections.size() == 1
+        ? destination->projections.front().constantIndex : std::nullopt;
+    const auto baseView = parentType && ordinal ? mir_detail::walkBorrowPath(
+        program, *parentType, AccessMode::Mutable,
+        BorrowPath{baseProjection(parentType->classId, *ordinal)}, {},
+        mir_detail::MirBorrowPathRoot::Value) : std::nullopt;
     if (selected.kind != ConstructorInitializerTargetKind::Base ||
-        selected.base != object.id || selected.targetType != object.type ||
+        selected.base != object.id || selected.targetType != instruction.info.type ||
         !selected.generatedDefault || selected.constructorTarget ||
         !selected.arguments.empty() || selected.explicitArgumentCount != 0 ||
         selected.storesReference || selected.ownedParameter || !destination ||
         destination->root != MirPlaceRootKind::This ||
-        destination->type != object.type ||
-        destination->projections !=
-            std::vector<MirPlaceProjection>{
-                {.kind = MirProjectionKind::Base, .selection = object.id}} ||
-        !parent ||
-        std::none_of(parent->bases.begin(), parent->bases.end(),
-                     [&](const auto &row) {
-                       return !row.interface && row.instance == object.id &&
-                              row.type == object.type;
-                     }))
+        destination->type != selected.targetType || !baseView ||
+        baseView->type != destination->type ||
+        destination->projections != baseView->projections)
       throw std::invalid_argument(
           "LLVM generated-empty base lost its selected type or destination");
   }

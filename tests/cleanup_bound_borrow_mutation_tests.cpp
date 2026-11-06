@@ -493,7 +493,7 @@ int main() {
                                : nullptr;
         if (candidate.kind == lang::MirInstructionKind::Borrow &&
             loan != nullptr && loan->lifecycleBound && loan->escapes &&
-            loan->storedField != 0 && candidate.operands.size() == 1 &&
+            !loan->storedPath.empty() && candidate.operands.size() == 1 &&
             candidate.operands.front().kind == lang::MirOperandKind::Loan &&
             candidate.operands.front().value != 0)
           publications.push_back(&candidate);
@@ -595,8 +595,8 @@ int main() {
         wrongEntry, "publication rejects another same-typed parameter loan",
         "nested carrier publication does not transfer its exact parameter");
     auto wrongField = *control;
-    body(wrongField, key).loans[*second.loan - 1].storedField =
-        constructor.body.findLoan(*first.loan)->storedField;
+    body(wrongField, key).loans[*second.loan - 1].storedPath =
+        constructor.body.findLoan(*first.loan)->storedPath;
     rejected(wrongField, "publication rejects another same-typed field");
     checkedWrongValue = true;
   }
@@ -1383,7 +1383,7 @@ int main() {
   for (const auto &constructor : control->constructorInstances()) {
     for (const auto &loan : constructor.body.loans) {
       if (loan.kind != lang::MirLoanKind::Stored || !loan.escapes ||
-          loan.storedField == 0 || loan.storedDependency == 0)
+          loan.storedPath.empty() || loan.storedDependency == 0)
         continue;
       checkedReferenceField = true;
       expect(!loan.lifecycleBound,
@@ -1793,7 +1793,7 @@ int main() { mut int first = 7; mut int second = 9;
                  "projected child origin must match its selected argument");
         auto wrongField = *control;
         body(wrongField, key).loans[parent->id - 1].designatedFields = {
-            place.projections.front().field};
+            lang::fieldProjection(place.projections.front().field)};
         rejected(wrongField,
                  "projected child cannot borrow through another entry field");
         checked = true;

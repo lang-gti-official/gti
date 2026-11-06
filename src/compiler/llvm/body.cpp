@@ -2876,7 +2876,7 @@ private:
     if (input.kind == MirBodyKind::Constructor && owner)
       for (const auto &loan : input.loans)
         if (loan.entry && loan.kind == MirLoanKind::Stored &&
-            loan.storedField) {
+            !loan.storedPath.empty()) {
           const auto publication = fieldPublication(loan);
           if (publication.kind == StoredFieldPublicationKind::ProvenanceOnly)
             continue;

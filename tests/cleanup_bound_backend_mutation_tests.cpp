@@ -373,7 +373,7 @@ int main() { Resource resource{}; SequenceOwner owner{Handle(resource), 1}; retu
             std::find_if(target.body.loans.begin(), target.body.loans.end(),
                          [&](const auto &loan) {
                            return value &&
-                                  loan.storedField == bindings[0].field &&
+                                  loan.storedPath == lang::BorrowPath{lang::fieldProjection(bindings[0].field)} &&
                                   loan.producedBy == value->sourceValue;
                          });
         if (published == target.body.loans.end())

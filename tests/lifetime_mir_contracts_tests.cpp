@@ -26,6 +26,133 @@ MirInstruction *firstLifetimeCall(MirBody &body) {
         return &instruction;
   return nullptr;
 }
+void checkProgramBasePathAuthority() {
+  const auto source = Frontend({.stopAfter = FrontendPhase::Mir}).analyze("base-path-authority.gti", R"gti(
+struct Base { int value; Base(int input) : value(input) {} };
+struct Derived : public Base { Derived(int input) : Base(input) {} };
+int&<a> inherited<lifetime a>(Derived&<a> input) { return input.value; }
+int main() { Derived value{7}; return inherited(value) - 7; }
+)gti");
+  if (!source.semanticValid || !source.mir.valid()) {
+    for (const auto &diagnostic : source.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    for (const auto &error : verifyMirProgram(source.mir).errors)
+      std::cerr << error.message << '\n';
+    expect(false, "ordinary inherited physical storage must reach the exact program-aware MIR gate");
+  }
+  std::optional<MirBodyAddress> selected;
+  MirPlaceId placeId = 0;
+  for (const auto address : enumerateMirBodyAddresses(source.mir)) {
+    const auto *body = findMirBody(source.mir, address);
+    if (!body) continue;
+    for (const auto &place : body->places)
+      if (place.key && std::any_of(place.key->projections.begin(), place.key->projections.end(),
+            [](const auto &step) { return step.kind == PlaceProjectionKind::Base; })) {
+        selected = address; placeId = place.id; break;
+      }
+    if (selected) break;
+  }
+  expect(selected.has_value(), "fixture must preserve an exact inherited typed place");
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto broken = source.mir;
+    auto *body = findMirBody(broken, *selected);
+    auto &place = body->places[placeId - 1];
+    if (mutation == 0) {
+      for (auto &step : place.key->projections)
+        if (step.kind == PlaceProjectionKind::Base) { step.baseOwner += 1000; break; }
+    } else {
+      for (auto &step : place.projections)
+        if (step.kind == MirProjectionKind::Base) {
+          if (mutation == 1) step.constantIndex = 999;
+          else step.selection += 1000;
+          break;
+        }
+    }
+    expect(verifyMirBodyStructure(*body, selected->owner).valid(),
+           "Base owner/ordinal/instance mutations remain provisional structural shapes");
+    expect(!verifyMirBody(*body, selected->owner).valid() && !verifyMirProgram(broken).valid(),
+           "neither context-free nor final program verification accepts a forged Base authority");
+  }
+}
+void checkBorrowedBasePublication() {
+  const auto source = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "borrowed-base-publication.gti", R"gti(
+interface Marker { int mark(); };
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+  ~Base() { int observed = this.value; }
+};
+int later(int divisor) { return 1 / divisor; }
+struct Derived<lifetime a> : public Marker, public Base<a> {
+  int after;
+  Derived(int&<a> input, int divisor) : Base<a>(input), after(later(divisor)) {}
+  int mark() override { return 0; }
+};
+int main() { int number = 7; Derived view{number, 1}; return 0; }
+)gti");
+  if (!source.semanticValid || !source.mir.valid()) {
+    for (const auto &diagnostic : source.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    for (const auto &error : verifyMirProgram(source.mir).errors)
+      std::cerr << error.message << '\n';
+    expect(false, "a borrowed Base after an interface retains exact rollback publication");
+  }
+  HirConstructorInstanceId owner = 0;
+  MirLoanId publication = 0;
+  MirInstructionId stageId = 0;
+  for (const auto &constructor : source.mir.constructorInstances())
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *loan = instruction.loan ? constructor.body.findLoan(*instruction.loan) : nullptr;
+        if (instruction.kind == MirInstructionKind::InitializeBase && loan &&
+            loan->lifecycleBound && loan->storedPath.size() == 1 &&
+            loan->storedPath.front().kind == PlaceProjectionKind::Base &&
+            loan->storedPath.front().index == 1) {
+          expect(owner == 0, "fixture must have one borrowed state-bearing Base publication");
+          owner = constructor.id; publication = loan->id; stageId = instruction.id;
+        }
+      }
+  expect(owner != 0, "fixture must exercise a destructor-bound Base at the full direct-base ordinal");
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto broken = source.mir;
+    auto *constructor = const_cast<MirConstructorInstance *>(broken.findConstructorInstance(owner));
+    auto &loan = constructor->body.loans[publication - 1];
+    MirInstruction *stage = nullptr;
+    for (auto &block : constructor->body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == stageId) stage = &instruction;
+    expect(stage && stage->successResultDrop && stage->constructorInitializer,
+           "base publication mutation must retain its exact stage and rollback witness");
+    if (mutation == 0) loan.lifecycleBound = false;
+    if (mutation == 1) loan.source = 0;
+    if (mutation == 2)
+      constructor->initializers[stage->constructorInitializer - 1].completeBorrow.reset();
+    if (mutation == 3)
+      constructor->body.dropObligations[*stage->successResultDrop - 1].dropType.type =
+          constructor->ownerType;
+    if (mutation == 4) {
+      bool moved = false;
+      for (auto &block : constructor->body.blocks) {
+        const auto end = std::find_if(block.instructions.begin(), block.instructions.end(),
+            [&](const auto &instruction) {
+              return instruction.kind == MirInstructionKind::EndBorrow && instruction.loan == publication;
+            });
+        const auto drop = std::find_if(block.instructions.begin(), block.instructions.end(),
+            [&](const auto &instruction) {
+              return instruction.kind == MirInstructionKind::Drop &&
+                     instruction.destination == stage->destination;
+            });
+        if (end != block.instructions.end() && drop != block.instructions.end() && drop < end) {
+          std::rotate(drop, end, end + 1); moved = true; break;
+        }
+      }
+      expect(moved, "rollback mutation must move a real retained-dependency end before its exact drop");
+    }
+    expect(!verifyMirProgram(broken).valid(),
+           "Base publication rejects missing retention, origin, complete evidence, rollback type and early release");
+  }
+}
 } // namespace
 
 int main() {
@@ -724,7 +851,7 @@ int main() { State<int> state = State<int>::value(7); return get(state) - 7; }
     if (mutation == 0)
       selection.kind = ReferenceSelectionKind::StoredExternalReference;
     else if (mutation == 1)
-      selection.fields.front() = 0;
+      selection.fields.front() = fieldProjection(0);
     else if (mutation == 2)
       selection.transferredFrom = loan.id;
     else
@@ -1084,5 +1211,7 @@ int main() {
              failure->primary.end == targetOffset + std::string("constrained").size() &&
              failure->fixes.empty(),
          "an invocation pointer cannot discard a target outlives requirement or invent a repair");
+  checkProgramBasePathAuthority();
+  checkBorrowedBasePublication();
   std::cout << "lifetime MIR contracts passed\n";
 }

@@ -10,12 +10,12 @@
 #include "gti/lifetime.h"
 #include "gti/source_graph.h"
 
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
-#include <span>
 #include <span>
 #include <string>
 #include <string_view>
@@ -133,7 +133,21 @@ struct PlaceProjection {
 
   friend bool operator==(const PlaceProjection &,
                          const PlaceProjection &) = default;
+  friend auto operator<=>(const PlaceProjection &,
+                          const PlaceProjection &) = default;
 };
+
+// Explicit structural constructors. These do not prove that a field, base,
+// or constant element belongs to any type; typed path consumers own that proof.
+[[nodiscard]] inline PlaceProjection fieldProjection(SymbolId field) {
+  return {.kind = PlaceProjectionKind::Field, .field = field};
+}
+[[nodiscard]] inline PlaceProjection baseProjection(ClassId owner, std::uint64_t ordinal) {
+  return {.kind = PlaceProjectionKind::Base, .index = ordinal, .baseOwner = owner};
+}
+[[nodiscard]] inline PlaceProjection constantIndexProjection(std::uint64_t index) {
+  return {.kind = PlaceProjectionKind::ConstantIndex, .index = index};
+}
 
 // Rootless structural paths share the place projection vocabulary. This
 // shape check grants no type, origin, active-variant or liveness authority;

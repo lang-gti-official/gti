@@ -29,19 +29,19 @@ verifyOwnerlessTextContracts(const MirProgram &program);
 // none with borrowed state: `{field}`, `{field, payload}` or a nested path.
 [[nodiscard]] bool directTextPath(const MirProgram &program,
                                   const SemanticType &type,
-                                  std::span<const SymbolId> path);
+                                  std::span<const PlaceProjection> path);
 // The formal that alone initializes the text field path `path` of the
 // constructor's class, when that formal reaches no other text initializer.
 [[nodiscard]] std::optional<std::size_t>
 dependentTextFieldFormal(const MirProgram &program,
                          const MirConstructorInstance &constructor,
-                         std::span<const SymbolId> path);
+                         std::span<const PlaceProjection> path);
 // The path at which the constructor alone stores the text that its class
 // formal `parameter` holds at `held`, through one field of the formal or the
 // whole value, which a construction may re-root its argument's owner
 // dependency at.
-[[nodiscard]] std::optional<std::vector<SymbolId>>
+[[nodiscard]] std::optional<BorrowPath>
 dependentTextRelayPath(const MirProgram &program,
                        const MirConstructorInstance &constructor,
-                       std::size_t parameter, std::span<const SymbolId> held);
+                       std::size_t parameter, std::span<const PlaceProjection> held);
 } // namespace lang::mir_detail

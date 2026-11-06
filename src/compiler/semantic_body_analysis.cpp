@@ -6,6 +6,7 @@
 namespace lang {
 
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
+  requestSession.packBorrowInvocationSequence.reset();
   requestSession.collectingPrivateLifetimeContracts = false;
   requestSession.privateLifetimeDependencies.reset();
   requestSession.privateConstexprPrerequisites.reset();
@@ -5698,11 +5699,9 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   SemanticLoanId subjectDependency = subjectSource ? subjectSource->loan : 0;
   // A field of the dependency's carrier that the subject names, as in
   // `switch (line.word)`, prefixes the payload designation.
-  std::vector<SymbolId> subjectFieldPrefix;
+  BorrowPath subjectFieldPrefix;
   if (const auto *place = semanticModel.findPlace(*stmt.expression()))
-    for (const auto &projection : place->projections)
-      subjectFieldPrefix.push_back(
-          projection.kind == PlaceProjectionKind::Field ? projection.field : 0);
+    subjectFieldPrefix = place->projections;
   if (const auto *loan = semanticModel.findLoan(subjectDependency);
       loan && loan->kind == SemanticLoanKind::Reference)
     subjectDependency = loan->storedDependency;
@@ -6145,7 +6144,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                   .source = payload.source,
                   .carrier = stmt.expression().get(),
                   .transferredFrom = consumedSubject ? subjectDependency : 0,
-                  .fields = {variant->payloadSymbols[payload.payloadIndex]},
+                  .fields = {fieldProjection(variant->payloadSymbols[payload.payloadIndex])},
                   .conditions = {{.enumeration = pattern.type,
                                   .variant = pattern.variantIndex}},
                   .reference = variant->payloadTypes[payload.payloadIndex]};
@@ -6246,7 +6245,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                   .kind = ReferenceSelectionKind::PhysicalPayload,
                   .source = payload.source,
                   .carrier = stmt.expression().get(),
-                  .fields = {variant->payloadSymbols[payload.payloadIndex]},
+                  .fields = {fieldProjection(variant->payloadSymbols[payload.payloadIndex])},
                   .conditions = {{.enumeration = pattern.type,
                                   .variant = pattern.variantIndex}},
                   .reference = payload.binding.type};
@@ -7939,6 +7938,7 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
 }
 
 auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
+  PackBorrowInvocationScope packInvocation(*this);
   if (expr.capturedArguments() && analyzeCapturedCall(expr))
     return;
   if (analyzeMacroCall(expr, macroStatementCall == &expr ? macroStatementContext
@@ -9935,7 +9935,7 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
                "GTI-S2045");
         valid = false;
       } else if (!dependencies.empty()) {
-        textOrigins.push_back({.resultFields = {field},
+        textOrigins.push_back({.resultFields = {fieldProjection(field)},
                                .origin = BorrowOriginKind::Argument,
                                .parameter = index,
                                .access = AccessMode::ReadOnly});
@@ -10007,6 +10007,7 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
 
 auto SemanticVisitor::Impl::visitDirectInitializerExpr(
     const DirectInitializer &expr) -> void {
+  PackBorrowInvocationScope packInvocation(*this);
   if (!expr.designators().empty()) {
     analyzeDesignatedInitializer(expr);
     return;
@@ -11277,7 +11278,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       const auto sourceLoan = retainedLoanSource(capture.initializer);
       SemanticLoanDependency dependency{
           .place = retainedLoanPlace(capture.initializer),
-          .designatedFields = {bindingSymbol},
+          .designatedFields = {fieldProjection(bindingSymbol)},
           .access = captureType.referenceAccess,
           .protectsStorage = true,
           .parent = sourceLoan ? sourceLoan->loan : SemanticLoanId{0}};
@@ -11304,7 +11305,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
           dependencies.front().access ==
               paths.front().reference.referenceAccess) {
         const auto fields =
-            storedFieldSymbols(captureType, paths.front().fields);
+            storedBorrowPath(captureType, paths.front().fields);
         if (fields.size() == paths.front().fields.size())
           dependencies.front().designatedFields = fields;
       }
@@ -11315,7 +11316,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                "GTI-S2017");
       for (auto &dependency : dependencies) {
         dependency.designatedFields.insert(dependency.designatedFields.begin(),
-                                           bindingSymbol);
+                                           fieldProjection(bindingSymbol));
         captureDependencies.push_back(std::move(dependency));
       }
     }
@@ -12854,11 +12855,25 @@ auto SemanticVisitor::Impl::visitPackExpansionExpr(const PackExpansion &expr)
     return;
   }
   if (symbol->valueState != ValueState::Available) {
-    reportUnavailableValue(expr.name(), *symbol);
-  } else if (packRequiresMove(symbol->type)) {
     if (Symbol *pack = resolveMutable(expr.name())) {
-      pack->valueState = ValueState::Moved;
-      pack->moveOrigins = {tokenSpan(expr.name())};
+      pack->entryBorrowExpansion = nullptr;
+      pack->entryBorrowInvocation = {};
+    }
+    reportUnavailableValue(expr.name(), *symbol);
+  } else {
+    if (Symbol *pack = resolveMutable(expr.name())) {
+      pack->entryBorrowExpansion = &expr;
+      pack->entryBorrowInvocation = loanFlow.activePackBorrowInvocation;
+      if (pack->entryBorrowInvocation.sequence &&
+          std::find(loanFlow.packBorrowInvocationsWithEntryUses.begin(),
+                    loanFlow.packBorrowInvocationsWithEntryUses.end(),
+                    pack->entryBorrowInvocation) ==
+              loanFlow.packBorrowInvocationsWithEntryUses.end())
+        loanFlow.packBorrowInvocationsWithEntryUses.push_back(pack->entryBorrowInvocation);
+      if (packRequiresMove(symbol->type)) {
+        pack->valueState = ValueState::Moved;
+        pack->moveOrigins = {tokenSpan(expr.name())};
+      }
     }
   }
   currentType = symbol->type;

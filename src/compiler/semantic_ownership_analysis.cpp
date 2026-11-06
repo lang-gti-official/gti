@@ -3,6 +3,7 @@
 #include "gti/lifetime_types.h"
 
 #include <stdexcept>
+#include <limits>
 
 namespace lang {
 namespace {
@@ -1445,15 +1446,15 @@ auto SemanticVisitor::Impl::contextualTextValue(const Expr &expression,
 }
 
 auto SemanticVisitor::Impl::textDependentPaths(const Expr &expression) const
-    -> std::vector<std::vector<SymbolId>> {
+    -> std::vector<BorrowPath> {
   if (const auto *group = exprAs<Grouping>(&expression))
     return group->expression() ? textDependentPaths(*group->expression())
-                               : std::vector<std::vector<SymbolId>>{};
+                               : std::vector<BorrowPath>{};
   if (const auto *call = exprAs<Call>(&expression);
       call != nullptr && call->arguments().size() == 1 &&
       resolvedIntrinsicKind(*call) == IntrinsicKind::Move)
     return textDependentPaths(*call->arguments().front());
-  std::vector<std::vector<SymbolId>> paths;
+  std::vector<BorrowPath> paths;
   const auto mapped = [&](const std::vector<BorrowedFieldOrigin> &fields) {
     for (const auto &mapping : fields)
       paths.push_back(mapping.resultFields);
@@ -1495,7 +1496,7 @@ auto SemanticVisitor::Impl::textDependentPaths(const Expr &expression) const
         place->projections.back().kind != PlaceProjectionKind::Field)
       return paths;
     for (auto path : textDependentPaths(*get->object()))
-      if (path.size() > 1 && path.front() == place->projections.back().field) {
+      if (path.size() > 1 && path.front() == place->projections.back()) {
         path.erase(path.begin());
         paths.push_back(std::move(path));
       }
@@ -1528,8 +1529,8 @@ auto SemanticVisitor::Impl::textDependentFields(const Expr &expression) const
     -> std::vector<SymbolId> {
   std::vector<SymbolId> fields;
   for (const auto &path : textDependentPaths(expression))
-    if (path.size() == 1)
-      fields.push_back(path.front());
+    if (path.size() == 1 && path.front().kind == PlaceProjectionKind::Field)
+      fields.push_back(path.front().field);
   return fields;
 }
 
@@ -1544,7 +1545,7 @@ auto SemanticVisitor::Impl::noteTextDependentValue(const Expr &expression)
 
 auto SemanticVisitor::Impl::dependentTextPayloadLoan(
     SemanticLoanId subject, const ResolvedPayloadPatternInfo &pattern,
-    const PayloadBindingInfo &payload, std::span<const SymbolId> prefix) const
+    const PayloadBindingInfo &payload, std::span<const PlaceProjection> prefix) const
     -> const SemanticLoanInfo * {
   const SemanticLoanInfo *loan =
       subject == 0 ? nullptr : semanticModel.findLoan(subject);
@@ -1576,7 +1577,7 @@ auto SemanticVisitor::Impl::dependentTextPayloadLoan(
       type.kind != SemanticType::CString)
     return nullptr;
   return loan->designatedFields.back() ==
-                 variant->payloadSymbols[payload.payloadIndex]
+                 fieldProjection(variant->payloadSymbols[payload.payloadIndex])
              ? loan
              : nullptr;
 }
@@ -1712,17 +1713,17 @@ auto SemanticVisitor::Impl::nestedTextClass(const SemanticType &type,
 }
 
 auto SemanticVisitor::Impl::nestedTextRelay(const FieldSourcedTextResult &relay)
-    const -> std::optional<std::vector<std::vector<SymbolId>>> {
+    const -> std::optional<std::vector<BorrowPath>> {
   const ExpressionInfo *info =
       relay.origin == nullptr || !*relay.origin
           ? nullptr
           : semanticModel.findExpression(**relay.origin);
   if (info == nullptr || !isTextDependentValue(*info))
     return std::nullopt;
-  std::vector<SymbolId> prefix{relay.field};
+  BorrowPath prefix{fieldProjection(relay.field)};
   if (relay.payload != 0)
-    prefix.push_back(relay.payload);
-  std::vector<std::vector<SymbolId>> paths;
+    prefix.push_back(fieldProjection(relay.payload));
+  std::vector<BorrowPath> paths;
   for (auto path : textDependentPaths(**relay.origin))
     if (path.size() > prefix.size() &&
         std::equal(prefix.begin(), prefix.end(), path.begin())) {
@@ -1737,7 +1738,7 @@ auto SemanticVisitor::Impl::referenceReturnPrefixes(const FunctionInfo &callee,
                                                     BorrowOriginKind origin,
                                                     std::size_t parameter,
                                                     std::size_t depth) const
-    -> std::optional<std::vector<std::vector<SymbolId>>> {
+    -> std::optional<std::vector<BorrowPath>> {
   const FunctionDecl *body = callee.bodyDeclaration();
   if (depth > 8 || callee.virtualMethod || callee.overrideMethod ||
       body == nullptr || body->body() == nullptr ||
@@ -1782,19 +1783,19 @@ auto SemanticVisitor::Impl::referenceReturnPrefixes(const FunctionInfo &callee,
     return current;
   };
   // Extends `prefix`, at `type`, by one member's field symbol.
-  const auto field = [&](std::vector<SymbolId> &prefix, SemanticType &type,
+  const auto field = [&](BorrowPath &prefix, SemanticType &type,
                          const Token &name) {
     const MemberInfo *member = findMember(type, name);
     if (member == nullptr || member->symbol.staticMember ||
         member->symbol.bindingKind != SemanticBindingKind::Field)
       return false;
-    prefix.push_back(symbolForDeclaration(member->symbol.declaration));
+    prefix.push_back(fieldProjection(symbolForDeclaration(member->symbol.declaration)));
     type = substituteType(member->symbol.type, classSubstitution(type));
     if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
       type = SemanticType(type.arguments.front());
     return true;
   };
-  std::vector<std::vector<SymbolId>> prefixes;
+  std::vector<BorrowPath> prefixes;
   for (const ExprPtr *returned : returns) {
     const Expr *current =
         returned == nullptr ? nullptr : strip(returned->get());
@@ -1808,22 +1809,22 @@ auto SemanticVisitor::Impl::referenceReturnPrefixes(const FunctionInfo &callee,
     if (current == nullptr)
       return std::nullopt;
     // The roots a return may start from, each with its prefix and type.
-    std::vector<std::pair<std::vector<SymbolId>, SemanticType>> roots;
+    std::vector<std::pair<BorrowPath, SemanticType>> roots;
     const auto *variable = exprAs<Variable>(current);
     const auto *call = exprAs<Call>(current);
     if (exprAs<This>(current) != nullptr &&
         origin == BorrowOriginKind::Receiver) {
-      roots.emplace_back(std::vector<SymbolId>{}, rootType);
+      roots.emplace_back(BorrowPath{}, rootType);
     } else if (variable != nullptr && namesResolve &&
                origin == BorrowOriginKind::Argument &&
                variable->name().lexeme ==
                    body->parameters()[parameter].name.lexeme) {
-      roots.emplace_back(std::vector<SymbolId>{}, rootType);
+      roots.emplace_back(BorrowPath{}, rootType);
     } else if (variable != nullptr && namesResolve &&
                origin == BorrowOriginKind::Receiver &&
                callee.parameterTypes.empty()) {
       // An implicit member, like `this.field`.
-      std::vector<SymbolId> prefix;
+      BorrowPath prefix;
       SemanticType type = rootType;
       if (!field(prefix, type, variable->name()))
         return std::nullopt;
@@ -1852,30 +1853,17 @@ auto SemanticVisitor::Impl::referenceReturnPrefixes(const FunctionInfo &callee,
         return std::nullopt;
       for (const auto &prefix : *inner) {
         SemanticType type = rootType;
-        std::vector<SymbolId> walked;
+        BorrowPath walked;
         bool valid = true;
-        for (const SymbolId symbol : prefix) {
-          const ClassInfo *owner = classInfo(type);
-          const MemberInfo *member = nullptr;
-          if (owner != nullptr)
-            for (const FieldInfo &candidate : owner->fields)
-              if (const auto found =
-                      candidate.declaration == nullptr
-                          ? owner->members.end()
-                          : owner->members.find(
-                                candidate.declaration->name().lexeme);
-                  found != owner->members.end() &&
-                  symbolForDeclaration(found->second.symbol.declaration) ==
-                      symbol)
-                member = &found->second;
-          if (member == nullptr) {
+        for (const auto &step : prefix) {
+          const auto child = borrowedPathElement(type, step);
+          if (!child) {
             valid = false;
             break;
           }
-          walked.push_back(symbol);
-          type = substituteType(member->symbol.type, classSubstitution(type));
-          if (type.kind == SemanticType::Reference &&
-              type.arguments.size() == 1)
+          walked.push_back(step);
+          type = *child;
+          if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
             type = SemanticType(type.arguments.front());
         }
         if (!valid)
@@ -1941,15 +1929,15 @@ auto SemanticVisitor::Impl::dependentReferenceResult(
 
 auto SemanticVisitor::Impl::dependentReferencePaths(
     const DependentReferenceResult &result) const
-    -> std::vector<std::vector<SymbolId>> {
-  std::vector<std::vector<SymbolId>> paths;
+    -> std::vector<BorrowPath> {
+  std::vector<BorrowPath> paths;
   if (!result.prefixes || result.origin == nullptr || !*result.origin)
     return paths;
   for (const auto &path : textDependentPaths(**result.origin))
     for (const auto &prefix : *result.prefixes)
       if (path.size() > prefix.size() &&
           std::equal(prefix.begin(), prefix.end(), path.begin())) {
-        std::vector<SymbolId> remainder(
+        BorrowPath remainder(
             path.begin() + static_cast<std::ptrdiff_t>(prefix.size()),
             path.end());
         if (std::find(paths.begin(), paths.end(), remainder) == paths.end())
@@ -1959,16 +1947,20 @@ auto SemanticVisitor::Impl::dependentReferencePaths(
 }
 
 auto SemanticVisitor::Impl::contractPrefix(const SemanticType &type,
-                                           std::span<const SymbolId> path,
+                                           std::span<const PlaceProjection> path,
                                            OwnerlessTextField formal) const
     -> std::optional<OwnerlessTextField> {
   const ClassInfo *owner = classInfo(type);
   if (path.empty() || owner == nullptr ||
-      typeTraits(type).containsBorrowedState)
+      typeTraits(type).containsBorrowedState ||
+      !isWellFormedBorrowPath(path) ||
+      std::any_of(path.begin(), path.end(), [](const auto &step) {
+        return step.kind != PlaceProjectionKind::Field;
+      }))
     return std::nullopt;
-  formal.field = path.front();
+  formal.field = path.front().field;
   formal.payload = 0;
-  if (directTextField(type, path.front()))
+  if (directTextField(type, path.front().field))
     return path.size() == 1 ? std::optional{formal} : std::nullopt;
   if (path.size() < 2)
     return std::nullopt;
@@ -1978,7 +1970,7 @@ auto SemanticVisitor::Impl::contractPrefix(const SemanticType &type,
             ? owner->members.end()
             : owner->members.find(field.declaration->name().lexeme);
     if (member == owner->members.end() ||
-        symbolForDeclaration(member->second.symbol.declaration) != path[0])
+        symbolForDeclaration(member->second.symbol.declaration) != path[0].field)
       continue;
     const auto fieldType =
         substituteType(member->second.symbol.type, classSubstitution(type));
@@ -1989,11 +1981,11 @@ auto SemanticVisitor::Impl::contractPrefix(const SemanticType &type,
       for (std::size_t index = 0; index < variant.payloadSymbols.size() &&
                                   index < variant.payloadTypes.size();
            ++index) {
-        if (variant.payloadSymbols[index] != path[1])
+        if (variant.payloadSymbols[index] != path[1].field)
           continue;
         const auto payload = substituteType(variant.payloadTypes[index],
                                             enumSubstitution(fieldType));
-        formal.payload = path[1];
+        formal.payload = path[1].field;
         if (payload.kind == SemanticType::StringView ||
             payload.kind == SemanticType::CString)
           return path.size() == 2 ? std::optional{formal} : std::nullopt;
@@ -2229,10 +2221,12 @@ auto SemanticVisitor::Impl::fieldSourcedTextResult(
       resolved.borrowFields.size() != 1)
     return std::nullopt;
   const BorrowedFieldOrigin &mapping = resolved.borrowFields.front();
-  if (mapping.sourceFields.size() != 1 || !mapping.resultFields.empty() ||
+  if (mapping.sourceFields.size() != 1 ||
+      mapping.sourceFields.front().kind != PlaceProjectionKind::Field ||
+      !mapping.resultFields.empty() ||
       !mapping.resultConditions.empty() || !mapping.sourceConditions.empty())
     return std::nullopt;
-  FieldSourcedTextResult result{.field = mapping.sourceFields.front()};
+  FieldSourcedTextResult result{.field = mapping.sourceFields.front().field};
   if (mapping.origin == BorrowOriginKind::Argument) {
     if (mapping.parameter >= resolvedCallArgumentCount(call, &resolved))
       return std::nullopt;
@@ -2259,7 +2253,9 @@ auto SemanticVisitor::Impl::operatorFieldSourcedTextResult(
       resolved.borrowFields.size() != 1)
     return std::nullopt;
   const BorrowedFieldOrigin &mapping = resolved.borrowFields.front();
-  if (mapping.sourceFields.size() != 1 || !mapping.resultFields.empty() ||
+  if (mapping.sourceFields.size() != 1 ||
+      mapping.sourceFields.front().kind != PlaceProjectionKind::Field ||
+      !mapping.resultFields.empty() ||
       !mapping.resultConditions.empty() || !mapping.sourceConditions.empty())
     return std::nullopt;
   const ExprPtr *origin = operatorRelayOperand(
@@ -2269,7 +2265,7 @@ auto SemanticVisitor::Impl::operatorFieldSourcedTextResult(
   return FieldSourcedTextResult{.origin = origin,
                                 .receiver = mapping.origin ==
                                             BorrowOriginKind::Receiver,
-                                .field = mapping.sourceFields.front()};
+                                .field = mapping.sourceFields.front().field};
 }
 
 auto SemanticVisitor::Impl::textReferenceRelay(
@@ -3101,7 +3097,7 @@ auto SemanticVisitor::Impl::textFieldInitializerDependencies(
     return {};
   auto dependencies = textFieldOwnerDependency(argument, field);
   for (auto &dependency : dependencies)
-    dependency.designatedFields.push_back(payload);
+    dependency.designatedFields.push_back(fieldProjection(payload));
   return dependencies;
 }
 
@@ -3214,12 +3210,12 @@ auto SemanticVisitor::Impl::textFieldOwnerDependency(const ExprPtr &argument,
       (dependencies.front().place.root == 0 &&
        !dependencies.front().place.receiver))
     return {};
-  publishTextDependency(dependencies.front(), {field});
+  publishTextDependency(dependencies.front(), {fieldProjection(field)});
   return dependencies;
 }
 
 auto SemanticVisitor::Impl::publishTextDependency(
-    SemanticLoanDependency &dependency, std::vector<SymbolId> path) const
+    SemanticLoanDependency &dependency, BorrowPath path) const
     -> void {
   dependency.designatedFields = std::move(path);
   dependency.access = AccessMode::ReadOnly;
@@ -3774,7 +3770,7 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
       const ExpressionInfo *info = semanticModel.findExpression(**argument);
       const auto paths = info != nullptr && isTextDependentValue(*info)
                              ? textDependentPaths(**argument)
-                             : std::vector<std::vector<SymbolId>>{};
+                             : std::vector<BorrowPath>{};
       const ClassInfo *result = classInfo(resolved.returnType);
       if (paths.size() != 1 || result == nullptr)
         continue;
@@ -3804,7 +3800,7 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
                  "GTI-S2045");
           break;
         }
-        std::vector<SymbolId> path{entry.field};
+        BorrowPath path{fieldProjection(entry.field)};
         path.insert(path.end(), paths.front().begin(), paths.front().end());
         published.push_back({.resultFields = std::move(path),
                              .origin = BorrowOriginKind::Argument,
@@ -3865,7 +3861,7 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
                "GTI-S2045");
         break;
       }
-      published.push_back({.resultFields = {entry.field},
+      published.push_back({.resultFields = {fieldProjection(entry.field)},
                            .origin = BorrowOriginKind::Argument,
                            .parameter = parameter,
                            .access = AccessMode::ReadOnly});
@@ -4170,15 +4166,15 @@ auto SemanticVisitor::Impl::relayConstructorTextField(
     return;
   // The stored part of the formal: one text or class field of it, or the
   // whole value. The argument holds one path through it.
-  const std::vector<SymbolId> stored =
-      input.wholeValue ? std::vector<SymbolId>{}
-                       : std::vector<SymbolId>{input.sourceField};
+  const BorrowPath stored =
+      input.wholeValue ? BorrowPath{}
+                       : BorrowPath{fieldProjection(input.sourceField)};
   const auto paths = textDependentPaths(*argument);
   if (paths.size() != 1 || paths.front().empty() ||
       paths.front().size() < stored.size() ||
       !std::equal(stored.begin(), stored.end(), paths.front().begin()))
     return;
-  const std::vector<SymbolId> held = paths.front();
+  const BorrowPath held = paths.front();
   // The formal must reach nothing but this initializer: the value keeps its
   // published text only when no other code reads the formal or `this`.
   const auto &parameters = constructor.parameters();
@@ -4239,9 +4235,9 @@ auto SemanticVisitor::Impl::relayConstructorTextField(
            "GTI-S2045");
     return;
   }
-  std::vector<SymbolId> path{toolingSymbolFor(member->second.symbol)};
+  BorrowPath path{fieldProjection(toolingSymbolFor(member->second.symbol))};
   if (input.payload != 0)
-    path.push_back(input.payload);
+    path.push_back(fieldProjection(input.payload));
   path.insert(path.end(), held.begin() + stored.size(), held.end());
   textOrigins.push_back({.resultFields = std::move(path),
                          .origin = BorrowOriginKind::Argument,
@@ -4594,15 +4590,52 @@ auto SemanticVisitor::Impl::collectStoredReferencePaths(
   // complete-inventory entry point always rejects unresolved type structure.
   const bool requireComplete = query == StoredReferenceQuery::CompleteInventory;
   std::vector<SemanticType> visiting;
+  BorrowInventoryBudget budget;
   const auto visit = [&](const auto &self, const SemanticType &current)
       -> std::optional<std::vector<StoredReferencePath>> {
+    if (!budget.consume() || visiting.size() >= borrowInventoryDepthLimit)
+      return std::nullopt;
     if (requireComplete && (current.kind == SemanticType::Unknown ||
                             containsOpenTypeParameter(current)))
       return std::nullopt;
     if (!current.hasLambdaShape() && current.kind != SemanticType::Class &&
-        current.kind != SemanticType::Enum &&
+        current.kind != SemanticType::Enum && current.kind != SemanticType::TypePack &&
         !typeTraits(current).containsBorrowedState)
       return std::vector<StoredReferencePath>{};
+    if (current.kind == SemanticType::Array || current.kind == SemanticType::TypePack) {
+      const bool array = current.kind == SemanticType::Array;
+      if ((array && (current.arguments.size() != 1 || current.arrayLengthParameterId)) ||
+          (!array && !current.concretePack))
+        return std::nullopt;
+      if (std::find(visiting.begin(), visiting.end(), current) != visiting.end())
+        return std::nullopt;
+      visiting.push_back(current);
+      std::vector<StoredReferencePath> paths;
+      const std::size_t count = array ? current.arrayLength : current.arguments.size();
+      for (std::size_t index = 0; index < count; ++index) {
+        const auto &element = array ? current.arguments.front() : current.arguments[index];
+        std::vector<StoredReferencePath> children;
+        if (element.kind == SemanticType::Reference) {
+          if (!budget.consume() || element.arguments.size() != 1)
+            return std::nullopt;
+          children.push_back({.reference = element});
+        } else if (typeTraits(element).containsBorrowedState || element.kind == SemanticType::TypePack) {
+          auto child = self(self, element);
+          if (!child)
+            return std::nullopt;
+          children = std::move(*child);
+        }
+        for (auto &child : children) {
+          const auto step = StoredField::element(index);
+          child.fields.insert(child.fields.begin(), step);
+          for (auto &condition : child.conditions)
+            condition.subobject.insert(condition.subobject.begin(), step);
+          paths.push_back(std::move(child));
+        }
+      }
+      visiting.pop_back();
+      return paths;
+    }
     if (current.hasLambdaShape()) {
       const auto *lambda = semanticModel.findLambda(current.lambdaId);
       const auto types = current.lambdaCaptureTypes();
@@ -4624,8 +4657,11 @@ auto SemanticVisitor::Impl::collectStoredReferencePaths(
           continue;
         }
         std::vector<StoredReferencePath> children;
-        if (types[index].kind == SemanticType::Reference)
+        if (types[index].kind == SemanticType::Reference) {
+          if (!budget.consume())
+            return std::nullopt;
           children.push_back({.reference = types[index]});
+        }
         else if (typeTraits(types[index]).containsBorrowedState) {
           auto inventory = self(self, types[index]);
           invalid = invalid || !inventory;
@@ -4677,8 +4713,11 @@ auto SemanticVisitor::Impl::collectStoredReferencePaths(
             continue;
           }
           std::vector<StoredReferencePath> children;
-          if (fieldType.kind == SemanticType::Reference)
+          if (fieldType.kind == SemanticType::Reference) {
+            if (!budget.consume())
+              return std::nullopt;
             children.push_back({.reference = fieldType});
+          }
           else if (typeTraits(fieldType).containsBorrowedState) {
             auto inventory = self(self, fieldType);
             invalid = invalid || !inventory;
@@ -4726,10 +4765,25 @@ auto SemanticVisitor::Impl::collectStoredReferencePaths(
     const GenericSubstitution substitution = classSubstitution(current);
     std::vector<StoredReferencePath> paths;
     bool invalid = false;
-    for (const ClassBaseTypeInfo &base : owner->bases) {
-      invalid = invalid || (!base.interface &&
-                            typeTraits(substituteType(base.type, substitution))
-                                .containsBorrowedState);
+    for (std::size_t ordinal = 0; ordinal < owner->bases.size(); ++ordinal) {
+      const auto &base = owner->bases[ordinal];
+      if (base.interface)
+        continue;
+      const auto actual = substituteType(base.type, substitution);
+      if (!typeTraits(actual).containsBorrowedState)
+        continue;
+      auto children = self(self, actual);
+      if (!base.syntax || !children) {
+        invalid = true;
+        continue;
+      }
+      const StoredField step(base.syntax, current.classId, ordinal);
+      for (auto &child : *children) {
+        child.fields.insert(child.fields.begin(), step);
+        for (auto &condition : child.conditions)
+          condition.subobject.insert(condition.subobject.begin(), step);
+        paths.push_back(std::move(child));
+      }
     }
     for (const FieldInfo &field : owner->fields) {
       if (field.declaration == nullptr) {
@@ -4754,6 +4808,8 @@ auto SemanticVisitor::Impl::collectStoredReferencePaths(
           invalid = true;
           continue;
         }
+        if (!budget.consume())
+          return std::nullopt;
         children.push_back(StoredReferencePath{.reference = fieldType});
       } else if (typeTraits(fieldType).containsBorrowedState) {
         auto inventory = self(self, fieldType);
@@ -4791,8 +4847,11 @@ auto SemanticVisitor::Impl::storedBorrowAlternativeInventory(
   if (!storedReferenceInventory(type))
     return std::nullopt;
   std::vector<SemanticType> visiting;
+  BorrowInventoryBudget budget;
   const auto visit = [&](const auto &self, const SemanticType &current)
       -> std::optional<std::vector<BorrowAlternativePath>> {
+    if (!budget.consume() || visiting.size() >= borrowInventoryDepthLimit)
+      return std::nullopt;
     if (current.kind == SemanticType::Unknown ||
         containsOpenTypeParameter(current))
       return std::nullopt;
@@ -4803,16 +4862,16 @@ auto SemanticVisitor::Impl::storedBorrowAlternativeInventory(
     if (std::find(visiting.begin(), visiting.end(), current) != visiting.end())
       return std::nullopt;
     visiting.push_back(current);
-    const auto appendChildren = [&](const SemanticType &child, SymbolId field,
+    const auto appendChildren = [&](const SemanticType &child, const PlaceProjection &step,
                                     const BorrowDependencyCondition *outer) {
-      if (!typeTraits(child).containsBorrowedState)
+      if (!typeTraits(child).containsBorrowedState && child.kind != SemanticType::TypePack)
         return true;
       auto children = self(self, child);
-      if (!children || field == 0)
+      if (!children || !isWellFormedBorrowPath(std::span(&step, 1)))
         return false;
       for (auto &path : *children) {
         for (auto &condition : path.conditions)
-          condition.subobject.insert(condition.subobject.begin(), field);
+          condition.subobject.insert(condition.subobject.begin(), step);
         if (outer != nullptr)
           path.conditions.insert(path.conditions.begin(), *outer);
         result.push_back(std::move(path));
@@ -4829,6 +4888,8 @@ auto SemanticVisitor::Impl::storedBorrowAlternativeInventory(
           const auto &variant = enumeration->enumerators[index];
           const BorrowDependencyCondition outer{.enumeration = current,
                                                 .variant = index};
+          if (!budget.consume())
+            return std::nullopt;
           result.push_back({.conditions = {outer}});
           if (variant.payloadTypes.size() != variant.payloadSymbols.size()) {
             complete = false;
@@ -4837,10 +4898,20 @@ auto SemanticVisitor::Impl::storedBorrowAlternativeInventory(
           for (std::size_t field = 0; field < variant.payloadTypes.size();
                ++field)
             complete &= appendChildren(variant.payloadTypes[field],
-                                       variant.payloadSymbols[field], &outer);
+                                       fieldProjection(variant.payloadSymbols[field]), &outer);
         }
-    } else if (typeTraits(current).containsBorrowedState) {
-      if (current.hasLambdaShape()) {
+    } else if (typeTraits(current).containsBorrowedState || current.kind == SemanticType::TypePack) {
+      if (current.kind == SemanticType::Array || current.kind == SemanticType::TypePack) {
+        const bool array = current.kind == SemanticType::Array;
+        if ((array && (current.arguments.size() != 1 || current.arrayLengthParameterId)) ||
+            (!array && !current.concretePack))
+          return std::nullopt;
+        const std::size_t count = array ? current.arrayLength : current.arguments.size();
+        for (std::size_t index = 0; index < count; ++index)
+          if (!appendChildren(array ? current.arguments.front() : current.arguments[index],
+                              constantIndexProjection(index), nullptr))
+            return std::nullopt;
+      } else if (current.hasLambdaShape()) {
         const auto *lambda = semanticModel.findLambda(current.lambdaId);
         const auto captures = current.lambdaCaptureTypes();
         complete = lambda != nullptr && lambda->declaration != nullptr &&
@@ -4849,20 +4920,24 @@ auto SemanticVisitor::Impl::storedBorrowAlternativeInventory(
           for (std::size_t index = 0; index < captures.size(); ++index) {
             const std::vector<StoredField> path{
                 &lambda->declaration->captures()[index]};
-            const auto fields = storedFieldSymbols(current, path);
+            const auto fields = storedBorrowPath(current, path);
             complete &=
                 fields.size() == 1 &&
                 appendChildren(captures[index], fields.front(), nullptr);
           }
       } else if (const auto *owner = classInfo(current)) {
         const auto substitution = classSubstitution(current);
+        for (std::size_t ordinal = 0; ordinal < owner->bases.size(); ++ordinal)
+          if (!owner->bases[ordinal].interface)
+            complete &= appendChildren(substituteType(owner->bases[ordinal].type, substitution),
+                                       baseProjection(current.classId, ordinal), nullptr);
         for (const auto &field : owner->fields) {
           if (field.declaration == nullptr)
             continue;
           const auto member =
               owner->members.find(field.declaration->name().lexeme);
           const std::vector<StoredField> path{field.declaration};
-          const auto fields = storedFieldSymbols(current, path);
+          const auto fields = storedBorrowPath(current, path);
           if (member == owner->members.end() || fields.size() != 1) {
             complete = false;
             continue;
@@ -4919,50 +4994,13 @@ auto SemanticVisitor::Impl::completeBorrowDependencySet(const Expr *expression)
     return completeBorrowDependencySet(group->expression());
   if (const auto *field = exprAs<Get>(expression)) {
     const auto owner = completeBorrowDependencySet(field->object());
-    const auto *place = semanticModel.findPlace(*expression);
-    if (owner && place && !place->projections.empty() &&
-        place->projections.back().kind == PlaceProjectionKind::Field) {
-      const auto symbol = place->projections.back().field;
-      SemanticBorrowDependencySet result;
-      for (auto dependency : owner->dependencies) {
-        if (dependency.designatedFields.empty())
-          return std::nullopt;
-        if (dependency.designatedFields.front() != symbol)
-          continue; // An exact sibling field does not contribute to this projection.
-        dependency.designatedFields.erase(dependency.designatedFields.begin());
-        bool qualified = true;
-        for (auto &condition : dependency.conditions) {
-          if (condition.subobject.empty() ||
-              condition.subobject.front() != symbol) {
-            qualified = false;
-            break;
-          }
-          condition.subobject.erase(condition.subobject.begin());
-        }
-        if (!qualified)
-          return std::nullopt;
-        result.dependencies.push_back(std::move(dependency));
-      }
-      for (const auto &alternative : owner->possibleAlternatives) {
-        BorrowAlternativePath projected;
-        for (auto condition : alternative.conditions) {
-          if (condition.subobject.empty())
-            return std::nullopt;
-          if (condition.subobject.front() != symbol)
-            continue;
-          condition.subobject.erase(condition.subobject.begin());
-          projected.conditions.push_back(std::move(condition));
-        }
-        if (!projected.conditions.empty() &&
-            std::find(result.possibleAlternatives.begin(), result.possibleAlternatives.end(), projected) ==
-                result.possibleAlternatives.end())
-          result.possibleAlternatives.push_back(std::move(projected));
-      }
-      const auto *info = semanticModel.findExpression(*expression);
-      const auto inventory = info ? storedBorrowAlternativeInventory(info->type) : std::nullopt;
-      if (inventory && hasCompleteBorrowAlternativeCoverage(*inventory, result.possibleAlternatives))
-        return result;
-    }
+    const auto object = memberAccessObjectType(*field);
+    const auto *member = findMember(object, field->name());
+    const auto *info = semanticModel.findExpression(*expression);
+    const auto prefix = member ? memberBorrowPath(object, member->symbol)
+                               : std::nullopt;
+    if (owner && prefix && info)
+      return projectBorrowDependencySet(*owner, object, *prefix, info->type);
   }
   if (const auto *binary = exprAs<Binary>(expression);
       binary && binary->oper().kind == TokenKind::COMMA)
@@ -4979,21 +5017,77 @@ auto SemanticVisitor::Impl::completeBorrowDependencySet(const Expr *expression)
   return std::nullopt;
 }
 
-auto SemanticVisitor::Impl::completeBorrowDependencySetForType(
-    const Expr *expression, const SemanticType &target)
+auto SemanticVisitor::Impl::projectBorrowDependencySet(
+    const SemanticBorrowDependencySet &source, const SemanticType &sourceType,
+    std::span<const PlaceProjection> prefix, const SemanticType &target) const
     -> std::optional<SemanticBorrowDependencySet> {
-  auto source = completeBorrowDependencySet(expression);
-  if (!source || (source->possibleAlternatives.empty() &&
-                 std::all_of(source->dependencies.begin(), source->dependencies.end(),
-                     [](const auto &dependency) { return dependency.conditions.empty(); })))
-    return source;
-  const auto *info = expression ? semanticModel.findExpression(*expression) : nullptr;
-  if (!info)
+  if (!isWellFormedBorrowPath(prefix))
     return std::nullopt;
-  auto actual = info->type;
-  if (const auto *contextual = semanticModel.findContextualConstruction(*expression);
-      contextual && contextual->contextualBorrowDependencies)
-    actual = contextual->constructedType;
+  auto selected = sourceType;
+  for (const auto &step : prefix) {
+    const auto child = borrowedPathElement(selected, step);
+    if (!child)
+      return std::nullopt;
+    selected = *child;
+  }
+  if (selected != target &&
+      !(selected.kind == SemanticType::Reference &&
+        selected.arguments.size() == 1 && selected.arguments.front() == target))
+    return std::nullopt;
+  const auto startsWith = [](const auto &path, const auto &head) {
+    return path.size() >= head.size() &&
+           std::equal(head.begin(), head.end(), path.begin());
+  };
+  SemanticBorrowDependencySet result;
+  for (auto dependency : source.dependencies) {
+    if (!startsWith(dependency.designatedFields, prefix)) {
+      if (startsWith(prefix, dependency.designatedFields))
+        return std::nullopt; // An ancestor fact cannot identify this subobject.
+      continue; // Independently stored sibling, selected by an exact typed path.
+    }
+    dependency.designatedFields.erase(dependency.designatedFields.begin(),
+                                      dependency.designatedFields.begin() + prefix.size());
+    for (auto &condition : dependency.conditions) {
+      if (!startsWith(condition.subobject, prefix))
+        return std::nullopt; // An ancestor enum guard needs evaluated selection evidence.
+      condition.subobject.erase(condition.subobject.begin(),
+                                condition.subobject.begin() + prefix.size());
+    }
+    result.dependencies.push_back(std::move(dependency));
+  }
+  for (const auto &alternative : source.possibleAlternatives) {
+    BorrowAlternativePath projected;
+    for (auto condition : alternative.conditions) {
+      if (!startsWith(condition.subobject, prefix)) {
+        if (startsWith(prefix, condition.subobject))
+          return std::nullopt;
+        continue;
+      }
+      condition.subobject.erase(condition.subobject.begin(),
+                                condition.subobject.begin() + prefix.size());
+      projected.conditions.push_back(std::move(condition));
+    }
+    if (!projected.conditions.empty() &&
+        std::find(result.possibleAlternatives.begin(), result.possibleAlternatives.end(), projected) ==
+            result.possibleAlternatives.end())
+      result.possibleAlternatives.push_back(std::move(projected));
+  }
+  const auto inventory = storedBorrowAlternativeInventory(target);
+  return inventory && hasCompleteBorrowAlternativeCoverage(*inventory, result.possibleAlternatives)
+             ? std::optional(std::move(result)) : std::nullopt;
+}
+
+auto SemanticVisitor::Impl::transportBorrowDependencySet(
+    const SemanticBorrowDependencySet &source, SemanticType actual,
+    SemanticType target) -> std::optional<SemanticBorrowDependencySet> {
+  if (source.possibleAlternatives.empty() &&
+      std::all_of(source.dependencies.begin(), source.dependencies.end(),
+                  [](const auto &dependency) { return dependency.conditions.empty(); }))
+    return source;
+  if (actual.kind == SemanticType::Reference && actual.arguments.size() == 1)
+    actual = SemanticType(actual.arguments.front());
+  if (target.kind == SemanticType::Reference && target.arguments.size() == 1)
+    target = SemanticType(target.arguments.front());
   if (actual == target)
     return source;
   std::vector<LifetimeBound> obligations;
@@ -5005,7 +5099,155 @@ auto SemanticVisitor::Impl::completeBorrowDependencySetForType(
   if (!from || !to)
     return std::nullopt;
   const auto transport = BorrowConditionTransport::between(*from, *to);
-  return transport ? transportBorrowDependencyConditions(*source, *transport) : std::nullopt;
+  return transport ? transportBorrowDependencyConditions(source, *transport) : std::nullopt;
+}
+
+auto SemanticVisitor::Impl::completeBorrowDependencySetForType(
+    const Expr *expression, const SemanticType &target)
+    -> std::optional<SemanticBorrowDependencySet> {
+  const auto source = completeBorrowDependencySet(expression);
+  if (!source)
+    return std::nullopt;
+  const auto *info = expression ? semanticModel.findExpression(*expression) : nullptr;
+  if (!info)
+    return std::nullopt;
+  auto actual = info->type;
+  if (const auto *contextual = semanticModel.findContextualConstruction(*expression);
+      contextual && contextual->contextualBorrowDependencies)
+    actual = contextual->constructedType;
+  return transportBorrowDependencySet(*source, std::move(actual), target);
+}
+
+SemanticVisitor::Impl::PackBorrowInvocationScope::PackBorrowInvocationScope(
+    Impl &owner) : owner(owner), previous(owner.loanFlow.activePackBorrowInvocation) {
+  auto &sequence = owner.requestSession.packBorrowInvocationSequence;
+  if (!sequence)
+    sequence = std::make_shared<std::size_t>(0);
+  if (*sequence != std::numeric_limits<std::size_t>::max())
+    invocation = {.session = sequence.get(), .sequence = ++*sequence};
+  // Exhaustion disables this transient permission, never reuses an identity.
+  owner.loanFlow.activePackBorrowInvocation = invocation;
+}
+
+SemanticVisitor::Impl::PackBorrowInvocationScope::~PackBorrowInvocationScope() {
+  auto &uses = owner.loanFlow.packBorrowInvocationsWithEntryUses;
+  const auto used = std::find(uses.begin(), uses.end(), invocation);
+  if (used != uses.end()) {
+    uses.erase(used);
+    for (auto &scope : owner.scopes)
+      for (auto &[_, symbol] : scope)
+        if (symbol.entryBorrowInvocation == invocation) {
+          symbol.entryBorrowExpansion = nullptr;
+          symbol.entryBorrowInvocation = {};
+        }
+  }
+  owner.loanFlow.activePackBorrowInvocation = previous;
+}
+
+auto SemanticVisitor::Impl::entryBorrowElement(
+    const AnalyzedCallArgument &argument) const -> const EntryBorrowElement * {
+  if (!argument.forwardedPackElement || !argument.expression ||
+      argument.packPath.empty())
+    return nullptr;
+  const auto *expansion = exprAs<PackExpansion>(argument.expression->get());
+  const auto *carrier = expansion ? resolve(expansion->name()) : nullptr;
+  if (!carrier || !carrier->parameterDeclaration ||
+      !carrier->parameterDeclaration->pack ||
+      (carrier->valueState != ValueState::Available &&
+       !(carrier->valueState == ValueState::Moved &&
+         carrier->entryBorrowExpansion == expansion &&
+         carrier->entryBorrowInvocation.sequence != 0 &&
+         carrier->entryBorrowInvocation == loanFlow.activePackBorrowInvocation)))
+    return nullptr;
+  const auto *binding = semanticModel.findBinding(*carrier->parameterDeclaration);
+  const auto symbol = symbolForDeclaration(carrier->declaration);
+  if (!symbol || !binding || binding->symbol != symbol || binding->type != carrier->type)
+    return nullptr;
+  SemanticLoanPlace place{.root = symbol};
+  auto actual = carrier->type;
+  for (const auto index : argument.packPath) {
+    if (actual.kind != SemanticType::TypePack || !actual.concretePack ||
+        index >= actual.arguments.size())
+      return nullptr;
+    actual = SemanticType(actual.arguments[index]);
+    place.projections.push_back(constantIndexProjection(index));
+  }
+  if (actual != argument.type)
+    return nullptr;
+  for (const auto &state : carrier->projectedValueStates)
+    if (state.state != ValueState::Available &&
+        loanPlacesOverlap(place, {.root = symbol, .projections = state.projections}))
+      return nullptr;
+  const EntryBorrowElement *selected = nullptr;
+  for (const auto &element : carrier->entryBorrowElements)
+    if (element.bindingPrefix == place.projections && element.type == actual) {
+      if (selected)
+        return nullptr;
+      selected = &element;
+    }
+  if (!selected)
+    return nullptr;
+  const auto liveEntry = [&](SemanticLoanId id, SemanticLoanKind kind) {
+    const auto *loan = semanticModel.findLoan(id);
+    const auto flow = loanFlow.records.find(id);
+    return loan && loan->entry && loan->kind == kind && loan->owner == symbol &&
+           loan->place == place && flow != loanFlow.records.end() && flow->second.active;
+  };
+  if (actual.kind == SemanticType::Reference) {
+    if (actual.arguments.size() != 1 ||
+        !liveEntry(selected->reference, SemanticLoanKind::Reference))
+      return nullptr;
+    const auto *loan = semanticModel.findLoan(selected->reference);
+    if (loan->access != actual.referenceAccess || !loan->protectsStorage ||
+        !loan->designatedFields.empty() || !loan->conditions.empty())
+      return nullptr;
+  } else if (selected->reference)
+    return nullptr;
+  if (selected->stored) {
+    const auto value = actual.kind == SemanticType::Reference
+                           ? actual.arguments.front() : actual;
+    const auto inventory = storedReferenceInventory(value);
+    const auto alternatives = storedBorrowAlternativeInventory(value);
+    if (!inventory || !alternatives ||
+        !hasCompleteBorrowAlternativeCoverage(*alternatives,
+                                               selected->stored->possibleAlternatives) ||
+        (selected->stored->dependencies.empty() && !inventory->empty()))
+      return nullptr;
+    for (const auto &dependency : selected->stored->dependencies) {
+      if (!liveEntry(dependency.parent, SemanticLoanKind::StoredValue))
+        return nullptr;
+      const auto *loan = semanticModel.findLoan(dependency.parent);
+      const auto matches = [&](const SemanticLoanDependency &entry) {
+        auto expected = entry;
+        expected.parent = loan->id;
+        expected.place.projections.insert(expected.place.projections.end(),
+            expected.designatedFields.begin(), expected.designatedFields.end());
+        return expected == dependency;
+      };
+      if (!matches({.place = loan->place,
+                    .designatedFields = loan->designatedFields,
+                    .access = loan->access,
+                    .protectsStorage = loan->protectsStorage,
+                    .conditions = loan->conditions}) &&
+          std::none_of(loan->additionalDependencies.begin(),
+                       loan->additionalDependencies.end(), matches))
+        return nullptr;
+    }
+  }
+  return selected;
+}
+
+auto SemanticVisitor::Impl::completeBorrowDependencySetForType(
+    const AnalyzedCallArgument &argument, const SemanticType &target)
+    -> std::optional<SemanticBorrowDependencySet> {
+  if (!argument.forwardedPackElement)
+    return argument.expression
+               ? completeBorrowDependencySetForType(argument.expression->get(), target)
+               : std::nullopt;
+  const auto *element = entryBorrowElement(argument);
+  return element && element->stored
+             ? transportBorrowDependencySet(*element->stored, element->type, target)
+             : std::nullopt;
 }
 
 auto SemanticVisitor::Impl::conditionalReferenceReturn(
@@ -5266,13 +5508,54 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   return entry->result;
 }
 
+auto SemanticVisitor::Impl::formalBorrowInputs(
+    std::span<const Parameter> parameters,
+    std::span<const SemanticType> signature) const
+    -> std::optional<std::vector<FormalBorrowInput>> {
+  std::vector<SemanticType> flatTypes;
+  for (const auto &type : signature)
+    SemanticType::appendExpandedArgument(flatTypes, type);
+  std::vector<FormalBorrowInput> result;
+  const auto append = [&](auto &&self, SymbolId binding, const SemanticType &type,
+                          BorrowPath prefix) -> bool {
+    if (prefix.size() >= 256)
+      return false;
+    if (type.kind == SemanticType::TypePack) {
+      if (!type.concretePack)
+        return false;
+      for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+        auto element = prefix;
+        element.push_back(constantIndexProjection(index));
+        if (!self(self, binding, type.arguments[index], std::move(element)))
+          return false;
+      }
+      return true;
+    }
+    const auto ordinal = result.size();
+    if (ordinal >= flatTypes.size() || type != flatTypes[ordinal])
+      return false;
+    result.push_back({.argument = ordinal, .binding = binding,
+                      .bindingPrefix = std::move(prefix), .type = type});
+    return true;
+  };
+  std::unordered_set<SymbolId> bindings;
+  for (const auto &parameter : parameters) {
+    const auto *binding = semanticModel.findBinding(parameter);
+    if (!binding || !binding->symbol || !bindings.insert(binding->symbol).second ||
+        (parameter.pack && binding->type.kind != SemanticType::TypePack) ||
+        !append(append, binding->symbol, binding->type, {}))
+      return std::nullopt;
+  }
+  return result.size() == flatTypes.size() ? std::optional(std::move(result))
+                                         : std::nullopt;
+}
+
 auto SemanticVisitor::Impl::normalizedCompleteReturnBorrow(
     const FunctionInfo &function, const SemanticBorrowDependencySet &complete,
     std::vector<LifetimeBound> *requiredLifetimes)
     -> std::optional<FunctionBorrowDependencySummary> {
   const auto *syntax = function.bodyDeclaration();
-  if (!syntax || function.parameterPack ||
-      syntax->parameters().size() != function.parameterTypes.size())
+  if (!syntax)
     return std::nullopt;
   return normalizedCompleteBorrow(function, syntax->parameters(),
                                   syntax->receiverMutability(), complete,
@@ -5286,7 +5569,8 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
     std::vector<LifetimeBound> *requiredLifetimes,
     std::span<const LambdaCaptureInfo> captures)
     -> std::optional<FunctionBorrowDependencySummary> {
-  if (parameters.size() != function.parameterTypes.size())
+  const auto formals = formalBorrowInputs(parameters, function.parameterTypes);
+  if (!formals)
     return std::nullopt;
   const bool directReference =
       function.returnType.kind == SemanticType::Reference &&
@@ -5308,15 +5592,15 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
     return std::nullopt;
 
   struct ResultPath {
-    std::vector<SymbolId> fields;
+    BorrowPath fields;
     SemanticType reference;
     std::vector<BorrowDependencyCondition> conditions;
   };
   std::vector<ResultPath> resultPaths;
   for (const auto &path : *inventory) {
-    auto fields = storedFieldSymbols(function.returnType, path.fields);
+    auto fields = storedBorrowPath(function.returnType, path.fields);
     auto conditions =
-        storedConditionSymbols(function.returnType, path.conditions);
+        storedBorrowConditions(function.returnType, path.conditions);
     if (fields.size() != path.fields.size() || !conditions)
       return std::nullopt;
     resultPaths.push_back(
@@ -5367,6 +5651,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
                                    .access = dependency.access,
                                    .resultConditions = dependency.conditions};
     SemanticType sourceType = SemanticType::Unknown;
+    BorrowPath sourcePrefix;
     Lifetime sourceRegion;
     bool physicalCallerStorage = false;
     bool sourceThroughExternalReference = false;
@@ -5384,17 +5669,18 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
                          ? AccessMode::Mutable
                          : AccessMode::ReadOnly;
     } else {
-      for (std::size_t index = 0; index < function.parameterTypes.size();
-           ++index) {
-        const auto *binding = semanticModel.findBinding(parameters[index]);
-        if (!binding || binding->symbol == 0 ||
-            binding->symbol != dependency.place.root)
+      for (const auto &formal : *formals) {
+        if (formal.binding != dependency.place.root ||
+            formal.bindingPrefix.size() > dependency.place.projections.size() ||
+            !std::equal(formal.bindingPrefix.begin(), formal.bindingPrefix.end(),
+                        dependency.place.projections.begin()))
           continue;
         if (normalized.origin != BorrowOriginKind::None)
           return std::nullopt;
         normalized.origin = BorrowOriginKind::Argument;
-        normalized.parameter = index;
-        sourceType = function.parameterTypes[index];
+        normalized.parameter = formal.argument;
+        sourcePrefix = formal.bindingPrefix;
+        sourceType = formal.type;
         if (sourceType.kind == SemanticType::Reference &&
             sourceType.arguments.size() == 1) {
           sourceRegion = sourceType.referenceLifetime;
@@ -5410,7 +5696,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
           if (normalized.origin != BorrowOriginKind::None)
             return std::nullopt;
           normalized.origin = BorrowOriginKind::Receiver;
-          normalized.sourceFields.push_back(capture.bindingSymbol);
+          normalized.sourceFields.push_back(fieldProjection(capture.bindingSymbol));
           sourceType = capture.type;
           sourceRegion = function.lifetimeContract.receiver;
           physicalCallerStorage = receiverMutability != ReceiverMutability::Consuming;
@@ -5471,23 +5757,27 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
         if (physicalSelections.insert(selection.source).second)
           selectedPlace.projections.insert(
               selectedPlace.projections.begin() + loan->place.projections.size(),
-              {.kind = PlaceProjectionKind::Field, .field = selection.fields.front()});
+              selection.fields.front());
       }
       parent = loan->parent;
     }
     bool externalReferent = sourceThroughExternalReference;
-    for (const auto &projection : selectedPlace.projections) {
+    if (sourcePrefix.size() > selectedPlace.projections.size() ||
+        !std::equal(sourcePrefix.begin(), sourcePrefix.end(), selectedPlace.projections.begin()))
+      return std::nullopt;
+    for (const auto &projection : std::span(selectedPlace.projections).subspan(sourcePrefix.size())) {
       // A class's checked pointee accessor (an owning handle's operator*)
       // reaches storage that class owns: the path ends at the handle, whose
       // storage then contains the referent.
       if (projection.kind == PlaceProjectionKind::Dereference &&
           sourceType.kind == SemanticType::Class && !externalReferent)
         break;
-      if (projection.kind != PlaceProjectionKind::Field ||
-          projection.field == 0)
+      if (!isWellFormedBorrowPath(std::span(&projection, 1)))
         return std::nullopt;
       SemanticType fieldType = SemanticType::Unknown;
       if (sourceType.kind == SemanticType::Enum) {
+        if (projection.kind != PlaceProjectionKind::Field)
+          return std::nullopt;
         const auto enumeration = enumTypeFor(sourceType);
         if (!enumeration || !enumeration->payload)
           return std::nullopt;
@@ -5506,20 +5796,11 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
                    .variant = variant.variantIndex});
             }
         }
-      } else if (const auto *owner = classInfo(sourceType)) {
-        for (const auto &[_, member] : owner->members) {
-          if (member.symbol.staticMember ||
-              member.symbol.bindingKind != SemanticBindingKind::Field ||
-              toolingSymbolFor(member.symbol) != projection.field)
-            continue;
-          if (fieldType != SemanticType::Unknown)
-            return std::nullopt;
-          fieldType = substituteSymbol(member.symbol, sourceType).type;
-        }
-      }
+      } else if (const auto selected = borrowedPathElement(sourceType, projection))
+        fieldType = *selected;
       if (fieldType == SemanticType::Unknown)
         return std::nullopt;
-      normalized.sourceFields.push_back(projection.field);
+      normalized.sourceFields.push_back(projection);
       if (fieldType.kind == SemanticType::Reference) {
         if (fieldType.arguments.size() != 1)
           return std::nullopt;
@@ -5540,9 +5821,35 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
     // that itself stores references needs an exact path instead, so that an
     // external referent is never confused with the carrier's own storage.
     const auto containedInventory = storedReferenceInventory(sourceType);
+    // A checked owning accessor supplies a different proof: its exact trusted
+    // operation returns the pointee stored by this owning field. Opaque T may
+    // prevent a complete inventory of T's external references, but that does
+    // not invalidate the independently owned physical T object. Nested type
+    // formation/outlives obligations and the cleanup/parent checks below stay
+    // separate; an unknown inventory is never treated as empty.
+    bool checkedOwnedPointee = false;
+    if (physicalCallerStorage && !externalReferent &&
+        normalized.origin == BorrowOriginKind::Receiver &&
+        function.ownedPointeeProjection &&
+        function.ownedPointeeProjection->fields == normalized.sourceFields &&
+        sourceType.arguments.size() == 1 &&
+        sourceType.arguments.front() == resultPath->reference.arguments.front()) {
+      const auto intrinsic = function.ownedPointeeProjection->borrowIntrinsic;
+      const bool mutableProjection = intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
+                                     intrinsic == IntrinsicKind::PolymorphicStorageReadMut;
+      const auto *storage = classInfo(sourceType);
+      checkedOwnedPointee =
+          ((sourceType.kind == SemanticType::UniqueOwner &&
+            (intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+             intrinsic == IntrinsicKind::UniqueOwnerBorrowMut)) ||
+           (storage && storage->compilerCapability == CompilerCapabilityTypeKind::PolymorphicStorage &&
+            (intrinsic == IntrinsicKind::PolymorphicStorageRead ||
+             intrinsic == IntrinsicKind::PolymorphicStorageReadMut))) &&
+          (dependency.access != AccessMode::Mutable || mutableProjection);
+    }
     const bool containedReferent = physicalCallerStorage && !externalReferent &&
-                                   containedInventory &&
-                                   containedInventory->empty();
+                                   (checkedOwnedPointee ||
+                                    (containedInventory && containedInventory->empty()));
     if ((!physicalCallerStorage && !externalReferent) ||
         (sourceType != resultPath->reference.arguments.front() &&
          !containedReferent) ||
@@ -5679,6 +5986,25 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
     const FunctionBorrowDependencySummary &summary,
     std::span<const ExprPtr *const> arguments, const ExprPtr *receiver,
     bool *noNormalResult) -> std::optional<SemanticBorrowDependencySet> {
+  std::vector<AnalyzedCallArgument> concrete;
+  for (const auto *argument : arguments) {
+    if (!argument || !*argument ||
+        !appendConcreteCallArgument(semanticModel.typeOf(**argument),
+                                    *argument, concrete)) {
+      if (noNormalResult)
+        *noNormalResult = false;
+      return std::nullopt;
+    }
+  }
+  return instantiateCompleteBorrowArguments(resolved, summary, concrete,
+                                            receiver, noNormalResult);
+}
+
+auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
+    const ResolvedCallInfo &resolved,
+    const FunctionBorrowDependencySummary &summary,
+    std::span<const AnalyzedCallArgument> arguments, const ExprPtr *receiver,
+    bool *noNormalResult) -> std::optional<SemanticBorrowDependencySet> {
   if (noNormalResult)
     *noNormalResult = false;
   const bool checkedCallableInvocation =
@@ -5690,6 +6016,9 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
       (resolved.intrinsic != IntrinsicKind::None && !checkedCallableInvocation) ||
       resolved.neverReturns)
     return std::nullopt;
+  std::vector<SemanticType> parameterTypes;
+  for (const auto &type : resolved.parameterTypes)
+    SemanticType::appendExpandedArgument(parameterTypes, type);
   using Availability = BorrowSupplierAvailability;
   std::vector<Availability> availability(summary.dependencies.size(),
                                          Availability::Unknown);
@@ -5715,42 +6044,48 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
                                         .conditions = mapping.resultConditions};
       for (const auto field : mapping.sourceFields)
         dependency.place.projections.push_back(
-            {.kind = PlaceProjectionKind::Field, .field = field});
+            field);
       supplying[index].push_back(std::move(dependency));
       availability[index] = Availability::Available;
       continue;
     }
-    const ExprPtr *argument = nullptr;
+    AnalyzedCallArgument actual;
     SemanticType formal = SemanticType::Unknown;
     bool physical = false;
     if (mapping.origin == BorrowOriginKind::Argument &&
-        mapping.parameter < resolved.parameterTypes.size() &&
+        mapping.parameter < parameterTypes.size() &&
         mapping.parameter < arguments.size()) {
-      argument = arguments[mapping.parameter];
-      formal = resolved.parameterTypes[mapping.parameter];
+      actual = arguments[mapping.parameter];
+      formal = parameterTypes[mapping.parameter];
       if (formal.kind == SemanticType::Reference &&
           formal.arguments.size() == 1) {
         physical = true;
         formal = SemanticType(formal.arguments.front());
       }
     } else if (mapping.origin == BorrowOriginKind::Receiver) {
-      argument = receiver;
+      actual = {.type = receiver && *receiver ? semanticModel.typeOf(**receiver)
+                                             : SemanticType::Unknown,
+                .expression = receiver};
       formal = resolved.dispatchOwner;
       physical = resolved.receiverMode != CallReceiverMode::Consuming &&
                  resolved.receiverMode != CallReceiverMode::None;
     }
+    const ExprPtr *argument = actual.expression;
     if (!argument || !*argument)
+      continue;
+    const auto *entry = actual.forwardedPackElement ? entryBorrowElement(actual) : nullptr;
+    if (actual.forwardedPackElement && !entry)
       continue;
     const auto inventory = storedReferenceInventory(formal);
     if (!inventory)
       continue;
-    const auto input = completeBorrowDependencySetForType(argument->get(), formal);
-    std::optional<std::vector<SymbolId>> externalPrefix;
+    const auto input = completeBorrowDependencySetForType(actual, formal);
+    std::optional<BorrowPath> externalPrefix;
     std::vector<BorrowDependencyCondition> externalConditions;
     SemanticType externalType = SemanticType::Unknown;
     bool ambiguous = false;
     for (const auto &path : *inventory) {
-      const auto fields = storedFieldSymbols(formal, path.fields);
+      const auto fields = storedBorrowPath(formal, path.fields);
       if (fields.size() != path.fields.size() || fields.empty()) {
         ambiguous = true;
         break;
@@ -5759,7 +6094,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
           !std::equal(fields.begin(), fields.end(),
                       mapping.sourceFields.begin()))
         continue;
-      const auto conditions = storedConditionSymbols(formal, path.conditions);
+      const auto conditions = storedBorrowConditions(formal, path.conditions);
       if (externalPrefix || !conditions ||
           path.reference.kind != SemanticType::Reference ||
           path.reference.arguments.size() != 1) {
@@ -5798,7 +6133,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
       // unguarded path may supply this result directly. Missing conditional
       // evidence never proves an alternative impossible or ownerless.
       const auto dependencies = input ? input->dependencies
-                                      : storedBorrowDependencies(*argument);
+                                      : storedBorrowDependencies(actual);
       for (const auto &dependency : dependencies)
         if (dependency.designatedFields == *externalPrefix &&
             dependency.conditions == externalConditions)
@@ -5808,7 +6143,8 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
       // exact live authority so an exclusive input cannot become a competing
       // sibling of its own result. Fresh producers without a retained loan
       // keep the ancestry in their complete producer fact.
-      if (resolved.returnType.kind == SemanticType::Reference) {
+      if (resolved.returnType.kind == SemanticType::Reference &&
+          !actual.forwardedPackElement) {
         const auto retained = retainedLoanSource(*argument);
         const auto *loan =
             retained ? semanticModel.findLoan(retained->loan) : nullptr;
@@ -5859,7 +6195,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
             if (loan->entry)
               for (const auto field : candidate.designatedFields)
                 place.projections.push_back(
-                    {.kind = PlaceProjectionKind::Field, .field = field});
+                    field);
             return source.place == place &&
                    source.designatedFields == candidate.designatedFields &&
                    source.conditions == candidate.conditions &&
@@ -5875,6 +6211,27 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
               return std::nullopt;
           }
         }
+      }
+    } else if (actual.forwardedPackElement) {
+      if (entry->reference) {
+        const auto *loan = semanticModel.findLoan(entry->reference);
+        // entryBorrowElement checked the exact parameter, path, type, access
+        // and active entry. Its shell is distinct from the external StoredValue
+        // set, including when this is a reference to a borrowed carrier.
+        sources.push_back({.place = loan->place,
+                           .access = loan->access,
+                           .protectsStorage = loan->protectsStorage,
+                           .parent = loan->id});
+      } else {
+        const auto *expansion = exprAs<PackExpansion>(argument->get());
+        const auto *binding = expansion ? resolve(expansion->name()) : nullptr;
+        const auto *info = semanticModel.findExpression(**argument);
+        if (!binding || !info)
+          continue;
+        sources.push_back({.place = {.root = toolingSymbolFor(*binding),
+                                     .projections = entry->bindingPrefix},
+                           .access = info->access,
+                           .protectsStorage = true});
       }
     } else if (!hasStableBorrowStorage(*argument)) {
       // A relayed reference value, such as ?carrier through a checked
@@ -5974,24 +6331,9 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
     // Crossing another stored reference needs its own complete producer fact;
     // never pretend the intermediate object owns that second external target.
     bool ordinarySuffix = true;
-    for (std::size_t field = prefix; field < mapping.sourceFields.size();
-         ++field) {
-      SemanticType next = SemanticType::Unknown;
-      if (const auto enumeration = enumTypeFor(projectedType);
-          enumeration && enumeration->payload) {
-        for (const auto &variant : enumeration->enumerators)
-          for (std::size_t payload = 0; payload < variant.payloadTypes.size();
-               ++payload)
-            if (payload < variant.payloadSymbols.size() &&
-                variant.payloadSymbols[payload] == mapping.sourceFields[field])
-              next = variant.payloadTypes[payload];
-      } else if (const auto *owner = classInfo(projectedType)) {
-        for (const auto &[_, member] : owner->members)
-          if (!member.symbol.staticMember &&
-              member.symbol.bindingKind == SemanticBindingKind::Field &&
-              toolingSymbolFor(member.symbol) == mapping.sourceFields[field])
-            next = substituteSymbol(member.symbol, projectedType).type;
-      }
+    for (std::size_t field = prefix; field < mapping.sourceFields.size(); ++field) {
+      const auto next = borrowedPathElement(projectedType, mapping.sourceFields[field])
+                            .value_or(SemanticType::Unknown);
       if (next == SemanticType::Unknown ||
           next.kind == SemanticType::Reference) {
         ordinarySuffix = false;
@@ -6014,8 +6356,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
       for (std::size_t field = prefix; field < mapping.sourceFields.size();
            ++field)
         dependency.place.projections.push_back(
-            {.kind = PlaceProjectionKind::Field,
-             .field = mapping.sourceFields[field]});
+            mapping.sourceFields[field]);
       dependency.designatedFields = mapping.resultFields;
       dependency.conditions = mapping.resultConditions;
       dependency.access = mapping.access;
@@ -6041,6 +6382,68 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
   return result;
 }
 
+auto SemanticVisitor::Impl::completeBaseInitializerBorrow(
+    const ConstructorInitializer &syntax,
+    const ResolvedConstructorInitializerInfo &selected)
+    -> std::optional<SemanticBorrowDependencySet> {
+  if (selected.kind != ConstructorInitializerTargetKind::Base ||
+      !selected.lifetimeApplication.complete)
+    return std::nullopt;
+  const auto &type = selected.targetType;
+  const auto inventory = storedReferenceInventory(type);
+  if (!inventory)
+    return std::nullopt;
+  std::optional<FunctionBorrowDependencySummary> summary;
+  if (std::any_of(inventory->begin(), inventory->end(),
+                  [](const auto &path) { return !path.conditions.empty(); })) {
+    ResolvedConstructionInfo construction{
+        .constructor = selected.constructor, .declaration = selected.declaration,
+        .constructedType = type, .lifetimeArguments = selected.lifetimeArguments,
+        .lifetimeApplication = selected.lifetimeApplication,
+        .parameterTypes = selected.parameterTypes,
+        .generatedDefault = selected.generatedDefault};
+    summary = completeConstructorBorrow(construction, tokenSpan(syntax.target.name.last()));
+  } else {
+    summary.emplace();
+    const auto bindings = storedCarrierConstructorBindings(type, selected.declaration,
+                                                           selected.parameterTypes);
+    if (bindings.size() != inventory->size())
+      return std::nullopt;
+    for (const auto &binding : bindings) {
+      if (binding.parameter >= selected.parameterTypes.size())
+        return std::nullopt;
+      auto destination = storedBorrowPath(type, binding.destination.fields);
+      auto source = storedBorrowPath(selected.parameterTypes[binding.parameter],
+                                     binding.sourceFields);
+      if (destination.size() != binding.destination.fields.size() ||
+          source.size() != binding.sourceFields.size())
+        return std::nullopt;
+      summary->dependencies.push_back({
+          .resultFields = std::move(destination),
+          .origin = BorrowOriginKind::Argument, .parameter = binding.parameter,
+          .sourceFields = std::move(source),
+          .access = binding.destination.reference.referenceAccess});
+    }
+  }
+  if (!summary)
+    return std::nullopt;
+  ResolvedCallInfo publication;
+  publication.returnType = type;
+  publication.parameterTypes = selected.parameterTypes;
+  std::vector<AnalyzedCallArgument> inputs;
+  for (const auto &argument : syntax.arguments)
+    inputs.push_back({.type = semanticModel.typeOf(*argument), .expression = &argument});
+  if (selected.declaration)
+    for (std::size_t index = inputs.size(); index < selected.declaration->parameters().size(); ++index) {
+      const auto &parameter = selected.declaration->parameters()[index];
+      if (!parameter.defaultArgument)
+        break;
+      const auto *expression = &parameter.defaultArgument->expression;
+      inputs.push_back({.type = semanticModel.typeOf(**expression), .expression = expression});
+    }
+  return instantiateCompleteBorrowArguments(publication, *summary, inputs);
+}
+
 auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
     const ConstructorDecl &constructor) -> void {
   const auto *record = semanticModel.findConstructor(constructor);
@@ -6064,6 +6467,47 @@ auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
   const auto *owner = classInfo(type);
   if (!owner)
     return;
+  const auto appendSubobject = [&](const SemanticBorrowDependencySet &input,
+                                    const PlaceProjection &step) {
+    for (auto dependency : input.dependencies) {
+      dependency.designatedFields.insert(dependency.designatedFields.begin(), step);
+      for (auto &condition : dependency.conditions)
+        condition.subobject.insert(condition.subobject.begin(), step);
+      complete.dependencies.push_back(std::move(dependency));
+    }
+    for (auto alternative : input.possibleAlternatives) {
+      for (auto &condition : alternative.conditions)
+        condition.subobject.insert(condition.subobject.begin(), step);
+      complete.possibleAlternatives.push_back(std::move(alternative));
+    }
+  };
+  for (std::size_t ordinal = 0; ordinal < owner->bases.size(); ++ordinal) {
+    if (owner->bases[ordinal].interface)
+      continue;
+    const auto step = baseProjection(type.classId, ordinal);
+    const auto base = borrowedPathElement(type, step);
+    if (!base)
+      return;
+    if (!typeTraits(*base).containsBorrowedState)
+      continue;
+    const ConstructorInitializer *syntax = nullptr;
+    const ResolvedConstructorInitializerInfo *selected = nullptr;
+    for (const auto &initializer : constructor.initializers()) {
+      const auto *candidate = semanticModel.findConstructorInitializer(initializer);
+      if (candidate && candidate->kind == ConstructorInitializerTargetKind::Base &&
+          candidate->targetType == *base) {
+        if (selected)
+          return;
+        syntax = &initializer;
+        selected = candidate;
+      }
+    }
+    if (!selected || !syntax || !selected->lifetimeApplication.complete)
+      return;
+    if (!selected->completeBorrow)
+      return;
+    appendSubobject(*selected->completeBorrow, step);
+  }
   for (const auto &field : owner->fields) {
     if (!field.declaration)
       return;
@@ -6098,18 +6542,7 @@ auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
         completeBorrowDependencySetForType(initializer.get(), fieldType);
     if (!input)
       return;
-    for (auto dependency : input->dependencies) {
-      dependency.designatedFields.insert(dependency.designatedFields.begin(),
-                                         fieldSymbol);
-      for (auto &condition : dependency.conditions)
-        condition.subobject.insert(condition.subobject.begin(), fieldSymbol);
-      complete.dependencies.push_back(std::move(dependency));
-    }
-    for (auto alternative : input->possibleAlternatives) {
-      for (auto &condition : alternative.conditions)
-        condition.subobject.insert(condition.subobject.begin(), fieldSymbol);
-      complete.possibleAlternatives.push_back(std::move(alternative));
-    }
+    appendSubobject(*input, fieldProjection(fieldSymbol));
   }
   FunctionInfo publication;
   publication.returnType = type;
@@ -6255,7 +6688,7 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     BorrowOriginPlace place{.root = global.globalRoot};
     for (const auto field : global.sourceFields)
       place.projections.push_back(
-          {.kind = PlaceProjectionKind::Field, .field = field});
+          field);
     updated.returnBorrowOrigin = BorrowOriginKind::Global;
     updated.returnBorrowParameter = 0;
     updated.returnBorrowAccess = global.access;
@@ -6290,7 +6723,7 @@ auto SemanticVisitor::Impl::payloadBorrowDependencySet(
         std::find(inputs.begin(), inputs.end(), argument.get()) == inputs.end())
       return std::nullopt;
     const StoredField storedField = &enumerator.declaration->payload[index];
-    const auto symbols = storedFieldSymbols(
+    const auto symbols = storedBorrowPath(
         enumerator.symbol.type, std::span<const StoredField>(&storedField, 1));
     if (symbols.size() != 1)
       return std::nullopt;
@@ -6352,7 +6785,7 @@ auto SemanticVisitor::Impl::payloadBorrowDependencySet(
         for (std::size_t path = 0; path < inventory->size(); ++path) {
           const auto &required = (*inventory)[path];
           auto &dependency = input.dependencies[path];
-          const auto fields = storedFieldSymbols(field, required.fields);
+          const auto fields = storedBorrowPath(field, required.fields);
           if (!required.conditions.empty() || !dependency.conditions.empty() ||
               fields.size() != required.fields.size() ||
               (dependency.designatedFields != fields &&
@@ -6428,7 +6861,7 @@ auto SemanticVisitor::Impl::selectedPayloadReferenceDependencies(
     return std::nullopt;
   SemanticBorrowDependencySet projected;
   for (auto dependency : source.dependencies) {
-    if (dependency.designatedFields != std::vector<SymbolId>{symbol})
+    if (dependency.designatedFields != BorrowPath{fieldProjection(symbol)})
       continue;
     // A direct reference is the end of the carrier's stored path. Its outer
     // guard belongs to address selection; the resulting scalar capability
@@ -6712,6 +7145,104 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
           return index;
       return std::nullopt;
     };
+    const auto constructBindings = [&](const auto &argumentSelf,
+                                        const SemanticType &expected,
+                                        std::span<const ExprPtr> sourceArguments,
+                                        std::size_t depth) -> ArgumentBindings {
+      const auto *nested = classInfo(expected);
+      if (!nested || expected.kind != SemanticType::Class || depth >= 64)
+        return {};
+      ArgumentBindings result;
+      bool matched = false;
+      for (const auto &candidate : nested->constructors) {
+        if (candidate.declaration == nullptr || candidate.parameterPack ||
+            !candidate.genericParameters.empty() ||
+            candidate.parameterTypes.size() != sourceArguments.size())
+          continue;
+        auto nestedTypes = candidate.parameterTypes;
+        std::vector<ArgumentBindings> arguments;
+        for (auto &parameter : nestedTypes) {
+          parameter = substituteType(parameter, classSubstitution(expected));
+          auto argument =
+              argumentSelf(argumentSelf, sourceArguments[arguments.size()],
+                           parameter, depth + 1);
+          if (!argument.valid)
+            break;
+          arguments.push_back(std::move(argument));
+        }
+        if (arguments.size() != nestedTypes.size())
+          continue;
+        if (matched)
+          return {}; // Do not select an ambiguous dependency producer.
+        matched = true;
+        const auto childBindings =
+            self(self, expected, candidate.declaration, nestedTypes);
+        if (!childBindings.valid)
+          return {};
+        result.selectedVariants = childBindings.selectedVariants;
+        for (const auto &child : childBindings.bindings) {
+          if (child.parameter >= arguments.size())
+            return {};
+          const auto &argument = arguments[child.parameter];
+          const auto sourcePaths = storedReferencePaths(nestedTypes[child.parameter]);
+          const auto sourcePath = std::find_if(sourcePaths.begin(), sourcePaths.end(),
+                                               [&](const auto &path) {
+            return path.fields == child.sourceFields;
+          });
+          // An exact passthrough of a conditional carrier also transports its
+          // known variant. Match both typed enum identity and the remaining
+          // payload path; an arbitrary reference mapping is not such a proof.
+          if (sourcePath != sourcePaths.end()) {
+            for (const auto &known : argument.selectedVariants)
+              for (const auto &destination : child.destination.conditions) {
+                if (!sameShape(known.enumeration, destination.enumeration) ||
+                    std::none_of(sourcePath->conditions.begin(), sourcePath->conditions.end(),
+                                 [&](const auto &condition) {
+                                   return sameConditionPlace(condition, known);
+                                 }) ||
+                    known.subobject.size() > child.sourceFields.size() ||
+                    destination.subobject.size() > child.destination.fields.size() ||
+                    !std::equal(known.subobject.begin(), known.subobject.end(),
+                                child.sourceFields.begin()) ||
+                    !std::equal(destination.subobject.begin(), destination.subobject.end(),
+                                child.destination.fields.begin()) ||
+                    !std::equal(child.sourceFields.begin() + known.subobject.size(),
+                                child.sourceFields.end(),
+                                child.destination.fields.begin() + destination.subobject.size(),
+                                child.destination.fields.end()))
+                  continue;
+                auto projected = destination;
+                projected.variant = known.variant;
+                const auto existing = std::find_if(result.selectedVariants.begin(),
+                                                   result.selectedVariants.end(),
+                                                   [&](const auto &condition) {
+                  return sameConditionPlace(condition, projected);
+                });
+                if (existing == result.selectedVariants.end())
+                  result.selectedVariants.push_back(std::move(projected));
+                else if (existing->variant != projected.variant)
+                  return {};
+              }
+            if (inactivePath(*sourcePath, argument))
+              continue;
+          }
+          const auto origin = std::find_if(
+              argument.bindings.begin(), argument.bindings.end(),
+              [&](const auto &binding) {
+                return binding.destination.fields == child.sourceFields &&
+                       sameShape(binding.destination.reference,
+                                 child.destination.reference);
+              });
+          if (origin == argument.bindings.end())
+            return {};
+          result.bindings.push_back({.destination = child.destination,
+                                     .parameter = origin->parameter,
+                                     .sourceFields = origin->sourceFields});
+        }
+        result.valid = true;
+      }
+      return result;
+    };
     const auto argumentBindings = [&](const auto &argumentSelf,
                                       const ExprPtr &expression,
                                       const SemanticType &expected,
@@ -6803,132 +7334,54 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
       // when queried from a caller in a different source unit.
       if (!target || *target != nested->id)
         return {};
-      ArgumentBindings result;
-      bool matched = false;
-      for (const auto &candidate : nested->constructors) {
-        if (candidate.declaration == nullptr || candidate.parameterPack ||
-            !candidate.genericParameters.empty() ||
-            candidate.parameterTypes.size() != call->arguments().size())
-          continue;
-        auto nestedTypes = candidate.parameterTypes;
-        std::vector<ArgumentBindings> arguments;
-        for (auto &parameter : nestedTypes) {
-          parameter = substituteType(parameter, classSubstitution(expected));
-          auto argument =
-              argumentSelf(argumentSelf, call->arguments()[arguments.size()],
-                           parameter, depth + 1);
-          if (!argument.valid)
-            break;
-          arguments.push_back(std::move(argument));
-        }
-        if (arguments.size() != nestedTypes.size())
-          continue;
-        if (matched)
-          return {}; // Do not select an ambiguous dependency producer.
-        matched = true;
-        const auto childBindings =
-            self(self, expected, candidate.declaration, nestedTypes);
-        if (!childBindings.valid)
-          return {};
-        result.selectedVariants = childBindings.selectedVariants;
-        for (const auto &child : childBindings.bindings) {
-          if (child.parameter >= arguments.size())
-            return {};
-          const auto &argument = arguments[child.parameter];
-          const auto sourcePaths = storedReferencePaths(nestedTypes[child.parameter]);
-          const auto sourcePath = std::find_if(sourcePaths.begin(), sourcePaths.end(),
-                                               [&](const auto &path) {
-            return path.fields == child.sourceFields;
-          });
-          // An exact passthrough of a conditional carrier also transports its
-          // known variant. Match both typed enum identity and the remaining
-          // payload path; an arbitrary reference mapping is not such a proof.
-          if (sourcePath != sourcePaths.end()) {
-            for (const auto &known : argument.selectedVariants)
-              for (const auto &destination : child.destination.conditions) {
-                if (!sameShape(known.enumeration, destination.enumeration) ||
-                    std::none_of(sourcePath->conditions.begin(), sourcePath->conditions.end(),
-                                 [&](const auto &condition) {
-                                   return sameConditionPlace(condition, known);
-                                 }) ||
-                    known.subobject.size() > child.sourceFields.size() ||
-                    destination.subobject.size() > child.destination.fields.size() ||
-                    !std::equal(known.subobject.begin(), known.subobject.end(),
-                                child.sourceFields.begin()) ||
-                    !std::equal(destination.subobject.begin(), destination.subobject.end(),
-                                child.destination.fields.begin()) ||
-                    !std::equal(child.sourceFields.begin() + known.subobject.size(),
-                                child.sourceFields.end(),
-                                child.destination.fields.begin() + destination.subobject.size(),
-                                child.destination.fields.end()))
-                  continue;
-                auto projected = destination;
-                projected.variant = known.variant;
-                const auto existing = std::find_if(result.selectedVariants.begin(),
-                                                   result.selectedVariants.end(),
-                                                   [&](const auto &condition) {
-                  return sameConditionPlace(condition, projected);
-                });
-                if (existing == result.selectedVariants.end())
-                  result.selectedVariants.push_back(std::move(projected));
-                else if (existing->variant != projected.variant)
-                  return {};
-              }
-            if (inactivePath(*sourcePath, argument))
-              continue;
-          }
-          const auto origin = std::find_if(
-              argument.bindings.begin(), argument.bindings.end(),
-              [&](const auto &binding) {
-                return binding.destination.fields == child.sourceFields &&
-                       sameShape(binding.destination.reference,
-                                 child.destination.reference);
-              });
-          if (origin == argument.bindings.end())
-            return {};
-          result.bindings.push_back({.destination = child.destination,
-                                     .parameter = origin->parameter,
-                                     .sourceFields = origin->sourceFields});
-        }
-        result.valid = true;
-      }
-      return result;
+      return constructBindings(argumentSelf, expected, call->arguments(), depth);
     };
     ArgumentBindings result{.valid = true};
-    std::unordered_map<const VariableDecl *, ArgumentBindings> fieldBindings;
+    std::vector<std::pair<StoredField, ArgumentBindings>> fieldBindings;
     for (const StoredReferencePath &path : paths) {
       if (path.fields.empty()) {
         return {};
       }
-      const VariableDecl *field = path.fields.front().declaration;
-      if (field == nullptr)
+      const auto &head = path.fields.front();
+      if (!head.declaration && !head.base)
         return {};
-      const auto member = owner->members.find(field->name().lexeme);
-      if (member == owner->members.end()) {
+      const auto prefix = storedBorrowPath(type, std::span(&head, 1));
+      const auto projected = prefix.size() == 1 ? borrowedPathElement(type, prefix.front())
+                                               : std::nullopt;
+      if (!projected)
         return {};
-      }
-      const SemanticType fieldType =
-          substituteType(member->second.symbol.type, classSubstitution(type));
+      const SemanticType fieldType = *projected;
       std::optional<std::size_t> selected;
       bool inactive = false;
       std::vector<StoredField> sourceFields(path.fields.begin() + 1,
                                             path.fields.end());
       for (const ConstructorInitializer &initializer :
            constructor->initializers()) {
-        if (initializer.target.name.segments.size() != 1 ||
-            initializer.target.name.last().lexeme != field->name().lexeme ||
-            initializer.arguments.size() != 1) {
+        if (head.base && initializer.target.name.segments.size() == 1 &&
+            initializer.target.arguments.empty() &&
+            std::any_of(owner->fields.begin(), owner->fields.end(), [&](const auto &field) {
+              return field.declaration && field.declaration->name().lexeme ==
+                                             initializer.target.name.last().lexeme;
+            }))
           continue;
-        }
-        const ExprPtr *argument = &initializer.arguments.front();
-        while (const auto *group = exprAs<Grouping>(argument->get())) {
-          argument = &group->expression();
-        }
-        const auto [entry, inserted] = fieldBindings.try_emplace(field);
-        if (inserted) {
-          entry->second = argumentBindings(argumentBindings, *argument, fieldType, 0);
+        const bool matches = head.declaration
+            ? initializer.target.name.segments.size() == 1 &&
+                  initializer.target.arguments.empty() &&
+                  initializer.target.name.last().lexeme == head.declaration->name().lexeme &&
+                  initializer.arguments.size() == 1
+            : sameShape(typeOf(initializer.target, owner->namespaceScope), fieldType);
+        if (!matches)
+          continue;
+        auto entry = std::find_if(fieldBindings.begin(), fieldBindings.end(),
+                                  [&](const auto &cached) { return cached.first == head; });
+        if (entry == fieldBindings.end()) {
+          auto bindings = head.base
+              ? constructBindings(argumentBindings, fieldType, initializer.arguments, 0)
+              : argumentBindings(argumentBindings, initializer.arguments.front(), fieldType, 0);
+          fieldBindings.emplace_back(head, std::move(bindings));
+          entry = std::prev(fieldBindings.end());
           for (auto condition : entry->second.selectedVariants) {
-            condition.subobject.insert(condition.subobject.begin(), StoredField(field));
+            condition.subobject.insert(condition.subobject.begin(), head);
             result.selectedVariants.push_back(std::move(condition));
           }
         }
@@ -6964,69 +7417,122 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
   return summarize(summarize, type, constructor, parameterTypes).bindings;
 }
 
-auto SemanticVisitor::Impl::storedFieldSymbols(
+auto SemanticVisitor::Impl::borrowedPathElement(
+    SemanticType type, const PlaceProjection &step) const
+    -> std::optional<SemanticType> {
+  if (!isWellFormedBorrowPath(std::span(&step, 1)))
+    return std::nullopt;
+  if (type.kind == SemanticType::Reference) {
+    if (type.arguments.size() != 1)
+      return std::nullopt;
+    type = SemanticType(type.arguments.front());
+  }
+  if (step.kind == PlaceProjectionKind::Base) {
+    const auto *owner = classInfo(type);
+    if (!owner || type.kind != SemanticType::Class || type.classId != step.baseOwner ||
+        step.index >= owner->bases.size() || owner->bases[step.index].interface)
+      return std::nullopt;
+    return substituteType(owner->bases[step.index].type, classSubstitution(type));
+  }
+  if (step.kind == PlaceProjectionKind::ConstantIndex) {
+    if (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
+        !type.arrayLengthParameterId && step.index < type.arrayLength)
+      return type.arguments.front();
+    if (type.kind == SemanticType::TypePack && type.concretePack &&
+        step.index < type.arguments.size())
+      return type.arguments[step.index];
+    return std::nullopt;
+  }
+  if (step.kind != PlaceProjectionKind::Field)
+    return std::nullopt;
+  if (type.kind == SemanticType::Enum) {
+    const auto enumeration = enumTypeFor(type);
+    if (!enumeration || !enumeration->payload)
+      return std::nullopt;
+    std::optional<SemanticType> result;
+    for (const auto &variant : enumeration->enumerators) {
+      if (variant.payloadSymbols.size() != variant.payloadTypes.size())
+        return std::nullopt;
+      for (std::size_t index = 0; index < variant.payloadSymbols.size(); ++index)
+        if (variant.payloadSymbols[index] == step.field) {
+          if (result)
+            return std::nullopt;
+          result = variant.payloadTypes[index];
+        }
+    }
+    return result;
+  }
+  if (type.hasLambdaShape()) {
+    const auto *lambda = semanticModel.findLambda(type.lambdaId);
+    const auto captures = type.lambdaCaptureTypes();
+    if (!lambda || lambda->captures.size() != captures.size())
+      return std::nullopt;
+    for (std::size_t index = 0; index < captures.size(); ++index)
+      if (lambda->captures[index].bindingSymbol == step.field)
+        return captures[index];
+    return std::nullopt;
+  }
+  const auto *owner = classInfo(type);
+  if (!owner)
+    return std::nullopt;
+  for (const auto &field : owner->fields) {
+    if (!field.declaration)
+      return std::nullopt;
+    const auto member = owner->members.find(field.declaration->name().lexeme);
+    if (member != owner->members.end() &&
+        member->second.symbol.variableDeclaration == field.declaration &&
+        symbolForDeclaration(member->second.symbol.declaration) == step.field)
+      return substituteSymbol(member->second.symbol, type).type;
+  }
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::storedBorrowPath(
     SemanticType type, std::span<const StoredField> fields) const
-    -> std::vector<SymbolId> {
-  std::vector<SymbolId> result;
+    -> BorrowPath {
+  BorrowPath result;
   for (const auto &field : fields) {
-    if (field.payload != nullptr) {
+    PlaceProjection step;
+    if (field.base) {
+      const auto *owner = classInfo(type);
+      if (!owner || type.classId != field.baseOwner || field.index >= owner->bases.size() ||
+          owner->bases[field.index].syntax != field.base)
+        return {};
+      step = baseProjection(field.baseOwner, field.index);
+    } else if (field.indexed) {
+      step = constantIndexProjection(field.index);
+    } else if (field.payload) {
       const auto enumeration = enumTypeFor(type);
       if (!enumeration || !enumeration->payload)
         return {};
-      bool found = false;
       for (const auto &variant : enumeration->enumerators) {
-        if (variant.declaration == nullptr ||
-            variant.payloadSymbols.size() != variant.payloadTypes.size())
+        if (!variant.declaration || variant.payloadSymbols.size() != variant.payloadTypes.size())
           return {};
-        for (std::size_t index = 0; index < variant.payloadTypes.size();
-             ++index) {
-          if (&variant.declaration->payload[index] != field.payload)
-            continue;
-          result.push_back(variant.payloadSymbols[index]);
-          type = variant.payloadTypes[index];
-          found = true;
-          break;
-        }
-        if (found)
-          break;
+        for (std::size_t index = 0; index < variant.payloadTypes.size(); ++index)
+          if (&variant.declaration->payload[index] == field.payload) {
+            if (step.field)
+              return {};
+            step = fieldProjection(variant.payloadSymbols[index]);
+          }
       }
-      if (!found)
+    } else if (field.capture) {
+      const auto *lambda = type.hasLambdaShape() ? semanticModel.findLambda(type.lambdaId) : nullptr;
+      if (!lambda || !lambda->declaration ||
+          lambda->captures.size() != lambda->declaration->captures().size())
         return {};
-      continue;
+      for (std::size_t index = 0; index < lambda->captures.size(); ++index)
+        if (&lambda->declaration->captures()[index] == field.capture)
+          step = fieldProjection(lambda->captures[index].bindingSymbol);
+    } else if (field.declaration) {
+      step = fieldProjection(symbolForDeclaration(field.declaration->name()));
+    } else {
+      return {};
     }
-    if (field.capture != nullptr) {
-      const auto *lambda = type.hasLambdaShape()
-                               ? semanticModel.findLambda(type.lambdaId)
-                               : nullptr;
-      if (lambda == nullptr)
-        return {};
-      const auto capture =
-          std::find_if(lambda->captures.begin(), lambda->captures.end(),
-                       [&](const auto &candidate) {
-                         return candidate.capture.lexeme == field.name().lexeme;
-                       });
-      if (capture == lambda->captures.end() || capture->bindingSymbol == 0)
-        return {};
-      const auto index = std::size_t(capture - lambda->captures.begin());
-      const auto types = type.lambdaCaptureTypes();
-      if (index >= types.size())
-        return {};
-      result.push_back(capture->bindingSymbol);
-      // The capture view aliases type's payload; copy before replacing it.
-      type = SemanticType(types[index]);
-      continue;
-    }
-    const auto *owner = classInfo(type);
-    if (owner == nullptr)
+    const auto child = borrowedPathElement(type, step);
+    if (!child)
       return {};
-    const auto member = owner->members.find(field.name().lexeme);
-    if (member == owner->members.end())
-      return {};
-    const auto symbol = symbolForDeclaration(member->second.symbol.declaration);
-    if (symbol == 0)
-      return {};
-    result.push_back(symbol);
-    type = substituteType(member->second.symbol.type, classSubstitution(type));
+    result.push_back(step);
+    type = *child;
   }
   return result;
 }
@@ -7036,13 +7542,13 @@ auto SemanticVisitor::Impl::isDirectStoredReferenceType(
   return !storedReferencePaths(type).empty();
 }
 
-auto SemanticVisitor::Impl::storedConditionSymbols(
+auto SemanticVisitor::Impl::storedBorrowConditions(
     const SemanticType &type,
     std::span<const StoredReferenceCondition> conditions) const
     -> std::optional<std::vector<BorrowDependencyCondition>> {
   std::vector<BorrowDependencyCondition> result;
   for (const auto &condition : conditions) {
-    auto fields = storedFieldSymbols(type, condition.subobject);
+    auto fields = storedBorrowPath(type, condition.subobject);
     const auto enumeration = enumTypeFor(condition.enumeration);
     if (fields.size() != condition.subobject.size() || !enumeration ||
         !enumeration->payload ||
@@ -7105,8 +7611,8 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
                   return declaredLifetimeRelationship(*lifetimeContract, source, target);
                 }))
           continue;
-        const auto fields = storedFieldSymbols(type, path.fields);
-        const auto conditions = storedConditionSymbols(type, path.conditions);
+        const auto fields = storedBorrowPath(type, path.fields);
+        const auto conditions = storedBorrowConditions(type, path.conditions);
         if (fields.empty() || fields.size() != path.fields.size() || !conditions)
           continue;
         summary.fields.push_back({.origin = origin, .parameter = parameter,
@@ -8357,6 +8863,11 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(
     return {};
   if (!argument.forwardedPackElement)
     return storedBorrowDependencies(*argument.expression);
+  const auto *element = entryBorrowElement(argument);
+  if (!element)
+    return {};
+  if (element->stored)
+    return element->stored->dependencies;
   const auto *expansion = exprAs<PackExpansion>(argument.expression->get());
   const auto *carrier =
       expansion == nullptr ? nullptr : resolve(expansion->name());
@@ -8369,6 +8880,9 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(
   for (const auto &loan : semanticModel.loans()) {
     if (!loan.entry || loan.kind != SemanticLoanKind::StoredValue ||
         loan.place != place)
+      continue;
+    const auto active = loanFlow.records.find(loan.id);
+    if (active == loanFlow.records.end() || !active->second.active)
       continue;
     std::vector<SemanticLoanDependency> result{
         {.place = loan.place,
@@ -8383,7 +8897,7 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(
       dependency.parent = loan.id;
       for (const auto field : dependency.designatedFields)
         dependency.place.projections.push_back(
-            {.kind = PlaceProjectionKind::Field, .field = field});
+            field);
     }
     return result;
   }
@@ -8437,7 +8951,7 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const Expr *expression)
         auto sources = storedBorrowDependencies(*relay->origin);
         for (auto &dependency : sources)
           if (dependency.designatedFields ==
-              std::vector<SymbolId>{relay->field}) {
+              BorrowPath{fieldProjection(relay->field)}) {
             dependency.designatedFields.clear();
             dependency.access = AccessMode::ReadOnly;
             return {std::move(dependency)};
@@ -8560,7 +9074,7 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const Expr *expression)
       if (sources.empty()) {
         return {};
       }
-      const auto sourceFields = storedFieldSymbols(
+      const auto sourceFields = storedBorrowPath(
           construction->parameterTypes[parameter], binding.sourceFields);
       auto source = sources.begin();
       if (!binding.sourceFields.empty()) {
@@ -8578,7 +9092,7 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const Expr *expression)
           (binding.sourceFields.empty() && sources.size() != 1))
         return {};
       auto dependency = *source;
-      dependency.designatedFields = storedFieldSymbols(
+      dependency.designatedFields = storedBorrowPath(
           construction->constructedType, binding.destination.fields);
       if (dependency.designatedFields.empty())
         return {};
@@ -8655,7 +9169,7 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const Expr *expression)
                                  ? std::vector<StoredReferencePath>{}
                                  : storedReferencePaths(*type);
           if (paths.size() == 1) {
-            const auto fields = storedFieldSymbols(*type, paths.front().fields);
+            const auto fields = storedBorrowPath(*type, paths.front().fields);
             if (mapping.sourceFields.size() >= fields.size() &&
                 std::equal(fields.begin(), fields.end(),
                            mapping.sourceFields.begin()))
@@ -8670,8 +9184,7 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const Expr *expression)
         for (std::size_t index = matchedFields;
              index < mapping.sourceFields.size(); ++index)
           dependency.place.projections.push_back(
-              {.kind = PlaceProjectionKind::Field,
-               .field = mapping.sourceFields[index]});
+              mapping.sourceFields[index]);
         dependency.designatedFields = mapping.resultFields;
         dependency.access = mapping.access;
         dependencies.push_back(std::move(dependency));
@@ -8700,7 +9213,7 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const Expr *expression)
         if (place.root != 0 || place.receiver)
           return {{.place = std::move(place),
                    .designatedFields =
-                       storedFieldSymbols(*resultType, path->fields),
+                       storedBorrowPath(*resultType, path->fields),
                    .access = path->reference.referenceAccess,
                    .protectsStorage = hasStableBorrowStorage(expression)}};
       }
@@ -8753,7 +9266,7 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const Expr *expression)
         for (auto &dependency : dependencies)
           for (const auto field : dependency.designatedFields)
             dependency.place.projections.push_back(
-                {.kind = PlaceProjectionKind::Field, .field = field});
+                field);
       // A projected carrier keeps only the fields below that projection.
       // Rebase their identities to the projected value's own layout, so a
       // constructor wrapping it can prepend its destination field without
@@ -8768,12 +9281,12 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const Expr *expression)
         projected = origin->get();
       }
       const auto *place = semanticModel.findPlace(*projected);
-      std::vector<SymbolId> prefix;
+      BorrowPath prefix;
       if (place != nullptr)
         for (const auto &projection : place->projections) {
           if (projection.kind != PlaceProjectionKind::Field)
             break;
-          prefix.push_back(projection.field);
+          prefix.push_back(projection);
         }
       if (!prefix.empty()) {
         std::erase_if(dependencies, [&](const auto &dependency) {
@@ -9034,8 +9547,8 @@ auto SemanticVisitor::Impl::projectedStoredDependency(
     if (fields.empty() || projections.size() < fields.size())
       return std::nullopt;
     for (std::size_t index = 0; index < fields.size(); ++index)
-      if (projections[index].kind != PlaceProjectionKind::Field ||
-          projections[index].field != fields[index])
+      if (!isWellFormedBorrowPath(std::span(&projections[index], 1)) ||
+          projections[index] != fields[index])
         return std::nullopt;
     // Entry dependencies name caller-owned referents through their carrier's
     // field path. Concrete local dependencies already name the external owner.
@@ -9086,7 +9599,7 @@ auto SemanticVisitor::Impl::retainedLoanSource(const Expr *expression) const
     return retainedLoanSource(alias);
   const auto mappedDependency = [&](const SemanticLoanInfo &loan,
                                     const ExprPtr &origin,
-                                    const std::vector<SymbolId> &sourceFields)
+                                    const BorrowPath &sourceFields)
       -> std::optional<SemanticLoanDependency> {
     std::vector<PlaceProjection> projections;
     if (const auto *place = semanticModel.findPlace(*origin);
@@ -9100,7 +9613,7 @@ auto SemanticVisitor::Impl::retainedLoanSource(const Expr *expression) const
       projections = place->projections;
     for (const auto field : sourceFields)
       projections.push_back(
-          {.kind = PlaceProjectionKind::Field, .field = field});
+          field);
     if (auto selected = projectedStoredDependency(loan, projections))
       return selected;
     if (loan.kind != SemanticLoanKind::StoredValue ||
@@ -9119,13 +9632,9 @@ auto SemanticVisitor::Impl::retainedLoanSource(const Expr *expression) const
     const auto paths = storedReferencePaths(type);
     if (paths.size() != 1)
       return std::nullopt;
-    std::vector<SymbolId> fields;
-    for (const auto &field : paths.front().fields) {
-      const auto symbol = symbolForDeclaration(field.name());
-      if (symbol == 0)
-        return std::nullopt;
-      fields.push_back(symbol);
-    }
+    const auto fields = storedBorrowPath(type, paths.front().fields);
+    if (fields.size() != paths.front().fields.size())
+      return std::nullopt;
     if (sourceFields.size() < fields.size() ||
         !std::equal(fields.begin(), fields.end(), sourceFields.begin()))
       return std::nullopt;
@@ -9135,7 +9644,7 @@ auto SemanticVisitor::Impl::retainedLoanSource(const Expr *expression) const
     for (std::size_t index = fields.size(); index < sourceFields.size();
          ++index)
       dependency.place.projections.push_back(
-          {.kind = PlaceProjectionKind::Field, .field = sourceFields[index]});
+          sourceFields[index]);
     return dependency;
   };
   const auto selectedDependency =
@@ -9155,13 +9664,13 @@ auto SemanticVisitor::Impl::retainedLoanSource(const Expr *expression) const
             loan->designatedFields.empty() || place == nullptr ||
             place->projections.empty())
           return source;
-        const auto overlaps = [&](const std::vector<SymbolId> &fields) {
+        const auto overlaps = [&](const BorrowPath &fields) {
           for (std::size_t index = 0;
                index < std::min(fields.size(), place->projections.size());
                ++index) {
             if (place->projections[index].kind != PlaceProjectionKind::Field)
               return true;
-            if (place->projections[index].field != fields[index])
+            if (place->projections[index] != fields[index])
               return false;
           }
           return true;
@@ -9507,12 +10016,12 @@ auto SemanticVisitor::Impl::hasCheckedExternalBorrowOrigin(
         auto external = entry.place;
         for (const auto field : entry.designatedFields)
           external.projections.push_back(
-              {.kind = PlaceProjectionKind::Field, .field = field});
+              field);
         if (external != dependency.place)
           return false;
         for (const auto &path : *inventory) {
-          const auto fields = storedFieldSymbols(carrier, path.fields);
-          const auto guards = storedConditionSymbols(carrier, path.conditions);
+          const auto fields = storedBorrowPath(carrier, path.fields);
+          const auto guards = storedBorrowConditions(carrier, path.conditions);
           if (fields == entry.designatedFields && guards &&
               *guards == entry.conditions &&
               path.reference.kind == SemanticType::Reference &&
@@ -11166,7 +11675,7 @@ auto SemanticVisitor::Impl::createRetainedLoan(
     Symbol &carrier, SymbolId carrierSymbol, SemanticLoanKind kind,
     const Expr *origin, SemanticLoanPlace place, SymbolId owner,
     bool receiverOrigin, AccessMode access, bool protectsStorage,
-    SemanticLoanId parent, bool entry, std::vector<SymbolId> designatedFields,
+    SemanticLoanId parent, bool entry, BorrowPath designatedFields,
     std::vector<BorrowDependencyCondition> conditions) -> SemanticLoanId {
   if (semanticModel.findForeignStorage(place.root) != nullptr &&
       origin != nullptr) {
@@ -11211,20 +11720,29 @@ auto SemanticVisitor::Impl::createRetainedLoan(
 
 auto SemanticVisitor::Impl::recordStoredEntryDependency(
     Symbol &carrier, SymbolId carrierSymbol, const SemanticType &type,
-    bool receiver, const Stmt *declaration) -> SemanticLoanId {
-  const SemanticLoanPlace place{.root = carrierSymbol, .receiver = receiver};
+    bool receiver, const Stmt *declaration, EntryBorrowElement *element)
+    -> SemanticLoanId {
+  const SemanticLoanPlace place{.root = carrierSymbol,
+                                .receiver = receiver,
+                                .projections = element ? element->bindingPrefix
+                                                       : BorrowPath{}};
   const auto paths = storedReferencePaths(type);
+  const auto inventory = storedReferenceInventory(type);
+  auto alternatives = storedBorrowAlternativeInventory(type);
+  if (element && inventory && inventory->empty() && alternatives)
+    element->stored = SemanticBorrowDependencySet{
+        .possibleAlternatives = *alternatives};
   const bool abstractEntry =
-      receiver || carrier.type.kind == SemanticType::Reference;
+      receiver || (element ? element->type : carrier.type).kind == SemanticType::Reference;
   const bool textEntry =
-      abstractEntry && (type.kind == SemanticType::StringView ||
+      (abstractEntry || element) && (type.kind == SemanticType::StringView ||
                         type.kind == SemanticType::CString);
-  std::vector<SymbolId> designatedFields;
+  BorrowPath designatedFields;
   std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additional;
   for (const auto &path : paths) {
-    auto fields = storedFieldSymbols(type, path.fields);
-    auto qualified = storedConditionSymbols(type, path.conditions);
+    auto fields = storedBorrowPath(type, path.fields);
+    auto qualified = storedBorrowConditions(type, path.conditions);
     if (fields.size() != path.fields.size() || !qualified)
       return 0;
     if (designatedFields.empty()) {
@@ -11238,13 +11756,37 @@ auto SemanticVisitor::Impl::recordStoredEntryDependency(
   }
   if (designatedFields.empty() && !textEntry)
     return 0;
-  const SemanticLoanId id = createRetainedLoan(
-      carrier, carrierSymbol, SemanticLoanKind::StoredValue, nullptr, place,
-      carrierSymbol, receiver,
-      textEntry       ? AccessMode::ReadOnly
-      : abstractEntry ? paths.front().reference.referenceAccess
-                      : borrowAccess(type),
-      false, 0, true, std::move(designatedFields), std::move(conditions));
+  const auto access = textEntry       ? AccessMode::ReadOnly
+                      : abstractEntry ? paths.front().reference.referenceAccess
+                                      : borrowAccess(type);
+  SemanticLoanId id = 0;
+  if (element) {
+    // A pack has several simultaneously live entry groups. None replaces the
+    // whole binding's scalar retained-loan slot with its last element.
+    id = nextSemanticLoanId++;
+    const bool lifecycleBound = !abstractEntry && lifecycleBoundBorrowCarrierFor(type);
+    semanticModel.recordLoan({.id = id,
+                              .kind = SemanticLoanKind::StoredValue,
+                              .owner = carrierSymbol,
+                              .entry = true,
+                              .place = place,
+                              .access = access,
+                              .protectsStorage = false,
+                              .lifecycleBound = lifecycleBound,
+                              .designatedFields = std::move(designatedFields),
+                              .conditions = std::move(conditions),
+                              .carriers = {carrierSymbol}});
+    loanFlow.records.emplace(id, LoanFlowRecord{
+        .id = id, .region = loanFlow.currentRegion,
+        .lastUseOrder = loanFlow.currentOrder, .lastUse = loanFlow.currentStatement,
+        .carriers = {carrierSymbol}, .confinedToRegion = carrierSymbol != 0,
+        .lifecycleBound = lifecycleBound});
+  } else {
+    id = createRetainedLoan(carrier, carrierSymbol, SemanticLoanKind::StoredValue,
+                            nullptr, place, carrierSymbol, receiver, access,
+                            false, 0, true, std::move(designatedFields),
+                            std::move(conditions));
+  }
   SemanticLoanInfo loan = *semanticModel.findLoan(id);
   loan.additionalDependencies = std::move(additional);
   if (abstractEntry) {
@@ -11266,11 +11808,9 @@ auto SemanticVisitor::Impl::recordStoredEntryDependency(
                  : nullptr;
   }
   semanticModel.recordLoan(std::move(loan));
-  const auto inventory = storedReferenceInventory(type);
-  auto alternatives = storedBorrowAlternativeInventory(type);
   if (inventory && alternatives &&
-      std::any_of(inventory->begin(), inventory->end(),
-                  [](const auto &path) { return !path.conditions.empty(); })) {
+      (element || std::any_of(inventory->begin(), inventory->end(),
+                  [](const auto &path) { return !path.conditions.empty(); }))) {
     SemanticBorrowDependencySet complete{.possibleAlternatives =
                                              std::move(*alternatives)};
     const auto *entry = semanticModel.findLoan(id);
@@ -11280,7 +11820,7 @@ auto SemanticVisitor::Impl::recordStoredEntryDependency(
       // path explicitly, not the by-value carrier's local physical shell.
       for (const auto field : dependency.designatedFields)
         dependency.place.projections.push_back(
-            {.kind = PlaceProjectionKind::Field, .field = field});
+            field);
       dependency.parent = id;
       complete.dependencies.push_back(std::move(dependency));
     };
@@ -11291,7 +11831,10 @@ auto SemanticVisitor::Impl::recordStoredEntryDependency(
             .conditions = entry->conditions});
     for (const auto &dependency : entry->additionalDependencies)
       append(dependency);
-    carrier.completeBorrowSet = std::move(complete);
+    if (element)
+      element->stored = std::move(complete);
+    else
+      carrier.completeBorrowSet = std::move(complete);
   }
   return id;
 }
@@ -11330,62 +11873,48 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
   };
   if (parameter.pack && carrier->type.kind == SemanticType::TypePack &&
       carrier->type.concretePack) {
-    // Elements cannot be named independently in the source language. Their
-    // entry capabilities remain live for the whole call and whole-pack
-    // forwarding reborrows each exact element, never the aggregate binding.
     const SymbolId symbol = toolingSymbolFor(*carrier);
-    for (std::size_t index = 0; index < carrier->type.arguments.size();
-         ++index) {
-      const auto &element = carrier->type.arguments[index];
-      const auto paths = storedReferencePaths(element);
-      if (!paths.empty()) {
-        const SemanticLoanPlace place{
-            .root = symbol,
-            .projections = {
-                {.kind = PlaceProjectionKind::ConstantIndex, .index = index}}};
-        SemanticLoanInfo loan{
-            .id = nextSemanticLoanId++,
-            .kind = SemanticLoanKind::StoredValue,
-            .owner = symbol,
-            .entry = true,
-            .place = place,
-            .access = paths.front().reference.referenceAccess,
-            .protectsStorage = false,
-            .lifecycleBound = lifecycleBoundBorrowCarrierFor(element),
-            .designatedFields =
-                storedFieldSymbols(element, paths.front().fields),
-            .carriers = {symbol}};
-        for (std::size_t field = 1; field < paths.size(); ++field)
-          loan.additionalDependencies.push_back(
-              {.place = place,
-               .designatedFields =
-                   storedFieldSymbols(element, paths[field].fields),
-               .access = paths[field].reference.referenceAccess,
-               .protectsStorage = false});
-        // Pack elements are individually identified, but cannot be named or
-        // reassigned independently by source. Do not overwrite the whole
-        // pack binding's single-carrier flow entry with its last element.
-        semanticModel.recordLoan(std::move(loan));
-        continue;
+    carrier->entryBorrowElements.clear();
+    const auto recordElement = [&](const auto &self, const SemanticType &type,
+                                   BorrowPath prefix) -> void {
+      if (prefix.size() >= borrowInventoryDepthLimit)
+        return;
+      if (type.kind == SemanticType::TypePack) {
+        if (!type.concretePack)
+          return;
+        for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+          auto nested = prefix;
+          nested.push_back(constantIndexProjection(index));
+          self(self, type.arguments[index], std::move(nested));
+        }
+        return;
       }
-      if (element.kind != SemanticType::Reference ||
-          (element.referenceAccess != AccessMode::Mutable &&
-           !carriesOpaqueWitness(element))) {
-        continue;
+      EntryBorrowElement element{.bindingPrefix = std::move(prefix), .type = type};
+      const bool reference = type.kind == SemanticType::Reference && type.arguments.size() == 1;
+      const auto &value = reference ? type.arguments.front() : type;
+      const auto dependency = recordStoredEntryDependency(
+          *carrier, symbol, value, false, nullptr, &element);
+      if (reference) {
+        const auto id = nextSemanticLoanId++;
+        element.reference = id;
+        semanticModel.recordLoan({.id = id,
+                                  .kind = SemanticLoanKind::Reference,
+                                  .owner = symbol,
+                                  .storedDependency = dependency,
+                                  .entry = true,
+                                  .place = {.root = symbol, .projections = element.bindingPrefix},
+                                  .access = type.referenceAccess,
+                                  .protectsStorage = true,
+                                  .carriers = {symbol}});
+        loanFlow.records.emplace(id, LoanFlowRecord{
+            .id = id, .region = loanFlow.currentRegion,
+            .lastUseOrder = loanFlow.currentOrder, .lastUse = loanFlow.currentStatement,
+            .carriers = {symbol}, .confinedToRegion = symbol != 0});
+        registerStorageLoan(symbol, false, id);
       }
-      semanticModel.recordLoan(
-          {.id = nextSemanticLoanId++,
-           .kind = SemanticLoanKind::Reference,
-           .owner = symbol,
-           .entry = true,
-           .place = {.root = symbol,
-                     .projections = {{.kind =
-                                          PlaceProjectionKind::ConstantIndex,
-                                      .index = index}}},
-           .access = element.referenceAccess,
-           .protectsStorage = true,
-           .carriers = {symbol}});
-    }
+      carrier->entryBorrowElements.push_back(std::move(element));
+    };
+    recordElement(recordElement, carrier->type, {});
     return;
   }
   const FunctionInfo *function =
@@ -12585,7 +13114,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                                   : std::vector<SemanticLoanDependency>{};
     const auto fields = dependencies.size() == 1
                             ? dependencies.front().designatedFields
-                            : std::vector<SymbolId>{};
+                            : BorrowPath{};
     // A root shared reference can be copied into an independent value
     // dependency. A child or cleanup-bound reference still retains ancestry:
     // copying its read permission cannot release an exclusive ancestor or
@@ -13876,10 +14405,9 @@ auto SemanticVisitor::Impl::scopedThreadTaskShapeFor(const SemanticType &type)
                           ThreadTransferBoundary::Scoped)
              .transferCapable)
       return std::nullopt;
-    auto fields = storedFieldSymbols(type, path.fields);
+    auto fields = storedBorrowPath(type, path.fields);
     if (fields.size() != path.fields.size() ||
-        std::any_of(fields.begin(), fields.end(),
-                    [](SymbolId field) { return field == 0; }))
+        !isWellFormedBorrowPath(fields))
       return std::nullopt;
     shape.dependencies.push_back(
         {.fields = std::move(fields), .reference = path.reference});

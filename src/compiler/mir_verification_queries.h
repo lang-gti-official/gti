@@ -114,16 +114,17 @@ physicalPayloadSelectionSource(const MirProgram &, const MirBody &,
 storedPayloadSelectionReference(const MirProgram &, const MirBody &,
                                 const MirReferenceSelection &);
 
-// Transient input for the typed-path foundation. Current loan records still
-// have their existing field paths; this is not a second persisted authority.
-// Replace this wrapper with BorrowDependencyCondition when that path migrates.
-struct MirBorrowPathGuard {
-  BorrowPath subobject;
-  SemanticType enumeration = SemanticType::Unknown;
-  std::size_t variant = 0;
-  friend bool operator==(const MirBorrowPathGuard &,
-                         const MirBorrowPathGuard &) = default;
-};
+// Body-local executable shape only. This does not prove Base owner/selection,
+// field types or reference crossings; mandatory program verification must
+// replay the typed path with walkBorrowPath before accepting those facts.
+[[nodiscard]] std::optional<std::size_t> borrowPathProjectionPrefix(
+    std::span<const MirPlaceProjection>, std::span<const PlaceProjection>,
+    bool trailingReference);
+
+// Structural producer identity only; the program verifier replays the selected
+// constructor, lifetime application and complete staged argument dependencies.
+[[nodiscard]] const MirInstruction *baseConstructorPublicationStage(
+    const MirBody &, const MirLoan &);
 
 enum class MirBorrowPathRoot { Value, PhysicalReference };
 
@@ -163,15 +164,22 @@ struct MirBorrowPathView {
 // constantIndex and the independently selected concrete instance in selection.
 [[nodiscard]] std::optional<MirBorrowPathView> walkBorrowPath(
     const MirProgram &, const SemanticType &root, AccessMode rootAccess,
-    std::span<const PlaceProjection>, std::span<const MirBorrowPathGuard>,
+    std::span<const PlaceProjection>, std::span<const BorrowDependencyCondition>,
     MirBorrowPathRoot);
+
+// Derive which exact typed enum domains a stable payload-symbol path crosses.
+// This proves structural selection only; active-variant/dominance permission
+// remains with the caller. Duplicate symbols or any failed prefix replay reject.
+[[nodiscard]] std::optional<std::vector<BorrowDependencyCondition>>
+deriveBorrowPathConditions(const MirProgram &, const SemanticType &, AccessMode,
+                           std::span<const PlaceProjection>, MirBorrowPathRoot);
 
 // Recover only a path whose forward replay exactly reproduces the canonical
 // projections and payload selections. An SSA index needs an independently
 // canonicalized constant first; absent base ordinals and ambiguous views fail.
 [[nodiscard]] std::optional<BorrowPath> borrowPathForProjections(
     const MirProgram &, const SemanticType &root, AccessMode rootAccess,
-    std::span<const MirPlaceProjection>, std::span<const MirBorrowPathGuard>,
+    std::span<const MirPlaceProjection>, std::span<const BorrowDependencyCondition>,
     std::span<const MirBorrowPathPayloadSelection>, MirBorrowPathRoot);
 
 // Concrete complete object representation, independent of any lifetime action.

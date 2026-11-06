@@ -6588,6 +6588,7 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
       baseType.classId > classes.size()) {
     return;
   }
+  PackBorrowInvocationScope borrowedInputs(*this);
   const ClassInfo &baseOwner = classInfo(baseType.classId);
   const bool enclosingConstructorInitializer = analyzingConstructorInitializer;
   analyzingConstructorInitializer = true;
@@ -6604,6 +6605,7 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
     std::vector<SemanticType> parameterTypes;
     bool generatedDefault = false;
     std::vector<std::size_t> contextualIntegerLiteralArguments;
+    CallableCandidate lifetimeCandidate;
   };
   std::vector<ViableConstructor> viable;
   const Token &location = initializer.target.name.last();
@@ -6627,7 +6629,8 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
       if (index >= argumentTypes.size()) {
         continue;
       }
-      if (!callArgumentMatches(parameter, argumentTypes[index],
+      if (!callArgumentMatches(parameter, argumentTypes[index], initializer.arguments[index]) &&
+          !callArgumentMatches(eraseTypeLifetimes(parameter), eraseTypeLifetimes(argumentTypes[index]),
                                initializer.arguments[index])) {
         if (contextualIntegerLiteralArgumentFits(
                 parameter, argumentTypes[index],
@@ -6640,9 +6643,42 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
       }
     }
     if (exact) {
+      const auto canonical = canonicalizeExecutableInstance(
+          {.kind = InstanceAnalysisKind::Constructor, .declaration = constructor.id,
+           .classTypes = baseType.arguments, .classValues = baseType.valueArguments});
+      if (!canonical || canonical->parameterTypes.size() != parameterTypes.size())
+        continue;
+      CallableCandidate lifetime;
+      lifetime.ownerClass = baseType.classId;
+      lifetime.dispatchOwner = baseType;
+      lifetime.returnType = canonical->ownerType;
+      lifetime.parameterTypes = canonical->parameterTypes;
+      lifetime.lifetimeContract = canonical->lifetimeContract;
+      lifetime.requirements = canonical->requirements;
+      lifetime.lifetimeApplication.bindings = canonical->lifetimeApplication.bindings;
+      std::vector<AnalyzedCallArgument> inputs;
+      for (std::size_t index = 0; index < initializer.arguments.size(); ++index)
+        inputs.push_back({.type = std::find(literalArguments.begin(), literalArguments.end(), index) !=
+                                    literalArguments.end() ? parameterTypes[index] : argumentTypes[index],
+                          .expression = &initializer.arguments[index]});
+      if (constructor.declaration)
+        for (std::size_t index = inputs.size(); index < constructor.declaration->parameters().size(); ++index) {
+          const auto &parameter = constructor.declaration->parameters()[index];
+          if (!parameter.defaultArgument)
+            break;
+          const auto *expression = &parameter.defaultArgument->expression;
+          inputs.push_back({.type = semanticModel.typeOf(**expression), .expression = expression});
+        }
+      // Erased types above establish candidate shape only. The ordinary
+      // constructor contract proves every nested region, access and bound
+      // before this candidate can supply executable or borrowed-base facts.
+      if (!applyCallLifetimeContract(lifetime, inputs, location, nullptr, false) ||
+          lifetime.returnType != baseType)
+        continue;
+      parameterTypes = lifetime.parameterTypes;
       viable.push_back({&constructor, std::move(parameterTypes),
                         requestsStructuralDefaultConstruction(constructor),
-                        std::move(literalArguments)});
+                        std::move(literalArguments), std::move(lifetime)});
     }
   }
   if (initializer.arguments.empty() &&
@@ -6744,6 +6780,17 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
          "Constructor declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
   }
+  std::vector<Lifetime> lifetimeArguments;
+  if (selected.constructor)
+    for (const auto &parameter : selected.constructor->genericParameters)
+      if (parameter.lifetime)
+        for (const auto &binding : selected.lifetimeCandidate.lifetimeApplication.bindings)
+          if (binding.first == Lifetime::parameter(parameter.id)) {
+            lifetimeArguments.push_back(binding.second);
+            break;
+          }
+  if (selected.lifetimeCandidate.lifetimeApplication.complete)
+    commitLifetimeApplication(selected.lifetimeCandidate.lifetimeApplication);
   semanticModel.record(
       initializer,
       ResolvedConstructorInitializerInfo{
@@ -6755,6 +6802,8 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
                              ? nullptr
                              : selected.constructor->declaration,
           .parameterTypes = selected.parameterTypes,
+          .lifetimeArguments = std::move(lifetimeArguments),
+          .lifetimeApplication = selected.lifetimeCandidate.lifetimeApplication,
           .defaultArguments =
               selected.constructor == nullptr ||
                       selected.constructor->declaration == nullptr
@@ -6763,6 +6812,14 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
                         selected.constructor->declaration->parameters(),
                         initializer.arguments.size()),
           .generatedDefault = selected.generatedDefault});
+  if (typeTraits(baseType).containsBorrowedState) {
+    const auto *record = semanticModel.findConstructorInitializer(initializer);
+    if (record) {
+      auto updated = *record;
+      updated.completeBorrow = completeBaseInitializerBorrow(initializer, updated);
+      semanticModel.record(initializer, std::move(updated));
+    }
+  }
   recordProgramArgumentBoundaryEffects(selected.parameterTypes,
                                        initializer.arguments);
   const SourceSpan span = tokenSpan(location);
@@ -7965,15 +8022,6 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       }
       continue;
     }
-    for (const ClassBaseTypeInfo &base : owner.bases) {
-      if (!base.interface && typeTraits(base.type).containsBorrowedState) {
-        report(base.syntax == nullptr ? owner.name
-                                      : base.syntax->type.name.last(),
-               "Borrowed state cannot be inherited in the current lifetime "
-               "model; store one direct reference instead.",
-               "GTI-S2045");
-      }
-    }
     for (const FieldInfo &field : owner.fields) {
       if (field.declaration == nullptr || field.declaration->type().reference) {
         continue;
@@ -8539,9 +8587,10 @@ auto SemanticVisitor::Impl::predeclaredTextBorrowSource(
     const auto summary =
         target ? dynamicTextReturnBorrowSummary(*target) : std::nullopt;
     if (!summary || summary->fields.size() != 1 ||
-        summary->fields.front().sourceFields.size() != 1)
+        summary->fields.front().sourceFields.size() != 1 ||
+        summary->fields.front().sourceFields.front().kind != PlaceProjectionKind::Field)
       return std::nullopt;
-    const SymbolId field = summary->fields.front().sourceFields.front();
+    const SymbolId field = summary->fields.front().sourceFields.front().field;
     if (summary->origin == BorrowOriginKind::Receiver && !origin) {
       // An implicit receiver call relays this method's own receiver.
       const SemanticType owner = function.ownerClass == 0
@@ -8888,7 +8937,7 @@ auto SemanticVisitor::Impl::textRelaySummary(const TextRelaySources &sources)
       .parameter = parameter,
       .access = AccessMode::ReadOnly,
       .fields = {
-          {.origin = origin, .parameter = parameter, .sourceFields = {field}}}};
+          {.origin = origin, .parameter = parameter, .sourceFields = {fieldProjection(field)}}}};
 }
 
 auto SemanticVisitor::Impl::textBorrowSummaryInProgress(
@@ -9676,7 +9725,7 @@ auto SemanticVisitor::Impl::ownedPointeeReturnProjection(
   if (!intrinsic || intrinsic->record().intrinsic != expected) {
     return std::nullopt;
   }
-  return OwnedPointeeProjection{.fields = {toolingSymbolFor(storage)},
+  return OwnedPointeeProjection{.fields = {fieldProjection(toolingSymbolFor(storage))},
                                 .borrowIntrinsic = expected};
 }
 
@@ -9718,8 +9767,18 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
     if (member == nullptr || member->symbol.variableDeclaration == nullptr ||
         member->symbol.staticMember)
       return std::nullopt;
-    source.source.sourceFields.push_back(toolingSymbolFor(member->symbol));
-    source.type = substituteType(member->symbol.type, classSubstitution(owner));
+    const auto path = memberBorrowPath(owner, member->symbol);
+    if (!path)
+      return std::nullopt;
+    for (const auto &step : *path) {
+      const auto element = borrowedPathElement(owner, step);
+      if (!element)
+        return std::nullopt;
+      owner = *element;
+    }
+    source.source.sourceFields.insert(source.source.sourceFields.end(),
+                                      path->begin(), path->end());
+    source.type = std::move(owner);
     return source;
   };
   std::vector<FunctionId> activeOrigins{function.id};
@@ -9839,7 +9898,7 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
           const bool external =
               std::any_of(paths.begin(), paths.end(), [&](const auto &path) {
                 const auto fields =
-                    storedFieldSymbols(receiverType, path.fields);
+                    storedBorrowPath(receiverType, path.fields);
                 return nested->source.sourceFields.size() >= fields.size() &&
                        std::equal(fields.begin(), fields.end(),
                                   nested->source.sourceFields.begin());
@@ -9915,7 +9974,7 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
         const bool externalReceiver = std::any_of(
             sourcePaths.begin(), sourcePaths.end(), [&](const auto &path) {
               const auto sourceFields =
-                  storedFieldSymbols(sourceOwner, path.fields);
+                  storedBorrowPath(sourceOwner, path.fields);
               return receiver->source.sourceFields.size() >=
                          sourceFields.size() &&
                      std::equal(sourceFields.begin(), sourceFields.end(),
@@ -9938,7 +9997,7 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
           // keeps that external owner, not this wrapper's shell. The selected
           // call and the return body independently validate this proposed map.
           auto mapping = receiver->source;
-          mapping.resultFields = storedFieldSymbols(context.returnType,
+          mapping.resultFields = storedBorrowPath(context.returnType,
                                                     resultPaths.front().fields);
           mapping.access = resultPaths.front().reference.referenceAccess;
           return std::vector<BorrowedFieldOrigin>{std::move(mapping)};
@@ -9959,7 +10018,7 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
           owner = SemanticType(owner.arguments.front());
         const auto paths = storedReferencePaths(owner);
         if (std::none_of(paths.begin(), paths.end(), [&](const auto &path) {
-              const auto fields = storedFieldSymbols(owner, path.fields);
+              const auto fields = storedBorrowPath(owner, path.fields);
               return source->source.sourceFields.size() >= fields.size() &&
                      std::equal(fields.begin(), fields.end(),
                                 source->source.sourceFields.begin());
@@ -9981,7 +10040,7 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
         return std::nullopt;
       for (const auto &path : storedReferencePaths(type)) {
         auto mapping = source->source;
-        mapping.resultFields = storedFieldSymbols(type, path.fields);
+        mapping.resultFields = storedBorrowPath(type, path.fields);
         mapping.sourceFields.insert(mapping.sourceFields.end(),
                                     mapping.resultFields.begin(),
                                     mapping.resultFields.end());
@@ -10149,8 +10208,8 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
         }
         auto mapping = std::move(source->source);
         mapping.resultFields =
-            storedFieldSymbols(context.returnType, binding.destination.fields);
-        auto nested = storedFieldSymbols(parameters[binding.parameter],
+            storedBorrowPath(context.returnType, binding.destination.fields);
+        auto nested = storedBorrowPath(parameters[binding.parameter],
                                          binding.sourceFields);
         mapping.sourceFields.insert(mapping.sourceFields.end(), nested.begin(),
                                     nested.end());
@@ -10169,7 +10228,7 @@ auto SemanticVisitor::Impl::storedFieldReturnBorrowSummary(
           const auto paths = storedReferencePaths(sourceOwner);
           if (std::none_of(paths.begin(), paths.end(), [&](const auto &path) {
                 const auto sourceFields =
-                    storedFieldSymbols(sourceOwner, path.fields);
+                    storedBorrowPath(sourceOwner, path.fields);
                 return mapping.sourceFields.size() >= sourceFields.size() &&
                        std::equal(sourceFields.begin(), sourceFields.end(),
                                   mapping.sourceFields.begin());

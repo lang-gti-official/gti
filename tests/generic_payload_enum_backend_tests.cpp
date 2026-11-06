@@ -125,7 +125,7 @@ int main() {
           loan.referenceSelection = lang::MirReferenceSelection{
               .value = mutation == 0 ? 0 : value.id,
               .carrier = mutation == 1 ? 0 : loan.source,
-              .fields = {1},
+              .fields = {lang::fieldProjection(1)},
               .reference = reference};
           changed = true;
         }
@@ -176,8 +176,8 @@ int main() {
   expect(leftName && rightName && leftName != rightName,
          "native representation names preserve exact generic identity");
   const auto serialized = lang::LoweredProgramPrinter().print(lowered);
-  expect(serialized.starts_with("lowered-program-v37") &&
-             lang::MirPrinter().print(frontend.mir).starts_with("mir-v123"),
+  expect(serialized.starts_with("lowered-program-v38") &&
+             lang::MirPrinter().print(frontend.mir).starts_with("mir-v124"),
          "snapshot versions retain the concrete enum identity contract");
   auto badLowered = lowered;
   for (auto &row : lang::LoweredProgramTestAccess::declarations(badLowered)) {
@@ -1426,7 +1426,7 @@ int main() {
           break;
         for (auto &loan : constructor.body.loans) {
           if (loan.kind != lang::MirLoanKind::Stored || !loan.escapes ||
-              loan.storedField == 0 || loan.designatedFields.empty())
+              loan.storedPath.empty() || loan.designatedFields.empty())
             continue;
           expect(lang::cppMirStoredReferenceBindings(malformed, constructor)
                      .has_value(),
@@ -1438,7 +1438,7 @@ int main() {
           else if (mutation == 2)
             loan.producedBy = 0;
           else
-            loan.storedField = 1;
+            loan.storedPath = lang::BorrowPath{lang::fieldProjection(1)};
           changed = true;
           expect(!lang::cppMirStoredReferenceBindings(malformed, constructor),
                  "enum field erasure rejects a substituted field, producer "

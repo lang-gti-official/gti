@@ -1,5 +1,6 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
+#include "gti/borrow_conditions.h"
 
 namespace lang {
 namespace {
@@ -3468,13 +3469,13 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
               field && borrowedTextType(type)) {
             const ExpressionInfo *sourceInfo =
                 semanticModel.findExpression(**field->origin);
-            std::vector<std::vector<SymbolId>> held;
+            std::vector<BorrowPath> held;
             if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
               held = textDependentPaths(**field->origin);
             const auto designated =
                 field->payload == 0
-                    ? std::vector<SymbolId>{field->field}
-                    : std::vector<SymbolId>{field->field, field->payload};
+                    ? BorrowPath{fieldProjection(field->field)}
+                    : BorrowPath{fieldProjection(field->field), fieldProjection(field->payload)};
             if (fieldSourcedTextFormal(*field) ||
                 std::find(held.begin(), held.end(), designated) != held.end())
               return ownerDependentTextInfo(
@@ -3663,7 +3664,7 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       const auto field = symbolForDeclaration(member->symbol.declaration);
       const auto paths = textDependentPaths(*get.object());
       if (std::any_of(paths.begin(), paths.end(), [&](const auto &path) {
-            return path.size() > 1 && path.front() == field;
+            return path.size() > 1 && path.front() == fieldProjection(field);
           }))
         return textDependentValueInfo(type, ValueCategory::Place,
                                       mutableAccess ? AccessMode::Mutable
@@ -3687,13 +3688,13 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
             field->origin == nullptr
                 ? nullptr
                 : semanticModel.findExpression(**field->origin);
-        std::vector<std::vector<SymbolId>> held;
+        std::vector<BorrowPath> held;
         if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
           held = textDependentPaths(**field->origin);
         const auto designated =
             field->payload == 0
-                ? std::vector<SymbolId>{field->field}
-                : std::vector<SymbolId>{field->field, field->payload};
+                ? BorrowPath{fieldProjection(field->field)}
+                : BorrowPath{fieldProjection(field->field), fieldProjection(field->payload)};
         if (fieldSourcedTextFormal(*field) ||
             std::find(held.begin(), held.end(), designated) != held.end())
           return ownerDependentTextInfo(std::move(type), ValueCategory::Place,
@@ -8367,7 +8368,7 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
                "would add a second owner dependency.",
                "GTI-S2045");
       else if (!dependencies.empty())
-        textOrigins.push_back({.resultFields = {payload},
+        textOrigins.push_back({.resultFields = {fieldProjection(payload)},
                                .origin = BorrowOriginKind::Argument,
                                .parameter = index,
                                .access = AccessMode::ReadOnly});
@@ -9774,6 +9775,44 @@ auto SemanticVisitor::Impl::receiverStateSymbol() -> Symbol * {
   return nullptr;
 }
 
+auto SemanticVisitor::Impl::memberBorrowPath(SemanticType object,
+                                                const Symbol &field) const
+    -> std::optional<BorrowPath> {
+  if (!field.ownerClass || field.staticMember || !field.variableDeclaration ||
+      field.bindingKind != SemanticBindingKind::Field)
+    return std::nullopt;
+  if (object.kind == SemanticType::Reference && object.arguments.size() == 1)
+    object = SemanticType(object.arguments.front());
+  BorrowPath path;
+  std::unordered_set<ClassId> visited;
+  while (object.classId != field.ownerClass) {
+    const auto *owner = classInfo(object);
+    if (!owner || !visited.insert(object.classId).second ||
+        path.size() >= borrowInventoryDepthLimit)
+      return std::nullopt;
+    std::optional<std::size_t> ordinal;
+    for (std::size_t index = 0; index < owner->bases.size(); ++index)
+      if (!owner->bases[index].interface) {
+        if (ordinal)
+          return std::nullopt; // The language permits one storage base.
+        ordinal = index;
+      }
+    if (!ordinal)
+      return std::nullopt;
+    const auto step = baseProjection(object.classId, *ordinal);
+    const auto child = borrowedPathElement(object, step);
+    if (!child)
+      return std::nullopt;
+    path.push_back(step);
+    object = *child;
+  }
+  const auto step = fieldProjection(symbolForDeclaration(field.declaration));
+  if (!borrowedPathElement(object, step))
+    return std::nullopt;
+  path.push_back(step);
+  return path;
+}
+
 auto SemanticVisitor::Impl::placeForSymbol(Symbol &symbol) -> SemanticPlace {
   // A by-reference capture is a checked reference held by the closure
   // environment. Inside the body its referent places follow the same overlap
@@ -9788,10 +9827,11 @@ auto SemanticVisitor::Impl::placeForSymbol(Symbol &symbol) -> SemanticPlace {
   }
   if (symbol.bindingKind == SemanticBindingKind::Field &&
       !symbol.staticMember && symbol.variableDeclaration != nullptr) {
-    return {.root = receiverStateSymbol(),
-            .projections = {{.kind = PlaceProjectionKind::Field,
-                             .field = toolingSymbolFor(symbol)}},
-            .receiver = true};
+    const auto path = currentClass ? memberBorrowPath(openClassType(*currentClass), symbol)
+                                   : std::nullopt;
+    if (!path)
+      return {};
+    return {.root = receiverStateSymbol(), .projections = *path, .receiver = true};
   }
   return {};
 }
@@ -9893,9 +9933,10 @@ auto SemanticVisitor::Impl::semanticPlace(const Expr *expression)
       if (resolved->symbol.variableDeclaration == nullptr) {
         return {};
       }
-      place.projections.push_back(
-          {.kind = PlaceProjectionKind::Field,
-           .field = toolingSymbolFor(resolved->symbol)});
+      const auto path = memberBorrowPath(memberAccessObjectType(*member), resolved->symbol);
+      if (!path)
+        return {};
+      place.projections.insert(place.projections.end(), path->begin(), path->end());
     }
     return place;
   }
@@ -9969,8 +10010,10 @@ auto SemanticVisitor::Impl::semanticPlace(const Set &expression)
   if (resolved == nullptr || resolved->symbol.variableDeclaration == nullptr) {
     return {};
   }
-  place.projections.push_back({.kind = PlaceProjectionKind::Field,
-                               .field = toolingSymbolFor(resolved->symbol)});
+  const auto path = memberBorrowPath(memberAccessObjectType(expression), resolved->symbol);
+  if (!path)
+    return {};
+  place.projections.insert(place.projections.end(), path->begin(), path->end());
   return place;
 }
 
@@ -11049,6 +11092,30 @@ auto SemanticVisitor::Impl::rawPointerFields(const Expr *expression)
   return unresolved;
 }
 
+auto SemanticVisitor::Impl::rawPointerPathElement(
+    SemanticType type, const PlaceProjection &projection) const
+    -> std::optional<SemanticType> {
+  if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+    type = SemanticType(type.arguments.front());
+  switch (projection.kind) {
+  case PlaceProjectionKind::Field:
+  case PlaceProjectionKind::Base:
+  case PlaceProjectionKind::ConstantIndex:
+    return borrowedPathElement(std::move(type), projection);
+  case PlaceProjectionKind::DynamicIndex:
+    if (type.kind == SemanticType::Array && type.arguments.size() == 1)
+      return type.arguments.front();
+    break;
+  case PlaceProjectionKind::Dereference:
+    if ((type.kind == SemanticType::RawPointer ||
+         type.kind == SemanticType::UniqueOwner ||
+         type.kind == SemanticType::SharedPointer) && type.arguments.size() == 1)
+      return type.arguments.front();
+    break;
+  }
+  return std::nullopt;
+}
+
 auto SemanticVisitor::Impl::rawPointerFieldsAt(const PlaceKey &place)
     -> std::vector<ProjectedRawPointerOrigins> {
   if (!rawAuditEnabled())
@@ -11071,18 +11138,9 @@ auto SemanticVisitor::Impl::rawPointerFieldsAt(const PlaceKey &place)
   auto selectedType = root->type;
   bool borrowedStorage = false;
   for (const auto &projection : place.projections) {
-    if (selectedType.kind == SemanticType::Reference &&
-        selectedType.arguments.size() == 1)
-      selectedType = SemanticType(selectedType.arguments.front());
-    if (projection.kind == PlaceProjectionKind::Field) {
-      const auto *field = semanticModel.database().findSymbol(projection.field);
-      selectedType = field ? field->type : SemanticType::Unknown;
-      borrowedStorage |= selectedType.kind == SemanticType::Reference;
-    } else if (!selectedType.arguments.empty()) {
-      selectedType = SemanticType(selectedType.arguments.front());
-    } else {
-      selectedType = SemanticType::Unknown;
-    }
+    const auto element = rawPointerPathElement(selectedType, projection);
+    selectedType = element.value_or(SemanticType::Unknown);
+    borrowedStorage |= selectedType.kind == SemanticType::Reference;
   }
   bool weak = false;
   for (const auto &storage :
@@ -11199,12 +11257,17 @@ auto SemanticVisitor::Impl::rawPointerFieldPaths(const SemanticType &type)
       return {};
     active.push_back(current);
     std::vector<std::vector<PlaceProjection>> result;
-    for (const auto &base : owner->bases)
-      if (!base.interface) {
-        auto paths = self(
-            self, substituteType(base.type, classSubstitution(current)), false);
-        result.insert(result.end(), paths.begin(), paths.end());
+    for (std::size_t ordinal = 0; ordinal < owner->bases.size(); ++ordinal) {
+      const auto &base = owner->bases[ordinal];
+      if (base.interface)
+        continue;
+      auto paths = self(
+          self, substituteType(base.type, classSubstitution(current)), false);
+      for (auto &path : paths) {
+        path.insert(path.begin(), baseProjection(current.classId, ordinal));
+        result.push_back(std::move(path));
       }
+    }
     for (const auto &field : owner->fields) {
       const auto member = owner->members.find(field.declaration->name().lexeme);
       if (member == owner->members.end())
@@ -11254,33 +11317,8 @@ auto SemanticVisitor::Impl::rawPointerTypesAt(
         result.push_back(std::move(current));
       return;
     }
-    const auto &projection = projections[index];
-    if (projection.kind != PlaceProjectionKind::Field) {
-      if (!current.arguments.empty())
-        self(self, current.arguments.front(), index + 1);
-    } else if (current.kind == SemanticType::Lambda &&
-               current.hasLambdaShape()) {
-      if (const auto *lambda = semanticModel.findLambda(current.lambdaId)) {
-        const auto captures = current.lambdaCaptureTypes();
-        for (std::size_t capture = 0;
-             capture < captures.size() && capture < lambda->captures.size();
-             ++capture)
-          if (lambda->captures[capture].bindingSymbol == projection.field)
-            self(self, captures[capture], index + 1);
-      }
-    } else if (const auto *owner = classInfo(current)) {
-      for (const auto &[_, member] : owner->members)
-        // This is a lookup of an already-identified field, not symbol
-        // discovery. Registering every member here gives optional auditing
-        // authority over later method/local SymbolIds and mandatory MIR.
-        if (member.symbol.bindingKind == SemanticBindingKind::Field &&
-            symbolForDeclaration(member.symbol.declaration) == projection.field)
-          self(self, substituteSymbol(member.symbol, current).type, index + 1);
-      for (const auto &base : owner->bases)
-        if (!base.interface)
-          self(self, substituteType(base.type, classSubstitution(current)),
-               index);
-    }
+    if (const auto element = rawPointerPathElement(current, projections[index]))
+      self(self, *element, index + 1);
   };
   visit(visit, type, 0);
   return result;
@@ -12210,15 +12248,7 @@ auto SemanticVisitor::Impl::recordRawWrite(
   }
   auto type = place.root->type;
   for (const auto &projection : place.projections) {
-    if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
-      type = SemanticType(type.arguments.front());
-    if (projection.kind == PlaceProjectionKind::Field) {
-      const auto *field = semanticModel.database().findSymbol(projection.field);
-      type = field ? field->type : SemanticType::Unknown;
-    } else if (!type.arguments.empty())
-      type = SemanticType(type.arguments.front());
-    else
-      type = SemanticType::Unknown;
+    type = rawPointerPathElement(type, projection).value_or(SemanticType::Unknown);
   }
   if (rawPointerFieldPaths(type).empty())
     return;
@@ -12764,17 +12794,7 @@ auto SemanticVisitor::Impl::rawPointerStoragePlaces(const SemanticPlace &place,
   const auto typeAt = [&](const SemanticPlace &selected) {
     auto type = selected.root->type;
     for (const auto &projection : selected.projections) {
-      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
-        type = SemanticType(type.arguments.front());
-      if (projection.kind == PlaceProjectionKind::Field) {
-        const auto *field =
-            semanticModel.database().findSymbol(projection.field);
-        type = field ? field->type : SemanticType::Unknown;
-      } else if (!type.arguments.empty()) {
-        type = SemanticType(type.arguments.front());
-      } else {
-        type = SemanticType::Unknown;
-      }
+      type = rawPointerPathElement(type, projection).value_or(SemanticType::Unknown);
     }
     return type;
   };

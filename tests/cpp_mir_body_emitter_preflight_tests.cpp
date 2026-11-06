@@ -6184,7 +6184,7 @@ int main() {
   };
   const auto changeStored = [](auto &candidate, const auto &mutate) {
     for (auto &loan : candidate.body.loans) {
-      if (loan.storedField == candidate.initializers.front().field) {
+      if (loan.storedPath == lang::BorrowPath{lang::fieldProjection(candidate.initializers.front().field)}) {
         mutate(loan);
         return;
       }
@@ -6193,7 +6193,7 @@ int main() {
   rejectMutation(
       [&](auto &candidate) {
         changeStored(candidate, [&](auto &loan) {
-          loan.storedField = candidate.initializers.back().field;
+          loan.storedPath = lang::BorrowPath{lang::fieldProjection(candidate.initializers.back().field)};
         });
       },
       "exclusive prefix rejects a substituted reference field");

@@ -108,7 +108,7 @@ terminatorSuccessors(const MirTerminator &terminator);
     bool physicalCarrier = false, bool exactPayload = false);
 [[nodiscard]] bool sameCanonicalPlace(const CanonicalPlace &left,
                                       const CanonicalPlace &right);
-[[nodiscard]] bool sameGlobalBorrowPlace(const BorrowOriginPlace &expected,
+[[nodiscard]] bool sameGlobalBorrowPlace(const MirProgram &program, const BorrowOriginPlace &expected,
                                          const CanonicalPlace &actual);
 
 } // namespace lang::mir_detail

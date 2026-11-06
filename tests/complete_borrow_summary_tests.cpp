@@ -39,7 +39,7 @@ int main() {
     auto error = outer;
     error.variant = 1;
     const lang::BorrowDependencyCondition inner{
-        .subobject = {10},
+        .subobject = {lang::fieldProjection(10)},
         .enumeration = lang::SemanticType::enumType(2),
         .variant = 0};
     auto otherInner = inner;
@@ -50,11 +50,11 @@ int main() {
           contract, std::span(states.begin(), states.size()));
     };
     lang::FunctionBorrowDependencySummary contract{
-        .dependencies = {{.resultFields = {20},
+        .dependencies = {{.resultFields = {lang::fieldProjection(20)},
                           .origin = lang::BorrowOriginKind::Argument,
                           .parameter = 0,
                           .resultConditions = {outer}},
-                         {.resultFields = {20},
+                         {.resultFields = {lang::fieldProjection(20)},
                           .origin = lang::BorrowOriginKind::Argument,
                           .parameter = 1,
                           .resultConditions = {outer}}},
@@ -97,11 +97,11 @@ int main() {
                reverseDomain.dependencies == std::vector<std::size_t>{0},
            "supplier declaration order does not change the retained domain");
     lang::FunctionBorrowDependencySummary nested{
-        .dependencies = {{.resultFields = {10, 30},
+        .dependencies = {{.resultFields = {lang::fieldProjection(10), lang::fieldProjection(30)},
                           .origin = lang::BorrowOriginKind::Argument,
                           .parameter = 0,
                           .resultConditions = {outer, inner}},
-                         {.resultFields = {10, 31},
+                         {.resultFields = {lang::fieldProjection(10), lang::fieldProjection(31)},
                           .origin = lang::BorrowOriginKind::Argument,
                           .parameter = 1,
                           .resultConditions = {outer, otherInner}}},
@@ -1123,7 +1123,7 @@ int main() { int owner = 3; return twice(owner) == 6 ? 0 : 1; }
     live.loans[0].entry = true;
     live.loans[0].carriers.push_back(3);
     live.loans[1].source = 4;
-    live.loans[1].referenceSelection->fields = {1};
+    live.loans[1].referenceSelection->fields = {lang::fieldProjection(1)};
     live.loans[1].referenceSelection->conditions = {
         {.enumeration = live.places[0].type, .variant = 0}};
     live.loans[1].referenceSelection->reference = reference;
@@ -1236,7 +1236,7 @@ int main() { auto value = choose(true); return 0; }
               1000;
         if (mutation == 4)
           summary.possibleAlternatives.front().conditions.front().subobject = {
-              1};
+              lang::fieldProjection(1)};
         if (mutation == 5)
           summary.dependencies.push_back({});
         expect(!lang::verifyMirProgram(malformed).valid(),
@@ -1303,7 +1303,7 @@ int main() { auto value = unwrap(Envelope::wrap(Token::item(7))); return 0; }
         if (mutation == 2)
           set.possibleAlternatives.front().conditions.front().variant = 1000;
         if (mutation == 3)
-          set.possibleAlternatives.front().conditions.front().subobject = {1};
+          set.possibleAlternatives.front().conditions.front().subobject = {lang::fieldProjection(1)};
         if (mutation == 4)
           set.possibleAlternatives.back() = set.possibleAlternatives.front();
         if (mutation == 5)
@@ -1347,7 +1347,7 @@ int main() { mut Token value = Token::item(7); mut int other = 1; return read(va
               loan.referenceSelection = lang::MirReferenceSelection{
                   .value = *instruction.result,
                   .carrier = instruction.operands.front().place,
-                  .fields = {field},
+                  .fields = {lang::fieldProjection(field)},
                   .conditions = {{.enumeration = type,
                                   .variant = *instruction.enumVariant}},
                   .reference = lang::SemanticType::referenceTo(
@@ -1717,12 +1717,12 @@ int main() { return 0; }
           {.id = 1,
            .kind = lang::MirLoanKind::Stored,
            .source = base.id,
-           .additionalDependencies = {{.designatedFields = {second},
+           .additionalDependencies = {{.designatedFields = {lang::fieldProjection(second)},
                                        .access = lang::AccessMode::Mutable,
                                        .conditions = {guard}}},
            .access = lang::AccessMode::ReadOnly,
            .carriers = {base.binding},
-           .designatedFields = {first},
+           .designatedFields = {lang::fieldProjection(first)},
            .conditions = {guard},
            .entry = true});
       const auto entryFailure = [](const auto &verified) {
@@ -1745,7 +1745,7 @@ int main() { return 0; }
         if (mutation == 0)
           loan.conditions.front().variant = 0;
         if (mutation == 1)
-          loan.designatedFields = {second};
+          loan.designatedFields = {lang::fieldProjection(second)};
         if (mutation == 2)
           loan.additionalDependencies.clear();
         if (mutation == 3)
@@ -1833,14 +1833,14 @@ int main() { return 0; }
                   instruction.operands.clear();
           if (mutation >= 5)
             for (auto &loan : changed.body.loans) {
-              if (!loan.escapes || !loan.storedField)
+              if (!loan.escapes || loan.storedPath.empty())
                 continue;
               if (mutation == 6)
                 loan.source = 0;
               if (mutation == 7)
                 loan.conditions.clear();
               if (mutation == 8)
-                loan.storedField = 0;
+                loan.storedPath.clear();
               for (auto &block : changed.body.blocks)
                 for (auto &instruction : block.instructions)
                   if (instruction.kind == lang::MirInstructionKind::Borrow &&
@@ -1966,7 +1966,7 @@ int main() { return 0; }
             malformed)[constructor.id - 1];
         const auto published = std::find_if(
             changed.body.loans.begin(), changed.body.loans.end(),
-            [](const auto &loan) { return loan.escapes && loan.storedField; });
+            [](const auto &loan) { return loan.escapes && !loan.storedPath.empty(); });
         expect(published != changed.body.loans.end(),
                "constructor publishes its field group");
         if (published == changed.body.loans.end())
@@ -2058,7 +2058,7 @@ int main() { return 0; }
             });
         auto published = std::find_if(
             changed.body.loans.begin(), changed.body.loans.end(),
-            [](const auto &loan) { return loan.escapes && loan.storedField; });
+            [](const auto &loan) { return loan.escapes && !loan.storedPath.empty(); });
         expect(group != changed.body.loans.end() &&
                    published != changed.body.loans.end(),
                "formal field publication names its entry group");

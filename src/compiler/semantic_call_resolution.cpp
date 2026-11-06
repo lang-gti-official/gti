@@ -5190,7 +5190,7 @@ auto SemanticVisitor::Impl::rawBorrowArgument(const ExprPtr &argument,
     const auto paths = storedReferencePaths(type);
     if (paths.size() == 1)
       snapshot.dependencies.front().designatedFields =
-          storedFieldSymbols(type, paths.front().fields);
+          storedBorrowPath(type, paths.front().fields);
   }
   for (const auto &field : rawPointerFields(argument.get()))
     mergeRawPointerOrigins(snapshot.origins, field.origins);
@@ -5349,8 +5349,8 @@ auto SemanticVisitor::Impl::finalizeRawBorrowContracts() -> void {
         continue;
       bool matches = true;
       for (std::size_t index = 0; index < fields.size(); ++index)
-        matches &= projections[index].kind == PlaceProjectionKind::Field &&
-                   projections[index].field == fields[index];
+        matches &= isWellFormedBorrowPath(std::span(&projections[index], 1)) &&
+                   projections[index] == fields[index];
       if (!matches)
         continue;
       witness = dependency.place;
@@ -8499,7 +8499,7 @@ auto SemanticVisitor::Impl::recordResolvedCall(
           BorrowOriginPlace place{.root = global->globalRoot};
           for (const auto field : global->sourceFields)
             place.projections.push_back(
-                {.kind = PlaceProjectionKind::Field, .field = field});
+                field);
           resolved.borrowOrigin = BorrowOriginKind::Global;
           resolved.borrowAccess = global->access;
           resolved.borrowPlace = std::move(place);

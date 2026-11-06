@@ -36,7 +36,8 @@ using MirPersistentStorageEffectQuery =
     std::span<const MirPersistentStorageAccess> hidden,
     std::vector<MirPersistentStorageAccess> *direct = nullptr,
     const MirPersistentStorageEffectQuery *query = nullptr,
-    std::span<const SymbolId> persistent = {});
+    std::span<const SymbolId> persistent = {},
+    const MirProgram *catalog = nullptr);
 
 [[nodiscard]] MirVerificationResult
 verifyMirPersistentStorageEffects(const MirProgram &program);

@@ -2629,7 +2629,7 @@ transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
          stored.kind == MirLoanKind::Stored && stored.source == source.id &&
          stored.access == AccessMode::Mutable && stored.semanticLoan != 0 &&
          stored.parent == 0 && stored.producedBy == 0 && stored.entry &&
-         stored.escapes && stored.storedField == initializer.field &&
+         stored.escapes && stored.storedPath == BorrowPath{fieldProjection(initializer.field)} &&
          stored.carriers.size() == 1 &&
          stored.carriers.front() == source.binding;
 }
@@ -2649,7 +2649,7 @@ transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
          dependency.kind == MirLoanKind::Stored && dependency.entry &&
          !dependency.escapes && !dependency.lifecycleBound &&
          dependency.source == source.id && dependency.parent == 0 &&
-         dependency.storedDependency == 0 && dependency.storedField == 0 &&
+         dependency.storedDependency == 0 && dependency.storedPath.empty() &&
          dependency.producedBy == 0 &&
          dependency.access == AccessMode::ReadOnly &&
          dependency.carriers.empty() && dependency.designatedFields.empty() &&
@@ -2671,14 +2671,14 @@ transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
       source.access != AccessMode::ReadOnly || !source.initiallyAvailable ||
       shell.kind != MirLoanKind::Parameter || !shell.entry || shell.escapes ||
       shell.parent != 0 || shell.source != source.id ||
-      shell.access != AccessMode::ReadOnly || shell.storedField != 0 ||
+      shell.access != AccessMode::ReadOnly || !shell.storedPath.empty() ||
       shell.producedBy != 0 || !shell.additionalDependencies.empty() ||
       shell.carriers.size() != 1 || shell.carriers.front() != source.binding)
     return false;
   const auto *dependency = body.findLoan(shell.storedDependency);
   return dependency != nullptr && dependency->kind == MirLoanKind::Stored &&
          dependency->entry && !dependency->escapes && dependency->parent == 0 &&
-         dependency->storedDependency == 0 && dependency->storedField == 0 &&
+         dependency->storedDependency == 0 && dependency->storedPath.empty() &&
          dependency->producedBy == 0 && dependency->source == source.id &&
          dependency->access == AccessMode::ReadOnly &&
          (!dependency->designatedFields.empty() ||
@@ -2702,13 +2702,13 @@ sharedPhysicalStoredParameter(const MirBody &body,
       stored.kind != MirLoanKind::Stored || stored.source != source.id ||
       stored.access != AccessMode::ReadOnly || stored.parent != 0 ||
       stored.entry || !stored.escapes || !stored.carriers.empty() ||
-      stored.storedField != initializer.field ||
+      stored.storedPath != BorrowPath{fieldProjection(initializer.field)} ||
       stored.producedBy != initializer.arguments.front())
     return false;
   const auto *dependency = body.findLoan(stored.storedDependency);
   if (dependency == nullptr || dependency->kind != MirLoanKind::Stored ||
       !dependency->entry || dependency->escapes || dependency->parent != 0 ||
-      dependency->storedDependency != 0 || dependency->storedField != 0 ||
+      dependency->storedDependency != 0 || !dependency->storedPath.empty() ||
       dependency->producedBy != 0 || dependency->source != source.id ||
       dependency->access != AccessMode::ReadOnly ||
       (dependency->designatedFields.empty() &&
@@ -2788,7 +2788,7 @@ storedReferenceFieldPublication(const MirProgram &program, const MirBody &body,
     const MirLoan *stored = nullptr;
     for (const MirLoan &loan : body.loans) {
       if (loan.kind != MirLoanKind::Stored ||
-          loan.storedField != binding.field) {
+          loan.storedPath != BorrowPath{fieldProjection(binding.field)}) {
         continue;
       }
       if (stored != nullptr) {
@@ -4297,7 +4297,7 @@ constructedFieldOwnedSiblingMove(const MirProgram &program,
           loadedSource->type == reference.targetType.arguments.front();
       if (borrow.kind != MirInstructionKind::Borrow || loan == nullptr ||
           loan->kind != MirLoanKind::Stored ||
-          loan->storedField != reference.field ||
+          loan->storedPath != BorrowPath{fieldProjection(reference.field)} ||
           (loan->source != load.operands.front().place &&
            !sharedPhysicalLoad) ||
           loan->producedBy != reference.arguments.front() ||
@@ -5268,7 +5268,7 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
         !source->info.traits.movable ||
         producer->borrowOrigin == BorrowOriginKind::None || loan == nullptr ||
         loan->kind != MirLoanKind::Stored || loan->entry || loan->escapes ||
-        loan->storedField != 0 || !loan->carriers.empty() ||
+        !loan->storedPath.empty() || !loan->carriers.empty() ||
         loan->producedBy != producer->hirValue ||
         body.findPlace(loan->source) == nullptr)
       return {};
@@ -6286,7 +6286,7 @@ temporaryArgumentStage(const MirBody &body, const MirInstruction &call,
       loan->source != stage->operands.front().place ||
       loan->access != AccessMode::ReadOnly || loan->semanticLoan != 0 ||
       loan->parent != 0 || loan->entry || loan->escapes ||
-      !loan->carriers.empty() || loan->storedField != 0 ||
+      !loan->carriers.empty() || !loan->storedPath.empty() ||
       loan->producedBy != stage->callSite) {
     return {};
   }
@@ -6769,7 +6769,7 @@ transferredConstructorArgumentForSource(const MirBody &body,
         retained->parent != 0 || retained->access != AccessMode::ReadOnly ||
         retained->producedBy != producer->hirValue || retained->entry ||
         retained->escapes || !retained->carriers.empty() ||
-        retained->storedField != 0) {
+        !retained->storedPath.empty()) {
       return {};
     }
   }
@@ -14573,14 +14573,14 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
   const MirBody &body = constructor.body;
   const MirLoan *entry = nullptr;
   for (const MirLoan &loan : body.loans) {
-    if (loan.storedField == field || loan.producedBy == move.hirValue) {
+    if (loan.storedPath == BorrowPath{fieldProjection(field)} || loan.producedBy == move.hirValue) {
       return false;
     }
     if (!loan.protectsSource(source.id)) {
       continue;
     }
     if (entry != nullptr || loan.source != source.id || !loan.entry ||
-        loan.escapes || loan.producedBy != 0 || loan.storedField != 0 ||
+        loan.escapes || loan.producedBy != 0 || !loan.storedPath.empty() ||
         loan.lifecycleBound || loan.twoPhase ||
         !loan.additionalDependencies.empty()) {
       return false;
@@ -14645,10 +14645,10 @@ formalEntryGroupPayloadMove(const MirConstructorInstance &constructor,
   }
   const MirLoan *published = nullptr;
   for (const MirLoan &loan : body.loans) {
-    if (loan.storedField != field && loan.producedBy != move.hirValue) {
+    if (loan.storedPath != BorrowPath{fieldProjection(field)} && loan.producedBy != move.hirValue) {
       continue;
     }
-    if (published != nullptr || loan.storedField != field ||
+    if (published != nullptr || loan.storedPath != BorrowPath{fieldProjection(field)} ||
         loan.producedBy != move.hirValue) {
       return false;
     }
@@ -14976,7 +14976,7 @@ formalEntryGroupPayloadMove(const MirConstructorInstance &constructor,
       if (deferredMove) {
         const MirLoan *stored = nullptr;
         for (const MirLoan &loan : constructor.body.loans) {
-          if (loan.storedField != initializer.field)
+          if (loan.storedPath != BorrowPath{fieldProjection(initializer.field)})
             continue;
           if (stored != nullptr)
             return false;
@@ -15481,7 +15481,7 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
     const auto &retire = entry->instructions[offset + 3];
     const auto *loan =
         publication.loan ? body.findLoan(*publication.loan) : nullptr;
-    if (!loan || loan->storedField != copy->field ||
+    if (!loan || loan->storedPath != BorrowPath{fieldProjection(copy->field)} ||
         loan->source != copy->sourcePlace ||
         storedFieldValueLoanProducer(body, *loan) != &publication ||
         publication.operands.front().value != copy->loadedValue ||
@@ -15628,7 +15628,7 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
                      [&](const auto &candidate) {
                        return candidate.id == boundary.fullExpressionEnd;
                      });
-    if (!loan || loan->storedField != move->field ||
+    if (!loan || loan->storedPath != BorrowPath{fieldProjection(move->field)} ||
         loan->source != move->sourcePlace ||
         storedFieldValueLoanProducer(body, *loan) != &publication ||
         publication.operands.front().value != move->movedValue ||
@@ -17264,7 +17264,7 @@ payloadEnumConstructorFieldPublication(const MirProgram &program,
       const auto count = std::count_if(
           body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
             const auto *publication = storedFieldValueLoanProducer(body, loan);
-            return loan.storedField == fieldSymbol && publication &&
+            return loan.storedPath == BorrowPath{fieldProjection(fieldSymbol)} && publication &&
                    publication->operands.front().value == valueId;
           });
       if (count != 1)
@@ -27656,7 +27656,7 @@ constructorInputBorrowLoans(const MirBody &body,
         stage->preparedParameterDrop || !stage->lifecycle.empty() ||
         !stage->result || *stage->result != operand.value ||
         loan->access != AccessMode::ReadOnly || loan->entry || loan->escapes ||
-        !loan->carriers.empty() || loan->storedField != 0 ||
+        !loan->carriers.empty() || !loan->storedPath.empty() ||
         !loan->additionalDependencies.empty() ||
         std::find(loans.begin(), loans.end(), loan->id) != loans.end())
       return std::nullopt;
@@ -30093,7 +30093,7 @@ returnLoanErasedByClassSsaSlot(const MirProgram &program,
 storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan) {
   if (body.kind != MirBodyKind::Constructor ||
       loan.kind != MirLoanKind::Stored || loan.entry || !loan.escapes ||
-      loan.parent != 0 || loan.storedField == 0 || loan.producedBy == 0) {
+      loan.parent != 0 || loan.storedPath.empty() || loan.producedBy == 0) {
     return nullptr;
   }
   const MirInstruction *producer = nullptr;
@@ -30170,7 +30170,7 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan) {
           field == nullptr || field->root != MirPlaceRootKind::This ||
           field->projections.size() != 1 ||
           field->projections.front().kind != MirProjectionKind::Field ||
-          field->projections.front().field != loan.storedField ||
+          BorrowPath{fieldProjection(field->projections.front().field)} != loan.storedPath ||
           field->type != operand.type || operand.type != transfer.info.type ||
           retire.kind != MirInstructionKind::EndBorrow ||
           retire.loan != entry->id || retire.hirValue != transfer.hirValue) {
@@ -30195,7 +30195,7 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan) {
 storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
   if (loan.kind != MirLoanKind::Return || loan.entry || !loan.escapes ||
       loan.parent != 0 || loan.source == 0 || loan.producedBy == 0 ||
-      !loan.carriers.empty() || loan.storedField != 0 ||
+      !loan.carriers.empty() || !loan.storedPath.empty() ||
       body.returnType.kind == SemanticType::Reference) {
     return nullptr;
   }
@@ -30289,7 +30289,7 @@ storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
             dependency == nullptr || dependency->kind != MirLoanKind::Stored ||
             !dependency->entry || dependency->escapes ||
             dependency->parent != 0 || dependency->storedDependency != 0 ||
-            dependency->storedField != 0 || dependency->producedBy != 0 ||
+            !dependency->storedPath.empty() || dependency->producedBy != 0 ||
             dependency->designatedFields.empty() ||
             dependencySource == nullptr ||
             !sameMirPlaceRoot(*source, *dependencySource) ||
@@ -30302,7 +30302,7 @@ storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
       }
       const bool exactCopiedEntry = [&] {
         if (!retained->entry || retained->escapes || retained->parent != 0 ||
-            retained->storedDependency != 0 || retained->storedField != 0 ||
+            retained->storedDependency != 0 || !retained->storedPath.empty() ||
             retained->producedBy != 0 || retained->designatedFields.empty() ||
             retained->access != AccessMode::ReadOnly ||
             instruction.info.type.kind != SemanticType::Class ||
@@ -30385,7 +30385,7 @@ storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
 callResultReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
   if (loan.kind != MirLoanKind::Return || loan.entry || !loan.escapes ||
       loan.parent != 0 || loan.source == 0 || loan.producedBy == 0 ||
-      !loan.carriers.empty() || loan.storedField != 0 ||
+      !loan.carriers.empty() || !loan.storedPath.empty() ||
       body.returnType.kind != SemanticType::Reference ||
       body.returnType.arguments.size() != 1) {
     return nullptr;
@@ -30748,7 +30748,7 @@ loanHasCppPointerCarrier(const MirProgram &program,
                             ? body.findLoan(place.loan)
                             : nullptr;
   return loan != nullptr && loan->kind == MirLoanKind::Stored &&
-         loan->storedField == 0 &&
+         loan->storedPath.empty() &&
          provenanceOnlyLoanSource(program, body, place);
 }
 
@@ -36101,13 +36101,13 @@ private:
         // A deferred field's dependency travels inside the value just
         // published into its storage, not a native reference binding.
         const MirPlace *stored =
-            loan->storedField == 0 ? nullptr : [&]() -> const MirPlace * {
+            loan->storedPath.empty() ? nullptr : [&]() -> const MirPlace * {
           for (const MirPlace &candidate : facts.body.places)
             if (candidate.root == MirPlaceRootKind::This &&
                 candidate.projections.size() == 1 &&
                 candidate.projections.front().kind ==
                     MirProjectionKind::Field &&
-                candidate.projections.front().field == loan->storedField)
+                BorrowPath{fieldProjection(candidate.projections.front().field)} == loan->storedPath)
               return &candidate;
           return nullptr;
         }();
@@ -45472,7 +45472,7 @@ cppMirStoredReferenceBindings(const MirProgram &program,
          ++loanIndex) {
       const MirLoan &loan = constructor.body.loans[loanIndex];
       if (loan.kind != MirLoanKind::Stored ||
-          loan.storedField != initializer.field) {
+          loan.storedPath != BorrowPath{fieldProjection(initializer.field)}) {
         continue;
       }
       if (stored != nullptr) {
@@ -45560,7 +45560,7 @@ cppMirStoredReferenceBindings(const MirProgram &program,
   for (std::size_t loanIndex = 0; loanIndex < constructor.body.loans.size();
        ++loanIndex) {
     if (constructor.body.loans[loanIndex].kind == MirLoanKind::Stored &&
-        constructor.body.loans[loanIndex].storedField != 0 &&
+        !constructor.body.loans[loanIndex].storedPath.empty() &&
         !loanUsed[loanIndex] &&
         storedFieldValueLoanProducer(
             constructor.body, constructor.body.loans[loanIndex]) == nullptr) {
@@ -46799,7 +46799,7 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
                 storedFieldValueLoanProducer(constructor.body, loan);
             return publication != nullptr && loan.source == source->id &&
                    loan.access == AccessMode::ReadOnly &&
-                   loan.storedField == initializer.field &&
+                   loan.storedPath == BorrowPath{fieldProjection(initializer.field)} &&
                    publication->operands.front().value == loadedValue->id;
           });
       if (publications != 1)
@@ -47473,7 +47473,7 @@ plainConstructedFieldTarget(const MirProgram &program,
     const auto *value = body.findValue(it->constructedValue);
     const MirLoan *published = nullptr;
     for (const auto &loan : body.loans) {
-      if (value && loan.storedField == it->field &&
+      if (value && loan.storedPath == BorrowPath{fieldProjection(it->field)} &&
           loan.producedBy == value->sourceValue) {
         if (published || !storedFieldValueLoanProducer(body, loan))
           return false;
@@ -48147,7 +48147,7 @@ nativeBorrowedConstructedFieldPrefix(
       construct.operands.size() != target->parameterTypes.size() ||
       loan == nullptr || loan->kind != MirLoanKind::Stored || loan->entry ||
       loan->escapes || loan->lifecycleBound != activeCleanup ||
-      loan->storedField != 0 || loan->producedBy != construct.hirValue)
+      !loan->storedPath.empty() || loan->producedBy != construct.hirValue)
     return std::nullopt;
 
   // Multiple native children require proof of actual absence of failure;
@@ -51875,7 +51875,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // pointers. A place rooted at it never spells: it is admissible only
       // as provenance that nothing evaluates, such as the owner of a
       // reference selected from the carrier's payload.
-      if (loan.storedField == 0 && !storedReferenceBindings) {
+      if (loan.storedPath.empty() && !storedReferenceBindings) {
         for (const MirPlace &place : body.places) {
           if (place.root == MirPlaceRootKind::Loan && place.loan == loan.id &&
               !storedCarrierProvenancePlace(program_, body, place)) {

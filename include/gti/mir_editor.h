@@ -48,12 +48,14 @@ struct MirUnreachableBlockRewrite {
 // Canonical lower-level operations used by MirEditor and coherence replay.
 // Failure leaves the supplied MIR byte-identical.
 [[nodiscard]] std::optional<MirScalarPromotionRewrite>
-rewriteMirScalarPlace(MirBody &body, MirPlaceId place);
+rewriteMirScalarPlace(MirBody &body, MirPlaceId place,
+                      const MirProgram *catalog = nullptr);
 [[nodiscard]] std::optional<MirDeadInstructionRewrite>
 rewriteMirDeadInstruction(MirProgram &program, MirBodyAddress body,
                           MirInstructionId instruction);
 [[nodiscard]] std::optional<MirUnreachableBlockRewrite>
-rewriteMirUnreachableBlock(MirBody &body, MirBlockId block);
+rewriteMirUnreachableBlock(MirBody &body, MirBlockId block,
+                           const MirProgram *catalog = nullptr);
 
 // The single evaluation authority for MIR compute folds. Optimizer admission
 // and coherence replay both use this operation.

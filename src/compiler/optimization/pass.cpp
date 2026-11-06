@@ -272,7 +272,7 @@ analyzeScalarPromotion(const MirProgram &program, MirBodyAddress address,
     }
     if (eligible) {
       MirBody proof = body;
-      if (rewriteMirScalarPlace(proof, place.id)) {
+      if (rewriteMirScalarPlace(proof, place.id, &program)) {
         result.candidates.push_back(std::move(candidate));
       } else {
         result.misses.push_back(

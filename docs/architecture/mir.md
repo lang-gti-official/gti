@@ -669,10 +669,31 @@ retain both the declaration-vector ordinal and concrete instance; interface
 entries cannot yield storage. Reverse mapping succeeds only when forward replay
 reproduces every projection and payload-selection position, without inherited
 field searches or guessed dereferences. These are structural facts, not origin,
-branch-dominance, capability, liveness or cleanup authority. The foundation is
-currently unused by live loan records: their field paths migrate atomically in
-a later step, and the query's typed guard input is transient rather than a second
-persisted contract. Existing single state-bearing base admission is unchanged.
+branch-dominance, capability, liveness or cleanup authority. Live dependency, condition, selection and result paths share this typed
+`BorrowPath`; there is no parallel symbol-only path. Constructor publication
+uses `storedPath` to identify one exact direct field or base initializer.
+A base initializer preserves the semantic complete dependency set captured
+before argument effects are retired. MIR reconstructs it from the selected
+constructor summary, checked lifetime application and staged operands, then
+matches the exact destination, sources, parents, permissions and guards. An
+absent set is never a known-empty result. Rollback and cleanup remain separate
+mandatory proofs. Borrowed-base source admission stays gated while this wider
+constructor family completes validation; the one state-bearing base rule is
+unchanged.
+
+Reference and alternative inventories use one bounded work budget per query
+(4096 structural/leaf or emitted-alternative steps, depth 256). Arrays and
+concrete packs consume the same budget across all elements; exhaustion returns
+unknown rather than truncating a complete inventory. Equal element types still
+have distinct constant-index paths.
+
+Body lowering runs `verifyMirBodyStructure`, a provisional structural check.
+Only the unconditional final `verifyMirProgram` runs the complete body loan,
+alias and effect proof with the sealed nominal catalog. Program-owned optimizer
+rewrites and effect queries pass that same explicit read-only context.
+Context-free body verification fails closed for paths that need nominal Base
+or index evidence, including metadata-only conditions and publications. Neither
+a provisional result nor a caller-supplied concrete base ID seals a program.
 
 A structural enum-field region query resolves a unique payload symbol in the
 exact instantiated enum type and uses the stored external region when crossing
