@@ -125,6 +125,14 @@ bootstrap; neither waives full CI evidence for the nightly source or the
 separate merge-queue evidence for the release-cut landing, and a lowered soak is
 written into the stable release notes.
 
+The beta workflow initializes the installer's `release-status` registry before
+packaging/publication, even when there have been no stable promotions or
+rollbacks. This is automatic, not a manual branch push. An existing registry is
+validated and left unchanged, including its yank and withdrawal entries. If a
+previously published beta cannot be installed because that branch is missing,
+dispatch `workflows/beta.yml` from `main`: the status job also runs when beta
+selection finds nothing new to build, preserving the existing release assets.
+
 One-time owner setup, in this order:
 
 1. Install the rollup App (section "Rollup bot"); the cut job reuses its
