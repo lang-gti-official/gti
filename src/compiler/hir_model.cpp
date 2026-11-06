@@ -1233,7 +1233,47 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       if (!value.nativeCalleeType)
         continue;
       const auto &signature = *value.nativeCalleeType;
-      const auto parameters = signature.nativeFunctionParameterTypes();
+      const auto &application = value.lifetimeApplication;
+      const auto *callable = application.callableSignature
+                                 ? &*application.callableSignature : nullptr;
+      std::optional<SemanticType> appliedResult;
+      std::vector<SemanticType> parameters;
+      bool appliedSignature = callable && application.complete &&
+          callable->signature.hasNativeFunctionShape() && callable->contract.valid() &&
+          application.bindings.size() == callable->contract.parameters.size();
+      if (appliedSignature) {
+        // The callee value keeps its universal native carrier type; only this
+        // invocation's argument/result types use the checked application.
+        // MIR independently rederives the callable contract and proves its
+        // obligations before admitting a native operation.
+        const auto carrier = substituteTypeLifetimes(
+            callable->signature, callable->signatureBindings);
+        appliedSignature = carrier && equivalentLifetimeTypes(*carrier, signature);
+        for (const auto parameter : callable->contract.parameters) {
+          const auto count = std::count_if(application.bindings.begin(), application.bindings.end(),
+              [&](const auto binding) { return binding.first == parameter && binding.second.specified(); });
+          appliedSignature &= count == 1;
+        }
+        for (const auto fixed : callable->signatureBindings)
+          appliedSignature &= std::find(application.bindings.begin(), application.bindings.end(), fixed) !=
+                              application.bindings.end();
+        for (const auto quantified : callable->signature.quantifiedLifetimes)
+          appliedSignature &= std::any_of(application.bindings.begin(), application.bindings.end(),
+              [&](const auto binding) {
+                return binding.first == Lifetime::parameter(quantified) &&
+                       binding.second.kind == Lifetime::Kind::Inference;
+              });
+        appliedResult = substituteTypeLifetimes(callable->signature.arguments.front(), application.bindings);
+        appliedSignature &= appliedResult.has_value();
+        for (const auto &parameter : callable->signature.nativeFunctionParameterTypes()) {
+          const auto actual = substituteTypeLifetimes(parameter, application.bindings);
+          if (!actual) {
+            appliedSignature = false;
+            break;
+          }
+          SemanticType::appendExpandedArgument(parameters, *actual);
+        }
+      }
       const auto *callee =
           value.receiver ? body.findValue(*value.receiver) : nullptr;
       const bool expandedArguments =
@@ -1253,14 +1293,16 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value.callPlan->receiver->value == *value.receiver &&
           value.callPlan->receiver->type == signature &&
           value.callPlan->receiver->kind == HirCallInputKind::Value &&
-          value.callPlan->arguments.size() == parameters.size();
+          value.callPlan->arguments.size() == parameters.size() &&
+          std::equal(parameters.begin(), parameters.end(), value.callPlan->arguments.begin(),
+              [](const SemanticType &type, const auto &input) { return input.parameterType == type; });
       if (value.kind != HirValueKind::Call ||
           !signature.hasNativeFunctionShape() || !callee ||
           callee->info.type != signature || value.functionTarget ||
           value.constructorTarget || value.lambdaTarget ||
           value.nativeCallbackAdapter || (!orderedPlan && !expandedArguments) ||
           value.unsafeOperation != UnsafeOperationKind::ForeignPointerCall ||
-          value.info.type != *signature.nativeFunctionReturnType() ||
+          !appliedSignature || !appliedResult || value.info.type != *appliedResult ||
           value.parameterTypes.size() != parameters.size() ||
           !std::equal(parameters.begin(), parameters.end(),
                       value.parameterTypes.begin())) {

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 
 using namespace lang;
@@ -79,8 +80,56 @@ int main() {
                    "construction body has ambiguous instance arguments") != rejected.errors.end(),
          "a lambda construction body cannot inherit unequal lifetime contexts");
 }
+void nativeInvocationContexts() {
+  const auto library = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto path = std::filesystem::weakly_canonical(library / "lifetime-native-hir.gti");
+  const std::string source = R"gti(
+using Count = (std::string_view) -> int32_t;
+int32_t count<lifetime a>(std::string_view<a> value) { return 7; }
+int32_t invoke<lifetime a>(Count callback, std::string_view<a> value) {
+  unsafe { return callback(value); }
+}
+int main() { Count callback = count; return invoke(callback, "text") - 7; }
+)gti";
+  const auto result = Frontend({.stopAfter = FrontendPhase::Hir}).analyze(
+      path, source, {library / "prelude.gti", path}, {{path.string(), source}}, {library});
+  if (!result.semanticValid || !result.hir.valid()) {
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "native HIR keeps the carrier universal and instantiates its invocation");
+  }
+  bool found = false;
+  for (const auto &function : result.hir.functionInstances())
+    for (const auto &value : function.body.values) {
+      if (!value.nativeCalleeType)
+        continue;
+      found = true;
+      expect(value.callPlan && value.lifetimeApplication.callableSignature &&
+                 !value.lifetimeApplication.bindings.empty() && value.parameterTypes.size() == 1 &&
+                 value.parameterTypes.front() != value.nativeCalleeType->nativeFunctionParameterTypes().front(),
+             "native invocation fixture distinguishes carrier binders from invocation arguments");
+      for (int mutation = 0; mutation != 4; ++mutation) {
+        auto malformed = result.hir;
+        auto *body = const_cast<HirBody *>(&malformed.findFunctionInstance(function.id)->body);
+        auto *call = const_cast<HirValue *>(body->findValue(value.id));
+        if (mutation == 0)
+          call->lifetimeApplication.bindings.clear();
+        else if (mutation == 1)
+          call->parameterTypes.front() = call->nativeCalleeType->nativeFunctionParameterTypes().front();
+        else if (mutation == 2)
+          call->callPlan->arguments.front().parameterType =
+              call->nativeCalleeType->nativeFunctionParameterTypes().front();
+        else
+          call->lifetimeApplication.callableSignature->signature.quantifiedLifetimes.clear();
+        expect(!verifyHirProgramPlans(result.semantics, malformed).valid(),
+               "native HIR cannot replace applied types or lose its exact carrier scope/application");
+      }
+    }
+  expect(found, "native HIR fixture retains an indirect invocation");
+}
 } // namespace
 int main() {
+  nativeInvocationContexts();
   constructionLifetimeContexts();
   const auto result = Frontend({.stopAfter = FrontendPhase::Hir})
                           .analyze("lifetime-hir-signatures.gti", R"gti(

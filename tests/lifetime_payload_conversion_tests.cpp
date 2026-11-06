@@ -344,6 +344,72 @@ void checkGuardMutations(const MirProgram &program) {
   }
 }
 
+void checkRetainedPayloadCopy(const MirProgram &program) {
+  for (const auto address : enumerateMirBodyAddresses(program)) {
+    const auto *body = findMirBody(program, address);
+    if (!body)
+      continue;
+    for (const auto &block : body->blocks)
+      for (const auto &producer : block.instructions) {
+        if (producer.operation != MirOperation::PayloadConstruct || !producer.loan ||
+            !producer.result || producer.operands.size() != 1)
+          continue;
+        const auto *group = body->findLoan(*producer.loan);
+        const auto *retained = group ? body->findLoan(group->parent) : nullptr;
+        if (!retained || retained->entry || retained->kind != MirLoanKind::Stored)
+          continue;
+        for (int mutation = 0; mutation != 4; ++mutation) {
+          auto broken = program;
+          auto *changedBody = findMirBody(broken, address);
+          auto *changed = payloadConstruct(*changedBody);
+          auto *loan = const_cast<MirLoan *>(changedBody->findLoan(*changed->loan));
+          MirInstruction *stage = nullptr;
+          for (auto &candidate : changedBody->blocks)
+            for (auto &input : candidate.instructions)
+              if (input.result == changed->operands.front().value)
+                stage = &input;
+          expect(stage && stage->callInputKind == HirCallInputKind::CopyValue &&
+                     stage->operands.size() == 1 && stage->operands.front().kind == MirOperandKind::Copy,
+                 "payload parent fixture uses an exact copied carrier stage");
+          if (!stage || stage->operands.size() != 1)
+            return;
+          bool mutated = true;
+          if (mutation == 0) {
+            loan->parent = 0;
+            auto &fact = changedBody->values[*changed->result - 1].borrowDependencies;
+            expect(fact.has_value(), "payload copied carrier publishes complete origin evidence");
+            if (fact)
+              for (auto &dependency : fact->dependencies)
+                dependency.parent = 0;
+          } else if (mutation == 1) {
+            auto *parent = const_cast<MirLoan *>(changedBody->findLoan(loan->parent));
+            parent->source = stage->operands.front().place;
+          } else if (mutation == 2) {
+            stage->operands.front().kind = MirOperandKind::Move;
+          } else {
+            const auto *copied = changedBody->findPlace(stage->operands.front().place);
+            mutated = false;
+            for (auto &candidate : changedBody->blocks)
+              for (auto &initialize : candidate.instructions) {
+                const auto *destination = initialize.destination
+                    ? changedBody->findPlace(*initialize.destination) : nullptr;
+                if (initialize.kind == MirInstructionKind::Initialize && copied && destination &&
+                    destination->root == MirPlaceRootKind::Binding &&
+                    destination->binding == copied->binding && destination->projections.empty()) {
+                  initialize.tombstone = true;
+                  mutated = true;
+                }
+              }
+          }
+          expect(mutated && !verifyMirProgram(broken).valid(),
+                 "payload copied parent requires exact retained contents, source, copy and initialization");
+        }
+        return;
+      }
+  }
+  expect(false, "payload copy fixture must retain a separately proved Stored group parent");
+}
+
 void checkMutations(const MirProgram &program) {
   std::optional<MirBodyAddress> address;
   for (const auto candidate : enumerateMirBodyAddresses(program)) {
@@ -500,7 +566,7 @@ int main() { int value = 7; View view{value}; return wrap(view) - 1; }
   if (generic.canGenerateCode())
     checkMutations(generic.mir);
 
-  (void)positive("generic-payload-external-field", R"gti(
+  const auto externalPayload = positive("generic-payload-external-field", R"gti(
 struct View<lifetime a> {
   int&<a> value;
   View(int&<a> input) : value(input) {}
@@ -516,6 +582,9 @@ int main() {
   return read(box) - 7;
 }
 )gti");
+
+  if (externalPayload.canGenerateCode())
+    checkRetainedPayloadCopy(externalPayload.mir);
 
   (void)positive("direct-payload-region-conversion", R"gti(
 enum Borrow<lifetime a> { item(int&<a> value) };

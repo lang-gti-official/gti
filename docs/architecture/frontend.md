@@ -426,6 +426,13 @@ still prove all active dependencies; unresolved generic recipes alone cannot
 certify a complete result. Exclusive sources cannot be duplicated into fields
 whose guards can hold together.
 
+Enum reference patterns form an inferred binding region. After validating the
+exact loan, a physical payload borrow records the subject storage's relationship
+to that region, just as a reference local does. Reborrowing a stored reference
+instead records its external referent's declared region; the enum shell does
+not supply that lifetime. Both paths preserve nested carrier regions and their
+existing access, guard, parent-loan and cleanup obligations.
+
 The shared callable contract derivation obtains each nominal application's
 formation formula from the owning phase. Semantics supplies the instantiated
 declaration contract; MIR supplies its verified nominal view. Inputs and

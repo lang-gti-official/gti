@@ -634,7 +634,15 @@ and MIR derives a separate binding view from the unique producer, the exact
 stored contents and the proved conversion. It does not rewrite the producer's
 conditions. Missing initialization, ambiguous producers, stale guards, or an
 unproved conversion cannot establish that view. Field projection filters sibling
-facts and checks complete coverage of the selected field's typed enum domains.
+facts only after proving an exact ordinary Class field chain, and checks complete
+coverage of the selected field's typed enum domains. Crossing an enclosing enum
+guard requires a separate evaluated-selection proof; field projection does not
+discard that guard or treat it as an unrelated sibling.
+A copied carrier passed into a payload constructor reuses the same exact
+retained-copy proof as an ordinary callable result: the original complete
+contents must match before the copied value adopts the stored group's parent.
+The body-flow replay retains those normalized inputs for the independent
+payload and cleanup-handoff checks; no attached result claim supplies them.
 Value-annotation and return-contract checks share the same producer/storage
 dataflow reconstruction. These facts neither establish nor replace ordinary
 loan, access, escape, movement or cleanup proofs.

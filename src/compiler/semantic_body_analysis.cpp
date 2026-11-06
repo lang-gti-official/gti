@@ -6095,6 +6095,10 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                                   .variant = pattern.variantIndex}},
                   .reference = variant->payloadTypes[payload.payloadIndex]};
               semanticModel.recordLoan(std::move(loan));
+              if (reborrow)
+                (void)requireLifetimeRelationship(
+                    variant->payloadTypes[payload.payloadIndex].referenceLifetime,
+                    payload.binding.type.referenceLifetime, *payload.name);
               for (const auto &dependency : dependencies->dependencies)
                 if (dependency.protectsStorage)
                   registerStorageLoan(dependency.place.root,
@@ -6192,6 +6196,8 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                                   .variant = pattern.variantIndex}},
                   .reference = payload.binding.type};
               semanticModel.recordLoan(std::move(loan));
+              recordReferenceLifetimeBinding(payload.binding.type,
+                                             stmt.expression());
             }
             // The binding is born at this arm's entry, not at the switch
             // subject's full expression. Keep its endpoint lexical until

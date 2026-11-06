@@ -13631,6 +13631,8 @@ exactMutexIntrinsicContract(const MirProgram &program, const MirBody &body,
 }
 
 using CompleteBorrowFact = std::optional<MirBorrowDependencySet>;
+[[nodiscard]] bool equalCompleteBorrowSets(const CompleteBorrowFact &left,
+                                           const CompleteBorrowFact &right);
 using CompleteBorrowCallSummaryLookup =
     std::function<const FunctionBorrowDependencySummary *(std::size_t, MirBodyKind)>;
 
@@ -14030,6 +14032,9 @@ struct CompleteBorrowFlow {
   // PayloadExtract. This is not the final state of the consumed shell and
   // does not trust the extraction's attached dependency annotations.
   std::vector<CompleteBorrowFact> payloadSelectionSources;
+  // Exact pre-construction inputs after independently proved retained-copy
+  // reborrows. Kept only in this replay result, never attached to source MIR.
+  std::unordered_map<MirInstructionId, std::vector<CompleteBorrowFact>> payloadConstructionInputs;
   std::vector<CompleteBorrowReturnFact> normalReturns;
   std::unordered_set<MirInstructionId> noNormalBorrowResults;
   // Populated only for failed claimed values during the final replay, never
@@ -14213,10 +14218,11 @@ completeBorrowSourcePath(const MirProgram &program,
     for (std::size_t index = 0; index < identities.size(); ++index)
       if (sameCanonicalPlace(key, identities[index]) && state.places[index])
         return state.places[index];
-    // A single conditional field may retain its containing value's COMPLETE
-    // dependency set. This deliberately cannot select a subset: every origin
-    // and every alternative guard must carry the exact field prefix. No
-    // sibling obligation is filtered, and a mismatch yields unknown.
+    // Project only an exact ordinary Class field chain. The complete owner
+    // fact establishes sibling domains, which remain disjoint storage; it is
+    // not necessary to copy their obligations into the selected field. An
+    // enclosing enum guard instead needs evaluated selection evidence and is
+    // not discarded by this path.
     for (std::size_t index = 0; index < identities.size(); ++index) {
       const auto &base = identities[index];
       if (!state.places[index] || !sameRoot(key, base) ||
@@ -14227,34 +14233,81 @@ completeBorrowSourcePath(const MirProgram &program,
       std::vector<SymbolId> prefix;
       for (auto part = key.projections.begin() + base.projections.size();
            part != key.projections.end(); ++part) {
-        if (part->kind != MirProjectionKind::Field) {
+        if (part->kind != MirProjectionKind::Field || !part->field) {
           prefix.clear();
           break;
         }
         prefix.push_back(part->field);
       }
-      if (prefix.empty())
+      const auto *source = body.findPlace(index + 1);
+      const auto *target = body.findPlace(id);
+      if (prefix.empty() || !source || !target)
         continue;
+      SemanticType selected = source->type;
+      if (selected.kind == SemanticType::Reference && selected.arguments.size() == 1)
+        selected = SemanticType(selected.arguments.front());
+      if (!completeBorrowSetHasTypedShape(program, selected, *state.places[index]))
+        continue;
+      bool valid = true;
+      for (const auto field : prefix) {
+        const auto view = mirClassLifetimeView(program, selected);
+        const MirClassFieldInfo *member = nullptr;
+        if (view)
+          for (const auto &candidate : view->instance->declaredFields)
+            if (candidate.symbol == field) {
+              if (member) {
+                valid = false;
+                break;
+              }
+              member = &candidate;
+            }
+        const auto actual = view && member ? view->instantiate(member->type) : std::nullopt;
+        if (!valid || !actual) {
+          valid = false;
+          break;
+        }
+        selected = *actual;
+      }
+      if (!valid || selected != target->type)
+        continue;
+      const auto starts = [](const auto &path, const auto &head) {
+        return path.size() >= head.size() &&
+               std::equal(head.begin(), head.end(), path.begin());
+      };
       const auto strip = [&](std::vector<SymbolId> &fields) {
-        if (fields.size() < prefix.size() ||
-            !std::equal(prefix.begin(), prefix.end(), fields.begin()))
+        if (!starts(fields, prefix))
           return false;
         fields.erase(fields.begin(), fields.begin() + prefix.size());
         return true;
       };
-      auto projected = *state.places[index];
-      bool valid = true;
-      for (auto &dependency : projected.dependencies) {
-        valid &= strip(dependency.designatedFields);
+      MirBorrowDependencySet projected;
+      for (auto dependency : state.places[index]->dependencies) {
+        if (!starts(dependency.designatedFields, prefix)) {
+          // A shorter path would cross an external reference boundary; only
+          // a field proven disjoint from this Class chain may be omitted.
+          if (starts(prefix, dependency.designatedFields))
+            valid = false;
+          continue;
+        }
+        (void)strip(dependency.designatedFields);
         for (auto &condition : dependency.conditions)
           valid &= strip(condition.subobject);
+        projected.dependencies.push_back(std::move(dependency));
       }
-      for (auto &alternative : projected.possibleAlternatives)
-        for (auto &condition : alternative.conditions)
-          valid &= strip(condition.subobject);
-      const auto *target = body.findPlace(id);
-      if (valid && target &&
-          completeBorrowSetHasTypedShape(program, target->type, projected))
+      for (const auto &alternative : state.places[index]->possibleAlternatives) {
+        BorrowAlternativePath selectedAlternative;
+        for (auto condition : alternative.conditions) {
+          if (strip(condition.subobject))
+            selectedAlternative.conditions.push_back(std::move(condition));
+          else if (starts(prefix, condition.subobject))
+            valid = false;
+        }
+        if (!selectedAlternative.conditions.empty() &&
+            std::find(projected.possibleAlternatives.begin(), projected.possibleAlternatives.end(),
+                      selectedAlternative) == projected.possibleAlternatives.end())
+          projected.possibleAlternatives.push_back(std::move(selectedAlternative));
+      }
+      if (valid && completeBorrowSetHasTypedShape(program, target->type, projected))
         return projected;
     }
     return std::nullopt;
@@ -14837,6 +14890,83 @@ completeBorrowSourcePath(const MirProgram &program,
       dependency.parent = group->id;
     return fact;
   };
+  struct RetainedCopiedInput {
+    const MirLoan *group = nullptr;
+    Fact contents;
+    Fact retained;
+  };
+  const auto retainedCopiedInput = [&](const State &state,
+                                       const MirInstruction &instruction,
+                                       const MirOperand &argument,
+                                       MirCallInputRole role, std::size_t index,
+                                       const SemanticType &inputType)
+      -> std::optional<RetainedCopiedInput> {
+    const auto converts = [&](const SemanticType &from, const SemanticType &to) {
+      return from == to || mirLifetimeValueConversion(program, body, owner, from, to);
+    };
+    const MirOperand *copy = &argument;
+    if (copy->kind == MirOperandKind::Value && copy->value && copy->value <= definitions.size()) {
+      const auto *stage = definitions[copy->value - 1];
+      if (stage && stage->kind == MirInstructionKind::CallInput) {
+        if (stage->tombstone ||
+            (stage->callInputKind != HirCallInputKind::CopyValue &&
+             stage->callInputKind != HirCallInputKind::Value) ||
+            stage->callInputRole != role ||
+            (role == MirCallInputRole::Argument && stage->callInputIndex != index) ||
+            stage->result != copy->value || stage->info.type != copy->type ||
+            stage->callSite != instruction.callSite || stage->operands.size() != 1 ||
+            !converts(stage->operands.front().type, stage->info.type))
+          return std::nullopt;
+        copy = &stage->operands.front();
+      }
+    }
+    if (copy->kind == MirOperandKind::Value && copy->value && copy->value <= definitions.size()) {
+      const auto *load = definitions[copy->value - 1];
+      if (!load || load->tombstone || load->kind != MirInstructionKind::Load ||
+          load->result != copy->value || load->operands.size() != 1 ||
+          load->info.type != copy->type ||
+          !converts(load->operands.front().type, load->info.type))
+        return std::nullopt;
+      copy = &load->operands.front();
+    }
+    const auto *copied = copy->kind == MirOperandKind::Copy ? body.findPlace(copy->place) : nullptr;
+    if (!copied || copied->root != MirPlaceRootKind::Binding || !copied->projections.empty() ||
+        !converts(copied->type, copy->type))
+      return std::nullopt;
+    const auto loans = bindingLoans.find(copied->binding);
+    if (loans == bindingLoans.end() || loans->second.size() != 1)
+      return std::nullopt;
+    const auto *group = body.findLoan(loans->second.front());
+    if (!group || group->kind != MirLoanKind::Stored)
+      return std::nullopt;
+    // Establish the complete retained capability before looking at the raw
+    // copied contents. A later consumer must match those original facts before
+    // adopting the proved group as parent; source overlap alone is insufficient.
+    auto retained = retainedCarrierInput(state, copied->id);
+    auto contents = retained ? fromPlace(state, copied->id) : Fact{};
+    if (!retained || !contents)
+      return std::nullopt;
+    retained = transportCompleteBorrowFact(program, body, owner, copied->type, inputType, *retained);
+    contents = transportCompleteBorrowFact(program, body, owner, copied->type, inputType, *contents);
+    if (!retained || !contents)
+      return std::nullopt;
+    return RetainedCopiedInput{group, std::move(contents), std::move(retained)};
+  };
+  const auto payloadInputs = [&](const State &state, const MirInstruction &instruction) {
+    std::vector<Fact> inputs;
+    inputs.reserve(instruction.operands.size());
+    for (std::size_t index = 0; index < instruction.operands.size(); ++index) {
+      const auto &operand = instruction.operands[index];
+      auto input = fromOperand(state, operand);
+      if (index < instruction.parameterTypes.size())
+        if (const auto copied = retainedCopiedInput(state, instruction, operand,
+                MirCallInputRole::Argument, index, instruction.parameterTypes[index]);
+            copied && equalCompleteBorrowSets(input, copied->contents))
+          input = copied->retained;
+      inputs.push_back(std::move(input));
+    }
+    return inputs;
+  };
   const auto callResult =
       [&](const State &state, const MirInstruction &instruction,
           const MirFunctionInstance &universalTarget,
@@ -14929,78 +15059,18 @@ completeBorrowSourcePath(const MirProgram &program,
       }
       if (!argument)
         continue;
-      // A reference extracted from a copy of a carrier binding reborrows the
-      // permission that binding still retains: semantics records its exact
-      // Stored group as the result's parent.
+      // Shared copy proof retains the original source facts for exact
+      // matching before a result adopts the stored group's permission.
       const MirLoan *retainedGroup = nullptr;
       Fact retainedContents;
-      if (!referenceInput &&
-          target.returnType.kind == SemanticType::Reference) {
-        // Neutral Value call stages may have been forwarded to their source
-        // SSA value. Prove the same exact copy with or without that stage;
-        // never infer a retained parent from the argument's type alone.
-        const auto converts = [&](const SemanticType &from,
-                                  const SemanticType &to) {
-          return from == to ||
-                 mirLifetimeValueConversion(program, body, owner, from, to);
-        };
-        const MirOperand *copy = argument;
-        if (copy->kind == MirOperandKind::Value && copy->value &&
-            copy->value <= definitions.size()) {
-          const auto *stage = definitions[copy->value - 1];
-          if (stage && stage->kind == MirInstructionKind::CallInput) {
-            const bool argumentStage =
-                mapping.origin == BorrowOriginKind::Argument &&
-                stage->callInputRole == MirCallInputRole::Argument &&
-                stage->callInputIndex == mapping.parameter;
-            const bool receiverStage =
-                mapping.origin == BorrowOriginKind::Receiver &&
-                stage->callInputRole == MirCallInputRole::Receiver;
-            if ((stage->callInputKind == HirCallInputKind::CopyValue ||
-                 stage->callInputKind == HirCallInputKind::Value) &&
-                (argumentStage || receiverStage) &&
-                stage->result == copy->value &&
-                stage->info.type == copy->type &&
-                stage->callSite == instruction.callSite &&
-                stage->operands.size() == 1 &&
-                converts(stage->operands.front().type, stage->info.type))
-              copy = &stage->operands.front();
-            else
-              copy = nullptr;
-          }
+      if (!referenceInput && target.returnType.kind == SemanticType::Reference)
+        if (const auto copied = retainedCopiedInput(state, instruction, *argument,
+                mapping.origin == BorrowOriginKind::Receiver ? MirCallInputRole::Receiver
+                                                            : MirCallInputRole::Argument,
+                mapping.parameter, inputType)) {
+          retainedGroup = copied->group;
+          retainedContents = copied->contents;
         }
-        if (copy && copy->kind == MirOperandKind::Value && copy->value &&
-            copy->value <= definitions.size()) {
-          const auto *load = definitions[copy->value - 1];
-          if (load && load->kind == MirInstructionKind::Load &&
-              load->result == copy->value && load->operands.size() == 1 &&
-              load->info.type == copy->type &&
-              converts(load->operands.front().type, load->info.type))
-            copy = &load->operands.front();
-          else
-            copy = nullptr;
-        }
-        const auto *copied = copy && copy->kind == MirOperandKind::Copy
-            ? body.findPlace(copy->place) : nullptr;
-        if (copied && copied->root == MirPlaceRootKind::Binding &&
-            copied->projections.empty() && converts(copied->type, copy->type))
-          if (const auto loans = bindingLoans.find(copied->binding);
-              loans != bindingLoans.end() && loans->second.size() == 1)
-            if (const auto *group = body.findLoan(loans->second.front());
-                group && group->kind == MirLoanKind::Stored) {
-              // Prove the complete stored capability before using it as a
-              // parent. Match the copied input against the original contents,
-              // not retainedCarrierInput's already-reparented result: copying
-              // a local carrier preserves its external source parents.
-              if (retainedCarrierInput(state, copied->id))
-                retainedContents = fromPlace(state, copied->id);
-              if (retainedContents)
-                retainedContents = transportCompleteBorrowFact(
-                    program, body, owner, copied->type, inputType, *retainedContents);
-              if (retainedContents)
-                retainedGroup = group;
-            }
-      }
       Fact input;
       if (!referenceInput) {
         input = fromOperand(state, *argument);
@@ -15221,12 +15291,8 @@ completeBorrowSourcePath(const MirProgram &program,
     if (payload) {
       // A declaration summary can demand this flow before the ordinary
       // value-annotation verifier. Establish the typed producer independently.
-      std::vector<Fact> inputs;
-      inputs.reserve(instruction.operands.size());
-      for (const auto &operand : instruction.operands)
-        inputs.push_back(fromOperand(state, operand));
-      result =
-          constructedCompleteBorrowFact(program, body, instruction, inputs);
+      const auto inputs = payloadInputs(state, instruction);
+      result = constructedCompleteBorrowFact(program, body, instruction, inputs);
     } else if (instruction.kind == MirInstructionKind::Construct &&
                instruction.constructorTarget &&
                callSummary(*instruction.constructorTarget, MirBodyKind::Constructor)) {
@@ -15761,6 +15827,9 @@ completeBorrowSourcePath(const MirProgram &program,
           instruction.result ? body.findValue(*instruction.result) : nullptr;
       std::string failure;
       replayFailure = value && value->borrowDependencies ? &failure : nullptr;
+      if (instruction.kind == MirInstructionKind::Compute &&
+          instruction.operation == MirOperation::PayloadConstruct)
+        observations.payloadConstructionInputs.emplace(instruction.id, payloadInputs(state, instruction));
       execute(state, instruction);
       replayFailure = nullptr;
       if (value)
@@ -18173,11 +18242,10 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
               const auto cleanup = mirUniqueCleanupType(program, call.info.type);
               if (!retained || !retained->lifecycleBound || !variant || !cleanup)
                 return false;
-              std::vector<CompleteBorrowFact> inputs;
-              for (const auto &operand : call.operands)
-                inputs.push_back(operand.kind == MirOperandKind::Value && operand.value &&
-                                         operand.value <= observed->values.size()
-                    ? observed->values[operand.value - 1] : std::nullopt);
+              const auto incoming = observed->payloadConstructionInputs.find(call.id);
+              if (incoming == observed->payloadConstructionInputs.end())
+                return false;
+              const auto &inputs = incoming->second;
               const auto composed = constructedCompleteBorrowFact(program, body, call, inputs);
               if (!equalCompleteBorrowSets(composed, observed->values[*call.result - 1]))
                 return false;

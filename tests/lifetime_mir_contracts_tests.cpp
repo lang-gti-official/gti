@@ -607,25 +607,37 @@ int main() { int first = 7; int second = 9; return use(first, second, false) - 7
         function.parameterTypes[0].kind != SemanticType::Reference ||
         function.parameterTypes[0] != function.parameterTypes[1])
       continue;
-    const auto other = std::find_if(function.body.places.begin(), function.body.places.end(),
-        [&](const auto &place) {
-          return place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
-                 place.binding == function.parameterBindings[1] &&
-                 place.type == function.parameterTypes[1];
-        });
-    if (other == function.body.places.end())
-      continue;
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions) {
         if (instruction.kind != MirInstructionKind::Construct || !instruction.loan)
           continue;
         const auto *stored = function.body.findLoan(*instruction.loan);
-        if (!stored || stored->kind != MirLoanKind::Stored || stored->entry || stored->parent)
+        if (!stored || stored->kind != MirLoanKind::Stored || stored->entry)
+          continue;
+        const auto fromInput = [&](MirPlaceId id) {
+          const auto *source = function.body.findPlace(id);
+          return source && source->root == MirPlaceRootKind::Binding &&
+                 source->binding == function.parameterBindings.front() &&
+                 std::all_of(source->projections.begin(), source->projections.end(),
+                             [](const auto &projection) {
+                               return projection.kind == MirProjectionKind::Dereference;
+                             });
+        };
+        if (!fromInput(stored->source))
+          continue;
+        const auto *source = function.body.findPlace(stored->source);
+        const auto other = std::find_if(function.body.places.begin(), function.body.places.end(),
+            [&](const auto &place) {
+              return place.root == MirPlaceRootKind::Binding &&
+                     place.binding == function.parameterBindings[1] &&
+                     place.projections == source->projections && place.type == source->type;
+            });
+        if (other == function.body.places.end())
           continue;
         const auto entry = std::find_if(function.body.loans.begin(), function.body.loans.end(),
             [&](const auto &loan) {
               return loan.entry && loan.kind == MirLoanKind::Parameter &&
-                     loan.source == stored->source && loan.access == AccessMode::ReadOnly;
+                     fromInput(loan.source) && loan.access == AccessMode::ReadOnly;
             });
         if (entry == function.body.loans.end())
           continue;
@@ -635,6 +647,18 @@ int main() { int first = 7; int second = 9; return use(first, second, false) - 7
         otherFormal = other->id;
       }
   }
+  if (!constructionBody)
+    for (const auto &function : constructedCarrier.mir.functionInstances()) {
+      std::cerr << "constructor source fixture function=" << function.id
+                << " parameters=" << function.parameterBindings.size() << '\n';
+      for (const auto &loan : function.body.loans) {
+        const auto *source = function.body.findPlace(loan.source);
+        std::cerr << "  loan=" << loan.id << " kind=" << static_cast<int>(loan.kind)
+                  << " parent=" << loan.parent << " entry=" << loan.entry
+                  << " source=" << loan.source << " binding="
+                  << (source ? source->binding : 0) << '\n';
+      }
+    }
   expect(constructionBody && constructionLoan && incomingLoan && otherFormal,
          "fixture must exercise a fresh Stored group from a shared reference entry");
   for (int mutation = 0; mutation != 3; ++mutation) {
@@ -691,6 +715,19 @@ int main() { State<int> state = State<int>::value(7); return get(state) - 7; }
       loan.source = selection.carrier;
     expect(!verifyMirProgram(invalid).valid(),
            "physical payload cannot forge external authority, selector, transfer or storage");
+  }
+  if (physicalBody && physicalLoan) {
+    auto missingPatternRegion = physical.mir;
+    auto *body = findMirBody(missingPatternRegion, *physicalBody);
+    const auto *loan = body->findLoan(physicalLoan);
+    const auto region = loan->referenceSelection->reference.referenceLifetime;
+    expect(region.kind == Lifetime::Kind::Inference,
+           "physical reference patterns form an inferred binding region");
+    const auto removed = std::erase_if(body->lifetimeBody.obligations,
+                                      [&](const auto &edge) { return edge.shorter == region; });
+    expect(removed != 0, "the payload binding must prove its source-to-binding region");
+    expect(!verifyMirProgram(missingPatternRegion).valid(),
+           "MIR cannot trust a payload reference without its binding lifetime relationship");
   }
   const auto projectedPayload = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "physical-payload-stored-field.gti", R"gti(

@@ -8650,13 +8650,18 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
                    ? PayloadExtractionKind::BorrowValue
                : consumingSubject ? PayloadExtractionKind::MoveValue
                                   : PayloadExtractionKind::CopyValue);
-    const SemanticType bindingType =
+    SemanticType bindingType =
         binding->isReferencePattern()
             ? SemanticType::referenceTo(
                   storedReference ? payloadType.arguments.front() : payloadType,
                   binding->isMutablePattern() ? AccessMode::Mutable
                                               : AccessMode::ReadOnly)
             : payloadType;
+    // A reference pattern forms a new reference just as a local declaration
+    // does. Its source relationship is recorded only after the arm establishes
+    // the exact physical payload or stored external-reference loan.
+    if (binding->isReferencePattern())
+      bindingType.referenceLifetime = inferredLifetime(binding->name());
     result.bindings.push_back(
         {.name = &binding->name(),
          .source = binding,

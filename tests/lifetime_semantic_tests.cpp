@@ -415,6 +415,33 @@ struct Split<lifetime a, lifetime b> {
   int&<a> wrong() { return this.second; }
 };
 )gti", false, "GTI-S2127");
+  check("physical-payload-borrow-keeps-caller-region", R"gti(
+enum State { value(int item) };
+int&<a> select<lifetime a>(State&<a> state) {
+  switch (state) { case State::value(auto& payload): return payload; }
+}
+int main() { State state = State::value(7); return select(state) - 7; }
+)gti", true);
+  check("local-physical-payload-borrow-has-storage-region", R"gti(
+enum State { value(int item) };
+int main() {
+  State state = State::value(7);
+  switch (state) { case State::value(auto& payload): return payload - 7; }
+}
+)gti", true);
+  check("stored-reference-reborrow-keeps-external-region", R"gti(
+enum Link<lifetime a> { value(int&<a> item) };
+int&<a> select<lifetime a>(Link<a>& link) {
+  switch (link) { case Link<a>::value(auto& payload): return payload; }
+}
+int main() { int value = 7; auto link = Link<_>::value(value); return select(link) - 7; }
+)gti", true);
+  check("payload-reference-cannot-be-extended-to-static", R"gti(
+enum Link<lifetime a> { value(int&<a> item) };
+int&<static> select<lifetime a>(Link<a>& link) {
+  switch (link) { case Link<a>::value(auto& payload): return payload; }
+}
+)gti", false, "GTI-S2127");
   check("local-payload-is-not-caller-storage", R"gti(
 enum State { value(int item) };
 int&<a> bad<lifetime a>(int&<a> caller) {

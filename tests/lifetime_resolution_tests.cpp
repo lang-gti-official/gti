@@ -1143,9 +1143,9 @@ struct Pair<lifetime a, lifetime b> {
   Pair(int code) : first(Reading<a>::missing(code)), second(Reading<b>::missing(code)) {}
 };
 void repeat<lifetime a>(Reading<a> source) {
-  let pair = Pair<a, a>{source, source};
+  Pair<a, a> pair{source, source};
 }
-int main() { let empty = Pair<static, static>{0}; return 0; }
+int main() { Pair<static, static> empty{0}; return 0; }
 )");
   expectValid(pair, "independent conditional fields preserve complete constructor domains");
   const auto *pairOwner = record(pair, "Pair");

@@ -33,6 +33,11 @@ explicit generic lifetime arguments and the full checked substitution for
 owner, declared and elided regions. These are proof records, not executable
 arguments. Type hashing includes regions, callable quantifiers and receiver
 mutability so semantic instances never rely on an erased type fingerprint.
+Native indirect calls keep the universal carrier signature on the callee and
+receiver plan. Their ordered argument and result types instead carry the exact
+invocation substitution, including fixed environment slots and fresh quantified
+regions. HIR checks that correspondence; MIR independently proves the contract
+and the invocation's lifetime obligations before native emission.
 
 Concrete function instances preserve the semantic owned-pointee accessor
 summary (exact receiver-field identity and private borrow operation), refreshed
