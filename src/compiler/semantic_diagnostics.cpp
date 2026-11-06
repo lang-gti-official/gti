@@ -15,7 +15,9 @@ ExprPtr parseRepairExpression(const std::string &text,
   Lexer lexer;
   Parser parser(lexer.scan(text, sourceName));
   auto expression = parser.parseExpression();
-  return lexer.hadError() || parser.hadError() ? nullptr : expression;
+  if (lexer.hadError() || parser.hadError())
+    return nullptr;
+  return expression;
 }
 
 void SemanticConstantTrace::appendTo(Diagnostic &diagnostic) const {
