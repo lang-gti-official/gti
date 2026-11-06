@@ -856,6 +856,8 @@ def rulesets_contract():
     rules = {rule["type"]: rule.get("parameters", {}) for rule in beta["rules"]}
     assert {"deletion", "non_fast_forward", "pull_request", "required_status_checks"} <= set(rules)
     assert rules["pull_request"]["allowed_merge_methods"] == ["rebase"], "picks keep their -x lines"
+    assert "required_linear_history" not in rules, \
+        "a line branch starts on main's merge-queue history; that rule refuses its creation"
     assert [check["context"] for check in rules["required_status_checks"]["required_status_checks"]] == \
         ["CI gate", "Backport gate"]
     assert {rule["type"] for rule in status["rules"]} == {"deletion", "non_fast_forward"}

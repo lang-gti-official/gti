@@ -1398,10 +1398,14 @@ def rulesets() -> list[dict[str, Any]]:
          # Creation stays open so the beta and promote jobs can push new tags;
          # an existing tag can never move or be deleted.
          "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}, {"type": "update"}]},
+        # No required_linear_history: a line branch starts at a release cut on
+        # main's merge-queue history, which that rule rejects on creation
+        # (GH013, the 0.494 line). Rebase-only PR merges keep the line itself
+        # free of new merge commits, and direct pushes need a pull request.
         {"name": "beta", "target": "branch", "enforcement": "active", "bypass_actors": [],
          "conditions": {"ref_name": {"include": ["refs/heads/beta/*"], "exclude": []}},
          "rules": [
-             {"type": "deletion"}, {"type": "non_fast_forward"}, {"type": "required_linear_history"},
+             {"type": "deletion"}, {"type": "non_fast_forward"},
              {"type": "pull_request", "parameters": {
                  "required_approving_review_count": 0, "dismiss_stale_reviews_on_push": False,
                  "require_code_owner_review": False, "require_last_push_approval": False,
