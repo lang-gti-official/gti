@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Install a Mac-local GTI toolchain for terminal commands and Neovim."""
+"""Install a Mac-local GTI toolchain for terminal commands and Neovim.
+
+With --gtiup, the build is installed into a fresh prefix and registered as a
+linked gtiup toolchain instead: `gtiup link NAME PREFIX`, then `gtiup default
+NAME`. Terminal commands and Neovim then follow gtiup, so this mode writes no
+~/.local/bin symlinks and no Neovim configuration.
+"""
 
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -23,6 +30,14 @@ import llvm_pin  # noqa: E402  (sibling module)
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOOLS = ("gti", "gti_lsp")
 CANONICAL = "https://github.com/lang-gti-official/gti.git"
+# `gtiup link` arrived in gtiup 0.5.0.
+GTIUP_MINIMUM = (0, 5, 0)
+# Names gtiup accepts for a linked toolchain; channel names are reserved.
+LINK_NAME = re.compile(r"[A-Za-z][A-Za-z0-9._-]*")
+RESERVED_LINK_NAMES = ("nightly", "beta", "stable", "preview")
+# Only directories carrying this marker were created here, so only they are pruned.
+LINK_MARKER = ".gti-local-link.json"
+DEFAULT_LINK_ROOT = pathlib.Path.home() / ".local/share/gti/linked"
 
 
 def nightly_source(root, dry_run=False):
@@ -197,6 +212,98 @@ def validate_installed_toolchain(toolchain):
     return version
 
 
+def find_gtiup():
+    found = shutil.which("gtiup")
+    if found:
+        return pathlib.Path(found)
+    installed = pathlib.Path.home() / ".gtiup/bin/gtiup"
+    return installed if installed.is_file() and os.access(installed, os.X_OK) else None
+
+
+def gtiup_version(gtiup):
+    output = run([gtiup, "--version"], capture=True).stdout.strip()
+    match = re.fullmatch(r"gtiup (\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?", output)
+    if match is None:
+        raise ValueError(f"unrecognised gtiup version output: {output!r}")
+    return tuple(int(part) for part in match.groups())
+
+
+def check_link_name(name):
+    if not LINK_NAME.fullmatch(name) or name in RESERVED_LINK_NAMES:
+        raise ValueError(f"invalid gtiup toolchain name {name!r}: start with a letter, use "
+                         "letters, digits, '.', '_' or '-', and avoid channel names")
+    return name
+
+
+def source_identity(root):
+    """The checkout commit and whether tracked files differ from it."""
+    commit = run(["git", "-C", root, "rev-parse", "HEAD"], capture=True).stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ValueError(f"cannot identify the source commit of {root}")
+    changes = run(["git", "-C", root, "status", "--porcelain", "--untracked-files=no"],
+                  capture=True).stdout.strip()
+    return commit, bool(changes)
+
+
+def link_label(version, commit, dirty, now):
+    # Timestamp first, so names sort oldest to newest.
+    return f"{now:%Y%m%dT%H%M%SZ}-{version}-{commit[:12]}" + ("-dirty" if dirty else "")
+
+
+def unused_label(base, label):
+    """label, or label.N when an install in the same second already used it."""
+    candidate, number = label, 2
+    while (base / candidate).exists() or (base / candidate).is_symlink():
+        candidate, number = f"{label}.{number}", number + 1
+    return candidate
+
+
+def install_linked_prefix(build, base, label, marker, build_id=None):
+    """Install the toolchain into base/label without touching an existing prefix.
+
+    A running gti_lsp keeps using its own prefix: each build gets a new one,
+    and gtiup switches to it in a single state update."""
+    if base.is_symlink():
+        raise ValueError(f"refusing a symlinked link root: {base}")
+    base.mkdir(parents=True, exist_ok=True)
+    final = base / label
+    staging = base / f".staging-{label}"
+    if final.exists() or final.is_symlink():
+        raise ValueError(f"linked prefix already exists: {final}")
+    if staging.exists():
+        shutil.rmtree(staging)
+    try:
+        run(["cmake", "--install", build, "--prefix", staging, "--component", "gti_toolchain"])
+        if build_id:
+            (staging / "share/gti/BUILD_ID").write_text(build_id + "\n")
+        (staging / LINK_MARKER).write_text(json.dumps(marker, indent=2) + "\n")
+        os.replace(staging, final)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    try:
+        validate_installed_toolchain(final)
+    except BaseException:
+        shutil.rmtree(final, ignore_errors=True)
+        raise
+    return final
+
+
+def prune_linked_prefixes(base, keep, protect):
+    """Remove all but the newest `keep` prefixes this installer created."""
+    marked = sorted((entry for entry in base.iterdir()
+                     if entry.is_dir() and not entry.is_symlink()
+                     and not entry.name.startswith(".") and (entry / LINK_MARKER).is_file()),
+                    key=lambda entry: entry.name, reverse=True)
+    removed = []
+    for entry in marked[keep:]:
+        if entry.resolve() == protect.resolve():
+            continue
+        shutil.rmtree(entry)
+        removed.append(entry)
+    return removed
+
+
 def cache_values(build):
     cache = build / "CMakeCache.txt"
     if not cache.exists():
@@ -274,6 +381,17 @@ def main():
                         help="parallel build jobs (default: all detected CPUs)")
     parser.add_argument("--dry-run", action="store_true",
                         help="inspect prerequisites and destinations without writing")
+    parser.add_argument("--gtiup", nargs="?", const="dev", metavar="NAME",
+                        help="install a fresh prefix and register it as linked gtiup toolchain "
+                             "NAME (default: dev) instead of terminal symlinks and Neovim "
+                             "configuration; needs gtiup 0.5.0 or later")
+    parser.add_argument("--no-default", action="store_true",
+                        help="with --gtiup, link the toolchain without making it gtiup's default")
+    parser.add_argument("--keep", type=int, default=3,
+                        help="with --gtiup, linked prefixes to keep, newest first (default: 3)")
+    parser.add_argument("--link-root", type=pathlib.Path, default=DEFAULT_LINK_ROOT,
+                        help="with --gtiup, directory holding linked prefixes "
+                             "(default: ~/.local/share/gti/linked)")
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("this installer is for macOS")
@@ -282,6 +400,29 @@ def main():
                      "(the default), or use --local for this checkout")
     if args.jobs < 1:
         parser.error("--jobs must be a positive integer")
+    gtiup = None
+    if args.gtiup is None:
+        if args.no_default or args.keep != 3 or args.link_root != DEFAULT_LINK_ROOT:
+            parser.error("--no-default, --keep and --link-root need --gtiup")
+    else:
+        if args.activate_only:
+            parser.error("--gtiup installs a new build; it cannot be combined with --activate-only")
+        if args.config or args.replace_config or args.replace_bin or args.no_terminal:
+            parser.error("--gtiup writes no terminal commands or Neovim configuration; "
+                         "omit --config, --replace-config, --replace-bin and --no-terminal")
+        if args.keep < 1:
+            parser.error("--keep must be a positive integer")
+        try:
+            check_link_name(args.gtiup)
+        except ValueError as error:
+            parser.error(str(error))
+        gtiup = find_gtiup()
+        if gtiup is None:
+            parser.error("gtiup is not installed; see https://github.com/lang-gti-official/gtiup")
+        found = gtiup_version(gtiup)
+        if found < GTIUP_MINIMUM:
+            parser.error(f"gtiup {'.'.join(map(str, found))} cannot link toolchains; "
+                         "run gtiup self update (0.5.0 or later)")
     if args.nightly:
         if args.activate_only:
             parser.error("nightly selects and builds source; use --local with --activate-only")
@@ -290,10 +431,13 @@ def main():
             return
         ROOT = selected
         print(f"Installing CLI, LSP and parser from nightly commit {head}")
-    prerequisites = ("nvim",) if args.activate_only else ("cmake", "nvim", "tar", "c++")
+    prerequisites = (("nvim",) if args.activate_only else
+                     ("cmake", "c++") if gtiup else ("cmake", "nvim", "tar", "c++"))
     for executable in prerequisites:
         if not shutil.which(executable):
             parser.error(f"{executable} is required; see README's local Neovim setup")
+    if gtiup:
+        return install_with_gtiup(args, parser, gtiup, head if args.nightly else None)
     nvim = ["nvim", "--headless", "-u", "NONE", "-i", "NONE", "-n"]
     probe = run(nvim + ["-l", ROOT / "scripts/install_neovim_local.lua", "probe"], capture=True)
     configuration = args.config or pathlib.Path(json.loads(probe.stdout)) / "lua/plugins/gti.lua"
@@ -320,31 +464,10 @@ def main():
         finish_activation(configuration, content, args.replace_config,
                           bin_dir, toolchain, args.replace_bin, args.no_terminal, version)
         return
-    build = (args.build_dir or ROOT / "out/neovim-local-build").expanduser().resolve()
-    if build == ROOT or ROOT.is_relative_to(build):
-        parser.error("--build-dir must not be the source checkout or its parent")
-    if build == ROOT / "toolchain" or build.is_relative_to(ROOT / "toolchain"):
-        parser.error("--build-dir must not be inside the installed toolchain")
-    llvm_dir = args.llvm_dir or os.environ.get("LLVM_DIR")
-    if llvm_dir:
-        llvm_dir = pathlib.Path(llvm_dir).expanduser().resolve()
-        if not supported_llvm(llvm_dir):
-            parser.error(f"--llvm-dir/LLVM_DIR must select LLVM {llvm_pin.pinned_major()}, "
-                         "GTI's pinned LLVM")
-    else:
-        values = cache_values(build)
-        cached = (pathlib.Path(values["LLVM_DIR"])
-                  if values and values.get("LLVM_DIR") else None)
-        # Resolve a moving Homebrew opt alias on every configuration, including
-        # an existing cache, and select its matching Clang package as well.
-        llvm_dir = (cached.resolve() if cached and supported_llvm(cached)
-                    else discover_llvm())
-        if llvm_dir is None:
-            major = llvm_pin.pinned_major()
-            parser.error(f"no LLVM {major} found; GTI pins LLVM {major}. Install it "
-                         f"(including libclang), for example brew install llvm@{major}, "
-                         "then pass --llvm-dir. To restore commands from an already "
-                         "installed toolchain without rebuilding, use --activate-only")
+    build = build_directory(args, parser)
+    llvm_dir = selected_llvm(args, parser, build,
+                             ". To restore commands from an already installed toolchain "
+                             "without rebuilding, use --activate-only")
     configure = configure_command(build, llvm_dir)
     if "-G" in configure and not shutil.which("ninja"):
         parser.error("Ninja is required for a fresh build")
@@ -402,6 +525,75 @@ def main():
                       bin_dir, toolchain, args.replace_bin, args.no_terminal, version)
     if args.nightly:
         print(f"Installed nightly GTI {version} from {head}")
+
+
+def build_directory(args, parser):
+    build = (args.build_dir or ROOT / "out/neovim-local-build").expanduser().resolve()
+    if build == ROOT or ROOT.is_relative_to(build):
+        parser.error("--build-dir must not be the source checkout or its parent")
+    if build == ROOT / "toolchain" or build.is_relative_to(ROOT / "toolchain"):
+        parser.error("--build-dir must not be inside the installed toolchain")
+    return build
+
+
+def selected_llvm(args, parser, build, hint=""):
+    llvm_dir = args.llvm_dir or os.environ.get("LLVM_DIR")
+    if llvm_dir:
+        llvm_dir = pathlib.Path(llvm_dir).expanduser().resolve()
+        if not supported_llvm(llvm_dir):
+            parser.error(f"--llvm-dir/LLVM_DIR must select LLVM {llvm_pin.pinned_major()}, "
+                         "GTI's pinned LLVM")
+        return llvm_dir
+    values = cache_values(build)
+    cached = (pathlib.Path(values["LLVM_DIR"])
+              if values and values.get("LLVM_DIR") else None)
+    # Resolve a moving Homebrew opt alias on every configuration, including
+    # an existing cache, and select its matching Clang package as well.
+    llvm_dir = cached.resolve() if cached and supported_llvm(cached) else discover_llvm()
+    if llvm_dir is None:
+        major = llvm_pin.pinned_major()
+        parser.error(f"no LLVM {major} found; GTI pins LLVM {major}. Install it "
+                     f"(including libclang), for example brew install llvm@{major}, "
+                     "then pass --llvm-dir" + hint)
+    return llvm_dir
+
+
+def install_with_gtiup(args, parser, gtiup, nightly_head):
+    """Build the selected source and register it as a linked gtiup toolchain."""
+    build = build_directory(args, parser)
+    llvm_dir = selected_llvm(args, parser, build)
+    configure = configure_command(build, llvm_dir)
+    if "-G" in configure and not shutil.which("ninja"):
+        parser.error("Ninja is required for a fresh build")
+    base = args.link_root.expanduser().absolute() / args.gtiup
+    print(f"Build: {build}\nLinked prefixes: {base}\ngtiup toolchain: {args.gtiup}"
+          + ("" if args.no_default else " (becomes the default)"))
+    print(f"Parallel build jobs: {args.jobs}")
+    if args.dry_run:
+        print("Dry run: no build, installation or gtiup change performed.")
+        return
+    if configure:
+        run(configure)
+    run(["python3", ROOT / "scripts/build_window.py", "--kind", "build", "--",
+         "cmake", "--build", build, "--parallel", str(args.jobs),
+         "--target", "gti", "gti_lsp", "gti_tree_sitter"])
+    version = (ROOT / "VERSION").read_text().strip()
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ValueError("invalid VERSION")
+    commit, dirty = source_identity(ROOT)
+    now = datetime.now(timezone.utc)
+    label = unused_label(base, link_label(version, commit, dirty, now))
+    marker = {"source": str(ROOT), "commit": commit, "dirty": dirty, "version": version,
+              "nightly": nightly_head is not None, "created": now.isoformat(timespec="seconds")}
+    prefix = install_linked_prefix(build, base, label, marker, build_id=nightly_head)
+    run([gtiup, "link", args.gtiup, prefix])
+    if not args.no_default:
+        run([gtiup, "default", args.gtiup])
+    for removed in prune_linked_prefixes(base, args.keep, prefix):
+        print(f"Removed older linked prefix: {removed}")
+    state = " with uncommitted changes" if dirty else ""
+    print(f"Linked GTI {version} from {commit[:7]}{state} as gtiup toolchain {args.gtiup}: {prefix}")
+    print("Restart Neovim's LSP client (or Neovim) to use it; run rehash in open zsh sessions.")
 
 
 def finish_activation(configuration, content, replace_config, bin_dir,
