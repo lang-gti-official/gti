@@ -1,8 +1,5 @@
 #include "semantic_analyzer_impl.h"
 
-#include "gti/lexer.h"
-#include "gti/parser.h"
-
 #include <iterator>
 
 namespace lang {
@@ -6142,13 +6139,11 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       // this scope (namespace shadowing, aliases, or unnamed type arguments).
       // Prove the proposed owner with the ordinary parser and exact lookup;
       // never offer an edit naming a different concrete enum instance.
-      Lexer lexer;
-      Parser parser(lexer.scan(missingVariants.front(), stmt.keyword().source));
-      const auto expression = parser.parseExpression();
+      const auto expression =
+          parseRepairExpression(missingVariants.front(), stmt.keyword().source);
       const auto *qualified = exprAs<QualifiedName>(expression.get());
-      const auto resolved = !lexer.hadError() && !parser.hadError() && qualified
-                                ? resolveEnumerator(*qualified)
-                                : std::nullopt;
+      const auto resolved =
+          qualified ? resolveEnumerator(*qualified) : std::nullopt;
       if (resolved && resolved->symbol.type == subjectType)
         if (auto fix = missingSwitchCasesFix(stmt, sources, missingVariants))
           diagnostic.fixes.push_back(std::move(*fix));
