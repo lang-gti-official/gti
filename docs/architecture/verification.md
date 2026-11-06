@@ -1,5 +1,16 @@
 # Compiler Verification
 
+## Isolated native test fixtures
+
+C++ test executables that write source/module fixtures use
+`tests/temporary_directory.h`. Atomic directory creation gives each process a
+private root; descriptive fixture names live beneath it, and RAII cleanup removes
+only that owned root on normal exit or exception unwinding. Fixed paths directly
+under the system temporary directory are not safe across concurrent CTest runs
+or worktrees. Failure-only MIR dumps go to captured stderr so their evidence
+stays with the failed test. `testSupportFacilities` checks independent roots and
+cleanup without removing a surviving fixture.
+
 ## Google Spot runner pilot
 
 `gcp_spot_runner` is entirely offline: strict policy parsing, disabled/expired
