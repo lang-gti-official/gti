@@ -14290,6 +14290,34 @@ completeBorrowSourcePath(const MirProgram &program,
     }
     return fact;
   };
+  const auto unmaterializedReferenceFormal = [&](const MirPlace &place) -> Fact {
+    // No claim or body-local alias may manufacture caller-owned storage.
+    // A reference formal without an entry loan still names its exact referent.
+    if (place.root != MirPlaceRootKind::Binding ||
+        bindingLoans.contains(place.binding) || !parameters || !parameterTypes ||
+        parameters->size() != parameterTypes->size() ||
+        std::count(parameters->begin(), parameters->end(), place.binding) != 1)
+      return std::nullopt;
+    const auto index = std::find(parameters->begin(), parameters->end(), place.binding) -
+                       parameters->begin();
+    const auto &formal = (*parameterTypes)[index];
+    const auto shell = std::find_if(body.places.begin(), body.places.end(),
+        [&](const auto &candidate) {
+          return candidate.root == MirPlaceRootKind::Binding &&
+                 candidate.binding == place.binding && candidate.projections.empty() &&
+                 candidate.type == formal && candidate.initiallyAvailable &&
+                 !candidate.foreignStorage;
+        });
+    if (formal.kind != SemanticType::Reference || formal.arguments.size() != 1 ||
+        shell == body.places.end() || place.projections.size() != 1 ||
+        place.projections.front().kind != MirProjectionKind::Dereference ||
+        place.type != formal.arguments.front() || !place.initiallyAvailable ||
+        place.foreignStorage || place.symbol != shell->symbol || place.key != shell->key ||
+        (place.access == AccessMode::Mutable && formal.referenceAccess != AccessMode::Mutable))
+      return std::nullopt;
+    return MirBorrowDependencySet{
+        .dependencies = {{.source = place.id, .access = place.access}}};
+  };
   // A checked direct field below a borrowed formal remains physical caller
   // storage. Prove that path from the exact formal type; a dereference of a
   // stored reference is a different external owner and is not flattened here.
@@ -14395,7 +14423,9 @@ completeBorrowSourcePath(const MirProgram &program,
         if (place && place->root == MirPlaceRootKind::Loan &&
             place->projections.empty())
           fact = self(self, state, place->loan, depth + 1);
-        else if (place && place->type.kind != SemanticType::Reference &&
+        else if (place && (fact = unmaterializedReferenceFormal(*place))) {
+          // The exact formal proof also applies to a return's producer.
+        } else if (place && place->type.kind != SemanticType::Reference &&
                  (physicalBorrowedSubobject(*place) ||
                   std::none_of(place->projections.begin(),
                                place->projections.end(), [](const auto &part) {
@@ -14493,40 +14523,7 @@ completeBorrowSourcePath(const MirProgram &program,
       const auto loans = bindingLoans.find(place->binding);
       if (loans != bindingLoans.end() && loans->second.size() == 1)
         return fromReferenceLoan(state, loans->second.front());
-      // An ordinary reference formal need not have a materialized entry loan
-      // when it is only forwarded. Its caller-owned referent is nevertheless
-      // established by the exact typed formal, not by local reference storage
-      // or an attached result-origin claim. Never apply this fallback to an
-      // ambiguous carrier group or a local reference binding.
-      if (loans == bindingLoans.end() && parameters && parameterTypes &&
-          parameters->size() == parameterTypes->size() &&
-          std::count(parameters->begin(), parameters->end(), place->binding) ==
-              1) {
-        const auto index =
-            std::find(parameters->begin(), parameters->end(), place->binding) -
-            parameters->begin();
-        const auto &formal = (*parameterTypes)[index];
-        const auto shell = std::find_if(
-            body.places.begin(), body.places.end(), [&](const auto &candidate) {
-              return candidate.root == MirPlaceRootKind::Binding &&
-                     candidate.binding == place->binding &&
-                     candidate.projections.empty() &&
-                     candidate.type == formal && candidate.initiallyAvailable &&
-                     !candidate.foreignStorage;
-            });
-        if (formal.kind == SemanticType::Reference &&
-            formal.arguments.size() == 1 && shell != body.places.end() &&
-            place->projections.size() == 1 &&
-            place->projections.front().kind == MirProjectionKind::Dereference &&
-            place->type == formal.arguments.front() &&
-            place->initiallyAvailable && !place->foreignStorage &&
-            place->symbol == shell->symbol && place->key == shell->key &&
-            (place->access == AccessMode::ReadOnly ||
-             formal.referenceAccess == AccessMode::Mutable))
-          return MirBorrowDependencySet{
-              .dependencies = {{.source = place->id, .access = place->access}}};
-      }
-      return std::nullopt;
+      return unmaterializedReferenceFormal(*place);
     }
     // The referent behind a stored reference of a by-value carrier formal is
     // the caller's storage that the formal's entry group names at exactly

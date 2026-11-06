@@ -1,5 +1,6 @@
 #include "placement.h"
 #include "../mir_verification_queries.h"
+#include "../mir_lifetimes.h"
 #include "atomic_types.h"
 #include "closure_environment.h"
 #include "gti/backend.h"
@@ -568,7 +569,8 @@ namespace {
             "LLVM hierarchy exclusion requires an exact closure environment");
       const MirLambdaInstance *representation = nullptr;
       for (const auto &candidate : program.lambdaInstances()) {
-        if (candidate.type != selected)
+        const auto view = mirLambdaLifetimeView(candidate, selected);
+        if (!view)
           continue;
         if (!candidate.id || candidate.declaration != selected.lambdaId ||
             program.findLambda(candidate.id) != &candidate ||
@@ -614,20 +616,9 @@ namespace {
       });
     }
     if (selected.kind == SemanticType::Enum) {
-      const MirIntegralEnum *integral = nullptr;
-      const MirPayloadEnum *payload = nullptr;
-      for (const auto &row : program.integralEnums())
-        if (row.type == selected) {
-          if (integral)
-            reject("LLVM hierarchy exclusion has an ambiguous integral enum");
-          integral = &row;
-        }
-      for (const auto &row : program.payloadEnums())
-        if (row.type == selected) {
-          if (payload)
-            reject("LLVM hierarchy exclusion has an ambiguous payload enum");
-          payload = &row;
-        }
+      const auto view = mirEnumLifetimeView(program, selected);
+      const MirIntegralEnum *integral = view ? view->integral : nullptr;
+      const MirPayloadEnum *payload = view ? view->payload : nullptr;
       if (!selected.enumId || (integral != nullptr) == (payload != nullptr) ||
           (integral && integral->declaration != selected.enumId) ||
           (payload && payload->declaration != selected.enumId))
@@ -655,8 +646,12 @@ namespace {
                   variant.payloadRequiresActiveCleanup.size())
             reject("LLVM hierarchy exclusion lost exact payload field "
                    "inventories");
-          for (const auto &field : variant.payloadTypes)
-            result = self(self, field) || result;
+          for (const auto &field : variant.payloadTypes) {
+            const auto actual = view->instantiate(field);
+            if (!actual)
+              reject("LLVM hierarchy exclusion lost its exact payload lifetime view");
+            result = self(self, *actual) || result;
+          }
         }
         return result;
       });
@@ -688,13 +683,8 @@ namespace {
         reject("LLVM hierarchy exclusion has no concrete inline-storage proof");
       }
     }
-    const MirClassInstance *owner = nullptr;
-    for (const auto &row : program.classInstances())
-      if (row.type == selected) {
-        if (owner)
-          reject("LLVM hierarchy exclusion has an ambiguous class type");
-        owner = &row;
-      }
+    const auto view = mirClassLifetimeView(program, selected);
+    const MirClassInstance *owner = view ? view->instance : nullptr;
     if (!owner || !owner->id || program.findClassInstance(owner->id) != owner ||
         std::count_if(
             program.classInstances().begin(), program.classInstances().end(),
@@ -757,14 +747,20 @@ namespace {
                     !owner->bases.empty() || !owner->structuralBases.empty();
       // All union fields are potential inline storage. This neither selects
       // an active member nor changes its existing unsafe/lifetime contract.
-      for (const auto &field : owner->declaredFields)
-        result = self(self, field.type) || result;
+      for (const auto &field : owner->declaredFields) {
+        const auto actual = view->instantiate(field.type);
+        if (!actual)
+          reject("LLVM hierarchy exclusion lost its exact field lifetime view");
+        result = self(self, *actual) || result;
+      }
       const auto base = [&](const auto &row) {
-        const auto *target = program.findClassInstance(row.instance);
-        if (!target || target->type != row.type ||
+        const auto actual = view->instantiate(row.type);
+        const auto baseView = actual ? mirClassLifetimeView(program, *actual) : std::nullopt;
+        const auto *target = baseView ? baseView->instance : nullptr;
+        if (!target || target->id != row.instance ||
             row.interface != (target->kind == ClassKind::Interface))
           reject("LLVM hierarchy exclusion lost an exact base identity");
-        result = self(self, row.type) || result;
+        result = self(self, *actual) || result;
       };
       for (const auto &row : owner->bases)
         base(row);

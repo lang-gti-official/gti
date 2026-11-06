@@ -2437,7 +2437,8 @@ private:
   // The caller still enforces ordinary child-loan escape and availability.
   [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
   normalizedCompleteReturnBorrow(const FunctionInfo &function,
-                                 const SemanticBorrowDependencySet &complete);
+                                 const SemanticBorrowDependencySet &complete,
+                                 std::vector<LifetimeBound> *requiredLifetimes = nullptr);
   [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
   normalizedCompleteBorrow(const FunctionInfo &function,
                            std::span<const Parameter> parameters,

@@ -16092,6 +16092,12 @@ private:
                         .type = value->info.type};
             }
           } else if (function != nullptr &&
+                     // Complete results use the producer-preserving publication
+                     // below. Its independent MIR flow replay must reconstruct
+                     // every source; the attached summary/set alone proves none.
+                     !(function->completeReturnBorrow &&
+                       findValue(*statement.value) &&
+                       findValue(*statement.value)->borrowDependencies) &&
                      bodyReturnBorrowOrigin() != BorrowOriginKind::None &&
                      borrow.loan <= output.loans.size() &&
                      output.loans[borrow.loan - 1].kind ==
@@ -16204,7 +16210,9 @@ private:
                                 function->parameterBindings
                                     [function->returnBorrowParameter]));
             if (!validTail || transientChain.empty()) {
-              valid = false;
+              reject(*statement.value,
+                     "reference return has no exact incoming authority chain "
+                     "or complete producer dependency fact");
             } else {
               const HirValue *value = findValue(*statement.value);
               if (value == nullptr || output.returnType.arguments.size() != 1 ||

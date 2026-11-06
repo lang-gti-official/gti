@@ -5198,14 +5198,16 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
 }
 
 auto SemanticVisitor::Impl::normalizedCompleteReturnBorrow(
-    const FunctionInfo &function, const SemanticBorrowDependencySet &complete)
+    const FunctionInfo &function, const SemanticBorrowDependencySet &complete,
+    std::vector<LifetimeBound> *requiredLifetimes)
     -> std::optional<FunctionBorrowDependencySummary> {
   const auto *syntax = function.bodyDeclaration();
   if (!syntax || function.parameterPack ||
       syntax->parameters().size() != function.parameterTypes.size())
     return std::nullopt;
   return normalizedCompleteBorrow(function, syntax->parameters(),
-                                  syntax->receiverMutability(), complete);
+                                  syntax->receiverMutability(), complete,
+                                  requiredLifetimes);
 }
 
 auto SemanticVisitor::Impl::normalizedCompleteBorrow(

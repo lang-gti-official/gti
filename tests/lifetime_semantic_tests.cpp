@@ -1,7 +1,10 @@
 #include "gti/frontend.h"
+#include "gti/mir_printer.h"
 
 #include <algorithm>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 
@@ -27,6 +30,33 @@ int main(int argc, char **argv) {
                 << (code.empty() ? "" : std::string(" with ") + std::string(code)) << '\n';
       for (const auto &diagnostic : result.diagnostics)
         std::cerr << "  " << diagnostic.code << ": " << diagnostic.message << '\n';
+      if (mir && internal && argc > 2 &&
+          (name == "stored-external-reference-keeps-its-declared-region" ||
+           name == "borrowed-value-parameter-publishes-stored-suppliers")) {
+        const std::size_t owner = name == "stored-external-reference-keeps-its-declared-region" ? 2 : 1;
+        const auto directory = std::filesystem::path(argv[2]);
+        std::filesystem::create_directories(directory);
+        const auto path = directory / (std::string(name) + ".mir.txt");
+        std::ofstream evidence(path);
+        if (const auto *function = result.mir.findFunctionInstance(owner))
+          evidence << lang::MirPrinter{}.print(function->body);
+        if (const auto *function = result.hir.findFunctionInstance(owner)) {
+          evidence << "HIR owner=" << owner << " declaration=" << function->declaration << '\n';
+          for (const auto &loan : function->body.loans) {
+            evidence << "HIR loan=" << loan.semanticLoan << " kind=" << static_cast<int>(loan.kind)
+                     << " parent=" << loan.parent << " stored=" << loan.storedDependency
+                     << " entry=" << loan.entry << " suppliers=" << loan.additionalDependencies.size()
+                     << " fields=" << loan.designatedFields.size() << '\n';
+          }
+          for (const auto &value : function->body.values)
+            if (value.borrowOrigin != lang::BorrowOriginKind::None || value.borrowDependencies)
+              evidence << "HIR value=" << value.id << " kind=" << static_cast<int>(value.kind)
+                       << " origin=" << static_cast<int>(value.borrowOrigin)
+                       << " parameter=" << value.borrowArgument << " suppliers=" << value.borrowFields.size()
+                       << " complete=" << value.borrowDependencies.has_value() << '\n';
+        }
+        std::cerr << "  failing owner " << owner << " evidence: " << path << '\n';
+      }
       if (mir && internal) {
         const auto suppliers = [](std::string_view label, const auto &fields) {
           std::cerr << "  " << label << " suppliers=" << fields.size();
@@ -243,6 +273,14 @@ public:
   }
 };
 int main() { Holder<int> holder{7}; return holder.get() - 7; }
+)gti", true);
+  check("whole-receiver-contract-keeps-compact-call-summary", R"gti(
+struct Number {
+  int value = 7;
+  Number() = default;
+  int& get() { return this.value; }
+};
+int main() { Number number{}; int& alias = number.get(); return alias - 7; }
 )gti", true);
   check("owned-generic-value-has-local-validity", R"gti(
 int observe<T, lifetime a>(T&<a> value) requires outlives<T, a> { return 7; }

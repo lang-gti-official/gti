@@ -257,7 +257,7 @@ export [[borrowed_from(second)]] int& choose(int& first, int& second) {
   const auto facade = compiledInterfaceSource(signatures);
   expect(facade.find("[[borrowed_from(arg1)]]") != std::string::npos,
          "wire profile must reconstruct the exact selected input region");
-  const auto consumerSource = facade + R"(
+  const auto consumerSource = "export module borrowing;\n" + facade + R"(
 int main() { int left = 3; int right = 7; return choose(left, right) - 7; }
 )";
   // Inspection may retain undefined declarations; actual executable source

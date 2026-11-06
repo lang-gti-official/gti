@@ -699,6 +699,14 @@ auto SemanticVisitor::Impl::validateCallableReturn(
       returnType == SemanticType::Unknown) {
     return true;
   }
+  // A value context may load an exact referent from a checked-reference
+  // invocation result, as it does for an ordinary direct call. Keep the
+  // selected reference signature and supplier proof intact; the enclosing
+  // initialization still checks copying/moving and any borrowed-state escape.
+  if (requirement->returnType.kind != SemanticType::Reference &&
+      returnType.kind == SemanticType::Reference &&
+      requirement->returnType == callExpressionType(returnType))
+    return true;
   const Variable *variable = directCallableParameterVariable(call.callee());
   const Token location =
       variable == nullptr ? expressionToken(call.callee()) : variable->name();
@@ -8391,10 +8399,28 @@ auto SemanticVisitor::Impl::recordResolvedCall(
         complete ? instantiateCompleteCallBorrow(call, resolved, *complete,
                                                  &noNormalResult)
                  : std::nullopt;
-    // The exact instance's complete contract names the result's fields
+    // Complete dependency metadata represents even a sole whole-reference
+    // supplier explicitly. The callable summary retains its canonical compact
+    // representation for that case; adapting a call must not turn an empty
+    // field list into a distinct one-element empty path.
+    const bool compactReferenceSupplier = [&] {
+      if (!complete || function.returnType.kind != SemanticType::Reference ||
+          !resolved.borrowFields.empty() || !resolved.borrowArguments.empty() ||
+          resolved.borrowPlace || complete->dependencies.size() != 1 ||
+          !complete->possibleAlternatives.empty())
+        return false;
+      const auto &supplier = complete->dependencies.front();
+      return supplier.origin == resolved.borrowOrigin &&
+             supplier.parameter == resolved.borrowArgument &&
+             supplier.access == resolved.borrowAccess && supplier.globalRoot == 0 &&
+             supplier.resultFields.empty() && supplier.sourceFields.empty() &&
+             supplier.resultConditions.empty() && supplier.sourceConditions.empty();
+    }();
+    // Nontrivial paths come from the exact instance's complete contract,
     // whether or not this call's inputs instantiate its dependency set.
     const bool contractFields =
-        complete && (function.returnType.kind == SemanticType::Class ||
+        complete && !compactReferenceSupplier &&
+                    (function.returnType.kind == SemanticType::Class ||
                      (function.returnType.kind == SemanticType::Reference &&
                       function.dispatchOwner.kind == SemanticType::Class));
     // A reference selected from a receiver's alternative-guarded stored path

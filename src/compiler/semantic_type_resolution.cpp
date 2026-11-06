@@ -5924,9 +5924,16 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
                     })) {
       for (auto &dependency : dependencies)
         dependency.access = function->returnType.referenceAccess;
+      std::vector<LifetimeBound> required;
       if (normalizedCompleteReturnBorrow(
-              *function, {.dependencies = std::move(dependencies)}))
+              *function, {.dependencies = std::move(dependencies)},
+              loanFlow.collectingLifetimeContract ? &required : nullptr)) {
+        for (const auto edge : required)
+          if (!requireLifetimeRelationship(edge.longer, edge.shorter,
+                                            expressionToken(value)))
+            return;
         return;
+      }
     }
     report(expressionToken(value),
            "Every possible owner of the returned reference must outlive its "

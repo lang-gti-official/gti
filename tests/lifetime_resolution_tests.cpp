@@ -576,7 +576,7 @@ int main() { int firstValue = 1; int secondValue = 2; return first(firstValue, s
     lang::LifetimeBounds bounds;
     for (const auto edge : info->lifetimeContract.bounds)
       (void)bounds.assume(edge.longer, edge.shorter);
-    expect(info->lifetimeContract.origin == lang::LifetimeContractOrigin::BodyInferred &&
+    const bool validSummary = info->lifetimeContract.origin == lang::LifetimeContractOrigin::BodyInferred &&
                info->lifetimeContract.valid() && info->parameterTypes.size() > ignored &&
                bounds.proves(info->parameterTypes[selected].referenceLifetime,
                              info->returnType.referenceLifetime) &&
@@ -586,8 +586,28 @@ int main() { int firstValue = 1; int secondValue = 2; return first(firstValue, s
                info->completeReturnBorrow->dependencies.size() == 1 &&
                info->completeReturnBorrow->dependencies.front().origin ==
                    lang::BorrowOriginKind::Argument &&
-               info->completeReturnBorrow->dependencies.front().parameter == selected,
+               info->completeReturnBorrow->dependencies.front().parameter == selected;
+    expect(validSummary,
            std::string("private recursive fixed point preserves only productive return suppliers: ") + name);
+    if (!validSummary) {
+      const auto region = [](lang::Lifetime value) {
+        std::cerr << unsigned(value.kind) << ':' << value.id;
+      };
+      const auto edges = [&](std::span<const lang::LifetimeBound> values) {
+        for (std::size_t index = 0; index < std::min<std::size_t>(values.size(), 16); ++index) {
+          std::cerr << ' '; region(values[index].longer);
+          std::cerr << '>'; region(values[index].shorter);
+        }
+        std::cerr << " (" << values.size() << ")\n";
+      };
+      std::cerr << name << " result="; region(info->returnType.referenceLifetime);
+      std::cerr << " contract:"; edges(info->lifetimeContract.bounds);
+      if (info->declaration && info->declaration->body())
+        if (const auto *body = result.semantics.findLifetimeBody(*info->declaration->body())) {
+          std::cerr << name << " body complete=" << body->complete << " obligations:";
+          edges(body->obligations);
+        }
+    }
   }
   const auto *both = function(result, "both");
   lang::LifetimeBounds bothBounds;
