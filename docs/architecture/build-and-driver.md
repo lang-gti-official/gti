@@ -3047,6 +3047,15 @@ global and aggregate-carried origins reject. The virtual declaration publishes
 escape, mutation and aliasing. This does not yet export custom ownership/drop
 recipes or a general lifetime dependency graph.
 
+Inferred reference regions remain in the verified source signature. Before
+projecting this bounded interface, the compiler proves that its normalized
+contract consists of independent input reference regions, their implied referent
+validity, and the one selected result relationship. The existing wire profile
+then reconstructs those same relationships through elision and `borrowed_from`.
+It does not erase a stronger bound, correlate independent inputs, or admit a
+named generic lifetime API; those require the general interface profile. Import
+binding repeats the profile check against the newly normalized source signature.
+
 Callable metadata profile `gti.callable-interface.4` contains key-sorted,
 length-framed records: persistent function key, result recipe, common nominal
 metadata, borrow origin, parameter ordinal, access, inlining policy

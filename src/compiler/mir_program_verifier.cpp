@@ -78,9 +78,12 @@ struct MirStoredCarrierReference {
   std::vector<BorrowDependencyCondition> conditions;
 };
 
+enum class MirStoredReferenceQuery { CompleteBorrowInventory, DeclaredSuppliers };
+
 [[nodiscard]] std::optional<std::vector<MirStoredCarrierReference>>
-findStoredCarrierReferenceInventory(const MirProgram &program,
-                                    const SemanticType &type);
+findStoredCarrierReferenceInventory(
+    const MirProgram &program, const SemanticType &type,
+    MirStoredReferenceQuery query = MirStoredReferenceQuery::CompleteBorrowInventory);
 
 [[nodiscard]] std::optional<std::vector<BorrowAlternativePath>>
 findStoredCarrierAlternativeInventory(const MirProgram &program,
@@ -5223,13 +5226,20 @@ findStoredCarrierReferences(const MirProgram &program,
 
 [[nodiscard]] std::optional<std::vector<MirStoredCarrierReference>>
 findStoredCarrierReferenceInventory(const MirProgram &program,
-                                    const SemanticType &type) {
+                                    const SemanticType &type,
+                                    MirStoredReferenceQuery query) {
   std::vector<SemanticType> visiting;
   const auto visit = [&](const auto &self, const SemanticType &current)
       -> std::optional<std::vector<MirStoredCarrierReference>> {
     if (current.kind == SemanticType::Unknown ||
         current.kind == SemanticType::TypeParameter)
       return std::nullopt;
+    // Primitive text carriers retain their payload region, but contain no
+    // language Reference field path. This does not establish an empty complete
+    // borrow set: the general carrier query keeps its existing strict result.
+    if (query == MirStoredReferenceQuery::DeclaredSuppliers &&
+        (current.kind == SemanticType::StringView || current.kind == SemanticType::CString))
+      return std::vector<MirStoredCarrierReference>{};
     if (std::find(visiting.begin(), visiting.end(), current) !=
         visiting.end()) {
       return std::nullopt;
@@ -5252,16 +5262,20 @@ findStoredCarrierReferenceInventory(const MirProgram &program,
     };
     visiting.push_back(current);
     if (current.kind == SemanticType::Lambda) {
-      const auto instance = std::find_if(
-          program.lambdaInstances().begin(), program.lambdaInstances().end(),
-          [&](const auto &row) { return row.type == current; });
+      const MirLambdaInstance *instance = nullptr;
+      bool invalid = false;
+      for (const auto &candidate : program.lambdaInstances())
+        if (mirLambdaLifetimeView(candidate, current)) {
+          if (instance && candidate.captureSymbols != instance->captureSymbols)
+            invalid = true;
+          instance = &candidate;
+        }
+      const auto captures = mirLambdaCaptureTypes(program, current);
       std::vector<MirStoredCarrierReference> paths;
-      bool invalid = instance == program.lambdaInstances().end();
-      if (!invalid &&
-          instance->captureSymbols.size() == instance->captureTypes.size()) {
-        for (std::size_t index = 0; index < instance->captureTypes.size();
-             ++index) {
-          const auto &field = instance->captureTypes[index];
+      invalid |= !instance || !captures;
+      if (!invalid && instance->captureSymbols.size() == captures->size()) {
+        for (std::size_t index = 0; index < captures->size(); ++index) {
+          const auto &field = (*captures)[index];
           auto children = childInventory(field);
           if (!children || instance->captureSymbols[index] == 0) {
             invalid = true;
@@ -5335,7 +5349,8 @@ findStoredCarrierReferenceInventory(const MirProgram &program,
     };
     if (instance->traits.containsBorrowedState &&
         (instance->kind == ClassKind::Union || instance->cAbiRecord ||
-         (instance->destructor && !instance->lifecycleBoundBorrowCarrier))) {
+         (query == MirStoredReferenceQuery::CompleteBorrowInventory &&
+          instance->destructor && !instance->lifecycleBoundBorrowCarrier))) {
       invalid = true;
     }
     for (const HirBaseInstance &base : instance->structuralBases) {
@@ -14022,6 +14037,7 @@ struct CompleteBorrowSourcePath {
   // absent prefix denotes physical caller storage, not a by-value shell.
   std::optional<std::size_t> externalPrefix;
   std::size_t externalReferences = 0;
+  Lifetime externalRegion;
   std::vector<BorrowDependencyCondition> conditions;
 };
 
@@ -15712,6 +15728,7 @@ completeBorrowSourcePath(const MirProgram &program,
       if (field.arguments.size() != 1)
         return std::nullopt;
       ++source.externalReferences;
+      source.externalRegion = field.referenceLifetime;
       if (!source.externalPrefix)
         source.externalPrefix = prefix.size();
       source.access = field.referenceAccess;
@@ -15731,15 +15748,23 @@ completeBorrowSourcePath(const MirProgram &program,
 [[nodiscard]] bool lifetimeRootSupplier(
     const MirProgram &program, const MirFunctionInstance &function, const BorrowedFieldOrigin &mapping) {
   if (!function.lifetimeContract.valid() ||
-      function.lifetimeContract.origin == LifetimeContractOrigin::BodyInferred ||
       function.returnType.kind != SemanticType::Reference ||
       !mapping.resultFields.empty() || !mapping.resultConditions.empty() ||
-      !mapping.sourceConditions.empty() ||
       mapping.globalRoot || mapping.access != function.returnType.referenceAccess)
     return false;
   Lifetime source;
   AccessMode access = AccessMode::ReadOnly;
-  if (mapping.origin == BorrowOriginKind::Argument) {
+  const auto path = mapping.sourceFields.empty()
+                        ? std::optional<CompleteBorrowSourcePath>{}
+                        : completeBorrowSourcePath(program, function, mapping);
+  if (path && path->externalPrefix) {
+    if (path->conditions != mapping.sourceConditions)
+      return false;
+    source = path->externalRegion;
+    access = path->access;
+  } else if (!mapping.sourceConditions.empty()) {
+    return false;
+  } else if (mapping.origin == BorrowOriginKind::Argument) {
     if (!mapping.sourceFields.empty() || mapping.parameter >= function.parameterTypes.size())
       return false;
     const auto &parameter = function.parameterTypes[mapping.parameter];
@@ -15771,9 +15796,12 @@ completeBorrowSourcePath(const MirProgram &program,
   } else {
     return false;
   }
-  return (mapping.access == AccessMode::ReadOnly || access == AccessMode::Mutable) &&
-         mirDeclaredLifetimeRelationship(program, function.lifetimeContract,
-                                          source, function.returnType.referenceLifetime);
+  return lifetimeBorrowSupplierPermitted(
+      source, access, function.returnType.referenceLifetime, mapping.access,
+      [&](Lifetime longer, Lifetime shorter) {
+        return mirDeclaredLifetimeRelationship(program, function.lifetimeContract,
+                                                longer, shorter);
+      });
 }
 
 [[nodiscard]] bool permitsCompleteBorrowMapping(
@@ -15781,13 +15809,29 @@ completeBorrowSourcePath(const MirProgram &program,
     const BorrowedFieldOrigin &actual) {
   if (allowed == actual)
     return true;
-  return lifetimeRootSupplier(program, function, allowed) &&
-         allowed.origin == actual.origin &&
-         allowed.parameter == actual.parameter &&
-         allowed.globalRoot == actual.globalRoot &&
-         allowed.access == actual.access &&
-         allowed.resultFields == actual.resultFields &&
-         allowed.resultConditions == actual.resultConditions;
+  if (!lifetimeRootSupplier(program, function, allowed) ||
+      allowed.origin != actual.origin || allowed.parameter != actual.parameter ||
+      allowed.globalRoot != actual.globalRoot || allowed.access != actual.access ||
+      allowed.resultFields != actual.resultFields ||
+      allowed.resultConditions != actual.resultConditions ||
+      allowed.sourceFields.size() > actual.sourceFields.size() ||
+      !std::equal(allowed.sourceFields.begin(), allowed.sourceFields.end(),
+                  actual.sourceFields.begin()))
+    return false;
+  const auto allowedSource = completeBorrowSourcePath(program, function, allowed);
+  const auto actualSource = completeBorrowSourcePath(program, function, actual);
+  // A permitted physical subobject may be refined, but crossing another
+  // stored reference changes the external owner. The caller must retain that
+  // independently declared supplier; a shell loan is not its authority.
+  return allowedSource && actualSource &&
+         allowedSource->externalPrefix == actualSource->externalPrefix &&
+         allowedSource->externalReferences == actualSource->externalReferences &&
+         std::all_of(allowed.sourceConditions.begin(), allowed.sourceConditions.end(),
+                     [&](const auto &condition) {
+                       return std::find(actual.sourceConditions.begin(),
+                                        actual.sourceConditions.end(), condition) !=
+                              actual.sourceConditions.end();
+                     });
 }
 
 [[nodiscard]] bool
@@ -15943,6 +15987,67 @@ normalizedCompleteReturnBorrow(const MirProgram &program,
   return result;
 }
 
+// Reconstruct the declaration's complete scalar supplier inventory, separately
+// from body returns. A body may use fewer suppliers; publication may not narrow
+// the lifetime contract that callers must retain.
+[[nodiscard]] std::optional<std::vector<BorrowedFieldOrigin>>
+declaredScalarLifetimeSuppliers(const MirProgram &program,
+                                 const MirFunctionInstance &function) {
+  std::vector<BorrowedFieldOrigin> required;
+  const auto add = [&](BorrowedFieldOrigin candidate) {
+    if (lifetimeRootSupplier(program, function, candidate) &&
+        std::find(required.begin(), required.end(), candidate) == required.end())
+      required.push_back(std::move(candidate));
+  };
+  const auto stored = [&](const SemanticType &type, BorrowOriginKind origin,
+                           std::size_t parameter) {
+    const auto inventory = findStoredCarrierReferenceInventory(
+        program, type, MirStoredReferenceQuery::DeclaredSuppliers);
+    if (!inventory)
+      return false;
+    for (const auto &path : *inventory) {
+      if (path.fields.empty())
+        return false;
+      add({.origin = origin, .parameter = parameter,
+           .sourceFields = path.fields, .access = function.returnType.referenceAccess,
+           .sourceConditions = path.conditions});
+    }
+    return true;
+  };
+  if (function.body.kind == MirBodyKind::Lambda) {
+    const auto *lambda = program.findLambda(function.id);
+    if (!lambda || !mirLambdaLifetimeView(*lambda, lambda->type) ||
+        lambda->captureSymbols.size() != lambda->captureTypes.size() ||
+        !stored(lambda->type, BorrowOriginKind::Receiver, 0))
+      return std::nullopt;
+    for (std::size_t index = 0; index < lambda->captureTypes.size(); ++index)
+      if (lambda->captureTypes[index].kind != SemanticType::Reference)
+        add({.origin = BorrowOriginKind::Receiver,
+             .sourceFields = {lambda->captureSymbols[index]},
+             .access = function.returnType.referenceAccess});
+  } else if (function.owner && !function.staticMember) {
+    const auto owner = checkedMirCallableOwnerType(
+        program, *function.owner, function.ownerType, function.lifetimeContract);
+    if (!owner || !stored(*owner, BorrowOriginKind::Receiver, 0))
+      return std::nullopt;
+    add({.origin = BorrowOriginKind::Receiver,
+         .access = function.returnType.referenceAccess});
+  }
+  for (std::size_t index = 0; index < function.parameterTypes.size(); ++index) {
+    const auto &parameter = function.parameterTypes[index];
+    if (parameter.kind == SemanticType::Reference) {
+      if (parameter.arguments.size() != 1 ||
+          !stored(parameter.arguments.front(), BorrowOriginKind::Argument, index))
+        return std::nullopt;
+      add({.origin = BorrowOriginKind::Argument, .parameter = index,
+           .access = function.returnType.referenceAccess});
+    } else if (!stored(parameter, BorrowOriginKind::Argument, index)) {
+      return std::nullopt;
+    }
+  }
+  return required;
+}
+
 // Program-local proof cache. A recursive edge observes unknown, never the
 // declaration's claim, so mutually forged summaries cannot justify one another.
 // The same executable flow reconstruction also verifies value annotations.
@@ -16024,6 +16129,10 @@ public:
       return nullptr;
     states[id - 1] = State::Visiting;
     const auto *function = program.findFunctionInstance(id);
+    if (function && !retainsDeclaredSuppliers(*function)) {
+      states[id - 1] = State::Complete;
+      return nullptr;
+    }
     if (function && function->completeReturnBorrow) {
       auto observed = reconstruct(*function, flows[id - 1]);
       const auto &claim = *function->completeReturnBorrow;
@@ -16076,6 +16185,10 @@ public:
     const auto *lambda = program.findLambda(id);
     const auto publication = lambda ? std::optional(lambdaPublication(*lambda, true)) : std::nullopt;
     const auto *function = publication ? &*publication : nullptr;
+    if (function && !retainsDeclaredSuppliers(*function)) {
+      lambdaStates[id - 1] = State::Complete;
+      return nullptr;
+    }
     if (function && function->completeReturnBorrow) {
       auto observed = reconstruct(*function, lambdaFlows[id - 1]);
       const auto &claim = *function->completeReturnBorrow;
@@ -16333,6 +16446,25 @@ private:
       }
     }
     return published && retired;
+  }
+
+  bool retainsDeclaredSuppliers(const MirFunctionInstance &function) {
+    if (function.neverReturns || !function.lifetimeContract.valid() ||
+        function.lifetimeContract.origin == LifetimeContractOrigin::BodyInferred ||
+        function.returnType.kind != SemanticType::Reference)
+      return true;
+    const auto required = declaredScalarLifetimeSuppliers(program, function);
+    if (required && std::all_of(required->begin(), required->end(), [&](const auto &supplier) {
+          return function.completeReturnBorrow &&
+                 std::find(function.completeReturnBorrow->dependencies.begin(),
+                           function.completeReturnBorrow->dependencies.end(), supplier) !=
+                     function.completeReturnBorrow->dependencies.end();
+        }))
+      return true;
+    appendVerification(verification, verificationFailure(
+        function.body, function.id,
+        "declared scalar lifetime result omits its complete permitted supplier inventory"));
+    return false;
   }
 
   bool wellFormed(const MirFunctionInstance &function,

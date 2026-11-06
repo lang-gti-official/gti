@@ -312,6 +312,12 @@ public:
   [[nodiscard]] NominalVariance nominalVariance(const SemanticType &type) const override;
   [[nodiscard]] LifetimeSignatureContract
   nominalLifetimeContract(const SemanticType &type) const override;
+  [[nodiscard]] std::optional<LifetimeRequirementFormula>
+  nominalFormationRequirements(const SemanticType &type) const;
+  [[nodiscard]] bool collectNominalFormationAssumptions(
+      const SemanticType &type, LifetimeSignatureContract &contract) const;
+  void validateNominalFormation(const SemanticType &type, const Token &site);
+  void refreshNominalLifetimeSignatures();
   [[nodiscard]] std::vector<NominalVarianceRecipe>
   nominalVarianceRecipes() const override;
   [[nodiscard]] std::optional<SemanticExecutableInstantiation>
@@ -1756,6 +1762,7 @@ private:
     LifetimeSignatureContract lifetimeContract;
     DefaultsState defaultsState = DefaultsState::Unresolved;
     std::vector<SemanticType> genericArgumentPatterns;
+    std::vector<GenericParameterInfo> genericArgumentPatternLifetimes;
     bool argumentPatternsResolving = false;
     bool argumentPatternsResolved = false;
     std::unordered_map<std::string, MemberInfo> members;
@@ -3011,11 +3018,11 @@ private:
       std::span<const SemanticType> parameterTypes) const;
 
   [[nodiscard]] std::vector<SymbolId>
-  storedFieldSymbols(SemanticType type, std::span<const StoredField> fields);
+  storedFieldSymbols(SemanticType type, std::span<const StoredField> fields) const;
 
   [[nodiscard]] std::optional<std::vector<BorrowDependencyCondition>>
   storedConditionSymbols(const SemanticType &type,
-                         std::span<const StoredReferenceCondition> conditions);
+                         std::span<const StoredReferenceCondition> conditions) const;
 
   // A present inventory enumerates every independently checked dependency in
   // declaration order. Present-empty is dependency-free; absent is unsupported
@@ -7245,6 +7252,7 @@ private:
     std::vector<RegisteredConformance> conformances;
     std::vector<EnumInfo> enums;
     std::unordered_map<const TypeRef *, SemanticType> normalizedNominalTypes;
+    bool nominalLifetimeContractsReady = false;
     std::unordered_set<const VariableDecl *> predeclaredVariables;
     std::unordered_map<const VariableDecl *, const Token *>
         mutableFieldGroupOrigins;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/semantic_model.h"
+#include "gti/lifetime_types.h"
 
 #include <span>
 #include <unordered_map>
@@ -107,11 +108,41 @@ inline std::optional<std::vector<NominalVariance>> inferNominalVarianceRecipes(
       ids.push_back(parameter.id);
       if (parameter.lifetime)
         result[index].lifetimes.push_back(TypeVariance::Bivariant);
-      else if (!parameter.value)
+      else if (!parameter.value && recipe.argumentPatterns.empty())
         result[index].types.push_back(recipe.exactSpecializationPrimary
                                           ? TypeVariance::Invariant
                                           : TypeVariance::Bivariant);
     }
+    // Pattern binders are projections inside public type arguments, never
+    // additional public region slots. Until each pattern position is composed
+    // with its stored uses, the complete public argument is invariant.
+    if (!recipe.argumentPatterns.empty())
+      result[index].types.assign(recipe.argumentPatterns.size(), TypeVariance::Invariant);
+    if (!recipe.argumentPatternLifetimes.empty() && recipe.argumentPatterns.empty())
+      return std::nullopt;
+    std::vector<Lifetime> scope;
+    for (const auto &parameter : parameters.back())
+      if (parameter.lifetime)
+        scope.push_back(Lifetime::parameter(parameter.id));
+    for (const auto &parameter : recipe.argumentPatternLifetimes) {
+      if (!parameter.id || !parameter.lifetime || !parameter.implicit || parameter.value ||
+          parameter.pack || !parameter.typeArgumentPath.empty() ||
+          std::find(ids.begin(), ids.end(), parameter.id) != ids.end())
+        return std::nullopt;
+      ids.push_back(parameter.id);
+      scope.push_back(Lifetime::parameter(parameter.id));
+    }
+    std::vector<Lifetime> used;
+    for (const auto &pattern : recipe.argumentPatterns)
+      for (const auto region : freeTypeLifetimes(pattern)) {
+        if (!region.specified() || (region.kind != Lifetime::Kind::Static &&
+            std::find(scope.begin(), scope.end(), region) == scope.end()))
+          return std::nullopt;
+        used.push_back(region);
+      }
+    for (const auto &parameter : recipe.argumentPatternLifetimes)
+      if (std::find(used.begin(), used.end(), Lifetime::parameter(parameter.id)) == used.end())
+        return std::nullopt;
     result[index].complete = true;
   }
   const auto declarationIndex = [&](SemanticType::Kind kind, std::uint64_t id)
@@ -138,7 +169,7 @@ inline std::optional<std::vector<NominalVariance>> inferNominalVarianceRecipes(
       for (const auto &parameter : parameters[index])
         if (parameter.lifetime)
           slots.emplace(parameter.id, &next.lifetimes[lifetimes++]);
-        else if (!parameter.value)
+        else if (!parameter.value && recipe.argumentPatterns.empty())
           slots.emplace(parameter.id, &next.types[types++]);
       const auto observe = [&](GenericParameterId id, TypeVariance position) {
         if (const auto found = slots.find(id); found != slots.end())

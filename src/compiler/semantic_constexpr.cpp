@@ -489,6 +489,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   copy.conformances = other.conformances;
   copy.enums = other.enums;
   copy.normalizedNominalTypes = other.normalizedNominalTypes;
+  copy.nominalLifetimeContractsReady = other.nominalLifetimeContractsReady;
   copy.predeclaredVariables = other.predeclaredVariables;
   copy.mutableFieldGroupOrigins = other.mutableFieldGroupOrigins;
   copy.recursiveLayoutFields = other.recursiveLayoutFields;

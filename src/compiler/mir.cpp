@@ -11478,10 +11478,19 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         return false;
     }
     const bool stagedPayload = stagedPayloadConstruction(instruction);
+    const bool selectedBorrowTarget =
+        instruction.intrinsic == IntrinsicKind::None &&
+        (instruction.functionTarget || instruction.constructorTarget ||
+         instruction.lambdaTarget);
+    const bool signatureBorrowTarget =
+        instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke &&
+        !instruction.functionTarget && !instruction.constructorTarget &&
+        !instruction.lambdaTarget &&
+        instruction.lifetimeApplication.callableSignature.has_value();
     if (!instruction.borrowFields.empty() &&
         (!callable || instruction.borrowOrigin == BorrowOriginKind::None ||
-         instruction.intrinsic != IntrinsicKind::None ||
-         (!instruction.functionTarget && !instruction.constructorTarget)))
+         (!selectedBorrowTarget && !signatureBorrowTarget)))
       return false;
     const bool callInput = instruction.kind == MirInstructionKind::CallInput;
     const bool baseCallInput =
@@ -11509,7 +11518,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             : nullptr;
     if ((instruction.noNormalBorrowResult &&
          (instruction.kind != MirInstructionKind::Call ||
-          !instruction.neverReturns || !instruction.functionTarget ||
+          !instruction.neverReturns ||
+          (!instruction.functionTarget && !instruction.lambdaTarget) ||
           instruction.intrinsic != IntrinsicKind::None ||
           instruction.dispatch != CallDispatch::Static || instruction.result ||
           instruction.loan || instruction.successResultDrop ||

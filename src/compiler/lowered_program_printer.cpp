@@ -674,6 +674,8 @@ private:
     }
     output << "];generics=";
     genericParameters(value.genericParameters);
+    output << ";argument-pattern-lifetimes=";
+    genericParameters(value.genericArgumentPatternLifetimes);
     if (!value.genericArgumentPatterns.empty()) {
       output << ";argument-patterns=[";
       for (std::size_t index = 0; index < value.genericArgumentPatterns.size();
@@ -1025,7 +1027,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v35\n";
+  output << "lowered-program-v36\n";
   for (const auto &unit : program.compiledInterfaceUnits())
     output << "compiled-interface-unit " << unit.sourceUnit
            << " package=" << std::quoted(unit.owner.package)

@@ -284,7 +284,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v121 valid=" << program.valid() << '\n';
+    output << "mir-v122 valid=" << program.valid() << '\n';
     if (program.requiresNativeObjectLayout())
       output << "native-object-layout\n";
     for (const auto &recipe : program.nominalVarianceRecipes()) {
@@ -320,6 +320,18 @@ public:
         separator(index);
         const auto &argument = recipe.exactValueArguments[index];
         output << number(argument.kind) << ':' << argument.value << ':' << argument.parameterId;
+      }
+      output << "],pattern-lifetimes=[";
+      for (std::size_t index = 0; index < recipe.argumentPatternLifetimes.size(); ++index) {
+        separator(index);
+        const auto &parameter = recipe.argumentPatternLifetimes[index];
+        output << parameter.id << ':' << parameter.pack << ':' << parameter.value
+               << ':' << parameter.lifetime << ':' << parameter.implicit << ":[";
+        for (std::size_t part = 0; part < parameter.typeArgumentPath.size(); ++part) {
+          separator(part);
+          output << parameter.typeArgumentPath[part];
+        }
+        output << ']';
       }
       output << "],patterns=[";
       for (std::size_t index = 0; index < recipe.argumentPatterns.size(); ++index) {

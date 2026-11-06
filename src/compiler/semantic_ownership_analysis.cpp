@@ -4997,7 +4997,6 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
     const std::vector<CompileTimeValue> &valueArguments, const SourceSpan &site)
     -> std::optional<FunctionBorrowDependencySummary> {
   if (function.lifetimeContract.valid() &&
-      function.lifetimeContract.origin != LifetimeContractOrigin::BodyInferred &&
       function.returnType.kind == SemanticType::Reference)
     if (const auto *declaration = semanticModel.findFunction(function.id);
         declaration && declaration->completeReturnBorrow)
@@ -5735,11 +5734,17 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
     std::size_t prefix = 0;
     SemanticType projectedType = formal;
     if (externalPrefix) {
-      if (!input)
+      if (!input && (!externalConditions.empty() || !mapping.sourceConditions.empty()))
         continue;
       prefix = externalPrefix->size();
       projectedType = externalType;
-      for (const auto &dependency : input->dependencies)
+      // Ordinary records and closure environments can retain exact external
+      // loans without a conditional complete-set publication. Their known
+      // unguarded path may supply this result directly. Missing conditional
+      // evidence never proves an alternative impossible or ownerless.
+      const auto dependencies = input ? input->dependencies
+                                      : storedBorrowDependencies(*argument);
+      for (const auto &dependency : dependencies)
         if (dependency.designatedFields == *externalPrefix &&
             dependency.conditions == externalConditions)
           sources.push_back(dependency);
@@ -6035,7 +6040,6 @@ auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
 auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     const FunctionInfo &function) -> void {
   if (function.lifetimeContract.valid() &&
-      function.lifetimeContract.origin != LifetimeContractOrigin::BodyInferred &&
       function.returnType.kind == SemanticType::Reference &&
       function.completeReturnBorrow)
     return; // Preserve all declaration-permitted suppliers across body edits.
@@ -6694,7 +6698,7 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
 }
 
 auto SemanticVisitor::Impl::storedFieldSymbols(
-    SemanticType type, std::span<const StoredField> fields)
+    SemanticType type, std::span<const StoredField> fields) const
     -> std::vector<SymbolId> {
   std::vector<SymbolId> result;
   for (const auto &field : fields) {
@@ -6751,7 +6755,7 @@ auto SemanticVisitor::Impl::storedFieldSymbols(
     const auto member = owner->members.find(field.name().lexeme);
     if (member == owner->members.end())
       return {};
-    const auto symbol = toolingSymbolFor(member->second.symbol);
+    const auto symbol = symbolForDeclaration(member->second.symbol.declaration);
     if (symbol == 0)
       return {};
     result.push_back(symbol);
@@ -6767,7 +6771,7 @@ auto SemanticVisitor::Impl::isDirectStoredReferenceType(
 
 auto SemanticVisitor::Impl::storedConditionSymbols(
     const SemanticType &type,
-    std::span<const StoredReferenceCondition> conditions)
+    std::span<const StoredReferenceCondition> conditions) const
     -> std::optional<std::vector<BorrowDependencyCondition>> {
   std::vector<BorrowDependencyCondition> result;
   for (const auto &condition : conditions) {
@@ -6822,29 +6826,73 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
       returnType.kind == SemanticType::Reference &&
       returnType.referenceLifetime.declarationRegion()) {
     const Lifetime result = returnType.referenceLifetime;
+    const auto addStoredSuppliers = [&](const SemanticType &type,
+                                       BorrowOriginKind origin,
+                                       std::size_t parameter) {
+      for (const auto &path : storedReferencePaths(type)) {
+        if (path.reference.kind != SemanticType::Reference ||
+            path.reference.arguments.size() != 1 ||
+            !lifetimeBorrowSupplierPermitted(
+                path.reference.referenceLifetime, path.reference.referenceAccess,
+                result, summary.access, [&](Lifetime source, Lifetime target) {
+                  return declaredLifetimeRelationship(*lifetimeContract, source, target);
+                }))
+          continue;
+        const auto fields = storedFieldSymbols(type, path.fields);
+        const auto conditions = storedConditionSymbols(type, path.conditions);
+        if (fields.empty() || fields.size() != path.fields.size() || !conditions)
+          continue;
+        summary.fields.push_back({.origin = origin, .parameter = parameter,
+                                  .sourceFields = fields, .access = summary.access,
+                                  .sourceConditions = *conditions});
+        if (summary.origin == BorrowOriginKind::None) {
+          summary.origin = origin;
+          summary.parameter = parameter;
+        }
+        if (origin == BorrowOriginKind::Argument &&
+            std::find(summary.parameters.begin(), summary.parameters.end(), parameter) ==
+                summary.parameters.end()) {
+          summary.parameters.push_back(parameter);
+          ++summary.eligibleParameters;
+        }
+      }
+    };
     if (ownerClass != 0 && !staticMember &&
         declaredLifetimeRelationship(*lifetimeContract, lifetimeContract->receiver, result)) {
       summary.origin = BorrowOriginKind::Receiver;
       summary.fields.push_back({.origin = BorrowOriginKind::Receiver,
                                 .access = summary.access});
     }
+    if (ownerClass != 0 && !staticMember)
+      addStoredSuppliers(openClassType(ownerClass), BorrowOriginKind::Receiver, 0);
     for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
       const auto &parameter = parameterTypes[index];
+      addStoredSuppliers(parameter.kind == SemanticType::Reference &&
+                                 parameter.arguments.size() == 1
+                             ? parameter.arguments.front() : parameter,
+                         BorrowOriginKind::Argument, index);
       if (parameter.kind != SemanticType::Reference ||
-          !declaredLifetimeRelationship(*lifetimeContract, parameter.referenceLifetime, result) ||
-          (summary.access == AccessMode::Mutable &&
-           parameter.referenceAccess != AccessMode::Mutable))
+          !lifetimeBorrowSupplierPermitted(
+              parameter.referenceLifetime, parameter.referenceAccess, result, summary.access,
+              [&](Lifetime source, Lifetime target) {
+                return declaredLifetimeRelationship(*lifetimeContract, source, target);
+              }))
         continue;
-      if (summary.eligibleParameters++ == 0)
+      if (summary.origin == BorrowOriginKind::None)
         summary.parameter = index;
-      summary.parameters.push_back(index);
+      if (std::find(summary.parameters.begin(), summary.parameters.end(), index) ==
+          summary.parameters.end()) {
+        summary.parameters.push_back(index);
+        ++summary.eligibleParameters;
+      }
       summary.fields.push_back({.origin = BorrowOriginKind::Argument,
                                 .parameter = index,
                                 .access = summary.access});
       if (summary.origin == BorrowOriginKind::None)
         summary.origin = BorrowOriginKind::Argument;
     }
-    if (summary.fields.size() == 1) {
+    if (summary.fields.size() == 1 && summary.fields.front().sourceFields.empty() &&
+        summary.fields.front().sourceConditions.empty()) {
       // Keep the proven one-owner fast path; several suppliers use the full
       // declaration contract even when the current body returns only one.
       summary.fields.clear();

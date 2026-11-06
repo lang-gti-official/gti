@@ -10,6 +10,17 @@
 
 namespace lang {
 
+// Shared declaration policy; each phase supplies its own checked outlives
+// query and typed storage inventory.
+template <class Proves>
+[[nodiscard]] bool lifetimeBorrowSupplierPermitted(
+    Lifetime source, AccessMode sourceAccess, Lifetime result,
+    AccessMode resultAccess, Proves &&proves) {
+  return source.declarationRegion() && result.declarationRegion() &&
+         (resultAccess == AccessMode::ReadOnly || sourceAccess == AccessMode::Mutable) &&
+         proves(source, result);
+}
+
 namespace lifetime_detail {
 template <typename Type, typename Visitor>
 void children(Type &type, Visitor &&visit) {
@@ -263,6 +274,61 @@ inline std::optional<std::vector<LifetimeBinding>> matchUniversalTypeLifetimes(
   if (!match(match, pattern, actual, {}, 0))
     return std::nullopt;
   return result;
+}
+
+// A generic argument recipe is one structural scope: repeated region slots
+// across separate arguments must receive the same actual lifetime.
+inline std::optional<std::vector<LifetimeBinding>> matchUniversalTypeArgumentLifetimes(
+    std::span<const SemanticType> patterns, std::span<const SemanticType> actual,
+    std::span<const Lifetime> universals) {
+  return matchUniversalTypeLifetimes(
+      SemanticType::concreteTypePack(0, {patterns.begin(), patterns.end()}),
+      SemanticType::concreteTypePack(0, {actual.begin(), actual.end()}), universals);
+}
+
+// Rename declaration universals after structural type-argument projection.
+// Actual local/inference choices belong to an application, never a published
+// declaration contract. Nested callable binders remain capture-avoiding.
+inline std::optional<LifetimeSignatureContract> substituteLifetimeContract(
+    LifetimeSignatureContract contract, std::span<const LifetimeBinding> bindings) {
+  const auto region = [&](Lifetime value) {
+    for (const auto binding : bindings)
+      if (binding.first == value)
+        return binding.second;
+    return value;
+  };
+  std::vector<Lifetime> parameters;
+  for (const auto parameter : contract.parameters) {
+    const auto mapped = region(parameter);
+    if (mapped == Lifetime::staticLifetime())
+      continue;
+    if (mapped.kind != Lifetime::Kind::Parameter || !mapped.specified())
+      return std::nullopt;
+    if (std::find(parameters.begin(), parameters.end(), mapped) == parameters.end())
+      parameters.push_back(mapped);
+  }
+  contract.parameters = std::move(parameters);
+  contract.receiver = region(contract.receiver);
+  for (auto &bound : contract.bounds) {
+    bound.longer = region(bound.longer);
+    bound.shorter = region(bound.shorter);
+  }
+  for (auto &bound : contract.typeBounds) {
+    const auto type = substituteTypeLifetimes(bound.type, bindings);
+    if (!type)
+      return std::nullopt;
+    bound.type = *type;
+    bound.region = region(bound.region);
+  }
+  for (auto &node : contract.requirements.nodes) {
+    const auto type = substituteTypeLifetimes(node.type, bindings);
+    if (!type)
+      return std::nullopt;
+    node.type = *type;
+    node.bound.longer = region(node.bound.longer);
+    node.bound.shorter = region(node.bound.shorter);
+  }
+  return contract;
 }
 
 // Representation-only operation. Semantic conversion, overload selection and

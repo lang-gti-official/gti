@@ -7990,21 +7990,23 @@ auto SemanticVisitor::Impl::requireFunctionDefinition(
       function.record().pureVirtual) {
     return;
   }
-  // Scalar metadata has no borrow/lifetime/generic summaries to infer. Its
-  // generated declaration remains opaque and conservatively fallible; the
-  // compiler's compiled-unit verifier requires an exact native binding later.
+  // The bounded compiled profile reconstructs independent input reference
+  // regions and one selected result through ordinary declaration elision.
+  // Require that exact profile here; the opaque declaration is conservatively
+  // fallible and still requires an independently verified native binding.
   const auto &record = function.record();
   const auto *unit =
       sourceGraph ? sourceGraph->findUnit(record.sourceUnit) : nullptr;
   if (unit && unit->compiledScalarInterface &&
-      isCompiledScalarResultType(record.returnType) && record.ownerClass == 0 &&
+      isCompiledScalarLifetimeProfile(
+          record.returnType, record.parameterTypes, record.lifetimeContract,
+          {record.returnBorrowOrigin, record.returnBorrowParameter,
+           record.returnBorrowAccess}) && record.ownerClass == 0 &&
       record.genericParameters.empty() && !record.parameterPack &&
       !record.constexprFunction && !record.requiresUnsafe &&
       !record.compilerPrivate &&
       record.requiredParameterCount == record.parameterTypes.size() &&
-      declaration->exportKeyword() &&
-      std::all_of(record.parameterTypes.begin(), record.parameterTypes.end(),
-                  isCompiledScalarValueType))
+      declaration->exportKeyword())
     return;
   // A generic primary is a checked declaration, not yet an executable body.
   // Concrete reanalysis selects exact specializations and constexpr branches
@@ -8128,8 +8130,19 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     concreteDeclaration = *declarationInfo;
     concreteDeclaration->returnType = function.returnType;
     concreteDeclaration->parameterTypes = function.parameterTypes;
-    if (const auto fields = storedFieldReturnBorrowSummary(
-            *concreteDeclaration, function.dispatchOwner)) {
+    // A normalized reference signature already publishes every permitted
+    // supplier. Instantiation must not replace that stable contract with a
+    // body-selected field path; the executable instance retains the same
+    // declared summary and independently proves the body's narrower source.
+    const bool declaredLifetimeReturn =
+        declarationInfo->returnType.kind == SemanticType::Reference &&
+        declarationInfo->lifetimeContract.valid() &&
+        declarationInfo->explicitReturnBorrowOrigin &&
+        declarationInfo->completeReturnBorrow.has_value();
+    if (const auto fields = declaredLifetimeReturn
+                                ? std::optional<FunctionReturnBorrowSummary>{}
+                                : storedFieldReturnBorrowSummary(
+                                      *concreteDeclaration, function.dispatchOwner)) {
       concreteDeclaration->returnBorrowOrigin = fields->origin;
       concreteDeclaration->returnBorrowParameter = fields->parameter;
       concreteDeclaration->returnBorrowAccess = fields->access;
@@ -8137,8 +8150,10 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       concreteDeclaration->returnBorrowFields = fields->fields;
       concreteDeclaration->returnBorrowPlace = fields->place;
       declarationInfo = &*concreteDeclaration;
-    } else if (const auto text = dynamicTextReturnBorrowSummary(
-                   *concreteDeclaration, textRelayOwner)) {
+    } else if (const auto text = declaredLifetimeReturn
+                                   ? std::optional<FunctionReturnBorrowSummary>{}
+                                   : dynamicTextReturnBorrowSummary(
+                                         *concreteDeclaration, textRelayOwner)) {
       if (!text->fields.empty()) {
         // A generic class method relays a receiver field that this call's
         // types make text (L-OWN-02).

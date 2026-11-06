@@ -324,6 +324,7 @@ struct LoweredClassDeclaration {
   std::vector<CompileTimeValue> exactValueArguments;
   std::vector<LoweredGenericParameter> genericParameters;
   std::vector<SemanticType> genericArgumentPatterns;
+  std::vector<LoweredGenericParameter> genericArgumentPatternLifetimes;
   std::vector<LoweredClassBase> bases;
   std::vector<ClassVirtualDispatch> virtualDispatch;
   SemanticTypeTraits traits;

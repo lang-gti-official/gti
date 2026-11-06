@@ -14,6 +14,7 @@
     "bindgen_module_cli",
     "bindgen_pipeline",
     "c_abi_header_boundary",
+    "compiled_borrow_library",
     "cpp_debug_artifacts",
     "cthread_condition_boundary",
     "cthread_condition_runtime",

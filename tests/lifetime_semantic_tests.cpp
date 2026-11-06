@@ -249,6 +249,55 @@ T&<a> get<T, lifetime a>(State<T>&<a> state) {
 }
 int main() { State<int> state = State<int>::right(7); return get(state) - 7; }
 )gti", true);
+  check("stored-external-reference-keeps-its-declared-region", R"gti(
+class View<lifetime a> {
+  int&<a> value;
+public:
+  View(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+};
+int&<a> use<lifetime a>(int&<a> input) {
+  View<a> view(input);
+  return view.get();
+}
+int main() { int value = 7; return use(value) - 7; }
+)gti", true);
+  check("borrowed-value-parameter-publishes-stored-suppliers", R"gti(
+struct View<lifetime a> {
+  int&<a> first; int&<a> second;
+  View(int&<a> left, int&<a> right) : first(left), second(right) {}
+};
+int&<a> choose<lifetime a>(View<a> view, bool first) {
+  if (first) { return view.first; }
+  return view.second;
+}
+int main() {
+  int left = 3; int right = 7;
+  View view(left, right);
+  return choose(view, false) - 7;
+}
+)gti", true);
+  check("stored-supplier-contract-retains-unused-owner", R"gti(
+struct View<lifetime a> {
+  int&<a> first; int&<a> second;
+  View(int&<a> left, int&<a> right) : first(left), second(right) {}
+};
+int&<a> first<lifetime a>(View<a> view) { return view.first; }
+int main() {
+  int left = 3; mut int right = 7;
+  View view(left, right);
+  int& result = first(view);
+  right = 9;
+  return result;
+}
+)gti", false);
+  check("stored-reference-cannot-change-declared-owner-region", R"gti(
+struct Split<lifetime a, lifetime b> {
+  int&<a> first; int&<b> second;
+  Split(int&<a> left, int&<b> right) : first(left), second(right) {}
+  int&<a> wrong() { return this.second; }
+};
+)gti", false, "GTI-S2127");
   check("local-payload-is-not-caller-storage", R"gti(
 enum State { value(int item) };
 int&<a> bad<lifetime a>(int&<a> caller) {

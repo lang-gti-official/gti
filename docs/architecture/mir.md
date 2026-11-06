@@ -496,13 +496,19 @@ dominance, access, parent liveness and cleanup remain separate required proofs.
 A program-level nominal recipe graph preserves symbolic generic identities,
 fields, bases, payload paths, specialization families and trusted capabilities.
 The shared variance fixed point operates on these recipes, retaining slot
-identity when concrete arguments coincide. Concrete executable instances also
+identity when concrete arguments coincide. Lifetimes projected inside generic
+argument patterns have a separate binder inventory. Matching the substituted
+pattern against the actual public arguments binds those regions without adding
+top-level lifetime arguments. Public type slots selected by specialization
+patterns are conservatively invariant; precise variance composition through
+pattern positions is not implemented. Ordinary declared lifetime slots retain
+the variance derived from their stored uses. Concrete executable instances also
 retain descriptors for lifted universal regions and their extended contracts.
 These records are proof metadata and do not authorize runtime erasure by
 themselves.
 
-The combined deterministic serialization is currently `mir-v121`/`mir-body-v94`,
-with `lowered-program-v35` declaration metadata. Function instances and sealed
+The combined deterministic serialization is currently `mir-v122`/`mir-body-v94`,
+with `lowered-program-v36` declaration metadata. Function instances and sealed
 declarations retain the resolved cold hint and default/hint/never inlining policy;
 verification rejects a mismatching or non-source policy. These distinct combined
 identities retain both macro result-region/local-initializer authority and
@@ -586,7 +592,14 @@ each declared alternative's exact concrete type, tag and dependency-free
 payload layout, then reconstructs facts at every reachable normal return. The
 actual alternatives must be covered by the declaration contract; additional
 well-typed dependency-free cases are conservative, so optimizer narrowing does
-not change caller lifetime obligations. Unknown return facts and a function
+not change caller lifetime obligations. For a declared or elided scalar reference
+result, a separate query reconstructs every permitted physical input root and
+stored reference path from the universal signature, exact type inventory,
+access and lifetime bounds. The published summary must retain all of them,
+including suppliers unused by the current body. Body-inferred contracts retain
+their precise source-inferred supplier policy. HIR-to-MIR forwarding preserves
+the complete summary and its scalar mirrors, and optimization replay seals the
+unchanged publication independently of body rewrites. Unknown return facts and a function
 with no normal return cannot prove this contract. A program-local memoized
 query treats recursive/in-progress callees as unknown; declarations cannot
 justify one another cyclically. Exact direct calls use only independently

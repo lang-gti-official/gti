@@ -254,6 +254,167 @@ auto SemanticVisitor::Impl::nominalVariance(const SemanticType &type) const
   return result;
 }
 
+auto SemanticVisitor::Impl::nominalFormationRequirements(const SemanticType &type) const
+    -> std::optional<LifetimeRequirementFormula> {
+  LifetimeRequirementFormula result;
+  using Node = LifetimeRequirementNode;
+  const auto append = [&](LifetimeRequirementFormula part) {
+    if (part.nodes.empty())
+      return part.root == Node::invalidIndex;
+    const auto offset = result.nodes.size();
+    if (offset + part.nodes.size() + 1 > 4096)
+      return false;
+    for (auto node : part.nodes) {
+      if (node.kind == Node::Kind::All || node.kind == Node::Kind::Any) {
+        node.left += offset;
+        node.right += offset;
+      }
+      result.nodes.push_back(std::move(node));
+    }
+    const auto root = offset + part.root;
+    if (result.root == Node::invalidIndex)
+      result.root = root;
+    else {
+      result.nodes.push_back({.kind = Node::Kind::All, .left = result.root, .right = root});
+      result.root = result.nodes.size() - 1;
+    }
+    return true;
+  };
+  std::size_t work = 0;
+  const auto visit = [&](auto &&self, const SemanticType &current) -> bool {
+    if (++work > 4096)
+      return false;
+    if (!current.quantifiedLifetimes.empty())
+      return true; // A nested callable owns its quantified formation scope.
+    const LifetimeSignatureContract *declaration = nullptr;
+    GenericSubstitution substitution;
+    if (current.kind == SemanticType::Class && current.classId && current.classId <= classes.size()) {
+      declaration = &classInfo(current.classId).lifetimeContract;
+      substitution = classSubstitution(current);
+      const auto &owner = publicClassInfo(current.classId);
+      if (!owner.genericArgumentPatterns.empty()) {
+        std::vector<SemanticType> patterns;
+        for (const auto &pattern : owner.genericArgumentPatterns)
+          patterns.push_back(substituteType(pattern, substitution));
+        // Selection already used only runtime shape. This exact comparison
+        // enforces fixed regions and every projected binder afterwards.
+        if (!matchUniversalTypeArgumentLifetimes(patterns, current.arguments, {}))
+          return false;
+      }
+    } else if (current.kind == SemanticType::Enum && current.enumId && current.enumId <= enums.size()) {
+      declaration = &enums[current.enumId - 1].lifetimeContract;
+      substitution = enumSubstitution(current);
+    }
+    if (declaration) {
+      if (!declaration->valid())
+        return !catalog.nominalLifetimeContractsReady;
+      const auto region = [&](Lifetime value) {
+        if (value.kind == Lifetime::Kind::Parameter)
+          if (const auto found = substitution.lifetimes.find(value.id);
+              found != substitution.lifetimes.end())
+            return found->second;
+        return value;
+      };
+      auto formula = declaration->requirements;
+      for (auto &node : formula.nodes) {
+        node.bound.longer = region(node.bound.longer);
+        node.bound.shorter = region(node.bound.shorter);
+        if (node.kind == Node::Kind::Type)
+          node.type = substituteType(node.type, substitution);
+      }
+      if (!append(std::move(formula)))
+        return false;
+      for (const auto bound : declaration->bounds)
+        if (!append({.nodes = {{.kind = Node::Kind::Region,
+                               .bound = {region(bound.longer), region(bound.shorter)}}}, .root = 0}))
+          return false;
+      for (const auto &bound : declaration->typeBounds)
+        if (!append({.nodes = {{.kind = Node::Kind::Type,
+                               .bound = {{}, region(bound.region)},
+                               .type = substituteType(bound.type, substitution)}}, .root = 0}))
+          return false;
+    }
+    bool valid = true;
+    lifetime_detail::children(current, [&](const SemanticType &child) {
+      valid = valid && self(self, child);
+    });
+    return valid;
+  };
+  if (!visit(visit, type))
+    return std::nullopt;
+  return result;
+}
+
+auto SemanticVisitor::Impl::collectNominalFormationAssumptions(
+    const SemanticType &type, LifetimeSignatureContract &contract) const -> bool {
+  if (!catalog.nominalLifetimeContractsReady)
+    return true;
+  const auto formula = nominalFormationRequirements(type);
+  if (!formula)
+    return false;
+  const auto append = [](auto &values, const auto &value) {
+    if (std::find(values.begin(), values.end(), value) == values.end())
+      values.push_back(value);
+  };
+  // Current nominal declarations have conjunctive structural WF contracts.
+  // Retain a future disjunctive/predicate requirement intact, never its leaves.
+  if (std::none_of(formula->nodes.begin(), formula->nodes.end(), [](const auto &node) {
+        return node.kind == LifetimeRequirementNode::Kind::Any ||
+               node.kind == LifetimeRequirementNode::Kind::SemanticPredicate;
+      })) {
+    for (const auto &node : formula->nodes)
+      if (node.kind == LifetimeRequirementNode::Kind::Region)
+        append(contract.bounds, node.bound);
+      else if (node.kind == LifetimeRequirementNode::Kind::Type)
+        append(contract.typeBounds, LifetimeTypeBound{node.type, node.bound.shorter});
+    return true;
+  }
+  if (formula->nodes.empty() || contract.requirements == *formula)
+    return true;
+  const auto offset = contract.requirements.nodes.size();
+  if (offset + formula->nodes.size() + 1 > 4096)
+    return false;
+  for (auto node : formula->nodes) {
+    if (node.kind == LifetimeRequirementNode::Kind::All ||
+        node.kind == LifetimeRequirementNode::Kind::Any) {
+      node.left += offset;
+      node.right += offset;
+    }
+    contract.requirements.nodes.push_back(std::move(node));
+  }
+  const auto root = offset + formula->root;
+  if (contract.requirements.root == LifetimeRequirementNode::invalidIndex)
+    contract.requirements.root = root;
+  else {
+    contract.requirements.nodes.push_back({.kind = LifetimeRequirementNode::Kind::All,
+                                          .left = contract.requirements.root, .right = root});
+    contract.requirements.root = contract.requirements.nodes.size() - 1;
+  }
+  return true;
+}
+
+auto SemanticVisitor::Impl::validateNominalFormation(
+    const SemanticType &type, const Token &site) -> void {
+  if (!catalog.sealed || !catalog.nominalLifetimeContractsReady)
+    return; // Open declarations collect their premises before body checking.
+  const auto formula = nominalFormationRequirements(type);
+  if (!formula) {
+    report(site, "This nominal type does not satisfy its selected lifetime argument pattern or formation contract.",
+           "GTI-S2127");
+    return;
+  }
+  SemanticLifetimeApplication application;
+  if (!applyLifetimeRequirements(*formula, application, site, true))
+    return;
+  for (const auto edge : application.obligations)
+    for (const auto region : {edge.longer, edge.shorter})
+      if (region.kind == Lifetime::Kind::Inference &&
+          std::find(application.variables.begin(), application.variables.end(), region) == application.variables.end())
+        application.variables.push_back(region);
+  application.complete = true;
+  commitLifetimeApplication(application);
+}
+
 auto SemanticVisitor::Impl::nominalLifetimeContract(const SemanticType &type) const
     -> LifetimeSignatureContract {
   LifetimeSignatureContract result;
@@ -267,13 +428,22 @@ auto SemanticVisitor::Impl::nominalLifetimeContract(const SemanticType &type) co
   } else {
     return result;
   }
+  std::vector<LifetimeBinding> projectedRegions;
+  if (type.kind == SemanticType::Class)
+    for (const auto &parameter : publicClassInfo(type.classId).genericArgumentPatternLifetimes) {
+      const auto selected = substitution.lifetimes.find(parameter.id);
+      if (selected == substitution.lifetimes.end())
+        return {};
+      projectedRegions.emplace_back(Lifetime::parameter(parameter.id), selected->second);
+    }
   substitution.lifetimes.clear();
   for (auto &bound : result.typeBounds)
     bound.type = substituteType(bound.type, substitution);
   for (auto &node : result.requirements.nodes)
     if (node.kind == LifetimeRequirementNode::Kind::Type)
       node.type = substituteType(node.type, substitution);
-  return result;
+  return substituteLifetimeContract(std::move(result), projectedRegions)
+      .value_or(LifetimeSignatureContract{});
 }
 
 auto SemanticVisitor::Impl::nominalVarianceRecipes() const
@@ -288,6 +458,7 @@ auto SemanticVisitor::Impl::nominalVarianceRecipes() const
         .exactTypeArguments = owner.exactTypeArguments,
         .exactValueArguments = owner.exactValueArguments,
         .argumentPatterns = owner.genericArgumentPatterns,
+        .argumentPatternLifetimes = genericParameterIdentities(owner.genericArgumentPatternLifetimes),
         .parameters = genericParameterIdentities(owner.genericParameters),
         .compilerCapability = owner.compilerCapability,
         .classKind = owner.kind, .cOpaqueHandle = owner.cOpaqueHandle,
@@ -334,7 +505,56 @@ auto SemanticVisitor::Impl::nominalVarianceRecipes() const
   return result;
 }
 
+auto SemanticVisitor::Impl::refreshNominalLifetimeSignatures() -> void {
+  const auto candidates = functionCandidateBorrowSummaryIndex();
+  const auto collect = [&](LifetimeSignatureContract &contract,
+                           const SemanticType &result,
+                           std::span<const SemanticType> parameters,
+                           ClassId owner, const Token &site) {
+    const bool previouslyValid = contract.valid();
+    bool valid = collectNominalFormationAssumptions(result, contract);
+    for (const auto &parameter : parameters)
+      valid = collectNominalFormationAssumptions(parameter, contract) && valid;
+    if (owner)
+      valid = collectNominalFormationAssumptions(openClassType(owner), contract) && valid;
+    contract.complete = contract.complete && valid;
+    if (previouslyValid && !contract.valid())
+      report(site, "This signature has an unresolved nominal lifetime formation contract.", "GTI-S2127");
+  };
+  for (const auto &entry : catalog.callableDeclarations) {
+    if (!entry->syntax)
+      continue;
+    const auto *found = semanticModel.findFunction(*entry->syntax);
+    if (!found)
+      continue;
+    auto function = *found;
+    collect(function.lifetimeContract, function.returnType, function.parameterTypes,
+            function.ownerClass, entry->syntax->name());
+    semanticModel.record(*entry->syntax, function);
+    entry->lifetimeContract = function.lifetimeContract;
+    if (const auto selected = candidates.find(function.id); selected != candidates.end())
+      for (auto *candidate : selected->second)
+        candidate->lifetimeContract = function.lifetimeContract;
+  }
+  for (auto &owner : classes) {
+    const auto constructor = [&](ConstructorInfo &value) {
+      collect(value.lifetimeContract, openClassType(owner.id), value.parameterTypes,
+              owner.id, value.declaration ? value.declaration->name() : owner.name);
+    };
+    for (auto &value : owner.constructors)
+      constructor(value);
+    for (auto *value : {&owner.copyConstructor, &owner.moveConstructor,
+                       &owner.designatedConstructor, &owner.reversedDesignatedConstructor})
+      if (*value)
+        constructor(**value);
+    if (owner.destructor)
+      collect(owner.destructor->lifetimeContract, SemanticType::Void, {}, owner.id,
+              owner.destructor->declaration ? owner.destructor->declaration->tilde() : owner.name);
+  }
+}
+
 auto SemanticVisitor::Impl::inferNominalVariances() -> void {
+  catalog.nominalLifetimeContractsReady = false;
   const auto recipes = nominalVarianceRecipes();
   const auto inferred = inferNominalVarianceRecipes(recipes);
   if (inferred) {
@@ -349,8 +569,11 @@ auto SemanticVisitor::Impl::inferNominalVariances() -> void {
     for (auto &owner : enums)
       owner.variance = {};
   }
-  const auto contractFor = [&](auto &owner, std::vector<SemanticType> fields) {
+  const auto contractFor = [&](auto &owner, std::vector<SemanticType> fields,
+                               std::span<const GenericParameterInfo> patternLifetimes = {}) {
     LifetimeSignatureContract seed;
+    for (const auto &parameter : patternLifetimes)
+      seed.parameters.push_back(Lifetime::parameter(parameter.id));
     for (const auto &parameter : owner.genericParameters)
       if (parameter.lifetime) {
         seed.parameters.push_back(Lifetime::parameter(parameter.id));
@@ -365,12 +588,8 @@ auto SemanticVisitor::Impl::inferNominalVariances() -> void {
     owner.lifetimeContract = std::move(normalized.contract);
     if (owner.lifetimeState == NominalLifetimeState::Invalid)
       owner.lifetimeContract.complete = false;
-    else if (!owner.lifetimeContract.valid())
-      report(owner.name,
-             "Stored borrowed types require a finite complete lifetime contract; name unresolved lifetime slots explicitly.",
-             "GTI-S2126");
   };
-  for (auto &owner : classes) {
+  const auto classFields = [&](const ClassInfo &owner) {
     std::vector<SemanticType> fields;
     for (const auto &base : owner.bases)
       fields.push_back(base.type);
@@ -378,16 +597,55 @@ auto SemanticVisitor::Impl::inferNominalVariances() -> void {
       if (const auto member = owner.members.find(field.declaration->name().lexeme);
           member != owner.members.end())
         fields.push_back(member->second.symbol.type);
-    contractFor(owner, std::move(fields));
-  }
-  for (auto &owner : enums) {
+    fields.insert(fields.end(), owner.genericArgumentPatterns.begin(),
+                   owner.genericArgumentPatterns.end());
+    return fields;
+  };
+  const auto enumFields = [&](const EnumInfo &owner) {
     std::vector<SemanticType> fields;
     for (const auto &[name, variant] : owner.enumerators) {
       (void)name;
       fields.insert(fields.end(), variant.payloadTypes.begin(), variant.payloadTypes.end());
     }
-    contractFor(owner, std::move(fields));
+    return fields;
+  };
+  for (auto &owner : classes)
+    contractFor(owner, classFields(owner), owner.genericArgumentPatternLifetimes);
+  for (auto &owner : enums)
+    contractFor(owner, enumFields(owner));
+  catalog.nominalLifetimeContractsReady = true;
+  // Nominal formation is a declaration graph, not an order-dependent field
+  // walk. Propagate exact substituted premises to a finite fixed point before
+  // exposing any callable that receives or returns these types.
+  bool changed = true;
+  std::size_t work = 0;
+  while (changed && work <= 4096) {
+    changed = false;
+    for (auto &owner : classes) {
+      const auto previous = owner.lifetimeContract;
+      contractFor(owner, classFields(owner), owner.genericArgumentPatternLifetimes);
+      changed = changed || previous != owner.lifetimeContract;
+      ++work;
+    }
+    for (auto &owner : enums) {
+      const auto previous = owner.lifetimeContract;
+      contractFor(owner, enumFields(owner));
+      changed = changed || previous != owner.lifetimeContract;
+      ++work;
+    }
   }
+  const auto validate = [&](auto &owners) {
+    for (auto &owner : owners) {
+      if (changed)
+        owner.lifetimeContract.complete = false;
+      if (!owner.lifetimeContract.valid())
+        report(owner.name,
+               "Stored borrowed types require a finite complete lifetime formation contract; name recursive relationships explicitly.",
+               "GTI-S2126");
+    }
+  };
+  validate(classes);
+  validate(enums);
   for (auto &owner : classes) {
     if (!owner.exactSpecializationPrimary || !owner.lifetimeContract.valid())
       continue;

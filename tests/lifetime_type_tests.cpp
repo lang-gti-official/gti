@@ -94,6 +94,38 @@ int main() {
   contract.bounds.push_back({b, Lifetime::inference(7)});
   expect(!contract.valid(), "public contracts cannot publish local inference holes");
   contract.bounds.pop_back();
+  contract.typeBounds.push_back({reference(a), b});
+  contract.requirements.nodes = {
+      {.kind = LifetimeRequirementNode::Kind::Region, .bound = {a, b}},
+      {.kind = LifetimeRequirementNode::Kind::Type, .bound = {{}, b}, .type = reference(a)},
+      {.kind = LifetimeRequirementNode::Kind::Any, .left = 0, .right = 1}};
+  contract.requirements.root = 2;
+  const auto renamedContract = substituteLifetimeContract(contract, renamed);
+  expect(renamedContract && renamedContract->valid() &&
+             renamedContract->parameters == std::vector<Lifetime>{x, y} &&
+             renamedContract->receiver == x &&
+             renamedContract->bounds == std::vector<LifetimeBound>{{x, y}} &&
+             renamedContract->typeBounds.front().type == reference(x) &&
+             renamedContract->typeBounds.front().region == y &&
+             renamedContract->requirements.nodes[0].bound == LifetimeBound{x, y} &&
+             renamedContract->requirements.nodes[1].type == reference(x) &&
+             renamedContract->requirements.nodes[1].bound.shorter == y,
+         "projected instance renaming preserves all contract binders and Boolean requirements");
+  const std::array patternArguments{reference(a), reference(a), reference(b)};
+  const std::array actualArguments{reference(x), reference(x), reference(y)};
+  const std::array patternRegions{a, b};
+  const auto projected = matchUniversalTypeArgumentLifetimes(
+      patternArguments, actualArguments, patternRegions);
+  expect(projected && *projected == std::vector<LifetimeBinding>(renamed.begin(), renamed.end()),
+         "argument-pattern matching preserves repeated region identities across arguments");
+  auto mismatchedArguments = actualArguments;
+  mismatchedArguments[1] = reference(y);
+  expect(!matchUniversalTypeArgumentLifetimes(patternArguments, mismatchedArguments, patternRegions),
+         "a repeated projected binder cannot match unrelated actual regions");
+  const std::array fixedPattern{reference(Lifetime::staticLifetime())};
+  const std::array nonstaticArgument{reference(x)};
+  expect(!matchUniversalTypeArgumentLifetimes(fixedPattern, nonstaticArgument, {}),
+         "fixed pattern lifetimes are obligations after structural selection");
   contract.parameters.push_back(a);
   expect(!contract.valid(), "duplicate region identities are malformed metadata");
   contract.parameters.pop_back();

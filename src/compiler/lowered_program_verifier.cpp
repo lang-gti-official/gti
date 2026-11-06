@@ -1,6 +1,7 @@
 #include "gti/compiled_scalar_unit.h"
 #include "gti/lowered_program.h"
 #include "gti/mir_verifier.h"
+#include "gti/lifetime_types.h"
 
 #include "gti/failure_metadata.h"
 #include "gti/lowered_program_printer.h"
@@ -152,7 +153,8 @@ validGenericParameters(const std::vector<LoweredGenericParameter> &parameters,
 [[nodiscard]] bool
 validClassPatternBindings(const LoweredClassDeclaration &declaration) {
   if (declaration.genericArgumentPatterns.empty()) {
-    return std::all_of(declaration.genericParameters.begin(),
+    return declaration.genericArgumentPatternLifetimes.empty() &&
+           std::all_of(declaration.genericParameters.begin(),
                        declaration.genericParameters.end(),
                        [](const auto &parameter) {
                          return parameter.typeArgumentPath.empty();
@@ -162,7 +164,33 @@ validClassPatternBindings(const LoweredClassDeclaration &declaration) {
       declaration.genericParameters.empty()) {
     return false;
   }
+  std::vector<Lifetime> scope;
+  for (const auto &parameter : declaration.genericParameters)
+    if (parameter.lifetime)
+      scope.push_back(Lifetime::parameter(parameter.id));
+  if (!validGenericParameters(declaration.genericArgumentPatternLifetimes))
+    return false;
+  for (const auto &parameter : declaration.genericArgumentPatternLifetimes) {
+    if (!parameter.lifetime || !parameter.implicit ||
+        std::any_of(declaration.genericParameters.begin(), declaration.genericParameters.end(),
+                    [&](const auto &declared) { return declared.id == parameter.id; }))
+      return false;
+    scope.push_back(Lifetime::parameter(parameter.id));
+  }
+  std::vector<Lifetime> used;
+  for (const auto &pattern : declaration.genericArgumentPatterns)
+    for (const auto region : freeTypeLifetimes(pattern)) {
+      if (!region.specified() || (region.kind != Lifetime::Kind::Static &&
+          std::find(scope.begin(), scope.end(), region) == scope.end()))
+        return false;
+      used.push_back(region);
+    }
+  for (const auto &parameter : declaration.genericArgumentPatternLifetimes)
+    if (std::find(used.begin(), used.end(), Lifetime::parameter(parameter.id)) == used.end())
+      return false;
   for (const auto &parameter : declaration.genericParameters) {
+    if (parameter.lifetime)
+      continue;
     const auto projected = projectGenericTypeArgument(
         declaration.genericArgumentPatterns, parameter.typeArgumentPath,
         parameter.id, parameter.pack);
@@ -446,7 +474,8 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
         !validGenericParameters(payload->genericParameters, true) ||
         !validClassPatternBindings(*payload) ||
         (exactSpecialization &&
-         (!payload->genericParameters.empty() ||
+         (std::any_of(payload->genericParameters.begin(), payload->genericParameters.end(),
+                      [](const auto &parameter) { return !parameter.lifetime; }) ||
           (payload->exactTypeArguments.empty() &&
            payload->exactValueArguments.empty()) ||
           payload->forwardDeclaration || payload->cAbiRecord ||

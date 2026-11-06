@@ -307,6 +307,7 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
   validateNativeFacingNamespaces(declarations);
   validateStoredReferenceContracts();
   inferNominalVariances();
+  refreshNominalLifetimeSignatures();
   resolveFunctionBorrowSummaries();
   validateInterfaceCapabilities();
   recordClassTypes();
@@ -516,7 +517,11 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
                                   classValueArguments);
   beginAssertionTracking();
   FunctionInfo concreteFunction = *function;
-  concreteFunction.completeReturnBorrow.reset();
+  const bool retainsLifetimeContract = function->lifetimeContract.valid() &&
+      function->returnType.kind == SemanticType::Reference &&
+      function->completeReturnBorrow.has_value();
+  if (!retainsLifetimeContract)
+    concreteFunction.completeReturnBorrow.reset();
   concreteFunction.restoresReferenceResult = false;
   concreteFunction.restoredBorrowFields.clear();
   // A generic formal's ownerless-text obligation binds only text-view
@@ -527,6 +532,22 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
   concreteFunction.publishedTextFields.clear();
   const GenericSubstitution substitution{.types = instanceTypeSubstitution,
                                          .values = instanceValueSubstitution};
+  if (retainsLifetimeContract) {
+    auto supplierSubstitution = substitution;
+    // These are canonical instance binders, including regions projected from
+    // public owner arguments; never caller-local application choices.
+    supplierSubstitution.lifetimes = instanceLifetimeSubstitution;
+    const auto conditions = [&](auto &values) {
+      for (auto &condition : values)
+        condition.enumeration = substituteType(condition.enumeration, supplierSubstitution);
+    };
+    for (auto &dependency : concreteFunction.completeReturnBorrow->dependencies) {
+      conditions(dependency.sourceConditions);
+      conditions(dependency.resultConditions);
+    }
+    for (auto &alternative : concreteFunction.completeReturnBorrow->possibleAlternatives)
+      conditions(alternative.conditions);
+  }
   concreteFunction.returnType =
       substituteType(concreteFunction.returnType, substitution);
   for (SemanticType &parameter : concreteFunction.parameterTypes) {

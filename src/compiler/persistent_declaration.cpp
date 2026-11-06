@@ -758,7 +758,8 @@ std::string persistentClassKey(const ClassTypeInfo &info,
   if (info.enclosingClass || info.definitionFamilyPrimary ||
       info.exactSpecializationPrimary || !info.exactTypeArguments.empty() ||
       !info.exactValueArguments.empty() ||
-      !info.genericArgumentPatterns.empty() || info.compilerPrivate ||
+      !info.genericArgumentPatterns.empty() ||
+      !info.genericArgumentPatternLifetimes.empty() || info.compilerPrivate ||
       info.compilerCapability != CompilerCapabilityTypeKind::None ||
       info.computedTypeProjection != ComputedTypeProjectionKind::None)
     reject("unsupported persistent class declaration profile");

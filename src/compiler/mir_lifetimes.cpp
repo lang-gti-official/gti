@@ -244,6 +244,31 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
       return std::nullopt;
     if (recipe.exactSpecializationPrimary && !selectorMatches(recipe, type))
       return std::nullopt;
+    if (!recipe.argumentPatterns.empty()) {
+      std::vector<LifetimeBinding> knownRegions;
+      for (const auto &[id, actual] : values.lifetimes)
+        knownRegions.emplace_back(Lifetime::parameter(id), actual);
+      std::vector<SemanticType> patterns;
+      for (const auto &pattern : recipe.argumentPatterns) {
+        const auto replaced = substituteTypeLifetimes(
+            substituteSemanticType(pattern, values), knownRegions);
+        const auto selected = replaced ? selectedType(selectedType, *replaced)
+                                       : std::nullopt;
+        if (!selected)
+          return std::nullopt;
+        SemanticType::appendExpandedArgument(patterns, *selected);
+      }
+      std::vector<Lifetime> projectedRegions;
+      for (const auto &parameter : recipe.argumentPatternLifetimes)
+        projectedRegions.push_back(Lifetime::parameter(parameter.id));
+      const auto bindings = matchUniversalTypeArgumentLifetimes(
+          patterns, type.arguments, projectedRegions);
+      if (!bindings || bindings->size() != projectedRegions.size())
+        return std::nullopt;
+      for (const auto &[parameter, actual] : *bindings)
+        if (!values.lifetimes.emplace(parameter.id, actual).second)
+          return std::nullopt;
+    }
     return values;
   };
   const auto instantiate = [&](const SemanticType &type, const GenericSubstitution &values)
@@ -264,6 +289,9 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
           parameter.pack || !parameter.typeArgumentPath.empty() ||
           std::find(seen.begin(), seen.end(), parameter.id) != seen.end() ||
           std::any_of(recipe.parameters.begin(), recipe.parameters.end(), [&](const auto &source) {
+            return source.id == parameter.id;
+          }) || std::any_of(recipe.argumentPatternLifetimes.begin(),
+                           recipe.argumentPatternLifetimes.end(), [&](const auto &source) {
             return source.id == parameter.id;
           }) || std::find(contract.parameters.begin(), contract.parameters.end(),
                           Lifetime::parameter(parameter.id)) == contract.parameters.end())

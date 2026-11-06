@@ -254,8 +254,24 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
     bound.type = substituteType(bound.type, substitution);
   for (auto &node : result.lifetimeContract.requirements.nodes)
     node.type = substituteType(node.type, substitution);
+  std::vector<LifetimeBinding> projectedRegions;
+  if (ownerId)
+    for (const auto &parameter : publicClassInfo(ownerId).genericArgumentPatternLifetimes) {
+      const auto selected = substitution.lifetimes.find(parameter.id);
+      if (selected == substitution.lifetimes.end())
+        return std::nullopt;
+      projectedRegions.emplace_back(Lifetime::parameter(parameter.id), selected->second);
+    }
+  const auto projectedContract = substituteLifetimeContract(
+      std::move(result.lifetimeContract), projectedRegions);
+  if (!projectedContract)
+    return std::nullopt;
+  result.lifetimeContract = *projectedContract;
   for (const auto &binding : result.lifetimeApplication.bindings)
-    result.lifetimeContract.parameters.push_back(binding.first);
+    if (std::find(result.lifetimeContract.parameters.begin(),
+                  result.lifetimeContract.parameters.end(), binding.first) ==
+        result.lifetimeContract.parameters.end())
+      result.lifetimeContract.parameters.push_back(binding.first);
 
   // Reuse the authoritative WF collector after type substitution. Generic
   // arguments themselves also carry formation obligations even when an

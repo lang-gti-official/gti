@@ -6593,7 +6593,7 @@ add_test(NAME compiled_value_types
 set_tests_properties(compiled_value_types PROPERTIES TIMEOUT 600)
 add_test(NAME compiled_borrow_library
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_borrow_library_test.py"
-  "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/compiled-borrow-library")
+  "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/Testing/compiled-borrow-library")
 set_tests_properties(compiled_borrow_library PROPERTIES TIMEOUT 600)
 add_executable(gti_compiled_borrow_contract_tests compiled_borrow_contract_tests.cpp)
 target_link_libraries(gti_compiled_borrow_contract_tests PRIVATE gti_compiler)

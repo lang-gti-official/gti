@@ -140,6 +140,44 @@ int main() {
   specialization.parameters.push_back(specialization.parameters.front());
   expect(!inferNominalVarianceRecipes(std::array{shared, specialization}),
          "duplicate symbolic parameter identities cannot enter variance proof");
+  NominalVarianceRecipe projected{
+      .declaration = 3,
+      .argumentPatterns = {SemanticType::referenceTo(
+          SemanticType::typeParameter(801), AccessMode::ReadOnly,
+          Lifetime::parameter(802))},
+      .argumentPatternLifetimes = {{.id = 802, .lifetime = true, .implicit = true}},
+      .parameters = {{.id = 801, .typeArgumentPath = {0, 0}}},
+      .stored = {{.symbol = 803, .type = SemanticType::rawPointerTo(reference(802))}},
+      .complete = true};
+  const auto projectedVariance = inferNominalVarianceRecipes(std::array{projected});
+  expect(projectedVariance && projectedVariance->front().types ==
+             std::vector{TypeVariance::Invariant} &&
+             projectedVariance->front().lifetimes.empty(),
+         "projected pattern regions do not add top-level arity or grant unchecked variance");
+  const std::array projectedPatterns{reference(802), reference(802)};
+  const std::array projectedActual{reference(901), reference(901)};
+  const std::array projectedRegions{Lifetime::parameter(802)};
+  const auto projectedBindings = matchUniversalTypeArgumentLifetimes(
+      projectedPatterns, projectedActual, projectedRegions);
+  expect(projectedBindings && *projectedBindings == std::vector<LifetimeBinding>{
+             {Lifetime::parameter(802), Lifetime::parameter(901)}},
+         "a projected region binding must agree across all public type arguments");
+  expect(!matchUniversalTypeArgumentLifetimes(
+             projectedPatterns, std::array{reference(901), reference(902)}, projectedRegions),
+         "a repeated projected binder cannot receive inconsistent actual regions");
+  auto duplicateProjected = projected;
+  duplicateProjected.argumentPatternLifetimes.push_back(
+      duplicateProjected.argumentPatternLifetimes.front());
+  expect(!inferNominalVarianceRecipes(std::array{duplicateProjected}),
+         "duplicate projected lifetime binder identity is invalid");
+  auto foreignProjected = projected;
+  foreignProjected.argumentPatterns.front().referenceLifetime = Lifetime::parameter(804);
+  expect(!inferNominalVarianceRecipes(std::array{foreignProjected}),
+         "an argument pattern cannot reference an undeclared region binder");
+  auto unusedProjected = projected;
+  unusedProjected.argumentPatterns.front().referenceLifetime = Lifetime::staticLifetime();
+  expect(!inferNominalVarianceRecipes(std::array{unusedProjected}),
+         "a projected lifetime binder requires an exact pattern occurrence");
   MirBody body;
   body.returnType = reference(1);
   body.entry = 1;

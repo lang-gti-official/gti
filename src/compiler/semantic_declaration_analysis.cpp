@@ -3009,7 +3009,28 @@ auto SemanticVisitor::Impl::resolveClassArgumentPatterns(ClassId id) -> void {
   for (const TypeRef &pattern : owner.declaration->genericArgumentPatterns()) {
     resolveTypeAliasDependencies(pattern, owner.namespaceScope);
     validateType(pattern);
-    owner.genericArgumentPatterns.push_back(typeOf(pattern));
+    auto type = typeOf(pattern);
+    if (!normalizeCallableLifetimeType(type, pattern.name.last()))
+      report(pattern.name.last(), "A callable argument pattern needs a complete lifetime scope.",
+             "GTI-S2127");
+    std::vector<LifetimeBinding> regions;
+    for (const auto region : freeTypeLifetimes(type)) {
+      if (region.kind != Lifetime::Kind::Inference)
+        continue;
+      auto name = pattern.name.last();
+      name.lexeme = "$pattern_lifetime" +
+                    std::to_string(owner.genericArgumentPatternLifetimes.size() + 1);
+      name.generated = true;
+      GenericParameterInfo parameter{.id = nextGenericParameterId++,
+                                     .name = std::move(name), .lifetime = true,
+                                     .implicit = true};
+      semanticModel.recordGenericParameter(parameter);
+      regions.emplace_back(region, Lifetime::parameter(parameter.id));
+      owner.genericArgumentPatternLifetimes.push_back(std::move(parameter));
+    }
+    type = substituteTypeLifetimes(type, regions).value_or(SemanticType::Unknown);
+    catalog.normalizedNominalTypes.insert_or_assign(&pattern, type);
+    owner.genericArgumentPatterns.push_back(std::move(type));
   }
   endTypeParameterScope();
   currentNamespace = savedNamespace;
@@ -3065,8 +3086,8 @@ auto SemanticVisitor::Impl::classArgumentPatternsMatch(
     if (containsOpenTypeParameter(arguments[index])) {
       continue;
     }
-    if (substituteType(owner.genericArgumentPatterns[index], substitution) !=
-        arguments[index]) {
+    if (eraseTypeLifetimes(substituteType(owner.genericArgumentPatterns[index], substitution)) !=
+        eraseTypeLifetimes(arguments[index])) {
       return false;
     }
   }
@@ -5440,7 +5461,8 @@ auto SemanticVisitor::Impl::bindOutOfClassDefinitions(
         bool equal = expected.size() == ownerArguments.size();
         for (std::size_t i = 0; equal && i < expected.size(); ++i) {
           const auto actual = typeOf(ownerArguments[i], namespaceScope);
-          equal = actual != SemanticType::Unknown && actual == expected[i];
+          equal = actual != SemanticType::Unknown &&
+                  eraseTypeLifetimes(actual) == eraseTypeLifetimes(expected[i]);
         }
         endTypeParameterScope();
         if (!equal)
@@ -11498,6 +11520,7 @@ auto SemanticVisitor::Impl::recordClassTypeIdentities() -> void {
             .exactValueArguments = owner.exactValueArguments,
             .genericParameters = owner.genericParameters,
             .genericArgumentPatterns = owner.genericArgumentPatterns,
+            .genericArgumentPatternLifetimes = owner.genericArgumentPatternLifetimes,
             .variance = owner.variance,
             .lifetimeContract = owner.lifetimeContract,
             .kind = owner.kind,
@@ -11626,6 +11649,7 @@ auto SemanticVisitor::Impl::recordClassTypes() -> void {
             .exactValueArguments = owner.exactValueArguments,
             .genericParameters = owner.genericParameters,
             .genericArgumentPatterns = owner.genericArgumentPatterns,
+            .genericArgumentPatternLifetimes = owner.genericArgumentPatternLifetimes,
             .variance = owner.variance,
             .lifetimeContract = owner.lifetimeContract,
             .fields = std::move(fields),

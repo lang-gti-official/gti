@@ -207,6 +207,8 @@ auto SemanticVisitor::Impl::normalizeFunctionLifetimeContract(
     for (const auto &parameter : owner.genericParameters)
       if (parameter.lifetime)
         addParameter(Lifetime::parameter(parameter.id));
+    for (const auto &parameter : owner.genericArgumentPatternLifetimes)
+      addParameter(Lifetime::parameter(parameter.id));
   }
   for (const auto &parameter : function.record().genericParameters)
     if (parameter.lifetime) {
@@ -281,6 +283,8 @@ auto SemanticVisitor::Impl::normalizeConstructorLifetimeContract(
   const Token site = constructor.declaration ? constructor.declaration->name()
                                            : owner.name;
   LifetimeSignatureContract contract = owner.lifetimeContract;
+  for (const auto &parameter : owner.genericArgumentPatternLifetimes)
+    appendUnique(contract.parameters, Lifetime::parameter(parameter.id));
   for (const auto *parameters : std::array<const std::vector<GenericParameterInfo> *, 2>{
                                    &owner.genericParameters,
                                    &constructor.genericParameters})
@@ -355,6 +359,8 @@ auto SemanticVisitor::Impl::normalizeDestructorLifetimeContract(
   const Token site = destructor.declaration ? destructor.declaration->tilde()
                                           : owner.name;
   LifetimeSignatureContract contract = owner.lifetimeContract;
+  for (const auto &parameter : owner.genericArgumentPatternLifetimes)
+    appendUnique(contract.parameters, Lifetime::parameter(parameter.id));
   contract.receiver = implicitSyntaxLifetime(site, 0, "this");
   contract.parameters.push_back(contract.receiver);
   for (const auto &parameter : owner.genericParameters)
@@ -522,6 +528,9 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
   } else {
     valid = false;
   }
+  for (const auto &parameter : parameterTypes)
+    valid = collectNominalFormationAssumptions(parameter, contract) && valid;
+  valid = collectNominalFormationAssumptions(returnType, contract) && valid;
   contract.complete = valid;
   return {.contract = std::move(contract), .ambiguousResult = ambiguousResult};
 }
@@ -831,6 +840,33 @@ auto SemanticVisitor::Impl::constrainLifetimeType(
     }
     if (source.kind != target.kind)
       return source; // The ordinary conversion rules still own type shape.
+    if (source.hasLambdaShape() && target.hasLambdaShape() &&
+        source.lambdaId == target.lambdaId) {
+      const auto *lambda = semanticModel.findLambda(source.lambdaId);
+      if (!lambda && instanceBaseModel)
+        lambda = instanceBaseModel->findLambda(source.lambdaId);
+      if (!lambda || !lambda->type.hasLambdaShape())
+        return std::nullopt;
+      const auto sourceEnvironment = matchUniversalTypeLifetimes(
+          lambda->type, source, lambda->environmentLifetimes);
+      const auto targetEnvironment = matchUniversalTypeLifetimes(
+          lambda->type, target, lambda->environmentLifetimes);
+      if (!sourceEnvironment || !targetEnvironment ||
+          sourceEnvironment->size() != lambda->environmentLifetimes.size() ||
+          targetEnvironment->size() != lambda->environmentLifetimes.size())
+        return std::nullopt;
+      for (const auto slot : lambda->environmentLifetimes) {
+        const auto from = std::find_if(sourceEnvironment->begin(), sourceEnvironment->end(),
+            [&](const auto binding) { return binding.first == slot; });
+        const auto to = std::find_if(targetEnvironment->begin(), targetEnvironment->end(),
+            [&](const auto binding) { return binding.first == slot; });
+        if (from == sourceEnvironment->end() || to == targetEnvironment->end())
+          return std::nullopt;
+        appendUnique(obligations, LifetimeBound{from->second, to->second});
+        appendUnique(obligations, LifetimeBound{to->second, from->second});
+      }
+      return target;
+    }
     if (!source.quantifiedLifetimes.empty() ||
         !target.quantifiedLifetimes.empty())
       return equivalentLifetimeTypes(source, target)

@@ -89,6 +89,51 @@ int main() {
               .valid(),
          "MIR cannot trust an inferred region number without its allocation "
          "inventory");
+  const auto published = Frontend({.stopAfter = FrontendPhase::Mir,
+                                    .retainApplicationBodies = true}).analyze(
+      "published-unused-lifetime-supplier.gti", R"gti(
+export module published_unused_lifetime_supplier;
+export int&<static> first(int&<static> left, int&<static> right) { return left; }
+int main() { return 0; }
+)gti");
+  if (!published.canGenerateCode()) {
+    for (const auto &diagnostic : published.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "an uncalled published reference contract must reach verified MIR");
+  }
+  const auto publishedFunction = std::find_if(
+      published.mir.functionInstances().begin(), published.mir.functionInstances().end(),
+      [](const auto &function) {
+        return function.returnType.kind == SemanticType::Reference &&
+               function.parameterTypes.size() == 2;
+      });
+  expect(publishedFunction != published.mir.functionInstances().end() &&
+             publishedFunction->completeReturnBorrow &&
+             publishedFunction->completeReturnBorrow->dependencies.size() == 2,
+         "the published result retains both permitted suppliers even when only first is returned");
+  for (const bool removeEntireSummary : {false, true}) {
+    auto narrowed = published.mir;
+    auto &target = const_cast<MirFunctionInstance &>(
+        *narrowed.findFunctionInstance(publishedFunction->id));
+    std::erase_if(target.completeReturnBorrow->dependencies, [](const auto &supplier) {
+      return supplier.origin == BorrowOriginKind::Argument && supplier.parameter == 1;
+    });
+    std::erase_if(target.returnBorrowFields, [](const auto &supplier) {
+      return supplier.origin == BorrowOriginKind::Argument && supplier.parameter == 1;
+    });
+    std::erase(target.returnBorrowParameters, std::size_t{1});
+    if (removeEntireSummary) {
+      target.completeReturnBorrow.reset();
+      target.returnBorrowFields.clear();
+      target.returnBorrowParameters.clear();
+    }
+    const auto invalid = verifyMirProgram(narrowed);
+    expect(!invalid.valid() && std::any_of(invalid.errors.begin(), invalid.errors.end(),
+               [](const auto &error) {
+                 return error.message.find("complete permitted supplier inventory") != std::string::npos;
+               }),
+           "independent MIR proof must reject narrowing an unused declared supplier");
+  }
   const auto lambda = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "lambda-lifetime-contract.gti", R"gti(
 int main() {
@@ -119,6 +164,19 @@ int main() {
   brokenLambda.completeReturnBorrow->dependencies.pop_back();
   expect(!verifyMirProgram(missingLambdaSupplier).valid(),
          "independent lambda proof must reject an omitted reachable supplier");
+  auto missingLambdaTarget = lambda.mir;
+  bool removedLambdaTarget = false;
+  for (const auto address : enumerateMirBodyAddresses(missingLambdaTarget))
+    if (auto *body = findMirBody(missingLambdaTarget, address))
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::Call &&
+              instruction.lambdaTarget && !instruction.borrowFields.empty()) {
+            instruction.lambdaTarget.reset();
+            removedLambdaTarget = true;
+          }
+  expect(removedLambdaTarget && !verifyMirProgram(missingLambdaTarget).valid(),
+         "a complete supplier set cannot authorize a call without its typed target");
   const auto physical = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "physical-payload-contract.gti", R"gti(
 enum State<T> { value(T item) };

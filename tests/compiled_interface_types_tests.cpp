@@ -229,9 +229,49 @@ namespace derived {
   units.back() = units.front();
   rejects([&] { validateCompiledInterfaceUnits(units); });
 }
+void inferredReferenceProfile() {
+  auto program = lower(R"(export module borrowing;
+export int& identity(int& value) { return value; }
+export [[borrowed_from(second)]] int& choose(int& first, int& second) {
+  return second;
+}
+)");
+  SourceUnitId unit = 0;
+  for (const auto &function : program.mir().functionInstances())
+    if (const auto *declaration = program.findFunctionDeclaration(function.declaration);
+        declaration && declaration->qualifiedName == "identity") {
+      unit = declaration->sourceUnit;
+      expect(function.returnType.referenceLifetime.specified(),
+             "source reference fixture must carry normalized lifetime metadata");
+    }
+  expect(unit != 0, "reference fixture lost its exported source unit");
+  const PersistentDeclarationOwner owner{"borrow-test", "api", "borrowing", {}};
+  const std::vector<std::string> names{"identity", "choose"};
+  const auto signatures =
+      CompiledScalarUnitBuilder().selectExports(program, unit, owner, names);
+  expect(signatures.size() == 2, "inferred references must retain the compiled profile");
+  const auto bound = CompiledScalarUnitBuilder().bindExports(program, unit, signatures);
+  expect(verifyCompiledScalarUnit(bound).empty(),
+         "compiled linkage must preserve the checked source lifetime contract");
+  const auto facade = compiledInterfaceSource(signatures);
+  expect(facade.find("[[borrowed_from(arg1)]]") != std::string::npos,
+         "wire profile must reconstruct the exact selected input region");
+  auto strengthened = program;
+  for (const auto &function : strengthened.mir().functionInstances())
+    if (const auto *declaration = strengthened.findFunctionDeclaration(function.declaration);
+        declaration && declaration->qualifiedName == "identity") {
+      auto &contract = const_cast<MirFunctionInstance &>(function).lifetimeContract;
+      contract.bounds.push_back({function.parameterTypes.front().referenceLifetime,
+                                 Lifetime::staticLifetime()});
+    }
+  rejects([&] {
+    (void)CompiledScalarUnitBuilder().selectExports(strengthened, unit, owner, names);
+  });
+}
 } // namespace
 int main() {
   try {
+    inferredReferenceProfile();
     namespacedTypes();
     shadowedNamespaceTypes();
     dependencyOwnedTypes();

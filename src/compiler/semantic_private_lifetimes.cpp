@@ -196,6 +196,23 @@ auto SemanticVisitor::Impl::inferPrivateLifetimeContracts() -> void {
         report(syntax->name(),
                "Private lifetime inference exceeded its finite summary budget; declare the recursive relationship explicitly.",
                "GTI-S2127");
+        for (const auto *incomplete : pending)
+          if (const auto *found = semanticModel.findFunction(*incomplete)) {
+            auto invalid = *found;
+            invalid.lifetimeContract.complete = false;
+            invalid.completeReturnBorrow.reset();
+            invalid.returnBorrowOrigin = BorrowOriginKind::None;
+            invalid.returnBorrowParameters.clear();
+            invalid.returnBorrowFields.clear();
+            semanticModel.record(*incomplete, invalid);
+            if (auto *declaration = catalog.mutableCallable(*incomplete))
+              declaration->lifetimeContract = invalid.lifetimeContract;
+            if (const auto selected = candidateIndex.find(invalid.id); selected != candidateIndex.end())
+              for (auto *candidate : selected->second)
+                candidate->lifetimeContract = invalid.lifetimeContract;
+            publishFunctionBorrowSummary(invalid, candidateIndex);
+          }
+        ++requestSession.lifetimeContractRevision;
         return;
       }
       const auto *found = semanticModel.findFunction(*syntax);

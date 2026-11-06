@@ -54,6 +54,76 @@ std::string_view compiledScalarTypeSpelling(const SemanticType &type) {
   throw std::invalid_argument("unsupported compiled scalar type");
 }
 namespace {
+// The existing compiled profile encodes independent input reference regions
+// and one optional whole-argument result through CompiledBorrowContract.
+// Keep that wire profile bounded: only the reference shell is reconstructed
+// by ordinary signature elision. No nested or named generic contract is
+// discarded here, and the checked MIR signature keeps all of its regions.
+std::optional<SemanticType> compiledProfileType(const SemanticType &type) {
+  auto result = type;
+  if (result.kind == SemanticType::Reference) {
+    if (result.referenceLifetime.specified() &&
+        !result.referenceLifetime.declarationRegion())
+      return std::nullopt;
+    result.referenceLifetime = {};
+  }
+  return isCompiledScalarResultType(result) ? std::optional{std::move(result)}
+                                          : std::nullopt;
+}
+
+std::vector<SemanticType> compiledProfileParameters(
+    std::span<const SemanticType> parameters) {
+  std::vector<SemanticType> result;
+  for (const auto &parameter : parameters) {
+    const auto type = compiledProfileType(parameter);
+    if (!type || *type == SemanticType::Void)
+      throw std::invalid_argument("unsupported compiled parameter type");
+    result.push_back(*type);
+  }
+  return result;
+}
+
+bool compiledProfileLifetimes(const SemanticType &result,
+                             std::span<const SemanticType> parameterTypes,
+                             const LifetimeSignatureContract &contract,
+                             const CompiledBorrowContract &borrow) {
+  if (contract == LifetimeSignatureContract{}) {
+    return !result.referenceLifetime.specified() &&
+           std::none_of(parameterTypes.begin(), parameterTypes.end(),
+                        [](const auto &type) { return type.referenceLifetime.specified(); });
+  }
+  if (!contract.valid() || contract.receiver.specified() ||
+      !contract.bounds.empty() || !contract.requirements.nodes.empty())
+    return false;
+  std::vector<Lifetime> parameters;
+  std::vector<LifetimeTypeBound> typeBounds;
+  for (const auto &parameter : parameterTypes) {
+    if (parameter.kind != SemanticType::Reference)
+      continue;
+    if (parameter.arguments.size() != 1 ||
+        parameter.referenceLifetime.kind != Lifetime::Kind::Parameter ||
+        std::find(parameters.begin(), parameters.end(), parameter.referenceLifetime) !=
+            parameters.end())
+      return false;
+    parameters.push_back(parameter.referenceLifetime);
+    typeBounds.push_back({parameter.arguments.front(), parameter.referenceLifetime});
+  }
+  const auto sameSet = [](const auto &left, const auto &right) {
+    return left.size() == right.size() &&
+           std::all_of(left.begin(), left.end(), [&](const auto &item) {
+             return std::find(right.begin(), right.end(), item) != right.end();
+           });
+  };
+  if (!sameSet(contract.parameters, parameters) ||
+      !sameSet(contract.typeBounds, typeBounds))
+    return false;
+  if (result.kind != SemanticType::Reference)
+    return true;
+  return borrow.origin == BorrowOriginKind::Argument &&
+         borrow.parameter < parameterTypes.size() &&
+         result.referenceLifetime == parameterTypes[borrow.parameter].referenceLifetime;
+}
+
 std::string resultRecipe(const CompiledScalarSignature &signature) {
   return signature.resultRecipe.empty()
              ? writePersistentType(
@@ -110,6 +180,22 @@ void validateCompiledBorrowContract(const SemanticType &result,
        source.referenceAccess != AccessMode::Mutable))
     throw std::invalid_argument("compiled reference result must borrow its "
                                 "whole compatible reference argument");
+}
+bool isCompiledScalarLifetimeProfile(
+    const SemanticType &result, std::span<const SemanticType> parameters,
+    const LifetimeSignatureContract &contract, const CompiledBorrowContract &borrow) {
+  if (!compiledProfileType(result) ||
+      !std::all_of(parameters.begin(), parameters.end(), [](const auto &type) {
+        const auto profile = compiledProfileType(type);
+        return profile && *profile != SemanticType::Void;
+      }))
+    return false;
+  try {
+    validateCompiledBorrowContract(result, parameters, borrow);
+  } catch (const std::invalid_argument &) {
+    return false;
+  }
+  return compiledProfileLifetimes(result, parameters, contract, borrow);
 }
 namespace {
 std::string callableSource(const CompiledScalarSignature &signature,
@@ -272,10 +358,15 @@ bool scalarFunction(const LoweredProgram &program,
          d->callableParameters.empty() && d->intrinsic == IntrinsicKind::None &&
          d->entryKind == ProgramEntryKind::None &&
          f.linkage == LanguageLinkage::Gti && f.externalSymbol.empty() &&
-         isCompiledScalarResultType(f.returnType) &&
+         isCompiledScalarLifetimeProfile(
+             f.returnType, f.parameterTypes, f.lifetimeContract,
+             {f.returnBorrowOrigin, f.returnBorrowParameter, f.returnBorrowAccess}) &&
          d->requiredParameterCount == d->parameters.size() &&
          std::all_of(f.parameterTypes.begin(), f.parameterTypes.end(),
-                     isCompiledScalarValueType);
+                     [](const auto &type) {
+                       const auto profile = compiledProfileType(type);
+                       return profile && *profile != SemanticType::Void;
+                     });
 }
 } // namespace
 std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
@@ -307,9 +398,9 @@ std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
         throw std::invalid_argument("unsupported compiled function signature");
       found = true;
       selected.push_back(&function);
-      roots.push_back(function.returnType);
-      roots.insert(roots.end(), function.parameterTypes.begin(),
-                   function.parameterTypes.end());
+      roots.push_back(*compiledProfileType(function.returnType));
+      const auto parameters = compiledProfileParameters(function.parameterTypes);
+      roots.insert(roots.end(), parameters.begin(), parameters.end());
       if (selected.size() > 256)
         throw std::invalid_argument(
             "compiled library exceeds 256 exported overloads");
@@ -329,10 +420,11 @@ std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
         program.findFunctionDeclaration(function->declaration);
     PersistentFunctionKey key{.owner = owner,
                               .qualifiedName = declaration->qualifiedName,
-                              .parameters = function->parameterTypes};
+                              .parameters = compiledProfileParameters(function->parameterTypes)};
+    const auto result = *compiledProfileType(function->returnType);
     signatures.push_back(
-        {writePersistentFunctionKey(key, registry), function->returnType,
-         metadata, writePersistentType(function->returnType, registry),
+        {writePersistentFunctionKey(key, registry), result,
+         metadata, writePersistentType(result, registry),
          borrowContract(*function), function->codegenAttributes});
   }
   std::sort(signatures.begin(), signatures.end(),
@@ -396,8 +488,9 @@ verifyCompiledScalarUnit(const LoweredProgram &program) {
           readPersistentType(binding.resultRecipe, registry);
       const auto *d = program.findFunctionDeclaration(f->declaration);
       if (decoded.sourceLocal || decoded.qualifiedName != d->qualifiedName ||
-          decoded.parameters != f->parameterTypes ||
-          binding.result != f->returnType || decodedResult != f->returnType ||
+          decoded.parameters != compiledProfileParameters(f->parameterTypes) ||
+          binding.result != f->returnType ||
+          decodedResult != *compiledProfileType(f->returnType) ||
           binding.borrow != borrowContract(*f) || !binding.sourceUnit ||
           (!binding.imported &&
            binding.codegenAttributes != f->codegenAttributes) ||
@@ -467,7 +560,8 @@ LoweredProgram CompiledScalarUnitBuilder::bindScoped(
       const auto *d = program.findFunctionDeclaration(f.declaration);
       if (d && d->sourceUnit == input.sourceUnit &&
           d->qualifiedName == record.qualifiedName &&
-          f.parameterTypes == record.parameters) {
+          scalarFunction(program, f) &&
+          compiledProfileParameters(f.parameterTypes) == record.parameters) {
         if (selected)
           throw std::invalid_argument("ambiguous compiled scalar declaration");
         selected = &f;
@@ -479,7 +573,7 @@ LoweredProgram CompiledScalarUnitBuilder::bindScoped(
       throw std::invalid_argument("compiled scalar declaration is absent");
     program.compiledScalarBindings_.push_back(
         {selected->id, signature.key, compiledScalarSymbol(signature), imported,
-         result, input.sourceUnit, signature.typeMetadata,
+         selected->returnType, input.sourceUnit, signature.typeMetadata,
          signature.resultRecipe, signature.borrow,
          signature.codegenAttributes});
   };

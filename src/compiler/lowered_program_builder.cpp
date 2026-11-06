@@ -906,6 +906,8 @@ private:
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
             .genericArgumentPatterns = info->genericArgumentPatterns,
+            .genericArgumentPatternLifetimes =
+                lowerGenericParameters(info->genericArgumentPatternLifetimes),
             .virtualDispatch = info->virtualDispatch,
             .traits = info->traits,
             .transferPolicy = info->transferPolicy,
@@ -1374,6 +1376,17 @@ private:
                                 lowered.callableParameters) ||
         source.liftedLifetimes != lowered.liftedLifetimes ||
         source.lifetimeContract != lowered.lifetimeContract ||
+        source.returnBorrowOrigin != lowered.returnBorrowOrigin ||
+        source.explicitReturnBorrowOrigin != lowered.explicitReturnBorrowOrigin ||
+        source.returnBorrowParameter != lowered.returnBorrowParameter ||
+        source.returnBorrowAccess != lowered.returnBorrowAccess ||
+        source.returnBorrowParameters != lowered.returnBorrowParameters ||
+        source.returnBorrowFields != lowered.returnBorrowFields ||
+        source.completeReturnBorrow != lowered.completeReturnBorrow ||
+        source.returnBorrowPlace != lowered.returnBorrowPlace ||
+        source.restoresReferenceResult != lowered.restoresReferenceResult ||
+        source.restoredBorrowFields != lowered.restoredBorrowFields ||
+        source.ownedPointeeProjection != lowered.ownedPointeeProjection ||
         source.parameterBindings != lowered.parameterBindings ||
         source.entryKind != lowered.entryKind ||
         source.entryArgumentAppendTarget != lowered.entryArgumentAppendTarget ||

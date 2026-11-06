@@ -9648,7 +9648,7 @@ auto SemanticVisitor::Impl::placeForSymbol(Symbol &symbol) -> SemanticPlace {
       symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
       symbol.bindingKind == SemanticBindingKind::StaticField ||
       (symbol.bindingKind == SemanticBindingKind::LambdaCapture &&
-       symbol.type.kind == SemanticType::Reference && !analyzingCaptureList)) {
+       !analyzingCaptureList)) {
     return {.root = &symbol, .rootIdentity = toolingSymbolFor(symbol)};
   }
   if (symbol.bindingKind == SemanticBindingKind::Field &&

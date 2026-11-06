@@ -762,6 +762,7 @@ struct NominalVarianceRecipe {
   std::vector<SemanticType> exactTypeArguments;
   std::vector<CompileTimeValue> exactValueArguments;
   std::vector<SemanticType> argumentPatterns;
+  std::vector<GenericParameterIdentity> argumentPatternLifetimes;
   std::vector<NominalVarianceParameter> parameters;
   std::vector<NominalStoredTypeRecipe> stored;
   CompilerCapabilityTypeKind compilerCapability = CompilerCapabilityTypeKind::None;
@@ -1254,6 +1255,9 @@ struct ClassTypeInfo {
   std::vector<CompileTimeValue> exactValueArguments;
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<SemanticType> genericArgumentPatterns;
+  // Universals projected from the public type-argument recipe, not separate
+  // source arguments or top-level lifetime arguments of the nominal type.
+  std::vector<GenericParameterInfo> genericArgumentPatternLifetimes;
   NominalVariance variance;
   LifetimeSignatureContract lifetimeContract;
   std::vector<ClassFieldTypeInfo> fields;

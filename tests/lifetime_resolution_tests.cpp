@@ -604,6 +604,85 @@ int main() { int firstValue = 1; int secondValue = 2; return first(firstValue, s
   }
 }
 
+void testProjectedPatternLifetimes() {
+  const auto result = analyze(R"(
+enum Outcome<T> { ready(T value), failed(int code) };
+class Result<T&> {
+  Outcome<T&> state;
+public:
+  Result(int error) : state(Outcome<T&>::failed(error)) {}
+  Result(T& value) : state(Outcome<T&>::ready(value)) {}
+};
+void inspect<lifetime a>(Result<int&<a>> value);
+int main() { return 0; }
+)");
+  expectValid(result, "profile regions are projected from public arguments even in a failure-only constructor");
+  const auto *owner = record(result, "Result");
+  expect(owner && owner->genericArgumentPatternLifetimes.size() == 1 &&
+             owner->genericArgumentPatternLifetimes.front().lifetime &&
+             owner->genericArgumentPatternLifetimes.front().implicit &&
+             owner->genericArgumentPatterns.size() == 1 &&
+             owner->genericArgumentPatterns.front().referenceLifetime ==
+                 lang::Lifetime::parameter(owner->genericArgumentPatternLifetimes.front().id),
+         "a normalized argument pattern owns a separate projected region binder");
+  if (owner && !owner->genericArgumentPatternLifetimes.empty()) {
+    const auto projected = lang::Lifetime::parameter(owner->genericArgumentPatternLifetimes.front().id);
+    expect(owner->lifetimeContract.valid() &&
+               std::find(owner->lifetimeContract.parameters.begin(),
+                         owner->lifetimeContract.parameters.end(), projected) !=
+                   owner->lifetimeContract.parameters.end() &&
+               std::none_of(owner->genericParameters.begin(), owner->genericParameters.end(),
+                            [&](const auto &parameter) { return parameter.id == projected.id; }),
+           "projected binders participate in formation without changing public generic arity");
+    const auto *inspect = function(result, "inspect");
+    expect(inspect && inspect->parameterTypes.size() == 1 &&
+               inspect->parameterTypes.front().arguments.size() == 1 &&
+               inspect->parameterTypes.front().arguments.front().kind == lang::SemanticType::Reference &&
+               inspect->parameterTypes.front().arguments.front().referenceLifetime != projected,
+           "public profile arguments retain their actual region independently of the declaration recipe");
+  }
+  const auto fixedMismatch = analyze(R"(
+class Fixed<T&<static>> { int value = 0; public: Fixed() {} };
+void invalid<lifetime a>(Fixed<int&<a>> value);
+int main() { return 0; }
+)");
+  expect(!fixedMismatch.semanticValid &&
+             std::any_of(fixedMismatch.diagnostics.begin(), fixedMismatch.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
+         "a structural profile match cannot replace a fixed static lifetime with a caller region");
+}
+
+void testNominalFormation() {
+  const std::string declarations = R"(
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+struct Holder<T, lifetime a> { T&<a> value; Holder(T&<a> input) : value(input) {} };
+struct Envelope<T, lifetime a> { Holder<T, a> value; Envelope(Holder<T, a> input) : value(input) {} };
+)";
+  const auto result = analyze(declarations + R"(
+void inspect<lifetime a, lifetime b>(Envelope<View<b>, a> value);
+int main() { return 0; }
+)");
+  expectValid(result, "nested nominal formation premises are normalized before signature publication");
+  const auto *inspect = function(result, "inspect");
+  expect(inspect && inspect->lifetimeContract.valid() &&
+             std::any_of(inspect->lifetimeContract.typeBounds.begin(),
+                         inspect->lifetimeContract.typeBounds.end(), [](const auto &bound) {
+                           return bound.type.kind == lang::SemanticType::Class &&
+                                  !bound.type.lifetimeArguments.empty();
+                         }),
+         "a signature receiving nested storage retains its substituted type-outlives premise");
+  const auto invalid = analyze(declarations + R"(
+void invalid<lifetime a>(View<a>& input) {
+  Holder<View<a>, static>* impossible = nullptr;
+}
+int main() { return 0; }
+)");
+  expect(!invalid.semanticValid &&
+             std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
+         "even an uninitialized pointer target must satisfy its nominal lifetime formation requirements");
+}
+
 void testCStringRegions() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto prelude = std::filesystem::weakly_canonical(root / "prelude.gti");
@@ -692,8 +771,8 @@ int&<a> externalCapture<lifetime a>(int&<a> source) {
   auto get = [&source]() -> int& { return source; };
   return get();
 }
-void acceptStatic<F>(F callback) requires outlives<F, static> {}
-int invoke<F>(F callback) { return callback(); }
+void acceptStatic<F>(F& callback) requires outlives<F, static> {}
+int invoke<F>(F& callback) { return callback(); }
 int main() {
   auto identity = [](int& value) -> int& { return value; };
   acceptStatic(identity);
@@ -726,7 +805,7 @@ int main() {
            "int&<b> invalid<lifetime a, lifetime b>(int&<a> first, int&<b> second) { auto fixed = [](int&<a> value) -> int&<a> { return value; }; return fixed(second); } int main() { return 0; }",
            "int&<a> invalid<lifetime a>(int&<a> source) { int local = 1; auto get = [&local]() -> int& { return local; }; return get(); } int main() { return 0; }",
            "int&<a> invalid<lifetime a>(int&<a> source) { int local = 1; auto get = [local]() -> int& { return local; }; return get(); } int main() { return 0; }",
-           "void acceptStatic<F>(F callback) requires outlives<F, static> {} int main() { int local = 1; auto get = [&local]() -> int& { return local; }; acceptStatic(get); return 0; }"}) {
+           "void acceptStatic<F>(F& callback) requires outlives<F, static> {} int main() { int local = 1; auto get = [&local]() -> int& { return local; }; acceptStatic(get); return 0; }"}) {
     const auto invalid = analyze(source);
     expect(!invalid.semanticValid,
            "fixed closure environments reject incompatible input, local escape and static storage promises");
@@ -747,6 +826,8 @@ int main() {
   testSpecializationLifetimeShape();
   testExecutableLifetimeIdentity();
   testInferredCarrierRegions();
+  testProjectedPatternLifetimes();
+  testNominalFormation();
   testCStringRegions();
   testPrivateLifetimeInference();
   testLambdaLifetimeInference();
