@@ -336,8 +336,11 @@ int main() {
     auto &function = const_cast<MirFunctionInstance &>(immutable);
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions)
-        if (instruction.kind == MirInstructionKind::Call && instruction.result &&
-            instruction.info.type.kind == SemanticType::Reference) {
+        if (instruction.kind == MirInstructionKind::Call && instruction.result) {
+          const auto signature = instantiateMirLifetimeTarget(localCopiedCarrier.mir,
+                                                               instruction);
+          if (!signature || signature->returnType.kind != SemanticType::Reference)
+            continue;
           auto *value = const_cast<MirValue *>(function.body.findValue(*instruction.result));
           if (!value || !value->borrowDependencies ||
               value->borrowDependencies->dependencies.size() != 2)
@@ -351,7 +354,9 @@ int main() {
           removedCopiedParent = true;
         }
   }
-  expect(removedCopiedParent && !verifyMirProgram(missingCopiedParent).valid(),
+  expect(removedCopiedParent,
+         "copied result parent mutation must find an applied reference-returning call");
+  expect(!verifyMirProgram(missingCopiedParent).valid(),
          "a copied carrier result cannot drop one retained permission parent");
   const auto retainedSelection = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "retained-selection-carrier.gti", R"gti(

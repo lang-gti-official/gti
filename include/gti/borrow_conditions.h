@@ -11,6 +11,52 @@
 
 namespace lang {
 
+// The inventory is an authoritative enumeration of typed enum subobjects,
+// including alternatives with no borrowed payload. A selected subset may
+// narrow each domain, but cannot omit an independently stored sibling or an
+// active nested domain. Missing evidence never proves an alternative empty.
+[[nodiscard]] inline bool hasCompleteBorrowAlternativeCoverage(
+    std::span<const BorrowAlternativePath> inventory,
+    std::span<const BorrowAlternativePath> selected) {
+  if (inventory.empty())
+    return selected.empty();
+  if (selected.empty())
+    return false;
+  const auto contains = [](const auto &all, const auto &required) {
+    return std::all_of(required.begin(), required.end(), [&](const auto &condition) {
+      return std::find(all.begin(), all.end(), condition) != all.end();
+    });
+  };
+  for (const auto &path : selected)
+    if (path.conditions.empty() ||
+        std::find(inventory.begin(), inventory.end(), path) == inventory.end())
+      return false;
+  for (const auto &path : inventory) {
+    if (path.conditions.empty())
+      return false;
+    for (std::size_t depth = 0; depth < path.conditions.size(); ++depth) {
+      const auto ancestors = std::span(path.conditions).first(depth);
+      const bool active = ancestors.empty() ||
+          std::any_of(selected.begin(), selected.end(), [&](const auto &alternative) {
+            return contains(alternative.conditions, ancestors);
+          });
+      if (!active)
+        continue;
+      const auto &domain = path.conditions[depth];
+      if (!std::any_of(selected.begin(), selected.end(), [&](const auto &alternative) {
+            return contains(alternative.conditions, ancestors) &&
+                std::any_of(alternative.conditions.begin(), alternative.conditions.end(),
+                            [&](const auto &condition) {
+                  return condition.subobject == domain.subobject &&
+                         condition.enumeration == domain.enumeration;
+                });
+          }))
+        return false;
+    }
+  }
+  return true;
+}
+
 // Transient structural transport between complete typed alternative inventories.
 // Each caller must first prove the source-to-target conversion. This helper
 // establishes no origin, permission, region relationship or feasible variant.

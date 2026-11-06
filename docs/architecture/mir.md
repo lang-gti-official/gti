@@ -628,6 +628,13 @@ region shortens differently in two fields. MIR first proves the value conversion
 from body lifetime facts, then reconstructs this same transport for stages,
 carrier inputs, stores and returns. A global replacement of region IDs is not
 an equivalent proof. Missing inventories or ambiguous paths remain unknown.
+A retained loan keeps the immutable guard types of its producing value. When a
+binding has a checked shorter region, lowering preserves that producer identity
+and MIR derives a separate binding view from the unique producer, the exact
+stored contents and the proved conversion. It does not rewrite the producer's
+conditions. Missing initialization, ambiguous producers, stale guards, or an
+unproved conversion cannot establish that view. Field projection filters sibling
+facts and checks complete coverage of the selected field's typed enum domains.
 Value-annotation and return-contract checks share the same producer/storage
 dataflow reconstruction. These facts neither establish nor replace ordinary
 loan, access, escape, movement or cleanup proofs.

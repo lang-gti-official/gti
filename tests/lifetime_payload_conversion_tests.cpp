@@ -1,6 +1,7 @@
 #include "../src/compiler/mir_lifetimes.h"
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
+#include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
@@ -208,28 +209,103 @@ void checkOwningPayloadMutations(const MirProgram &program) {
       break;
     case 5: drop->initiallyActive = true; break;
     case 6: {
-      bool relocated = false;
+      const auto loanId = *producer->loan;
+      std::optional<MirInstruction> endpoint;
       for (auto &block : body->blocks) {
         const auto end = std::find_if(block.instructions.begin(), block.instructions.end(),
             [&](const auto &instruction) {
-              return instruction.kind == MirInstructionKind::EndBorrow &&
-                     instruction.loan == producer->loan;
+              return instruction.kind == MirInstructionKind::EndBorrow && instruction.loan == loanId;
             });
-        const auto cleanup = std::find_if(block.instructions.begin(), block.instructions.end(),
-            [](const auto &instruction) { return instruction.kind == MirInstructionKind::Drop; });
-        if (end != block.instructions.end() && cleanup != block.instructions.end() && cleanup < end) {
-          std::rotate(cleanup, end, end + 1);
-          relocated = true;
+        if (end != block.instructions.end()) {
+          endpoint = *end;
+          block.instructions.erase(end);
           break;
         }
       }
-      expect(relocated, "owning enum dependency normally ends after its cleanup");
+      bool relocated = false;
+      if (endpoint)
+        for (auto &block : body->blocks) {
+          const auto produced = std::find_if(block.instructions.begin(), block.instructions.end(),
+              [&](const auto &instruction) { return instruction.id == producerId; });
+          if (produced != block.instructions.end()) {
+            block.instructions.insert(produced + 1, *endpoint);
+            relocated = true;
+            break;
+          }
+        }
+      expect(relocated, "owning enum has an endpoint to move before its cleanup control-flow graph");
       break;
     }
     }
     expect(!verifyMirProgram(broken).valid(),
            "owning payload cannot forge carrier classification, handoff, child cleanup or loan endpoint");
   }
+}
+
+void checkGuardBindingViews(const FrontendResult &frontend) {
+  struct Site { MirBodyAddress body; MirLoanId loan; MirPlaceId binding; MirInstructionId initializer; };
+  std::optional<Site> site;
+  for (const auto address : enumerateMirBodyAddresses(frontend.mir)) {
+    const auto *body = findMirBody(frontend.mir, address);
+    if (!body) continue;
+    for (const auto &loan : body->loans) {
+      if (loan.entry || loan.kind != MirLoanKind::Stored || loan.conditions.size() != 1 ||
+          !loan.conditions.front().subobject.empty())
+        continue;
+      for (const auto binding : loan.carriers)
+        for (const auto &place : body->places)
+          if (place.root == MirPlaceRootKind::Binding && place.binding == binding &&
+              place.projections.empty() && place.type.kind == SemanticType::Enum &&
+              place.type != loan.conditions.front().enumeration)
+            for (const auto &block : body->blocks)
+              for (const auto &instruction : block.instructions)
+                if (instruction.kind == MirInstructionKind::Initialize && instruction.destination == place.id)
+                  site = Site{address, loan.id, place.id, instruction.id};
+    }
+  }
+  expect(site.has_value(), "shortened enum binding retains the immutable producer guard domain");
+  if (!site) return;
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto broken = frontend.mir;
+    auto *body = findMirBody(broken, site->body);
+    auto &loan = body->loans[site->loan - 1];
+    switch (mutation) {
+    case 0: loan.conditions.front().enumeration.lifetimeArguments = {Lifetime::staticLifetime()}; break;
+    case 1: {
+      const auto &target = body->places[site->binding - 1].type;
+      const auto &source = loan.conditions.front().enumeration;
+      const LifetimeBound edge{source.lifetimeArguments.front(), target.lifetimeArguments.front()};
+      const auto size = body->lifetimeBody.obligations.size();
+      std::erase(body->lifetimeBody.obligations, edge);
+      expect(body->lifetimeBody.obligations.size() < size, "binding conversion has its exact recorded edge");
+      expect(!verifyMirLifetimeApplications(broken, *body, site->body.owner).valid(),
+             "conditional binding view cannot invent its source-to-binding lifetime proof");
+      break;
+    }
+    case 2: loan.parent = loan.id; break;
+    case 3: loan.source = site->binding; break;
+    case 4:
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.id == site->initializer)
+            instruction.tombstone = true;
+      break;
+    }
+    expect(!verifyMirProgram(broken).valid(),
+           "conditional binding views reject stale guards, missing conversion/init and forged source authority");
+  }
+  auto staleHir = frontend.hir;
+  bool changed = false;
+  for (const auto &immutable : staleHir.functionInstances()) {
+    auto &function = const_cast<HirFunctionInstance &>(immutable);
+    for (auto &loan : function.body.loans)
+      if (!loan.entry && !loan.carriers.empty() && !loan.conditions.empty()) {
+        loan.conditions.front().enumeration.lifetimeArguments = {Lifetime::staticLifetime()};
+        changed = true;
+      }
+  }
+  expect(changed && !MirLowerer{}.lower(staleHir, frontend.failureMetadata).valid(),
+         "lowering cannot reinterpret a stale semantic binding guard as a checked typed view");
 }
 
 void checkGuardMutations(const MirProgram &program) {
@@ -424,6 +500,23 @@ int main() { int value = 7; View view{value}; return wrap(view) - 1; }
   if (generic.canGenerateCode())
     checkMutations(generic.mir);
 
+  (void)positive("generic-payload-external-field", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+enum Box<T> { item(T value) };
+int read<lifetime a>(Box<View<a>>& box) {
+  switch (box) { case Box<View<a>>::item(auto& payload): return payload.value; }
+}
+int main() {
+  int number = 7;
+  View view{number};
+  auto box = Box<View<_>>::item(view);
+  return read(box) - 7;
+}
+)gti");
+
   (void)positive("direct-payload-region-conversion", R"gti(
 enum Borrow<lifetime a> { item(int&<a> value) };
 int wrap<lifetime a>(int&<a> input) {
@@ -474,8 +567,10 @@ int main() {
   return inspect(left) + inspect(right) - 22;
 }
 )gti");
-  if (factory.canGenerateCode())
+  if (factory.canGenerateCode()) {
     checkGuardMutations(factory.mir);
+    checkGuardBindingViews(factory);
+  }
 
   (void)positive("nested-enum-field-guard-conversion", R"gti(
 enum Reading<lifetime a> { empty, value(int&<a> owner) };
@@ -528,8 +623,12 @@ void wrap<lifetime a>(int&<a> input) {
 }
 int main() { int number = 7; wrap(number); return destroyed - 7; }
 )gti");
-  if (owningEnum.canGenerateCode())
+  if (owningEnum.canGenerateCode()) {
+    const auto before = failures;
     checkOwningPayloadMutations(owningEnum.mir);
+    if (failures != before)
+      retain("owning-enum-payload-handoff", owningEnum);
+  }
 
   (void)positive("temporary-read-applies-declared-region", R"gti(
 struct Value { int n; Value(int n) : n(n) {} };

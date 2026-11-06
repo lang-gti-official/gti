@@ -1017,10 +1017,13 @@ auto SemanticVisitor::Impl::analyzeNativeIndirectCall(
       ordinaryParameters.push_back(parameters[index]);
       ordinaryArguments.push_back(argument.expression);
     }
+    const auto adjusted =
+        callLifetimeArgumentType(invocation, argument.type, parameters[index]);
+    const auto &matchedType = adjusted ? *adjusted : argument.type;
     const bool matches =
         argument.forwardedPackElement
-            ? forwardedPackArgumentMatches(parameters[index], argument.type)
-            : callArgumentMatches(parameters[index], argument.type, expression);
+            ? forwardedPackArgumentMatches(parameters[index], matchedType)
+            : callArgumentMatches(parameters[index], matchedType, expression);
     if (argument.type != SemanticType::Unknown && !matches) {
       reportCallArgumentMismatch(index, parameters[index], argument.type,
                                  expression, "Native function pointer");

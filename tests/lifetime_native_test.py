@@ -25,6 +25,24 @@ int main() {
   return 0;
 }
 """,
+    "constexpr_text_storage_region": """
+constexpr uint64_t count_spaces(std::string_view text) {
+  mut uint64_t count = 0;
+  mut uint64_t index = 0;
+  while (index < text.size()) {
+    if (text[index] == ' ') { count = count + 1; }
+    index = index + 1;
+  }
+  return count;
+}
+consteval uint64_t checked_spaces(std::string_view text) { return count_spaces(text); }
+int main() {
+  constexpr uint64_t expected = checked_spaces("one two three");
+  uint64_t actual = count_spaces("one two three");
+  if (expected != 2 or actual != expected) { return 1; }
+  return 0;
+}
+""",
     "explicit_identity": """
 int&<region> identity<lifetime region>(int&<region> value) { return value; }
 int main() { int value = 7; return identity(value) - 7; }

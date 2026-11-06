@@ -156,6 +156,12 @@ public:
     std::size_t useEnd = 0;
     std::size_t storageUseStart = 0;
     std::size_t borrowCheckStart = 0;
+    const BlockStmt *lifetimeBlock = nullptr;
+    const Expr *lifetimeExpression = nullptr;
+    std::size_t lifetimeVariableStart = 0;
+    std::size_t lifetimeObligationStart = 0;
+    std::size_t lifetimeTypeObligationStart = 0;
+    std::size_t lifetimeOriginStart = 0;
     bool directFailureBefore = false;
   };
 
@@ -3034,7 +3040,7 @@ private:
   storedReferenceInventory(const SemanticType &type) const;
 
   [[nodiscard]] std::optional<std::vector<BorrowAlternativePath>>
-  storedBorrowAlternativeInventory(const SemanticType &type);
+  storedBorrowAlternativeInventory(const SemanticType &type) const;
 
   enum class StoredReferenceQuery { SymbolicPaths, CompleteInventory };
   [[nodiscard]] std::optional<std::vector<StoredReferencePath>>

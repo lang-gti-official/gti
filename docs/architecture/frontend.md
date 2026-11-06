@@ -417,6 +417,14 @@ not prove an alternative inactive. These declaration summaries supply input
 relationships to the existing lifetime normalizer, while ordinary body
 analysis still proves initialization, access, movement and conversion. Named
 owner lifetimes continue to require declared relationships.
+Conditional nominal wrappers publish each initialized field's exact paths and
+alternative domains, including fields nested through other ordinary records.
+The shared coverage check requires a selected alternative for every active
+typed enum subobject and every independent sibling. Empty variants contribute
+domain evidence without an invented origin. Concrete constructor body queries
+still prove all active dependencies; unresolved generic recipes alone cannot
+certify a complete result. Exclusive sources cannot be duplicated into fields
+whose guards can hold together.
 
 The shared callable contract derivation obtains each nominal application's
 formation formula from the owning phase. Semantics supplies the instantiated
@@ -470,6 +478,11 @@ the original required-constant source boundary, which also participates in
 the staging result and worker identities. Prerequisite proofs retain dependency reads and the exact
 contract generation, preserve source declaration order, and cannot publish a
 provisional recursive proof or complete the primary program's body pass.
+Successful immediate value or void substitution withdraws that expression's
+runtime lifetime facts with its existing runtime effect slice. The snapshot
+belongs to the exact enclosing body and preserves every earlier origin and
+constraint; semantic argument checks and checked constant execution precede
+withdrawal. HIR therefore does not need origins for erased temporary receivers.
 
 Nominal variance is derived from verified fields and bases by a finite fixed
 point over the variance lattice. Shared references and owned storage preserve

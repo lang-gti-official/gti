@@ -1749,6 +1749,16 @@ auto SemanticVisitor::Impl::discardImmediateProgramEffects(
       found->second.owner != currentProgramEffectOwner)
     return;
   auto evaluation = found->second;
+  // The checked substitution withdraws only this body's expression suffix.
+  // Nested instance analysis restores its own loan-flow state; a mismatched
+  // body or rewound inventory must never be treated as the same authority.
+  if (evaluation.lifetimeBlock != loanFlow.lifetimeBlock ||
+      evaluation.lifetimeExpression != loanFlow.lifetimeExpression ||
+      evaluation.lifetimeVariableStart > loanFlow.lifetimeVariables.size() ||
+      evaluation.lifetimeObligationStart > loanFlow.lifetimeObligations.size() ||
+      evaluation.lifetimeTypeObligationStart > loanFlow.lifetimeTypeObligations.size() ||
+      evaluation.lifetimeOriginStart > loanFlow.lifetimeOrigins.size())
+    return;
   auto &summary = programEffects[evaluation.owner];
   // Publication replaces the complete invocation, including its inputs, with
   // immutable data. Resolution, loan validation and constant execution have
@@ -1760,6 +1770,13 @@ auto SemanticVisitor::Impl::discardImmediateProgramEffects(
   summary.borrowUses.resize(evaluation.useStart);
   summary.uses.resize(evaluation.storageUseStart);
   summary.directFailure = evaluation.directFailureBefore;
+  // Invocation checking and constant execution already proved these facts.
+  // A substituted value carries no borrowed result; its temporary inputs no
+  // longer have executable origins. Preserve every pre-expression body fact.
+  loanFlow.lifetimeVariables.resize(evaluation.lifetimeVariableStart);
+  loanFlow.lifetimeObligations.resize(evaluation.lifetimeObligationStart);
+  loanFlow.lifetimeTypeObligations.resize(evaluation.lifetimeTypeObligationStart);
+  loanFlow.lifetimeOrigins.resize(evaluation.lifetimeOriginStart);
   // Loan-flow conflicts retain indices into this vector. Keep those indices
   // stable while making the now nonexistent runtime checks vacuous.
   for (std::size_t index = evaluation.borrowCheckStart;
@@ -4533,6 +4550,12 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     evaluation.storageUseStart = summary.uses.size();
     evaluation.borrowCheckStart =
         requestSession.programStorageBorrowChecks.size();
+    evaluation.lifetimeBlock = loanFlow.lifetimeBlock;
+    evaluation.lifetimeExpression = loanFlow.lifetimeExpression;
+    evaluation.lifetimeVariableStart = loanFlow.lifetimeVariables.size();
+    evaluation.lifetimeObligationStart = loanFlow.lifetimeObligations.size();
+    evaluation.lifetimeTypeObligationStart = loanFlow.lifetimeTypeObligations.size();
+    evaluation.lifetimeOriginStart = loanFlow.lifetimeOrigins.size();
     evaluation.directFailureBefore = summary.directFailure;
   }
   const auto fullExpression = beginProgramFullExpression(expr);

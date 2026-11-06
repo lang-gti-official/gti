@@ -6747,7 +6747,7 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   } else if (instanceField && declaredType.kind != SemanticType::Reference &&
              typeTraits(declaredType).containsBorrowedState &&
              (!currentClass ||
-              storedReferencePaths(SemanticType::classType(*currentClass))
+              storedReferencePaths(openClassType(*currentClass))
                   .empty())) {
     if (std::none_of(diagnostics.begin(), diagnostics.end(),
                      [&](const Diagnostic &diagnostic) {

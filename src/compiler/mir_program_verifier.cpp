@@ -13726,47 +13726,8 @@ template <typename Dependency, typename ResultPath>
                          return contains(path.conditions, conditions);
                        });
   };
-  for (std::size_t index = 0; index < possibleAlternatives.size(); ++index) {
-    const auto &path = possibleAlternatives[index];
-    if (std::find(alternatives->begin(), alternatives->end(), path) ==
-            alternatives->end() ||
-        std::find(possibleAlternatives.begin(),
-                  possibleAlternatives.begin() + index,
-                  path) != possibleAlternatives.begin() + index)
-      return false;
-  }
-  // Every potentially active borrowed enum subobject needs some exact
-  // alternative. Dependency-free children may omit their tags: projection
-  // conservatively reconstructs all of their typed alternatives instead.
-  for (const auto &path : *alternatives) {
-    if (path.conditions.empty())
-      return false;
-    const auto ancestors =
-        std::span(path.conditions).first(path.conditions.size() - 1);
-    if (!possible(ancestors))
-      continue;
-    const auto &selected = path.conditions.back();
-    if (!selected.subobject.empty() &&
-        std::none_of(
-            references->begin(), references->end(), [&](const auto &reference) {
-              return reference.fields.size() >= selected.subobject.size() &&
-                     std::equal(selected.subobject.begin(),
-                                selected.subobject.end(),
-                                reference.fields.begin());
-            }))
-      continue;
-    if (std::none_of(possibleAlternatives.begin(), possibleAlternatives.end(),
-                     [&](const auto &candidate) {
-                       if (candidate.conditions.size() !=
-                           path.conditions.size())
-                         return false;
-                       const auto &last = candidate.conditions.back();
-                       return last.subobject == selected.subobject &&
-                              last.enumeration == selected.enumeration &&
-                              contains(candidate.conditions, ancestors);
-                     }))
-      return false;
-  }
+  if (!hasCompleteBorrowAlternativeCoverage(*alternatives, possibleAlternatives))
+    return false;
   const auto matches = [](const CompleteBorrowResultPathView &dependency,
                           const MirStoredCarrierReference &path) {
     return std::equal(dependency.fields.begin(), dependency.fields.end(),
@@ -14824,6 +14785,35 @@ completeBorrowSourcePath(const MirProgram &program,
          .conditions = group->conditions}};
     retained.insert(retained.end(), group->additionalDependencies.begin(),
                     group->additionalDependencies.end());
+    // The group is immutable in its producing value's typed domain. A
+    // retained binding can have a shorter region while storing that same
+    // exact value. Reconstruct the producer independently, prove the forward
+    // conversion, and compare a path-directed view with the binding contents.
+    // A missing or ambiguous producer never supplies a conditional view.
+    if (retained != fact->dependencies &&
+        std::any_of(retained.begin(), retained.end(), [](const auto &item) {
+          return !item.conditions.empty();
+        })) {
+      const MirInstruction *producer = nullptr;
+      bool ambiguous = false;
+      for (const auto *candidate : definitions)
+        if (candidate && !candidate->tombstone && candidate->loan == group->id &&
+            candidate->hirValue == group->producedBy && candidate->result) {
+          ambiguous |= producer && producer != candidate;
+          producer = candidate;
+        }
+      const auto *place = body.findPlace(id);
+      const auto source = producer && *producer->result <= state.values.size()
+          ? state.values[*producer->result - 1] : Fact{};
+      if (!ambiguous && producer && place && source &&
+          source->dependencies == retained && producer->info.type != place->type) {
+        const auto viewed = transportCompleteBorrowFact(program, body, owner,
+            producer->info.type, place->type, *source);
+        if (!viewed)
+          return std::nullopt;
+        retained = viewed->dependencies;
+      }
+    }
     // The stored capability is authority only for this complete executable
     // value. Never choose a matching primary origin while losing another
     // path, permission or guard. The ordinary loan verifier checks activity.

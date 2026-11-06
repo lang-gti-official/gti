@@ -91,6 +91,39 @@ void testBorrowConditionTransport() {
          "canonical summary instantiation preserves suppliers and all typed guards");
 }
 
+void testBorrowAlternativeCoverage() {
+  using namespace lang;
+  const auto outer = SemanticType::enumType(70);
+  const auto inner = SemanticType::enumType(71);
+  const BorrowDependencyCondition first{.subobject = {10}, .enumeration = outer, .variant = 0};
+  const BorrowDependencyCondition empty{.subobject = {10}, .enumeration = outer, .variant = 1};
+  const BorrowDependencyCondition nested{.subobject = {10, 11}, .enumeration = inner, .variant = 0};
+  const BorrowDependencyCondition nestedEmpty{.subobject = {10, 11}, .enumeration = inner, .variant = 1};
+  const BorrowDependencyCondition sibling{.subobject = {20}, .enumeration = outer, .variant = 0};
+  const BorrowDependencyCondition siblingEmpty{.subobject = {20}, .enumeration = outer, .variant = 1};
+  const std::vector<BorrowAlternativePath> inventory{
+      {{first}}, {{empty}}, {{first, nested}}, {{first, nestedEmpty}},
+      {{sibling}}, {{siblingEmpty}}};
+  const auto covered = [&](std::vector<BorrowAlternativePath> selected) {
+    return hasCompleteBorrowAlternativeCoverage(inventory, selected);
+  };
+  expect(covered({{{empty}}, {{siblingEmpty}}}),
+         "explicit empty siblings require no invented borrowed origin");
+  expect(covered({{{first}}, {{first, nestedEmpty}}, {{sibling}}}),
+         "each active nested domain and independent sibling is represented");
+  expect(!covered({{{empty}}}),
+         "one empty field cannot conceal missing evidence for its sibling");
+  expect(!covered({{{first}}, {{sibling}}}),
+         "an active outer alternative requires its nested enum domain");
+  expect(!covered({}), "missing alternatives do not certify an empty value");
+  auto forged = sibling;
+  forged.enumeration = inner;
+  expect(!covered({{{empty}}, {{forged}}}),
+         "the same field path with another enum identity cannot supply a domain");
+  expect(hasCompleteBorrowAlternativeCoverage({}, {}),
+         "an authoritative unconditional inventory has an empty alternative set");
+}
+
 void testLifetimeConversionShapes() {
   using namespace lang;
   const auto a = Lifetime::parameter(301);
@@ -306,6 +339,7 @@ void testNativeInvocationScopes() {
 
 int main() {
   testBorrowConditionTransport();
+  testBorrowAlternativeCoverage();
   testLifetimeConversionShapes();
   using namespace lang;
   testScopedCallableFormation();

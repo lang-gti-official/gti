@@ -4787,7 +4787,7 @@ auto SemanticVisitor::Impl::storedReferenceInventory(const SemanticType &type)
 }
 
 auto SemanticVisitor::Impl::storedBorrowAlternativeInventory(
-    const SemanticType &type)
+    const SemanticType &type) const
     -> std::optional<std::vector<BorrowAlternativePath>> {
   if (!storedReferenceInventory(type))
     return std::nullopt;
@@ -4926,9 +4926,10 @@ auto SemanticVisitor::Impl::completeBorrowDependencySet(const Expr *expression)
       const auto symbol = place->projections.back().field;
       SemanticBorrowDependencySet result;
       for (auto dependency : owner->dependencies) {
-        if (dependency.designatedFields.empty() ||
-            dependency.designatedFields.front() != symbol)
+        if (dependency.designatedFields.empty())
           return std::nullopt;
+        if (dependency.designatedFields.front() != symbol)
+          continue; // An exact sibling field does not contribute to this projection.
         dependency.designatedFields.erase(dependency.designatedFields.begin());
         bool qualified = true;
         for (auto &condition : dependency.conditions) {
@@ -4946,16 +4947,21 @@ auto SemanticVisitor::Impl::completeBorrowDependencySet(const Expr *expression)
       for (const auto &alternative : owner->possibleAlternatives) {
         BorrowAlternativePath projected;
         for (auto condition : alternative.conditions) {
-          if (condition.subobject.empty() ||
-              condition.subobject.front() != symbol)
+          if (condition.subobject.empty())
             return std::nullopt;
+          if (condition.subobject.front() != symbol)
+            continue;
           condition.subobject.erase(condition.subobject.begin());
           projected.conditions.push_back(std::move(condition));
         }
-        if (!projected.conditions.empty())
+        if (!projected.conditions.empty() &&
+            std::find(result.possibleAlternatives.begin(), result.possibleAlternatives.end(), projected) ==
+                result.possibleAlternatives.end())
           result.possibleAlternatives.push_back(std::move(projected));
       }
-      if (!result.possibleAlternatives.empty())
+      const auto *info = semanticModel.findExpression(*expression);
+      const auto inventory = info ? storedBorrowAlternativeInventory(info->type) : std::nullopt;
+      if (inventory && hasCompleteBorrowAlternativeCoverage(*inventory, result.possibleAlternatives))
         return result;
     }
   }
@@ -5299,12 +5305,8 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
       directReference ? std::optional{std::vector<BorrowAlternativePath>{}}
                       : storedBorrowAlternativeInventory(function.returnType);
   if (!alternatives ||
-      (alternatives->empty() != complete.possibleAlternatives.empty()))
+      !hasCompleteBorrowAlternativeCoverage(*alternatives, complete.possibleAlternatives))
     return std::nullopt;
-  for (const auto &alternative : complete.possibleAlternatives)
-    if (std::find(alternatives->begin(), alternatives->end(), alternative) ==
-        alternatives->end())
-      return std::nullopt;
 
   struct ResultPath {
     std::vector<SymbolId> fields;
@@ -6018,12 +6020,11 @@ auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
       std::none_of(inventory->begin(), inventory->end(),
                    [](const auto &path) { return !path.conditions.empty(); }))
     return;
-  // Publish one complete stored carrier rather than a selected subset of
-  // sibling fields. All dependencies must share its exact field prefix.
-  if (inventory->front().fields.empty() ||
-      std::any_of(inventory->begin(), inventory->end(), [&](const auto &path) {
-        return path.fields.empty() ||
-               path.fields.front() != inventory->front().fields.front();
+  // Every field contributes its complete typed domain and all active origins.
+  // The normalizer also checks domain coverage across independent fields, so
+  // missing sibling evidence cannot masquerade as an inactive alternative.
+  if (std::any_of(inventory->begin(), inventory->end(), [](const auto &path) {
+        return path.fields.empty();
       }))
     return;
   SemanticBorrowDependencySet complete;
@@ -6069,8 +6070,8 @@ auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
   }
   FunctionInfo publication;
   publication.returnType = type;
-  for (const auto &parameter : constructor.parameters())
-    publication.parameterTypes.push_back(typeOf(parameter));
+  publication.parameterTypes = record->parameterTypes;
+  publication.lifetimeContract = record->lifetimeContract;
   const auto summary =
       normalizedCompleteBorrow(publication, constructor.parameters(),
                                ReceiverMutability::Consuming, complete);

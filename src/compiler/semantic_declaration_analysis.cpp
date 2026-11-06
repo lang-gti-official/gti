@@ -7840,8 +7840,36 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
     if (owner.kind == ClassKind::Union) {
       continue;
     }
-    const auto dependencies =
-        storedReferencePaths(SemanticType::classType(owner.id));
+    const SemanticType ownerType = openClassType(owner.id);
+    const auto dependencies = storedReferencePaths(ownerType);
+    const auto validateExclusiveBindings = [&](const ConstructorInfo &constructor) {
+      const auto bindings = storedCarrierConstructorBindings(
+          ownerType, constructor.declaration, constructor.parameterTypes);
+      for (std::size_t index = 0; index < bindings.size(); ++index)
+        for (std::size_t earlier = 0; earlier < index; ++earlier) {
+          const auto &left = bindings[earlier];
+          const auto &right = bindings[index];
+          if (left.parameter != right.parameter || left.sourceFields != right.sourceFields ||
+              (left.destination.reference.referenceAccess != AccessMode::Mutable &&
+               right.destination.reference.referenceAccess != AccessMode::Mutable))
+            continue;
+          const bool mutuallyExclusive = std::any_of(
+              left.destination.conditions.begin(), left.destination.conditions.end(),
+              [&](const auto &condition) {
+                return std::any_of(right.destination.conditions.begin(),
+                                   right.destination.conditions.end(), [&](const auto &other) {
+                  return condition.subobject == other.subobject &&
+                         condition.enumeration == other.enumeration &&
+                         condition.variant != other.variant;
+                });
+              });
+          if (!mutuallyExclusive)
+            report(right.destination.fields.front().name(),
+                   "Stored reference fields cannot duplicate an exclusive "
+                   "dependency from the same constructor parameter.",
+                   "GTI-S2045");
+        }
+    };
     if (std::any_of(
             dependencies.begin(), dependencies.end(),
             [](const auto &path) { return !path.conditions.empty(); })) {
@@ -7853,27 +7881,15 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
                "A conditionally borrowed value requires a declared constructor "
                "with a complete checked field-initialization contract.",
                "GTI-S2045");
-      // The guarded set may come from a payload-enum field. A field whose
-      // class is itself a conditional carrier would nest one carrier's
-      // guarded set inside another's, which is not yet a supported view graph.
-      for (const FieldInfo &field : owner.fields) {
-        if (field.declaration == nullptr || field.declaration->type().reference)
-          continue;
-        const auto member =
-            owner.members.find(field.declaration->name().lexeme);
-        if (member == owner.members.end() ||
-            member->second.symbol.type.kind != SemanticType::Class)
-          continue;
-        const auto nested = storedReferencePaths(member->second.symbol.type);
-        if (std::any_of(nested.begin(), nested.end(), [](const auto &path) {
-              return !path.conditions.empty();
-            }))
-          report(field.declaration->name(),
-                 "Borrowed field state must use checked stored-reference "
-                 "paths through ordinary nominal fields; fallible and other "
-                 "non-nominal carriers cannot be stored as fields.",
-                 "GTI-S2045");
-      }
+      // Nested class fields and independent enum fields use the same finite
+      // typed inventory. Open generic declarations retain symbolic paths;
+      // their concrete constructor query must establish completeness before
+      // publishing a result. No symbolic inventory certifies an empty branch.
+      if (!containsOpenTypeParameter(ownerType) && !storedReferenceInventory(ownerType))
+        report(owner.name,
+               "Conditionally borrowed fields require a complete finite "
+               "nominal storage inventory.",
+               "GTI-S2045");
       // As for an unconditional nested carrier, a borrowed field takes its
       // carrier from an exact by-value parameter (optionally moved) or builds
       // it in place. Copying the carrier out of a reference parameter would
@@ -7882,6 +7898,7 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       for (const ConstructorInfo &constructor : owner.constructors) {
         if (constructor.declaration == nullptr)
           continue;
+        validateExclusiveBindings(constructor);
         const auto &parameters = constructor.declaration->parameters();
         for (const auto &initializer :
              constructor.declaration->initializers()) {
@@ -7936,28 +7953,9 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
                "GTI-S2045");
       }
       for (ConstructorInfo &constructor : owner.constructors) {
-        const auto bindings = storedCarrierConstructorBindings(
-            SemanticType::classType(owner.id), constructor.declaration,
-            constructor.parameterTypes);
-        for (std::size_t index = 0; index < bindings.size(); ++index) {
-          for (std::size_t earlier = 0; earlier < index; ++earlier) {
-            const auto &left = bindings[earlier];
-            const auto &right = bindings[index];
-            if (left.parameter == right.parameter &&
-                left.sourceFields == right.sourceFields &&
-                (left.destination.reference.referenceAccess ==
-                     AccessMode::Mutable ||
-                 right.destination.reference.referenceAccess ==
-                     AccessMode::Mutable)) {
-              report(right.destination.fields.front().name(),
-                     "Stored reference fields cannot duplicate an exclusive "
-                     "dependency from the same constructor parameter.",
-                     "GTI-S2045");
-            }
-          }
-        }
+        validateExclusiveBindings(constructor);
         constructor.borrowParameters = storedCarrierConstructorParameters(
-            SemanticType::classType(owner.id), constructor,
+            ownerType, constructor,
             constructor.parameterTypes);
         if (constructor.borrowParameters.empty()) {
           report(constructor.declaration->name(),
@@ -7989,7 +7987,7 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       const auto member = owner.members.find(field.declaration->name().lexeme);
       if (member != owner.members.end() &&
           typeTraits(member->second.symbol.type).containsBorrowedState &&
-          !storedReferencePath(SemanticType::classType(owner.id))) {
+          !storedReferencePath(ownerType)) {
         report(
             field.declaration->name(),
             "Borrowed field state must use checked stored-reference paths "
@@ -7999,7 +7997,6 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       }
     }
     if (!owner.storedReference) {
-      const SemanticType ownerType = SemanticType::classType(owner.id);
       const auto path = storedReferencePath(ownerType);
       if (path) {
         if (owner.constructors.empty()) {
@@ -8040,7 +8037,7 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
         continue;
       }
       const auto bindings = storedCarrierConstructorBindings(
-          SemanticType::classType(owner.id), constructor.declaration,
+          ownerType, constructor.declaration,
           constructor.parameterTypes);
       if (bindings.size() == 1) {
         constructor.borrowParameter = bindings.front().parameter;

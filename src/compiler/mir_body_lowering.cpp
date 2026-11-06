@@ -4435,18 +4435,125 @@ private:
                                                 : std::vector<SymbolId>{};
   }
 
-  void recordLoanIdentity(MirLoanId id, const HirLoan &loan,
+  // Preserve the semantic binding's already-checked view without changing
+  // a producer group's condition domain. This walks exact typed subobjects;
+  // the program verifier independently proves the forward lifetime conversion
+  // and compares each binding's executable contents before using this group.
+  [[nodiscard]] std::optional<std::vector<BorrowDependencyCondition>>
+  conditionTypeView(const SemanticType &from, const SemanticType &to,
+                    std::span<const BorrowDependencyCondition> conditions) const {
+    if (!sameLifetimeConversionShape(from, to))
+      return std::nullopt;
+    std::vector<BorrowDependencyCondition> result;
+    for (const auto &condition : conditions) {
+      SemanticType left = from, right = to;
+      std::vector<SymbolId> prefix;
+      for (const auto symbol : condition.subobject) {
+        std::optional<SemanticType> leftField, rightField;
+        if (left.kind == SemanticType::Class && right.kind == SemanticType::Class) {
+          const auto a = hirLifetimeInstanceView(program.classInstances(), left);
+          const auto b = hirLifetimeInstanceView(program.classInstances(), right);
+          if (!a || !b || a->instance->id != b->instance->id)
+            return std::nullopt;
+          for (const auto &field : a->instance->fields)
+            if (field.info.symbol == symbol) {
+              if (leftField) return std::nullopt;
+              leftField = substituteTypeLifetimes(field.info.type, a->bindings);
+              rightField = substituteTypeLifetimes(field.info.type, b->bindings);
+            }
+        } else if (left.kind == SemanticType::Enum && right.kind == SemanticType::Enum) {
+          const auto a = hirLifetimeInstanceView(program.enumDeclarations(), left);
+          const auto b = hirLifetimeInstanceView(program.enumDeclarations(), right);
+          if (!a || !b || a->instance != b->instance)
+            return std::nullopt;
+          const BorrowDependencyCondition *ancestor = nullptr;
+          for (const auto &guard : conditions)
+            if (guard.subobject == prefix) {
+              if (ancestor || guard.enumeration != left)
+                return std::nullopt;
+              ancestor = &guard;
+            }
+          if (!ancestor || ancestor->variant >= a->instance->enumerators.size())
+            return std::nullopt;
+          const auto &variant = a->instance->enumerators[ancestor->variant];
+          if (variant.variantIndex != ancestor->variant ||
+              variant.payloadSymbols.size() != variant.payloadTypes.size())
+            return std::nullopt;
+          for (std::size_t index = 0; index < variant.payloadSymbols.size(); ++index)
+            if (variant.payloadSymbols[index] == symbol) {
+              if (leftField) return std::nullopt;
+              leftField = substituteTypeLifetimes(variant.payloadTypes[index], a->bindings);
+              rightField = substituteTypeLifetimes(variant.payloadTypes[index], b->bindings);
+            }
+        } else if (left.kind == SemanticType::Lambda && right.kind == SemanticType::Lambda) {
+          const auto a = hirLifetimeInstanceView(program.lambdaInstances(), left);
+          const auto b = hirLifetimeInstanceView(program.lambdaInstances(), right);
+          if (!a || !b || a->instance->id != b->instance->id)
+            return std::nullopt;
+          for (const auto &capture : a->instance->captures)
+            if (capture.bindingSymbol == symbol) {
+              if (leftField) return std::nullopt;
+              leftField = substituteTypeLifetimes(capture.type, a->bindings);
+              rightField = substituteTypeLifetimes(capture.type, b->bindings);
+            }
+        } else {
+          return std::nullopt;
+        }
+        if (!leftField || !rightField)
+          return std::nullopt;
+        left = *leftField;
+        right = *rightField;
+        prefix.push_back(symbol);
+      }
+      const auto view = hirLifetimeInstanceView(program.enumDeclarations(), right);
+      if (left != condition.enumeration || !view || !view->instance->payload ||
+          right.kind != SemanticType::Enum || left.enumId != right.enumId ||
+          condition.variant >= view->instance->enumerators.size() ||
+          view->instance->enumerators[condition.variant].variantIndex != condition.variant)
+        return std::nullopt;
+      auto mapped = condition;
+      mapped.enumeration = right;
+      result.push_back(std::move(mapped));
+    }
+    return result;
+  }
+
+  void recordLoanIdentity(MirLoanId id, const HirLoan &recorded,
                           HirBindingId binding = 0) {
     if (id == 0 || id > output.loans.size()) {
       valid = false;
       return;
     }
+    MirLoan &lowered = output.loans[id - 1];
+    std::optional<HirLoan> producerView;
+    const auto *target = binding ? findBinding(binding) : nullptr;
+    const auto *producer = lowered.producedBy ? findValue(lowered.producedBy) : nullptr;
+    const auto *entry = lowered.entry ? output.findPlace(lowered.source) : nullptr;
+    const SemanticType *domain = producer ? &producer->info.type
+        : entry && entry->initiallyAvailable &&
+              (entry->root == MirPlaceRootKind::Binding || entry->root == MirPlaceRootKind::This) &&
+              entry->projections.empty() ? &entry->type : nullptr;
+    const bool conditional = !recorded.conditions.empty() ||
+        std::any_of(recorded.additionalDependencies.begin(), recorded.additionalDependencies.end(),
+                    [](const auto &item) { return !item.conditions.empty(); });
+    if (lowered.kind == MirLoanKind::Stored && target && domain &&
+        target->info.type != *domain && conditional) {
+      producerView = recorded;
+      const auto conditions = conditionTypeView(target->info.type, *domain, recorded.conditions);
+      if (!conditions) { valid = false; return; }
+      producerView->conditions = *conditions;
+      for (auto &dependency : producerView->additionalDependencies) {
+        const auto conditions = conditionTypeView(target->info.type, *domain, dependency.conditions);
+        if (!conditions) { valid = false; return; }
+        dependency.conditions = *conditions;
+      }
+    }
+    const HirLoan &loan = producerView ? *producerView : recorded;
     if (const auto found = semanticLoans.find(loan.semanticLoan);
         found != semanticLoans.end() && found->second != id) {
       valid = false;
       return;
     }
-    MirLoan &lowered = output.loans[id - 1];
     if (lowered.semanticLoan != 0 &&
         lowered.semanticLoan != loan.semanticLoan) {
       valid = false;

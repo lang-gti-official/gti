@@ -4,12 +4,9 @@
 #include "gti/hir.h"
 #include "gti/mir_constant_evaluator.h"
 #include "gti/mir_lowering.h"
-#include "gti/mir_verifier.h"
 
 #include <algorithm>
-#include <cstdlib>
 #include <functional>
-#include <iostream>
 #include <span>
 
 namespace lang {
@@ -1171,18 +1168,6 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     stagedDetail += " " + typeSpelling(type);
   stagedDetail += " args=" + std::to_string(arguments.size());
   const PhaseTimeScope stagedScope("constexpr-staged-mir", stagedDetail);
-  // Temporary phase trace for the remaining prerequisite fixture. It does
-  // not affect availability, lowering, fallback, or execution decisions.
-  const auto *traceUnit = sourceGraph->findUnit(sourceUnitFor(callSite));
-  const bool tracePrerequisite = requestSession.privateConstexprPrerequisites &&
-      std::getenv("GTI_TRACE_PRIVATE_LIFETIME") && traceUnit &&
-      traceUnit->path.filename() == "private-lifetime-constructor.gti";
-  const auto traceFailure = [&](std::string detail) {
-    static thread_local std::size_t count = 0;
-    if (tracePrerequisite && count++ < 24)
-      std::cerr << "[private-staging] " << stagedDetail.substr(0, 160)
-                << ": " << detail.substr(0, 600) << '\n';
-  };
   if (closure != nullptr) {
     notePrivateLifetimeOpaqueDependency();
     context.work->steps += closure->steps;
@@ -1256,10 +1241,6 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                                                  substitution, constructors, sourceAuthority);
     }();
     if (!hir.valid()) {
-      traceFailure("HIR rejected; required=" + std::to_string(hir.requiredSemanticBodies.size()) +
-                   " diagnostics=" + std::to_string(hir.diagnostics.size()) +
-                   " functions=" + std::to_string(hir.program.functionInstances().size()) +
-                   " constructors=" + std::to_string(hir.program.constructorInstances().size()));
       if (hasErrorDiagnostics(hir.diagnostics)) {
         diagnostics.insert(diagnostics.end(), hir.diagnostics.begin(),
                            hir.diagnostics.end());
@@ -1282,8 +1263,6 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                                             entry->path);
     }();
     if (!metadata.valid()) {
-      traceFailure("failure metadata rejected: " +
-                   (metadata.errors.empty() ? std::string{} : metadata.errors.front()));
       return std::nullopt;
     }
     auto mir = [&] {
@@ -1291,20 +1270,6 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       return MirLowerer().lower(hir.program, metadata.metadata);
     }();
     if (!mir.valid()) {
-      traceFailure("MIR rejected; errors=" + std::to_string(mir.errors.size()));
-      for (std::size_t index = 0; index < std::min<std::size_t>(3, mir.errors.size()); ++index) {
-        const auto &error = mir.errors[index];
-        traceFailure("  owner=" + std::to_string(error.body.owner) +
-                     " instruction=" + std::to_string(error.instruction) + " " + error.message);
-      }
-      if (tracePrerequisite && mir.errors.empty()) {
-        const auto proof = verifyMirProgram(mir.program);
-        for (std::size_t index = 0; index < std::min<std::size_t>(3, proof.errors.size()); ++index) {
-          const auto &error = proof.errors[index];
-          traceFailure("  verifier owner=" + std::to_string(error.owner) +
-                       " instruction=" + std::to_string(error.instruction) + " " + error.message);
-        }
-      }
       return std::nullopt;
     }
     MirBodyAddress root;
@@ -1407,7 +1372,6 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   // failures are authoritative and must never be retried in the AST driver.
   if (result.failure == ConstantEvaluationFailure::UnsupportedExpression ||
       result.failure == ConstantEvaluationFailure::UnsupportedType) {
-    traceFailure("execution unsupported: " + result.detail);
     if (!requiresMir)
       return std::nullopt;
     // The compatibility walker does not own reference or receiver mutation.

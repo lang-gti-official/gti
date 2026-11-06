@@ -1133,6 +1133,62 @@ int main() { return 0; }
 )");
   expect(!wrong.semanticValid,
          "matching payload spelling does not substitute a different enum declaration");
+
+  const auto pair = analyze(R"(
+enum Reading<lifetime a> { ready(int&<a> value), missing(int code) };
+struct Pair<lifetime a, lifetime b> {
+  Reading<a> first;
+  Reading<b> second;
+  Pair(Reading<a> left, Reading<b> right) : first(left), second(right) {}
+  Pair(int code) : first(Reading<a>::missing(code)), second(Reading<b>::missing(code)) {}
+};
+void repeat<lifetime a>(Reading<a> source) {
+  let pair = Pair<a, a>{source, source};
+}
+int main() { let empty = Pair<static, static>{0}; return 0; }
+)");
+  expectValid(pair, "independent conditional fields preserve complete constructor domains");
+  const auto *pairOwner = record(pair, "Pair");
+  const auto *pairLifecycle = pairOwner && pairOwner->declaration
+      ? pair.semantics.findClassLifecycle(*pairOwner->declaration) : nullptr;
+  bool completePair = false;
+  bool completeEmpty = false;
+  if (pairLifecycle)
+    for (const auto &constructor : pairLifecycle->constructors) {
+      if (!constructor.completeBorrow)
+        continue;
+      const auto &summary = *constructor.completeBorrow;
+      if (constructor.parameterTypes.size() == 2)
+        completePair |= summary.dependencies.size() == 2 &&
+            summary.possibleAlternatives.size() == 4 &&
+            summary.dependencies[0].resultFields.size() == 2 &&
+            summary.dependencies[1].resultFields.size() == 2 &&
+            summary.dependencies[0].resultFields.front() !=
+                summary.dependencies[1].resultFields.front();
+      if (constructor.parameterTypes.size() == 1)
+        completeEmpty |= summary.dependencies.empty() &&
+            summary.possibleAlternatives.size() == 2;
+    }
+  expect(completePair, "constructor publication retains both independent guarded field paths");
+  expect(completeEmpty, "two selected empty fields publish two domains and no borrowed origin");
+
+  const auto exclusive = analyze(R"(
+enum Exclusive<lifetime a> { ready(mut int&<a> value), missing(int code) };
+struct Duplicated<lifetime a> {
+  Exclusive<a> first;
+  Exclusive<a> second;
+  Duplicated(mut int&<a> value)
+      : first(Exclusive<a>::ready(value)), second(Exclusive<a>::ready(value)) {}
+};
+int main() { return 0; }
+)");
+  expect(!exclusive.semanticValid &&
+             std::any_of(exclusive.diagnostics.begin(), exclusive.diagnostics.end(),
+                         [](const auto &diagnostic) {
+               return diagnostic.code == "GTI-S2045" &&
+                   diagnostic.message.find("duplicate an exclusive") != std::string::npos;
+             }),
+         "independent conditional fields cannot duplicate one exclusive source");
 }
 
 void testNamedProjectedPatternLifetimes() {
@@ -1236,7 +1292,7 @@ int32_t length(std::string_view value) { return 0; }
 int32_t named<lifetime a>(std::string_view<a> value) { return 0; }
 Count selected() { return length; }
 Count namedTarget() { return named; }
-struct Holder { Count callback; Holder(Count value) : callback(value) {} };
+struct Holder { Count callback = nullptr; Holder(Count value) : callback(value) {} };
 int32_t invoke<lifetime a>(Count callback, std::string_view<a> value) {
   unsafe { return callback(value); }
 }
