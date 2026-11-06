@@ -536,10 +536,24 @@ static int& recurse(bool done, int& selected, int& ignored) {
   if (done) { return selected; }
   return recurse(true, selected, ignored);
 }
+static int& both(bool chooseFirst, int& firstValue, int& secondValue) {
+  if (chooseFirst) { return firstValue; }
+  return secondValue;
+}
+static int& mutualFirst(bool done, int& selected, int& ignored) {
+  if (done) { return selected; }
+  return mutualSecond(true, selected, ignored);
+}
+static int& mutualSecond(bool done, int& selected, int& ignored) {
+  return mutualFirst(done, selected, ignored);
+}
+int&<a> explicitRelay<lifetime a, lifetime b>(int&<a> selected, int&<b> ignored) {
+  return first(selected, ignored);
+}
 int main() { int firstValue = 1; int secondValue = 2; return first(firstValue, secondValue) + recurse(false, firstValue, secondValue); }
 )");
   expectValid(result, "private omitted lifetime contracts infer selected and recursive suppliers");
-  for (const auto name : {"first", "recurse"}) {
+  for (const auto name : {"first", "recurse", "mutualFirst", "mutualSecond"}) {
     const auto *info = function(result, name);
     if (!info) {
       expect(false, "private helper metadata is available");
@@ -558,10 +572,23 @@ int main() { int firstValue = 1; int secondValue = 2; return first(firstValue, s
                               info->returnType.referenceLifetime),
            "private recursive fixed point preserves only productive return suppliers");
   }
+  const auto *both = function(result, "both");
+  lang::LifetimeBounds bothBounds;
+  if (both)
+    for (const auto edge : both->lifetimeContract.bounds)
+      (void)bothBounds.assume(edge.longer, edge.shorter);
+  expect(both && both->parameterTypes.size() == 3 &&
+             bothBounds.proves(both->parameterTypes[1].referenceLifetime,
+                               both->returnType.referenceLifetime) &&
+             bothBounds.proves(both->parameterTypes[2].referenceLifetime,
+                               both->returnType.referenceLifetime),
+         "distinct return paths infer every permitted supplier");
   for (const std::string source : {
            "int& publicBoundary(int& first, int& second) { return first; } int main() { return 0; }",
            "static int&<a> explicitBoundary<lifetime a, lifetime b>(int&<a> first, int&<b> second) { return second; } int main() { return 0; }",
-           "static int& dangling(int& first, int& second) { int local = 0; return local; } int main() { return 0; }"}) {
+           "static int& dangling(int& first, int& second) { int local = 0; return local; } int main() { return 0; }",
+           "static int& both(bool chooseFirst, int& first, int& second) { if (chooseFirst) { return first; } return second; } int&<a> escape<lifetime a, lifetime b>(int&<a> first, int&<b> second) { return both(false, first, second); } int main() { return 0; }",
+           "static int& unproductive(int& first, int& second) { return unproductive(first, second); } int main() { return 0; }"}) {
     const auto invalid = analyze(source);
     expect(!invalid.semanticValid,
            "private inference cannot change a public/explicit contract or export a local region");
