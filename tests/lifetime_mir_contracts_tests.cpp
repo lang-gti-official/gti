@@ -105,8 +105,16 @@ int main() { int value = 7; return inspect(value) - 7; }
   if (!receiver.canGenerateCode()) {
     for (const auto &diagnostic : receiver.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    if (const auto *method = receiver.mir.findFunctionInstance(3))
+      std::cerr << MirPrinter{}.print(method->body);
     expect(false, "method calls must apply the owner's lifetime universe");
   }
+  for (const auto &function : receiver.mir.functionInstances())
+    if (function.returnType.kind == SemanticType::Int32)
+      for (const auto &block : function.body.blocks)
+        if (block.terminator.kind == MirTerminatorKind::Return)
+          expect(!block.terminator.returnLoan,
+                 "loading a scalar through a stored reference must not export an address loan");
   auto forgedReceiver = receiver.mir;
   bool receiverMutationChecked = false;
   for (const auto &function : forgedReceiver.functionInstances())
@@ -271,6 +279,26 @@ int main() {
   }
   expect(changedCopySource && !verifyMirProgram(wrongCopiedCarrier).valid(),
          "a same-type copy of another carrier cannot use the original carrier's parent loan");
+  auto missingStoredAddress = copiedCarrier.mir;
+  bool removedStoredAddress = false;
+  for (const auto address : enumerateMirBodyAddresses(missingStoredAddress))
+    if (auto *body = findMirBody(missingStoredAddress, address))
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions) {
+          if (instruction.kind != MirInstructionKind::Borrow || !instruction.loan ||
+              instruction.operands.size() != 1)
+            continue;
+          auto &operand = instruction.operands.front();
+          const auto *published = body->findLoan(*instruction.loan);
+          const auto *entry = body->findLoan(operand.loan);
+          if (published && published->kind == MirLoanKind::Return && entry && entry->entry &&
+              entry->kind == MirLoanKind::Stored && operand.kind == MirOperandKind::Loan && operand.place) {
+            operand.place = 0;
+            removedStoredAddress = true;
+          }
+        }
+  expect(removedStoredAddress && !verifyMirProgram(missingStoredAddress).valid(),
+         "stored-reference publication must preserve the exact evaluated field address");
   const auto physical = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "physical-payload-contract.gti", R"gti(
 enum State<T> { value(T item) };

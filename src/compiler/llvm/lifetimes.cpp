@@ -142,15 +142,16 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
             selected.payloadField.has_value())
       throw BackendUnsupportedError(
           "LLVM cleanup requires its later ownership/dispatch milestone");
-    const auto *payload =
-        selected.type.kind == SemanticType::Enum
-            ? session.program().mir().findPayloadEnum(selected.type)
-            : nullptr;
+    const auto enumView = selected.type.kind == SemanticType::Enum
+                              ? mirEnumLifetimeView(session.program().mir(), selected.type)
+                              : std::nullopt;
+    const auto *payload = enumView ? enumView->payload : nullptr;
     const auto *lambda =
         closure ? closureCleanupInstance(session.program().mir(), selected)
                 : nullptr;
+    const auto lambdaView = lambda ? mirLambdaLifetimeView(*lambda, selected.type) : std::nullopt;
     if (closure &&
-        (!lambda || lambda->captureTypes.size() != lambda->captureModes.size()))
+        (!lambdaView || lambda->captureTypes.size() != lambda->captureModes.size()))
       throw std::logic_error(
           "LLVM closure cleanup lost its sealed lambda identity");
     if (selected.type.kind == SemanticType::Class) {
@@ -210,9 +211,12 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
     for (const auto &child : selected.aggregate) {
       if (closure) {
         // Each closure child is one owned, non-borrowing capture in its slot.
-        if (!child.captureIndex ||
-            *child.captureIndex >= lambda->captureTypes.size() ||
-            lambda->captureTypes[*child.captureIndex] != child.type ||
+        const auto captureType = child.captureIndex &&
+                                         *child.captureIndex < lambda->captureTypes.size()
+                                     ? lambdaView->instantiate(lambda->captureTypes[*child.captureIndex])
+                                     : std::nullopt;
+        if (!child.captureIndex || !captureType ||
+            *captureType != child.type ||
             isBorrowingCapture(lambda->captureModes[*child.captureIndex]) ||
             child.uniqueOwnerField || child.uniqueOwnerBase ||
             child.payloadVariant || child.payloadField)
@@ -228,18 +232,35 @@ void Lifetimes::preflightCleanup(Session &session, Dispatch &dispatch,
             *child.payloadVariant >= payload->variants.size() ||
             *child.payloadField >=
                 payload->variants[*child.payloadVariant].payloadTypes.size() ||
-            payload->variants[*child.payloadVariant]
-                    .payloadTypes[*child.payloadField] != child.type)
+            enumView->instantiate(payload->variants[*child.payloadVariant]
+                                      .payloadTypes[*child.payloadField]) != child.type)
           throw std::logic_error(
               "LLVM payload cleanup lost its exact alternative field");
         static_cast<void>(session.layouts().payload(selected.type));
       } else if (!selected.fixedArray) {
-        if (child.uniqueOwnerField)
-          static_cast<void>(session.layouts().fieldIndex(
-              selected.type, child.uniqueOwnerField));
-        else if (child.uniqueOwnerBase)
-          static_cast<void>(session.layouts().baseIndex(
-              selected.type, *child.uniqueOwnerBase));
+        if (child.uniqueOwnerField || child.uniqueOwnerBase) {
+          const auto view = mirClassLifetimeView(session.program().mir(), selected.type);
+          std::optional<SemanticType> actual;
+          if (view && child.uniqueOwnerField) {
+            for (const auto &field : view->instance->declaredFields)
+              if (field.symbol == child.uniqueOwnerField) {
+                if (actual) throw std::logic_error("LLVM cleanup has ambiguous field storage");
+                actual = view->instantiate(field.type);
+              }
+          } else if (view) {
+            for (const auto &base : view->instance->bases)
+              if (base.instance == *child.uniqueOwnerBase) {
+                if (actual) throw std::logic_error("LLVM cleanup has ambiguous base storage");
+                actual = view->instantiate(base.type);
+              }
+          }
+          if (!actual || *actual != child.type)
+            throw std::logic_error("LLVM cleanup lost its exact substituted subobject type");
+          if (child.uniqueOwnerField)
+            static_cast<void>(session.layouts().fieldIndex(selected.type, child.uniqueOwnerField));
+          else
+            static_cast<void>(session.layouts().baseIndex(selected.type, *child.uniqueOwnerBase));
+        }
         else if (mutexPayload && selected.aggregate.size() == 1 &&
                  child.type == *mutexPayload)
           static_cast<void>(session.layouts().mutexStorage(selected.type));
@@ -1619,11 +1640,15 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
     if (selected.type.kind == SemanticType::Lambda) {
       const auto *instance = closureCleanupInstance(program, selected);
       const auto environment = closureEnvironmentLayout(program, selected.type);
+      auto exactEnvironment = instance ? closureEnvironmentLayout(*instance) : ClosureEnvironmentLayout{};
+      if (instance)
+        exactEnvironment.captureTypes.assign(selected.type.lambdaCaptureTypes().begin(),
+                                              selected.type.lambdaCaptureTypes().end());
       if (!instance || !environment ||
           instance->captureTypes.size() != instance->captureModes.size() ||
           instance->captureTypes.size() !=
               instance->captureRequiresActiveCleanup.size() ||
-          *environment != closureEnvironmentLayout(*instance))
+          *environment != exactEnvironment)
         throw std::logic_error(
             "LLVM closure cleanup lost its exact compatible identity");
       // Physical agreement never selects a cleanup body. Keep the exact
@@ -1728,15 +1753,12 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
           schedule && schedule->leafClassInstance
               ? program.findClassInstance(*schedule->leafClassInstance)
               : nullptr;
-      const bool specialized = leaf.kind == SemanticType::Class && leafClass &&
-                               leafClass->type.kind == SemanticType::Class &&
-                               leafClass->type.classId == leaf.classId &&
-                               leafClass->type.arguments.empty() &&
-                               leafClass->type.valueArguments.empty();
+      const auto leafView = leaf.kind == SemanticType::Class
+                                ? mirClassLifetimeView(program, leaf) : std::nullopt;
       const bool exactLeaf =
           leaf.kind != SemanticType::Class
               ? schedule && !schedule->leafClassInstance && !recipe.destructor
-              : leafClass && (leafClass->type == leaf || specialized) &&
+              : leafClass && leafView && leafView->instance == leafClass &&
                     leafClass->destructor == recipe.destructor;
       if (recipe.classInstance || recipe.lambdaInstance || !schedule ||
           schedule->extents != extents || schedule->leafType != leaf ||
@@ -1747,8 +1769,9 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       const auto *owner = recipe.classInstance
                               ? program.findClassInstance(*recipe.classInstance)
                               : nullptr;
-      if (!owner || recipe.lambdaInstance || recipe.fixedArray ||
-          owner->type != recipe.type || owner->destructor != recipe.destructor)
+      const auto view = mirClassLifetimeView(program, recipe.type);
+      if (!owner || !view || view->instance != owner || recipe.lambdaInstance || recipe.fixedArray ||
+          owner->destructor != recipe.destructor)
         throw std::logic_error(
             "LLVM cleanup fallback lost its exact class identity");
       if (recipe.destructor) {

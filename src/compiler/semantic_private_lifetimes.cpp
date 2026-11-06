@@ -220,8 +220,15 @@ auto SemanticVisitor::Impl::inferPrivateLifetimeContracts() -> void {
         continue;
       const FunctionInfo function = *found;
       auto worker = unevaluatedExpressionWorker();
-      if (!worker->catalog.sealed)
+      if (!worker->catalog.sealed) {
         worker->catalog.seal();
+        // Inference runs during registration, before the caller's normal
+        // body phase. Sealing changes lookup to the body-flow tables, so
+        // publish the completed declarations there as check/checkResumed do.
+        // Extend retains any already checked prefix-global flow facts.
+        worker->valueFlow.extendBody(worker->catalog);
+      }
+      worker->valueFlow.rebindCallables(worker->catalog);
       worker->requestSession.collectingPrivateLifetimeContracts = true;
       std::vector<SemanticType> ownerTypes, types;
       std::vector<CompileTimeValue> ownerValues, values;

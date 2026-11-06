@@ -270,6 +270,12 @@ textAddressResultLoan(const MirBody &body, const MirInstruction &instruction,
 // dominating initializer chain must establish its typed address, and the return
 // expression must identify the selected alias. Shared by verification and
 // backend admission; carrier membership alone never proves the referent.
+// A scalar result selects one exact unconditional stored-reference path
+// from an input/receiver entry group, preserving its evaluated field pointer.
+// Program verification separately replays the declaration's typed path.
+[[nodiscard]] bool storedReferenceReturnPublication(const MirBody &body,
+                                                    const MirBlock &block,
+                                                    const MirInstruction &instruction);
 [[nodiscard]] bool
 referenceParameterReturnPublication(const MirBody &body, const MirBlock &block,
                                     const MirInstruction &instruction);

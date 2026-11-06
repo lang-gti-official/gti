@@ -467,6 +467,60 @@ referenceInitializerCall(const MirProgram &program,
   return call;
 }
 
+bool storedReferenceReturnPublication(const MirBody &body,
+                                       const MirBlock &block,
+                                       const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Borrow || !instruction.loan ||
+      instruction.operands.size() != 1 || !instruction.hirValue)
+    return false;
+  const auto *published = body.findLoan(*instruction.loan);
+  const auto &operand = instruction.operands.front();
+  const auto *entry = body.findLoan(operand.loan);
+  const auto *runtime = body.findPlace(operand.place);
+  const auto *root = entry ? body.findPlace(entry->source) : nullptr;
+  if (!published || published->kind != MirLoanKind::Return || published->entry ||
+      !published->escapes || published->parent || published->producedBy != instruction.hirValue ||
+      operand.kind != MirOperandKind::Loan || operand.value || !entry || !entry->entry ||
+      entry->kind != MirLoanKind::Stored || entry->escapes || entry->parent ||
+      !runtime || !root || published->source != runtime->id ||
+      published->storedDependency != entry->storedDependency ||
+      !published->additionalDependencies.empty() || !published->designatedFields.empty() ||
+      !published->conditions.empty() || runtime->type != operand.type ||
+      operand.type != instruction.info.type || runtime->foreignStorage ||
+      (published->access == AccessMode::Mutable && runtime->access != AccessMode::Mutable) ||
+      runtime->root != root->root || runtime->symbol != root->symbol ||
+      runtime->binding != root->binding || runtime->capture != root->capture ||
+      (root->root != MirPlaceRootKind::This &&
+       (root->root != MirPlaceRootKind::Binding ||
+        std::find(entry->carriers.begin(), entry->carriers.end(), root->binding) == entry->carriers.end())) ||
+      !root->projections.empty() || runtime->projections.size() < 2 ||
+      runtime->projections.back().kind != MirProjectionKind::Dereference)
+    return false;
+  std::vector<SymbolId> fields;
+  for (auto part = runtime->projections.begin(); part != std::prev(runtime->projections.end()); ++part) {
+    if (part->kind != MirProjectionKind::Field || !part->field)
+      return false;
+    fields.push_back(part->field);
+  }
+  const auto matches = [&](const auto &path, const auto &conditions, AccessMode access) {
+    return fields == path && conditions.empty() &&
+           (published->access == AccessMode::ReadOnly || access == AccessMode::Mutable);
+  };
+  if (!matches(entry->designatedFields, entry->conditions, entry->access) &&
+      std::none_of(entry->additionalDependencies.begin(), entry->additionalDependencies.end(),
+                   [&](const auto &dependency) {
+                     return dependency.source == entry->source &&
+                            matches(dependency.designatedFields, dependency.conditions, dependency.access);
+                   }))
+    return false;
+  const auto current = std::find_if(block.instructions.begin(), block.instructions.end(),
+      [&](const auto &candidate) { return candidate.id == instruction.id; });
+  return current != block.instructions.end() && std::next(current) != block.instructions.end() &&
+         std::next(current)->kind == MirInstructionKind::EndBorrow &&
+         std::next(current)->loan == entry->id &&
+         std::next(current)->hirValue == instruction.hirValue;
+}
+
 bool referenceParameterReturnPublication(const MirBody &body,
                                          const MirBlock &block,
                                          const MirInstruction &instruction) {

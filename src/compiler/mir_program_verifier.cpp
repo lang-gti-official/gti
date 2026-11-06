@@ -14034,7 +14034,26 @@ struct CompleteBorrowFlow {
   std::vector<CompleteBorrowFact> payloadSelectionSources;
   std::vector<CompleteBorrowReturnFact> normalReturns;
   std::unordered_set<MirInstructionId> noNormalBorrowResults;
+  // Populated only for failed claimed values during the final replay, never
+  // while solving the dataflow fixed point or as a premise of that proof.
+  std::unordered_map<MirValueId, std::string> failureReasons;
 };
+
+[[nodiscard]] std::string describeCompleteBorrowFact(const CompleteBorrowFact &fact) {
+  if (!fact)
+    return "unknown";
+  std::string result = std::to_string(fact->dependencies.size()) + " suppliers [";
+  const auto count = std::min<std::size_t>(fact->dependencies.size(), 4);
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto &dependency = fact->dependencies[index];
+    if (index) result += ", ";
+    result += "p" + std::to_string(dependency.source) + "/parent" +
+              std::to_string(dependency.parent) + "/fields" +
+              std::to_string(dependency.designatedFields.size()) + "/guards" +
+              std::to_string(dependency.conditions.size());
+  }
+  return result + "]; alternatives=" + std::to_string(fact->possibleAlternatives.size());
+}
 
 struct CompleteBorrowSourcePath {
   SemanticType referent = SemanticType::Unknown;
@@ -14738,9 +14757,12 @@ completeBorrowSourcePath(const MirProgram &program,
         key.value && key.value <= state.values.size())
       state.values[key.value - 1] = fact;
   };
+  std::string *replayFailure = nullptr;
   const auto retainedCarrierInput = [&](const State &state,
                                         MirPlaceId id) -> Fact {
     auto fact = fromPlace(state, id);
+    if (!fact && replayFailure)
+      *replayFailure = "addressed carrier p" + std::to_string(id) + " has no reconstructed contents";
     if (!fact || !id || id > identities.size())
       return fact;
     const auto &key = identities[id - 1];
@@ -14768,8 +14790,14 @@ completeBorrowSourcePath(const MirProgram &program,
     // The stored capability is authority only for this complete executable
     // value. Never choose a matching primary origin while losing another
     // path, permission or guard. The ordinary loan verifier checks activity.
-    if (retained != fact->dependencies)
+    if (retained != fact->dependencies) {
+      if (replayFailure)
+        *replayFailure = "stored group " + std::to_string(group->id) +
+            " differs from its reconstructed contents: retained " +
+            describeCompleteBorrowFact(MirBorrowDependencySet{.dependencies = retained}) +
+            "; reconstructed " + describeCompleteBorrowFact(fact);
       return std::nullopt;
+    }
     for (auto &dependency : fact->dependencies)
       dependency.parent = group->id;
     return fact;
@@ -15608,11 +15636,16 @@ completeBorrowSourcePath(const MirProgram &program,
         observations.payloadSelectionSources[*instruction.result - 1] =
             extractionSource(state, instruction);
       }
-      execute(state, instruction);
       const auto *value =
           instruction.result ? body.findValue(*instruction.result) : nullptr;
+      std::string failure;
+      replayFailure = value && value->borrowDependencies ? &failure : nullptr;
+      execute(state, instruction);
+      replayFailure = nullptr;
       if (value)
         observations.values[value->id - 1] = state.values[value->id - 1];
+      if (value && !state.values[value->id - 1] && !failure.empty())
+        observations.failureReasons.emplace(value->id, std::move(failure));
     }
     // A function with no reachable normal return has no result evidence. Do
     // not turn the absence of returning paths into a vacuous empty set.
@@ -16896,10 +16929,13 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
       continue;
     return verificationFailure(
         body, owner,
-        value.definition == 0
+        std::string(value.definition == 0
             ? "complete dependency set disagrees with its incoming edge values"
-            : "complete dependency set disagrees with exact producer/storage "
-              "flow",
+            : "complete dependency set disagrees with exact producer/storage flow") +
+            ": claimed " + describeCompleteBorrowFact(value.borrowDependencies) +
+            "; reconstructed " + describeCompleteBorrowFact(flow.values[value.id - 1]) +
+            (flow.failureReasons.contains(value.id)
+                 ? "; " + flow.failureReasons.at(value.id) : ""),
         value.definitionBlock, value.definition);
   }
   return {};

@@ -16410,8 +16410,11 @@ private:
         const bool completeEmpty =
             result && completeEmptyBorrowValue(*statement.value, *result,
                                                output.returnType);
+        // A scalar loaded from a reference place uses its borrow while
+        // evaluating the expression; it does not export that address with
+        // the copied result. Keep expression-specific ownerless facts too.
         if (value != nullptr && value->info.traits.containsBorrowedState &&
-            !completeEmpty) {
+            resolvedTraits(output.returnType).containsBorrowedState && !completeEmpty) {
           MirLoanId retained = loanForValue(*statement.value);
           if (retained == 0 &&
               (output.returnType.kind == SemanticType::Class ||

@@ -14438,7 +14438,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                          "shell's stored dependency",
                          block.id, instruction.id);
         }
-        const bool storedCarrierReturnTransfer = [&] {
+        const bool storedCarrierReturnTransfer =
+            mir_detail::storedReferenceReturnPublication(body, block, instruction) || [&] {
           const bool fieldPublication = body.kind == MirBodyKind::Constructor &&
                                         produced.kind == MirLoanKind::Stored &&
                                         produced.storedField != 0;
