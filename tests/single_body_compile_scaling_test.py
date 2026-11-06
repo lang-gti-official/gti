@@ -96,7 +96,8 @@ def compile_seconds(compiler: str, source: Path, timeout: float,
             (after.ru_stime - before.ru_stime))
 
 
-def profile(compiler: str, *, mir: bool) -> float:
+def profile(compiler: str, *, mir: bool) -> bool:
+    """Measure one profile; report and return False when growth exceeds its limit."""
     # The native check includes LLVM and linking. The larger MIR-only case
     # prevents fixed native-toolchain costs from hiding verifier regressions.
     small_size, limit = (90, 6.0) if mir else (SMALL, GROWTH_LIMIT)
@@ -131,9 +132,10 @@ def profile(compiler: str, *, mir: bool) -> float:
     growth = statistics.median(growth_samples)
     print(f"{label} median body growth {growth:.2f}x for 4x statements")
     if growth > limit:
-        raise SystemExit(f"{label} single-body compile time grew {growth:.2f}x "
-                         f"for 4x statements (limit {limit:.0f}x)")
-    return growth
+        print(f"{label} single-body compile time grew {growth:.2f}x "
+              f"for 4x statements (limit {limit:.0f}x)", file=sys.stderr)
+        return False
+    return True
 
 
 def main() -> int:
@@ -143,10 +145,10 @@ def main() -> int:
               file=sys.stderr)
         return 2
     compiler = sys.argv[1]
-    if len(sys.argv) == 2:
-        profile(compiler, mir=False)
-    profile(compiler, mir=True)
-    return 0
+    # Run both profiles even when the first fails, so one report shows both.
+    passed = profile(compiler, mir=False) if len(sys.argv) == 2 else True
+    passed = profile(compiler, mir=True) and passed
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":
