@@ -19,8 +19,12 @@ DECLARATIONS = (
                )
 
 SOURCE = """import "messages.gti";
+class Resource { public: Resource() {} ~Resource() {} };
+enum Owned { Empty, Item(Resource resource) };
+void forward<Args...>(Args... args) {}
 using Count = Message<int32_t>;
 int main() {
+  forward(Owned::Item(Resource()));
   // The supplementary character tests UTF-16 navigation below.
   /* 😀 */ auto first = Count::item(1, int64_t(2));
   auto second = Message<bool, bool, 7>::item(true, false);

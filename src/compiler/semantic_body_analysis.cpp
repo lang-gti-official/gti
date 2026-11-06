@@ -411,6 +411,16 @@ auto SemanticVisitor::Impl::containsOwningPayloadEnum(
 auto SemanticVisitor::Impl::validateOwningPayloadEnumByValueBoundary(
     const SemanticType &type, const Token &location, std::string_view boundary,
     bool directTransport) -> void {
+  if (type.kind == SemanticType::TypePack) {
+    // A concrete parameter pack expands into independent formals, not an
+    // aggregate that contains their ownership. Apply the ordinary boundary
+    // contract to every element, retaining the callable's eligibility.
+    for (const auto &element : type.arguments) {
+      validateOwningPayloadEnumByValueBoundary(element, location, boundary,
+                                               directTransport);
+    }
+    return;
+  }
   if (!containsOwningPayloadEnum(type)) {
     return;
   }

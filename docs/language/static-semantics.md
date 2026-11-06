@@ -1759,7 +1759,12 @@ compiler error. Reference-field selection and borrowed-value extraction are
 distinct operations.
 
 Concrete generic free functions, methods, and constructors use that same
-ordered transport contract. A type argument mentioning the enum does not by
+ordered transport contract. Concrete by-value parameter packs apply this
+contract to each expanded formal, including owning payload enums mixed with
+ordinary values. Forwarding copies copyable elements and transfers move-only
+elements under the existing pack rules. A pack is not an aggregate containment
+boundary; each element retains its own cleanup and callable eligibility.
+Unsupported elements are diagnosed using their concrete type. A type argument mentioning the enum does not by
 itself create an ownership edge; concrete fields and declaration-bound storage
 capabilities determine containment and cleanup. This permits ordinary owning
 collections and inline optional storage of the enum without public-library

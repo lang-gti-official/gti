@@ -6731,13 +6731,11 @@ private:
                             : HirCallInputKind::ReadBorrow;
           } else if (orderedValueParameterType(element)) {
             inputKind = HirCallInputKind::Value;
-          } else if ((element.kind == SemanticType::Class ||
-                      element.kind == SemanticType::Lambda) &&
+          } else if (orderedOwningParameterType(element) &&
                      (!traits.containsBorrowedState || storedEntry) &&
                      traits.copyable) {
             inputKind = HirCallInputKind::CopyValue;
-          } else if ((element.kind == SemanticType::Class ||
-                      element.kind == SemanticType::Lambda) &&
+          } else if (orderedOwningParameterType(element) &&
                      (!traits.containsBorrowedState || storedEntry) &&
                      traits.movable) {
             inputKind = HirCallInputKind::MoveValue;

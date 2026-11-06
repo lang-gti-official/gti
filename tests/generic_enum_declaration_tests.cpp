@@ -587,9 +587,116 @@ void testCrossNominalDefaultsAndFiniteLayouts() {
            "recursive omitted-default dependencies");
   }
 }
+void testOwningEnumPacks() {
+  const std::string declarations = R"(
+class Token {
+public:
+  Token() {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  ~Token() {}
+};
+enum Event { Empty, Owned(Token token) };
+)";
+  const auto positive =
+      lang::Frontend().analyze("owning-enum-pack.gti", declarations + R"(
+void sink<Args...>(Args... args) {}
+void relay<Args...>(Args... args) { sink(args...); }
+int main() { relay(); relay(1, Event::Owned(Token()), Event::Empty); return 0; }
+)");
+  expect(positive.canGenerateCode(),
+         "owning enum pack elements use ordinary verified parameter transport");
+  if (!positive.canGenerateCode())
+    for (const auto &diagnostic : positive.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+
+  if (positive.canGenerateCode()) {
+    auto forged = positive.mir;
+    bool removed = false;
+    for (auto &function : lang::MirProgramTestAccess::functions(forged)) {
+      for (auto &block : function.body.blocks) {
+        for (auto &instruction : block.instructions) {
+          if (!removed && instruction.kind == lang::MirInstructionKind::Move &&
+              instruction.info.type.kind == lang::SemanticType::Enum &&
+              instruction.ownership && !instruction.operands.empty()) {
+            const auto *place =
+                function.body.findPlace(instruction.operands.front().place);
+            if (place == nullptr ||
+                std::none_of(place->projections.begin(),
+                             place->projections.end(),
+                             [](const auto &projection) {
+                               return projection.kind ==
+                                      lang::MirProjectionKind::PackElement;
+                             }))
+              continue;
+            instruction.ownership.reset();
+            removed = true;
+          }
+        }
+      }
+    }
+    expect(removed,
+           "expanded enum transfer has an explicit MIR ownership event");
+    expect(removed && !lang::verifyMirProgram(forged).valid(),
+           "MIR rejects an enum pack transfer without its ownership event");
+  }
+
+  const auto restricted =
+      lang::Frontend().analyze("virtual-enum-pack.gti", declarations + R"(
+class Target<Args...> {
+public:
+  Target() {}
+  virtual void accept(Args... args) {}
+};
+int main() {
+  Target<Event> target{};
+  target.accept(Event::Owned(Token()));
+  return 0;
+}
+)");
+  expect(!restricted.canGenerateCode(),
+         "pack expansion does not admit polymorphic owning enum transport");
+  expect(std::any_of(
+             restricted.diagnostics.begin(), restricted.diagnostics.end(),
+             [](const auto &diagnostic) {
+               return diagnostic.code == "GTI-S2067" &&
+                      diagnostic.message.find("'Event'") != std::string::npos &&
+                      diagnostic.message.find("Args...") == std::string::npos &&
+                      !diagnostic.hints.empty();
+             }),
+         "unsupported concrete pack element is named instead of Args...");
+
+  const auto forwardedTwice = analyzeWithPrelude("forwarded-twice-enum-pack.gti",
+      declarations + R"(
+void sink<Args...>(Args... args) {}
+void relay<Args...>(Args... args) { sink(args...); sink(args...); }
+int main() { relay(Event::Owned(Token())); return 0; }
+)");
+  expect(!forwardedTwice.semanticValid,
+         "forwarding a move-only enum element twice is rejected in semantics");
+
+  const auto moved =
+      analyzeWithPrelude("moved-enum-pack.gti", declarations + R"(
+void sink<Args...>(Args... args) {}
+int main() {
+  auto value = Event::Owned(Token());
+  sink(std::move(value));
+  sink(std::move(value));
+  return 0;
+}
+)");
+  expect(!moved.semanticValid && !moved.canGenerateCode() &&
+             std::any_of(moved.diagnostics.begin(), moved.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.message.find("moved") !=
+                                  std::string::npos;
+                         }),
+         "owning enum pack transfer preserves use-after-move rejection");
+}
 } // namespace
 
 int main() {
+  testOwningEnumPacks();
   testDeclarationSyntax();
   testDeclarationRecoveryGuidance();
   testDependentPayloads();
