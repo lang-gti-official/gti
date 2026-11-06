@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import time
 
@@ -142,8 +143,21 @@ def main():
         result = subprocess.run(command, capture_output=True, text=True, timeout=240)
         log = output / (label + ".log")
         log.write_text(result.stdout + result.stderr)
+        # Compiler backend diagnostics intentionally survive its temporary
+        # build directory. Retain the exact reported file with this harness
+        # before a remote runner removes its checkout and build artifacts.
+        backend_logs = []
+        for reported in re.findall(r"^gti: backend diagnostics saved at (.+)$",
+                                   result.stdout + result.stderr, re.MULTILINE):
+            diagnostic = Path(reported.strip())
+            if diagnostic.name == "backend.log" and diagnostic.is_file():
+                retained = output / (label + "-backend.log")
+                shutil.copyfile(diagnostic, retained)
+                backend_logs.append(str(retained))
         step = {"label": label, "command": command, "exit": result.returncode,
                 "seconds": time.perf_counter() - started, "log": str(log)}
+        if backend_logs:
+            step["backend_diagnostics"] = backend_logs
         if measure_build:
             raw = metrics.read_text()
             pattern = (r"(\d+)\s+maximum resident set size" if platform.system() == "Darwin"

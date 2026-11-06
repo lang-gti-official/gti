@@ -640,6 +640,16 @@ std::optional<SemanticType> checkedMirCallableOwnerType(
   return view && view->instance == layout ? std::optional{selected} : std::nullopt;
 }
 
+std::optional<SemanticType> instantiateMirCallableOwnerType(
+    const MirProgram &program, const MirFunctionInstance &function,
+    const MirLifetimeApplication &application) {
+  const auto owner = checkedMirCallableOwnerType(
+      program, function.owner, function.ownerType, function.lifetimeContract);
+  const auto signature = owner ? instantiateMirLifetimeSignature(
+      function.lifetimeContract, *owner, function.parameterTypes, application) : std::nullopt;
+  return signature ? std::optional{signature->returnType} : std::nullopt;
+}
+
 std::optional<MirInstantiatedLifetimeSignature>
 instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
                                 const SemanticType &returnType,
@@ -1849,6 +1859,24 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
             reject(
                 "MIR receiver does not prove its required region relationship",
                 block.id, instruction.id);
+          if (target && target->owner && !target->staticMember && instruction.receiver) {
+            const auto expectedOwner = instantiateMirCallableOwnerType(
+                program, *target, instruction.lifetimeApplication);
+            auto actualOwner = relations.actualType(*instruction.receiver);
+            if (actualOwner && actualOwner->kind == SemanticType::Reference &&
+                actualOwner->arguments.size() == 1)
+              actualOwner = SemanticType(actualOwner->arguments.front());
+            if (actualOwner && instruction.unsafeOperation == UnsafeOperationKind::RawMember &&
+                actualOwner->kind == SemanticType::RawPointer && actualOwner->arguments.size() == 1)
+              actualOwner = SemanticType(actualOwner->arguments.front());
+            if (!actualOwner || !expectedOwner ||
+                ((containsLifetimeMetadata(*actualOwner) || containsLifetimeMetadata(*expectedOwner)) &&
+                 !relations.types(*actualOwner, *expectedOwner,
+                                  target->receiverMutability == ReceiverMutability::Mutable ? 0 : 1,
+                                  0, true)))
+              reject("MIR receiver type does not prove its nested lifetime relationships",
+                     block.id, instruction.id);
+          }
         }
         const auto &returned = signature->returnType;
         if (instruction.kind != MirInstructionKind::InitializeBase &&

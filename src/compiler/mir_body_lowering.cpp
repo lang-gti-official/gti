@@ -15934,6 +15934,8 @@ private:
         // before the operand-free return below.
         emitValue(*statement.value);
       } else if (output.returnType.kind == SemanticType::Reference) {
+        const bool completeCallableReturn = function ? function->completeReturnBorrow.has_value()
+                                            : lambda ? lambda->completeReturnBorrow.has_value() : false;
         MirOperand borrow = referenceOperand(*statement.value, 0,
                                              output.returnType.referenceAccess);
         if (borrow.loan != 0) {
@@ -15956,6 +15958,23 @@ private:
                        candidate.entry && carriedByParameter) {
               referenceParameterEntry = borrow.loan;
             }
+          }
+          // A complete scalar result may select any exact stored-reference
+          // field of its receiver or input carrier. Preserve the entry group
+          // and publish the evaluated field pointer separately; independent
+          // program flow proves the typed path and allowed outgoing supplier.
+          if (storedCarrierEntry == 0 && completeCallableReturn &&
+              borrow.loan <= output.loans.size()) {
+            const auto &candidate = output.loans[borrow.loan - 1];
+            const auto *runtime = candidate.kind == MirLoanKind::Stored && candidate.entry
+                                      ? output.findPlace(placeForValue(*statement.value)) : nullptr;
+            if (runtime && (runtime->root == MirPlaceRootKind::This ||
+                            runtime->root == MirPlaceRootKind::Binding) &&
+                runtime->projections.size() >= 2 &&
+                runtime->projections.back().kind == MirProjectionKind::Dereference &&
+                std::all_of(runtime->projections.begin(), std::prev(runtime->projections.end()),
+                            [](const auto &part) { return part.kind == MirProjectionKind::Field; }))
+              storedCarrierEntry = borrow.loan;
           }
           // Entry loans are immutable callable inputs, independently of
           // which supplier the one-source compatibility summary names. A
@@ -16015,9 +16034,13 @@ private:
               // retire the by-value carrier parameter's body-local entry loan
               // at the same instruction boundary.
               const MirLoan retainedLoan = output.loans[storedCarrierEntry - 1];
+              const bool completeProjection = completeCallableReturn &&
+                  runtime->projections.size() >= 2 &&
+                  runtime->projections.back().kind == MirProjectionKind::Dereference;
               const MirLoanId published =
-                  createLoan(MirLoanKind::Return, retainedLoan.source,
-                             retainedLoan.access, *statement.value);
+                  createLoan(MirLoanKind::Return,
+                             completeProjection ? runtimePlace : retainedLoan.source,
+                             output.returnType.referenceAccess, *statement.value);
               output.loans[published - 1].storedDependency =
                   retainedLoan.storedDependency;
               (void)appendInstruction(
@@ -16338,6 +16361,7 @@ private:
             (void)appendInstruction({.kind = MirInstructionKind::Borrow,
                                      .hirValue = source.producedBy,
                                      .operands = {{.kind = MirOperandKind::Loan,
+                                                   .place = borrow.place,
                                                    .loan = borrow.loan,
                                                    .type = borrow.type}},
                                      .loan = published,
@@ -16349,6 +16373,7 @@ private:
                                      .loan = borrow.loan});
             removeLoanFromState(borrow.loan, scopes, bindingLoans);
             borrow = {.kind = MirOperandKind::Loan,
+                      .place = borrow.place,
                       .loan = published,
                       .type = borrow.type};
             returnLoan = published;

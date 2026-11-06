@@ -5412,6 +5412,27 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                 movedCarrier = true;
                 resolved = callInputSource(producer->operands.front());
               }
+              // A copyable carrier shares its readonly external group.
+              // Follow the exact load's physical binding, just as a move
+              // follows its source; the later parent check still requires
+              // that binding to own this very active group. Complete program
+              // flow separately proves each selected stored-reference path.
+              if (producer != nullptr &&
+                  producer->kind == MirInstructionKind::Load &&
+                  producer->operands.size() == 1 &&
+                  producer->operands.front().kind == MirOperandKind::Copy &&
+                  producer->info.type == resolved->type &&
+                  producer->info.traits.copyable &&
+                  producer->info.traits.containsBorrowedState &&
+                  body.loans[parent - 1].kind == MirLoanKind::Stored &&
+                  body.loans[parent - 1].access == AccessMode::ReadOnly &&
+                  body.loans[loan - 1].access == AccessMode::ReadOnly &&
+                  std::all_of(body.loans[parent - 1].additionalDependencies.begin(),
+                              body.loans[parent - 1].additionalDependencies.end(),
+                              [](const auto &dependency) {
+                                return dependency.access == AccessMode::ReadOnly;
+                              }))
+                resolved = callInputSource(producer->operands.front());
               if (producer != nullptr &&
                   stagedPayloadConstruction(instruction) &&
                   stagedPayloadConstruction(*producer) && producer->loan &&

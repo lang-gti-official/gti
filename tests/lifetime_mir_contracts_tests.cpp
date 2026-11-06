@@ -89,6 +89,46 @@ int main() {
               .valid(),
          "MIR cannot trust an inferred region number without its allocation "
          "inventory");
+  const auto receiver = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "receiver-lifetime-contract.gti", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  int read() { return this.value; }
+};
+int inspect<lifetime a>(int&<a> input) {
+  View<a> view{input};
+  return view.read();
+}
+int main() { int value = 7; return inspect(value) - 7; }
+)gti");
+  if (!receiver.canGenerateCode()) {
+    for (const auto &diagnostic : receiver.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "method calls must apply the owner's lifetime universe");
+  }
+  auto forgedReceiver = receiver.mir;
+  bool receiverMutationChecked = false;
+  for (const auto &function : forgedReceiver.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (!receiverMutationChecked && instruction.kind == MirInstructionKind::Call &&
+            instruction.functionTarget && instruction.receiver) {
+          auto *target = const_cast<MirFunctionInstance *>(
+              forgedReceiver.findFunctionInstance(*instruction.functionTarget));
+          if (!target || !target->owner || target->ownerType.lifetimeArguments.empty())
+            continue;
+          target->ownerType.lifetimeArguments.front() = Lifetime::staticLifetime();
+          const auto invalid = verifyMirLifetimeApplications(
+              forgedReceiver, function.body, function.id);
+          expect(!invalid.valid() && std::any_of(invalid.errors.begin(), invalid.errors.end(),
+                     [](const auto &error) {
+                       return error.message.find("receiver type does not prove its nested") != std::string::npos;
+                     }),
+                 "receiver storage validity must not authorize stronger nested owner lifetimes");
+          receiverMutationChecked = true;
+        }
+  expect(receiverMutationChecked, "receiver fixture must contain an applied nominal owner");
   const auto published = Frontend({.stopAfter = FrontendPhase::Mir,
                                     .retainApplicationBodies = true}).analyze(
       "published-unused-lifetime-supplier.gti", R"gti(
@@ -180,6 +220,57 @@ int main() {
           }
   expect(removedLambdaTarget && !verifyMirProgram(missingLambdaTarget).valid(),
          "a complete supplier set cannot authorize a call without its typed target");
+  const auto copiedCarrier = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "copied-carrier-parent.gti", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+int&<a> get<lifetime a>(View<a> view) { return view.value; }
+int probe<lifetime a>(View<a> first, View<a> second) { return get(first) - 3; }
+int main() {
+  int left = 3; int right = 7;
+  View first{left}; View second{right};
+  return probe(first, second);
+}
+)gti");
+  if (!copiedCarrier.canGenerateCode())
+    for (const auto &diagnostic : copiedCarrier.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(copiedCarrier.canGenerateCode(),
+         "a copied readonly carrier must retain its exact stored parent authority");
+  auto wrongCopiedCarrier = copiedCarrier.mir;
+  bool changedCopySource = false;
+  for (const auto &immutable : wrongCopiedCarrier.functionInstances()) {
+    if (immutable.parameterTypes.size() != 2 || immutable.parameterBindings.size() != 2 ||
+        immutable.parameterTypes[0].kind != SemanticType::Class ||
+        immutable.parameterTypes[0] != immutable.parameterTypes[1])
+      continue;
+    auto &function = const_cast<MirFunctionInstance &>(immutable);
+    const auto other = std::find_if(function.body.places.begin(), function.body.places.end(),
+        [&](const auto &place) {
+          return place.root == MirPlaceRootKind::Binding &&
+                 place.binding == function.parameterBindings[1] && place.projections.empty() &&
+                 place.type == function.parameterTypes[1];
+        });
+    if (other == function.body.places.end()) continue;
+    for (auto &block : function.body.blocks)
+      for (auto &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Load || instruction.operands.size() != 1 ||
+            instruction.operands.front().kind != MirOperandKind::Copy)
+          continue;
+        auto &operand = instruction.operands.front();
+        const auto *source = function.body.findPlace(operand.place);
+        if (!source || source->root != MirPlaceRootKind::Binding ||
+            source->binding != function.parameterBindings[0] || !source->projections.empty() ||
+            source->type != other->type)
+          continue;
+        operand.place = other->id;
+        changedCopySource = true;
+      }
+  }
+  expect(changedCopySource && !verifyMirProgram(wrongCopiedCarrier).valid(),
+         "a same-type copy of another carrier cannot use the original carrier's parent loan");
   const auto physical = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "physical-payload-contract.gti", R"gti(
 enum State<T> { value(T item) };

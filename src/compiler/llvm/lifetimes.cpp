@@ -1572,26 +1572,22 @@ llvm::Function *Lifetimes::cleanup(const MirDropType &recipe,
       return type.arguments.size() == 1 ? self(self, type.arguments.front())
                                         : std::nullopt;
     case SemanticType::Class: {
-      const MirClassInstance *selected = nullptr;
-      for (const auto &candidate : program.classInstances())
-        if (candidate.type == type) {
-          if (selected)
-            return std::nullopt;
-          selected = &candidate;
-        }
+      const auto view = mirClassLifetimeView(program, type);
+      const MirClassInstance *selected = view ? view->instance : nullptr;
       return selected ? std::optional<bool>{selected->requiresActiveCleanup}
                       : std::nullopt;
     }
     case SemanticType::Enum: {
-      const auto *enumeration = program.findPayloadEnum(type);
-      return enumeration
-                 ? std::optional<bool>{enumeration->requiresActiveCleanup}
+      const auto view = mirEnumLifetimeView(program, type);
+      if (!view) return std::nullopt;
+      return view->payload
+                 ? std::optional<bool>{view->payload->requiresActiveCleanup}
                  : std::optional<bool>{false};
     }
     case SemanticType::Lambda: {
       std::optional<bool> result;
       for (const auto &instance : program.lambdaInstances()) {
-        if (instance.type != type)
+        if (!mirLambdaLifetimeView(instance, type))
           continue;
         if (instance.captureTypes.size() !=
             instance.captureRequiresActiveCleanup.size())

@@ -40,6 +40,11 @@ int main(int argc, char **argv) {
         std::ofstream evidence(path);
         if (const auto *function = result.mir.findFunctionInstance(owner))
           evidence << lang::MirPrinter{}.print(function->body);
+        if (name == "stored-external-reference-keeps-its-declared-region")
+          if (const auto *getter = result.mir.findFunctionInstance(3)) {
+            evidence << "GETTER owner=3\n";
+            evidence << lang::MirPrinter{}.print(getter->body);
+          }
         if (const auto *function = result.hir.findFunctionInstance(owner)) {
           evidence << "HIR owner=" << owner << " declaration=" << function->declaration << '\n';
           for (const auto &loan : function->body.loans) {
@@ -330,6 +335,19 @@ int&<a> use<lifetime a>(int&<a> input) {
   return view.get();
 }
 int main() { int value = 7; return use(value) - 7; }
+)gti", true);
+  check("method-receiver-instantiates-owner-regions", R"gti(
+class View<lifetime a> {
+  int&<a> value;
+public:
+  View(int&<a> input) : value(input) {}
+  int read() { return this.value; }
+};
+int inspect<lifetime a>(int&<a> input) {
+  View<a> view{input};
+  return view.read();
+}
+int main() { int value = 7; return inspect(value) - 7; }
 )gti", true);
   check("borrowed-value-parameter-publishes-stored-suppliers", R"gti(
 struct View<lifetime a> {

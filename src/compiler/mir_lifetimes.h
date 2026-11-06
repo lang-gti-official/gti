@@ -79,6 +79,10 @@ instantiateMirLifetimeTarget(const MirProgram &, const MirInstruction &);
 [[nodiscard]] std::optional<SemanticType> checkedMirCallableOwnerType(
     const MirProgram &, std::optional<HirClassInstanceId>, const SemanticType &,
     const LifetimeSignatureContract &);
+// Apply a method's own binders to its exact owner type. The layout's binder
+// universe is separate and cannot be compared directly with a caller type.
+[[nodiscard]] std::optional<SemanticType> instantiateMirCallableOwnerType(
+    const MirProgram &, const MirFunctionInstance &, const MirLifetimeApplication &);
 
 // A view preserves the actual semantic region type while selecting one
 // universal layout. Matching identifies substitutions; formation obligations

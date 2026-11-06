@@ -540,6 +540,7 @@ int main() { int value = 7; return identity(value) - 7; }
 void testPrivateLifetimeInference() {
   const auto result = analyze(R"(
 static int& first(int& selected, int& ignored) { return selected; }
+static int& relay(int& selected, int& ignored) { return first(selected, ignored); }
 static int& recurse(bool done, int& selected, int& ignored) {
   if (done) { return selected; }
   return recurse(true, selected, ignored);
@@ -565,13 +566,14 @@ int&<a> explicitMutualRelay<lifetime a, lifetime b>(int&<a> selected, int&<b> ig
 int main() { int firstValue = 1; int secondValue = 2; return first(firstValue, secondValue) + recurse(false, firstValue, secondValue); }
 )");
   expectValid(result, "private omitted lifetime contracts infer selected and recursive suppliers");
-  for (const auto name : {"first", "recurse", "mutualFirst", "mutualSecond"}) {
+  for (const auto name : {"first", "relay", "recurse", "mutualFirst", "mutualSecond"}) {
     const auto *info = function(result, name);
     if (!info) {
       expect(false, "private helper metadata is available");
       continue;
     }
-    const auto selected = std::string_view(name) == "first" ? 0U : 1U;
+    const auto selected = std::string_view(name) == "first" ||
+                                  std::string_view(name) == "relay" ? 0U : 1U;
     const auto ignored = selected + 1;
     lang::LifetimeBounds bounds;
     for (const auto edge : info->lifetimeContract.bounds)
@@ -602,10 +604,45 @@ int main() { int firstValue = 1; int secondValue = 2; return first(firstValue, s
       };
       std::cerr << name << " result="; region(info->returnType.referenceLifetime);
       std::cerr << " contract:"; edges(info->lifetimeContract.bounds);
+      std::cerr << name << " binders:";
+      for (const auto binder : info->lifetimeContract.parameters) {
+        std::cerr << ' '; region(binder);
+      }
+      std::cerr << '\n';
       if (info->declaration && info->declaration->body())
         if (const auto *body = result.semantics.findLifetimeBody(*info->declaration->body())) {
           std::cerr << name << " body complete=" << body->complete << " obligations:";
           edges(body->obligations);
+          std::cerr << name << " type obligations:";
+          for (std::size_t index = 0; index < std::min<std::size_t>(body->typeObligations.size(), 16); ++index) {
+            const auto &bound = body->typeObligations[index];
+            std::cerr << " kind=" << unsigned(bound.type.kind) << ':';
+            region(bound.region);
+            std::cerr << " free=";
+            for (const auto free : lang::freeTypeLifetimes(bound.type)) {
+              region(free); std::cerr << ',';
+            }
+          }
+          std::cerr << '\n';
+          for (const auto &statement : info->declaration->body()->statements()) {
+            const auto *returned = lang::stmtAs<lang::ReturnStmt>(statement.get());
+            const auto *call = returned ? lang::exprAs<lang::Call>(returned->value().get()) : nullptr;
+            if (!call)
+              continue;
+            const auto *resolved = result.semantics.findCall(*call);
+            std::cerr << name << " return call=" << (resolved ? resolved->function : 0) << " region=";
+            if (resolved) region(resolved->returnType.referenceLifetime);
+            if (const auto *complete = result.semantics.findBorrowDependencySet(*call)) {
+              std::cerr << " roots=";
+              for (const auto &dependency : complete->dependencies)
+                std::cerr << dependency.place.root << '/' << dependency.parent << ',';
+            }
+            std::cerr << " parameter roots=";
+            for (const auto &parameter : info->declaration->parameters())
+              if (const auto *binding = result.semantics.findBinding(parameter))
+                std::cerr << binding->symbol << ',';
+            std::cerr << '\n';
+          }
         }
     }
   }
