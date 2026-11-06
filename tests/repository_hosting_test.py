@@ -224,8 +224,9 @@ def check_release_train(root, ci):
                f"unexpected secrets in {workflow}: {sorted(secrets)}")
     cut = text(root, TRAIN).split("\n  cut:\n", 1)[1].split("\n  promote:\n", 1)[0]
     expect("secrets.GTI_ROLLUP_APP_ID" in cut and re.findall(r"GH_TOKEN: (.*)", cut)
-           == ["${{ steps.token.outputs.token }}"] and "repositories: gti" in cut,
-           "the release cut opens its PR only with the repository-scoped App token")
+           == ["${{ steps.token.outputs.token }}", "${{ steps.queue-token.outputs.token }}"]
+           and cut.count("repositories: gti") == 2,
+           "the release cut opens and queues its PR only with repository-scoped App tokens")
     expect("environment: stable" in text(root, TRAIN).split("\n  promote:\n", 1)[1]
            and "environment: stable" in text(root, ROLLBACK),
            "promotion and rollback run only behind the protected stable environment")
