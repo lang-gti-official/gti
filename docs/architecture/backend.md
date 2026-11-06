@@ -6128,7 +6128,7 @@ cleanup ownership is independent of whether the representation needs a byte.
 MIR independently follows the destructor with that field known null and requires
 a terminating path containing only the field observation, inert scalar operations
 and empty lifecycle boundaries. Effects, calls, failure, uncertain branches and
-cycles invalidate the witness. The witness is serialized in `mir-v120`.
+cycles invalidate the witness. The witness is serialized in `mir-v121`.
 
 LLVM omits the separate byte for this witness, uses the pointer for cleanup
 observation, and nulls it after transferring all fields to a move destination.

@@ -929,8 +929,8 @@ across movement.
 ### Function optimization attributes
 
 `[[inline]]`, `[[noinline]]` and `[[cold]]` annotate a source-defined GTI
-function, method, constructor or destructor, including generic owners and callable declarations after concrete
-instantiation. They are optimization requests, not type, ownership, ABI,
+function, method, constructor or destructor, including generic declarations
+after concrete instantiation. They are optimization requests, not type, ownership, ABI,
 constant-evaluation, failure or return-flow contracts.
 
 | Attribute | LLVM behavior | What it does not promise |
