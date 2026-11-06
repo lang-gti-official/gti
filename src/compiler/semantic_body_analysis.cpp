@@ -320,6 +320,8 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
   for (const auto &owner : classes)
     for (const auto &[_, member] : owner.members)
       checkOverloads(member.symbol);
+  inferPrivateLifetimeContracts();
+  resolveFunctionBorrowSummaries();
 }
 
 auto SemanticVisitor::Impl::analyzeBodies(const StmtList &declarations,
@@ -4172,6 +4174,9 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   loanFlow.lifetimeBlock = stmt.body().get();
   if (functionInfo)
     loanFlow.lifetimeContract = functionInfo->lifetimeContract;
+  loanFlow.collectingLifetimeContract =
+      requestSession.collectingPrivateLifetimeContracts && functionInfo &&
+      functionInfo->lifetimeContract.origin == LifetimeContractOrigin::BodyInferred;
   currentFunctionDeclaration = &stmt;
   if (functionInfo != nullptr && functionInfo->id != 0) {
     currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::Function,

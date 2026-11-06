@@ -5331,9 +5331,8 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
       if (normalized.origin == BorrowOriginKind::None)
         if (const auto *global =
                 semanticModel.database().findSymbol(dependency.place.root);
-            global != nullptr &&
-            (global->threadLocal ||
-             global->kind == SymbolKind::GlobalVariable ||
+            global != nullptr && !global->threadLocal &&
+            (global->kind == SymbolKind::GlobalVariable ||
              (global->kind == SymbolKind::Field && global->staticMember))) {
           normalized.origin = BorrowOriginKind::Global;
           normalized.globalRoot = dependency.place.root;
@@ -5451,14 +5450,12 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
     }
     if (function.lifetimeContract.valid() &&
         resultPath->reference.referenceLifetime.declarationRegion()) {
-      const LifetimeBounds bounds =
-          lifetimeBoundsForContract(function.lifetimeContract);
       // A body proves a supplier permitted by the declaration. It need not
       // return every supplier, nor may its present choice narrow that public
       // contract. The physical storage, access and cleanup proofs above are
       // independent of this validity-region relation.
-      if (!bounds.proves(sourceRegion,
-                         resultPath->reference.referenceLifetime))
+      if (!declaredLifetimeRelationship(function.lifetimeContract, sourceRegion,
+                                        resultPath->reference.referenceLifetime))
         return std::nullopt;
     } else if (function.explicitReturnBorrowOrigin) {
       if (normalized.origin != function.returnBorrowOrigin)
@@ -5504,8 +5501,14 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
     bool *noNormalResult) -> std::optional<SemanticBorrowDependencySet> {
   if (noNormalResult)
     *noNormalResult = false;
+  const bool checkedCallableInvocation =
+      resolved.intrinsic == IntrinsicKind::FunctionPointerInvoke &&
+      resolved.lifetimeApplication.complete &&
+      resolved.lifetimeApplication.callableSignature.has_value() &&
+      resolved.lifetimeApplication.callableSignature->contract.valid();
   if (resolved.dispatch != CallDispatch::Static ||
-      resolved.intrinsic != IntrinsicKind::None || resolved.neverReturns)
+      (resolved.intrinsic != IntrinsicKind::None && !checkedCallableInvocation) ||
+      resolved.neverReturns)
     return std::nullopt;
   using Availability = BorrowSupplierAvailability;
   std::vector<Availability> availability(summary.dependencies.size(),
@@ -6692,13 +6695,9 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
   if (lifetimeContract && lifetimeContract->complete &&
       returnType.kind == SemanticType::Reference &&
       returnType.referenceLifetime.declarationRegion()) {
-    LifetimeBounds bounds;
-    for (const auto bound : lifetimeContract->bounds)
-      if (!bounds.assume(bound.longer, bound.shorter))
-        return summary;
     const Lifetime result = returnType.referenceLifetime;
     if (ownerClass != 0 && !staticMember &&
-        bounds.proves(lifetimeContract->receiver, result)) {
+        declaredLifetimeRelationship(*lifetimeContract, lifetimeContract->receiver, result)) {
       summary.origin = BorrowOriginKind::Receiver;
       summary.fields.push_back({.origin = BorrowOriginKind::Receiver,
                                 .access = summary.access});
@@ -6706,7 +6705,7 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
     for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
       const auto &parameter = parameterTypes[index];
       if (parameter.kind != SemanticType::Reference ||
-          !bounds.proves(parameter.referenceLifetime, result) ||
+          !declaredLifetimeRelationship(*lifetimeContract, parameter.referenceLifetime, result) ||
           (summary.access == AccessMode::Mutable &&
            parameter.referenceAccess != AccessMode::Mutable))
         continue;

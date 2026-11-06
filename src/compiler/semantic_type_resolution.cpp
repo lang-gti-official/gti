@@ -33,7 +33,10 @@ auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
       std::any_of(candidate.record().genericParameters.begin(),
                   candidate.record().genericParameters.end(),
                   [](const auto &parameter) { return !parameter.lifetime; }) ||
-      candidate.record().parameterPack || !candidate.requirements.empty() ||
+      candidate.record().parameterPack ||
+      (!candidate.requirements.empty() &&
+       (!candidate.lifetimeContract.requirements.resolved() ||
+        candidate.lifetimeContract.requirements.nodes.empty())) ||
       ((!candidate.record().genericParameters.empty() ||
         !candidate.requirements.empty()) && !candidate.lifetimeContract.valid()) ||
       candidate.virtualMethod || candidate.pureVirtual ||
@@ -8955,7 +8958,7 @@ auto SemanticVisitor::Impl::substituteSymbol(
 
 auto SemanticVisitor::Impl::functionSymbol(
     const FunctionDecl &function, const std::vector<std::string> &scope,
-    ClassId ownerClass)
+    ClassId ownerClass, AccessModifier access)
     -> Symbol {
   const std::vector<GenericParameterInfo> &genericParameters =
       genericParametersFor(function);
@@ -8974,7 +8977,9 @@ auto SemanticVisitor::Impl::functionSymbol(
           scope),
       .parameterPack = !function.parameters().empty() &&
                        function.parameters().back().pack.has_value(),
-      .receiverMutability = function.receiverMutability()};
+      .ownerClass = ownerClass,
+      .receiverMutability = function.receiverMutability(),
+      .access = access};
   if (registered != nullptr) {
     candidate.id = registered->id;
     candidate.staticMember = registered->staticMember;

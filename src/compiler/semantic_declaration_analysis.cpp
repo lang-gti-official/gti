@@ -10987,7 +10987,7 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       name = &function->name();
       std::vector<std::string> memberScope = owner.namespaceScope;
       memberScope.emplace_back(owner.name.lexeme);
-      symbol = functionSymbol(*function, memberScope, owner.id);
+      symbol = functionSymbol(*function, memberScope, owner.id, access);
       symbol.staticMember = function->isStatic();
       const bool interfaceContract =
           owner.kind == ClassKind::Interface && !function->isStatic();

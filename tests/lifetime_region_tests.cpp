@@ -94,5 +94,14 @@ int main() {
          }),
          "body-local containment must come from independently checked flow facts");
   expect(!localUse.require({}, input), "unsolved syntax is not an inference region");
+  const auto projected = intersection.fixedRequirements();
+  expect(std::find(projected.begin(), projected.end(),
+                   lang::LifetimeBound{unrelated, input}) != projected.end() &&
+             intersection.failure().has_value(),
+         "fixed-anchor projection exposes a requirement without proving it");
+  expect(localUse.fixedRequirements() == std::vector{lang::LifetimeBound{input, local}},
+         "projection retains local anchors so declaration inference can reject escape");
+  expect(cycle.fixedRequirements().empty(),
+         "an existential cycle alone invents no declaration requirement");
   return 0;
 }

@@ -1,5 +1,6 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/callable_lifetimes.h"
+#include "gti/lifetime_requirements.h"
 
 #include <algorithm>
 
@@ -364,18 +365,26 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
             return binding.second;
         return value;
       };
-      const auto bounds = lifetimeBoundsForContract(callable.contract);
-      for (const auto bound : targetContract->bounds)
-        compatible = bounds.proves(region(bound.longer), region(bound.shorter)) && compatible;
-      for (const auto &bound : targetContract->typeBounds) {
-        const auto type = substituteTypeLifetimes(bound.type, *targetBindings);
-        compatible = type && std::any_of(
-            callable.contract.typeBounds.begin(), callable.contract.typeBounds.end(),
-            [&](const auto &known) {
-              return equivalentLifetimeTypes(known.type, *type) &&
-                     bounds.proves(known.region, region(bound.region));
-            }) && compatible;
-      }
+      compatible = targetContract->valid() && targetContract->requirements.resolved() &&
+          visitLifetimeAssumptionCases(callable.contract, [&](const auto &assumptions) {
+            LifetimeInferenceConstraints constraints(lifetimeBoundsForContract(assumptions));
+            for (const auto bound : targetContract->bounds)
+              if (!constraints.proves(region(bound.longer), region(bound.shorter)))
+                return false;
+            const auto provesType = [&](const SemanticType &type, Lifetime lifetime) {
+              const auto actual = substituteTypeLifetimes(type, *targetBindings);
+              return actual && proveLifetimeTypeOutlives(*actual, region(lifetime),
+                                                         assumptions, constraints);
+            };
+            for (const auto &bound : targetContract->typeBounds)
+              if (!provesType(bound.type, bound.region))
+                return false;
+            return evaluateLifetimeRequirements(targetContract->requirements, [&](const auto &node) {
+              return node.kind == LifetimeRequirementNode::Kind::Region
+                  ? constraints.proves(region(node.bound.longer), region(node.bound.shorter))
+                  : provesType(node.type, node.bound.shorter);
+            }).value_or(false);
+          }).proof == LifetimeFormulaProof::Proven;
     }
     if (!containsOpenTypeParameter(target) && !compatible) {
       report(expressionToken(expr.arguments().front()),
@@ -571,9 +580,26 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
     for (auto &field : resolved.borrowFields)
       if (field.origin == BorrowOriginKind::Argument)
         ++field.parameter;
+    std::optional<SemanticBorrowDependencySet> complete;
+    if (result.kind == SemanticType::Reference && summary.origin != BorrowOriginKind::None) {
+      FunctionBorrowDependencySummary allowed{.dependencies = resolved.borrowFields};
+      if (allowed.dependencies.empty())
+        allowed.dependencies.push_back({.origin = resolved.borrowOrigin,
+            .parameter = resolved.borrowArgument, .access = resolved.borrowAccess});
+      complete = instantiateCompleteCallBorrow(expr, resolved, allowed);
+      if (!complete) {
+        report(expr.paren(),
+               "The invocation pointer result cannot retain every permitted input borrow origin.",
+               "GTI-S2045");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+    }
     commitLifetimeApplication(resolved.lifetimeApplication);
     currentType = callExpressionType(result);
     semanticModel.record(expr, std::move(resolved));
+    if (complete)
+      semanticModel.recordBorrowDependencySet(expr, std::move(*complete));
   } else {
     currentType = SemanticType::Unknown;
   }

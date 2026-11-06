@@ -14216,6 +14216,53 @@ completeBorrowSourcePath(const MirProgram &program,
     }
     return fact;
   };
+  // A checked direct field below a borrowed formal remains physical caller
+  // storage. Prove that path from the exact formal type; a dereference of a
+  // stored reference is a different external owner and is not flattened here.
+  const auto physicalBorrowedSubobject = [&](const MirPlace &place) {
+    if (place.foreignStorage || !place.initiallyAvailable || place.projections.empty() ||
+        place.root != MirPlaceRootKind::Binding || !parameters || !parameterTypes ||
+        parameters->size() != parameterTypes->size() ||
+        std::count(parameters->begin(), parameters->end(), place.binding) != 1)
+      return false;
+    const auto index = std::find(parameters->begin(), parameters->end(), place.binding) -
+                       parameters->begin();
+    const auto &formal = (*parameterTypes)[index];
+    if (formal.kind != SemanticType::Reference || formal.arguments.size() != 1 ||
+        (place.access == AccessMode::Mutable && formal.referenceAccess != AccessMode::Mutable))
+      return false;
+    const auto shell = std::find_if(body.places.begin(), body.places.end(), [&](const auto &candidate) {
+      return candidate.root == MirPlaceRootKind::Binding && candidate.binding == place.binding &&
+             candidate.projections.empty() && candidate.type == formal &&
+             candidate.initiallyAvailable && !candidate.foreignStorage;
+    });
+    if (shell == body.places.end() || shell->symbol != place.symbol)
+      return false;
+    SemanticType selected = formal.arguments.front();
+    bool field = false;
+    for (std::size_t index = 0; index < place.projections.size(); ++index) {
+      const auto &projection = place.projections[index];
+      if (index == 0 && projection.kind == MirProjectionKind::Dereference)
+        continue;
+      if (projection.kind != MirProjectionKind::Field || !projection.field)
+        return false;
+      const auto view = mirClassLifetimeView(program, selected);
+      if (!view)
+        return false;
+      const auto member = std::find_if(view->instance->declaredFields.begin(),
+          view->instance->declaredFields.end(), [&](const auto &candidate) {
+            return candidate.symbol == projection.field;
+          });
+      if (member == view->instance->declaredFields.end())
+        return false;
+      const auto actual = view->instantiate(member->type);
+      if (!actual || actual->kind == SemanticType::Reference)
+        return false;
+      selected = *actual;
+      field = true;
+    }
+    return field && selected == place.type;
+  };
   const auto referenceLoanFact = [&](const auto &self, const State &state,
                                      MirLoanId id, std::size_t depth) -> Fact {
     const auto *loan = body.findLoan(id);
@@ -14233,7 +14280,9 @@ completeBorrowSourcePath(const MirProgram &program,
           call && call->functionTarget
               ? program.findFunctionInstance(*call->functionTarget)
               : nullptr;
-      if (target && target->completeReturnBorrow) {
+      if ((target && target->completeReturnBorrow) ||
+          (call && call->intrinsic == IntrinsicKind::FunctionPointerInvoke &&
+           mir_detail::functionPointerOperation(program, *call))) {
         if (!call->result || !*call->result ||
             *call->result > state.values.size() ||
             call->info.category != ValueCategory::Place)
@@ -14270,11 +14319,11 @@ completeBorrowSourcePath(const MirProgram &program,
             place->projections.empty())
           fact = self(self, state, place->loan, depth + 1);
         else if (place && place->type.kind != SemanticType::Reference &&
-                 std::none_of(place->projections.begin(),
-                              place->projections.end(), [](const auto &part) {
-                                return part.kind ==
-                                       MirProjectionKind::Dereference;
-                              }))
+                 (physicalBorrowedSubobject(*place) ||
+                  std::none_of(place->projections.begin(),
+                               place->projections.end(), [](const auto &part) {
+                                 return part.kind == MirProjectionKind::Dereference;
+                               })))
           fact = MirBorrowDependencySet{
               .dependencies = {
                   {.source = place->id,
@@ -14433,6 +14482,9 @@ completeBorrowSourcePath(const MirProgram &program,
         return MirBorrowDependencySet{
             .dependencies = {{.source = place->id, .access = place->access}}};
     }
+    if (physicalBorrowedSubobject(*place))
+      return MirBorrowDependencySet{
+          .dependencies = {{.source = place->id, .access = place->access}}};
     if (place->root == MirPlaceRootKind::Loan ||
         place->type.kind == SemanticType::Reference ||
         std::any_of(place->projections.begin(), place->projections.end(),
@@ -15070,6 +15122,21 @@ completeBorrowSourcePath(const MirProgram &program,
               : nullptr;
       if (summary)
         result = callResult(state, instruction, *target, *summary);
+    } else if (instruction.kind == MirInstructionKind::Call &&
+               instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke &&
+               mir_detail::functionPointerOperation(program, instruction)) {
+      const auto *callable = checkedMirCallableLifetimeSignature(program, instruction);
+      const auto summary = mirCallableLifetimeBorrowSummary(program, instruction);
+      if (callable && summary && !summary->dependencies.empty()) {
+        MirFunctionInstance publication;
+        publication.returnType = callable->signature.arguments.front();
+        publication.parameterTypes = {instruction.parameterTypes.front()};
+        for (const auto &parameter : std::span(callable->signature.arguments).subspan(1))
+          SemanticType::appendExpandedArgument(publication.parameterTypes, parameter);
+        publication.lifetimeContract = callable->contract;
+        publication.staticMember = true;
+        result = callResult(state, instruction, publication, *summary);
+      }
     } else if (instruction.kind == MirInstructionKind::CallInput &&
                instruction.callInputRole == MirCallInputRole::Receiver &&
                (instruction.callInputKind == HirCallInputKind::ReadBorrow ||
@@ -15570,7 +15637,7 @@ completeBorrowSourcePath(const MirProgram &program,
 // The particular returned subobject is checked independently by the body flow;
 // it need not be frozen into the public signature of this implementation.
 [[nodiscard]] bool lifetimeRootSupplier(
-    const MirFunctionInstance &function, const BorrowedFieldOrigin &mapping) {
+    const MirProgram &program, const MirFunctionInstance &function, const BorrowedFieldOrigin &mapping) {
   if (!function.lifetimeContract.valid() ||
       function.lifetimeContract.origin == LifetimeContractOrigin::BodyInferred ||
       function.returnType.kind != SemanticType::Reference ||
@@ -15597,20 +15664,17 @@ completeBorrowSourcePath(const MirProgram &program,
   } else {
     return false;
   }
-  LifetimeBounds bounds;
-  for (const auto bound : function.lifetimeContract.bounds)
-    if (!bounds.assume(bound.longer, bound.shorter))
-      return false;
   return (mapping.access == AccessMode::ReadOnly || access == AccessMode::Mutable) &&
-         bounds.proves(source, function.returnType.referenceLifetime);
+         mirDeclaredLifetimeRelationship(program, function.lifetimeContract,
+                                          source, function.returnType.referenceLifetime);
 }
 
 [[nodiscard]] bool permitsCompleteBorrowMapping(
-    const MirFunctionInstance &function, const BorrowedFieldOrigin &allowed,
+    const MirProgram &program, const MirFunctionInstance &function, const BorrowedFieldOrigin &allowed,
     const BorrowedFieldOrigin &actual) {
   if (allowed == actual)
     return true;
-  return lifetimeRootSupplier(function, allowed) &&
+  return lifetimeRootSupplier(program, function, allowed) &&
          allowed.origin == actual.origin &&
          allowed.parameter == actual.parameter &&
          allowed.globalRoot == actual.globalRoot &&
@@ -15641,8 +15705,8 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
   const bool permittedLifetimeSupplier =
       std::any_of(function.returnBorrowFields.begin(),
                   function.returnBorrowFields.end(), [&](const auto &allowed) {
-                    return lifetimeRootSupplier(function, allowed) &&
-                           permitsCompleteBorrowMapping(function, allowed, mapping);
+                    return lifetimeRootSupplier(program, function, allowed) &&
+                           permitsCompleteBorrowMapping(program, function, allowed, mapping);
                   });
   if (function.explicitReturnBorrowOrigin && !permittedLifetimeSupplier) {
     if (mapping.origin != function.returnBorrowOrigin ||
@@ -15654,11 +15718,11 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
         (!function.returnBorrowFields.empty() &&
          std::none_of(function.returnBorrowFields.begin(),
                       function.returnBorrowFields.end(), [&](const auto &allowed) {
-                        return permitsCompleteBorrowMapping(function, allowed, mapping);
+                        return permitsCompleteBorrowMapping(program, function, allowed, mapping);
                       })))
       return false;
   }
-  if (lifetimeRootSupplier(function, mapping))
+  if (lifetimeRootSupplier(program, function, mapping))
     return true;
   // Caller storage reached without crossing a stored reference, and holding
   // no stored reference itself, may contain the referent anywhere inside it;
@@ -15833,7 +15897,7 @@ public:
                 return std::any_of(
                     claim.dependencies.begin(), claim.dependencies.end(),
                     [&](const auto &allowed) {
-                      return permitsCompleteBorrowMapping(*function, allowed, dependency);
+                      return permitsCompleteBorrowMapping(program, *function, allowed, dependency);
                     });
               }) &&
           std::all_of(observed->possibleAlternatives.begin(),

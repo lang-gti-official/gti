@@ -90,11 +90,20 @@ int main() {
          "inventory");
   const auto standardLibrary =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const PackageSourceRoot pointerModules{
+      .identity = "toolchain:std", .name = "std",
+      .packageRoot = standardLibrary, .sourceRoot = standardLibrary,
+      .modules = {{"meta", standardLibrary / "std/meta.gti"},
+                  {"detail_function_pointer_impl", standardLibrary / "std/detail/function_pointer.gti"}},
+      .kind = SourceOwnerKind::Toolchain, .implicitAlias = "std",
+      .defaultModule = "meta"};
   const auto pointer = Frontend({.stopAfter = FrontendPhase::Mir})
                            .analyze(standardLibrary.parent_path() / "tests/lifetime-pointer-contracts.gti", R"gti(
-import "../stdlib/std/detail/function_pointer.gti";
+import std.detail_function_pointer_impl;
 using Selection = for<lifetime region> int&<region>(int&<region>, int&<region>, bool);
-int&<a> select<lifetime a>(int&<a> left, int&<a> right, bool first) {
+int&<shorter> select<lifetime longer, lifetime shorter>(
+    int&<longer> left, int&<shorter> right, bool first)
+  requires outlives<longer, shorter> {
   if (first) { return left; }
   return right;
 }
@@ -105,7 +114,7 @@ int main() {
   int& selected = gti_internal::function_pointer_invoke(pointer, left, right, false);
   return selected - 11;
 }
-)gti", {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+)gti", {standardLibrary / "prelude.gti"}, {}, {standardLibrary}, {pointerModules});
   if (!pointer.semanticValid || !pointer.mir.valid()) {
     for (const auto &diagnostic : pointer.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -135,5 +144,34 @@ int main() {
         instruction.lifetimeApplication.callableSignature->contract.typeBounds.clear();
   expect(!verifyMirProgram(corruptPointer).valid(),
          "MIR must derive callable obligations independently from the trusted carrier");
+  const auto rejectedPath = standardLibrary.parent_path() / "tests/lifetime-pointer-requires.gti";
+  const std::string rejectedSource = R"gti(
+import std.detail_function_pointer_impl;
+using Independent = for<lifetime x, lifetime y> int&<y>(int&<x>, int&<y>, bool);
+int&<shorter> constrained<lifetime longer, lifetime shorter>(
+    int&<longer> left, int&<shorter> right, bool first)
+  requires outlives<longer, shorter> {
+  if (first) { return left; }
+  return right;
+}
+int main() {
+  auto pointer = gti_internal::function_pointer_from_item<Independent>(constrained);
+  return 0;
+}
+)gti";
+  const auto rejected = Frontend({.stopAfter = FrontendPhase::Mir})
+      .analyze(rejectedPath, rejectedSource, {standardLibrary / "prelude.gti"}, {},
+               {standardLibrary}, {pointerModules});
+  const auto failure = std::find_if(rejected.diagnostics.begin(), rejected.diagnostics.end(),
+      [](const auto &diagnostic) { return diagnostic.code == "GTI-S2093"; });
+  const auto targetOffset = rejectedSource.find(">(constrained)") + 2;
+  expect(!rejected.semanticValid && !rejected.canGenerateCode() &&
+             failure != rejected.diagnostics.end() &&
+             failure->message.find("exact-signature") != std::string::npos &&
+             failure->primary.source == rejectedPath.string() &&
+             failure->primary.start == targetOffset &&
+             failure->primary.end == targetOffset + std::string("constrained").size() &&
+             failure->fixes.empty(),
+         "an invocation pointer cannot discard a target outlives requirement or invent a repair");
   std::cout << "lifetime MIR contracts passed\n";
 }

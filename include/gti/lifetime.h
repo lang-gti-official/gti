@@ -172,6 +172,34 @@ public:
     return obligations_;
   }
 
+  // Eliminate existential variables without treating the resulting
+  // fixed-to-fixed requirements as established facts. Private declaration
+  // inference may publish representable requirements; ordinary checking
+  // must prove them using independently established assumptions.
+  [[nodiscard]] std::vector<LifetimeBound> fixedRequirements() const {
+    std::vector<Lifetime> anchors;
+    for (const auto edge : obligations_)
+      for (const auto region : {edge.longer, edge.shorter})
+        if (region.kind != Lifetime::Kind::Inference &&
+            std::find(anchors.begin(), anchors.end(), region) == anchors.end())
+          anchors.push_back(region);
+    std::vector<LifetimeBound> result;
+    for (const auto source : anchors)
+      for (const auto target : reachable(source, [](Lifetime, Lifetime) { return false; }))
+        if (target.kind != Lifetime::Kind::Inference && source != target &&
+            !assumptions_.proves(source, target))
+          result.push_back({source, target});
+    return result;
+  }
+
+  [[nodiscard]] std::vector<Lifetime> fixedTargets(Lifetime source) const {
+    auto result = reachable(source, [](Lifetime, Lifetime) { return false; });
+    std::erase_if(result, [](Lifetime region) {
+      return region.kind == Lifetime::Kind::Inference;
+    });
+    return result;
+  }
+
 private:
   template <typename Proven>
   std::vector<Lifetime> reachable(Lifetime start, Proven proven) const {

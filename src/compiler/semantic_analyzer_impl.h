@@ -1342,6 +1342,9 @@ private:
     std::vector<Lifetime> lifetimeVariables;
     LifetimeSignatureContract lifetimeContract;
     std::vector<std::pair<SymbolId, SemanticType>> lifetimeInputTypes;
+    // Only isolated eligible-body probes may propose declaration bounds.
+    // Ordinary body reanalysis always checks the finalized contract.
+    bool collectingLifetimeContract = false;
     // Checked call/store constraints share one body graph. Speculative
     // overload candidates never publish facts here; selected applications do.
     std::vector<LifetimeBound> lifetimeObligations;
@@ -3081,6 +3084,16 @@ private:
   void prepareFunctionLifetimeContract(const FunctionDecl &function,
                                        ClassId ownerClass);
   void normalizeFunctionLifetimeContract(CallableCandidate &function);
+  [[nodiscard]] bool privateLifetimeInferenceEligible(const CallableCandidate &function) const;
+  [[nodiscard]] bool hasExplicitLifetimeContract(const TypeRef &type) const;
+  void prepareInferredLifetimeResult(SemanticType &type,
+                                    const std::function<Lifetime()> &fresh) const;
+  void inferPrivateLifetimeContracts();
+  [[nodiscard]] std::optional<LifetimeSignatureContract> projectInferredLifetimeContract(
+      const LifetimeSignatureContract &declaration,
+      const SemanticLifetimeBody &body) const;
+  [[nodiscard]] bool representableInferredLifetimeBound(
+      const LifetimeSignatureContract &declaration, LifetimeBound bound) const;
   void normalizeConstructorLifetimeContract(ConstructorInfo &constructor);
   void normalizeDestructorLifetimeContract(DestructorInfo &destructor);
   struct LifetimeSignatureNormalization {
@@ -3118,11 +3131,24 @@ private:
       const Token &site, const Expr *receiver = nullptr, bool diagnose = true);
   void commitLifetimeApplication(const SemanticLifetimeApplication &application);
   void finalizeLifetimeBody();
-  [[nodiscard]] LifetimeBounds currentLifetimeBounds() const;
+  [[nodiscard]] LifetimeBounds currentLifetimeBounds(
+      const LifetimeSignatureContract *assumptionCase = nullptr) const;
+  [[nodiscard]] bool forEveryLifetimeAssumption(
+      const std::function<bool(const LifetimeSignatureContract &)> &prove) const;
+  [[nodiscard]] bool validateLifetimeConstraints(
+      std::span<const LifetimeBound> additional = {},
+      std::span<const LifetimeBound> prove = {}) const;
   [[nodiscard]] LifetimeBounds lifetimeBoundsForContract(
       const LifetimeSignatureContract &contract) const;
+  [[nodiscard]] bool declaredLifetimeRelationship(
+      const LifetimeSignatureContract &contract, Lifetime source, Lifetime target) const;
+  [[nodiscard]] bool proveLifetimeTypeOutlives(
+      const SemanticType &type, Lifetime region,
+      const LifetimeSignatureContract &assumptionCase,
+      const LifetimeInferenceConstraints &constraints) const;
   [[nodiscard]] std::optional<LifetimeRequirementFormula> buildLifetimeRequirements(
-      std::span<const AppliedConceptRequirement> requirements) const;
+      std::span<const AppliedConceptRequirement> requirements,
+      bool evaluatePredicates = true) const;
   [[nodiscard]] bool applyLifetimeRequirements(
       const LifetimeRequirementFormula &requirements,
       SemanticLifetimeApplication &application, const Token &site, bool diagnose);
@@ -3139,7 +3165,9 @@ private:
                                                  std::size_t slot,
                                                  std::string_view name);
   [[nodiscard]] std::optional<ConstraintFailure>
-  lifetimeRequirementFailure(const AppliedConceptRequirement &requirement) const;
+  lifetimeRequirementFailure(
+      const AppliedConceptRequirement &requirement,
+      const LifetimeSignatureContract *assumptionCase = nullptr) const;
 
   [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
   storedFieldReturnBorrowSummary(
@@ -4882,7 +4910,8 @@ private:
 
   Symbol functionSymbol(const FunctionDecl &function,
                         const std::vector<std::string> &scope,
-                        ClassId ownerClass = 0);
+                        ClassId ownerClass = 0,
+                        AccessModifier access = AccessModifier::Public);
 
   void validateFunctionPacks(
       const FunctionDecl &function,
@@ -7436,6 +7465,7 @@ private:
   // semantic facts. Speculative expression checks use a model delta rather
   // than copying every earlier expression in the caller's program.
   struct RequestSessionContext {
+    bool collectingPrivateLifetimeContracts = false;
     struct ExecutableLifetimeKey {
       InstanceAnalysisKey runtime;
       // Alpha-normalized bound uses preserve HRTB equality and scope. All

@@ -2050,37 +2050,23 @@ bool functionPointerOperation(const MirProgram &program,
     return false;
   // Derive alternatives before invocation substitution: incidental equality
   // of caller regions must never change the signature's supplier contract.
-  LifetimeBounds bounds;
-  for (const auto bound : callable->contract.bounds)
-    if (!bounds.assume(bound.longer, bound.shorter))
-      return false;
-  std::vector<std::size_t> suppliers;
-  std::vector<SemanticType> parameters;
-  for (const auto &parameter : std::span(callable->signature.arguments).subspan(1))
-    SemanticType::appendExpandedArgument(parameters, parameter);
-  const auto &declaredResult = callable->signature.arguments.front();
-  for (std::size_t index = 0; index < parameters.size(); ++index) {
-    const auto &parameter = parameters[index];
-    if (parameter.kind == SemanticType::Reference &&
-        bounds.proves(parameter.referenceLifetime, declaredResult.referenceLifetime) &&
-        (result.referenceAccess == AccessMode::ReadOnly ||
-         parameter.referenceAccess == AccessMode::Mutable))
-      suppliers.push_back(index + 1); // Operand zero is the pointer carrier.
-  }
-  if (suppliers.empty())
+  const auto summary = mirCallableLifetimeBorrowSummary(program, instruction);
+  if (!summary)
+    return false;
+  if (summary->dependencies.empty())
     return result.referenceLifetime == Lifetime::staticLifetime() &&
            instruction.borrowOrigin == BorrowOriginKind::None && !instruction.loan &&
            instruction.borrowArguments.empty() && instruction.borrowFields.empty();
   if (instruction.borrowOrigin != BorrowOriginKind::Argument ||
-      instruction.borrowArgument != suppliers.front())
+      instruction.borrowArgument != summary->dependencies.front().parameter)
     return false;
-  if (suppliers.size() == 1)
+  if (summary->dependencies.size() == 1)
     return instruction.borrowArguments.empty() && instruction.borrowFields.empty();
-  std::vector<BorrowedFieldOrigin> fields;
-  for (const auto parameter : suppliers)
-    fields.push_back({.origin = BorrowOriginKind::Argument,
-                      .parameter = parameter, .access = result.referenceAccess});
-  return instruction.borrowArguments == suppliers && instruction.borrowFields == fields;
+  std::vector<std::size_t> suppliers;
+  for (const auto &dependency : summary->dependencies)
+    suppliers.push_back(dependency.parameter);
+  return instruction.borrowArguments == suppliers &&
+         instruction.borrowFields == summary->dependencies;
 }
 
 const MirLoan *textAddressResultLoan(const MirBody &body,

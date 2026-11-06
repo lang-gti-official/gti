@@ -1,11 +1,95 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
+#include "gti/lifetime_requirements.h"
 #include <array>
 
 namespace lang {
 
+auto SemanticVisitor::Impl::forEveryLifetimeAssumption(
+    const std::function<bool(const LifetimeSignatureContract &)> &prove) const
+    -> bool {
+  LifetimeSignatureContract contract{.complete = true};
+  if (loanFlow.lifetimeContract.valid())
+    contract = loanFlow.lifetimeContract;
+  else if (const auto *function = currentFunctionInfo();
+           function && function->lifetimeContract.valid())
+    contract = function->lifetimeContract;
+  // Enclosing class/concept scopes may add premises to a local declaration.
+  // Keep their Boolean structure; collecting each leaf would assume both
+  // sides of an OR. A duplicate declaration formula needs no second expansion.
+  std::vector<LifetimeRequirementFormula> seen{contract.requirements};
+  for (const auto &scope : requirementScopes) {
+    const auto formula = buildLifetimeRequirements(scope, false);
+    if (!formula)
+      return false;
+    if (formula->nodes.empty() ||
+        std::find(seen.begin(), seen.end(), *formula) != seen.end())
+      continue;
+    seen.push_back(*formula);
+    const auto offset = contract.requirements.nodes.size();
+    if (offset + formula->nodes.size() + 1 > 4096)
+      return false;
+    for (auto node : formula->nodes) {
+      if (node.kind == LifetimeRequirementNode::Kind::All ||
+          node.kind == LifetimeRequirementNode::Kind::Any) {
+        node.left += offset;
+        node.right += offset;
+      }
+      contract.requirements.nodes.push_back(std::move(node));
+    }
+    const auto root = offset + formula->root;
+    if (contract.requirements.root == LifetimeRequirementNode::invalidIndex) {
+      contract.requirements.root = root;
+    } else {
+      contract.requirements.nodes.push_back(
+          {.kind = LifetimeRequirementNode::Kind::All,
+           .left = contract.requirements.root, .right = root});
+      contract.requirements.root = contract.requirements.nodes.size() - 1;
+    }
+  }
+  return visitLifetimeAssumptionCases(contract, prove).proof ==
+         LifetimeFormulaProof::Proven;
+}
+
+auto SemanticVisitor::Impl::validateLifetimeConstraints(
+    std::span<const LifetimeBound> additional,
+    std::span<const LifetimeBound> prove) const -> bool {
+  return forEveryLifetimeAssumption([&](const auto &assumptions) {
+    LifetimeInferenceConstraints graph(currentLifetimeBounds(&assumptions));
+    for (const auto edges : {std::span<const LifetimeBound>(loanFlow.lifetimeObligations),
+                             additional})
+      for (const auto edge : edges)
+        if (!graph.require(edge.longer, edge.shorter))
+          return false;
+    const auto provesAll = [&](const auto &checked) {
+      return !checked.failure() &&
+             std::all_of(prove.begin(), prove.end(), [&](const auto edge) {
+               return checked.proves(edge.longer, edge.shorter);
+             });
+    };
+    if (provesAll(graph))
+      return true;
+    if (!loanFlow.collectingLifetimeContract)
+      return false;
+    auto proposed = currentLifetimeBounds(&assumptions);
+    for (const auto edge : graph.fixedRequirements()) {
+      if (!representableInferredLifetimeBound(loanFlow.lifetimeContract, edge) ||
+          !proposed.assume(edge.longer, edge.shorter))
+        return false;
+    }
+    LifetimeInferenceConstraints provisional(std::move(proposed));
+    for (const auto edge : graph.obligations())
+      if (!provisional.require(edge.longer, edge.shorter))
+        return false;
+    // This is representability only. Selected applications and non-call
+    // writes retain obligations; speculative candidates publish nothing.
+    return provesAll(provisional);
+  });
+}
+
 auto SemanticVisitor::Impl::buildLifetimeRequirements(
-    std::span<const AppliedConceptRequirement> requirements) const
+    std::span<const AppliedConceptRequirement> requirements,
+    bool evaluatePredicates) const
     -> std::optional<LifetimeRequirementFormula> {
   using Node = LifetimeRequirementNode;
   using Kind = Node::Kind;
@@ -82,7 +166,8 @@ auto SemanticVisitor::Impl::buildLifetimeRequirements(
       }
     }
     std::optional<bool> truth;
-    if (std::none_of(requirement.arguments.begin(), requirement.arguments.end(),
+    if (evaluatePredicates &&
+        std::none_of(requirement.arguments.begin(), requirement.arguments.end(),
                      containsOpenTypeParameter))
       truth = !firstConceptApplicationFailure(requirement).has_value();
     return {append({.kind = Kind::SemanticPredicate, .predicate = predicate++,
@@ -152,6 +237,33 @@ auto SemanticVisitor::Impl::applyLifetimeRequirements(
     return requirements.root == LifetimeRequirementNode::invalidIndex;
   using Node = LifetimeRequirementNode;
   using Kind = Node::Kind;
+  // A declaration can already entail a disjunctive target without entailing
+  // any one target leaf unconditionally. Prove the formula per caller case
+  // and publish no branch-specific edge as a global inference obligation.
+  const bool entailed = forEveryLifetimeAssumption([&](const auto &assumptions) {
+    LifetimeInferenceConstraints graph(currentLifetimeBounds(&assumptions));
+    for (const auto edges : {
+             std::span<const LifetimeBound>(loanFlow.lifetimeObligations),
+             std::span<const LifetimeBound>(application.obligations)})
+      for (const auto edge : edges)
+        if (!graph.require(edge.longer, edge.shorter))
+          return false;
+    if (graph.failure())
+      return false;
+    const auto size = loanFlow.lifetimeObligations.size();
+    loanFlow.lifetimeObligations.insert(loanFlow.lifetimeObligations.end(),
+                                        application.obligations.begin(), application.obligations.end());
+    const auto value = evaluateLifetimeRequirements(requirements, [&](const auto &node) {
+      if (node.kind == Kind::Region)
+        return graph.proves(node.bound.longer, node.bound.shorter);
+      return !lifetimeRequirementFailure(
+          {.lifetimeBound = node.bound, .outlivesType = node.type}, &assumptions);
+    });
+    loanFlow.lifetimeObligations.resize(size);
+    return value.value_or(false);
+  });
+  if (entailed)
+    return true;
   struct State {
     std::vector<LifetimeBound> edges;
     std::vector<LifetimeTypeBound> types;
@@ -163,14 +275,9 @@ auto SemanticVisitor::Impl::applyLifetimeRequirements(
       values.push_back(value);
   };
   const auto consistent = [&](const State &state) {
-    LifetimeInferenceConstraints graph(currentLifetimeBounds());
-    bool valid = true;
-    for (const auto &edges : std::array<std::span<const LifetimeBound>, 3>{
-                              loanFlow.lifetimeObligations,
-                              application.obligations, state.edges})
-      for (const auto edge : edges)
-        valid = graph.require(edge.longer, edge.shorter) && valid;
-    return valid && !graph.failure();
+    auto edges = application.obligations;
+    edges.insert(edges.end(), state.edges.begin(), state.edges.end());
+    return validateLifetimeConstraints(edges);
   };
   const auto typeSatisfied = [&](const LifetimeTypeBound &bound, const State &state) {
     const auto size = loanFlow.lifetimeObligations.size();
@@ -180,8 +287,15 @@ auto SemanticVisitor::Impl::applyLifetimeRequirements(
                                         state.edges.begin(), state.edges.end());
     const bool satisfied = !lifetimeRequirementFailure(
         {.lifetimeBound = LifetimeBound{{}, bound.region}, .outlivesType = bound.type});
+    bool representable = false;
+    if (!satisfied && loanFlow.collectingLifetimeContract) {
+      SemanticLifetimeBody proposal{.obligations = loanFlow.lifetimeObligations,
+                                     .typeObligations = {bound}};
+      representable = projectInferredLifetimeContract(loanFlow.lifetimeContract,
+                                                       proposal).has_value();
+    }
     loanFlow.lifetimeObligations.resize(size);
-    return satisfied;
+    return satisfied || representable;
   };
   using Continuation = std::function<bool(State)>;
   std::function<bool(std::size_t, State, const Continuation &)> solve;

@@ -51,6 +51,10 @@ verifyMirLifetimeBodyFacts(const MirProgram &, const MirBody &,
 verifyMirLifetimeApplications(const MirProgram &, const MirBody &,
                               std::size_t owner = 0);
 
+// Universal declaration relationship, proved under every feasible formula case.
+[[nodiscard]] bool mirDeclaredLifetimeRelationship(
+    const MirProgram &, const LifetimeSignatureContract &, Lifetime source, Lifetime target);
+
 // Checks a reference conversion using the exact body contract/constraint
 // graph, retaining referent identity, access and every nested region relation.
 [[nodiscard]] bool mirLifetimeReferenceConversion(
@@ -102,6 +106,10 @@ mirEnumLifetimeView(const MirProgram &, const SemanticType &);
 // The carrier capability and its exact type select the source-free authority.
 [[nodiscard]] const CallableLifetimeSignature *
 checkedMirCallableLifetimeSignature(const MirProgram &, const MirInstruction &);
+// Conservative direct-reference suppliers derived from the trusted carrier
+// signature, with invocation operand zero reserved for the pointer itself.
+[[nodiscard]] std::optional<FunctionBorrowDependencySummary>
+mirCallableLifetimeBorrowSummary(const MirProgram &, const MirInstruction &);
 [[nodiscard]] bool mirCallableLifetimeTargetMatches(
     const MirProgram &, const CallableLifetimeSignature &,
     const SemanticType &returnType, std::span<const SemanticType> parameters,

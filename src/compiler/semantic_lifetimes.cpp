@@ -1,5 +1,6 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
+#include "gti/lifetime_requirements.h"
 #include <array>
 
 namespace lang {
@@ -221,6 +222,14 @@ auto SemanticVisitor::Impl::normalizeFunctionLifetimeContract(
     for (std::size_t index = 0; index < syntax.parameters().size(); ++index)
       if (syntax.parameters()[index].name.lexeme == attribute->argument->lexeme)
         borrowedParameter = index;
+  }
+  if (privateLifetimeInferenceEligible(function)) {
+    SemanticType noResult = SemanticType::Void;
+    auto inputs = normalizeLifetimeSignature(noResult, function.parameterTypes,
+                                              std::move(contract), function.requirements, fresh);
+    contract = std::move(inputs.contract);
+    prepareInferredLifetimeResult(function.returnType, fresh);
+    contract.origin = LifetimeContractOrigin::BodyInferred;
   }
   auto normalized = normalizeLifetimeSignature(
       function.returnType, function.parameterTypes, std::move(contract),
@@ -572,9 +581,11 @@ auto SemanticVisitor::Impl::lifetimeBoundsForContract(
   return result;
 }
 
-auto SemanticVisitor::Impl::currentLifetimeBounds() const -> LifetimeBounds {
+auto SemanticVisitor::Impl::currentLifetimeBounds(
+    const LifetimeSignatureContract *assumptionCase) const -> LifetimeBounds {
   const auto *function = currentFunctionInfo();
-  const auto *contract = loanFlow.lifetimeContract.valid()
+  const auto *contract = assumptionCase ? assumptionCase
+                             : loanFlow.lifetimeContract.valid()
                              ? &loanFlow.lifetimeContract
                              : function ? &function->lifetimeContract : nullptr;
   LifetimeSignatureContract assumptions = contract ? *contract
@@ -720,12 +731,8 @@ auto SemanticVisitor::Impl::borrowedExpressionLifetime(const Expr *expression) c
 
 auto SemanticVisitor::Impl::requireLifetimeRelationship(
     Lifetime source, Lifetime target, const Token &site, bool diagnose) -> bool {
-  LifetimeInferenceConstraints graph(currentLifetimeBounds());
-  bool valid = true;
-  for (const auto bound : loanFlow.lifetimeObligations)
-    valid = graph.require(bound.longer, bound.shorter) && valid;
-  valid = graph.require(source, target) && valid;
-  if (!valid || graph.failure()) {
+  const std::array required{LifetimeBound{source, target}};
+  if (!validateLifetimeConstraints(required)) {
     if (diagnose)
       report(site, "The borrowed value does not satisfy the destination's "
                    "lifetime contract.", "GTI-S2127");
@@ -942,13 +949,7 @@ auto SemanticVisitor::Impl::applyLifetimeValueConversion(
   auto adjusted = constrainLifetimeType(actual, expected, variance, obligations, allowBase);
   if (!adjusted)
     return std::nullopt;
-  LifetimeInferenceConstraints graph(currentLifetimeBounds());
-  bool valid = true;
-  for (const auto edge : loanFlow.lifetimeObligations)
-    valid = graph.require(edge.longer, edge.shorter) && valid;
-  for (const auto edge : obligations)
-    valid = graph.require(edge.longer, edge.shorter) && valid;
-  if (!valid || graph.failure()) {
+  if (!validateLifetimeConstraints(obligations)) {
     if (diagnose)
       report(site, "This value conversion requires a lifetime relationship "
                    "that the current borrowing contract does not prove.",
@@ -981,20 +982,10 @@ auto SemanticVisitor::Impl::callLifetimeArgumentType(
                                         expected.kind == SemanticType::Reference);
   if (!adjusted)
     return std::nullopt;
-  LifetimeInferenceConstraints graph(currentLifetimeBounds());
-  for (const auto edge : loanFlow.lifetimeObligations)
-    if (!graph.require(edge.longer, edge.shorter))
-      return std::nullopt;
-  for (const auto edge : function.lifetimeApplication.obligations)
-    if (!graph.require(edge.longer, edge.shorter))
-      return std::nullopt;
-  if (graph.failure())
-    return std::nullopt;
   // Selection may use only relationships proved by the complete application;
   // it must not silently create an unrecorded inference obligation.
-  for (const auto edge : obligations)
-    if (!graph.proves(edge.longer, edge.shorter))
-      return std::nullopt;
+  if (!validateLifetimeConstraints(function.lifetimeApplication.obligations, obligations))
+    return std::nullopt;
   return adjusted;
 }
 
@@ -1187,14 +1178,7 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
     appendUnique(application.typeObligations,
                  LifetimeTypeBound{std::move(*type), substitute(bound.region)});
   }
-  LifetimeInferenceConstraints graph(currentLifetimeBounds());
-  for (const auto bound : loanFlow.lifetimeObligations)
-    if (!graph.require(bound.longer, bound.shorter))
-      return reject("The enclosing body's lifetime constraints are incomplete.");
-  for (const auto bound : application.obligations)
-    if (!graph.require(bound.longer, bound.shorter))
-      return reject("The call's lifetime constraints are incomplete.");
-  if (graph.failure())
+  if (!validateLifetimeConstraints(application.obligations))
     return reject("The call requires a lifetime relationship the caller cannot prove.");
   // Check obligations in the same body graph without publishing a speculative
   // overload candidate. The selected caller commits them after overload choice.
@@ -1247,7 +1231,7 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
     for (const auto region : {edge.longer, edge.shorter})
       if (region.kind == Lifetime::Kind::Inference)
         appendUnique(application.variables, region);
-  if (const auto failure = firstRequirementFailure(requirements)) {
+  if (const auto failure = firstRequirementFailureBeforeLifetimeApplication(requirements)) {
     if (diagnose)
       reportConstraintFailure(site, *failure);
     return false;
@@ -1267,11 +1251,7 @@ auto SemanticVisitor::Impl::finalizeLifetimeBody() -> void {
                             .obligations = loanFlow.lifetimeObligations,
                             .typeObligations = loanFlow.lifetimeTypeObligations,
                             .origins = loanFlow.lifetimeOrigins};
-  LifetimeInferenceConstraints constraints(currentLifetimeBounds());
-  bool valid = true;
-  for (const auto bound : body.obligations)
-    valid = constraints.require(bound.longer, bound.shorter) && valid;
-  valid = !constraints.failure() && valid;
+  const bool valid = validateLifetimeConstraints();
   body.complete = valid && !loanFlow.deferredGenericFlow;
   if (!valid && !loanFlow.deferredGenericFlow) {
     Token site = currentFunctionDeclaration ? currentFunctionDeclaration->name()
@@ -1289,13 +1269,115 @@ auto SemanticVisitor::Impl::finalizeLifetimeBody() -> void {
     semanticModel.recordLifetimeBody(*loanFlow.lifetimeExpression, std::move(body));
 }
 
+auto SemanticVisitor::Impl::declaredLifetimeRelationship(
+    const LifetimeSignatureContract &contract, Lifetime source, Lifetime target) const
+    -> bool {
+  return visitLifetimeAssumptionCases(contract, [&](const auto &assumptions) {
+    return lifetimeBoundsForContract(assumptions).proves(source, target);
+  }).proof == LifetimeFormulaProof::Proven;
+}
+
+auto SemanticVisitor::Impl::proveLifetimeTypeOutlives(
+    const SemanticType &requestedType, Lifetime region,
+    const LifetimeSignatureContract &assumptionCase,
+    const LifetimeInferenceConstraints &constraints) const -> bool {
+  if (!region.specified() || constraints.failure())
+    return false;
+  std::vector<SemanticType> pending;
+  const auto check = [&](auto &&self, const SemanticType &type) -> bool {
+    for (const auto &known : assumptionCase.typeBounds)
+      if (equivalentLifetimeTypes(type, known.type) &&
+          constraints.proves(known.region, region))
+        return true;
+    if (type.kind == SemanticType::Unknown || type.kind == SemanticType::TypeParameter ||
+        (type.kind == SemanticType::TypePack && !type.concretePack))
+      return false;
+    if (std::find(pending.begin(), pending.end(), type) != pending.end())
+      return true;
+    if (pending.size() >= 256)
+      return false;
+    pending.push_back(type);
+    struct Pop { std::vector<SemanticType> &values; ~Pop() { values.pop_back(); } } pop{pending};
+    if (type.kind == SemanticType::Reference &&
+        !constraints.proves(type.referenceLifetime, region))
+      return false;
+    if (type.kind != SemanticType::Class && type.kind != SemanticType::Enum)
+      for (const auto lifetime : type.lifetimeArguments)
+        if (!constraints.proves(lifetime, region))
+          return false;
+    if ((type.kind == SemanticType::StringView || type.kind == SemanticType::CString) &&
+        type.lifetimeArguments.size() != 1)
+      return false;
+    if (type.kind == SemanticType::Class) {
+      const auto *owner = classInfo(type);
+      if (!owner)
+        return false;
+      const auto substitution = classSubstitution(type);
+      for (const auto &field : owner->fields) {
+        if (!field.declaration)
+          return false;
+        const auto member = owner->members.find(field.declaration->name().lexeme);
+        if (member == owner->members.end() ||
+            !self(self, substituteType(member->second.symbol.type, substitution)))
+          return false;
+      }
+      for (const auto &base : owner->bases)
+        if (!base.interface && !self(self, substituteType(base.type, substitution)))
+          return false;
+      return true;
+    }
+    if (type.kind == SemanticType::Enum) {
+      const auto enumeration = enumTypeFor(type);
+      if (!enumeration)
+        return false;
+      for (const auto &variant : enumeration->enumerators)
+        for (const auto &payload : variant.payloadTypes)
+          if (!self(self, payload))
+            return false;
+      return true;
+    }
+    if ((type.kind == SemanticType::FunctionSignature || type.kind == SemanticType::FunctionItem) &&
+        !type.quantifiedLifetimes.empty()) {
+      for (const auto lifetime : freeTypeLifetimes(type))
+        if (!constraints.proves(lifetime, region))
+          return false;
+      return true;
+    }
+    bool valid = true;
+    lifetime_detail::children(type, [&](const auto &child) {
+      valid = self(self, child) && valid;
+    });
+    return valid;
+  };
+  return check(check, requestedType);
+}
+
 auto SemanticVisitor::Impl::lifetimeRequirementFailure(
-    const AppliedConceptRequirement &requirement) const
+    const AppliedConceptRequirement &requirement,
+    const LifetimeSignatureContract *assumptionCase) const
     -> std::optional<ConstraintFailure> {
   if (!requirement.lifetimeBound)
     return std::nullopt;
+  if (!assumptionCase) {
+    std::optional<ConstraintFailure> failure;
+    if (forEveryLifetimeAssumption([&](const auto &branch) {
+          failure = lifetimeRequirementFailure(requirement, &branch);
+          return !failure;
+        }))
+      return std::nullopt;
+    if (failure)
+      return failure;
+    return ConstraintFailure{
+        .parameter = requirement.syntax ? requirement.syntax->name.last() : Token{},
+        .argument = requirement.outlivesType.value_or(SemanticType::Unknown),
+        .application = requirement.syntax, .leafApplication = requirement.syntax,
+        .expressionFailure = "The lifetime requirement cannot be proved within the bounded declaration-contract analysis."};
+  }
   LifetimeAssumptions assumptions;
-  if (loanFlow.lifetimeContract.valid()) {
+  if (assumptionCase) {
+    assumptions.regions = assumptionCase->bounds;
+    assumptions.types = assumptionCase->typeBounds;
+  } else if (loanFlow.lifetimeContract.valid()) {
     assumptions.regions = loanFlow.lifetimeContract.bounds;
     assumptions.types = loanFlow.lifetimeContract.typeBounds;
   } else if (const auto *function = currentFunctionInfo()) {
@@ -1309,7 +1391,7 @@ auto SemanticVisitor::Impl::lifetimeRequirementFailure(
     for (const auto &bound : known.types)
       appendUnique(assumptions.types, bound);
   }
-  LifetimeBounds bounds = currentLifetimeBounds();
+  LifetimeBounds bounds = currentLifetimeBounds(assumptionCase);
   bool wellFormed = true;
   for (const auto bound : assumptions.regions)
     wellFormed = bounds.assume(bound.longer, bound.shorter) && wellFormed;
@@ -1320,70 +1402,11 @@ auto SemanticVisitor::Impl::lifetimeRequirementFailure(
   bool satisfied = wellFormed &&
                    constraints.proves(requested.longer, requested.shorter);
   if (requirement.outlivesType && wellFormed) {
-    std::vector<SemanticType> pending;
-    const auto typeOutlives = [&](auto &&self, const SemanticType &type) -> bool {
-      for (const auto &known : assumptions.types)
-        if (equivalentLifetimeTypes(type, known.type) &&
-            constraints.proves(known.region, requested.shorter))
-          return true;
-      if (type.kind == SemanticType::Unknown ||
-          type.kind == SemanticType::TypeParameter ||
-          (type.kind == SemanticType::TypePack && !type.concretePack))
-        return false;
-      if (std::find(pending.begin(), pending.end(), type) != pending.end())
-        return true; // A nominal recursion adds no new observed component.
-      if (pending.size() >= 256)
-        return false; // Expanding generic recursion is not a validity proof.
-      pending.push_back(type);
-      struct Pop { std::vector<SemanticType> &types; ~Pop() { types.pop_back(); } } pop{pending};
-      if (type.kind == SemanticType::Reference &&
-          !constraints.proves(type.referenceLifetime, requested.shorter))
-        return false;
-      for (const auto region : type.lifetimeArguments)
-        if (!constraints.proves(region, requested.shorter))
-          return false;
-      if ((type.kind == SemanticType::StringView || type.kind == SemanticType::CString) &&
-          type.lifetimeArguments.size() != 1)
-        return false;
-      if (type.kind == SemanticType::Class) {
-        const auto *owner = classInfo(type);
-        if (!owner)
-          return false;
-        const auto substitution = classSubstitution(type);
-        for (const auto &field : owner->fields) {
-          const auto member = owner->members.find(field.declaration->name().lexeme);
-          if (member == owner->members.end() ||
-              !self(self, substituteType(member->second.symbol.type, substitution)))
-            return false;
-        }
-        for (const auto &base : owner->bases)
-          if (!base.interface && !self(self, substituteType(base.type, substitution)))
-            return false;
-        // Base subobjects and exact borrowed enum projections are included in
-        // the semantic inventory; a raw layout walk is never their authority.
-        if (const auto inventory = storedReferenceInventory(type))
-          for (const auto &path : *inventory)
-            if (!self(self, path.reference))
-              return false;
-        return true;
-      }
-      if (type.kind == SemanticType::FunctionSignature &&
-          !type.quantifiedLifetimes.empty()) {
-        // Quantified call validity is independent of the lifetime of a plain
-        // function signature; any free captured region remains an obligation.
-        for (const auto region : freeTypeLifetimes(type))
-          if (!constraints.proves(region, requested.shorter))
-            return false;
-        return true;
-      }
-      bool valid = true;
-      lifetime_detail::children(type, [&](const SemanticType &child) {
-        valid = self(self, child) && valid;
-      });
-      return valid;
-    };
-    satisfied = requested.shorter.specified() &&
-                typeOutlives(typeOutlives, *requirement.outlivesType);
+    auto explicitContract = *assumptionCase;
+    explicitContract.bounds = assumptions.regions;
+    explicitContract.typeBounds = assumptions.types;
+    satisfied = proveLifetimeTypeOutlives(*requirement.outlivesType,
+        requested.shorter, explicitContract, constraints);
   }
   if (satisfied)
     return std::nullopt;

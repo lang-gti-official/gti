@@ -465,6 +465,13 @@ higher-ranked binders for invocation. The declaration's permitted supplier set
 is retained even when the current target body uses only a subset. Full target
 requirement formulas are evaluated against the caller graph; semantic predicate
 truth belongs to the exact target instance and cannot be supplied by a call.
+Every feasible disjunct of the caller's declaration is checked independently,
+including the body graph's unconditional edges. Different branches may prove
+the same relation through different transitive paths; a fact from one branch
+never becomes an assumption for another. Type bounds and type-requirement
+leaves are checked for nested region scope before they grant any assumptions.
+Reference initialization uses this same graph to prove permitted shortening
+while retaining exact referent identity and access permission.
 
 A program-level nominal recipe graph preserves symbolic generic identities,
 fields, bases, payload paths, specialization families and trusted capabilities.

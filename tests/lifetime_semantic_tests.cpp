@@ -127,6 +127,33 @@ int main() { int value = 7; return identity(value) - 7; }
 int&<b> bad<lifetime a, lifetime b>(int&<a> input)
   requires outlives<a, b> || outlives<b, a> { return input; }
 )gti", false);
+  check("disjunctive-contract-forwarding", R"gti(
+int&<a> inner<lifetime a, lifetime b>(int&<a> input)
+  requires outlives<a, b> || outlives<b, a> { return input; }
+int&<a> outer<lifetime a, lifetime b>(int&<a> input)
+  requires outlives<a, b> || outlives<b, a> {
+  return inner<a, b>(input);
+}
+int main() { int value = 7; return outer(value) - 7; }
+)gti", true);
+  check("distributed-outlives-return", R"gti(
+int&<c> shorten<lifetime a, lifetime b, lifetime c, lifetime d>(int&<a> input)
+  requires (outlives<a, b> && outlives<b, c>) ||
+           (outlives<a, d> && outlives<d, c>) { return input; }
+int main() { int value = 7; return shorten(value) - 7; }
+)gti", true);
+  check("disjunctive-type-bound-forwarding", R"gti(
+void inner<T, lifetime a, lifetime b>(T input)
+  requires outlives<T, a> || outlives<T, b> {}
+void outer<T, lifetime a, lifetime b>(T input)
+  requires outlives<T, a> || outlives<T, b> { inner<T, a, b>(input); }
+int main() { outer<int>(7); return 0; }
+)gti", true);
+  check("phantom-region-is-not-borrowed-storage", R"gti(
+struct Tag<lifetime a> { int value = 7; Tag() = default; };
+int read<lifetime a>(Tag<a> tag) requires outlives<Tag<a>, static> { return tag.value; }
+int main() { Tag tag{}; return read(tag) - 7; }
+)gti", true);
   check("borrowed-record-construction", R"gti(
 struct View<lifetime a> {
   int&<a> value;
@@ -168,6 +195,24 @@ View bad(int& outside) { int local = 3; return View(local); }
   check("ordinary-input-is-not-static", R"gti(
 int&<static> forever(int& input) { return input; }
 )gti", false);
+  check("thread-storage-is-not-static", R"gti(
+thread_local int value = 7;
+int&<static> forever() { return value; }
+)gti", false, "GTI-S2127");
+  check("generic-owned-payload-receiver-borrow", R"gti(
+enum State<T> { value(T payload) };
+class Holder<T> {
+  State<T> state;
+public:
+  Holder(T input) : state(State<T>::value(input)) {}
+  T& get() {
+    switch (this.state) {
+    case State<T>::value(auto& payload): return payload;
+    }
+  }
+};
+int main() { Holder<int> holder{7}; return holder.get() - 7; }
+)gti", true);
   check("no-local-escape", R"gti(
 int&<a> escape<lifetime a>(int&<a> input) { int local = 9; return local; }
 )gti", false);

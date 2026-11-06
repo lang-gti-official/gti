@@ -412,6 +412,39 @@ int main() {
       .complete = true};
   expect(verifyMirLifetimeBodyFacts(emptyProgram, graphBody, caller).valid(),
          "two independent inputs may constrain one existential meet");
+  LifetimeSignatureContract cases{
+      .parameters = {Lifetime::parameter(21), Lifetime::parameter(22),
+                     Lifetime::parameter(24), Lifetime::parameter(25)},
+      .complete = true};
+  using CaseKind = LifetimeRequirementNode::Kind;
+  cases.requirements.nodes = {
+      {.kind = CaseKind::Region, .bound = {Lifetime::parameter(21), Lifetime::parameter(22)}},
+      {.kind = CaseKind::Region, .bound = {Lifetime::parameter(22), Lifetime::parameter(25)}},
+      {.kind = CaseKind::All, .left = 0, .right = 1},
+      {.kind = CaseKind::Region, .bound = {Lifetime::parameter(21), Lifetime::parameter(24)}},
+      {.kind = CaseKind::Region, .bound = {Lifetime::parameter(24), Lifetime::parameter(25)}},
+      {.kind = CaseKind::All, .left = 3, .right = 4},
+      {.kind = CaseKind::Any, .left = 2, .right = 5}};
+  cases.requirements.root = 6;
+  MirBody caseBody;
+  caseBody.lifetimeBody = {
+      .obligations = {{Lifetime::parameter(21), Lifetime::parameter(25)}},
+      .complete = true};
+  expect(verifyMirLifetimeBodyFacts(emptyProgram, caseBody, cases).valid(),
+         "each caller disjunct may prove the same transitive required relation");
+  caseBody.lifetimeBody.obligations.push_back({Lifetime::parameter(22), Lifetime::parameter(25)});
+  expect(!verifyMirLifetimeBodyFacts(emptyProgram, caseBody, cases).valid(),
+         "a relation true in one disjunct cannot become an unconditional body edge");
+  auto unboundTypeContract = caller;
+  unboundTypeContract.typeBounds = {{reference(999), Lifetime::parameter(21)}};
+  expect(!verifyMirLifetimeBodyFacts(emptyProgram, graphBody, unboundTypeContract).valid(),
+         "type-outlives assumptions cannot introduce an unbound nested region");
+  unboundTypeContract.typeBounds.clear();
+  unboundTypeContract.requirements.nodes = {{.kind = CaseKind::Type,
+      .bound = {{}, Lifetime::parameter(21)}, .type = reference(999)}};
+  unboundTypeContract.requirements.root = 0;
+  expect(!verifyMirLifetimeBodyFacts(emptyProgram, graphBody, unboundTypeContract).valid(),
+         "a requirement type leaf must be scoped before it becomes a branch assumption");
   auto forgedGraph = graphBody;
   forgedGraph.lifetimeBody.obligations.push_back(
       {Lifetime::inference(23), Lifetime::parameter(22)});

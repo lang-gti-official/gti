@@ -1,5 +1,6 @@
 #include "mir_lifetimes.h"
 #include "gti/lifetime_types.h"
+#include "gti/lifetime_requirements.h"
 #include "gti/callable_lifetimes.h"
 #include "gti/nominal_variance.h"
 
@@ -495,6 +496,47 @@ bool scopedDeclarationType(const SemanticType &type,
   return valid;
 }
 
+bool scopedLifetimeContract(const LifetimeSignatureContract &contract) {
+  if (contract == LifetimeSignatureContract{})
+    return true;
+  if (!contract.valid())
+    return false;
+  for (const auto &bound : contract.typeBounds)
+    if (!scopedDeclarationType(bound.type, contract.parameters))
+      return false;
+  for (const auto &node : contract.requirements.nodes)
+    if (node.kind == LifetimeRequirementNode::Kind::Type &&
+        !scopedDeclarationType(node.type, contract.parameters))
+      return false;
+  return true;
+}
+
+template <typename Verify>
+MirVerificationResult verifyLifetimeAssumptionCases(
+    const MirBody &body, std::size_t owner,
+    const LifetimeSignatureContract &declared, Verify verify) {
+  const auto reject = [&](std::string message) {
+    return MirVerificationResult{{MirVerificationError{
+        .bodyKind = body.kind, .owner = owner, .message = std::move(message)}}};
+  };
+  if (!scopedLifetimeContract(declared))
+    return reject("MIR lifetime contract contains a malformed or out-of-scope type region");
+  if (!declared.requirements.resolved())
+    return reject("MIR callable retains an unresolved semantic lifetime predicate");
+  if (declared.requirements.nodes.empty())
+    return verify(declared);
+  MirVerificationResult result;
+  const auto proof = visitLifetimeAssumptionCases(declared, [&](const auto &branch) {
+    result = verify(branch);
+    return result.valid();
+  });
+  if (proof.proof != LifetimeFormulaProof::Proven && result.valid())
+    return reject(proof.proof == LifetimeFormulaProof::Exhausted
+                      ? "MIR lifetime assumption proof exceeded its bounded case budget"
+                      : "MIR lifetime assumption formula has no valid proof");
+  return result;
+}
+
 Lifetime applyLifetime(Lifetime value,
                        std::span<const LifetimeBinding> bindings) {
   for (const auto binding : bindings)
@@ -619,6 +661,8 @@ namespace {
 std::optional<LifetimeSignatureContract>
 expandedLifetimeAssumptions(const MirProgram &program,
                             const LifetimeSignatureContract &source) {
+  if (!scopedLifetimeContract(source))
+    return std::nullopt;
   LifetimeSignatureContract result = source;
   const auto addType = [&](const SemanticType &type, Lifetime region) {
     const LifetimeTypeBound bound{type, region};
@@ -777,45 +821,24 @@ bool satisfiesLifetimeRequirements(
     std::span<const LifetimeBinding> bindings,
     const LifetimeSignatureContract &assumptions,
     const LifetimeInferenceConstraints &graph) {
-  if (target.requirements.nodes.empty())
-    return true;
-  if (!target.valid() || !target.requirements.resolved())
+  if (!scopedLifetimeContract(target) || !target.requirements.resolved())
     return false;
-  std::vector<bool> values;
-  for (const auto &node : target.requirements.nodes) {
-    using Kind = LifetimeRequirementNode::Kind;
-    bool satisfied = false;
-    switch (node.kind) {
-    case Kind::Region:
-      satisfied = graph.proves(applyLifetime(node.bound.longer, bindings),
-                                applyLifetime(node.bound.shorter, bindings));
-      break;
-    case Kind::Type: {
-      const auto type = substituteTypeLifetimes(node.type, bindings);
-      std::vector<SemanticType> pending;
-      satisfied = type && mirTypeOutlives(
-          program, *type, applyLifetime(node.bound.shorter, bindings),
-          assumptions, graph, pending);
-      break;
-    }
-    case Kind::SemanticPredicate:
-      satisfied = *node.semanticTruth; // Exact target-instance fact, never call-local truth.
-      break;
-    case Kind::All:
-      satisfied = values[node.left] && values[node.right];
-      break;
-    case Kind::Any:
-      satisfied = values[node.left] || values[node.right];
-      break;
-    }
-    values.push_back(satisfied);
-  }
-  return values[target.requirements.root];
+  const auto proof = evaluateLifetimeRequirements(target.requirements, [&](const auto &node) {
+    if (node.kind == LifetimeRequirementNode::Kind::Region)
+      return graph.proves(applyLifetime(node.bound.longer, bindings),
+                          applyLifetime(node.bound.shorter, bindings));
+    const auto type = substituteTypeLifetimes(node.type, bindings);
+    std::vector<SemanticType> pending;
+    return type && mirTypeOutlives(program, *type,
+        applyLifetime(node.bound.shorter, bindings), assumptions, graph, pending);
+  });
+  return proof.value_or(false);
 }
+
 } // namespace
 
-MirVerificationResult
-verifyMirLifetimeBodyFacts(const MirProgram &program, const MirBody &body,
+static MirVerificationResult
+verifyMirLifetimeBodyFactsForCase(const MirProgram &program, const MirBody &body,
                            const LifetimeSignatureContract &declaredContract,
                            std::size_t owner) {
   MirVerificationResult result;
@@ -989,6 +1012,34 @@ verifyMirLifetimeBodyFacts(const MirProgram &program, const MirBody &body,
   }
   return result;
 }
+bool mirDeclaredLifetimeRelationship(
+    const MirProgram &program, const LifetimeSignatureContract &contract,
+    Lifetime source, Lifetime target) {
+  if (!scopedLifetimeContract(contract) || !contract.requirements.resolved())
+    return false;
+  const auto prove = [&](const auto &branch) {
+    const auto expanded = expandedLifetimeAssumptions(program, branch);
+    if (!expanded)
+      return false;
+    LifetimeBounds bounds;
+    for (const auto bound : expanded->bounds)
+      if (!bounds.assume(bound.longer, bound.shorter))
+        return false;
+    return bounds.proves(source, target);
+  };
+  return contract.requirements.nodes.empty()
+             ? prove(contract)
+             : visitLifetimeAssumptionCases(contract, prove).proof == LifetimeFormulaProof::Proven;
+}
+
+MirVerificationResult verifyMirLifetimeBodyFacts(
+    const MirProgram &program, const MirBody &body,
+    const LifetimeSignatureContract &contract, std::size_t owner) {
+  return verifyLifetimeAssumptionCases(body, owner, contract, [&](const auto &branch) {
+    return verifyMirLifetimeBodyFactsForCase(program, body, branch, owner);
+  });
+}
+
 namespace {
 const LifetimeSignatureContract &bodyLifetimeContract(const MirProgram &program,
                                                       const MirBody &body,
@@ -1455,14 +1506,14 @@ private:
 };
 } // namespace
 
-bool mirLifetimeReferenceConversion(
+static bool mirLifetimeReferenceConversionForCase(
     const MirProgram &program, const MirBody &body, std::size_t owner,
-    const SemanticType &actual, const SemanticType &expected) {
+    const SemanticType &actual, const SemanticType &expected,
+    const LifetimeSignatureContract &declared) {
   if (actual.kind != SemanticType::Reference || expected.kind != SemanticType::Reference ||
       actual.arguments.size() != 1 || expected.arguments.size() != 1)
     return false;
-  const auto &declared = bodyLifetimeContract(program, body, owner);
-  if (!verifyMirLifetimeBodyFacts(program, body, declared, owner).valid())
+  if (!verifyMirLifetimeBodyFactsForCase(program, body, declared, owner).valid())
     return false;
   const auto expanded = expandedLifetimeAssumptions(program, declared);
   if (!expanded)
@@ -1490,12 +1541,24 @@ bool mirLifetimeReferenceConversion(
                               .types(actual, expected, 1, 0, true);
 }
 
-MirVerificationResult verifyMirLifetimeApplications(const MirProgram &program,
-                                                    const MirBody &body,
-                                                    std::size_t owner) {
-  const auto &declaredContract = bodyLifetimeContract(program, body, owner);
+bool mirLifetimeReferenceConversion(
+    const MirProgram &program, const MirBody &body, std::size_t owner,
+    const SemanticType &actual, const SemanticType &expected) {
+  const auto &declared = bodyLifetimeContract(program, body, owner);
+  return verifyLifetimeAssumptionCases(body, owner, declared, [&](const auto &branch) {
+    if (mirLifetimeReferenceConversionForCase(program, body, owner, actual, expected, branch))
+      return MirVerificationResult{};
+    return MirVerificationResult{{MirVerificationError{
+        .bodyKind = body.kind, .owner = owner,
+        .message = "MIR reference conversion is not proved in every lifetime assumption case"}}};
+  }).valid();
+}
+
+static MirVerificationResult verifyMirLifetimeApplicationsForCase(
+    const MirProgram &program, const MirBody &body, std::size_t owner,
+    const LifetimeSignatureContract &declaredContract) {
   auto result =
-      verifyMirLifetimeBodyFacts(program, body, declaredContract, owner);
+      verifyMirLifetimeBodyFactsForCase(program, body, declaredContract, owner);
   if (!result.valid())
     return result;
   const auto expanded = expandedLifetimeAssumptions(program, declaredContract);
@@ -1687,6 +1750,14 @@ MirVerificationResult verifyMirLifetimeApplications(const MirProgram &program,
   return result;
 }
 
+MirVerificationResult verifyMirLifetimeApplications(
+    const MirProgram &program, const MirBody &body, std::size_t owner) {
+  const auto &declared = bodyLifetimeContract(program, body, owner);
+  return verifyLifetimeAssumptionCases(body, owner, declared, [&](const auto &branch) {
+    return verifyMirLifetimeApplicationsForCase(program, body, owner, branch);
+  });
+}
+
 namespace {
 std::vector<SemanticType>
 canonicalLifetimeParameters(std::span<const SemanticType> types) {
@@ -1736,6 +1807,35 @@ bool mirLifetimeCallSignatureMatches(const MirInstruction &instruction,
       instruction.lifetimeApplication);
   return signature && appliedSignatureMatches(instruction, *signature);
 }
+std::optional<FunctionBorrowDependencySummary> mirCallableLifetimeBorrowSummary(
+    const MirProgram &program, const MirInstruction &instruction) {
+  const auto *callable = checkedMirCallableLifetimeSignature(program, instruction);
+  if (!callable || instruction.intrinsic != IntrinsicKind::FunctionPointerInvoke ||
+      callable->signature.arguments.empty())
+    return std::nullopt;
+  const auto &result = callable->signature.arguments.front();
+  if (result.kind != SemanticType::Reference || result.arguments.size() != 1)
+    return std::nullopt;
+  LifetimeBounds bounds;
+  for (const auto bound : callable->contract.bounds)
+    if (!bounds.assume(bound.longer, bound.shorter))
+      return std::nullopt;
+  FunctionBorrowDependencySummary summary;
+  std::vector<SemanticType> parameters;
+  for (const auto &parameter : std::span(callable->signature.arguments).subspan(1))
+    SemanticType::appendExpandedArgument(parameters, parameter);
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
+    const auto &parameter = parameters[index];
+    if (parameter.kind == SemanticType::Reference && parameter.arguments.size() == 1 &&
+        bounds.proves(parameter.referenceLifetime, result.referenceLifetime) &&
+        (result.referenceAccess == AccessMode::ReadOnly ||
+         parameter.referenceAccess == AccessMode::Mutable))
+      summary.dependencies.push_back({.origin = BorrowOriginKind::Argument,
+          .parameter = index + 1, .access = result.referenceAccess});
+  }
+  return summary;
+}
+
 bool mirCallableLifetimeTargetMatches(
     const MirProgram &program, const CallableLifetimeSignature &callable,
     const SemanticType &returnType, std::span<const SemanticType> parameters,

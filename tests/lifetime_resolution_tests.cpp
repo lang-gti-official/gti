@@ -529,6 +529,45 @@ int main() { return 0; }
          "explicit generic type choices retain their fixed lifetime obligations");
 }
 
+void testPrivateLifetimeInference() {
+  const auto result = analyze(R"(
+static int& first(int& selected, int& ignored) { return selected; }
+static int& recurse(bool done, int& selected, int& ignored) {
+  if (done) { return selected; }
+  return recurse(true, selected, ignored);
+}
+int main() { int firstValue = 1; int secondValue = 2; return first(firstValue, secondValue) + recurse(false, firstValue, secondValue); }
+)");
+  expectValid(result, "private omitted lifetime contracts infer selected and recursive suppliers");
+  for (const auto name : {"first", "recurse"}) {
+    const auto *info = function(result, name);
+    if (!info) {
+      expect(false, "private helper metadata is available");
+      continue;
+    }
+    const auto selected = std::string_view(name) == "first" ? 0U : 1U;
+    const auto ignored = selected + 1;
+    lang::LifetimeBounds bounds;
+    for (const auto edge : info->lifetimeContract.bounds)
+      (void)bounds.assume(edge.longer, edge.shorter);
+    expect(info->lifetimeContract.origin == lang::LifetimeContractOrigin::BodyInferred &&
+               info->lifetimeContract.valid() && info->parameterTypes.size() > ignored &&
+               bounds.proves(info->parameterTypes[selected].referenceLifetime,
+                             info->returnType.referenceLifetime) &&
+               !bounds.proves(info->parameterTypes[ignored].referenceLifetime,
+                              info->returnType.referenceLifetime),
+           "private recursive fixed point preserves only productive return suppliers");
+  }
+  for (const std::string source : {
+           "int& publicBoundary(int& first, int& second) { return first; } int main() { return 0; }",
+           "static int&<a> explicitBoundary<lifetime a, lifetime b>(int&<a> first, int&<b> second) { return second; } int main() { return 0; }",
+           "static int& dangling(int& first, int& second) { int local = 0; return local; } int main() { return 0; }"}) {
+    const auto invalid = analyze(source);
+    expect(!invalid.semanticValid,
+           "private inference cannot change a public/explicit contract or export a local region");
+  }
+}
+
 void testCStringRegions() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto prelude = std::filesystem::weakly_canonical(root / "prelude.gti");
@@ -586,5 +625,6 @@ int main() {
   testExecutableLifetimeIdentity();
   testInferredCarrierRegions();
   testCStringRegions();
+  testPrivateLifetimeInference();
   return failures == 0 ? 0 : 1;
 }
