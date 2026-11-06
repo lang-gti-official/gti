@@ -1,6 +1,6 @@
 export module left;
 import "api/base.gti";
 
-export int left_value() {
+export [[cold, noinline]] int left_value() {
     return base_value() * 2;
 }

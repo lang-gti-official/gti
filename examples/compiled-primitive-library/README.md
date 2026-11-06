@@ -9,6 +9,13 @@ destructor that prints on both normal return and checked failure. These operatio
 share the final executable's matching runtime without exposing implementation
 types in the library interface.
 
+The `int32_t` identity overload requests `[[inline]]`, the `int64_t` overload
+requests `[[noinline]]`, and the infrequent `divide` operation uses
+`[[cold, noinline]]`. These policies survive the compiled interface and source-free
+consumer build independently for each overload. Inline advice does not provide
+the consumer with a function body or enable cross-library inlining. The division
+failure checks still exercise normal panic propagation and consumer cleanup.
+
 With an optimized GTI toolchain on `PATH`, from this directory:
 
 ```sh

@@ -1,1 +1,0 @@
-Source-only standard-library CI can reuse a compatible full-CI production compiler, validate changed-library owners and consumers, and retain explicit compiler-origin provenance in the resulting toolchain archives. Native/build changes and unavailable evidence retain full integration.

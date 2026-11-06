@@ -1,1 +1,0 @@
-Typed macros now accept fitting integer literals such as `PRINT_BORDER(33)` for a `uint8_t` parameter, matching ordinary calls. Exact overloads remain preferred, ambiguous and out-of-range calls are rejected, and expanded arguments retain their selected type without changing lazy evaluation.

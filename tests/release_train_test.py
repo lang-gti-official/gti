@@ -332,17 +332,22 @@ def cut_contract(base):
 
 
 class FakeAPI:
-    def __init__(self, open_prs=(), gate=None):
-        self.calls, self.open_prs, self.gate_run, self.queued_numbers = [], list(open_prs), gate, set()
+    """The App-token API. The CI gate is read through GITHUB_TOKEN instead."""
+
+    def __init__(self, open_prs=()):
+        self.calls, self.open_prs, self.queued_numbers = [], list(open_prs), set()
 
     def request(self, method, path, payload=None):
         self.calls.append((method, path, payload))
         if method == "GET" and path.startswith("/pulls?"):
             return self.open_prs
+        if method == "GET" and path.startswith("/pulls/"):
+            number = int(path.rsplit("/", 1)[1])
+            return next((pr for pr in self.open_prs if pr["number"] == number), {})
         if method == "POST" and path == "/pulls":
             return {"number": 41, "node_id": "PR_41", "head": {"sha": "0" * 40}}
         if "/check-runs?" in path:
-            return {"check_runs": [self.gate_run] if self.gate_run else []}
+            raise AssertionError("the App token never reads the CI gate")
         return {}
 
     def graphql(self, query, variables):
@@ -427,56 +432,92 @@ def sanitizer_evidence_contract():
 
 def delivery_contract(repo, nightly, base, verified):
     sanitized = sanitized_for({nightly})
-
-    def runs(history):
-        return lambda path: {"workflow_runs": history}
-
-    clock = iter(range(0, 100000, 60))
     green = {"id": 3, "name": "CI gate", "status": "completed", "conclusion": "success"}
-    api = FakeAPI(gate=green)
-    delivery = LocalDelivery(api, runs([]), "token", sleep=lambda _: None,
-                             monotonic=lambda: next(clock), wait_seconds=600, poll_seconds=60)
+
+    def runs(history, gate=None):
+        """The GITHUB_TOKEN reader: merge-queue CI history and the CI gate check runs."""
+        def request(path):
+            if "/check-runs?" in path:
+                assert path.startswith("/repos/lang-gti-official/gti/commits/") and "check_name=CI+gate" in path, path
+                return {"check_runs": [gate] if gate else []}
+            return {"workflow_runs": history}
+        return request
+
+    # The cut opens the PR and stops: no App token is held across the CI gate wait.
+    api = FakeAPI()
+    delivery = LocalDelivery(api, runs([]), "token")
     result = quiet(train.run_cut, train.REPOSITORY, "schedule", "refs/heads/main", "", "", base / "deliver",
                    NOW, verified, delivery, nightly_request(nightly), sanitized)
-    assert result["cut"] == "true" and result["pr"] == "41" and result["queue"] == "enqueued", result
+    pushed = run(["git", "rev-parse", "refs/heads/release-cut/0.11.0"], repo.origin)
+    assert result["cut"] == "true" and result["pr"] == "41" and result["head"] == pushed, result
+    assert "queue" not in result
+    assert not [call for call in api.calls if call[0] == "GRAPHQL" or "/check-runs" in call[1]], \
+        "the cut neither reads the gate nor queues with the App token"
     posted = [call for call in api.calls if call[:2] == ("POST", "/pulls")][0][2]
     assert posted["head"] == "release-cut/0.11.0" and posted["base"] == "main"
     assert posted["title"] == "Release 0.11.0: Release train 2026-10-30"
     assert "Validation:\n- T1: release_version_policy, cut_release_policy\n" in posted["body"]
     labels = [call for call in api.calls if call[1] == "/issues/41/labels"][0][2]
     assert labels == {"labels": ["rollup=never", "release-cut"]}
-    enqueued = [call for call in api.calls if call[0] == "GRAPHQL" and call[1] == "enqueuePullRequest"]
-    pushed = run(["git", "rev-parse", "refs/heads/release-cut/0.11.0"], repo.origin)
-    assert enqueued and enqueued[0][2] == {"id": "PR_41", "head": pushed}, "queues the exact head"
     assert train.release_cut(pushed) == "0.11.0"
     repo.git("push", "--quiet", "origin", ":refs/heads/release-cut/0.11.0")
 
-    # An open cut PR is resumed instead of cutting again.
-    pending = {"number": 40, "node_id": "PR_40", "head": {"ref": "release-cut/0.11.0", "sha": "a" * 40,
-                                                          "repo": {"full_name": train.REPOSITORY}}}
-    api = FakeAPI(open_prs=[pending], gate=green)
-    delivery = LocalDelivery(api, runs([]), "token", sleep=lambda _: None, monotonic=lambda: 0)
+    # An open cut PR is resumed: the cut reports it for the later steps instead of cutting again.
+    pending = {"number": 40, "node_id": "PR_40", "state": "open",
+               "head": {"ref": "release-cut/0.11.0", "sha": "a" * 40,
+                        "repo": {"full_name": train.REPOSITORY}}}
+    api = FakeAPI(open_prs=[pending])
     result = quiet(train.run_cut, train.REPOSITORY, "schedule", "refs/heads/main", "", "", base / "resume",
-                   NOW, verified, delivery, nightly_request(nightly), sanitized)
-    assert result["cut"] == "false" and not (base / "resume").exists()
-    assert ("GRAPHQL", "enqueuePullRequest", {"id": "PR_40", "head": "a" * 40}) in api.calls
-    api = FakeAPI(open_prs=[pending, dict(pending, number=39)], gate=green)
+                   NOW, verified, LocalDelivery(api, runs([]), "token"), nightly_request(nightly), sanitized)
+    assert result["cut"] == "false" and result["pr"] == "40" and result["head"] == "a" * 40, result
+    assert not (base / "resume").exists()
+    assert not [call for call in api.calls if call[0] == "GRAPHQL"]
+    api = FakeAPI(open_prs=[pending, dict(pending, number=39)])
     refused(train.run_cut, train.REPOSITORY, "schedule", "refs/heads/main", "", "", base / "two", NOW,
             verified, LocalDelivery(api, runs([]), "token"), nightly_request(nightly), sanitized,
             contains="more than one")
+
+    # The gate wait reads with GITHUB_TOKEN only and is bounded.
+    clock = iter(range(0, 100000, 60))
+    pauses = []
+    states = iter([None, dict(green, status="in_progress", conclusion=None), green])
+    def ticking(path):
+        if "/check-runs?" in path:
+            run = next(states)
+            return {"check_runs": [run] if run else []}
+        raise AssertionError(path)
+    assert quiet(train.await_gate, ticking, "40", "a" * 40, sleep=pauses.append,
+                 monotonic=lambda: next(clock), wait_seconds=600, poll_seconds=60) == {"gate": "success"}
+    assert pauses == [60, 60], pauses
+    clock = iter(range(0, 100000, 60))
+    assert quiet(train.await_gate, runs([]), "40", "a" * 40, sleep=lambda _: None,
+                 monotonic=lambda: next(clock), wait_seconds=300) == {"gate": "waiting"}
+    refused(train.await_gate, runs([], dict(green, conclusion="failure")), "40", "a" * 40,
+            sleep=lambda _: None, monotonic=lambda: 0, contains="failed its CI gate")
+    refused(train.await_gate, runs([], green), "40", "a" * 12, contains="full")
+
+    # Queueing, with a freshly minted App token, is one exact-head attempt and never waits.
+    api = FakeAPI(open_prs=[pending])
+    delivery = LocalDelivery(api, runs([], green), "token")
+    assert quiet(delivery.enqueue, quiet(delivery.pull, "40", "a" * 40)) == "enqueued"
+    assert ("GRAPHQL", "enqueuePullRequest", {"id": "PR_40", "head": "a" * 40}) in api.calls
+    refused(delivery.pull, "40", "b" * 40, contains="moved")
+    for changed in ({"state": "closed"}, {"head": dict(pending["head"], ref="feature")},
+                    {"head": dict(pending["head"], repo={"full_name": "fork/gti"})}):
+        refused(LocalDelivery(FakeAPI(open_prs=[dict(pending, **changed)]), runs([]), "token").pull,
+                "40", "a" * 40, contains="not an open release cut")
     failed = [{"head_branch": "gh-readonly-queue/main/pr-40-" + "b" * 40, "status": "completed",
                "conclusion": "failure"}]
-    refused(LocalDelivery(FakeAPI(gate=green), runs(failed), "token").enqueue, pending,
+    refused(LocalDelivery(FakeAPI(), runs(failed, green), "token").enqueue, pending,
             contains="failed in the merge queue")
-    refused(LocalDelivery(FakeAPI(gate=dict(green, conclusion="failure")), runs([]), "token").enqueue,
+    refused(LocalDelivery(FakeAPI(), runs([], dict(green, conclusion="failure")), "token").enqueue,
             pending, contains="failed its CI gate")
-    queued = FakeAPI(gate=green)
+    queued = FakeAPI()
     queued.queued_numbers = {40}
-    assert quiet(LocalDelivery(queued, runs([]), "token").enqueue, pending) == "queued"
-    clock = iter(range(0, 100000, 60))
-    waiting = LocalDelivery(FakeAPI(gate=None), runs([]), "token", sleep=lambda _: None,
-                            monotonic=lambda: next(clock), wait_seconds=300)
-    assert quiet(waiting.enqueue, pending) == "waiting"
+    assert quiet(LocalDelivery(queued, runs([], green), "token").enqueue, pending) == "queued"
+    waiting = FakeAPI()
+    assert quiet(LocalDelivery(waiting, runs([]), "token").enqueue, pending) == "waiting"
+    assert not [call for call in waiting.calls if call[1] == "enqueuePullRequest"]
 
 
 def beta_contract(base):
@@ -856,6 +897,8 @@ def rulesets_contract():
     rules = {rule["type"]: rule.get("parameters", {}) for rule in beta["rules"]}
     assert {"deletion", "non_fast_forward", "pull_request", "required_status_checks"} <= set(rules)
     assert rules["pull_request"]["allowed_merge_methods"] == ["rebase"], "picks keep their -x lines"
+    assert "required_linear_history" not in rules, \
+        "a line branch starts on main's merge-queue history; that rule refuses its creation"
     assert [check["context"] for check in rules["required_status_checks"]["required_status_checks"]] == \
         ["CI gate", "Backport gate"]
     assert {rule["type"] for rule in status["rules"]} == {"deletion", "non_fast_forward"}

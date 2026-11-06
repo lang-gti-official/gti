@@ -854,6 +854,8 @@ struct CompiledScalarBinding {
   std::string typeMetadata;
   std::string resultRecipe;
   CompiledBorrowContract borrow;
+  // Exported source policy, or authenticated interface policy for an import.
+  FunctionCodegenAttributes codegenAttributes;
 };
 class CompiledScalarUnitBuilder;
 

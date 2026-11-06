@@ -131,7 +131,7 @@ std::string interface(const std::vector<CompiledScalarSignature> &signatures) {
   auto sorted = signatures;
   std::sort(sorted.begin(), sorted.end(),
             [](const auto &a, const auto &b) { return a.key < b.key; });
-  std::string out = "gti.callable-interface.3\n", previous;
+  std::string out = "gti.callable-interface.4\n", previous;
   for (const auto &signature : sorted) {
     if (signature.key == previous)
       throw std::invalid_argument("duplicate callable interface declaration");
@@ -145,6 +145,12 @@ std::string interface(const std::vector<CompiledScalarSignature> &signatures) {
     field(out, std::to_string(signature.borrow.parameter));
     field(out,
           signature.borrow.access == AccessMode::ReadOnly ? "read" : "mut");
+    field(out, signature.codegenAttributes.inlining == FunctionInlining::Default
+                   ? "default"
+               : signature.codegenAttributes.inlining == FunctionInlining::Hint
+                   ? "hint"
+                   : "never");
+    field(out, signature.codegenAttributes.cold ? "1" : "0");
     out += '\n';
     if (out.size() > 1024U * 1024U)
       throw std::invalid_argument("callable interface exceeds metadata limit");
@@ -167,7 +173,7 @@ std::string_view takeField(std::string_view &bytes) {
   return result;
 }
 std::vector<CompiledScalarSignature> readInterface(std::string_view bytes) {
-  constexpr std::string_view header = "gti.callable-interface.3\n";
+  constexpr std::string_view header = "gti.callable-interface.4\n";
   if (bytes.size() > 1024U * 1024U || !bytes.starts_with(header))
     throw std::invalid_argument("unsupported compiled interface profile");
   auto rest = bytes.substr(header.size());
@@ -199,6 +205,17 @@ std::vector<CompiledScalarSignature> readInterface(std::string_view bytes) {
       throw std::invalid_argument("invalid compiled borrow access");
     signature.borrow.access =
         access == "read" ? AccessMode::ReadOnly : AccessMode::Mutable;
+    const auto inlining = takeField(rest);
+    if (inlining != "default" && inlining != "hint" && inlining != "never")
+      throw std::invalid_argument("invalid compiled inlining policy");
+    signature.codegenAttributes.inlining =
+        inlining == "default" ? FunctionInlining::Default
+        : inlining == "hint"  ? FunctionInlining::Hint
+                              : FunctionInlining::Never;
+    const auto cold = takeField(rest);
+    if (cold != "0" && cold != "1")
+      throw std::invalid_argument("invalid compiled cold policy");
+    signature.codegenAttributes.cold = cold == "1";
     if (rest.empty() || rest.front() != '\n')
       throw std::invalid_argument("malformed callable interface");
     rest.remove_prefix(1);

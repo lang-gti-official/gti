@@ -1,1 +1,0 @@
-Fix generic owned-value borrowing and constrained callable results inside expressions. Preserve deleted-copy causes for by-value argument packs, and explain nonconstant immediate arguments at their caller.

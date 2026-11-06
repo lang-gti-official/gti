@@ -881,9 +881,10 @@ compiled libraries selected through the plural project manifest, with source-fre
 consumer builds and checks. The `compiled_libraries_project` gate owns it.
 
 [`compiled-primitive-library/`](compiled-primitive-library/README.md) demonstrates
-all primitive interface types, overloaded exports, void results and checked
-arithmetic across a library boundary, with private allocation and runtime-backed
-destructor cleanup in the producer. `compiled_primitive_library` owns its
+all primitive interface types, overloaded exports, void results, checked
+arithmetic and preserved `[[inline]]`/`[[noinline]]`/`[[cold]]` policies across a
+library boundary, with private allocation and runtime-backed destructor cleanup
+in the producer. `compiled_primitive_library` owns its
 O0/O1/O3 execution and failure/cleanup checks.
 
 [`compiled-value-types/`](compiled-value-types/README.md) demonstrates source-free

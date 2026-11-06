@@ -541,9 +541,12 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    commits the result with its `Release-Cut:` trailer, pushes
    `release-cut/<version>` and opens the pull request with the gti-rollup App
    token (a `GITHUB_TOKEN` PR would get no PR checks). It labels the PR
-   `rollup=never` and `release-cut`, waits up to 150 minutes for its `CI gate`
-   and queues its exact head with `enqueuePullRequest`. An open cut PR is
-   resumed instead of cutting again; one the queue rejected stops the train
+   `rollup=never` and `release-cut`, then waits up to 150 minutes for its
+   `CI gate` holding only the read-only `GITHUB_TOKEN`. An App installation
+   token lives one hour and cannot be extended, and the cut PR's checks take
+   about that long, so a second App token is minted after the gate passes and
+   queues the exact head with `enqueuePullRequest`. An open cut PR is resumed
+   the same way instead of cutting again; one the queue rejected stops the train
    until it is closed (delete its branch with it). The PR body declares
    `release_version_policy` and `cut_release_policy` as its `Validation:` T1.
    The App has no Workflows permission and the cut touches only `VERSION`,
@@ -596,8 +599,11 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    `X.Y.Z` is stable. The complete suite then runs on the release configuration
    in cost-balanced shards, and `Backport gate` requires both. The main
    ruleset and merge queue do not cover `beta/*`; the proposed `beta` ruleset
-   requires a PR merged by rebase (picks keep their `-x` lines), linear
-   history, an up-to-date branch, `CI gate` and `Backport gate`.
+   requires a PR merged by rebase (picks keep their `-x` lines), an up-to-date
+   branch, `CI gate` and `Backport gate`. It does not require linear history:
+   a line starts at a release cut on main's merge-queue history, which that
+   rule rejects when the branch is created, and rebase-only merges already
+   keep the line free of new merge commits.
 4. **Promotion** (`train.yml`, job `promote`). Candidates are versions with a
    beta newer than every stable tag; a version a higher patch beta on its line
    supersedes is skipped. From the highest down, the version's newest beta
@@ -3041,14 +3047,27 @@ global and aggregate-carried origins reject. The virtual declaration publishes
 escape, mutation and aliasing. This does not yet export custom ownership/drop
 recipes or a general lifetime dependency graph.
 
-Callable metadata profile `gti.callable-interface.3` contains key-sorted,
+Callable metadata profile `gti.callable-interface.4` contains key-sorted,
 length-framed records: persistent function key, result recipe, common nominal
-metadata, borrow origin, parameter ordinal and access. Duplicate overload keys
+metadata, borrow origin, parameter ordinal, access, inlining policy
+(`default`/`hint`/`never`) and cold policy (`0`/`1`). Duplicate overload keys
 reject even when results differ. `gti.nominal-interface.2` stores the bounded
 declaration closure. Development codec entry points expose the same canonical
 validation used by the importer. Unknown profiles, malformed/noncanonical records,
 unresolved recipes and incomplete borrow contracts reject. No AST pointers,
 numerical instance IDs or arbitrary source bodies enter the interface.
+
+Resolved source optimization policy is selected from the verified MIR export,
+then carried in the compiler-owned binding. Export verification requires an exact
+match to the source policy. Import facades remain ordinary bodyless declarations:
+they do not acquire permission to author source-only attributes, and annotations
+do not change type, borrowing or failure analysis. The validated import binding
+supplies the LLVM declaration's policy; the producer applies the same mapping to
+its implementation and external wrapper. The binding is sealed and its symbol
+digest includes both policies, so a rechecksummed interface with changed hints
+cannot match an old object. This is integrity/consistency validation, not a
+cryptographic signature or a stable ABI. No body serialization, LTO, or forced
+inlining is added. Unsupported library callable shapes remain unsupported.
 
 Dependency-owned declarations retain their original identity when used as function
 parameters/results or nested fields. The consumer requires the defining artifact
@@ -3063,7 +3082,7 @@ contracts and colliding fully qualified nominal names remain separate work.
 
 `LoweredProgram` retains logical owner/source-unit bindings independently of
 callable reachability, including a library used only for its types. Serialization
-profile `lowered-program-v32` records these bindings. Wire metadata is validated
+profile `lowered-program-v34` records these bindings. Wire metadata is validated
 completely; concrete declaration comparison follows HIR reachability. An unused
 import may lack an instantiated type or function, but every reached GTI declaration
 must still bind to its exact validated callable contract. No new runtime adapter,
@@ -3079,8 +3098,9 @@ or reopened by explicit artifact imports; unused imported declarations are valid
 
 After lowering, `CompiledScalarUnitBuilder` binds concrete exported and imported
 instances together. The complete plan is sealed in `LoweredProgram` serialization
-v30, including source-unit identity, nominal metadata, result recipe and borrow
-contract. LLVM uses v3 SHA-256 symbols derived from the complete callable contract.
+v34, including source-unit identity, nominal metadata, result recipe, borrow
+contract and optimization policy. LLVM uses v4 SHA-256 symbols derived from the
+complete callable contract. Older development metadata profiles require rebuilding.
 An external wrapper preserves GTI's status/result/failure ABI; aggregate results
 forward the caller's destination, and fallible bodies forward the original failure
 record. Consumers do not infer purity, failure freedom or ownership from object
