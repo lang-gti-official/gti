@@ -699,7 +699,7 @@ struct Cell {
   Cell() = default;
   ~Cell() { destroyed += 1; }
 };
-struct Outer { mut Cell cell; Outer() : cell() {} };
+struct Outer { mut Cell cell{}; Outer() = default; };
 int read(int& value) { return value; }
 void change(mut int& value) { value = 9; }
 struct Snapshot { int value; Snapshot(int& source) : value(source) {} };
@@ -708,8 +708,9 @@ int main() {
     mut Outer owner{};
     unsafe {
       Outer* pointer = &owner;
-      Snapshot snapshot{pointer->cell.value};
-      change(pointer->cell.value);
+      Cell* cell = &owner.cell;
+      Snapshot snapshot{cell->value};
+      change(cell->value);
       const Outer* readonly = pointer;
       if (read(readonly->cell.value) != 9 || snapshot.value != 7) return 1;
     }
