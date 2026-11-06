@@ -72,9 +72,9 @@ int main() {
                 "contentChanges": [{"text": unbound}]}})
             unbound_errors = diagnostics(3)
             error = next(item for item in unbound_errors if item.get("code") == "GTI-S2126")
-            start = unbound.index(".name()") + len(".name(")
+            start = unbound.index(".name()") + 1
             assert error["range"] == {"start": lsp_position(unbound, start),
-                                      "end": lsp_position(unbound, start + 1)}, error
+                                      "end": lsp_position(unbound, start + len("name"))}, error
             assert error["severity"] == 1 and error["data"]["phase"] == "semantics", error
             assert error.get("relatedInformation"), error
             assert not any(item.get("code") in ("GTI-B0001", "GTI-B0003")

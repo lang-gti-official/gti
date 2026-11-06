@@ -1071,13 +1071,15 @@ public:
                     << diagnostic.message << '\n';
         continue;
       }
-      const auto queryStart = source.find(queries[index]);
+      const std::string_view callable = index == 2   ? "name_of"
+                                        : index == 3 ? "is_void"
+                                                     : "name";
+      const auto callStart =
+          source.find(queries[index]) + queries[index].rfind(callable);
       const bool attributed =
           std::filesystem::path(error->primary.source).filename() == name &&
-          error->primary.start >= queryStart &&
-          error->primary.end <= queryStart + queries[index].size() &&
-          error->primary.end == error->primary.start + 1 &&
-          source[error->primary.start] == ')' &&
+          error->primary.start == callStart &&
+          error->primary.end == callStart + callable.size() &&
           error->phase == lang::DiagnosticPhase::Semantics &&
           error->message.find("concrete generic arguments") !=
               std::string::npos &&
