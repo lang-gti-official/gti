@@ -1782,6 +1782,15 @@ The registered `compiled_scalar_library` example exercises separate processes,
 consumer-only edits, visibility and rejection at O0/O1/O3. This advances the
 user-visible workflow beyond codecs without marking general F1 or F2 complete.
 
+F2 runtime-closure progress: publication, import and reuse now admit runtime C
+services actually defined by the independently selected, digest-pinned runtime
+archive. Target checks cover its object members; thin archives and unresolved
+native dependencies remain rejected. The primitive-library example uses private
+allocation and destructor printing with producer sources absent, preserving
+normal and failure cleanup across the boundary. This advances selected runtime
+closure only: per-library globals/TLS initialization and retirement, exported
+custom ownership contracts and generic body recipes remain separate milestones.
+
 Project workflow progress: `gti-library` targets now select root-module exports
 through the compiler and publish `.gtilib`; executable targets resolve one
 `compiled-library` or several independent `compiled-libraries` artifacts and

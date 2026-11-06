@@ -3088,12 +3088,34 @@ code. These symbols do not promise cross-version ABI stability.
 
 Each bundle contains one `unit.o` and exact direct-dependency digest receipts.
 Object validation checks relocatable format, target/layout, exact exported
-symbols and unresolved symbols limited to declared imported GTI callables.
+symbols and unresolved symbols limited to declared imported GTI callables and
+the selected runtime's C ABI services. The driver reads the independently
+resolved runtime archive, verifies its bytes against the compatibility digest,
+and obtains the canonical service inventory from its target-matching relocatable
+members. A `gti_rt_` spelling is admitted only when that exact global definition
+exists in the selected archive; arbitrary native and C++ implementation symbols
+remain rejected. Thin archives are rejected before any external member is read.
+The same check applies to publication, artifact import and automatic reuse.
+The object's undefined-symbol table is the selected runtime dependency closure;
+it adds no bundle-controlled allowlist or semantic capabilities. Existing
+compiler/runtime identities pin this contract without a second metadata schema.
+LLVM's target-library information additionally selects the bounded hosted
+memory-helper family (`memcpy`, `memmove`, `memset`, `bzero`) used when lowering
+memory intrinsics and aggregate copies. The ordinary final native link supplies
+those C ABI helpers. This does not permit arbitrary additional native libraries.
 Transitive imports contribute their objects without requiring a source facade.
-Program initialization, TLS and hosted producer entry remain unsupported;
-producer cleanup needing external runtime services still requires a broader
-runtime-closure contract. Consumer cleanup and checked failure propagation retain
-their normal behavior. The driver owns bounded reads, native staging and atomic
+Program initialization, TLS and hosted producer entry remain unsupported.
+Library-private allocation, printing and destructor cleanup can use that runtime
+closure, including cleanup while a checked failure propagates to the consumer.
+The final executable owns runtime initialization and links one matching archive;
+libraries do not create an additional runtime instance. Exported ownership/type
+restrictions are unchanged. The LLVM dependency walk treats selected library
+exports as explicit entry roots, preserving their transitive calls and cleanup
+without requiring unrelated imported bodies. Unmodeled indirect dependencies
+and genuinely rootless units retain conservative admission. Imports that add
+program initialization still require the separate initialization milestone.
+Consumer cleanup and checked failure propagation
+retain their normal behavior. The driver owns bounded reads, native staging and atomic
 publication. Unsupported producer shapes use existing backend-limit diagnostics;
 malformed artifacts use existing driver validation diagnostics.
 

@@ -119,6 +119,50 @@ public:
     return {BackendArtifactKind::Object, "captured", ".o", {}};
   }
 };
+void runtimeClosureTests(const std::filesystem::path &root,
+                         const std::filesystem::path &runtime) {
+  const auto target = TargetInfo::host();
+  const auto services = compiledLibrarySupportSymbols(read(runtime), target);
+  expect(!services.empty() && std::is_sorted(services.begin(), services.end()),
+         "runtime service inventory must be nonempty and canonical");
+  rejects(
+      [&] { (void)compiledLibrarySupportSymbols("not an archive", target); },
+      "malformed runtime archive");
+  rejects([&] { (void)compiledLibrarySupportSymbols("!<thin>\n", target); },
+          "external thin runtime members");
+  rejects([&] { (void)compiledLibrarySupportSymbols("!<arch>\n", target); },
+          "runtime without services");
+  // These are symbol-verifier fixtures, not calls with an invented runtime ABI:
+  // nothing links or executes them. Prefix alone must never authorize an
+  // import.
+  const auto runtimeService =
+      std::find_if(services.begin(), services.end(), [](const auto &name) {
+        return name.starts_with("gti_rt_");
+      });
+  expect(runtimeService != services.end(), "missing actual runtime C export");
+  for (const auto &dependency : {*runtimeService, std::string("memcpy"),
+                                 std::string("gti_rt_missing_service_v999"),
+                                 std::string("arbitrary_native_service")}) {
+    const auto source = root / "runtime-probe.cpp";
+    const auto object = root / "runtime-probe.o";
+    write(source, "extern \"C\" void " + dependency +
+                      "(); extern \"C\" void probe() { " + dependency +
+                      "(); }\n");
+    auto built = process({"c++", "-c", source.string(), "-o", object.string()});
+    expect(built.succeeded(), "runtime symbol fixture failed: " + built.output);
+    const auto bytes = read(object);
+    rejects([&] { verifyCompiledScalarObject(bytes, target, {"probe"}); },
+            "unselected runtime dependency");
+    if (dependency == *runtimeService || dependency == "memcpy")
+      verifyCompiledScalarObject(bytes, target, {"probe"}, services);
+    else
+      rejects(
+          [&] {
+            verifyCompiledScalarObject(bytes, target, {"probe"}, services);
+          },
+          "unprovided native dependency");
+  }
+}
 void projectCheckTests(const std::filesystem::path &root,
                        const std::filesystem::path &runtime) {
   // Reach the error adapter without relying on a frontend bug to manufacture
@@ -450,6 +494,7 @@ int main(int argc, char **argv) {
     expect(argc == 3, "expected runtime archive and example directory");
     TemporaryDirectory tmp;
     const std::filesystem::path examples = argv[2];
+    runtimeClosureTests(tmp.path / "runtime", argv[1]);
     projectCheckTests(tmp.path / "check-project", argv[1]);
     write(tmp.path / "stdlib/prelude.gti", "");
     for (auto level : {OptimizationLevel::O0, OptimizationLevel::O1,
