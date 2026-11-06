@@ -2996,11 +2996,9 @@ auto SemanticVisitor::Impl::makeClassPatternParameters(
   for (const TypeRef &pattern : declaration.genericArgumentPatterns()) {
     collect(collect, pattern, {});
   }
-  if (std::none_of(parameters.begin(), parameters.end(), [](const auto &parameter) {
-        return !parameter.lifetimeKeyword;
-      })) {
+  if (parameters.empty()) {
     report(declaration.name(),
-           "A generic class argument pattern must declare a type parameter.",
+           "A generic class argument pattern must declare a type or lifetime parameter.",
            "GTI-S2023");
   }
   // Binding order is independent of public argument order. The ordinary
@@ -3175,7 +3173,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
         continue;
       }
       if (enclosingClass != 0 &&
-          !classInfo(enclosingClass).genericParameters.empty()) {
+          classInfo(enclosingClass).hasGenericBindings()) {
         report(classDecl->name(),
                "Nested type definitions inside generic enclosing types are "
                "not supported yet; enclosing generic arguments must be "
@@ -4492,7 +4490,7 @@ auto SemanticVisitor::Impl::analyzeDeclarationAttributeList(
       diagnostics.emplace_back(std::move(diagnostic));
       continue;
     }
-    if (!attribute->genericParameters.empty() ||
+    if (attribute->hasGenericBindings() ||
         (!attribute->fields.empty() && !attribute->designatedConstructor)) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2113", DiagnosticPhase::Semantics, anchor,
@@ -7124,8 +7122,8 @@ auto SemanticVisitor::Impl::validateCOpaqueHandles() -> void {
           owner.name, "Opaque C handle '" + owner.name.lexeme +
                           "' must be incomplete and cannot define a GTI body.");
     }
-    if (!owner.genericParameters.empty()) {
-      reportCOpaqueHandle(owner.genericParameters.front().name,
+    if (owner.hasGenericBindings()) {
+      reportCOpaqueHandle(owner.genericParameters.empty() ? owner.name : owner.genericParameters.front().name,
                           "Opaque C handle '" + owner.name.lexeme +
                               "' cannot declare generic parameters.");
     }
@@ -7196,8 +7194,8 @@ auto SemanticVisitor::Impl::validateCAbiRecordShape(ClassInfo &owner) -> bool {
               owner.name, "GTI-S2064", "C ABI record name",
               owner.namespaceScope.empty(), owner.namespaceScope.empty()) &&
           valid;
-  if (!owner.genericParameters.empty()) {
-    reportCAbiRecord(owner.genericParameters.front().name,
+  if (owner.hasGenericBindings()) {
+    reportCAbiRecord(owner.genericParameters.empty() ? owner.name : owner.genericParameters.front().name,
                      "C ABI record '" + owner.name.lexeme +
                          "' cannot declare generic parameters.");
     valid = false;
@@ -7606,7 +7604,7 @@ auto SemanticVisitor::Impl::validateUnionShape(ClassInfo &owner) -> bool {
     return false;
   }
   bool valid = !owner.declaration->isForwardDeclaration() &&
-               owner.genericParameters.empty() && owner.bases.empty();
+               !owner.hasGenericBindings() && owner.bases.empty();
   if (owner.fields.empty()) {
     reportUnion(owner.name, "Union '" + owner.name.lexeme +
                                 "' must contain at least one field.");
@@ -11128,7 +11126,7 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       const bool collectionProtocol =
           function != nullptr && (name->lexeme == "collection_init" ||
                                   name->lexeme == "collection_insert");
-      if (!owner.genericParameters.empty() && !collectionProtocol) {
+      if (owner.hasGenericBindings() && !collectionProtocol) {
         report(*name,
                "Static members of generic classes and structs require "
                "qualified generic member paths, which are not supported "

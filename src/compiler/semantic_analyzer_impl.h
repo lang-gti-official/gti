@@ -1771,6 +1771,13 @@ private:
     DefaultsState defaultsState = DefaultsState::Unresolved;
     std::vector<SemanticType> genericArgumentPatterns;
     std::vector<GenericParameterInfo> genericArgumentPatternLifetimes;
+    // Instantiation need is distinct from public generic argument arity.
+    [[nodiscard]] bool hasGenericBindings() const {
+      return !genericParameters.empty() || !genericArgumentPatternLifetimes.empty() ||
+             !genericArgumentPatterns.empty() ||
+             (declaration && !declaration->genericArgumentPatterns().empty());
+    }
+
     bool argumentPatternsResolving = false;
     bool argumentPatternsResolved = false;
     std::unordered_map<std::string, MemberInfo> members;

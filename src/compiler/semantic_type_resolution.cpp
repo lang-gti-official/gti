@@ -4281,7 +4281,7 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
     return false;
   }
   if (alias.ownerClass != 0 && alias.ownerClass <= classes.size() &&
-      !classInfo(alias.ownerClass).genericParameters.empty() &&
+      classInfo(alias.ownerClass).hasGenericBindings() &&
       !alias.specializedOwner && currentClass != alias.ownerClass) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2030", DiagnosticPhase::Semantics, use,
@@ -8727,7 +8727,7 @@ auto SemanticVisitor::Impl::concreteClassAssertionsFail(
     ClassId classId, const std::vector<SemanticType> &typeArguments,
     const std::vector<CompileTimeValue> &values) -> bool {
   const ClassInfo &owner = classInfo(classId);
-  if (owner.genericParameters.empty() || owner.declaration == nullptr ||
+  if (!owner.hasGenericBindings() || owner.declaration == nullptr ||
       !declaresConcreteClassStaticAssertions(owner.declaration->members())) {
     return false;
   }

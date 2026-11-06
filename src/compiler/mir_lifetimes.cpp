@@ -1499,6 +1499,14 @@ public:
       if (selected)
         return graph.proves(*selected, target);
     }
+    // A selected stored reference may use its carrier's abstract entry place
+    // for origin bookkeeping. That place's outer storage region does not name
+    // the selected external referent. Replay the exact typed extraction first.
+    if (actual->kind == MirOperandKind::Loan)
+      if (const auto *loan = body.findLoan(actual->loan);
+          loan && loan->referenceSelection && loan->referenceSelection->kind ==
+              ReferenceSelectionKind::StoredExternalReference)
+        return loanProves(actual->loan, target, 0);
     if (actual->place)
       if (const auto *place = body.findPlace(actual->place)) {
         const auto known = declaredPlaceRegion(*place);
@@ -1784,6 +1792,12 @@ private:
     const auto *loan = body.findLoan(id);
     if (!loan)
       return false;
+    if (loan->referenceSelection && loan->referenceSelection->kind ==
+            ReferenceSelectionKind::StoredExternalReference) {
+      const auto reference = mir_detail::storedPayloadSelectionReference(
+          program, body, *loan->referenceSelection);
+      return reference && graph.proves(reference->referenceLifetime, target);
+    }
     if (loan->producedBy)
       for (const auto &block : body.blocks)
         for (const auto &instruction : block.instructions)

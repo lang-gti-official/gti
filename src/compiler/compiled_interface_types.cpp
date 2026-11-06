@@ -306,7 +306,7 @@ Nominal project(const LoweredProgram &program,
     if (c->declaresOtherConstructors || c->declaresMemberFunctions ||
         c->declaresDestructor || c->declaresNestedTypes ||
         c->kind == ClassKind::Union || c->kind == ClassKind::Interface ||
-        !c->genericParameters.empty() || !c->bases.empty() ||
+        c->hasGenericBindings() || !c->bases.empty() ||
         c->definitionFamilyPrimary || c->exactSpecializationPrimary ||
         c->forwardDeclaration || c->polymorphic || c->compilerPrivate ||
         c->reflectPrivate || c->cAbiRecord || c->cOpaqueHandle ||

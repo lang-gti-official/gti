@@ -325,6 +325,12 @@ struct LoweredClassDeclaration {
   std::vector<LoweredGenericParameter> genericParameters;
   std::vector<SemanticType> genericArgumentPatterns;
   std::vector<LoweredGenericParameter> genericArgumentPatternLifetimes;
+  // Instantiation need is distinct from public generic argument arity.
+  [[nodiscard]] bool hasGenericBindings() const {
+    return !genericParameters.empty() || !genericArgumentPatternLifetimes.empty() ||
+           !genericArgumentPatterns.empty();
+  }
+
   std::vector<LoweredClassBase> bases;
   std::vector<ClassVirtualDispatch> virtualDispatch;
   SemanticTypeTraits traits;

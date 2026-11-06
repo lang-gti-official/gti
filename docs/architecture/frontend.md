@@ -409,6 +409,12 @@ declarations that would expand anonymous arity require explicit lifetime
 parameters and arguments. Callable type elision has its own higher-ranked
 scope and does not add parameters to the containing record.
 
+Class instantiation scheduling includes projected lifetime binders and argument
+patterns, even when a declaration has no ordinary type or value binder. This
+classification propagates through body/effect reanalysis, HIR discovery and
+lowered declaration/cleanup metadata. It does not add public generic arguments:
+`Fixed<int&<a>>` still projects `a` from its single reference-type argument.
+
 Constructor initializer summaries connect inputs to anonymous stored regions
 through exact field and enum-payload identities. Explicit variant construction
 retains its guard at each nested enum subobject; only a contradictory selected

@@ -1006,7 +1006,7 @@ auto SemanticVisitor::Impl::recordProgramDefaultConstructionEffects(
   }
   const ProgramEffectOwner fields{
       .kind = ProgramEffectOwnerKind::FieldInitializers, .id = owner.id};
-  if (!owner.genericParameters.empty())
+  if (owner.hasGenericBindings())
     recordConcreteProgramEffect(fields, type, {}, {}, span);
   else
     addProgramEffectEdge(fields, span);
@@ -1062,7 +1062,7 @@ auto SemanticVisitor::Impl::recordProgramSelectedConstructorEffect(
   if (constructor->declaration->body() != nullptr) {
     const ProgramEffectOwner effect{.kind = ProgramEffectOwnerKind::Constructor,
                                     .id = constructor->id};
-    if (!classInfo(constructedType.classId).genericParameters.empty() ||
+    if (classInfo(constructedType.classId).hasGenericBindings() ||
         !constructor->genericParameters.empty())
       recordConcreteProgramEffect(effect, constructedType, types, values, span);
     else
@@ -1195,7 +1195,7 @@ auto SemanticVisitor::Impl::recordProgramCleanupEffects(
   if (includeDirectDestructor && hasSourceDestructorBody(owner)) {
     const ProgramEffectOwner effect{.kind = ProgramEffectOwnerKind::Destructor,
                                     .id = owner.id};
-    if (!owner.genericParameters.empty())
+    if (owner.hasGenericBindings())
       recordConcreteProgramEffect(effect, type, {}, {}, span);
     else
       addProgramEffectEdge(effect, span);
@@ -1266,8 +1266,7 @@ auto SemanticVisitor::Impl::recordProgramConstructionEffects(
     const ProgramEffectOwner fields{
         .kind = ProgramEffectOwnerKind::FieldInitializers,
         .id = construction.constructedType.classId};
-    if (!classInfo(construction.constructedType.classId)
-             .genericParameters.empty())
+    if (classInfo(construction.constructedType.classId).hasGenericBindings())
       recordConcreteProgramEffect(fields, construction.constructedType, {}, {},
                                   span);
     else
@@ -1407,7 +1406,7 @@ auto SemanticVisitor::Impl::recordProgramOperatorTargetEffects(
     const ProgramEffectOwner effect{.kind = ProgramEffectOwnerKind::Function,
                                     .id = target->id};
     if (target->ownerClass != 0 &&
-        !classInfo(target->ownerClass).genericParameters.empty())
+        classInfo(target->ownerClass).hasGenericBindings())
       recordConcreteProgramEffect(effect, operation.dispatchOwner, {}, {},
                                   tokenSpan(expressionToken(expression)));
     else
@@ -2336,7 +2335,7 @@ auto SemanticVisitor::Impl::recordProgramCallEffectTargets(
   if (!target->genericParameters.empty() || !resolved->typeArguments.empty() ||
       !resolved->valueArguments.empty() ||
       (target->ownerClass != 0 &&
-       !classInfo(target->ownerClass).genericParameters.empty())) {
+       classInfo(target->ownerClass).hasGenericBindings())) {
     recordConcreteProgramEffect(
         effect, resolved->dispatchOwner, resolved->typeArguments,
         resolved->valueArguments, tokenSpan(expressionToken(expression)));
@@ -2682,7 +2681,7 @@ auto SemanticVisitor::Impl::collectProgramInitializationStatement(
   }
   if (const auto *owner = stmtAs<ClassDecl>(&statement)) {
     const ClassTypeInfo *info = semanticModel.findClassType(*owner);
-    if (info == nullptr || !info->genericParameters.empty()) {
+    if (info == nullptr || info->hasGenericBindings()) {
       return;
     }
     for (const StmtPtr &child : owner->members()) {
@@ -7159,7 +7158,7 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       if ((!canAccessMember(
               alias.access, alias.ownerClass, SemanticType::Unknown,
               specializedOwner.value_or(openClassType(*owner)))) ||
-          (!specializedOwner && !classType.genericParameters.empty() &&
+          (!specializedOwner && classType.hasGenericBindings() &&
            currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
            (alias.compilerPrivate ||
@@ -7189,7 +7188,7 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
           (!canAccessMember(
               alias.access, alias.ownerClass, SemanticType::Unknown,
               specializedOwner.value_or(openClassType(*owner)))) ||
-          (!specializedOwner && !classType.genericParameters.empty() &&
+          (!specializedOwner && classType.hasGenericBindings() &&
            currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
            (alias.compilerPrivate ||
@@ -13381,7 +13380,7 @@ auto SemanticVisitor::Impl::rawDispatchAccessFree(
                               member.symbol.overloads.end(), matches);
     if (!possible)
       continue;
-    if (!owner.genericParameters.empty() ||
+    if (owner.hasGenericBindings() ||
         !prove(owner, openClassType(owner.id)))
       return false;
     found = true;

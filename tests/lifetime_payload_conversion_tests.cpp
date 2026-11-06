@@ -79,6 +79,53 @@ MirInstruction *payloadConstruct(MirBody &body) {
   return nullptr;
 }
 
+void checkSelectedReferenceRegionMutations(const MirProgram &program) {
+  std::optional<MirBodyAddress> selectedBody;
+  MirLoanId selectedLoan = 0;
+  Lifetime bindingRegion;
+  for (const auto address : enumerateMirBodyAddresses(program))
+    if (const auto *body = findMirBody(program, address))
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != MirInstructionKind::Initialize ||
+              !instruction.destination || instruction.operands.size() != 1 ||
+              instruction.operands.front().kind != MirOperandKind::Loan)
+            continue;
+          const auto *place = body->findPlace(*instruction.destination);
+          const auto *loan = body->findLoan(instruction.operands.front().loan);
+          if (!place || place->type.kind != SemanticType::Reference ||
+              place->type.referenceLifetime.kind != Lifetime::Kind::Inference ||
+              !loan || !loan->referenceSelection || loan->referenceSelection->kind !=
+                  ReferenceSelectionKind::StoredExternalReference)
+            continue;
+          selectedBody = address;
+          selectedLoan = loan->id;
+          bindingRegion = place->type.referenceLifetime;
+        }
+  expect(selectedBody && selectedLoan && bindingRegion.specified(),
+         "stored reference pattern retains an inferred region and exact selection");
+  if (!selectedBody)
+    return;
+  for (int mutation = 0; mutation != 4; ++mutation) {
+    auto invalid = program;
+    auto *body = findMirBody(invalid, *selectedBody);
+    auto &loan = body->loans[selectedLoan - 1];
+    if (mutation == 0) {
+      const auto removed = std::erase_if(body->lifetimeBody.obligations,
+          [&](const auto &edge) { return edge.shorter == bindingRegion; });
+      expect(removed != 0, "selected reference binding records its external-region relationship");
+    } else if (mutation == 1) {
+      loan.referenceSelection->reference.referenceLifetime = Lifetime::staticLifetime();
+    } else if (mutation == 2) {
+      loan.referenceSelection->conditions.clear();
+    } else {
+      loan.referenceSelection.reset();
+    }
+    expect(!verifyMirProgram(invalid).valid(),
+           "stored reference regions require exact extraction, type, guard and binding proof");
+  }
+}
+
 void checkOwningTransferMutations(const MirProgram &program) {
   struct Stage { MirBodyAddress body; MirInstructionId instruction; };
   std::vector<Stage> stages;
@@ -344,6 +391,64 @@ void checkGuardMutations(const MirProgram &program) {
   }
 }
 
+void checkConstructorFieldDomains(const MirProgram &program) {
+  for (const auto &constructor : program.constructorInstances()) {
+    if (!constructor.completeBorrow)
+      continue;
+    std::vector<SymbolId> fields;
+    for (const auto &dependency : constructor.completeBorrow->dependencies)
+      if (!dependency.resultFields.empty() &&
+          std::find(fields.begin(), fields.end(), dependency.resultFields.front()) == fields.end())
+        fields.push_back(dependency.resultFields.front());
+    if (fields.size() < 2)
+      continue;
+    for (int mutation = 0; mutation != 5; ++mutation) {
+      auto broken = program;
+      auto *changed = const_cast<MirConstructorInstance *>(broken.findConstructorInstance(constructor.id));
+      bool mutated = false;
+      if (mutation == 0) {
+        std::erase_if(changed->completeBorrow->dependencies,
+            [&](const auto &item) { return !item.resultFields.empty() && item.resultFields.front() == fields.back(); });
+        std::erase_if(changed->completeBorrow->possibleAlternatives,
+            [&](const auto &path) { return !path.conditions.empty() &&
+                !path.conditions.front().subobject.empty() && path.conditions.front().subobject.front() == fields.back(); });
+        mutated = true;
+      } else if (mutation == 2) {
+        for (auto &block : changed->body.blocks)
+          for (auto &instruction : block.instructions) {
+            const auto *target = instruction.destination ? changed->body.findPlace(*instruction.destination) : nullptr;
+            if (instruction.kind == MirInstructionKind::Initialize && target &&
+                target->root == MirPlaceRootKind::This && target->projections.size() == 1 &&
+                target->projections.front().field == fields.back()) {
+              instruction.tombstone = true;
+              mutated = true;
+            }
+          }
+      } else if (mutation == 4) {
+        if (!changed->ownerType.lifetimeArguments.empty()) {
+          changed->ownerType.lifetimeArguments.front() = Lifetime::staticLifetime();
+          mutated = true;
+        }
+      } else {
+        for (auto &loan : changed->body.loans)
+          if (loan.escapes && loan.storedField == fields.back()) {
+            if (mutation == 1) {
+              loan.storedField = fields.front();
+              mutated = true;
+            } else if (!loan.conditions.empty()) {
+              loan.conditions.front().enumeration.lifetimeArguments = {Lifetime::staticLifetime()};
+              mutated = true;
+            }
+          }
+      }
+      expect(mutated && !verifyMirProgram(broken).valid(),
+             "constructor publication requires every exact field domain, initializer, group and owner view");
+    }
+    return;
+  }
+  expect(false, "constructor domain fixture must publish two independent borrowed fields");
+}
+
 void checkRetainedPayloadCopy(const MirProgram &program) {
   for (const auto address : enumerateMirBodyAddresses(program)) {
     const auto *body = findMirBody(program, address);
@@ -604,7 +709,7 @@ int wrap<lifetime a, lifetime b>(int&<a> left, int&<b> right) {
 int main() { int left = 7; int right = 9; return wrap(left, right) - 1; }
 )gti");
 
-  (void)positive("payload-borrow-extract-and-copy", R"gti(
+  const auto selectedReference = positive("payload-borrow-extract-and-copy", R"gti(
 enum Borrow<lifetime a> { item(int&<a> value) };
 int read<lifetime a>(Borrow<a>& input) {
   switch (input) { case Borrow<a>::item(auto& value): return value; }
@@ -616,6 +721,9 @@ int main() {
   return read(copied) - 7;
 }
 )gti");
+
+  if (selectedReference.canGenerateCode())
+    checkSelectedReferenceRegionMutations(selectedReference.mir);
 
   const auto factory = positive("returned-enum-guard-instantiation", R"gti(
 enum Reading<lifetime a> { empty, value(int&<a> owner, int sequence) };
@@ -641,7 +749,7 @@ int main() {
     checkGuardBindingViews(factory);
   }
 
-  (void)positive("nested-enum-field-guard-conversion", R"gti(
+  const auto paired = positive("nested-enum-field-guard-conversion", R"gti(
 enum Reading<lifetime a> { empty, value(int&<a> owner) };
 struct Pair<lifetime a, lifetime b> {
   Reading<a> first;
@@ -659,6 +767,31 @@ int main() {
   auto reading = Reading<_>::value(number);
   Pair<_, _> pair{reading, reading};
   return inspect(pair.first) + inspect(pair.second) - 14;
+}
+)gti");
+
+  if (paired.canGenerateCode())
+    checkConstructorFieldDomains(paired.mir);
+
+  (void)positive("constructor-independent-empty-field-domain", R"gti(
+enum Reading<lifetime a> { empty, value(int&<a> owner) };
+struct Pair<lifetime a, lifetime b> {
+  Reading<a> first;
+  Reading<b> second;
+  Pair(Reading<a> left, Reading<b> right) : first(left), second(right) {}
+};
+int inspect<lifetime a>(Reading<a>& reading) {
+  switch (reading) {
+  case Reading<a>::empty: return 0;
+  case Reading<a>::value(auto& value): return value;
+  }
+}
+int main() {
+  int number = 7;
+  auto empty = Reading<static>::empty;
+  auto full = Reading<_>::value(number);
+  Pair<static, _> pair{empty, full};
+  return inspect(pair.first) + inspect(pair.second) - 7;
 }
 )gti");
 

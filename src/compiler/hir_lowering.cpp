@@ -572,7 +572,7 @@ private:
         CompilerCapabilityTypeKind::NativeCScalar) {
       return std::nullopt;
     }
-    const bool generic = !declaration->genericParameters.empty() ||
+    const bool generic = declaration->hasGenericBindings() ||
                          declaration->exactSpecializationPrimary != 0;
     if (!admitInstance(declaration->declaration->name(), site, generic)) {
       return std::nullopt;
@@ -839,7 +839,7 @@ private:
     const bool generic =
         !declaration.genericParameters.empty() ||
         (genericOwner != nullptr &&
-         (!genericOwner->genericParameters.empty() || genericOwner->exactSpecializationPrimary));
+         (genericOwner->hasGenericBindings() || genericOwner->exactSpecializationPrimary));
     if (!admitInstance(declarationToken, site, generic)) {
       return 0;
     }
@@ -1103,7 +1103,7 @@ private:
                                         ? ownerType->declaration->name()
                                         : construction.declaration->name();
     const bool generic =
-        !ownerType->genericParameters.empty() || ownerType->exactSpecializationPrimary ||
+        ownerType->hasGenericBindings() || ownerType->exactSpecializationPrimary ||
         (declaration != nullptr && !declaration->genericParameters.empty());
     // A generated default is the already-admitted owner's field schedule,
     // not another source instantiation edge. Retain that owner's depth while
@@ -1181,7 +1181,7 @@ private:
       return *existing;
     }
     const HirDestructorInstanceId id = output.program.destructors.size() + 1;
-    const bool generic = !classType->genericParameters.empty() ||
+    const bool generic = classType->hasGenericBindings() ||
                          classType->exactSpecializationPrimary != 0;
     if (!admitInstance(lifecycle->declaredDestructor->declaration->name(),
                        classInstance.instantiationSite, generic)) {
@@ -1451,7 +1451,7 @@ private:
         const ClassTypeInfo *info = baseModel->findClassType(*classDeclaration);
         const bool emittedAsTemplate =
             templateContext ||
-            (info != nullptr && !info->genericParameters.empty());
+            (info != nullptr && info->hasGenericBindings());
         if (info != nullptr && !emittedAsTemplate &&
             (info->cAbiRecord || info->cOpaqueHandle)) {
           (void)enqueueClass(SemanticType::classType(info->id));
@@ -1544,7 +1544,7 @@ private:
           seedConcreteDeclarationType(field.type);
         }
       }
-      if (classInfo != nullptr && classInfo->genericParameters.empty() &&
+      if (classInfo != nullptr && !classInfo->hasGenericBindings() &&
           !classInfo->exactSpecializationPrimary) {
         (void)enqueueClass(SemanticType::classType(classInfo->id));
       }
@@ -1576,7 +1576,7 @@ private:
       std::vector<SemanticType> classArguments;
       if (info->ownerClass != 0) {
         const ClassTypeInfo *owner = baseModel->findClassType(info->ownerClass);
-        if (owner == nullptr || !owner->genericParameters.empty() ||
+        if (owner == nullptr || owner->hasGenericBindings() ||
             owner->exactSpecializationPrimary) {
           return;
         }
@@ -2205,7 +2205,7 @@ private:
         });
     // An empty concrete pack is still an instance. Its recorded field and
     // alias bindings must come from concrete reanalysis, not the open primary.
-    if (missingStagedFields || !declaration->genericParameters.empty() ||
+    if (missingStagedFields || declaration->hasGenericBindings() ||
         !snapshot.typeArguments.empty() || !snapshot.valueArguments.empty()) {
       analysis = instanceProvider->analyzeClassFieldInitializers(
           snapshot.declaration, snapshot.typeArguments,
@@ -2347,7 +2347,7 @@ private:
             appendInitializerSourceDebug(*model, *field.declaration,
                                          staticFieldInitializers,
                                          {*lowered.initializer});
-          if (declaration->genericParameters.empty()) {
+          if (!declaration->hasGenericBindings()) {
             lifecycleValid = false;
           }
         } else {
@@ -2481,7 +2481,7 @@ private:
     const bool concreteInstance =
         queriedConstantFunctions.contains(declaration->id) ||
         !declaration->genericParameters.empty() ||
-        (genericOwner != nullptr && !genericOwner->genericParameters.empty()) ||
+        (genericOwner != nullptr && genericOwner->hasGenericBindings()) ||
         !classArguments.empty() || !classValueArguments.empty() ||
         !snapshot.typeArguments.empty() || !snapshot.valueArguments.empty();
     if (!concreteInstance) {
@@ -2736,7 +2736,7 @@ private:
     const bool concreteInstance =
         queriedConstantFunctions.contains(declaration->id) ||
         !declaration->genericParameters.empty() ||
-        (genericOwner != nullptr && !genericOwner->genericParameters.empty()) ||
+        (genericOwner != nullptr && genericOwner->hasGenericBindings()) ||
         !classArguments.empty() || !classValueArguments.empty() ||
         !snapshot.typeArguments.empty() || !snapshot.valueArguments.empty();
     const SemanticModel *model = baseModel;
@@ -3168,7 +3168,7 @@ private:
     SemanticInstanceAnalysis fieldAnalysis;
     const SemanticModel *fieldModel = baseModel;
     const auto *fieldOwner = baseModel->findClassType(owner.declaration);
-    if ((fieldOwner && !fieldOwner->genericParameters.empty()) ||
+    if ((fieldOwner && fieldOwner->hasGenericBindings()) ||
         !classArguments.empty() || !classValueArguments.empty()) {
       const PhaseTimeScope timeScope("hir-instance-analysis", "fields");
       fieldAnalysis = instanceProvider->analyzeClassFieldInitializers(
@@ -3268,7 +3268,7 @@ private:
     currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
-    if ((ownerInfo != nullptr && !ownerInfo->genericParameters.empty()) ||
+    if ((ownerInfo != nullptr && ownerInfo->hasGenericBindings()) ||
         !owner.typeArguments.empty() || !owner.valueArguments.empty()) {
       const PhaseTimeScope timeScope("hir-instance-analysis", "destructor");
       analysis = instanceProvider->analyzeDestructorInstance(

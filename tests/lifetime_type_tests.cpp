@@ -1,6 +1,7 @@
 #include "gti/lifetime_types.h"
 #include "gti/borrow_conditions.h"
 #include "gti/callable_lifetimes.h"
+#include "gti/generic_type_patterns.h"
 
 #include <array>
 #include <cstdlib>
@@ -122,6 +123,85 @@ void testBorrowAlternativeCoverage() {
          "the same field path with another enum identity cannot supply a domain");
   expect(hasCompleteBorrowAlternativeCoverage({}, {}),
          "an authoritative unconditional inventory has an empty alternative set");
+}
+
+void testCallablePatternCaptures() {
+  using namespace lang;
+  const auto a = Lifetime::parameter(801);
+  const auto b = Lifetime::parameter(802);
+  auto actual = SemanticType::functionSignature(reference(a), {reference(a), reference(b)});
+  actual.quantifiedLifetimes = {a.id, b.id, 803};
+  const auto r = SemanticType::typeParameter(11);
+  const auto args = SemanticType::typePack(12);
+  const std::array parameters{GenericParameterIdentity{.id = 11},
+                            GenericParameterIdentity{.id = 12, .pack = true}};
+  const std::array primary{SemanticType::functionSignature(r, {args})};
+  const std::array values{actual};
+  const auto captured = deriveGenericArgumentPatternSubstitution(primary, values, parameters, {});
+  expect(captured && captured->types.empty() && captured->callableScopes.size() == 1,
+         "invocation-bound projections stay out of the ordinary generic type map");
+  const auto &scope = captured->callableScopes.front();
+  expect(scope.argumentPath == std::vector<std::size_t>{0} &&
+             scope.signature == actual && scope.signature.quantifiedLifetimes.size() == 3 &&
+             scope.capturedTypes.at(11) == reference(a) &&
+             scope.capturedTypes.at(12).arguments ==
+                 std::vector<SemanticType>{reference(a), reference(b)},
+         "scoped projection retains repeated, independent and unused invocation binders");
+  GenericSubstitution raw;
+  raw.types.emplace(11, reference(a));
+  raw.types.emplace(12, SemanticType::concreteTypePack(12, {reference(a), reference(b)}));
+  expect(deriveGenericArgumentPatternSubstitution(primary, values, parameters, {}, raw) == captured,
+         "independent raw projections are rederived under the complete callable scope");
+  const auto rebuild = [](const SemanticType &type, const GenericSubstitution &substitution) {
+    return substituteScopedGenericType(type, substitution,
+        [](const auto &value) { return value; },
+        [](SemanticType value) { return value; });
+  };
+  expect(rebuild(primary.front(), *captured) == actual,
+         "reconstructed callable preserves its full invocation scope and argument correlation");
+  expect(!rebuild(r, *captured) && !rebuild(SemanticType::classType(1, {r}), *captured),
+         "a projected invocation result cannot become free field or alias storage");
+  auto imported = *captured;
+  imported.callableScopes.front().imports = {
+      {a.id, Lifetime::parameter(901)}, {b.id, Lifetime::parameter(902)},
+      {803, Lifetime::parameter(903)}};
+  expect(rebuild(r, imported) == reference(Lifetime::parameter(901)) &&
+             rebuild(primary.front(), imported) == actual,
+         "member imports open fresh universals without changing the stored callable scope");
+  auto nested = SemanticType::functionSignature(SemanticType::Void, {primary.front()});
+  const auto nestedRebuilt = rebuild(nested, *captured);
+  expect(nestedRebuilt && nestedRebuilt->quantifiedLifetimes.empty() &&
+             nestedRebuilt->arguments.back() == actual,
+         "nested invocation binders stay inside their original signature boundary");
+
+  const std::array projected{GenericParameterIdentity{.id = 13, .lifetime = true}};
+  auto shell = SemanticType::referenceTo(r, AccessMode::ReadOnly);
+  shell.referenceLifetime = Lifetime::parameter(13);
+  const std::array referencePattern{SemanticType::functionSignature(shell, {args})};
+  const auto refCapture = deriveGenericArgumentPatternSubstitution(
+      referencePattern, values, parameters, projected);
+  expect(refCapture && refCapture->types.at(11) == SemanticType::Int32 &&
+             refCapture->lifetimes.empty() &&
+             refCapture->callableScopes.front().regionBindings ==
+                 std::vector<LifetimeBinding>{{Lifetime::parameter(13), a}},
+         "a named result-shell projection remains inside the matched invocation scope");
+  const std::array repeated{SemanticType::functionSignature(shell, {shell})};
+  auto unequal = SemanticType::functionSignature(reference(a), {reference(b)});
+  unequal.quantifiedLifetimes = {a.id, b.id};
+  expect(!deriveGenericArgumentPatternSubstitution(repeated, std::array{unequal}, parameters, projected),
+         "a repeated projected region cannot match independent invocation regions");
+  expect(deriveGenericArgumentPatternSubstitution(repeated, std::array{unequal}, parameters,
+              projected, {}, GenericPatternMatch::Structure).has_value(),
+         "failed region formation cannot change structural family selection");
+  auto fixed = shell;
+  fixed.referenceLifetime = Lifetime::staticLifetime();
+  expect(!deriveGenericArgumentPatternSubstitution(
+             std::array{SemanticType::functionSignature(fixed, {args})}, values, parameters, {}),
+         "fixed static requirements are not inferred invocation slots");
+  auto malformed = actual;
+  malformed.quantifiedLifetimes.push_back(a.id);
+  expect(!deriveGenericArgumentPatternSubstitution(primary, std::array{malformed}, parameters, {}),
+         "duplicate invocation binder inventory is invalid capture evidence");
 }
 
 void testLifetimeConversionShapes() {
@@ -340,6 +420,7 @@ void testNativeInvocationScopes() {
 int main() {
   testBorrowConditionTransport();
   testBorrowAlternativeCoverage();
+  testCallablePatternCaptures();
   testLifetimeConversionShapes();
   using namespace lang;
   testScopedCallableFormation();

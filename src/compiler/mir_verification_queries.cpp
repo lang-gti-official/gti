@@ -247,6 +247,46 @@ const MirPlace *physicalPayloadSelectionSource(
   return result;
 }
 
+std::optional<SemanticType> storedPayloadSelectionReference(
+    const MirProgram &program, const MirBody &body,
+    const MirReferenceSelection &selection) {
+  if (selection.kind != ReferenceSelectionKind::StoredExternalReference)
+    return std::nullopt;
+  const auto *value = body.findValue(selection.value);
+  const auto *extract = definitionFor(body, selection.value);
+  if (!value || !extract || extract->tombstone ||
+      extract->kind != MirInstructionKind::Compute ||
+      extract->operation != MirOperation::PayloadExtract ||
+      !extract->payloadExtractionKind ||
+      !isStoredReferenceExtraction(*extract->payloadExtractionKind) ||
+      extract->result != selection.value || extract->info != value->info ||
+      extract->operands.size() != 1 || !extract->enumOwner ||
+      !extract->enumVariant || !extract->payloadIndex)
+    return std::nullopt;
+  const auto &operand = extract->operands.front();
+  const auto *carrier = body.findPlace(operand.place);
+  const auto view = mirEnumLifetimeView(program, operand.type);
+  if (!carrier || operand.place != selection.carrier || carrier->foreignStorage ||
+      carrier->type != operand.type || !view || !view->payload ||
+      extract->enumOwner != view->payload->declaration ||
+      *extract->enumVariant >= view->payload->variants.size())
+    return std::nullopt;
+  const auto &variant = view->payload->variants[*extract->enumVariant];
+  if (*extract->payloadIndex >= variant.payloadTypes.size() ||
+      *extract->payloadIndex >= variant.payloadSymbols.size())
+    return std::nullopt;
+  const auto field = view->instantiate(variant.payloadTypes[*extract->payloadIndex]);
+  if (!field || field->kind != SemanticType::Reference || field->arguments.size() != 1 ||
+      *field != selection.reference || field->arguments.front() != value->info.type ||
+      value->info.category != ValueCategory::Place ||
+      (value->info.access == AccessMode::Mutable && field->referenceAccess != AccessMode::Mutable) ||
+      selection.fields != std::vector<SymbolId>{variant.payloadSymbols[*extract->payloadIndex]} ||
+      selection.conditions != std::vector<BorrowDependencyCondition>{
+          {.enumeration = operand.type, .variant = *extract->enumVariant}})
+    return std::nullopt;
+  return field;
+}
+
 std::optional<MirSelectedReferenceHandoff>
 selectedReferenceHandoff(const MirBody &body, const MirLoan &selected) {
   if (!selected.referenceSelection || selected.referenceSelection->kind !=

@@ -22,6 +22,14 @@ int read_through_view<lifetime data>(int&<data> input) {
   return reading.get();
 }
 
+// A region can be projected from a reference argument without adding another
+// public type/lifetime argument. This pattern has no generic type binder.
+struct IntBorrow<int&<source>> {
+  int&<source> value;
+  IntBorrow(int&<source> input) : value(input) {}
+  int&<source> get() { return this.value; }
+};
+
 int main() {
   mut int left = 3;
   int right = 9;
@@ -30,5 +38,7 @@ int main() {
   Reading reading{selected};
   if (reading.get() != 9) { return 1; }
   if (read_through_view(right) != 9) { return 2; }
+  IntBorrow<int&> projected{right};
+  if (projected.get() != 9) { return 3; }
   return identity(left) - 4;
 }

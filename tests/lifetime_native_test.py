@@ -214,6 +214,18 @@ int main() {
   return choose(left, right, false) - 8;
 }
 """,
+    "projected_only_class": """
+struct Fixed<int&<source>> {
+  int&<source> value;
+  Fixed(int&<source> input) : value(input) {}
+  int&<source> get() { return this.value; }
+};
+int&<a> read<lifetime a>(int&<a> input) {
+  Fixed<int&<a>> holder{input};
+  return holder.get();
+}
+int main() { int value = 7; return read(value) - 7; }
+""",
     "physical_payload": """
 enum State<T> { value(T item) };
 T&<region> get<T, lifetime region>(State<T>&<region> state) {

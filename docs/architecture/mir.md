@@ -502,7 +502,11 @@ independently of the selection annotation. Return-summary normalization retains
 that executable selector while tracing caller-owned storage, including generic
 payload types whose complete stored-reference inventory is not yet concrete.
 Reference-region checking replays that same exact selection to the carrier's
-declared region or checked local origin.
+declared region or checked local origin. A stored-reference selection instead
+reconstructs its external reference type from the exact extraction, instantiated
+enum variant, field and guard. Its abstract origin place can name the carrier
+for bookkeeping, but that carrier's storage region cannot replace the selected
+referent's region when checking a new reference binding.
 The physical selection cannot claim external-owner transfer authority. Variant
 dominance, access, parent liveness and cleanup remain separate required proofs.
 
@@ -633,7 +637,10 @@ binding has a checked shorter region, lowering preserves that producer identity
 and MIR derives a separate binding view from the unique producer, the exact
 stored contents and the proved conversion. It does not rewrite the producer's
 conditions. Missing initialization, ambiguous producers, stale guards, or an
-unproved conversion cannot establish that view. Field projection filters sibling
+unproved conversion cannot establish that view. Semantic scalar-return mapping
+also compares a retained group's guards in the applied formal type's domain;
+it preserves the exact live parent and original ancestry across that conversion.
+Field projection filters sibling
 facts only after proving an exact ordinary Class field chain, and checks complete
 coverage of the selected field's typed enum domains. Crossing an enclosing enum
 guard requires a separate evaluated-selection proof; field projection does not
@@ -707,9 +714,13 @@ the value annotation, and requires the transferred value to still hold exactly
 that set, so a formal written before its transfer is not accepted. The
 published field group remains active at every normal constructor
 exit. Known-empty alternatives require positive typed evidence and publish no
-manufactured loan. The current source constructor slice uses an empty body
-and one common nominal field prefix; unrelated sibling obligations cannot be
-dropped during projection.
+manufactured loan. This carrier-initializer proof handles each borrowed field
+in the constructor's exact actual owner type, then composes all field facts.
+Independent sibling enum domains remain present, including an empty alternative
+beside a nonempty field. Every normal exit must match the complete initialized
+publication; an omitted field or an unrelated later assignment cannot stand in
+for that proof. Direct reference fields retain their separate reference-binding
+authority rather than being treated as copied carrier values.
 
 A consuming receiver transfers its complete stored group through the ordinary
 ordered call-input stages. A reference result may outlive the consumed shell

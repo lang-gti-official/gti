@@ -519,7 +519,8 @@ captured environment. Nested callable requirements remain in their own scope;
 they cannot justify a surrounding return or stored reference.
 
 [Example 192](../../examples/192-lifetime-parameters.gti) demonstrates named
-relationships, elided identity and a borrowed record with inferred callers.
+relationships, elided identity, a borrowed record and a projected reference-region
+pattern with inferred callers.
 The complete target is [RFC 0004](https://github.com/lang-gti-official/rfcs/blob/codex/proposal-lifetime-parameters/rfcs/0004-lifetime-parameters-and-elision.md).
 Implementation of all compositions is still in progress: inherited borrowed
 storage, recursive forwarded packs and public generic callable wrappers need

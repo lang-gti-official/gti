@@ -3330,7 +3330,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   for (const auto &storage : program.threadLocalStorage())
     verifyRangeIterations(storage.initializer);
   for (const HirClassInstance &instance : program.classInstances()) {
+    const auto *declaration = semantics.findClassType(instance.declaration);
     const bool reanalyzed =
+        (declaration && declaration->hasGenericBindings()) ||
         !instance.typeArguments.empty() || !instance.valueArguments.empty();
     verifyRangeIterations(instance.fieldInitializers, reanalyzed);
     verifyRangeIterations(instance.staticFieldInitializers, reanalyzed);
@@ -3348,7 +3350,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         instance.body,
         function != nullptr &&
             (!function->genericParameters.empty() ||
-             (owner != nullptr && !owner->genericParameters.empty())));
+             (owner != nullptr && owner->hasGenericBindings())));
   }
   for (const HirConstructorInstance &instance :
        program.constructorInstances()) {

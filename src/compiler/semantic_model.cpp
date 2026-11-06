@@ -1,4 +1,5 @@
 #include "gti/semantic_model.h"
+#include "gti/generic_type_patterns.h"
 #include "gti/lifetime_types.h"
 
 #include <algorithm>
@@ -110,6 +111,16 @@ RestrictedBorrowResultDomain restrictCompleteBorrowResultDomain(
 SemanticType substituteSemanticType(const SemanticType &type,
                                     const GenericSubstitution &substitution,
                                     const SemanticModel *model) {
+  if (!substitution.callableScopes.empty())
+    return substituteScopedGenericType(
+        type, substitution,
+        [&](const auto &value) {
+          return substituteCompileTimeValue(value, substitution.values);
+        },
+        [&](SemanticType value) {
+          return model ? model->resolveExactClassSpecialization(std::move(value))
+                       : std::move(value);
+        }).value_or(SemanticType::Unknown);
   if (type.kind == SemanticType::TypeParameter ||
       (type.kind == SemanticType::TypePack && !type.concretePack)) {
     const auto found = substitution.types.find(type.genericParameterId);

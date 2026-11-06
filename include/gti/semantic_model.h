@@ -1258,6 +1258,12 @@ struct ClassTypeInfo {
   // Universals projected from the public type-argument recipe, not separate
   // source arguments or top-level lifetime arguments of the nominal type.
   std::vector<GenericParameterInfo> genericArgumentPatternLifetimes;
+  // Instantiation need is distinct from public generic argument arity.
+  [[nodiscard]] bool hasGenericBindings() const {
+    return !genericParameters.empty() || !genericArgumentPatternLifetimes.empty() ||
+           !genericArgumentPatterns.empty();
+  }
+
   NominalVariance variance;
   LifetimeSignatureContract lifetimeContract;
   std::vector<ClassFieldTypeInfo> fields;
@@ -2197,10 +2203,30 @@ using ValueSubstitution =
     std::unordered_map<GenericParameterId, CompileTimeValue>;
 using LifetimeSubstitution = std::unordered_map<GenericParameterId, Lifetime>;
 
+// A generic argument pattern may project part of an invocation signature.
+// Its bound regions belong to that signature, not to the containing nominal
+// object. Keep such projections out of the ordinary type map: losing this
+// scope must leave an unresolved parameter rather than expose a free region.
+// This is transient evidence derived from genericArgumentPatterns and the
+// actual arguments; the declaration recipe remains the persistent authority.
+struct GenericCallableScope {
+  std::vector<std::size_t> argumentPath;
+  SemanticType pattern = SemanticType::Unknown;
+  SemanticType signature = SemanticType::Unknown;
+  TypeSubstitution capturedTypes;
+  std::vector<LifetimeBinding> regionBindings;
+  // Only a member-signature adapter may open these invocation slots. Stored
+  // callable reconstruction continues to close the original captured scope.
+  LifetimeSubstitution imports;
+  friend bool operator==(const GenericCallableScope &,
+                         const GenericCallableScope &) = default;
+};
+
 struct GenericSubstitution {
   TypeSubstitution types;
   ValueSubstitution values;
   LifetimeSubstitution lifetimes;
+  std::vector<GenericCallableScope> callableScopes;
   friend bool operator==(const GenericSubstitution &,
                          const GenericSubstitution &) = default;
 };

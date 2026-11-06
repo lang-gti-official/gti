@@ -661,6 +661,7 @@ int main() { int first = 7; int second = 9; return use(first, second, false) - 7
     }
   expect(constructionBody && constructionLoan && incomingLoan && otherFormal,
          "fixture must exercise a fresh Stored group from a shared reference entry");
+  bool constructorMutationsRejected = true;
   for (int mutation = 0; mutation != 3; ++mutation) {
     auto invalid = constructedCarrier.mir;
     auto *body = findMirBody(invalid, *constructionBody);
@@ -673,9 +674,14 @@ int main() { int first = 7; int second = 9; return use(first, second, false) - 7
     else
       entry.access = AccessMode::Mutable;
     const auto rejected = verifyMirProgram(invalid);
-    expect(!rejected.valid(),
-           "constructor publication cannot forge its source or erase a local/exclusive parent");
+    if (rejected.valid())
+      std::cerr << "accepted constructor publication mutation=" << mutation
+                << " body=" << constructionBody->owner << " stored=" << constructionLoan
+                << " input=" << incomingLoan << " other=" << otherFormal << '\n';
+    constructorMutationsRejected = !rejected.valid() && constructorMutationsRejected;
   }
+  expect(constructorMutationsRejected,
+         "constructor publication cannot forge its source or erase a local/exclusive parent");
   const auto physical = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "physical-payload-contract.gti", R"gti(
 enum State<T> { value(T item) };

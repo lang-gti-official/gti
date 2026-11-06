@@ -115,7 +115,7 @@ auto SemanticVisitor::Impl::nonDecreasingNominalRecurrence(
       return semanticTypeComplexity(type) >= semanticTypeComplexity(*cursor);
     }
     if (const ClassInfo *owner = classInfo(*cursor);
-        owner != nullptr && owner->genericParameters.empty())
+        owner != nullptr && !owner->hasGenericBindings())
       return false;
     if (cursor->kind == SemanticType::Enum && cursor->enumId != 0 &&
         cursor->enumId <= enums.size() &&
@@ -1250,13 +1250,13 @@ auto SemanticVisitor::Impl::validateThreadLocalDeclaration(
   else if (lambdaDepth != 0)
     reason = "Thread-local declarations inside lambda bodies require a "
              "concrete per-instance storage identity.";
-  else if (currentClass && !classInfo(*currentClass).genericParameters.empty())
+  else if (currentClass && classInfo(*currentClass).hasGenericBindings())
     reason = "Thread-local declarations inside generic classes require a "
              "concrete per-instance storage identity.";
   else if (functionDepth > 0) {
     const FunctionInfo *function = currentFunctionInfo();
     if ((function != nullptr && !function->genericParameters.empty()) ||
-        (currentClass && !classInfo(*currentClass).genericParameters.empty()))
+        (currentClass && classInfo(*currentClass).hasGenericBindings()))
       reason = "Thread-local declarations inside generic bodies require a "
                "concrete per-instance storage identity.";
   }
@@ -1343,7 +1343,7 @@ auto SemanticVisitor::Impl::reportConcurrentGlobalPolicyFailure(
     return false;
   }
   if (currentClass && declaration.isStatic() &&
-      !classInfo(*currentClass).genericParameters.empty()) {
+      classInfo(*currentClass).hasGenericBindings()) {
     // Member registration unconditionally rejects every static member of a
     // generic class with GTI-S2039 because qualified generic member paths
     // are not represented yet. This branch suppresses only a redundant
@@ -2086,7 +2086,7 @@ auto SemanticVisitor::Impl::instanceFieldContractScope() const
   const FunctionDemandScope pauseDemand(semanticModel, nullptr);
   const FunctionInfo *function = currentFunctionInfo();
   if (function == nullptr || function->ownerClass == 0 ||
-      classInfo(function->ownerClass).genericParameters.empty() ||
+      !classInfo(function->ownerClass).hasGenericBindings() ||
       !textFieldContractFunction(
           function->declaration, function->bodyDeclaration(),
           function->virtualMethod || function->overrideMethod,
@@ -2369,7 +2369,7 @@ auto SemanticVisitor::Impl::conditionalTextField(const Expr &expression) const
     -> std::optional<OwnerlessTextField> {
   const FunctionInfo *scope = textFieldContractScope();
   if (scope == nullptr || scope->ownerClass == 0 ||
-      classInfo(scope->ownerClass).genericParameters.empty())
+      !classInfo(scope->ownerClass).hasGenericBindings())
     return std::nullopt;
   const bool readOnlyReceiver =
       !scope->staticMember &&
@@ -2601,7 +2601,7 @@ auto SemanticVisitor::Impl::contractPayloadBinding(
                                    enumSubstitution(pattern.type));
   const bool conditional =
       type.kind == SemanticType::TypeParameter && scope->ownerClass != 0 &&
-      !classInfo(scope->ownerClass).genericParameters.empty();
+      classInfo(scope->ownerClass).hasGenericBindings();
   if (type.kind != SemanticType::StringView &&
       type.kind != SemanticType::CString && !conditional &&
       !nestedTextClass(type))
@@ -2650,7 +2650,7 @@ auto SemanticVisitor::Impl::notePayloadFieldRead(const Expr &expression)
       return;
   }
   const bool generic = scope->ownerClass != 0 &&
-                       !classInfo(scope->ownerClass).genericParameters.empty();
+                       classInfo(scope->ownerClass).hasGenericBindings();
   for (const auto &[formal, fieldType] : fields) {
     const auto enumeration = enumTypeFor(fieldType);
     if (!enumeration)
@@ -2874,7 +2874,7 @@ auto SemanticVisitor::Impl::recordTextFieldUses(
   // forwards there.
   const FunctionInfo *open = nullptr;
   if (target.ownerClass != 0 &&
-      !classInfo(target.ownerClass).genericParameters.empty()) {
+      classInfo(target.ownerClass).hasGenericBindings()) {
     const FunctionDemandScope pauseDemand(semanticModel, nullptr);
     open = semanticModel.findFunction(target.id);
     if (open == nullptr && instanceBaseModel != nullptr)
@@ -2884,7 +2884,7 @@ auto SemanticVisitor::Impl::recordTextFieldUses(
        index < arguments.size() && index < target.parameterTypes.size();
        ++index) {
     if (open == nullptr && target.ownerClass != 0 &&
-        !classInfo(target.ownerClass).genericParameters.empty())
+        classInfo(target.ownerClass).hasGenericBindings())
       continue;
     if (open != nullptr && typeParameterFormal(*open, index))
       continue;
@@ -5814,6 +5814,46 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
         const auto *loan =
             retained ? semanticModel.findLoan(retained->loan) : nullptr;
         if (loan && loan->kind == SemanticLoanKind::StoredValue) {
+          std::vector<SemanticLoanDependency> retainedDependencies{
+              {.place = loan->place,
+               .designatedFields = loan->designatedFields,
+               .access = loan->access,
+               .protectsStorage = loan->protectsStorage,
+               .parent = loan->parent,
+               .conditions = loan->conditions}};
+          retainedDependencies.insert(retainedDependencies.end(), loan->additionalDependencies.begin(),
+                                      loan->additionalDependencies.end());
+          const bool guardedRetained = std::any_of(retainedDependencies.begin(), retainedDependencies.end(),
+                          [](const auto &item) { return !item.conditions.empty(); });
+          if (guardedRetained) {
+            // The complete argument fact is already in the applied formal's
+            // domain. A retained group still names its immutable producer
+            // domain, which may precede a checked binding conversion. Derive
+            // its whole typed view before using that group as reborrow parent.
+            const Expr *origin = loan->origin ? loan->origin : loan->entry ? argument->get() : nullptr;
+            const auto *info = origin ? semanticModel.findExpression(*origin) : nullptr;
+            if (!info)
+              return std::nullopt;
+            auto originalType = info->type;
+            if (const auto *contextual = semanticModel.findContextualConstruction(*origin);
+                contextual && contextual->contextualBorrowDependencies)
+              originalType = contextual->constructedType;
+            if (originalType.kind == SemanticType::Reference && originalType.arguments.size() == 1)
+              originalType = SemanticType(originalType.arguments.front());
+            std::vector<LifetimeBound> obligations;
+            const auto viewed = constrainLifetimeType(originalType, formal, 1, obligations);
+            const auto from = storedBorrowAlternativeInventory(originalType);
+            const auto to = storedBorrowAlternativeInventory(formal);
+            const auto transport = from && to ? BorrowConditionTransport::between(*from, *to) : std::nullopt;
+            if (!viewed || *viewed != formal || !validateLifetimeConstraints(obligations) || !transport)
+              return std::nullopt;
+            for (auto &candidate : retainedDependencies) {
+              auto conditions = transport->apply(candidate.conditions);
+              if (!conditions)
+                return std::nullopt;
+              candidate.conditions = std::move(*conditions);
+            }
+          }
           const auto matches = [&](const SemanticLoanDependency &source,
                                    const SemanticLoanDependency &candidate) {
             auto place = candidate.place;
@@ -5825,22 +5865,16 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
                    source.designatedFields == candidate.designatedFields &&
                    source.conditions == candidate.conditions &&
                    source.access == candidate.access &&
-                   source.protectsStorage == candidate.protectsStorage;
+                   source.protectsStorage == candidate.protectsStorage &&
+                   (source.parent == candidate.parent || source.parent == loan->id);
           };
-          const SemanticLoanDependency primary{
-              .place = loan->place,
-              .designatedFields = loan->designatedFields,
-              .access = loan->access,
-              .protectsStorage = loan->protectsStorage,
-              .conditions = loan->conditions};
-          for (auto &source : sources)
-            if (matches(source, primary) ||
-                std::any_of(loan->additionalDependencies.begin(),
-                            loan->additionalDependencies.end(),
-                            [&](const auto &candidate) {
-                              return matches(source, candidate);
-                            }))
+          for (auto &source : sources) {
+            if (std::any_of(retainedDependencies.begin(), retainedDependencies.end(),
+                            [&](const auto &candidate) { return matches(source, candidate); }))
               source.parent = loan->id;
+            else if (guardedRetained)
+              return std::nullopt;
+          }
         }
       }
     } else if (!hasStableBorrowStorage(*argument)) {
@@ -6530,6 +6564,51 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
     ScopedLookupValue classContext(currentClass,
                                    std::optional<ClassId>(owner->id));
     ScopedLookupValue namespaceContext(currentNamespace, owner->namespaceScope);
+    // This declaration query also runs outside a class body. Resolve explicit
+    // enum/constructor arguments in the exact owner's generic environment;
+    // an absent ambient scope is not evidence that the initializer has no
+    // borrowed dependency. Nested composition gets its own scope and restores
+    // the enclosing constructor's environment on return.
+    const auto ownerSubstitution = classSubstitution(type);
+    auto &queryTypes = typeParameterScopes.emplace_back();
+    auto &queryValues = valueParameterScopes.emplace_back();
+    auto &queryLifetimes = lifetimeParameterScopes.emplace_back();
+    auto &queryPacks = typePackScopes.emplace_back();
+    const auto bindOwnerParameter = [&](const GenericParameterInfo &parameter) {
+      if (parameter.lifetime) {
+        const auto value = ownerSubstitution.lifetimes.find(parameter.id);
+        queryLifetimes.emplace(parameter.name.lexeme,
+            value == ownerSubstitution.lifetimes.end()
+                ? Lifetime::parameter(parameter.id) : value->second);
+      } else if (parameter.value) {
+        const auto value = ownerSubstitution.values.find(parameter.id);
+        queryValues.emplace(parameter.name.lexeme,
+            value == ownerSubstitution.values.end()
+                ? CompileTimeValue::parameter(parameter.id) : value->second);
+      } else {
+        const auto value = ownerSubstitution.types.find(parameter.id);
+        queryTypes.emplace(parameter.name.lexeme,
+            value == ownerSubstitution.types.end()
+                ? (parameter.pack ? SemanticType::typePack(parameter.id)
+                                  : SemanticType::typeParameter(parameter.id))
+                : value->second);
+        if (parameter.pack)
+          queryPacks.emplace(parameter.name.lexeme, parameter.id);
+      }
+    };
+    for (const auto &parameter : owner->genericParameters)
+      bindOwnerParameter(parameter);
+    for (const auto &parameter : owner->genericArgumentPatternLifetimes)
+      bindOwnerParameter(parameter);
+    struct RestoreParameterScopes {
+      const Impl &analyzer;
+      ~RestoreParameterScopes() {
+        analyzer.typeParameterScopes.pop_back();
+        analyzer.valueParameterScopes.pop_back();
+        analyzer.lifetimeParameterScopes.pop_back();
+        analyzer.typePackScopes.pop_back();
+      }
+    } restoreParameters{*this};
     visiting.push_back(constructor);
     struct Pop {
       std::vector<const ConstructorDecl *> &stack;

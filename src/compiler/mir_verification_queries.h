@@ -107,6 +107,13 @@ selectedReferenceHandoff(const MirBody &body, const MirLoan &selected);
 physicalPayloadSelectionSource(const MirProgram &, const MirBody &,
                                const MirReferenceSelection &);
 
+// Derive a stored reference's declared type from its exact executable payload
+// extraction and actual enum view. This establishes neither external origins
+// nor parent activity, switch dominance or consuming handoff authority.
+[[nodiscard]] std::optional<SemanticType>
+storedPayloadSelectionReference(const MirProgram &, const MirBody &,
+                                const MirReferenceSelection &);
+
 // Concrete complete object representation, independent of any lifetime action.
 [[nodiscard]] bool completeObjectType(const MirProgram &program,
                                       const SemanticType &type);

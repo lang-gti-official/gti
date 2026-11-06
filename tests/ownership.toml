@@ -355,6 +355,7 @@ risk = "shared"
 paths = [
   "include/gti/lifetime*.h",
   "include/gti/callable_lifetimes.h",
+  "include/gti/generic_type_patterns.h",
   "include/gti/nominal_variance.h",
   "include/gti/semantic*",
   "src/compiler/semantic_analyzer_impl.h",

@@ -718,7 +718,7 @@ private:
 
   [[nodiscard]] bool nonGenericClass(ClassId id) const {
     const ClassTypeInfo *owner = semantics_.findClassType(id);
-    return owner != nullptr && owner->genericParameters.empty();
+    return owner != nullptr && !owner->hasGenericBindings();
   }
 
   // A non-generic class, function, or constructor has exactly one possible
@@ -729,7 +729,7 @@ private:
   unreachableConcreteDeclaration(const Stmt &statement) const {
     if (const auto *declaration = stmtAs<ClassDecl>(&statement)) {
       const ClassTypeInfo *info = semantics_.findClassType(*declaration);
-      return info != nullptr && info->genericParameters.empty() &&
+      return info != nullptr && !info->hasGenericBindings() &&
              !classes_.contains(info->id);
     }
     if (const auto *declaration = stmtAs<FunctionDecl>(&statement)) {
@@ -878,7 +878,7 @@ private:
       row.source = tokenSpan(declaration->name());
       row.generic = !declaration->genericParameters().empty();
       if (const ClassTypeInfo *info = semantics_.findClassType(*declaration)) {
-        row.generic = !info->genericParameters.empty();
+        row.generic = info->hasGenericBindings();
         row.semanticIdentity = info->id;
         // Namespace scope is separate from the lexical class prefix in the
         // semantic qualified name. Nested class ownership is already retained

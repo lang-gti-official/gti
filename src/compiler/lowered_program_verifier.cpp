@@ -161,7 +161,8 @@ validClassPatternBindings(const LoweredClassDeclaration &declaration) {
                        });
   }
   if (!resolvedTypes(declaration.genericArgumentPatterns) ||
-      declaration.genericParameters.empty()) {
+      (declaration.genericParameters.empty() &&
+       declaration.genericArgumentPatternLifetimes.empty())) {
     return false;
   }
   std::vector<Lifetime> scope;
@@ -470,7 +471,7 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     if (payload == nullptr || payload->id == 0 ||
         declaration.semanticIdentity != payload->id ||
         declaration.name.empty() || payload->qualifiedName.empty() ||
-        declaration.generic != !payload->genericParameters.empty() ||
+        declaration.generic != payload->hasGenericBindings() ||
         !validGenericParameters(payload->genericParameters, true) ||
         !validClassPatternBindings(*payload) ||
         (exactSpecialization &&
@@ -1123,8 +1124,8 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
           primaryRow->parent != declaration.parent ||
           primaryRow->namespaceScope != declaration.namespaceScope ||
           primaryRow->name != declaration.name ||
-          primary->genericParameters.empty() ||
-          specialization->genericParameters.empty()) {
+          !primary->hasGenericBindings() ||
+          !specialization->hasGenericBindings()) {
         addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
                  "generic class definition does not retain its exact family "
                  "primary identity",
@@ -1785,7 +1786,7 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
           owner != nullptr && lifecycleContainsClosure(owner->type)
               ? LoweredLifecycleCleanupForm::RetainedPrimary
           : classDeclaration != nullptr &&
-                  !classDeclaration->genericParameters.empty()
+                  classDeclaration->hasGenericBindings()
               ? LoweredLifecycleCleanupForm::ConcreteSpecialization
               : LoweredLifecycleCleanupForm::OrdinaryClass;
       if (payload == nullptr || destructorDeclaration == nullptr ||

@@ -569,7 +569,7 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
   // A generic class method's open field requirements bind exactly the fields
   // that are text in this instance (L-OWN-02).
   if (function->ownerClass != 0 &&
-      !classInfo(function->ownerClass).genericParameters.empty()) {
+      classInfo(function->ownerClass).hasGenericBindings()) {
     const SemanticType owner =
         substituteType(openClassType(function->ownerClass), substitution);
     for (const OwnerlessTextField &field : function->ownerlessTextFields) {
@@ -882,7 +882,7 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
                     [](const SemanticDiagnostic &diagnostic) {
                       return diagnostic.severity == DiagnosticSeverity::Error;
                     });
-    if (!classType->genericParameters.empty() &&
+    if (classType->hasGenericBindings() &&
         declaresConcreteClassStaticAssertions(
             classType->declaration->members()))
       recordConcreteClassAssertionOutcome(classId, classTypeArguments,
@@ -1068,7 +1068,7 @@ auto SemanticVisitor::Impl::enterUnsafeRegion(const Token &keyword,
       currentFunctionDeclaration != nullptr &&
       !currentFunctionDeclaration->genericParameters().empty();
   const bool genericClass =
-      currentClass && !classInfo(*currentClass).genericParameters.empty();
+      currentClass && classInfo(*currentClass).hasGenericBindings();
   if (!instanceAnalysisActive && !genericFunction && !genericClass &&
       !isCompilerTrustedRequester(keyword)) {
     requestSession.unsafeBlockCandidates.push_back(
@@ -11611,7 +11611,7 @@ auto SemanticVisitor::Impl::validateLayoutClassAssertions(
       if (work && work->failure)
         return false;
       const ClassInfo *owner = classInfo(type);
-      if (!owner || owner->genericParameters.empty() || !owner->declaration ||
+      if (!owner || !owner->hasGenericBindings() || !owner->declaration ||
           !declaresConcreteClassStaticAssertions(owner->declaration->members()))
         continue;
       const auto known = knownConcreteClassAssertionOutcome(
@@ -12772,7 +12772,7 @@ auto SemanticVisitor::Impl::analyzeQualifiedName(
       // unrelated diagnostics inside the instance can mask this path rule.
       const ClassInfo &ownerInfo = classInfo(*owner);
       const auto member = ownerInfo.members.find(expr.name().last().lexeme);
-      if (expr.ownerType() && !ownerInfo.genericParameters.empty() &&
+      if (expr.ownerType() && ownerInfo.hasGenericBindings() &&
           member != ownerInfo.members.end() &&
           member->second.symbol.staticMember) {
         report(expr.name().last(),

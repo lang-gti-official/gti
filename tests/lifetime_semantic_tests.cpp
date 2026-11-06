@@ -48,15 +48,21 @@ namespace std {
         std::cerr << "  " << diagnostic.code << ": " << diagnostic.message << '\n';
       if (mir && internal && argc > 2 &&
           (name == "stored-external-reference-keeps-its-declared-region" ||
-           name == "borrowed-value-parameter-publishes-stored-suppliers")) {
+           name == "borrowed-value-parameter-publishes-stored-suppliers" ||
+           name == "stored-reference-reborrow-keeps-external-region")) {
         const std::size_t owner =
-            name == "borrowed-value-parameter-publishes-stored-suppliers" ? 1 : 2;
+            name == "stored-external-reference-keeps-its-declared-region" ? 2 : 1;
         const auto directory = std::filesystem::path(argv[2]);
         std::filesystem::create_directories(directory);
         const auto path = directory / (std::string(name) + ".mir.txt");
         std::ofstream evidence(path);
         if (const auto *function = result.mir.findFunctionInstance(owner))
           evidence << lang::MirPrinter{}.print(function->body);
+        if (name == "stored-reference-reborrow-keeps-external-region")
+          if (const auto *selected = result.mir.findFunctionInstance(2)) {
+            evidence << "SELECT owner=2\n";
+            evidence << lang::MirPrinter{}.print(selected->body);
+          }
         if (name == "stored-external-reference-keeps-its-declared-region")
           if (const auto *getter = result.mir.findFunctionInstance(3)) {
             evidence << "GETTER owner=3\n";
@@ -415,6 +421,18 @@ struct Split<lifetime a, lifetime b> {
   int&<a> wrong() { return this.second; }
 };
 )gti", false, "GTI-S2127");
+  check("projected-only-class-instantiation", R"gti(
+struct Fixed<int&<source>> {
+  int&<source> value;
+  Fixed(int&<source> input) : value(input) {}
+  int&<source> get() { return this.value; }
+};
+int&<a> read<lifetime a>(int&<a> input) {
+  Fixed<int&<a>> holder{input};
+  return holder.get();
+}
+int main() { int value = 7; return read(value) - 7; }
+)gti", true);
   check("physical-payload-borrow-keeps-caller-region", R"gti(
 enum State { value(int item) };
 int&<a> select<lifetime a>(State&<a> state) {

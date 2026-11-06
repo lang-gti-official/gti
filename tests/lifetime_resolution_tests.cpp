@@ -1172,7 +1172,7 @@ int main() { Pair<static, static> empty{0}; return 0; }
   expect(completePair, "constructor publication retains both independent guarded field paths");
   expect(completeEmpty, "two selected empty fields publish two domains and no borrowed origin");
 
-  const auto exclusive = analyze(R"(
+  const std::string exclusiveDeclaration = R"(
 enum Exclusive<lifetime a> { ready(mut int&<a> value), missing(int code) };
 struct Duplicated<lifetime a> {
   Exclusive<a> first;
@@ -1180,15 +1180,59 @@ struct Duplicated<lifetime a> {
   Duplicated(mut int&<a> value)
       : first(Exclusive<a>::ready(value)), second(Exclusive<a>::ready(value)) {}
 };
-int main() { return 0; }
-)");
-  expect(!exclusive.semanticValid &&
+)";
+  for (const std::string main : {
+           "int main() { return 0; }",
+           "int main() { int value = 0; Duplicated<_> item{value}; return 0; }"}) {
+    const auto exclusive = analyze(exclusiveDeclaration + main);
+    expect(!exclusive.semanticValid &&
              std::any_of(exclusive.diagnostics.begin(), exclusive.diagnostics.end(),
                          [](const auto &diagnostic) {
                return diagnostic.code == "GTI-S2045" &&
                    diagnostic.message.find("duplicate an exclusive") != std::string::npos;
              }),
-         "independent conditional fields cannot duplicate one exclusive source");
+           "independent conditional fields cannot duplicate one exclusive source");
+  }
+}
+
+void testProjectedOnlyPatternLifetimes() {
+  const std::string declaration = R"gti(
+struct Fixed<int&<source>> {
+  using Borrow = int&<source>;
+  int&<source> value;
+  Fixed(int&<source> input) : value(input) {}
+  int&<source> get() { return this.value; }
+};
+)gti";
+  const auto result = analyze(declaration + R"gti(
+using Alias<lifetime a> = Fixed<int&<a>>;
+int&<a> read<lifetime a>(int&<a> input) {
+  Alias<a> holder{input};
+  return holder.get();
+}
+int main() { int value = 7; return read(value) - 7; }
+)gti");
+  expectValid(result, "a projected lifetime alone requires concrete class instantiation");
+  const auto *owner = record(result, "Fixed");
+  expect(owner && owner->hasGenericBindings() && owner->genericParameters.empty() &&
+             owner->genericArgumentPatterns.size() == 1 &&
+             owner->genericArgumentPatternLifetimes.size() == 1,
+         "projected-only bindings retain one type recipe and no extra public lifetime slot");
+  const auto escape = analyze(declaration + R"gti(
+int&<static> bad<lifetime a>(Fixed<int&<a>> input) { return input.get(); }
+int main() { return 0; }
+)gti");
+  expect(!escape.semanticValid &&
+             std::any_of(escape.diagnostics.begin(), escape.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
+         "a projected-only owner cannot widen its stored borrow to static");
+  for (const auto source : {"using Bad = Fixed<bool&<static>>;",
+                            "using Bad = Fixed<mut int&<static>>;",
+                            "using Bad = Fixed<int&<static>, static>;"}) {
+    const auto invalid = analyze(declaration + source + " int main() { return 0; }");
+    expect(invalid.syntaxValid && !invalid.semanticValid,
+           "projected-only patterns preserve fixed referent/access and public arity");
+  }
 }
 
 void testNamedProjectedPatternLifetimes() {
@@ -1471,6 +1515,7 @@ int main() {
   testInferredCarrierRegions();
   testProjectedPatternLifetimes();
   testEnumInitializerLifetimeComposition();
+  testProjectedOnlyPatternLifetimes();
   testNamedProjectedPatternLifetimes();
   testNominalFormation();
   testCStringRegions();
