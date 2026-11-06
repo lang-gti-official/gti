@@ -5,5 +5,9 @@ int main() {
     if (left_value() + right_value() != 42) {
         return 1;
     }
+    if (left_tick() != 2) { return 2; }
+    if (right_tick() != 4) { return 3; }
+    if (left_tick() != 6) { return 4; }
+    if (right_tick() != 8) { return 5; }
     return 0;
 }

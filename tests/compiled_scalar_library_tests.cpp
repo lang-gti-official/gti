@@ -18,6 +18,10 @@ namespace lang {
 struct LoweredProgramTestAccess {
   static auto &bindings(LoweredProgram &p) { return p.compiledScalarBindings_; }
   static auto &units(LoweredProgram &p) { return p.compiledInterfaceUnits_; }
+  static auto &mir(LoweredProgram &p) { return p.mir_; }
+};
+struct MirProgramTestAccess {
+  static auto &steps(MirProgram &p) { return p.programInitialization.steps; }
 };
 } // namespace lang
 namespace {
@@ -119,6 +123,106 @@ public:
     return {BackendArtifactKind::Object, "captured", ".o", {}};
   }
 };
+void passiveStorageTests(const std::filesystem::path &root,
+                         const std::filesystem::path &runtime) {
+  write(root / "stdlib/prelude.gti", "");
+  const auto source = root / "producer/library.gti";
+  constexpr std::string_view library = R"(
+export module numbers;
+mut int total;
+constexpr int bias = 7;
+class Counts {
+public:
+  static mut int calls;
+};
+int read(int& value) { return value; }
+export int choose(int x) {
+  total += x;
+  Counts::calls += 1;
+  return total + Counts::calls + read(bias);
+}
+)";
+  for (auto level : {OptimizationLevel::O0, OptimizationLevel::O3}) {
+    write(source, library);
+    auto producer = buildCompiledScalarLibrary(request(root, source, level),
+                                               keys(), runtime);
+    compiled(producer.compilation);
+    if (level == OptimizationLevel::O3) {
+      Capture capture;
+      compiled(compileWithBackend(
+          request(root, source, level).withApplicationBodies(), capture));
+      auto bound =
+          CompiledScalarUnitBuilder().bind(*capture.program, keys(), true);
+      expect(verifyLoweredProgram(bound).empty(),
+             "valid passive library failed verification");
+      const auto &steps = bound.mir().programInitializationPlan().steps;
+      expect(
+          steps.size() == 3 &&
+              std::count_if(steps.begin(), steps.end(),
+                            [](const auto &step) {
+                              return step.dataInitialization ==
+                                     MirProgramDataInitializationKind::Constant;
+                            }) == 1,
+          "fixture must exercise both zero and constant object storage");
+      for (int mutation = 0; mutation < 7; ++mutation) {
+        auto changed = bound;
+        auto &step =
+            MirProgramTestAccess::steps(LoweredProgramTestAccess::mir(changed))
+                .front();
+        if (mutation == 0)
+          step.role = ProgramInitializationStepRole::Initializer;
+        if (mutation == 1)
+          step.storageKind = ProgramStorageKind::FunctionLocal;
+        if (mutation == 2)
+          step.requiresActiveCleanup = true;
+        if (mutation == 3)
+          step.nativeRetirement = MirDropType{};
+        if (mutation == 4)
+          step.dataInitialization = MirProgramDataInitializationKind::None;
+        if (mutation == 5)
+          step.dataInitialization = MirProgramDataInitializationKind::Constant;
+        if (mutation == 6)
+          step.dataConstant = steps[1].dataConstant;
+        expect(!verifyCompiledScalarUnit(changed).empty() &&
+                   !verifyLoweredProgram(changed).empty(),
+               "forged passive storage plan accepted");
+      }
+    }
+    std::filesystem::remove_all(source.parent_path());
+    write(root / "consumer/main.gti", R"(
+import "api.gti";
+int main() {
+  if (choose(2) != 10) { return 1; }
+  if (choose(3) != 14) { return 2; }
+  if (choose(0) != 15) { return 3; }
+  return 0;
+}
+)");
+    linkAndRun(root, runtime,
+               compileCompiledScalarConsumer(
+                   request(root, root / "consumer/main.gti", level),
+                   producer.bundle, root / "consumer/api.gti", runtime));
+    // A new executable process starts with fresh object data, not a build-time
+    // or process-external counter shared by consumers.
+    const auto rerun = process({(root / "app").string()});
+    expect(rerun.succeeded(),
+           "passive storage did not reset per process: " + rerun.output);
+  }
+  for (std::string_view storage :
+       {"int initial() { return 1; } mut int total = initial();",
+        "thread_local mut int total;"}) {
+    write(source, "export module numbers; " + std::string(storage) +
+                      " export int choose(int x) { return total + x; }");
+    const auto rejected = buildCompiledScalarLibrary(
+        request(root, source, OptimizationLevel::O3), keys(), runtime);
+    expect(!rejected.compilation.succeeded() && rejected.bundle.empty() &&
+               rejected.compilation.backendFailureDetails.value_or("").find(
+                   "requires passive program storage") != std::string::npos,
+           "dynamic/TLS storage must fail compiled-unit admission");
+  }
+  std::cout << "passive namespace/static/constant storage and source-absent "
+               "execution passed at O0/O3\n";
+}
 void projectCheckTests(const std::filesystem::path &root,
                        const std::filesystem::path &runtime) {
   // Reach the error adapter without relying on a frontend bug to manufacture
@@ -451,6 +555,7 @@ int main(int argc, char **argv) {
     TemporaryDirectory tmp;
     const std::filesystem::path examples = argv[2];
     projectCheckTests(tmp.path / "check-project", argv[1]);
+    passiveStorageTests(tmp.path / "passive-storage", argv[1]);
     write(tmp.path / "stdlib/prelude.gti", "");
     for (auto level : {OptimizationLevel::O0, OptimizationLevel::O1,
                        OptimizationLevel::O3}) {

@@ -1846,6 +1846,18 @@ remain usable without sources. The `compiled_dependency_project` example covers
 these paths. Package-qualified source edges, zero-source-read freshness, input-race
 publication proofs and general cache/report integration remain F4 prerequisites.
 
+Passive storage progress (F2): compiled producers now admit the existing verified
+MIR `DataOnly` namespace-global/static-field stages: implicit zero and `constexpr`
+constants without active cleanup/native retirement. Their internal LLVM globals
+are linked once per library, including source-absent dependency diamonds. The
+`compiled_scalar_library` regression covers mutable namespace/static storage,
+addressed constant data, fresh process state, and fail-closed plan mutations;
+`compiled_dependency_project` covers shared counters through both diamond paths.
+No new startup execution or retirement scheduling is claimed. Executable explicit
+initializers (including plain literal initializers), TLS, function-local lazy
+storage and active destruction still require composable per-library lifetime
+plans. This slice does not complete F2.
+
 Next coherent outcomes: general ownership and lifecycle metadata, generic/staged
 constexpr recipes, complete multi-module ownership/re-export contracts, composable exactly-once
 globals/TLS, and artifact-aware diagnostic provenance/LSP snapshots. Production

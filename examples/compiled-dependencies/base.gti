@@ -1,5 +1,19 @@
 export module base;
 
+// Private data is stored once in base's object, even through a diamond.
+mut int calls;
+class Counters {
+public:
+    static mut int total;
+};
+constexpr int increment = 1;
+
 export int base_value() {
     return 7;
+}
+
+export int base_tick() {
+    calls += increment;
+    Counters::total += increment;
+    return calls + Counters::total;
 }

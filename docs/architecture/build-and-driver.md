@@ -3090,7 +3090,16 @@ Each bundle contains one `unit.o` and exact direct-dependency digest receipts.
 Object validation checks relocatable format, target/layout, exact exported
 symbols and unresolved symbols limited to declared imported GTI callables.
 Transitive imports contribute their objects without requiring a source facade.
-Program initialization, TLS and hosted producer entry remain unsupported;
+Private namespace globals and class static fields are admitted when their verified
+MIR initialization stages are `DataOnly` (implicit zero or `constexpr` constant),
+with no active cleanup or native retirement. LLVM emits these as internal object
+data. Linking each library object once gives all dependency paths the same storage;
+each executable process receives fresh initialized data. No initialization thunk
+or new serialized interface field is required, and storage identities do not
+become exported APIs. Ordinary explicit initializers, even literal `= 0`, remain
+executable initialization under the current semantic classification.
+Executable program initialization, function-local lazy storage, TLS and hosted
+producer entry remain unsupported;
 producer cleanup needing external runtime services still requires a broader
 runtime-closure contract. Consumer cleanup and checked failure propagation retain
 their normal behavior. The driver owns bounded reads, native staging and atomic

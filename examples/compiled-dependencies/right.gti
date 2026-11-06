@@ -4,3 +4,7 @@ import "api/base.gti";
 export int right_value() {
     return base_value() * 4;
 }
+
+export int right_tick() {
+    return base_tick();
+}
