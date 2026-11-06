@@ -28,6 +28,38 @@ using MirHostedStartupOperationId = std::size_t;
 using MirNativeCallbackAdapterId = std::size_t;
 using MirThreadTaskAdapterId = std::size_t;
 
+struct MirLifetimeOrigin {
+  Lifetime region;
+  MirPlaceId place = 0;
+  PlaceKey key;
+  // Stable body-local source value, also retained by MirPlace::sourceValue.
+  // This is provenance identity, never an AST pointer or a containment proof.
+  HirValueId source = 0;
+  friend bool operator==(const MirLifetimeOrigin &,
+                         const MirLifetimeOrigin &) = default;
+};
+
+struct MirLifetimeApplication {
+  std::vector<LifetimeBinding> bindings;
+  std::vector<Lifetime> variables;
+  std::vector<LifetimeBound> obligations;
+  std::vector<LifetimeTypeBound> typeObligations;
+  std::vector<MirLifetimeOrigin> origins;
+  bool complete = false;
+  friend bool operator==(const MirLifetimeApplication &,
+                         const MirLifetimeApplication &) = default;
+};
+
+struct MirLifetimeBody {
+  std::vector<Lifetime> variables;
+  std::vector<LifetimeBound> obligations;
+  std::vector<LifetimeTypeBound> typeObligations;
+  std::vector<MirLifetimeOrigin> origins;
+  bool complete = false;
+  friend bool operator==(const MirLifetimeBody &,
+                         const MirLifetimeBody &) = default;
+};
+
 struct MirFullExpression {
   HirFullExpressionId id = 0;
   HirFullExpressionId hirExpression = 0;
@@ -746,7 +778,7 @@ struct MirInstruction {
   // Semantics-selected generic regions remain proof metadata, never operands.
   std::vector<Lifetime> lifetimeArguments;
   // Complete declaration-contract substitution, including elided/owner regions.
-  std::vector<LifetimeBinding> lifetimeBindings;
+  MirLifetimeApplication lifetimeApplication;
   std::vector<SemanticType> closureCaptureTypes;
   std::vector<LambdaCaptureMode> closureCaptureModes;
   std::optional<MirLoanId> loan;
@@ -1175,6 +1207,7 @@ struct MirBody {
   // authority.
   bool compilerTrustedSynchronization = false;
   PlaceDomain placeDomain;
+  MirLifetimeBody lifetimeBody;
   MirBlockId entry = 0;
   SemanticType returnType = SemanticType::Void;
   std::vector<MirBlock> blocks;
@@ -1425,7 +1458,7 @@ struct MirCallableSignature {
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
   std::vector<Lifetime> lifetimeArguments;
-  std::vector<LifetimeBinding> lifetimeBindings;
+  MirLifetimeApplication lifetimeApplication;
   CallableInvocationCapability requiredCapability =
       CallableInvocationCapability::Read;
   std::optional<CallableInvocationCapability> selectedCapability;
@@ -1581,7 +1614,7 @@ struct MirConstructorInitializer {
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::vector<HirValueId> arguments;
   std::vector<Lifetime> lifetimeArguments;
-  std::vector<LifetimeBinding> lifetimeBindings;
+  MirLifetimeApplication lifetimeApplication;
   std::size_t explicitArgumentCount = 0;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;

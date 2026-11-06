@@ -2,6 +2,7 @@
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
 #include "gti/support.h"
+#include "mir_lifetimes.h"
 
 #include "gti/ast.h"
 #include "gti/failure_metadata.h"
@@ -1313,7 +1314,8 @@ private:
         if (a.returnType != b.returnType ||
             a.parameterTypes != b.parameterTypes ||
             a.lifetimeArguments != b.lifetimeArguments ||
-            a.lifetimeBindings != b.lifetimeBindings ||
+            !preservesHirLifetimeApplication(a.lifetimeApplication,
+                                             b.lifetimeApplication) ||
             a.requiredCapability != b.requiredCapability ||
             a.selectedCapability != b.selectedCapability ||
             a.functionTarget != b.functionTarget ||
@@ -1430,7 +1432,8 @@ private:
           input.constructorTarget != output.constructorTarget ||
           input.arguments != output.arguments ||
           input.lifetimeArguments != output.lifetimeArguments ||
-          input.lifetimeBindings != output.lifetimeBindings ||
+          !preservesHirLifetimeApplication(input.lifetimeApplication,
+                                           output.lifetimeApplication) ||
           input.explicitArgumentCount != output.explicitArgumentCount ||
           input.storesReference != output.storesReference ||
           input.borrowAccess != output.borrowAccess ||
@@ -2043,6 +2046,12 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   for (const auto address : enumerateMirBodyAddresses(sourceMir)) {
     const auto *sourceBody = debugHirBody(hir, address);
     const auto *mirBody = findMirBody(sourceMir, address);
+    if (sourceBody && mirBody &&
+        !preservesHirLifetimeBody(sourceBody->lifetimeBody,
+                                  mirBody->lifetimeBody))
+      addIssue(
+          build.issues, LoweredProgramIssueKind::FrontendMismatch,
+          "source MIR lifetime facts differ from exact accepted HIR facts");
     if (sourceBody && mirBody &&
         !mir_detail::sourceDebugMatchesHir(*sourceBody, *mirBody))
       addIssue(build.issues, LoweredProgramIssueKind::FrontendMismatch,

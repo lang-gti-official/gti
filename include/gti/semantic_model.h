@@ -48,6 +48,43 @@ using SemanticLoanPlaceProjectionKind = PlaceProjectionKind;
 using SemanticLoanPlaceProjection = PlaceProjection;
 using SemanticLoanPlace = PlaceKey;
 
+// Fixed local anchors retain their checked source identity. A temporary has
+// no named place and therefore requires its exact source expression.
+struct SemanticLifetimeOrigin {
+  Lifetime region;
+  SemanticLoanPlace place;
+  const Expr *source = nullptr;
+  friend bool operator==(const SemanticLifetimeOrigin &,
+                         const SemanticLifetimeOrigin &) = default;
+};
+
+// One selected application's obligations, never new declaration assumptions.
+// The complete bit alone grants no authority: later phases replay the exact
+// bindings, allocated existentials, type obligations and origin witnesses.
+struct SemanticLifetimeApplication {
+  std::vector<LifetimeBinding> bindings;
+  std::vector<Lifetime> variables;
+  std::vector<LifetimeBound> obligations;
+  std::vector<LifetimeTypeBound> typeObligations;
+  std::vector<SemanticLifetimeOrigin> origins;
+  bool complete = false;
+  friend bool operator==(const SemanticLifetimeApplication &,
+                         const SemanticLifetimeApplication &) = default;
+};
+
+// Body-wide existential inventory and required relationships. These facts
+// belong to this exact analysis instance; they are not declaration assumptions.
+struct SemanticLifetimeBody {
+  std::vector<Lifetime> variables;
+  std::vector<LifetimeBound> obligations;
+  std::vector<LifetimeTypeBound> typeObligations;
+  std::vector<SemanticLifetimeOrigin> origins;
+  bool complete = false;
+  friend bool operator==(const SemanticLifetimeBody &,
+                         const SemanticLifetimeBody &) = default;
+};
+
+
 // One exact tag proposition for a typed enum subobject. A path of these
 // propositions is a conjunction along nested active alternatives; it does not
 // refer to a runtime load of an inactive payload or an arbitrary Boolean fact.
@@ -1396,7 +1433,7 @@ struct ResolvedConstructionInfo {
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<Lifetime> lifetimeArguments;
-  std::vector<LifetimeBinding> lifetimeBindings;
+  SemanticLifetimeApplication lifetimeApplication;
   std::vector<AppliedConceptRequirement> requirements;
   std::vector<SemanticType> parameterTypes;
   std::vector<std::size_t> ephemeralBorrowArguments;
@@ -1438,7 +1475,7 @@ struct ResolvedConstructorInitializerInfo {
   const ConstructorDecl *declaration = nullptr;
   std::vector<SemanticType> parameterTypes;
   std::vector<Lifetime> lifetimeArguments;
-  std::vector<LifetimeBinding> lifetimeBindings;
+  SemanticLifetimeApplication lifetimeApplication;
   std::vector<const Expr *> defaultArguments;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
@@ -1481,7 +1518,7 @@ struct ResolvedCallInfo {
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<Lifetime> lifetimeArguments;
-  std::vector<LifetimeBinding> lifetimeBindings;
+  SemanticLifetimeApplication lifetimeApplication;
   std::vector<AppliedConceptRequirement> requirements;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   bool neverReturns = false;
@@ -1682,7 +1719,7 @@ struct ResolvedLambdaCallInfo {
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<Lifetime> lifetimeArguments;
-  std::vector<LifetimeBinding> lifetimeBindings;
+  SemanticLifetimeApplication lifetimeApplication;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::optional<CallableBoundary> boundary;
   // The lambda's result-origin contract, so the call result borrows the
@@ -1718,7 +1755,7 @@ struct ResolvedOperatorInfo {
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   std::vector<Lifetime> lifetimeArguments;
-  std::vector<LifetimeBinding> lifetimeBindings;
+  SemanticLifetimeApplication lifetimeApplication;
   std::vector<std::size_t> ephemeralBorrowArguments;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
@@ -2629,6 +2666,13 @@ public:
 
   [[nodiscard]] ExpressionInfo expressionInfo(const Expr &expression) const;
 
+  [[nodiscard]] const SemanticLifetimeBody *
+  findLifetimeBody(const BlockStmt &body) const;
+  [[nodiscard]] const SemanticLifetimeBody *
+  findLifetimeBody(const Expr &body) const;
+  void recordLifetimeBody(const BlockStmt &body, SemanticLifetimeBody facts);
+  void recordLifetimeBody(const Expr &body, SemanticLifetimeBody facts);
+
   [[nodiscard]] const SemanticType *findType(const Expr &expression) const;
 
   [[nodiscard]] std::optional<ConstantValue>
@@ -3485,6 +3529,8 @@ private:
       payloadConstructions;
   std::unordered_map<const Expr *, ResolvedPayloadPatternInfo> payloadPatterns;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
+  std::unordered_map<const BlockStmt *, SemanticLifetimeBody> blockLifetimeBodies;
+  std::unordered_map<const Expr *, SemanticLifetimeBody> expressionLifetimeBodies;
   std::unordered_map<const Expr *, RawReferenceAssertionInfo>
       rawReferenceAssertions;
   std::unordered_map<const Expr *, NativeFunctionConversionInfo>

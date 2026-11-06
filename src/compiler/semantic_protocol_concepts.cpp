@@ -1924,67 +1924,105 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
     return fail();
   }
 
-  // Through the requirement: check the arguments against the declared
-  // signature. Each concrete instance resolves the block function itself.
-  std::vector<SemanticType> parameterTypes;
-  parameterTypes.reserve(operation.parameterTypes.size());
+  // Through the requirement, apply the same declaration contract used by a
+  // concrete function. Region choices remain bindings until call checking.
+  CallableDeclaration declarationRecord{
+      .sourceUnit = conceptInfo.sourceUnit,
+      .syntax = operation.declaration,
+      .genericParameters = conceptInfo.genericParameters,
+      .lifetimeContract = operation.lifetimeContract};
+  declarationRecord.genericParameters.insert(
+      declarationRecord.genericParameters.end(), operation.genericParameters.begin(),
+      operation.genericParameters.end());
+  CallableCandidate candidate{
+      .declarationRecord = &declarationRecord,
+      .declaration = operation.declaration,
+      .returnType = protocolOperationType(id, operation.returnType, arguments, {}),
+      .requiredParameterCount = operation.parameterTypes.size(),
+      .requirements = operation.requirements,
+      .lifetimeContract = operation.lifetimeContract};
+  candidate.parameterTypes.reserve(operation.parameterTypes.size());
   for (const SemanticType &parameter : operation.parameterTypes) {
-    parameterTypes.push_back(substituteType(
-        protocolOperationType(id, parameter, arguments, resolved.lifetimes),
-        operationSubstitution));
+    candidate.parameterTypes.push_back(
+        protocolOperationType(id, parameter, arguments, {}));
   }
-  const SemanticType returnType =
-      substituteType(protocolOperationType(id, operation.returnType, arguments,
-                                           resolved.lifetimes),
-                     operationSubstitution);
-  if (expr.arguments().size() != parameterTypes.size()) {
+  const auto ownerSubstitution = conceptSubstitution(conceptInfo, arguments);
+  for (auto &requirement : candidate.requirements)
+    requirement = substituteRequirement(requirement, ownerSubstitution);
+  for (auto &bound : candidate.lifetimeContract.typeBounds)
+    bound.type = substituteType(bound.type, ownerSubstitution);
+  for (std::size_t region = 0; region < resolved.lifetimes.size(); ++region)
+    candidate.lifetimeApplication.bindings.emplace_back(
+        Lifetime::parameter(conceptInfo.lifetimeParameterIds[region]),
+        resolved.lifetimes[region]);
+  for (const auto &parameter : operation.genericParameters)
+    if (const auto selected = operationSubstitution.lifetimes.find(parameter.id);
+        selected != operationSubstitution.lifetimes.end()) {
+      candidate.lifetimeArguments.push_back(selected->second);
+      candidate.lifetimeApplication.bindings.emplace_back(
+          Lifetime::parameter(parameter.id), selected->second);
+    }
+  applyFunctionReturnBorrowSummary(candidate);
+  if (expr.arguments().size() != candidate.parameterTypes.size()) {
     report(expr.paren(),
-           "Function expects " + std::to_string(parameterTypes.size()) +
-               " argument" + (parameterTypes.size() == 1 ? "" : "s") +
+           "Function expects " + std::to_string(candidate.parameterTypes.size()) +
+               " argument" + (candidate.parameterTypes.size() == 1 ? "" : "s") +
                " but received " + std::to_string(expr.arguments().size()) + ".",
            "GTI-S2005");
     return fail();
   }
   bool valid = true;
-  for (std::size_t position = 0; position < parameterTypes.size(); ++position) {
-    const SemanticType actual = analyze(expr.arguments()[position]);
-    if (actual == SemanticType::Unknown) {
-      valid = false;
-      continue;
-    }
-    if (!callArgumentMatches(parameterTypes[position], actual,
-                             expr.arguments()[position])) {
+  std::vector<SemanticType> actualTypes;
+  actualTypes.reserve(expr.arguments().size());
+  for (const auto &argument : expr.arguments()) {
+    actualTypes.push_back(analyze(argument));
+    valid = actualTypes.back() != SemanticType::Unknown && valid;
+  }
+  if (valid)
+    valid = applyCallLifetimeContract(candidate, actualTypes, expr.arguments(),
+                                      expr.paren());
+  std::vector<std::size_t> ephemeralBorrowArguments;
+  std::vector<std::size_t> literalArguments;
+  for (std::size_t position = 0; valid && position < actualTypes.size(); ++position) {
+    const auto &actual = actualTypes[position];
+    const auto match = functionCallArgumentMatch(
+        candidate, position, actual, expr.arguments()[position], false);
+    if (match == CallArgumentMatchKind::EphemeralReadBorrow)
+      ephemeralBorrowArguments.push_back(position);
+    else if (match == CallArgumentMatchKind::ContextualIntegerLiteral)
+      literalArguments.push_back(position);
+    else if (match == CallArgumentMatchKind::Mismatch) {
       report(expressionToken(expr.arguments()[position]),
              "Argument " + std::to_string(position + 1) + " of '" +
                  site.lexeme + "' has type '" + typeSpelling(actual) +
                  "' but the operation expects '" +
-                 typeSpelling(parameterTypes[position]) + "'.",
+                 typeSpelling(candidate.parameterTypes[position]) + "'.",
              "GTI-S2005");
       valid = false;
     }
   }
   if (valid) {
-    ResolvedCallInfo selected{.returnType = returnType,
-                              .parameterTypes = parameterTypes};
-    const auto inferred = functionReturnBorrowSummary(
-        returnType, parameterTypes, 0, false, IntrinsicKind::None);
-    selected.borrowOrigin = inferred.origin;
-    selected.borrowArgument = inferred.parameter;
-    selected.borrowAccess = inferred.access;
-    selected.borrowArguments = inferred.parameters;
-    if (returnType.kind == SemanticType::Reference &&
-        operation.returnBorrowParameter) {
-      selected.borrowOrigin = BorrowOriginKind::Argument;
-      selected.borrowArgument = *operation.returnBorrowParameter;
-      selected.borrowAccess = returnType.referenceAccess;
-    }
+    adoptContextualIntegerLiteralArguments(candidate.parameterTypes,
+                                           expr.arguments(), actualTypes,
+                                           literalArguments);
+    commitLifetimeApplication(candidate.lifetimeApplication);
+    ResolvedCallInfo selected{
+        .returnType = candidate.returnType,
+        .parameterTypes = candidate.parameterTypes,
+        .lifetimeArguments = candidate.lifetimeArguments,
+        .lifetimeApplication = candidate.lifetimeApplication,
+        .requirements = candidate.requirements,
+        .borrowOrigin = candidate.returnBorrowOrigin,
+        .borrowArgument = candidate.returnBorrowParameter,
+        .borrowAccess = candidate.returnBorrowAccess,
+        .borrowArguments = candidate.returnBorrowParameters,
+        .borrowFields = candidate.returnBorrowFields,
+        .borrowPlace = candidate.returnBorrowPlace,
+        .ephemeralBorrowArguments = std::move(ephemeralBorrowArguments)};
     semanticModel.record(expr, std::move(selected));
   }
-  currentType = !valid ? SemanticType::Unknown
-                : returnType.kind == SemanticType::Reference &&
-                        returnType.arguments.size() == 1
-                    ? returnType.arguments.front()
-                    : returnType;
+  currentType = valid ? callExpressionType(candidate.returnType)
+                      : SemanticType::Unknown;
   return true;
 }
 

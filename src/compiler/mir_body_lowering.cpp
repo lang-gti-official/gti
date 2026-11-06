@@ -3,6 +3,7 @@
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
 #include "gti/support.h"
+#include "mir_lifetimes.h"
 #include "mir_source_debug.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
@@ -116,6 +117,7 @@ public:
     }
     output.hasCallerLocation = function != nullptr && function->tracksCaller;
     output.placeDomain = source.placeDomain;
+    output.lifetimeBody = lowerMirLifetimeBody(source.lifetimeBody);
     captureSourceDebug();
     output.returnType = std::move(returnType);
     for (const HirValue &value : source.values) {
@@ -947,7 +949,8 @@ private:
                          .operands = std::move(arguments),
                          .parameterTypes = std::move(parameterTypes),
                          .lifetimeArguments = initializer.lifetimeArguments,
-                         .lifetimeBindings = initializer.lifetimeBindings,
+                         .lifetimeApplication = lowerMirLifetimeApplication(
+                             initializer.lifetimeApplication),
                          .definedFailure = {.propagation = propagation},
                          .constructorTarget = initializer.constructorTarget,
                          .info = {.type = base->type,
@@ -2809,7 +2812,22 @@ private:
     valid = rebuildMirValueUses(output) && valid;
     valid = validateSourceProvenance() && valid;
     finishSourceDebug();
+    std::vector<MirVerificationError> lifetimeErrors;
+    if (!resolveMirLifetimeOrigins(output.lifetimeBody, output))
+      lifetimeErrors.push_back(
+          {.bodyKind = output.kind,
+           .message = "MIR body lifetime origin has no exact lowered place"});
+    for (auto &block : output.blocks)
+      for (auto &instruction : block.instructions)
+        if (!resolveMirLifetimeOrigins(instruction.lifetimeApplication, output))
+          lifetimeErrors.push_back(
+              {.bodyKind = output.kind,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "MIR lifetime origin has no exact lowered place"});
     verification = verifyMirBody(output);
+    verification.errors.insert(verification.errors.end(),
+                               lifetimeErrors.begin(), lifetimeErrors.end());
     valid = verification.valid() && valid;
   }
 
@@ -3359,7 +3377,8 @@ private:
         if (instruction.kind == MirInstructionKind::Call ||
             instruction.kind == MirInstructionKind::Construct) {
           instruction.lifetimeArguments = source->lifetimeArguments;
-          instruction.lifetimeBindings = source->lifetimeBindings;
+          instruction.lifetimeApplication =
+              lowerMirLifetimeApplication(source->lifetimeApplication);
         }
         const bool neutralValueStage =
             instruction.kind == MirInstructionKind::CallInput &&

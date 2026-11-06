@@ -52,6 +52,41 @@ int main() { int left = 3; int right = 8; return first(left, right) - 3; }
 int&<a> wrong<lifetime a, lifetime b>(int&<a> left, int&<b> right) { return right; }
 int main() { int left = 3; int right = 8; return wrong(left, right); }
 )gti", false);
+  check("subobject-preserves-owner-region", R"gti(
+struct Number { int value = 7; }
+int&<a> field<lifetime a>(Number&<a> number) { return number.value; }
+int main() { Number number; return field(number) - 7; }
+)gti", true);
+  check("common-region-cannot-escape-as-first-input", R"gti(
+int&<a> choose<lifetime a>(int&<a> first, int&<a> second, bool pick_first) {
+  if (pick_first) { return first; }
+  return second;
+}
+int&<a> wrong<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
+  return choose(first, second, true);
+}
+)gti", false, "GTI-S2127");
+  check("declaration-retains-unused-supplier", R"gti(
+int&<a> first<lifetime a>(int&<a> left, int&<a> right) { return left; }
+int main() {
+  mut int left = 3;
+  mut int right = 8;
+  int& result = first(left, right);
+  right = 9;
+  return result;
+}
+)gti", false);
+  check("declared-suppliers-end-at-last-use", R"gti(
+int&<a> first<lifetime a>(int&<a> left, int&<a> right) { return left; }
+int main() {
+  mut int left = 3;
+  mut int right = 8;
+  int& result = first(left, right);
+  int saved = result;
+  right = 9;
+  return saved - 3;
+}
+)gti", true);
   check("ambiguous-elision", R"gti(
 int& choose(int& first, int& second, bool pick_first) {
   if (pick_first) { return first; }

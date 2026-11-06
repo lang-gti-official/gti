@@ -2,6 +2,7 @@
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "mir_lifetimes.h"
 #include "mir_source_debug.h"
 
 namespace lang {
@@ -429,7 +430,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
             {.returnType = signature.returnType,
              .parameterTypes = signature.parameterTypes,
              .lifetimeArguments = signature.lifetimeArguments,
-             .lifetimeBindings = signature.lifetimeBindings,
+             .lifetimeApplication =
+                 lowerMirLifetimeApplication(signature.lifetimeApplication),
              .requiredCapability = signature.requiredCapability,
              .selectedCapability = signature.selectedCapability,
              .functionTarget = signature.functionTarget,
@@ -514,6 +516,17 @@ MirLowerer::lowerProgram(const HirProgram &source,
              result.errors, instance.id, implicitZeroReturn, nullptr, &instance,
              nullptr, nullptr, nullptr, nullptr,
              compilerTrustedSourceUnit(source, instance.sourceUnit))});
+    auto &lowered = result.program.functions.back();
+    for (auto &parameter : lowered.callableParameters)
+      for (auto &signature : parameter.signatures)
+        if (!resolveMirLifetimeOrigins(signature.lifetimeApplication,
+                                       lowered.body)) {
+          valid = false;
+          result.errors.push_back(
+              {.body = {MirBodyKind::Function, instance.id},
+               .message =
+                   "MIR callable lifetime origin has no exact lowered place"});
+        }
   }
 
   if (const std::optional<HirEmbeddingPlan> &sourcePlan =
@@ -579,7 +592,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
            .constructorTarget = initializer.constructorTarget,
            .arguments = initializer.arguments,
            .lifetimeArguments = initializer.lifetimeArguments,
-           .lifetimeBindings = initializer.lifetimeBindings,
+           .lifetimeApplication =
+               lowerMirLifetimeApplication(initializer.lifetimeApplication),
            .explicitArgumentCount = initializer.explicitArgumentCount,
            .storesReference = initializer.storesReference,
            .borrowAccess = initializer.borrowAccess,
@@ -620,6 +634,16 @@ MirLowerer::lowerProgram(const HirProgram &source,
              nullptr, compilerTrustedSourceUnit(source, instance.sourceUnit),
              constructorOwner)});
     auto &lowered = result.program.constructors.back();
+    for (auto &initializer : lowered.initializers)
+      if (!resolveMirLifetimeOrigins(initializer.lifetimeApplication,
+                                     lowered.body)) {
+        valid = false;
+        result.errors.push_back(
+            {.body = {MirBodyKind::Constructor, instance.id},
+             .message =
+                 "MIR constructor lifetime origin has no exact lowered place"});
+      }
+
     if (constructorOwner && constructorOwner->polymorphic &&
         lowered.definitionKind == MirDefinitionKind::Source) {
       const auto stateBase = std::find_if(

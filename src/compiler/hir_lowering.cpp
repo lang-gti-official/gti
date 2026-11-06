@@ -365,6 +365,52 @@ private:
     return result;
   }
 
+  [[nodiscard]] HirLifetimeApplication
+  lowerLifetimeApplication(const SemanticLifetimeApplication &application,
+                           const HirBody &body) {
+    HirLifetimeApplication result{.bindings = application.bindings,
+                                  .variables = application.variables,
+                                  .obligations = application.obligations,
+                                  .typeObligations =
+                                      application.typeObligations,
+                                  .complete = application.complete};
+    for (const auto &origin : application.origins) {
+      HirValueId source = 0;
+      if (origin.source != nullptr) {
+        const auto *value = body.valueForSource(*origin.source);
+        if (value == nullptr)
+          lifecycleValid = false;
+        else
+          source = value->id;
+      }
+      if (!origin.place.valid() && source == 0)
+        lifecycleValid = false;
+      result.origins.push_back(
+          {.region = origin.region,
+           .place = qualifyPlace(origin.place, body.placeDomain),
+           .source = source});
+    }
+    return result;
+  }
+
+  void lowerLifetimeBody(const SemanticLifetimeBody *facts, HirBody &body) {
+    if (!facts)
+      return;
+    ensurePlaceDomain(body);
+    auto lowered =
+        lowerLifetimeApplication({.variables = facts->variables,
+                                  .obligations = facts->obligations,
+                                  .typeObligations = facts->typeObligations,
+                                  .origins = facts->origins,
+                                  .complete = facts->complete},
+                                 body);
+    body.lifetimeBody = {.variables = std::move(lowered.variables),
+                         .obligations = std::move(lowered.obligations),
+                         .typeObligations = std::move(lowered.typeObligations),
+                         .origins = std::move(lowered.origins),
+                         .complete = lowered.complete};
+  }
+
   [[nodiscard]] GenericSubstitution instanceSubstitution(
       std::span<const GenericParameterInfo> parameters,
       const std::vector<SemanticType> &typeArguments,
@@ -2573,6 +2619,9 @@ private:
     }
     finalizeLifetimes(body, *model);
     lowerLoans(*model, body, bodyDeclaration);
+    if (bodyDeclaration->body())
+      lowerLifetimeBody(model->findLifetimeBody(*bodyDeclaration->body()),
+                        body);
     std::vector<HirCallableParameter> callableParameters;
     callableParameters.reserve(declaration->callableParameters.size());
     for (const CallableParameterContract &parameter :
@@ -2622,14 +2671,16 @@ private:
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
             concrete.lifetimeArguments = resolved->lifetimeArguments;
-            concrete.lifetimeBindings = resolved->lifetimeBindings;
+            concrete.lifetimeApplication =
+                lowerLifetimeApplication(resolved->lifetimeApplication, body);
             concrete.selectedCapability = resolved->capability;
           } else if (const ResolvedOperatorInfo *resolved =
                          model->findOperator(*signature.source)) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
             concrete.lifetimeArguments = resolved->lifetimeArguments;
-            concrete.lifetimeBindings = resolved->lifetimeBindings;
+            concrete.lifetimeApplication =
+                lowerLifetimeApplication(resolved->lifetimeApplication, body);
             concrete.selectedCapability = resolved->capability;
           } else if (const ResolvedCallInfo *resolved =
                          model->findCall(*signature.source);
@@ -2640,7 +2691,8 @@ private:
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
             concrete.lifetimeArguments = resolved->lifetimeArguments;
-            concrete.lifetimeBindings = resolved->lifetimeBindings;
+            concrete.lifetimeApplication =
+                lowerLifetimeApplication(resolved->lifetimeApplication, body);
             concrete.selectedCapability = CallableInvocationCapability::Read;
           }
           const auto value =
@@ -2774,7 +2826,7 @@ private:
           lowered.kind = resolved->kind;
           lowered.targetType = resolved->targetType;
           lowered.lifetimeArguments = resolved->lifetimeArguments;
-          lowered.lifetimeBindings = resolved->lifetimeBindings;
+
           lowered.field = resolved->field;
           lowered.storesReference = resolved->storesReference;
           lowered.borrowAccess = resolved->borrowAccess;
@@ -2788,9 +2840,9 @@ private:
                     .constructor = resolved->constructor,
                     .declaration = resolved->declaration,
                     .constructedType = resolved->targetType,
-                    .parameterTypes = resolved->parameterTypes,
                     .lifetimeArguments = resolved->lifetimeArguments,
-                    .lifetimeBindings = resolved->lifetimeBindings,
+                    .lifetimeApplication = resolved->lifetimeApplication,
+                    .parameterTypes = resolved->parameterTypes,
                     .defaultArguments = resolved->defaultArguments,
                     .generatedDefault = resolved->generatedDefault});
             if (target != 0) {
@@ -2835,6 +2887,9 @@ private:
             }
           }
         }
+        if (resolved != nullptr)
+          lowered.lifetimeApplication =
+              lowerLifetimeApplication(resolved->lifetimeApplication, body);
         initializers.push_back(std::move(lowered));
       }
     }
@@ -2986,6 +3041,9 @@ private:
                           classArguments, classValueArguments, body);
     finalizeLifetimes(body, bodyModel, {}, initializers);
     lowerLoans(bodyModel, body);
+    if (!snapshot.generatedDefault && snapshot.source->body())
+      lowerLifetimeBody(bodyModel.findLifetimeBody(*snapshot.source->body()),
+                        body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
     output.program.constructors[index].parameterBindings =
@@ -3046,6 +3104,7 @@ private:
                         owner.typeArguments, owner.valueArguments, body);
     finalizeLifetimes(body, *model);
     lowerLoans(*model, body, snapshot.source);
+    lowerLifetimeBody(model->findLifetimeBody(*snapshot.source->body()), body);
     captureSourceDebug(SourceDebugBodyKind::Destructor, snapshot.source, *model,
                        body);
     output.program.destructors[index].body = std::move(body);
@@ -4619,6 +4678,7 @@ private:
     currentSourceFunctionName = enclosingSourceFunctionName;
     finalizeLifetimes(body, model);
     lowerLoans(model, body, nullptr, info->captures);
+    lowerLifetimeBody(model.findLifetimeBody(lambda), body);
     captureSourceDebug(SourceDebugBodyKind::Lambda, &lambda, model, body);
     std::vector<bool> captureRequiresActiveCleanup;
     captureRequiresActiveCleanup.reserve(info->captures.size());
@@ -4993,7 +5053,8 @@ private:
     value.info = operatorResultInfo(resolved);
     value.parameterTypes = resolved.parameterTypes;
     value.lifetimeArguments = resolved.lifetimeArguments;
-    value.lifetimeBindings = resolved.lifetimeBindings;
+    value.lifetimeApplication =
+        lowerLifetimeApplication(resolved.lifetimeApplication, body);
     value.dispatch = resolved.dispatch;
     value.dispatchOwner = resolved.dispatchOwner;
     value.borrowOrigin = resolved.borrowOrigin;
@@ -5290,7 +5351,8 @@ private:
                      instanceProvider->traitsFor(construction.constructedType)},
         .parameterTypes = construction.parameterTypes,
         .lifetimeArguments = construction.lifetimeArguments,
-        .lifetimeBindings = construction.lifetimeBindings,
+        .lifetimeApplication =
+            lowerLifetimeApplication(construction.lifetimeApplication, body),
         .definedFailure = {.propagation =
                                construction.constructor != 0 &&
                                        !construction.generatedDefault
@@ -5624,7 +5686,8 @@ private:
           .operands = {argument},
           .parameterTypes = call.parameterTypes,
           .lifetimeArguments = call.lifetimeArguments,
-          .lifetimeBindings = call.lifetimeBindings,
+          .lifetimeApplication =
+              lowerLifetimeApplication(call.lifetimeApplication, body),
           .definedFailure = {.propagation = FailurePropagationKind::DirectCall},
           .borrowOrigin = call.borrowOrigin,
           .borrowArgument = call.borrowArgument,
@@ -5677,7 +5740,8 @@ private:
           .operands = {*residual},
           .parameterTypes = construction.parameterTypes,
           .lifetimeArguments = construction.lifetimeArguments,
-          .lifetimeBindings = construction.lifetimeBindings,
+          .lifetimeApplication =
+              lowerLifetimeApplication(construction.lifetimeApplication, body),
           .definedFailure = {.propagation =
                                  FailurePropagationKind::Constructor},
           .constructorKind = construction.kind,
@@ -5846,7 +5910,8 @@ private:
                      instanceProvider->traitsFor(construction.constructedType)},
         .parameterTypes = construction.parameterTypes,
         .lifetimeArguments = construction.lifetimeArguments,
-        .lifetimeBindings = construction.lifetimeBindings,
+        .lifetimeApplication =
+            lowerLifetimeApplication(construction.lifetimeApplication, body),
         .definedFailure = {.propagation = FailurePropagationKind::Constructor},
         .borrowOrigin = construction.borrowOrigin,
         .borrowArgument = construction.borrowArgument,
@@ -6968,7 +7033,8 @@ private:
         value.dispatchOwner = resolved->dispatchOwner;
         value.parameterTypes = resolved->parameterTypes;
         value.lifetimeArguments = resolved->lifetimeArguments;
-        value.lifetimeBindings = resolved->lifetimeBindings;
+        value.lifetimeApplication =
+            lowerLifetimeApplication(resolved->lifetimeApplication, body);
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
         value.borrowArguments = resolved->borrowArguments;
@@ -7208,7 +7274,8 @@ private:
               model.findLambdaCall(*call)) {
         value.parameterTypes = resolved->parameterTypes;
         value.lifetimeArguments = resolved->lifetimeArguments;
-        value.lifetimeBindings = resolved->lifetimeBindings;
+        value.lifetimeApplication =
+            lowerLifetimeApplication(resolved->lifetimeApplication, body);
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
         value.borrowAccess = resolved->borrowAccess;
@@ -7334,7 +7401,8 @@ private:
                .operands = std::move(arguments),
                .parameterTypes = element.call.parameterTypes,
                .lifetimeArguments = element.call.lifetimeArguments,
-               .lifetimeBindings = element.call.lifetimeBindings,
+               .lifetimeApplication = lowerLifetimeApplication(
+                   element.call.lifetimeApplication, body),
                .neverReturns = element.call.neverReturns,
                .tracksCaller = element.call.tracksCaller,
                .definedFailure = {.propagation =
@@ -7360,7 +7428,8 @@ private:
             model.findConstruction(*raw)) {
       value.designatedConstruction = !construction->designatedArguments.empty();
       value.lifetimeArguments = construction->lifetimeArguments;
-      value.lifetimeBindings = construction->lifetimeBindings;
+      value.lifetimeApplication =
+          lowerLifetimeApplication(construction->lifetimeApplication, body);
       const bool inPlaceStorageConstruction =
           value.intrinsic == IntrinsicKind::ObjectConstruct ||
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
@@ -7443,7 +7512,8 @@ private:
         resolved != nullptr && resolved->function != 0) {
       value.parameterTypes = resolved->parameterTypes;
       value.lifetimeArguments = resolved->lifetimeArguments;
-      value.lifetimeBindings = resolved->lifetimeBindings;
+      value.lifetimeApplication =
+          lowerLifetimeApplication(resolved->lifetimeApplication, body);
       value.dispatch = resolved->dispatch;
       value.dispatchOwner = resolved->dispatchOwner;
       value.callableBoundary = resolved->boundary;

@@ -999,7 +999,8 @@ private:
     std::vector<AppliedConceptRequirement> requirements;
     LifetimeSignatureContract lifetimeContract;
     std::vector<Lifetime> lifetimeArguments;
-    std::vector<LifetimeBinding> lifetimeBindings;
+    SemanticLifetimeApplication lifetimeApplication;
+    std::vector<GenericArgumentSyntax> explicitGenericArgumentKinds;
     bool parameterPack = false;
     ClassId ownerClass = 0;
     ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly;
@@ -1320,6 +1321,14 @@ private:
   };
   struct LoanFlowState {
     bool finalized = false;
+    const BlockStmt *lifetimeBlock = nullptr;
+    const Expr *lifetimeExpression = nullptr;
+    std::vector<Lifetime> lifetimeVariables;
+    // Checked call/store constraints share one body graph. Speculative
+    // overload candidates never publish facts here; selected applications do.
+    std::vector<LifetimeBound> lifetimeObligations;
+    std::vector<LifetimeTypeBound> lifetimeTypeObligations;
+    std::vector<SemanticLifetimeOrigin> lifetimeOrigins;
     // Local views given text a lambda capture provided, local views each
     // copies into, and escapes of such text or of local views that held
     // ownerless text when checked (`finalizeCapturedText`).
@@ -3042,6 +3051,16 @@ private:
   void prepareFunctionLifetimeContract(const FunctionDecl &function,
                                        ClassId ownerClass);
   void normalizeFunctionLifetimeContract(CallableCandidate &function);
+  [[nodiscard]] bool applyCallLifetimeContract(
+      CallableCandidate &function,
+      const std::vector<SemanticType> &argumentTypes,
+      const ExprList &arguments, const Token &site,
+      const Expr *receiver = nullptr, bool diagnose = true);
+  void commitLifetimeApplication(const SemanticLifetimeApplication &application);
+  void finalizeLifetimeBody();
+  [[nodiscard]] LifetimeBounds currentLifetimeBounds() const;
+  [[nodiscard]] Lifetime lifetimeOfOriginPlace(
+      const SemanticLoanPlace &place) const;
   [[nodiscard]] Lifetime implicitFunctionLifetime(const FunctionDecl &function,
                                                  std::size_t slot,
                                                  std::string_view name);
@@ -3737,9 +3756,10 @@ private:
   [[nodiscard]] std::optional<SemanticType>
   symbolicReadMemberReturnType(const SemanticType &receiver,
                                std::string_view member) const;
-  [[nodiscard]] TypeSubstitution
+  [[nodiscard]] GenericSubstitution
   conceptSubstitution(const RegisteredConcept &conceptInfo,
-                      std::span<const SemanticType> arguments) const;
+                      std::span<const SemanticType> arguments,
+                      std::span<const Lifetime> lifetimes = {}) const;
 
   [[nodiscard]] std::vector<ExpandedStructuralRequirement>
   activeStructuralRequirements() const;
@@ -3752,6 +3772,11 @@ private:
                                  std::span<const SemanticType> arguments) const;
 
   [[nodiscard]] std::optional<ConstraintFailure> firstRequirementFailure(
+      std::span<const AppliedConceptRequirement> requirements) const;
+  [[nodiscard]] bool requirementsAwaitLifetimeApplication(
+      std::span<const AppliedConceptRequirement> requirements) const;
+  [[nodiscard]] std::optional<ConstraintFailure>
+  firstRequirementFailureBeforeLifetimeApplication(
       std::span<const AppliedConceptRequirement> requirements) const;
 
   [[nodiscard]] bool activeRequirementsImply(
@@ -3806,6 +3831,10 @@ private:
       const std::vector<CompileTimeValue> &explicitValueArguments,
       const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
       const Token &paren, bool checkedArguments = false);
+
+  bool explicitFunctionLifetimeSubstitution(
+      const CallableCandidate &function, GenericSubstitution &substitution,
+      const Token &site, bool diagnose);
 
   bool inferTypeArguments(const SemanticType &pattern,
                           const SemanticType &argument,
@@ -4617,7 +4646,7 @@ private:
   [[nodiscard]] bool
   applyGenericDefaults(const std::vector<GenericParameterInfo> &parameters,
                        GenericSubstitution &substitution, const Token &site,
-                       bool diagnoseFailure);
+                       bool diagnoseFailure, bool inferOmittedLifetimes = true);
 
   [[nodiscard]] std::optional<ConstraintFailure>
   firstNestedTypeConstraintFailure(const SemanticType &type) const;
@@ -4682,6 +4711,9 @@ private:
   [[nodiscard]] SemanticType
   substituteType(const SemanticType &type,
                  const TypeSubstitution &substitution) const;
+  [[nodiscard]] AppliedConceptRequirement
+  substituteRequirement(const AppliedConceptRequirement &requirement,
+                        const GenericSubstitution &substitution) const;
 
   [[nodiscard]] GenericSubstitution
   classSubstitution(const SemanticType &objectType) const;
@@ -8148,6 +8180,7 @@ public:
     bool trustedMemberAccess = false;
     std::optional<std::vector<std::string>> lookupScope;
     std::vector<SemanticType> arguments;
+    std::vector<Lifetime> lifetimeArguments;
     friend bool operator==(const ConceptProofKey &,
                            const ConceptProofKey &) = default;
   };

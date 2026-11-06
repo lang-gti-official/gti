@@ -2219,6 +2219,8 @@ void SemanticModel::clear() {
   payloadConstructions.clear();
   payloadPatterns.clear();
   calls.clear();
+  blockLifetimeBodies.clear();
+  expressionLifetimeBodies.clear();
   suppressedInheritedCalls.clear();
   packFolds.clear();
   lambdaCalls.clear();
@@ -2672,10 +2674,20 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
     for (const auto &dependency : captures)
       borrowedDependencies += dependency.conditions.size();
   }
+  std::size_t lifetimeFacts = 0;
+  const auto countLifetimeBody = [&](const auto &bodies) {
+    for (const auto &[_, body] : bodies)
+      lifetimeFacts += body.variables.size() + body.obligations.size() +
+                       body.typeObligations.size() + body.origins.size();
+  };
+  countLifetimeBody(blockLifetimeBodies);
+  countLifetimeBody(expressionLifetimeBodies);
   // Records hold nested types and vectors whose allocator footprint is not
   // exposed; charge a deliberately generous per-record estimate so the LRU
   // bound is conservative rather than byte-exact.
   return sizeof(SemanticModel) + expressions.size() * 256 +
+         (blockLifetimeBodies.size() + expressionLifetimeBodies.size()) * 256 +
+         lifetimeFacts * 512 +
          (calls.size() + constructions.size() + contextualConstructions.size() +
           operators.size() + projectionOperators.size() +
           contextualConversions.size()) *
@@ -2751,6 +2763,30 @@ void SemanticModel::recordLoanEndpoint(SemanticLoanId id,
     endpoints.push_back(
         {.kind = kind, .statement = &statement, .switchArm = switchArm});
   }
+}
+
+const SemanticLifetimeBody *
+SemanticModel::findLifetimeBody(const BlockStmt &body) const {
+  const auto found = blockLifetimeBodies.find(&body);
+  // Like retained loans, inference variables and local anchors are owned by
+  // one body analysis. A generic-instance delta cannot inherit the base body.
+  return found == blockLifetimeBodies.end() ? nullptr : &found->second;
+}
+
+const SemanticLifetimeBody *
+SemanticModel::findLifetimeBody(const Expr &body) const {
+  const auto found = expressionLifetimeBodies.find(&body);
+  return found == expressionLifetimeBodies.end() ? nullptr : &found->second;
+}
+
+void SemanticModel::recordLifetimeBody(const BlockStmt &body,
+                                       SemanticLifetimeBody facts) {
+  blockLifetimeBodies.insert_or_assign(&body, std::move(facts));
+}
+
+void SemanticModel::recordLifetimeBody(const Expr &body,
+                                       SemanticLifetimeBody facts) {
+  expressionLifetimeBodies.insert_or_assign(&body, std::move(facts));
 }
 
 void SemanticModel::record(const Expr &expression, ExpressionInfo info) {

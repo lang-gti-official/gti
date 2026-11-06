@@ -4995,6 +4995,12 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
     const std::vector<SemanticType> &typeArguments,
     const std::vector<CompileTimeValue> &valueArguments, const SourceSpan &site)
     -> std::optional<FunctionBorrowDependencySummary> {
+  if (function.lifetimeContract.valid() &&
+      function.lifetimeContract.origin != LifetimeContractOrigin::BodyInferred &&
+      function.returnType.kind == SemanticType::Reference)
+    if (const auto *declaration = semanticModel.findFunction(function.id);
+        declaration && declaration->completeReturnBorrow)
+      return declaration->completeReturnBorrow;
   if (function.virtualMethod ||
       (function.returnType.kind != SemanticType::Enum &&
        !(function.returnType.kind == SemanticType::Class &&
@@ -5283,6 +5289,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
                                    .access = dependency.access,
                                    .resultConditions = dependency.conditions};
     SemanticType sourceType = SemanticType::Unknown;
+    Lifetime sourceRegion;
     bool physicalCallerStorage = false;
     AccessMode sourceAccess = AccessMode::ReadOnly;
     if (dependency.place.receiver) {
@@ -5290,6 +5297,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
           function.staticMember)
         return std::nullopt;
       normalized.origin = BorrowOriginKind::Receiver;
+      sourceRegion = function.lifetimeContract.receiver;
       sourceType = openClassType(function.ownerClass);
       physicalCallerStorage =
           receiverMutability != ReceiverMutability::Consuming;
@@ -5310,6 +5318,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
         sourceType = function.parameterTypes[index];
         if (sourceType.kind == SemanticType::Reference &&
             sourceType.arguments.size() == 1) {
+          sourceRegion = sourceType.referenceLifetime;
           physicalCallerStorage = true;
           sourceAccess = sourceType.referenceAccess;
           sourceType = SemanticType(sourceType.arguments.front());
@@ -5326,6 +5335,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
              (global->kind == SymbolKind::Field && global->staticMember))) {
           normalized.origin = BorrowOriginKind::Global;
           normalized.globalRoot = dependency.place.root;
+          sourceRegion = Lifetime::staticLifetime();
           sourceType = global->type;
           physicalCallerStorage = true;
           sourceAccess = global->mutableBinding ? AccessMode::Mutable
@@ -5387,6 +5397,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
         // by-value carrier shell. A readonly shell does not rewrite the
         // independently checked reference field's declared access mode.
         externalReferent = true;
+        sourceRegion = fieldType.referenceLifetime;
         sourceAccess = fieldType.referenceAccess;
         fieldType = SemanticType(fieldType.arguments.front());
       }
@@ -5436,7 +5447,20 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
       for (const auto &additional : loan->additionalDependencies)
         pending.emplace_back(additional.parent, false);
     }
-    if (function.explicitReturnBorrowOrigin) {
+    if (function.lifetimeContract.valid() &&
+        resultPath->reference.referenceLifetime.declarationRegion()) {
+      LifetimeBounds bounds;
+      for (const auto bound : function.lifetimeContract.bounds)
+        if (!bounds.assume(bound.longer, bound.shorter))
+          return std::nullopt;
+      // A body proves a supplier permitted by the declaration. It need not
+      // return every supplier, nor may its present choice narrow that public
+      // contract. The physical storage, access and cleanup proofs above are
+      // independent of this validity-region relation.
+      if (!bounds.proves(sourceRegion,
+                         resultPath->reference.referenceLifetime))
+        return std::nullopt;
+    } else if (function.explicitReturnBorrowOrigin) {
       if (normalized.origin != function.returnBorrowOrigin)
         return std::nullopt;
       if (normalized.origin == BorrowOriginKind::Argument &&
@@ -5881,6 +5905,11 @@ auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
 
 auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     const FunctionInfo &function) -> void {
+  if (function.lifetimeContract.valid() &&
+      function.lifetimeContract.origin != LifetimeContractOrigin::BodyInferred &&
+      function.returnType.kind == SemanticType::Reference &&
+      function.completeReturnBorrow)
+    return; // Preserve all declaration-permitted suppliers across body edits.
   // Reanalysis must not retain a primary/earlier body's complete fact when
   // this body now has unknown, recursive or nonreturning result evidence.
   const FunctionId id = function.id;
@@ -12920,6 +12949,7 @@ auto SemanticVisitor::Impl::recordProvenLoanEndpoint(
 auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
   (void)finalizeCapturedText();
   recordProgramScopeBorrowCleanup();
+  finalizeLifetimeBody();
   loanFlow.finalized = true;
   if (loanFlow.deferredGenericFlow) {
     // Unselected arms can add uses and conflicts. Publishing endpoints from

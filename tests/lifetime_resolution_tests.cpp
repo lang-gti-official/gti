@@ -157,20 +157,80 @@ void testBinderDiagnostics() {
 
 void testProtocolOperationBinders() {
   const auto result = analyze(R"(
-concept Shared<T> { T&<a> borrow<lifetime a>(T&<a> value); };
+concept Shared<T> {
+  T&<a> borrow<lifetime a>(T&<a> value);
+  T&<a> relay<lifetime a>(T&<a> value);
+};
 for concept Shared<int> {
   int&<b> borrow<lifetime b>(int&<b> value) { return value; }
+  int& relay(int& value) { return value; }
 };
 T&<a> forward<T, lifetime a>(T&<a> value) requires Shared<T> {
-  return Shared<T>::borrow(value);
+  return Shared<T>::relay<a>(value);
 }
 int main() {
   int value = 7;
-  int& selected = Shared<int>::borrow(value);
-  return forward(selected) - 7;
+  int& selected = Shared<int>::borrow<_>(value);
+  int& relayed = Shared<int>::relay<_>(selected);
+  return forward(relayed) - 7;
 }
 )");
-  expectValid(result, "protocol operation lifetime binders instantiate per call");
+  expectValid(result, "explicit protocol lifetimes select named and elided implementation binders");
+}
+
+void testExplicitFunctionKinds() {
+  const auto result = analyze(R"(
+void mixed<T, lifetime a, uint64_t N, lifetime b>(T&<a> first, int&<b> second) {}
+void collect<lifetime a, T, Args...>(T&<a> first, Args&<a>... rest) {}
+void exercise<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
+  mixed<int, a, 3, b>(first, second);
+  collect<a, int, int, int>(first, first, first);
+}
+int main() { int value = 7; exercise(value, value); return 0; }
+)");
+  expectValid(result, "explicit lifetime arguments retain mixed generic order and type packs");
+  const auto *exercise = function(result, "exercise");
+  if (!exercise || !exercise->declaration || !exercise->declaration->body()) {
+    expect(false, "mixed-kind call metadata remains available");
+    return;
+  }
+  std::size_t checked = 0;
+  for (const auto &statement : exercise->declaration->body()->statements()) {
+    const auto *expression = lang::stmtAs<lang::ExpressionStmt>(statement.get());
+    const auto *call = expression
+        ? lang::exprAs<lang::Call>(expression->expression().get()) : nullptr;
+    const auto *selected = call ? result.semantics.findCall(*call) : nullptr;
+    if (!selected)
+      continue;
+    expect(selected->lifetimeApplication.complete &&
+               !selected->lifetimeApplication.bindings.empty(),
+           "selected generic calls retain a checked lifetime application");
+    if (checked == 0)
+      expect(selected->typeArguments.size() == 1 &&
+                 selected->valueArguments.size() == 1 &&
+                 selected->lifetimeArguments.size() == 2,
+             "mixed kinds use separate compact runtime and lifetime vectors");
+    else
+      expect(selected->typeArguments.size() == 3 &&
+                 selected->valueArguments.empty() &&
+                 selected->lifetimeArguments.size() == 1 &&
+                 selected->parameterTypes.size() == 3,
+             "a leading lifetime does not count toward fixed types or pack elements");
+    ++checked;
+  }
+  expect(checked == 2, "both explicit generic calls publish semantic metadata");
+
+  for (const std::string source : {
+           "void use<T, lifetime a>(T&<a> value) {} int main() { int x = 0; use<static, int>(x); return 0; }",
+           "void use<lifetime a>(int&<a> value) {} int main() { int x = 0; use<missing>(x); return 0; }"}) {
+    const auto invalid = analyze(source);
+    expect(!invalid.semanticValid &&
+               std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                           [](const auto &diagnostic) {
+                             return diagnostic.code == "GTI-S2126";
+                           }),
+           "explicit call arguments reject wrong kinds and unknown lifetime names");
+  }
 }
 } // namespace
 
@@ -181,5 +241,6 @@ int main() {
   testAssociatedLifetimeFamily();
   testBinderDiagnostics();
   testProtocolOperationBinders();
+  testExplicitFunctionKinds();
   return failures == 0 ? 0 : 1;
 }

@@ -1181,18 +1181,48 @@ private:
   }
 
   void lifetimeApplication(std::span<const Lifetime> arguments,
-                           std::span<const LifetimeBinding> bindings) {
-    output << "{arguments=[";
+                           const MirLifetimeApplication &application) {
+    output << "{complete=" << application.complete << ",arguments=[";
     for (std::size_t index = 0; index < arguments.size(); ++index) {
       separator(index);
       lifetime(arguments[index]);
     }
     output << "],bindings=[";
-    for (std::size_t index = 0; index < bindings.size(); ++index) {
+    for (std::size_t index = 0; index < application.bindings.size(); ++index) {
       separator(index);
-      lifetime(bindings[index].first);
+      lifetime(application.bindings[index].first);
       output << "=>";
-      lifetime(bindings[index].second);
+      lifetime(application.bindings[index].second);
+    }
+    output << "],variables=[";
+    for (std::size_t index = 0; index < application.variables.size(); ++index) {
+      separator(index);
+      lifetime(application.variables[index]);
+    }
+    output << "],obligations=[";
+    for (std::size_t index = 0; index < application.obligations.size();
+         ++index) {
+      separator(index);
+      lifetime(application.obligations[index].longer);
+      output << ':';
+      lifetime(application.obligations[index].shorter);
+    }
+    output << "],type-obligations=[";
+    for (std::size_t index = 0; index < application.typeObligations.size();
+         ++index) {
+      separator(index);
+      type(application.typeObligations[index].type);
+      output << ':';
+      lifetime(application.typeObligations[index].region);
+    }
+    output << "],origins=[";
+    for (std::size_t index = 0; index < application.origins.size(); ++index) {
+      separator(index);
+      const auto &origin = application.origins[index];
+      lifetime(origin.region);
+      output << ":place=" << origin.place << ":key=";
+      placeKey(origin.key);
+      output << ":source=" << origin.source;
     }
     output << "]}";
   }
@@ -1328,9 +1358,10 @@ private:
   }
 
   void callableSignature(const MirCallableSignature &value) {
-    if (!value.lifetimeArguments.empty() || !value.lifetimeBindings.empty()) {
+    if (!value.lifetimeArguments.empty() ||
+        value.lifetimeApplication != MirLifetimeApplication{}) {
       output << "lifetime-application=";
-      lifetimeApplication(value.lifetimeArguments, value.lifetimeBindings);
+      lifetimeApplication(value.lifetimeArguments, value.lifetimeApplication);
     }
     output << "signature(return=";
     type(value.returnType);
@@ -1768,9 +1799,10 @@ private:
       operand(value.operands[index]);
     }
     output << ']';
-    if (!value.lifetimeArguments.empty() || !value.lifetimeBindings.empty()) {
+    if (!value.lifetimeArguments.empty() ||
+        value.lifetimeApplication != MirLifetimeApplication{}) {
       output << " lifetime-application=";
-      lifetimeApplication(value.lifetimeArguments, value.lifetimeBindings);
+      lifetimeApplication(value.lifetimeArguments, value.lifetimeApplication);
     }
     output << " parameters=[";
     for (std::size_t index = 0; index < value.parameterTypes.size(); ++index) {
@@ -2123,6 +2155,15 @@ private:
     placeDomain(value.placeDomain);
     output << " entry=bb" << value.entry << " return=";
     type(value.returnType);
+    if (value.lifetimeBody != MirLifetimeBody{}) {
+      output << " lifetime-body=";
+      lifetimeApplication(
+          {}, {.variables = value.lifetimeBody.variables,
+               .obligations = value.lifetimeBody.obligations,
+               .typeObligations = value.lifetimeBody.typeObligations,
+               .origins = value.lifetimeBody.origins,
+               .complete = value.lifetimeBody.complete});
+    }
     output << '\n';
     output << " places " << value.places.size() << '\n';
     for (const MirPlace &item : value.places) {
@@ -2296,9 +2337,10 @@ private:
   }
 
   void constructorInitializer(const MirConstructorInitializer &value) {
-    if (!value.lifetimeArguments.empty() || !value.lifetimeBindings.empty()) {
+    if (!value.lifetimeArguments.empty() ||
+        value.lifetimeApplication != MirLifetimeApplication{}) {
       output << "lifetime-application=";
-      lifetimeApplication(value.lifetimeArguments, value.lifetimeBindings);
+      lifetimeApplication(value.lifetimeArguments, value.lifetimeApplication);
     }
     output << "initializer(kind=" << number(value.kind) << ";type=";
     type(value.targetType);

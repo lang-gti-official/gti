@@ -35,6 +35,35 @@ using HirDropObligationId = std::size_t;
 using HirNativeCallbackAdapterId = std::size_t;
 using HirThreadTaskAdapterId = std::size_t;
 
+struct HirLifetimeOrigin {
+  Lifetime region;
+  PlaceKey place;
+  HirValueId source = 0;
+  friend bool operator==(const HirLifetimeOrigin &,
+                         const HirLifetimeOrigin &) = default;
+};
+
+struct HirLifetimeApplication {
+  std::vector<LifetimeBinding> bindings;
+  std::vector<Lifetime> variables;
+  std::vector<LifetimeBound> obligations;
+  std::vector<LifetimeTypeBound> typeObligations;
+  std::vector<HirLifetimeOrigin> origins;
+  bool complete = false;
+  friend bool operator==(const HirLifetimeApplication &,
+                         const HirLifetimeApplication &) = default;
+};
+
+struct HirLifetimeBody {
+  std::vector<Lifetime> variables;
+  std::vector<LifetimeBound> obligations;
+  std::vector<LifetimeTypeBound> typeObligations;
+  std::vector<HirLifetimeOrigin> origins;
+  bool complete = false;
+  friend bool operator==(const HirLifetimeBody &,
+                         const HirLifetimeBody &) = default;
+};
+
 enum class HirDropObligationKind {
   Binding,
   Value,
@@ -246,7 +275,7 @@ struct HirValue {
   // Semantics-selected generic regions remain proof metadata, never operands.
   std::vector<Lifetime> lifetimeArguments;
   // Complete declaration-contract substitution, including elided/owner regions.
-  std::vector<LifetimeBinding> lifetimeBindings;
+  HirLifetimeApplication lifetimeApplication;
   std::optional<TokenKind> operation;
   std::optional<Literal> literal;
   std::optional<ConstantValue> constant;
@@ -513,6 +542,7 @@ private:
 
 struct HirBody {
   PlaceDomain placeDomain;
+  HirLifetimeBody lifetimeBody;
   SourceDebugRecord<HirSourceDebugTables> sourceDebug;
   std::vector<HirBinding> bindings;
   std::vector<HirLoan> loans;
@@ -724,7 +754,7 @@ struct HirCallableSignature {
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
   std::vector<Lifetime> lifetimeArguments;
-  std::vector<LifetimeBinding> lifetimeBindings;
+  HirLifetimeApplication lifetimeApplication;
   CallableInvocationCapability requiredCapability =
       CallableInvocationCapability::Read;
   std::optional<CallableInvocationCapability> selectedCapability;
@@ -841,7 +871,7 @@ struct HirConstructorInitializer {
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::vector<HirValueId> arguments;
   std::vector<Lifetime> lifetimeArguments;
-  std::vector<LifetimeBinding> lifetimeBindings;
+  HirLifetimeApplication lifetimeApplication;
   std::size_t explicitArgumentCount = 0;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;

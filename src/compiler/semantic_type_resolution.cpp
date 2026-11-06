@@ -296,6 +296,9 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
   }
 
   GenericSubstitution baseSubstitution;
+  const Token site = target.declaration ? target.declaration->name() : Token{};
+  if (!explicitFunctionLifetimeSubstitution(target, baseSubstitution, site, diagnose))
+    return false;
   std::size_t explicitType = 0;
   std::size_t explicitValue = 0;
   for (const GenericParameterInfo &parameter :
@@ -5503,6 +5506,17 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
                    originType->kind == SemanticType::Reference &&
                    !shell.receiver && shell.root == binding->symbol;
     }
+    if (const auto *function = currentFunctionInfo();
+        function && !currentLambdaReturn && function->lifetimeContract.valid()) {
+      SemanticLoanDependency dependency{.place = shell,
+                                         .access = reference.referenceAccess,
+                                         .protectsStorage = true};
+      if (const auto source = retainedLoanSource(value))
+        dependency.parent = source->loan;
+      validShell = normalizedCompleteReturnBorrow(
+                       *function, {.dependencies = {std::move(dependency)}})
+                       .has_value();
+    }
     if (!validShell) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(value),
@@ -5578,13 +5592,17 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
     -> void {
   const std::optional<ReturnBorrowContract> contract =
       currentReturnBorrowContract();
-  if (!contract || contract->origin == BorrowOriginKind::None) {
+  const FunctionInfo *function =
+      contract && !contract->lambda ? currentFunctionInfo() : nullptr;
+  const bool lifetimeReferenceContract =
+      function && function->lifetimeContract.valid() &&
+      function->returnType.kind == SemanticType::Reference;
+  if (!contract ||
+      (contract->origin == BorrowOriginKind::None && !lifetimeReferenceContract)) {
     return;
   }
   // Field-path contracts belong to function declarations; a lambda's
   // contract is one parameter.
-  const FunctionInfo *function =
-      contract->lambda ? nullptr : currentFunctionInfo();
   const ExpressionInfo *valueInfo =
       value == nullptr ? nullptr : semanticModel.findExpression(*value);
   if (valueInfo == nullptr || valueInfo->type == SemanticType::Unknown) {
@@ -5638,6 +5656,15 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
                contract->place) {
       validShell = !shell.receiver && shell.root == contract->place->root;
     }
+    if (stable && lifetimeReferenceContract) {
+      SemanticLoanDependency dependency{
+          .place = shell,
+          .access = function->returnType.referenceAccess,
+          .protectsStorage = true};
+      validShell = normalizedCompleteReturnBorrow(
+                       *function, {.dependencies = {std::move(dependency)}})
+                       .has_value();
+    }
     if (!validShell) {
       // A named carrier is stable within this scope, but its long-lived
       // external dependency cannot authorize returning its own local shell.
@@ -5665,6 +5692,44 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   // the older single-path carrier relay. This does not authorize the local
   // carrier shell: its storage check above remains independent.
   const auto completeResult = completeBorrowDependencySet(value);
+  if (lifetimeReferenceContract && valueInfo->category == ValueCategory::Place) {
+    auto dependencies = completeResult ? completeResult->dependencies
+                                       : storedBorrowDependencies(value);
+    if (dependencies.empty() && !completeResult) {
+      const auto place = retainedLoanPlace(value);
+      if (place.valid()) {
+        SemanticLoanDependency dependency{
+            .place = place, .access = function->returnType.referenceAccess};
+        if (const auto source = retainedLoanSource(value))
+          dependency.parent = source->loan;
+        dependencies.push_back(std::move(dependency));
+      }
+    }
+    // The source's dependency set is conservative at branch joins. Every
+    // possible owner must satisfy the declared result region; a successful
+    // branch must not be selected merely because one owner happens to fit.
+    if (!dependencies.empty() &&
+        std::all_of(dependencies.begin(), dependencies.end(),
+                    [&](const auto &dependency) {
+                      return dependency.place.valid() &&
+                             dependency.designatedFields.empty() &&
+                             dependency.conditions.empty() &&
+                             (function->returnType.referenceAccess ==
+                                  AccessMode::ReadOnly ||
+                              dependency.access == AccessMode::Mutable);
+                    })) {
+      for (auto &dependency : dependencies)
+        dependency.access = function->returnType.referenceAccess;
+      if (normalizedCompleteReturnBorrow(
+              *function, {.dependencies = std::move(dependencies)}))
+        return;
+    }
+    report(expressionToken(value),
+           "Every possible owner of the returned reference must outlive its "
+           "declared result lifetime and retain the required access permission.",
+           "GTI-S2127");
+    return;
+  }
   const bool conditionalSignature =
       function && conditionalReferenceReturn(
                       function->returnType, function->parameterTypes,
@@ -6812,12 +6877,13 @@ auto SemanticVisitor::Impl::firstNestedTypeConstraintFailure(
 
 auto SemanticVisitor::Impl::applyGenericDefaults(
     const std::vector<GenericParameterInfo> &parameters,
-    GenericSubstitution &substitution, const Token &site, bool diagnoseFailure)
+    GenericSubstitution &substitution, const Token &site, bool diagnoseFailure,
+    bool inferOmittedLifetimes)
     -> bool {
   bool valid = true;
   for (const GenericParameterInfo &parameter : parameters) {
     if (parameter.lifetime) {
-      if (!substitution.lifetimes.contains(parameter.id))
+      if (inferOmittedLifetimes && !substitution.lifetimes.contains(parameter.id))
         substitution.lifetimes.emplace(
             parameter.id, inferredLifetime(site, parameter.id));
       continue;
@@ -7680,6 +7746,29 @@ auto SemanticVisitor::Impl::substituteType(
     const SemanticType &type, const TypeSubstitution &substitution) const
     -> SemanticType {
   return substituteType(type, GenericSubstitution{.types = substitution});
+}
+
+auto SemanticVisitor::Impl::substituteRequirement(
+    const AppliedConceptRequirement &requirement,
+    const GenericSubstitution &substitution) const -> AppliedConceptRequirement {
+  AppliedConceptRequirement result = requirement;
+  const auto replace = [&](Lifetime region) {
+    const auto found = substitution.lifetimes.find(region.id);
+    return region.kind == Lifetime::Kind::Parameter &&
+                   found != substitution.lifetimes.end()
+               ? found->second : region;
+  };
+  for (auto &argument : result.arguments)
+    argument = substituteType(argument, substitution);
+  for (auto &lifetime : result.lifetimeArguments)
+    lifetime = replace(lifetime);
+  if (result.lifetimeBound) {
+    result.lifetimeBound->longer = replace(result.lifetimeBound->longer);
+    result.lifetimeBound->shorter = replace(result.lifetimeBound->shorter);
+  }
+  if (result.outlivesType)
+    result.outlivesType = substituteType(*result.outlivesType, substitution);
+  return result;
 }
 
 auto SemanticVisitor::Impl::classSubstitution(

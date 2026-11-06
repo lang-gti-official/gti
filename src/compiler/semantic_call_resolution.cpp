@@ -1,4 +1,5 @@
 #include "semantic_analyzer_impl.h"
+#include "gti/lifetime_types.h"
 
 namespace lang {
 
@@ -432,15 +433,20 @@ auto SemanticVisitor::Impl::symbolicCallableResultTypes(
     const auto &conceptInfo = concepts[item.conceptId - 1];
     if (conceptInfo.protocol || !conceptInfo.definitionExpression)
       return {};
-    const auto substitution = conceptSubstitution(conceptInfo, item.arguments);
+    const auto substitution =
+        conceptSubstitution(conceptInfo, item.arguments, item.lifetimeArguments);
     std::vector<AppliedConceptRequirement> expanded;
     for (const auto &pattern : conceptInfo.definitionRequirements) {
       AppliedConceptRequirement applied{
           .conceptId = pattern.conceptId,
           .syntax = pattern.syntax,
+          .lifetimeArguments = pattern.lifetimeArguments,
           .expression = conceptInfo.definitionExpression,
           .expressionApplication = pattern.expressionApplication,
-          .lookupScope = conceptInfo.namespaceScope};
+          .lookupScope = conceptInfo.namespaceScope,
+          .lifetimeBound = pattern.lifetimeBound,
+          .outlivesType = pattern.outlivesType};
+      applied = substituteRequirement(applied, substitution);
       for (const auto &argument : pattern.arguments) {
         if (!argument.parameter)
           applied.arguments.push_back(
@@ -1341,12 +1347,17 @@ auto SemanticVisitor::Impl::firstConstraintFailure(
 
 auto SemanticVisitor::Impl::conceptSubstitution(
     const RegisteredConcept &conceptInfo,
-    std::span<const SemanticType> arguments) const -> TypeSubstitution {
-  TypeSubstitution result;
+    std::span<const SemanticType> arguments,
+    std::span<const Lifetime> lifetimes) const -> GenericSubstitution {
+  GenericSubstitution result;
   for (std::size_t index = 0;
        index < arguments.size() && index < conceptInfo.parameterIds.size();
        ++index)
-    result.emplace(conceptInfo.parameterIds[index], arguments[index]);
+    result.types.emplace(conceptInfo.parameterIds[index], arguments[index]);
+  for (std::size_t index = 0;
+       index < lifetimes.size() && index < conceptInfo.lifetimeParameterIds.size();
+       ++index)
+    result.lifetimes.emplace(conceptInfo.lifetimeParameterIds[index], lifetimes[index]);
   return result;
 }
 
@@ -1398,7 +1409,8 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
     }
     const RegisteredConcept &conceptInfo = concepts[requirement.conceptId - 1];
     const auto substitution =
-        conceptSubstitution(conceptInfo, requirement.arguments);
+        conceptSubstitution(conceptInfo, requirement.arguments,
+                            requirement.lifetimeArguments);
     for (const RegisteredConcept::StructuralPattern &pattern :
          conceptInfo.structuralConstraints) {
       ExpandedStructuralRequirement expanded{
@@ -1721,15 +1733,20 @@ auto SemanticVisitor::Impl::activeRequirementsImply(
       if (!conceptInfo.protocol && conceptInfo.definitionExpression &&
           !conceptInfo.definitionRequirements.empty()) {
         const auto substitution =
-            conceptSubstitution(conceptInfo, item.arguments);
+            conceptSubstitution(conceptInfo, item.arguments,
+                                item.lifetimeArguments);
         std::vector<AppliedConceptRequirement> expanded;
         for (const auto &pattern : conceptInfo.definitionRequirements) {
           AppliedConceptRequirement applied{
               .conceptId = pattern.conceptId,
               .syntax = pattern.syntax,
+              .lifetimeArguments = pattern.lifetimeArguments,
               .expression = conceptInfo.definitionExpression,
               .expressionApplication = pattern.expressionApplication,
-              .lookupScope = conceptInfo.namespaceScope};
+              .lookupScope = conceptInfo.namespaceScope,
+              .lifetimeBound = pattern.lifetimeBound,
+              .outlivesType = pattern.outlivesType};
+          applied = substituteRequirement(applied, substitution);
           for (const auto &argument : pattern.arguments) {
             if (!argument.parameter)
               applied.arguments.push_back(
@@ -1791,10 +1808,14 @@ auto SemanticVisitor::Impl::activeRequirementsImply(
              (item.syntax->predicate || item.syntax->memberRequirement);
     };
     return a.leaf.arguments == b.leaf.arguments &&
+           a.leaf.lifetimeArguments == b.leaf.lifetimeArguments &&
+           a.leaf.lifetimeBound == b.leaf.lifetimeBound &&
+           a.leaf.outlivesType == b.leaf.outlivesType &&
            (special(a.leaf) || special(b.leaf)
                 ? a.leaf.syntax == b.leaf.syntax
-                : a.leaf.conceptId != 0 &&
-                      a.leaf.conceptId == b.leaf.conceptId);
+                : (a.leaf.lifetimeBound.has_value() ||
+                   (a.leaf.conceptId != 0 &&
+                    a.leaf.conceptId == b.leaf.conceptId)));
   };
   for (const auto &scope : requirementScopes) {
     const auto shaped =
@@ -1895,9 +1916,15 @@ auto SemanticVisitor::Impl::firstRequirementFailure(
                     rightRequirement->syntax->memberRequirement
                         ->isExpressionRequirement())))))
               return leftRequirement->syntax == rightRequirement->syntax &&
+                     leftRequirement->lifetimeArguments == rightRequirement->lifetimeArguments &&
+                     leftRequirement->lifetimeBound == rightRequirement->lifetimeBound &&
+                     leftRequirement->outlivesType == rightRequirement->outlivesType &&
                      leftRequirement->arguments == rightRequirement->arguments;
             return leftRequirement != nullptr && rightRequirement != nullptr &&
                    leftRequirement->conceptId == rightRequirement->conceptId &&
+                   leftRequirement->lifetimeArguments == rightRequirement->lifetimeArguments &&
+                   leftRequirement->lifetimeBound == rightRequirement->lifetimeBound &&
+                   leftRequirement->outlivesType == rightRequirement->outlivesType &&
                    (!leftRequirement->syntax ||
                     !leftRequirement->syntax->memberRequirement ||
                     (rightRequirement->syntax &&
@@ -2005,6 +2032,11 @@ auto SemanticVisitor::Impl::preambleClosedType(
   const Impl &preamble = *adoptedPreamble->state;
   const auto preambleType = [&](const auto &self,
                                 const SemanticType &type) -> bool {
+    const auto regions = freeTypeLifetimes(type);
+    if (std::any_of(regions.begin(), regions.end(), [](Lifetime region) {
+          return region != Lifetime::staticLifetime();
+        }))
+      return false;
     switch (type.kind) {
     case SemanticType::Int8:
     case SemanticType::Int16:
@@ -2057,7 +2089,11 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
     return lifetimeRequirementFailure(requirement);
   // A concept proved of the adopted preamble's own types holds for every
   // analysis adopting it, so an editor reuses it across snapshots.
-  const bool shared = requirement.lifetimeArguments.empty() &&
+  const bool shared = std::all_of(requirement.lifetimeArguments.begin(),
+                                 requirement.lifetimeArguments.end(),
+                                 [](Lifetime region) {
+                                   return region == Lifetime::staticLifetime();
+                                 }) &&
                       preambleConceptProofApplies(requirement);
   const auto proofKey = [&] {
     return SemanticPreamble::ConceptProofKey{
@@ -2067,7 +2103,8 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
         .expressionApplication = requirement.expressionApplication,
         .trustedMemberAccess = requirement.trustedMemberAccess,
         .lookupScope = requirement.lookupScope,
-        .arguments = requirement.arguments};
+        .arguments = requirement.arguments,
+        .lifetimeArguments = requirement.lifetimeArguments};
   };
   if (shared && adoptedPreamble->provedConcept(proofKey())) {
     if (workMetrics != nullptr)
@@ -2240,6 +2277,9 @@ auto SemanticVisitor::Impl::evaluateConceptApplication(
       [&](const AppliedConceptRequirement &left,
           const AppliedConceptRequirement &right) {
         return left.conceptId == right.conceptId &&
+               left.lifetimeArguments == right.lifetimeArguments &&
+               left.lifetimeBound == right.lifetimeBound &&
+               left.outlivesType == right.outlivesType &&
                left.arguments == right.arguments;
       };
   for (const std::vector<AppliedConceptRequirement> &scope :
@@ -2335,7 +2375,8 @@ auto SemanticVisitor::Impl::evaluateConceptApplication(
       return std::nullopt;
   }
   const auto substitution =
-      conceptSubstitution(conceptInfo, requirement.arguments);
+      conceptSubstitution(conceptInfo, requirement.arguments,
+                          requirement.lifetimeArguments);
   if (conceptInfo.definitionExpression != nullptr &&
       !conceptInfo.definitionRequirements.empty()) {
     std::vector<AppliedConceptRequirement> expanded;
@@ -2345,9 +2386,13 @@ auto SemanticVisitor::Impl::evaluateConceptApplication(
       AppliedConceptRequirement applied{
           .conceptId = pattern.conceptId,
           .syntax = pattern.syntax,
+          .lifetimeArguments = pattern.lifetimeArguments,
           .expression = conceptInfo.definitionExpression,
           .expressionApplication = pattern.expressionApplication,
-          .lookupScope = conceptInfo.namespaceScope};
+          .lookupScope = conceptInfo.namespaceScope,
+          .lifetimeBound = pattern.lifetimeBound,
+          .outlivesType = pattern.outlivesType};
+      applied = substituteRequirement(applied, substitution);
       bool valid = true;
       for (const RegisteredConcept::StructuralPattern::Argument &argument :
            pattern.arguments) {
@@ -2596,6 +2641,53 @@ auto SemanticVisitor::Impl::attachConstraintCallContext(
   }
 }
 
+auto SemanticVisitor::Impl::explicitFunctionLifetimeSubstitution(
+    const CallableCandidate &function, GenericSubstitution &substitution,
+    const Token &site, bool diagnose) -> bool {
+  const auto reject = [&](std::string message) {
+    if (diagnose)
+      report(site, std::move(message), "GTI-S2126");
+    return false;
+  };
+  const auto &parameters = function.record().genericParameters;
+  for (std::size_t index = 0; index < function.explicitGenericArgumentKinds.size(); ++index) {
+    if (parameters.empty() ||
+        (index >= parameters.size() && !parameters.back().pack)) {
+      if (!function.lifetimeArguments.empty())
+        return reject("Function called with too many explicit generic arguments.");
+      // Existing type/value arity diagnostics own calls with no lifetime
+      // arguments, including the non-generic function diagnostic.
+      break;
+    }
+    const auto &parameter = parameters[std::min(index, parameters.size() - 1)];
+    const auto expected = parameter.lifetime ? GenericArgumentSyntax::Lifetime
+                        : parameter.value ? GenericArgumentSyntax::Value
+                                          : GenericArgumentSyntax::Type;
+    if (function.explicitGenericArgumentKinds[index] != expected &&
+        (expected == GenericArgumentSyntax::Lifetime ||
+         function.explicitGenericArgumentKinds[index] == GenericArgumentSyntax::Lifetime))
+      return reject("Explicit generic argument does not match the " +
+                    std::string(parameter.lifetime ? "lifetime"
+                                : parameter.value ? "value" : "type") +
+                    " parameter '" + parameter.name.lexeme + "'.");
+  }
+  if (function.lifetimeArguments.size() > genericLifetimeParameterCount(parameters))
+    return reject("Function called with too many explicit lifetime arguments.");
+  const auto bind = [&](GenericParameterId parameter, Lifetime region) {
+    const auto [found, inserted] = substitution.lifetimes.emplace(parameter, region);
+    return region.specified() && (inserted || found->second == region);
+  };
+  for (const auto &[from, to] : function.lifetimeApplication.bindings)
+    if (from.kind == Lifetime::Kind::Parameter && !bind(from.id, to))
+      return reject("Explicit lifetime choices bind one parameter to incompatible regions.");
+  std::size_t lifetimeIndex = 0;
+  for (const auto &parameter : parameters)
+    if (parameter.lifetime && lifetimeIndex < function.lifetimeArguments.size())
+      if (!bind(parameter.id, function.lifetimeArguments[lifetimeIndex++]))
+        return reject("Explicit lifetime choices bind one parameter to incompatible regions.");
+  return true;
+}
+
 auto SemanticVisitor::Impl::applyVariadicFunctionTypeArguments(
     CallableCandidate &function,
     const std::vector<SemanticType> &explicitTypeArguments,
@@ -2626,8 +2718,8 @@ auto SemanticVisitor::Impl::applyVariadicFunctionTypeArguments(
   bool valid = true;
   const GenericParameterInfo *pack = packGenericParameter(function);
   const std::size_t fixedGenerics =
-      pack == nullptr ? function.record().genericParameters.size()
-                      : function.record().genericParameters.size() - 1;
+      genericTypeParameterCount(function.record().genericParameters) -
+      (pack == nullptr ? 0 : 1);
   if (pack == nullptr) {
     if (function.ownerClass != 0) {
       Diagnostic diagnostic = makeDiagnostic(
@@ -2670,13 +2762,14 @@ auto SemanticVisitor::Impl::applyVariadicFunctionTypeArguments(
   }
 
   GenericSubstitution substitution;
+  valid = explicitFunctionLifetimeSubstitution(function, substitution, paren, true) && valid;
   if (!explicitTypeArguments.empty()) {
     const std::size_t count =
         std::min(fixedGenerics, explicitTypeArguments.size());
-    for (std::size_t index = 0; index < count; ++index) {
-      substitution.types.emplace(function.record().genericParameters[index].id,
-                                 explicitTypeArguments[index]);
-    }
+    std::size_t index = 0;
+    for (const auto &parameter : function.record().genericParameters)
+      if (!parameter.lifetime && !parameter.value && !parameter.pack && index < count)
+        substitution.types.emplace(parameter.id, explicitTypeArguments[index++]);
   } else {
     const std::size_t count =
         std::min(fixedParameterCount(function), argumentTypes.size());
@@ -2692,9 +2785,9 @@ auto SemanticVisitor::Impl::applyVariadicFunctionTypeArguments(
               valid;
     }
   }
-  for (std::size_t index = 0; index < fixedGenerics; ++index) {
-    const GenericParameterInfo &parameter =
-        function.record().genericParameters[index];
+  for (const auto &parameter : function.record().genericParameters) {
+    if (parameter.lifetime || parameter.value || parameter.pack)
+      continue;
     if (!substitution.types.contains(parameter.id)) {
       report(paren,
              "Cannot infer generic type parameter '" + parameter.name.lexeme +
@@ -2780,6 +2873,9 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
         arguments, paren, checkedArguments);
   }
   bool valid = true;
+  GenericSubstitution substitution;
+  if (!explicitFunctionLifetimeSubstitution(function, substitution, paren, true))
+    return false;
   if (function.record().genericParameters.empty()) {
     if (!explicitTypeArguments.empty() || !explicitValueArguments.empty()) {
       report(paren, "Non-generic functions do not take generic arguments.");
@@ -2788,7 +2884,6 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
     return valid;
   }
 
-  GenericSubstitution substitution;
   if (!explicitTypeArguments.empty() || !explicitValueArguments.empty()) {
     const std::size_t typeParameterCount =
         genericTypeParameterCount(function.record().genericParameters);
@@ -2869,11 +2964,13 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
   }
 
   valid = applyGenericDefaults(function.record().genericParameters,
-                               substitution, paren, true) &&
+                               substitution, paren, true, false) &&
           valid;
 
   for (const GenericParameterInfo &parameter :
        function.record().genericParameters) {
+    if (parameter.lifetime)
+      continue;
     const bool resolved = parameter.lifetime
                               ? substitution.lifetimes.contains(parameter.id)
                           : parameter.value
@@ -2916,19 +3013,21 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
       valid = false;
     }
   }
-  function.returnType = substituteType(function.returnType, substitution);
+  GenericSubstitution signatureSubstitution = substitution;
+  signatureSubstitution.lifetimes.clear();
+  function.returnType = substituteType(function.returnType, signatureSubstitution);
   for (SemanticType &parameter : function.parameterTypes) {
-    parameter = substituteType(parameter, substitution);
+    parameter = substituteType(parameter, signatureSubstitution);
   }
   for (AppliedConceptRequirement &requirement : function.requirements) {
-    for (SemanticType &argument : requirement.arguments) {
-      argument = substituteType(argument, substitution);
-    }
+    requirement = substituteRequirement(requirement, signatureSubstitution);
   }
+  for (LifetimeTypeBound &bound : function.lifetimeContract.typeBounds)
+    bound.type = substituteType(bound.type, signatureSubstitution);
   if (resolvedTypeArguments.size() ==
       genericTypeParameterCount(function.record().genericParameters)) {
     if (std::optional<ConstraintFailure> failure =
-            firstRequirementFailure(function.requirements)) {
+            firstRequirementFailureBeforeLifetimeApplication(function.requirements)) {
       attachConstraintCallContext(*failure, function, argumentTypes, arguments);
       reportConstraintFailure(paren, *failure);
       valid = false;
@@ -3196,13 +3295,18 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
   resolved = candidate;
   resolvedTypeArguments.clear();
   resolvedValueArguments.clear();
+  GenericSubstitution substitution;
+  const Token genericSite = candidate.declaration ? candidate.declaration->name()
+                                                 : Token{};
+  if (!explicitFunctionLifetimeSubstitution(candidate, substitution, genericSite, false))
+    return false;
   if (candidate.record().genericParameters.empty()) {
     if (!explicitTypeArguments.empty() || !explicitValueArguments.empty() ||
         !acceptsArgumentShape(candidate, argumentTypes)) {
       return false;
     }
     if (const std::optional<ConstraintFailure> failure =
-            firstRequirementFailure(candidate.requirements)) {
+            firstRequirementFailureBeforeLifetimeApplication(candidate.requirements)) {
       if (constraintFailure != nullptr) {
         *constraintFailure = *failure;
         attachConstraintCallContext(*constraintFailure, candidate,
@@ -3213,12 +3317,11 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
     return true;
   }
 
-  GenericSubstitution substitution;
   const GenericParameterInfo *pack = packGenericParameter(candidate);
   const std::size_t fixedGenerics =
       pack == nullptr
           ? genericTypeParameterCount(candidate.record().genericParameters)
-          : candidate.record().genericParameters.size() - 1;
+          : genericTypeParameterCount(candidate.record().genericParameters) - 1;
   if ((candidate.parameterPack && pack == nullptr) ||
       !acceptsArgumentShape(candidate, argumentTypes)) {
     return false;
@@ -3302,7 +3405,7 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
 
   if (!applyGenericDefaults(candidate.record().genericParameters, substitution,
                             candidate.record().genericParameters.front().name,
-                            false)) {
+                            false, false)) {
     return false;
   }
 
@@ -3412,13 +3515,15 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
             if (element.kind == SemanticType::Reference &&
                 element.arguments.size() == 1)
               element = SemanticType(element.arguments.front());
-            element = SemanticType::referenceTo(std::move(element), access);
+            element = SemanticType::referenceTo(std::move(element), access,
+                candidate.parameterTypes.back().referenceLifetime);
           }
       } else {
         if (parameter.kind == SemanticType::Reference &&
             parameter.arguments.size() == 1)
           parameter = SemanticType(parameter.arguments.front());
-        parameter = SemanticType::referenceTo(std::move(parameter), access);
+        parameter = SemanticType::referenceTo(std::move(parameter), access,
+            candidate.parameterTypes.back().referenceLifetime);
       }
     }
     if (pack != nullptr)
@@ -3447,24 +3552,26 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
     }
     return false;
   }
-  resolved.returnType = substituteType(resolved.returnType, substitution);
+  GenericSubstitution signatureSubstitution = substitution;
+  signatureSubstitution.lifetimes.clear();
+  resolved.returnType = substituteType(resolved.returnType, signatureSubstitution);
   std::vector<SemanticType> resolvedParameters;
   resolvedParameters.reserve(fixedParameterCount(candidate) + packTypes.size());
   for (std::size_t index = 0; index < fixedParameterCount(candidate); ++index) {
     resolvedParameters.emplace_back(
-        substituteType(candidate.parameterTypes[index], substitution));
+        substituteType(candidate.parameterTypes[index], signatureSubstitution));
   }
   resolvedParameters.insert(resolvedParameters.end(),
                             resolvedPackParameters.begin(),
                             resolvedPackParameters.end());
   resolved.parameterTypes = std::move(resolvedParameters);
   for (AppliedConceptRequirement &requirement : resolved.requirements) {
-    for (SemanticType &argument : requirement.arguments) {
-      argument = substituteType(argument, substitution);
-    }
+    requirement = substituteRequirement(requirement, signatureSubstitution);
   }
+  for (LifetimeTypeBound &bound : resolved.lifetimeContract.typeBounds)
+    bound.type = substituteType(bound.type, signatureSubstitution);
   if (const std::optional<ConstraintFailure> failure =
-          firstRequirementFailure(resolved.requirements)) {
+          firstRequirementFailureBeforeLifetimeApplication(resolved.requirements)) {
     if (constraintFailure != nullptr) {
       *constraintFailure = *failure;
       attachConstraintCallContext(*constraintFailure, candidate, argumentTypes,
@@ -8083,6 +8190,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       .defaultArguments = std::move(defaultArguments),
       .typeArguments = std::move(typeArguments),
       .valueArguments = std::move(valueArguments),
+      .lifetimeArguments = function.lifetimeArguments,
+      .lifetimeApplication = function.lifetimeApplication,
       .requirements = function.requirements,
       .synchronization =
           {.kind = function.record().cThreadOperation ==

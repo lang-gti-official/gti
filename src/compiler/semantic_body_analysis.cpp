@@ -2275,6 +2275,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   currentReturnType = SemanticType::Void;
   currentReceiverMutability = ReceiverMutability::Mutable;
   loanFlow = {};
+  loanFlow.lifetimeBlock = stmt.body().get();
   valueControlFlow.clear();
   ++functionDepth;
   ++constructorDepth;
@@ -2737,6 +2738,7 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
   auto enclosingRawPointerLoops = std::move(valueFlow.rawPointerLoops);
   currentReceiverMutability = ReceiverMutability::Mutable;
   loanFlow = {};
+  loanFlow.lifetimeBlock = stmt.body().get();
   valueControlFlow.clear();
   ++functionDepth;
   ++destructorDepth;
@@ -4052,6 +4054,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   valueControlFlow.clear();
   currentReturnType = functionInfo ? functionInfo->returnType
                                  : typeOf(stmt.returnType(), stmt.returnMutability());
+  loanFlow.lifetimeBlock = stmt.body().get();
   currentFunctionDeclaration = &stmt;
   if (functionInfo != nullptr && functionInfo->id != 0) {
     currentProgramEffectOwner = {.kind = ProgramEffectOwnerKind::Function,
@@ -5279,10 +5282,10 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     const auto *function = currentFunctionInfo();
     auto dependencies =
         function &&
-                conditionalReferenceReturn(
+                (function->lifetimeContract.valid() || conditionalReferenceReturn(
                     currentReturnType, function->parameterTypes,
                     function->ownerClass ? openClassType(function->ownerClass)
-                                         : SemanticType::Unknown)
+                                         : SemanticType::Unknown))
             ? storedBorrowDependencies(stmt.value())
             : std::vector<SemanticLoanDependency>{};
     if (!dependencies.empty() &&
@@ -8141,7 +8144,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return;
   }
 
-  const std::optional<Symbol> callee =
+  std::optional<Symbol> callee =
       protocolTarget ? std::optional<Symbol>(protocolTarget->symbol)
                      : resolveExpressionSymbol(expr.callee());
   const std::size_t genericDiagnosticStart = diagnostics.size();
@@ -8149,67 +8152,126 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   explicitTypeArguments.reserve(expr.typeArguments().size());
   std::vector<CompileTimeValue> explicitValueArguments;
   explicitValueArguments.reserve(expr.typeArguments().size());
+  std::vector<Lifetime> explicitLifetimeArguments;
+  std::vector<GenericArgumentSyntax> explicitKinds;
   bool sawExplicitValueArgument = false;
   std::size_t explicitArgumentIndex = 0;
   for (const TypeRef &argument : expr.typeArguments()) {
-    // The target's parameter kind is authoritative. In particular a runtime
-    // identifier in a value slot is a failed constant, not an unknown type.
-    const bool targetRequiresValue =
-        callee && !callee->overloads.empty() &&
-        std::all_of(callee->overloads.begin(), callee->overloads.end(),
-                    [&](const CallableCandidate &candidate) {
-                      const auto &parameters =
-                          candidate.record().genericParameters;
-                      return explicitArgumentIndex < parameters.size() &&
-                             parameters[explicitArgumentIndex].value;
-                    });
-    ++explicitArgumentIndex;
-    std::optional<CompileTimeValue> value;
-    if (targetRequiresValue ||
-        argument.genericArgumentSyntax == GenericArgumentSyntax::Value ||
-        (argument.genericArgumentSyntax ==
-             GenericArgumentSyntax::UnresolvedIdentifier &&
-         (value = genericValueArgument(argument)).has_value())) {
-      sawExplicitValueArgument = true;
-      if (!value) {
-        value = genericValueArgument(argument);
+    const auto allTargetsHaveKind = [&](bool lifetime, bool value) {
+      if (protocolTarget) {
+        const auto &parameters = protocolTarget->operationLifetimeParameters;
+        return explicitArgumentIndex < parameters.size() &&
+               parameters[explicitArgumentIndex].lifetime == lifetime &&
+               parameters[explicitArgumentIndex].value == value;
       }
-      if (!value) {
-        if (!reportGenericValueArgumentFailure(
-                argument, "Function value generic argument")) {
-          report(argument.name.last(),
-                 "A function value generic argument must be an in-scope "
-                 "uint64_t compile-time value.",
-                 "GTI-S2026");
-        }
-        explicitValueArguments.emplace_back();
+      return callee && !callee->overloads.empty() &&
+             std::all_of(callee->overloads.begin(), callee->overloads.end(),
+                         [&](const CallableCandidate &candidate) {
+        const auto &parameters = candidate.record().genericParameters;
+        return explicitArgumentIndex < parameters.size() &&
+               parameters[explicitArgumentIndex].lifetime == lifetime &&
+               parameters[explicitArgumentIndex].value == value;
+      });
+    };
+    const bool targetRequiresLifetime = allTargetsHaveKind(true, false);
+    const bool targetRequiresValue = allTargetsHaveKind(false, true);
+    ++explicitArgumentIndex;
+    const bool bare = argument.name.segments.size() == 1 &&
+                      !argument.qualifiedOwner && argument.arguments.empty() &&
+                      argument.pointers.empty() && !argument.reference &&
+                      argument.arrayExtents.empty() && !argument.packExpansion &&
+                      !argument.genericValueExpression;
+    if (targetRequiresLifetime ||
+        argument.genericArgumentSyntax == GenericArgumentSyntax::Lifetime ||
+        (bare && lifetimeOf(argument.name.last()).specified())) {
+      explicitKinds.push_back(GenericArgumentSyntax::Lifetime);
+      if (!bare) {
+        report(argument.name.last(), "A function lifetime argument must name a lifetime.",
+               "GTI-S2126");
+        explicitLifetimeArguments.emplace_back();
       } else {
-        explicitValueArguments.emplace_back(*value);
-        if (argument.genericValueExpression) {
-          recordArrayExtentUses(*argument.genericValueExpression);
-        } else if (argument.name.last().kind == TokenKind::IDENTIFIER) {
-          recordGenericParameterUse(argument.name.last(), *value,
-                                    OccurrenceRole::Read);
-        }
+        explicitLifetimeArguments.push_back(resolveLifetimeArgument(argument.name.last()));
       }
       continue;
     }
-    if (sawExplicitValueArgument) {
-      report(argument.name.last(),
-             "Explicit generic type arguments must appear before value "
-             "arguments.",
-             "GTI-S2026");
+    std::optional<CompileTimeValue> value;
+    if (targetRequiresValue ||
+        argument.genericArgumentSyntax == GenericArgumentSyntax::Value ||
+        (argument.genericArgumentSyntax == GenericArgumentSyntax::UnresolvedIdentifier &&
+         (value = genericValueArgument(argument)).has_value())) {
+      explicitKinds.push_back(GenericArgumentSyntax::Value);
+      sawExplicitValueArgument = true;
+      if (!value)
+        value = genericValueArgument(argument);
+      if (!value) {
+        if (!reportGenericValueArgumentFailure(argument, "Function value generic argument"))
+          report(argument.name.last(),
+                 "A function value generic argument must be an in-scope "
+                 "uint64_t compile-time value.", "GTI-S2026");
+        explicitValueArguments.emplace_back();
+      } else {
+        explicitValueArguments.emplace_back(*value);
+        if (argument.genericValueExpression)
+          recordArrayExtentUses(*argument.genericValueExpression);
+        else if (argument.name.last().kind == TokenKind::IDENTIFIER)
+          recordGenericParameterUse(argument.name.last(), *value, OccurrenceRole::Read);
+      }
+      continue;
     }
+    explicitKinds.push_back(GenericArgumentSyntax::Type);
+    if (sawExplicitValueArgument)
+      report(argument.name.last(),
+             "Explicit generic type arguments must appear before value arguments.",
+             "GTI-S2026");
     validateType(argument);
-    const SemanticType argumentType = typeOf(argument);
-    explicitTypeArguments.emplace_back(argumentType);
+    explicitTypeArguments.emplace_back(typeOf(argument));
   }
-  if (protocolTarget) {
-    // The block's parameters, bound by the concept argument's pattern.
+  if (protocolTarget)
     explicitTypeArguments = protocolTarget->typeArguments;
+  if (callee) {
+    for (auto &candidate : callee->overloads) {
+      candidate.lifetimeArguments = protocolTarget ? protocolTarget->lifetimeArguments
+                                                   : explicitLifetimeArguments;
+      candidate.explicitGenericArgumentKinds = protocolTarget
+          ? std::vector<GenericArgumentSyntax>{} : explicitKinds;
+      std::size_t lifetimeIndex = 0;
+      for (const auto &parameter : candidate.record().genericParameters)
+        if (parameter.lifetime && lifetimeIndex < candidate.lifetimeArguments.size())
+          candidate.lifetimeApplication.bindings.emplace_back(
+              Lifetime::parameter(parameter.id), candidate.lifetimeArguments[lifetimeIndex++]);
+      if (!protocolTarget)
+        continue;
+      GenericSubstitution interface = protocolTarget->interfaceSubstitution;
+      for (const auto &[from, to] : protocolTarget->operationLifetimeMapping)
+        interface.lifetimes.insert_or_assign(from.id, to);
+      for (std::size_t index = 0; index < explicitLifetimeArguments.size() &&
+                                     index < protocolTarget->operationLifetimeParameters.size(); ++index) {
+        const auto parameter = Lifetime::parameter(
+            protocolTarget->operationLifetimeParameters[index].id);
+        interface.lifetimes.insert_or_assign(parameter.id, explicitLifetimeArguments[index]);
+        const auto mapping = std::find_if(protocolTarget->operationLifetimeMapping.begin(),
+            protocolTarget->operationLifetimeMapping.end(), [&](const auto &binding) {
+              return binding.first == parameter;
+            });
+        candidate.lifetimeApplication.bindings.emplace_back(
+            mapping == protocolTarget->operationLifetimeMapping.end() ? parameter : mapping->second,
+            explicitLifetimeArguments[index]);
+      }
+      const auto replace = [&](Lifetime region) {
+        const auto found = interface.lifetimes.find(region.id);
+        return region.kind == Lifetime::Kind::Parameter && found != interface.lifetimes.end()
+                   ? found->second : region;
+      };
+      for (const auto bound : protocolTarget->interfaceLifetimeContract.bounds)
+        candidate.lifetimeApplication.obligations.push_back(
+            {replace(bound.longer), replace(bound.shorter)});
+      for (const auto &bound : protocolTarget->interfaceLifetimeContract.typeBounds)
+        candidate.lifetimeApplication.typeObligations.push_back(
+            {substituteType(bound.type, interface), replace(bound.region)});
+    }
   }
-  const bool hasExplicitGenericArguments =
-      !explicitTypeArguments.empty() || !explicitValueArguments.empty();
+  const bool hasExplicitGenericArguments = !explicitTypeArguments.empty() ||
+      !explicitValueArguments.empty() || !explicitLifetimeArguments.empty();
   if (hasErrorDiagnostics(
           std::span(diagnostics).subspan(genericDiagnosticStart))) {
     currentType = SemanticType::Unknown;
@@ -8451,6 +8513,13 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       valid = false;
     }
 
+    const auto *receiver = exprAs<Get>(expr.callee().get());
+    if (valid)
+      valid = applyCallLifetimeContract(
+          resolved, argumentTypes, expr.arguments(), expr.paren(),
+          resolved.ownerClass != 0 && !resolved.staticMember && receiver
+              ? receiver->object().get() : nullptr, true);
+
     const bool instantiatedPackForwardingShape =
         candidate.record().parameterPack && !resolved.parameterPack &&
         hasPackExpansion(argumentTypes) &&
@@ -8563,6 +8632,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                   candidate, resolved, argumentTypes, expr.arguments()) &&
               valid;
       if (valid) {
+        commitLifetimeApplication(resolved.lifetimeApplication);
         recordResolvedCall(
             expr, resolved, resolvedTypeArguments, resolvedValueArguments,
             std::move(ephemeralBorrowArguments),
@@ -8647,6 +8717,12 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         }
         continue;
       }
+      const auto *receiver = exprAs<Get>(expr.callee().get());
+      if (!applyCallLifetimeContract(
+              resolved, candidateArguments.types, expr.arguments(), expr.paren(),
+              resolved.ownerClass != 0 && !resolved.staticMember && receiver
+                  ? receiver->object().get() : nullptr, false))
+        continue;
       bool exact = true;
       std::vector<std::size_t> checkedArguments;
       std::optional<std::size_t> rejectedCopy;
@@ -8968,6 +9044,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     currentType = SemanticType::Unknown;
     return;
   }
+  commitLifetimeApplication(viable.front().function.lifetimeApplication);
   recordResolvedCall(
       expr, viable.front().function, viable.front().typeArguments,
       viable.front().valueArguments,
@@ -10860,6 +10937,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   currentReceiverMutability = mutableCaptures ? ReceiverMutability::Mutable
                                               : ReceiverMutability::ReadOnly;
   loanFlow = {};
+  loanFlow.lifetimeExpression = &expr;
   valueControlFlow.clear();
   analyzingCallCallee = false;
   contextualInitializerType.reset();

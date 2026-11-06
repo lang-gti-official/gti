@@ -1618,7 +1618,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
                   ? SemanticType::typeParameter(
                         conceptInfo.parameterIds[*argument.parameter])
                   : argument.concrete);
-        const auto substitution = conceptSubstitution(required, mappedTypes);
+        const auto substitution =
+            conceptSubstitution(required, mappedTypes, lifetimeArguments);
         for (const RegisteredConcept::StructuralPattern::Argument &argument :
              pattern.arguments) {
           if (!argument.parameter) {

@@ -609,6 +609,7 @@ add_library(
   "src/compiler/mir_failure_effects.cpp"
   "src/compiler/mir_hosted_startup_builder.cpp"
   "src/compiler/mir_lowering.cpp"
+  "src/compiler/mir_lifetimes.cpp"
   "src/compiler/mir_optimization_verifier.cpp"
   "src/compiler/mir_printer.cpp"
   "src/compiler/mir_program_verifier.cpp"
