@@ -197,6 +197,8 @@ int choose(bool condition) {
 int main() { return choose(true); }
 )gti";
     analyze(borrowed + observe);
+    analyze(borrowed + "if (condition) { return 1; } else { return 0; }" +
+            observe);
     const auto rejected = lang::Frontend().analyze(
         root / "tests/terminating-arm-owner-write.gti",
         borrowed + "owner = 7;" + observe, {root / "stdlib/prelude.gti"}, {},

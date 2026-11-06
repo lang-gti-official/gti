@@ -533,6 +533,8 @@ it is not an unknown supplier. This uses structural flow, matching MIR's CFG,
 so ordinary constant conditions still retain both structural edges. The
 conservative loan union and move-state analysis remain separate. MIR continues
 to verify attached transport facts against independently reconstructed flow.
+If neither arm continues, unreachable syntax retains the conservative join for
+semantic diagnostics; no continuing MIR value publishes that join.
 
 Loop entry also drops the complete borrow dependency set of every writable
 binding in scope. The single body visit cannot prove an incoming alternative

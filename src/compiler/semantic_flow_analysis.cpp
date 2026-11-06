@@ -10209,12 +10209,14 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
             rightSymbol->second.valueState == ValueState::Available
                 ? rightSymbol->second.completeBorrowSet
                 : std::nullopt;
+        // If neither arm continues, later unreachable syntax still receives
+        // ordinary semantic diagnostics. Retain the conservative join for
+        // that analysis; it is never published as a reachable MIR value.
         target->second.completeBorrowSet =
-            leftCanFallThrough && rightCanFallThrough
+            leftCanFallThrough == rightCanFallThrough
                 ? joinedBorrowDependencySets(leftSet, rightSet)
-            : leftCanFallThrough  ? leftSet
-            : rightCanFallThrough ? rightSet
-                                  : std::nullopt;
+            : leftCanFallThrough ? leftSet
+                                 : rightSet;
       }
     }
   }
