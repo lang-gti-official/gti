@@ -929,6 +929,7 @@ struct FunctionInfo {
   std::vector<std::size_t> defaultArgumentEffectOwners;
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<AppliedConceptRequirement> requirements;
+  LifetimeSignatureContract lifetimeContract;
   bool parameterPack = false;
   ClassId ownerClass = 0;
   bool entryPoint = false;
@@ -1392,6 +1393,7 @@ struct ResolvedConstructionInfo {
   SemanticType constructedType = SemanticType::Unknown;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
+  std::vector<Lifetime> lifetimeArguments;
   std::vector<AppliedConceptRequirement> requirements;
   std::vector<SemanticType> parameterTypes;
   std::vector<std::size_t> ephemeralBorrowArguments;
@@ -1442,6 +1444,7 @@ struct ResolvedConstructorInitializerInfo {
 struct ResolvedClassArguments {
   std::vector<SemanticType> types;
   std::vector<CompileTimeValue> values;
+  std::vector<Lifetime> lifetimes;
   bool valid = true;
 };
 
@@ -1472,6 +1475,7 @@ struct ResolvedCallInfo {
   std::vector<const Expr *> defaultArguments;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
+  std::vector<Lifetime> lifetimeArguments;
   std::vector<AppliedConceptRequirement> requirements;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   bool neverReturns = false;
@@ -1770,6 +1774,7 @@ enum class SemanticCompletionCandidateKind {
   LocalVariable,
   Parameter,
   TypeParameter,
+  LifetimeParameter,
   ValueParameter,
 };
 
@@ -1838,6 +1843,7 @@ enum class SymbolKind {
   Parameter,
   TypeParameter,
   ValueParameter,
+  LifetimeParameter,
   LambdaCapture,
   // A source-only name inside an unevaluated member requirement. It never
   // denotes runtime storage and may have a concept-dependent type.
@@ -1887,6 +1893,8 @@ struct SymbolRecord {
   std::optional<SourceSpan> definitionSpan;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits{};
+  // Lifetime binders have declaration identity without a runtime type.
+  GenericParameterId genericParameter = 0;
   AccessModifier access = AccessModifier::Public;
   bool mutableBinding = false;
   bool defaultLibrary = false;
@@ -2009,6 +2017,10 @@ private:
 
   SymbolId recordSymbol(SymbolRecord symbol);
 
+  // Includes implicit signature regions and higher-ranked binders, which are
+  // not positional source generic arguments but still need stable tooling IDs.
+  void recordGenericParameter(GenericParameterInfo parameter);
+
   void setSymbolDocumentation(SymbolId symbol,
                               std::string documentationMarkdown);
 
@@ -2058,10 +2070,12 @@ makeBindingInfo(SemanticType type, AccessMode access = AccessMode::ReadOnly);
 using TypeSubstitution = std::unordered_map<GenericParameterId, SemanticType>;
 using ValueSubstitution =
     std::unordered_map<GenericParameterId, CompileTimeValue>;
+using LifetimeSubstitution = std::unordered_map<GenericParameterId, Lifetime>;
 
 struct GenericSubstitution {
   TypeSubstitution types;
   ValueSubstitution values;
+  LifetimeSubstitution lifetimes;
 };
 
 // One element of an expanded `constexpr for`: the element type the binding
@@ -3429,6 +3443,8 @@ private:
   std::unordered_map<const RangeForStmt *, ResolvedRangeIterationInfo>
       rangeIterations;
   std::unordered_map<const FunctionDecl *, FunctionInfo> functions;
+  std::unordered_map<GenericParameterId, GenericParameterInfo>
+      genericParameterMetadata;
   std::unordered_map<const FunctionDecl *, const FunctionDecl *>
       functionDeclarations;
   std::unordered_map<FunctionId, const FunctionDecl *> functionsById;
@@ -3536,6 +3552,9 @@ public:
   explicit SemanticTypePrinter(const SemanticModel &semantics);
 
   [[nodiscard]] std::string print(const SemanticType &type) const;
+  [[nodiscard]] std::string printLifetime(Lifetime lifetime) const;
+  [[nodiscard]] std::string
+  printLifetime(Lifetime lifetime, const GenericParameterLookup &lookup) const;
   // Registration may supply declaration-owned parameters not yet published
   // in the completed model. The lookup only supplies spelling and is not kept.
   [[nodiscard]] std::string print(const SemanticType &type,

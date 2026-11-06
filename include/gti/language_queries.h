@@ -52,7 +52,8 @@ private:
   void appendSelectedGenericArguments(
       std::string &result, const std::vector<GenericParameterInfo> &parameters,
       const std::vector<SemanticType> &typeArguments,
-      const std::vector<CompileTimeValue> &valueArguments) const;
+      const std::vector<CompileTimeValue> &valueArguments,
+      const std::vector<Lifetime> &lifetimeArguments) const;
   void appendGenericParameters(
       std::string &result,
       const std::vector<GenericParameterInfo> &parameters) const;
@@ -170,6 +171,7 @@ enum class CompletionCandidateKind {
   Variable,
   Parameter,
   TypeParameter,
+  LifetimeParameter,
 };
 
 // One presentable signature for the innermost call containing the query

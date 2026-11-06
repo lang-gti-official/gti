@@ -1,6 +1,7 @@
 #include "gti/semantic_model.h"
 
 #include <algorithm>
+#include <span>
 
 namespace lang {
 
@@ -45,7 +46,7 @@ public:
     case SemanticType::Char:
       return "char";
     case SemanticType::StringView:
-      return "std::string_view";
+      return nominalType("std::string_view", {}, {}, type.lifetimeArguments, {});
     case SemanticType::CString:
       return "c_string";
     case SemanticType::NullPtr:
@@ -69,13 +70,17 @@ public:
     case SemanticType::Enum:
       if (const EnumTypeInfo *info = semantics.findEnumType(type.enumId)) {
         return nominalType(info->qualifiedName, type.arguments,
-                           type.valueArguments);
+                           type.valueArguments, type.lifetimeArguments,
+                           info->genericParameters);
       }
       return "unknown enum";
     case SemanticType::Reference:
       if (type.arguments.size() == 1) {
         return (type.referenceAccess == AccessMode::Mutable ? "mut " : "") +
-               print(type.arguments.front()) + "&";
+               print(type.arguments.front()) + "&" +
+               (type.referenceLifetime.specified()
+                    ? "<" + printLifetime(type.referenceLifetime) + ">"
+                    : "");
       }
       return "reference";
     case SemanticType::UniqueOwner:
@@ -100,7 +105,20 @@ public:
       if (type.arguments.empty()) {
         return "function signature";
       }
-      std::string result = print(type.arguments.front()) + "(";
+      std::string result;
+      if (!type.quantifiedLifetimes.empty()) {
+        result += "for<";
+        for (std::size_t index = 0; index < type.quantifiedLifetimes.size();
+             ++index) {
+          if (index != 0) {
+            result += ", ";
+          }
+          result += "lifetime " + printLifetime(Lifetime::parameter(
+                                      type.quantifiedLifetimes[index]));
+        }
+        result += "> ";
+      }
+      result += print(type.arguments.front()) + "(";
       for (std::size_t index = 1; index < type.arguments.size(); ++index) {
         if (index > 1) {
           result += ", ";
@@ -153,6 +171,27 @@ public:
     return "unknown";
   }
 
+  [[nodiscard]] std::string printLifetime(Lifetime lifetime) const {
+    switch (lifetime.kind) {
+    case Lifetime::Kind::Unspecified:
+      return "";
+    case Lifetime::Kind::Static:
+      return "static";
+    case Lifetime::Kind::Inference:
+    case Lifetime::Kind::Local:
+      return "_";
+    case Lifetime::Kind::Parameter: {
+      const GenericParameterInfo *parameter =
+          semantics.findGenericParameter(lifetime.id);
+      if (parameter == nullptr && lookup) {
+        parameter = lookup(lifetime.id);
+      }
+      return parameter == nullptr ? "_" : parameter->name.lexeme;
+    }
+    }
+    return "_";
+  }
+
 private:
   [[nodiscard]] std::string classType(const SemanticType &type) const {
     const ClassTypeInfo *info = semantics.findClassType(type.classId);
@@ -166,31 +205,68 @@ private:
     const std::vector<CompileTimeValue> &valueArguments =
         info->exactSpecializationPrimary == 0 ? type.valueArguments
                                               : info->exactValueArguments;
-    return nominalType(std::move(result), typeArguments, valueArguments);
+    const ClassTypeInfo *declaration =
+        info->exactSpecializationPrimary == 0
+            ? info
+            : semantics.findClassType(info->exactSpecializationPrimary);
+    return nominalType(std::move(result), typeArguments, valueArguments,
+                       type.lifetimeArguments,
+                       declaration == nullptr ? info->genericParameters
+                                              : declaration->genericParameters);
   }
 
   [[nodiscard]] std::string
   nominalType(std::string result,
-              const std::vector<SemanticType> &typeArguments,
-              const std::vector<CompileTimeValue> &valueArguments) const {
-    if (typeArguments.empty() && valueArguments.empty()) {
+              std::span<const SemanticType> typeArguments,
+              std::span<const CompileTimeValue> valueArguments,
+              std::span<const Lifetime> lifetimeArguments,
+              std::span<const GenericParameterInfo> parameters) const {
+    if (typeArguments.empty() && valueArguments.empty() &&
+        lifetimeArguments.empty()) {
       return result;
     }
     result += '<';
     bool first = true;
-    for (const SemanticType &argument : typeArguments) {
+    const auto append = [&](const std::string &argument) {
       if (!first) {
         result += ", ";
       }
       first = false;
-      result += print(argument);
+      result += argument;
+    };
+    std::size_t typeIndex = 0;
+    std::size_t valueIndex = 0;
+    std::size_t lifetimeIndex = 0;
+    for (const GenericParameterInfo &parameter : parameters) {
+      if (parameter.lifetime) {
+        if (lifetimeIndex < lifetimeArguments.size()) {
+          const std::string name =
+              printLifetime(lifetimeArguments[lifetimeIndex++]);
+          append(name.empty() ? "_" : name);
+        }
+      } else if (parameter.value) {
+        if (valueIndex < valueArguments.size()) {
+          append(value(valueArguments[valueIndex++]));
+        }
+      } else if (parameter.pack) {
+        while (typeIndex < typeArguments.size()) {
+          append(print(typeArguments[typeIndex++]));
+        }
+      } else if (typeIndex < typeArguments.size()) {
+        append(print(typeArguments[typeIndex++]));
+      }
     }
-    for (const CompileTimeValue &argument : valueArguments) {
-      if (!first) {
-        result += ", ";
-      }
-      first = false;
-      result += value(argument);
+    // Synthetic/private type carriers can have no source generic declaration.
+    // Preserve their existing compact ordering, followed by region arguments.
+    while (typeIndex < typeArguments.size()) {
+      append(print(typeArguments[typeIndex++]));
+    }
+    while (valueIndex < valueArguments.size()) {
+      append(value(valueArguments[valueIndex++]));
+    }
+    while (lifetimeIndex < lifetimeArguments.size()) {
+      const std::string name = printLifetime(lifetimeArguments[lifetimeIndex++]);
+      append(name.empty() ? "_" : name);
     }
     result += '>';
     return result;
@@ -288,6 +364,15 @@ std::string
 SemanticTypePrinter::print(const SemanticType &type,
                            const GenericParameterLookup &lookup) const {
   return SemanticTypePrinterImpl(semantics, lookup).print(type);
+}
+
+std::string SemanticTypePrinter::printLifetime(Lifetime lifetime) const {
+  return printLifetime(lifetime, {});
+}
+
+std::string SemanticTypePrinter::printLifetime(
+    Lifetime lifetime, const GenericParameterLookup &lookup) const {
+  return SemanticTypePrinterImpl(semantics, lookup).printLifetime(lifetime);
 }
 
 } // namespace lang

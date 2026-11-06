@@ -37,6 +37,11 @@
 
 (conformance_declaration) @local.scope
 
+(quantified_function_type) @local.scope
+
+(lifetime_parameter
+  name: (identifier) @local.definition.type)
+
 (generic_parameter
   !value_type
   name: (identifier) @local.definition.type)

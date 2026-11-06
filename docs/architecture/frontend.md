@@ -373,6 +373,30 @@ uniquely owned inside that tree. Syntax nodes preserve written forms and source
 tokens; they do not own resolved types or selected declarations, and compiler
 passes treat cached trees as immutable.
 
+Lifetime syntax follows that same division. `GenericParameter::lifetimeKeyword`
+retains contextual `lifetime` in function, record, alias and concept binders;
+the lexer continues to classify its spelling as an ordinary identifier.
+`ConceptDecl::genericParameters()` preserves parameter kinds, while its
+`typeParameters()` compatibility projection contains only ordinary type names.
+`TypeRef::referenceLifetime` holds the `<`, argument and `>` tokens of
+`T&<a>`, separately from the referent's generic arguments. Names stay unresolved
+in generic argument syntax; `_`, `static` and `this` have an explicit lifetime
+argument discriminator. Mutable reference type arguments preserve their `mut`
+token in the existing reference-access field. No syntax node decides whether a
+region is in scope or whether a borrow may escape.
+
+`for<lifetime a, lifetime b> R(Args...)` retains a `LifetimeBinder` on the
+function-signature `TypeRef`, with each declaration token and both delimiters.
+It scopes over the whole signature, including its result. The parser requires
+plain named lifetime parameters and a function-signature target; semantics
+owns quantification and compatibility. `this` is admitted as a reference or
+generic lifetime argument, including in `outlives<this, a>` requirements, and
+semantic method context gives it its receiver meaning. Ordinary `this`
+expressions, `for` statements and `for<...> concept` conformance declarations
+keep their existing syntax. AST cloning remaps all lifetime and binder tokens;
+debug printing preserves their written relationship. Malformed lifetime
+suffixes and binders recover through the ordinary declaration boundaries.
+
 Every final expression and statement node exposes one closed `ExprKind` or
 `StmtKind` tag in addition to the visitor interface. `exprAs<T>`/`stmtAs<T>`
 check that tag before a static cast. This avoids repeated RTTI name comparisons

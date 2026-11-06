@@ -138,11 +138,13 @@ SignaturePrinter::function(const FunctionInfo &info,
     result += types.print(returnType) + " " + functionName(info);
   }
   if (selected != nullptr &&
-      (!selected->typeArguments.empty() || !selected->valueArguments.empty())) {
+      (!selected->typeArguments.empty() || !selected->valueArguments.empty() ||
+       !selected->lifetimeArguments.empty())) {
     result += '<';
     appendSelectedGenericArguments(result, info.genericParameters,
                                    selected->typeArguments,
-                                   selected->valueArguments);
+                                   selected->valueArguments,
+                                   selected->lifetimeArguments);
     result += '>';
   } else if (selected == nullptr && !info.genericParameters.empty()) {
     result += '<';
@@ -213,12 +215,16 @@ SignaturePrinter::conceptSignature(const SymbolRecord &symbol,
   }
 
   result += '<';
-  for (std::size_t index = 0; index < declaration->typeParameters().size();
+  for (std::size_t index = 0; index < declaration->genericParameters().size();
        ++index) {
     if (index != 0) {
       result += ", ";
     }
-    result += declaration->typeParameters()[index].lexeme;
+    const GenericParameter &parameter = declaration->genericParameters()[index];
+    if (parameter.lifetimeKeyword) {
+      result += "lifetime ";
+    }
+    result += parameter.name.lexeme;
   }
   result += '>';
   if (!declaration->requirements().empty()) {
@@ -276,7 +282,8 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
           : constructedType;
   if (selected.declaration != nullptr && selected.declaration->unsafeKeyword())
     result = "unsafe " + result;
-  if (!selected.typeArguments.empty() || !selected.valueArguments.empty()) {
+  if (!selected.typeArguments.empty() || !selected.valueArguments.empty() ||
+      !selected.lifetimeArguments.empty()) {
     const ConstructorInfo *constructor =
         selected.declaration == nullptr
             ? nullptr
@@ -286,7 +293,8 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
       result += '<';
       appendSelectedGenericArguments(result, constructor->genericParameters,
                                      selected.typeArguments,
-                                     selected.valueArguments);
+                                     selected.valueArguments,
+                                     selected.lifetimeArguments);
       result += '>';
     }
   }
@@ -535,15 +543,25 @@ void SignaturePrinter::appendTypes(
 void SignaturePrinter::appendSelectedGenericArguments(
     std::string &result, const std::vector<GenericParameterInfo> &parameters,
     const std::vector<SemanticType> &typeArguments,
-    const std::vector<CompileTimeValue> &valueArguments) const {
+    const std::vector<CompileTimeValue> &valueArguments,
+    const std::vector<Lifetime> &lifetimeArguments) const {
   std::size_t typeIndex = 0;
   std::size_t valueIndex = 0;
+  std::size_t lifetimeIndex = 0;
   bool first = true;
   for (const GenericParameterInfo &parameter : parameters) {
     if (!first) {
       result += ", ";
     }
     first = false;
+    if (parameter.lifetime) {
+      const std::string name =
+          lifetimeIndex < lifetimeArguments.size()
+              ? types.printLifetime(lifetimeArguments[lifetimeIndex++])
+              : std::string();
+      result += name.empty() ? parameter.name.lexeme : name;
+      continue;
+    }
     if (!parameter.value) {
       result += typeIndex < typeArguments.size()
                     ? types.print(typeArguments[typeIndex++])
@@ -601,7 +619,9 @@ void SignaturePrinter::appendGenericParameters(
       result += ", ";
     }
     const GenericParameterInfo &parameter = parameters[index];
-    if (parameter.value) {
+    if (parameter.lifetime) {
+      result += "lifetime ";
+    } else if (parameter.value) {
       result += "uint64_t ";
     } else if (parameter.constraintName) {
       result += path(*parameter.constraintName) + " ";
@@ -1448,6 +1468,9 @@ public:
         result.signature =
             types.print(symbol->type) + " " + symbol->qualifiedName;
         break;
+      case SymbolKind::LifetimeParameter:
+        result.signature = "lifetime " + symbol->name;
+        break;
       case SymbolKind::TypeParameter:
         result.signature = "type parameter " + symbol->name;
         break;
@@ -1664,6 +1687,11 @@ public:
     }
     if (!core.failure.empty()) {
       outcome.failure = core.failure;
+      return outcome;
+    }
+    if (core.symbol->kind == SymbolKind::LifetimeParameter && newName == "_") {
+      outcome.failure = "A lifetime parameter cannot be renamed to the inferred "
+                        "lifetime placeholder '_'.";
       return outcome;
     }
     if (std::string validation = validateNewName(newName);
@@ -1994,7 +2022,7 @@ private:
               semantics.findClassType(selected.dispatchOwner.classId)) {
         std::size_t typeIndex = 0;
         for (const GenericParameterInfo &parameter : owner->genericParameters) {
-          if (parameter.value) {
+          if (parameter.value || parameter.lifetime) {
             continue;
           }
           if (typeIndex >= selected.dispatchOwner.arguments.size()) {
@@ -2011,13 +2039,16 @@ private:
                 function.genericParameters.back().pack
             ? function.genericParameters.size() - 1
             : function.genericParameters.size();
-    const std::size_t count =
-        std::min(fixedGenericCount, selected.typeArguments.size());
-    for (std::size_t index = 0; index < count; ++index) {
+    std::size_t typeIndex = 0;
+    for (std::size_t index = 0; index < fixedGenericCount; ++index) {
       const GenericParameterInfo &parameter = function.genericParameters[index];
-      if (!parameter.value) {
-        substitution.emplace(parameter.id, selected.typeArguments[index]);
+      if (parameter.value || parameter.lifetime) {
+        continue;
       }
+      if (typeIndex >= selected.typeArguments.size()) {
+        break;
+      }
+      substitution.emplace(parameter.id, selected.typeArguments[typeIndex++]);
     }
     return substitution;
   }
@@ -2269,6 +2300,7 @@ private:
     case SymbolKind::Parameter:
     case SymbolKind::RequirementParameter:
     case SymbolKind::TypeParameter:
+    case SymbolKind::LifetimeParameter:
     case SymbolKind::ValueParameter:
     case SymbolKind::LambdaCapture:
       return true;
@@ -2716,6 +2748,8 @@ private:
       return CompletionCandidateKind::Parameter;
     case SemanticCompletionCandidateKind::TypeParameter:
       return CompletionCandidateKind::TypeParameter;
+    case SemanticCompletionCandidateKind::LifetimeParameter:
+      return CompletionCandidateKind::LifetimeParameter;
     case SemanticCompletionCandidateKind::GlobalVariable:
     case SemanticCompletionCandidateKind::LocalVariable:
       return CompletionCandidateKind::Variable;
@@ -2738,6 +2772,7 @@ private:
     case CompletionCandidateKind::Enum:
     case CompletionCandidateKind::TypeAlias:
     case CompletionCandidateKind::TypeParameter:
+    case CompletionCandidateKind::LifetimeParameter:
       return 2;
     case CompletionCandidateKind::Enumerator:
       return 3;
@@ -2800,6 +2835,9 @@ private:
     }
     if (record.kind == SemanticCompletionCandidateKind::Namespace) {
       return "namespace " + record.qualifiedName;
+    }
+    if (record.kind == SemanticCompletionCandidateKind::LifetimeParameter) {
+      return "lifetime " + record.name;
     }
     const bool typeCarriesMutability =
         record.type.kind == SemanticType::Reference &&

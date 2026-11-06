@@ -2065,6 +2065,9 @@ SemanticModel::completionContext() const {
 
 [[nodiscard]] const GenericParameterInfo *
 SemanticModel::findGenericParameter(GenericParameterId id) const {
+  if (const auto parameter = genericParameterMetadata.find(id);
+      parameter != genericParameterMetadata.end())
+    return &parameter->second;
   const auto find = [id](const auto &records) -> const GenericParameterInfo * {
     for (const auto &[_, record] : records) {
       const auto parameter = std::find_if(
@@ -2101,6 +2104,11 @@ SemanticModel::findGenericParameter(GenericParameterId id) const {
     }
   }
   return base == nullptr ? nullptr : base->findGenericParameter(id);
+}
+
+void SemanticModel::recordGenericParameter(GenericParameterInfo parameter) {
+  assert(parameter.id != 0);
+  genericParameterMetadata.insert_or_assign(parameter.id, std::move(parameter));
 }
 
 [[nodiscard]] const ConstructorInfo *
@@ -2191,6 +2199,7 @@ void SemanticModel::clear() {
   structuredBindings.clear();
   rangeIterations.clear();
   functions.clear();
+  genericParameterMetadata.clear();
   functionsById.clear();
   functionDeclarations.clear();
   lambdas.clear();
@@ -2676,6 +2685,7 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
           immediateInvocations.size() + immediateVoidCompletions.size()) *
              160 +
          (functions.size() + lambdas.size() + classLifecycles.size()) * 1024 +
+         genericParameterMetadata.size() * 512 +
          (statementFullExpressions.size() + constructorFullExpressions.size() +
           fullExpressionOrder.size()) *
              96 +

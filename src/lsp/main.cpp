@@ -1350,6 +1350,7 @@ SemanticClassification classificationForSymbol(const lang::SymbolRecord &symbol,
     type = Parameter;
     break;
   case lang::SymbolKind::TypeParameter:
+  case lang::SymbolKind::LifetimeParameter:
     type = TypeParameter;
     break;
   }
@@ -1647,6 +1648,7 @@ int completionItemKind(lang::CompletionCandidateKind kind) {
   case lang::CompletionCandidateKind::Struct:
     return 22;
   case lang::CompletionCandidateKind::TypeParameter:
+  case lang::CompletionCandidateKind::LifetimeParameter:
     return 25;
   }
   return 6;

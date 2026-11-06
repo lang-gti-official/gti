@@ -7,6 +7,7 @@
 #include "gti/diagnostic.h"
 #include "gti/failure.h"
 #include "gti/generic_constraint.h"
+#include "gti/lifetime.h"
 #include "gti/source_graph.h"
 
 #include <cstddef>
@@ -230,6 +231,7 @@ struct GenericParameterInfo {
   Token name;
   bool pack = false;
   bool value = false;
+  bool lifetime = false;
   GenericConstraintSet constraints = 0;
   std::optional<NamePath> constraintName;
   ConceptId conceptId = 0;
@@ -420,10 +422,12 @@ struct SemanticType {
 
   [[nodiscard]] static SemanticType
   classType(ClassId id, std::vector<SemanticType> arguments = {},
-            std::vector<CompileTimeValue> valueArguments = {}) {
+            std::vector<CompileTimeValue> valueArguments = {},
+            std::vector<Lifetime> lifetimeArguments = {}) {
     SemanticType type(Class, std::move(arguments));
     type.classId = id;
     type.valueArguments = std::move(valueArguments);
+    type.lifetimeArguments = std::move(lifetimeArguments);
     return type;
   }
 
@@ -444,10 +448,12 @@ struct SemanticType {
 
   [[nodiscard]] static SemanticType
   enumType(EnumId id, std::vector<SemanticType> arguments = {},
-           std::vector<CompileTimeValue> valueArguments = {}) {
+           std::vector<CompileTimeValue> valueArguments = {},
+           std::vector<Lifetime> lifetimeArguments = {}) {
     SemanticType type(Enum, std::move(arguments));
     type.enumId = id;
     type.valueArguments = std::move(valueArguments);
+    type.lifetimeArguments = std::move(lifetimeArguments);
     return type;
   }
 
@@ -661,9 +667,11 @@ struct SemanticType {
   }
 
   [[nodiscard]] static SemanticType
-  referenceTo(SemanticType referent, AccessMode access = AccessMode::ReadOnly) {
+  referenceTo(SemanticType referent, AccessMode access = AccessMode::ReadOnly,
+              Lifetime lifetime = {}) {
     SemanticType type(Reference, {std::move(referent)});
     type.referenceAccess = access;
+    type.referenceLifetime = lifetime;
     return type;
   }
 
@@ -688,6 +696,14 @@ struct SemanticType {
   NativeCScalarKind nativeCScalar = NativeCScalarKind::None;
   std::vector<SemanticType> arguments;
   std::vector<CompileTimeValue> valueArguments;
+  // Lifetime arguments are semantic constraints, never executable type/value
+  // substitutions. Keep the reference's own region separate from regions in
+  // its referent (for example View<a>&<b>).
+  Lifetime referenceLifetime;
+  std::vector<Lifetime> lifetimeArguments;
+  // Universally quantified regions of a callable signature, scoped over its
+  // result and arguments. These are semantic identities, never ABI arguments.
+  std::vector<GenericParameterId> quantifiedLifetimes;
   ClassId classId = 0;
   EnumId enumId = 0;
   GenericParameterId genericParameterId = 0;

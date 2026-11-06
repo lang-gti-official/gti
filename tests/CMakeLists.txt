@@ -186,6 +186,16 @@ if(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE)
       "${GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
       -l "${PROJECT_SOURCE_DIR}/tests/macro_syntax_test.lua")
   set_tests_properties(macro_neovim_syntax PROPERTIES TIMEOUT 30)
+  add_test(NAME lifetime_neovim_syntax
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
+      "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test/state"
+      "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test/cache"
+      "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test/data"
+      "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-lifetime-syntax.log"
+      "${GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
+      -l "${PROJECT_SOURCE_DIR}/tests/lifetime_syntax_test.lua")
+  set_tests_properties(lifetime_neovim_syntax PROPERTIES TIMEOUT 30)
 endif()
 add_executable(gti_expression_text_tests expression_text_tests.cpp)
 add_executable(gti_macro_value_tests macro_value_tests.cpp)
@@ -866,6 +876,9 @@ if(TARGET gti_lsp)
   set_tests_properties(out_of_class_lsp PROPERTIES TIMEOUT 120)
   add_test(NAME nested_borrow_fields_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_borrow_fields_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  add_test(NAME lifetime_parameters_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lifetime_parameters_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(lifetime_parameters_lsp PROPERTIES TIMEOUT 120)
   add_test(NAME borrowing_composition_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/borrowing_composition_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME cleanup_bound_borrow_lsp
@@ -1570,6 +1583,17 @@ add_test(NAME raw_pointer_conversion_contract COMMAND gti_raw_pointer_conversion
 add_executable(gti_borrow_origin_syntax_tests "${PROJECT_SOURCE_DIR}/tests/borrow_origin_syntax_tests.cpp")
 target_link_libraries(gti_borrow_origin_syntax_tests PRIVATE gti_compiler)
 add_test(NAME borrow_origin_syntax COMMAND gti_borrow_origin_syntax_tests)
+
+add_executable(gti_lifetime_region_tests lifetime_region_tests.cpp)
+target_include_directories(gti_lifetime_region_tests PRIVATE "${PROJECT_SOURCE_DIR}/include")
+add_test(NAME lifetime_regions COMMAND gti_lifetime_region_tests)
+add_executable(gti_lifetime_type_tests lifetime_type_tests.cpp)
+target_include_directories(gti_lifetime_type_tests PRIVATE "${PROJECT_SOURCE_DIR}/include")
+add_test(NAME lifetime_types COMMAND gti_lifetime_type_tests)
+
+add_executable(gti_lifetime_syntax_tests lifetime_syntax_tests.cpp)
+target_link_libraries(gti_lifetime_syntax_tests PRIVATE gti_compiler)
+add_test(NAME lifetime_syntax COMMAND gti_lifetime_syntax_tests)
 
 add_executable(gti_lambda_reference_tests lambda_reference_tests.cpp)
 target_link_libraries(gti_lambda_reference_tests PRIVATE gti_compiler)
