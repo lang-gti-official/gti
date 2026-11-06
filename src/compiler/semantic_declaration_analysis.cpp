@@ -1,5 +1,6 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
+#include "gti/generic_type_patterns.h"
 
 namespace lang {
 
@@ -3040,7 +3041,7 @@ auto SemanticVisitor::Impl::resolveClassArgumentPatterns(ClassId id) -> void {
       report(pattern.name.last(), "A callable argument pattern needs a complete lifetime scope.",
              "GTI-S2127");
     std::vector<LifetimeBinding> regions;
-    for (const auto region : freeTypeLifetimes(type)) {
+    for (const auto region : declarationTypeLifetimes(type)) {
       if (region.kind != Lifetime::Kind::Inference)
         continue;
       auto name = pattern.name.last();
@@ -3098,26 +3099,21 @@ auto SemanticVisitor::Impl::classArgumentPatternsMatch(
   if (arguments.size() != owner.genericArgumentPatterns.size()) {
     return false;
   }
-  const auto substitution =
-      classSubstitution(SemanticType::classType(owner.id, arguments));
+  std::vector<SemanticType> closedPatterns;
+  std::vector<SemanticType> closedArguments;
   for (std::size_t index = 0; index < arguments.size(); ++index) {
-    const auto &pattern = owner.genericArgumentPatterns[index];
-    if (pattern.kind == SemanticType::FunctionSignature &&
-        arguments[index].kind == SemanticType::FunctionSignature &&
-        pattern.signatureReceiver != arguments[index].signatureReceiver) {
-      return false;
-    }
     // Symbolic generic bodies are rechecked with concrete arguments. Preserve
     // their public identity rather than inventing components of an opaque S.
     if (containsOpenTypeParameter(arguments[index])) {
       continue;
     }
-    if (eraseTypeLifetimes(substituteType(owner.genericArgumentPatterns[index], substitution)) !=
-        eraseTypeLifetimes(arguments[index])) {
-      return false;
-    }
+    closedPatterns.push_back(owner.genericArgumentPatterns[index]);
+    closedArguments.push_back(arguments[index]);
   }
-  return true;
+  return deriveGenericArgumentPatternSubstitution(
+      closedPatterns, closedArguments, genericParameterIdentities(owner.genericParameters),
+      genericParameterIdentities(owner.genericArgumentPatternLifetimes), {},
+      GenericPatternMatch::Structure).has_value();
 }
 
 auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,

@@ -484,8 +484,7 @@ auto SemanticVisitor::Impl::requirementQueryIdentity(
   ActiveRequirementQuery identity{
       .syntax = syntax,
       .arguments = {arguments.begin(), arguments.end()},
-      .types = instanceTypeSubstitution,
-      .values = instanceValueSubstitution};
+      .substitution = currentGenericSubstitution()};
   return identity;
 }
 

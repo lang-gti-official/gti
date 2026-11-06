@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -80,6 +81,66 @@ int main() {
                    "construction body has ambiguous instance arguments") != rejected.errors.end(),
          "a lambda construction body cannot inherit unequal lifetime contexts");
 }
+void projectedOnlyCallableOwners() {
+  const auto result = Frontend({.stopAfter = FrontendPhase::Mir})
+      .analyze("projected-only-callable-owner-scopes.gti", R"gti(
+struct Fixed<int&<source>> {
+  int&<source> value;
+  Fixed(int&<source> input) : value(input) {}
+  int&<source> get() { return value; }
+  ~Fixed() { int observed = value; }
+};
+int read<lifetime a>(int&<a> input) {
+  Fixed<int&<a>> holder{input};
+  return holder.get();
+}
+int main() { int value = 7; return read(value) - 7; }
+)gti");
+  if (!result.canGenerateCode())
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(result.canGenerateCode(),
+         "projected-only owners preserve distinct layout and callable lifetime scopes");
+  bool implicitReceiver = false;
+  for (const auto &function : result.hir.functionInstances())
+    if (function.owner)
+      for (const auto &value : function.body.values)
+        if (value.kind == HirValueKind::This && !value.source) {
+          implicitReceiver = true;
+          expect(value.info.type == function.ownerType,
+                 "implicit method receivers use their canonical callable owner");
+        }
+  for (const auto &destructor : result.hir.destructorInstances())
+    for (const auto &value : destructor.body.values)
+      if (value.kind == HirValueKind::This && !value.source) {
+        implicitReceiver = true;
+        expect(value.info.type == destructor.ownerType,
+               "implicit destructor receivers use their canonical callable owner");
+      }
+  expect(implicitReceiver, "projected-only fixture exercises implicit receiver lowering");
+  bool fieldMutation = false;
+  for (const auto &constructor : result.mir.constructorInstances()) {
+    const auto *owner = result.mir.findClassInstance(constructor.owner);
+    if (!owner)
+      continue;
+    for (std::size_t index = 0; index < constructor.initializers.size(); ++index) {
+      const auto &initializer = constructor.initializers[index];
+      const auto field = std::find_if(owner->declaredFields.begin(), owner->declaredFields.end(),
+          [&](const auto &candidate) { return candidate.symbol == initializer.field; });
+      if (field == owner->declaredFields.end() || field->type == initializer.targetType)
+        continue;
+      auto invalid = result.mir;
+      const_cast<MirConstructorInstance *>(invalid.findConstructorInstance(constructor.id))
+          ->initializers[index].targetType = field->type;
+      expect(!verifyMirProgram(invalid).valid(),
+             "constructor field metadata cannot substitute layout regions for its callable owner");
+      fieldMutation = true;
+      break;
+    }
+  }
+  expect(fieldMutation, "projected-only constructor has an independently scoped field type");
+}
+
 void nativeInvocationContexts() {
   const auto library = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto path = std::filesystem::weakly_canonical(library / "lifetime-native-hir.gti");
@@ -129,6 +190,7 @@ int main() { Count callback = count; return invoke(callback, "text") - 7; }
 }
 } // namespace
 int main() {
+  projectedOnlyCallableOwners();
   nativeInvocationContexts();
   constructionLifetimeContexts();
   const auto result = Frontend({.stopAfter = FrontendPhase::Hir})

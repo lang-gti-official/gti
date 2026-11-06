@@ -662,7 +662,7 @@ int main() { int first = 7; int second = 9; return use(first, second, false) - 7
   expect(constructionBody && constructionLoan && incomingLoan && otherFormal,
          "fixture must exercise a fresh Stored group from a shared reference entry");
   bool constructorMutationsRejected = true;
-  for (int mutation = 0; mutation != 3; ++mutation) {
+  for (int mutation = 0; mutation != 4; ++mutation) {
     auto invalid = constructedCarrier.mir;
     auto *body = findMirBody(invalid, *constructionBody);
     auto &stored = body->loans[constructionLoan - 1];
@@ -671,9 +671,18 @@ int main() { int first = 7; int second = 9; return use(first, second, false) - 7
       stored.source = otherFormal;
     else if (mutation == 1)
       entry.entry = false;
-    else
+    else {
       entry.access = AccessMode::Mutable;
+      if (mutation == 3)
+        body->places[entry.source - 1].type.referenceAccess = AccessMode::Mutable;
+    }
     const auto rejected = verifyMirProgram(invalid);
+    if (mutation == 2)
+      expect(!rejected.valid() && std::any_of(rejected.errors.begin(), rejected.errors.end(),
+                 [](const auto &error) {
+                   return error.message.find("formal reference access") != std::string::npos;
+                 }),
+             "whole reference entry loans must retain their formal's exact access");
     if (rejected.valid())
       std::cerr << "accepted constructor publication mutation=" << mutation
                 << " body=" << constructionBody->owner << " stored=" << constructionLoan

@@ -4530,6 +4530,20 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             block.id, instruction.id);
       }
 
+      // A conditional complete result can exclude the declaration's first
+      // compact supplier (for example, an empty first enum field). Its exact
+      // active sources are proved by verifyCompleteBorrowDependencySets from
+      // executable inputs and the independently reconstructed callee summary.
+      // That mandatory gate also matches the entire Stored loan, including
+      // parents, guards and paths; an attached result set is never evidence.
+      // Keep the scalar mapper below for results without that guarded domain.
+      if (completeResult &&
+          std::any_of(completeResult->dependencies.begin(),
+                      completeResult->dependencies.end(), [](const auto &item) {
+                        return !item.conditions.empty();
+                      }))
+        continue;
+
       std::vector<MirLoanDependency> mappedCallSources;
       // One formal field can be supplied by several alternatives of an
       // intermediate reference. Keep each mapping's complete source set.
@@ -21687,6 +21701,12 @@ verifyMirProgramContracts(const MirProgram &program) {
       }
     }
 
+    const auto callableOwnerType = checkedMirCallableOwnerType(
+        program, instance.owner, instance.ownerType, instance.lifetimeContract);
+    const auto callableOwnerView = callableOwnerType
+        ? mirClassLifetimeView(program, *callableOwnerType) : std::nullopt;
+    const bool exactCallableOwner = callableOwnerView &&
+        callableOwnerView->instance == constructorOwner;
     std::unordered_set<SymbolId> explicitlyInitializedFields;
     std::size_t previousFieldOrder = 0;
     bool exactSelectedFieldOrder = true;
@@ -21724,8 +21744,11 @@ verifyMirProgramContracts(const MirProgram &program) {
                            });
           const std::size_t order =
               std::size_t(field - constructorOwner->declaredFields.begin()) + 1;
-          if (field == constructorOwner->declaredFields.end() ||
-              field->type != initializer.targetType ||
+          const auto fieldType = exactCallableOwner &&
+                                         field != constructorOwner->declaredFields.end()
+                                     ? substituteTypeLifetimes(field->type, callableOwnerView->bindings)
+                                     : std::nullopt;
+          if (!fieldType || *fieldType != initializer.targetType ||
               order <= previousFieldOrder)
             exactSelectedFieldOrder = false;
           previousFieldOrder = order;

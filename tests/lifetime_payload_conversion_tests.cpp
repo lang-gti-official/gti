@@ -449,6 +449,71 @@ void checkConstructorFieldDomains(const MirProgram &program) {
   expect(false, "constructor domain fixture must publish two independent borrowed fields");
 }
 
+void checkConditionalConstructorSources(const MirProgram &program) {
+  for (const auto address : enumerateMirBodyAddresses(program)) {
+    const auto *body = findMirBody(program, address);
+    if (!body)
+      continue;
+    const auto definition = [&](MirValueId value) -> const MirInstruction * {
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.result == value)
+            return &instruction;
+      return nullptr;
+    };
+    for (const auto &block : body->blocks)
+      for (const auto &producer : block.instructions) {
+        if (producer.kind != MirInstructionKind::Construct ||
+            producer.operands.size() != 2 || !producer.loan || !producer.result)
+          continue;
+        const auto *result = body->findValue(*producer.result);
+        const auto *group = body->findLoan(*producer.loan);
+        const auto *first = producer.operands.front().kind == MirOperandKind::Value
+                                ? body->findValue(producer.operands.front().value) : nullptr;
+        if (!result || !result->borrowDependencies ||
+            result->borrowDependencies->dependencies.size() != 1 || !group ||
+            group->conditions.empty() || !first || !first->borrowDependencies ||
+            !first->borrowDependencies->dependencies.empty())
+          continue;
+        const auto *stage = definition(first->id);
+        const auto *load = stage && stage->operands.size() == 1 &&
+                                  stage->operands.front().kind == MirOperandKind::Value
+                               ? definition(stage->operands.front().value) : nullptr;
+        const MirPlaceId emptySource = load && load->kind == MirInstructionKind::Load &&
+                                                load->operands.size() == 1
+                                            ? load->operands.front().place : 0;
+        expect(emptySource && emptySource != group->source,
+               "conditional constructor fixture excludes its empty first input supplier");
+        if (!emptySource)
+          return;
+        for (int mutation = 0; mutation != 5; ++mutation) {
+          auto broken = program;
+          auto *changed = findMirBody(broken, address);
+          auto &claim = changed->values[result->id - 1].borrowDependencies;
+          auto &loan = changed->loans[group->id - 1];
+          if (mutation == 0) {
+            claim->dependencies.front().source = emptySource;
+            loan.source = emptySource;
+          } else if (mutation == 1) {
+            claim->dependencies.front().conditions.front().variant = 0;
+            loan.conditions.front().variant = 0;
+          } else if (mutation == 2) {
+            claim->dependencies.clear();
+          } else if (mutation == 3) {
+            claim.reset();
+          } else {
+            const_cast<MirConstructorInstance *>(
+                broken.findConstructorInstance(*producer.constructorTarget))->completeBorrow.reset();
+          }
+          expect(!verifyMirProgram(broken).valid(),
+                 "conditional constructor sources require replayed input domains, exact groups and callee proof");
+        }
+        return;
+      }
+  }
+  expect(false, "conditional constructor fixture must have an empty first input and guarded second supplier");
+}
+
 void checkRetainedPayloadCopy(const MirProgram &program) {
   for (const auto address : enumerateMirBodyAddresses(program)) {
     const auto *body = findMirBody(program, address);
@@ -773,7 +838,7 @@ int main() {
   if (paired.canGenerateCode())
     checkConstructorFieldDomains(paired.mir);
 
-  (void)positive("constructor-independent-empty-field-domain", R"gti(
+  const auto emptyFields = positive("constructor-independent-empty-field-domain", R"gti(
 enum Reading<lifetime a> { empty, value(int&<a> owner) };
 struct Pair<lifetime a, lifetime b> {
   Reading<a> first;
@@ -794,6 +859,8 @@ int main() {
   return inspect(pair.first) + inspect(pair.second) - 7;
 }
 )gti");
+  if (emptyFields.canGenerateCode())
+    checkConditionalConstructorSources(emptyFields.mir);
 
   const auto owning = positive("owning-region-transfer", R"gti(
 mut int destroyed = 0;

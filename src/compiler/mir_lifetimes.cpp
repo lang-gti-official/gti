@@ -212,7 +212,10 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
       -> std::optional<GenericSubstitution> {
     GenericSubstitution values;
     std::size_t types = 0, constants = 0, regions = 0;
-    bool projected = false;
+    // A pattern family can bind only projected regions (for example
+    // Fixed<int&<source>>), with no ordinary type parameter to mark it here.
+    // Its complete argument shape is checked by the pattern matcher below.
+    bool projected = !recipe.argumentPatterns.empty();
     const auto parameters = nominalVarianceParameters(recipe, recipes);
     if (!parameters)
       return std::nullopt;
@@ -1731,20 +1734,40 @@ private:
         if (!dereference())
           return {};
       } else if (projection.kind == MirProjectionKind::Field) {
-        const auto owner = mirClassLifetimeView(program, type);
-        if (!owner)
+        std::optional<SemanticType> fieldType;
+        if (const auto owner = mirClassLifetimeView(program, type)) {
+          for (const auto &field : owner->instance->declaredFields) {
+            if (field.symbol != projection.field)
+              continue;
+            if (fieldType)
+              return {};
+            fieldType = owner->instantiate(field.type);
+            if (!fieldType)
+              return {};
+          }
+        } else if (const auto owner = mirEnumLifetimeView(program, type);
+                   owner && owner->payload) {
+          // A stored reference crosses from the carrier's storage into its
+          // declared external region. The stable payload symbol selects one
+          // exact field; variant activity and origin/loan authority are checked
+          // independently, never granted by this structural type lookup.
+          for (const auto &variant : owner->payload->variants) {
+            if (variant.payloadSymbols.size() != variant.payloadTypes.size())
+              return {};
+            for (std::size_t index = 0; index < variant.payloadSymbols.size(); ++index) {
+              if (variant.payloadSymbols[index] != projection.field)
+                continue;
+              if (fieldType)
+                return {};
+              fieldType = owner->instantiate(variant.payloadTypes[index]);
+              if (!fieldType)
+                return {};
+            }
+          }
+        }
+        if (!fieldType)
           return {};
-        const auto field = std::find_if(
-            owner->instance->declaredFields.begin(), owner->instance->declaredFields.end(),
-            [&](const auto &candidate) {
-              return candidate.symbol == projection.field;
-            });
-        if (field == owner->instance->declaredFields.end())
-          return {};
-        const auto instantiated = owner->instantiate(field->type);
-        if (!instantiated)
-          return {};
-        type = *instantiated;
+        type = *fieldType;
       } else if (projection.kind == MirProjectionKind::Index &&
                  type.kind == SemanticType::Array &&
                  type.arguments.size() == 1) {

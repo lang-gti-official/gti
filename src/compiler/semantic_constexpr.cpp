@@ -633,6 +633,32 @@ auto SemanticVisitor::Impl::StagedConstantResults::hash(const Key &key)
     substitution += entry.value;
   }
   hash.add(substitution);
+  hash.add(key.substitution.valid);
+  for (const auto &scope : key.substitution.callableScopes) {
+    for (const auto path : scope.argumentPath)
+      hash.add(path);
+    hash.type(scope.pattern);
+    hash.type(scope.signature);
+    std::size_t captured = 0;
+    for (const auto &[parameter, type] : scope.capturedTypes) {
+      StagedHash entry;
+      entry.add(parameter);
+      entry.type(type);
+      captured += entry.value;
+    }
+    hash.add(captured);
+    for (const auto &[from, to] : scope.regionBindings) {
+      hash.add(static_cast<std::size_t>(from.kind)); hash.add(from.id);
+      hash.add(static_cast<std::size_t>(to.kind)); hash.add(to.id);
+    }
+    std::size_t imports = 0;
+    for (const auto &[parameter, region] : scope.imports) {
+      StagedHash entry;
+      entry.add(parameter); entry.add(static_cast<std::size_t>(region.kind)); entry.add(region.id);
+      imports += entry.value;
+    }
+    hash.add(imports);
+  }
   for (const auto &argument : key.arguments)
     hash.constant(argument);
   if (key.receiver)
@@ -764,7 +790,7 @@ auto SemanticVisitor::Impl::stagedConstantKey(
     const std::optional<ConstantValue> &receiver,
     std::vector<FunctionId> completed, std::vector<ConstructorId> constructors)
     -> std::optional<StagedConstantResults::Key> {
-  if (!std::all_of(arguments.begin(), arguments.end(),
+  if (!substitution.valid || !std::all_of(arguments.begin(), arguments.end(),
                    StagedConstantResults::reusable) ||
       (receiver && !StagedConstantResults::reusable(*receiver)))
     return std::nullopt;

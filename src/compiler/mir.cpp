@@ -13260,6 +13260,20 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
     }
     if (loan.entry) {
       const MirPlace *source = body.findPlace(loan.source);
+      // A whole reference formal lends exactly its declared permission, just
+      // as a captured reference and a concrete pack element do below. Body
+      // verification cannot let a forged entry loan upgrade that capability;
+      // program verification separately binds this root to the exact formal.
+      if (loan.kind == MirLoanKind::Parameter && source &&
+          source->root == MirPlaceRootKind::Binding &&
+          source->projections.empty() &&
+          source->type.kind == SemanticType::Reference &&
+          (source->type.arguments.size() != 1 ||
+           source->type.referenceAccess != loan.access)) {
+        return failure(body, owner,
+                       "entry loan " + std::to_string(loan.id) +
+                           " does not preserve its formal reference access");
+      }
       const bool capturedReference =
           body.kind == MirBodyKind::Lambda && source &&
           source->root == MirPlaceRootKind::Symbol && source->capture != 0 &&

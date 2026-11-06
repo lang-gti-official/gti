@@ -159,6 +159,100 @@ void owningCleanupShape() {
   expect(mir_detail::sameLifetimeDropShape(source, target),
          "cleanup shape is not an outlives proof; the mandatory stage gate rejects strengthening");
 }
+void projectedOnlyNominalRecipe() {
+  NominalVarianceRecipe recipe{
+      .declaration = 140,
+      .argumentPatterns = {reference(1401)},
+      .argumentPatternLifetimes = {{.id = 1401, .lifetime = true}},
+      .stored = {{.symbol = 1402, .type = reference(1401)}},
+      .complete = true};
+  MirClassInstance instance;
+  instance.id = 1;
+  instance.declaration = recipe.declaration;
+  instance.type = SemanticType::classType(recipe.declaration, {reference(1403)});
+  instance.liftedLifetimes = {{.id = 1403, .lifetime = true, .implicit = true}};
+  instance.lifetimeContract = {.parameters = {Lifetime::parameter(1403)}, .complete = true};
+  instance.declaredFields = {{.symbol = 1402, .type = reference(1403)}};
+  instance.variance = {.types = {TypeVariance::Invariant}, .complete = true};
+  MirProgram program;
+  MirProgramTestAccess::classes(program) = {instance};
+  MirProgramTestAccess::nominalRecipes(program) = {recipe};
+  expect(verifyMirNominalLifetimeRecipes(program).valid(),
+         "a projected-only pattern binds its public type argument without an ordinary type binder");
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto invalid = program;
+    auto &changed = MirProgramTestAccess::classes(invalid).front();
+    if (mutation == 0)
+      changed.type.arguments.clear();
+    else if (mutation == 1)
+      changed.type.arguments.front().arguments.front() = SemanticType::Bool;
+    else if (mutation == 2)
+      changed.type.lifetimeArguments = {Lifetime::parameter(1403)};
+    else if (mutation == 3)
+      changed.declaredFields.front().type.referenceLifetime = Lifetime::staticLifetime();
+    else
+      changed.type.arguments.push_back(reference(1403));
+    expect(!verifyMirNominalLifetimeRecipes(invalid).valid(),
+           "projected-only patterns still require exact argument arity, shape and stored region");
+  }
+}
+void storedEnumFieldRegion() {
+  MirPayloadEnum payload;
+  payload.declaration = 150;
+  payload.type = SemanticType::enumType(150);
+  payload.type.lifetimeArguments = {Lifetime::parameter(1501)};
+  payload.lifetimeContract = {.parameters = {Lifetime::parameter(1501)}, .complete = true};
+  payload.variants = {{.variantIndex = 0, .payloadTypes = {reference(1501)},
+                       .payloadSymbols = {1502}}};
+  MirProgram program;
+  MirProgramTestAccess::payloads(program) = {payload};
+  auto actual = payload.type;
+  actual.lifetimeArguments = {Lifetime::staticLifetime()};
+  MirBody body;
+  body.returnType = SemanticType::referenceTo(SemanticType::Int32, AccessMode::ReadOnly,
+                                             Lifetime::staticLifetime());
+  MirPlace root;
+  root.id = 1;
+  root.root = MirPlaceRootKind::Binding;
+  root.binding = 1;
+  root.type = SemanticType::referenceTo(actual, AccessMode::ReadOnly, Lifetime::local(1503));
+  auto field = root;
+  field.id = 2;
+  field.type = SemanticType::Int32;
+  field.projections = {{.kind = MirProjectionKind::Dereference},
+                       {.kind = MirProjectionKind::Field, .field = 1502},
+                       {.kind = MirProjectionKind::Dereference}};
+  body.places = {root, field};
+  MirLoan returned;
+  returned.id = 1;
+  returned.kind = MirLoanKind::Return;
+  returned.source = field.id;
+  body.loans = {returned};
+  MirBlock block;
+  block.id = 1;
+  block.terminator.kind = MirTerminatorKind::Return;
+  block.terminator.value = MirOperand{.kind = MirOperandKind::Loan, .loan = 1,
+                                      .type = SemanticType::Int32};
+  body.blocks = {block};
+  expect(verifyMirLifetimeApplications(program, body).valid(),
+         "an enum field's external reference region is independent of carrier storage");
+  for (int mutation = 0; mutation != 4; ++mutation) {
+    auto invalid = program;
+    auto changed = body;
+    if (mutation == 0)
+      changed.places.front().type.arguments.front().lifetimeArguments = {Lifetime::local(1503)};
+    else if (mutation == 1)
+      changed.places.back().projections[1].field = 9999;
+    else if (mutation == 2) {
+      auto duplicate = payload.variants.front();
+      duplicate.variantIndex = 1;
+      MirProgramTestAccess::payloads(invalid).front().variants.push_back(duplicate);
+    } else
+      MirProgramTestAccess::payloads(invalid).front().variants.front().payloadTypes.clear();
+    expect(!verifyMirLifetimeApplications(invalid, changed).valid(),
+           "enum field region proof rejects missing, ambiguous, malformed and strengthened paths");
+  }
+}
 void quantifiedNominalLiftInventory() {
   auto signature = SemanticType::functionSignature(reference(1001), {reference(1001)});
   signature.quantifiedLifetimes = {1001};
@@ -194,6 +288,8 @@ int main() {
   cleanupLifetimeRecipes();
   owningCleanupShape();
   quantifiedNominalLiftInventory();
+  projectedOnlyNominalRecipe();
+  storedEnumFieldRegion();
   const auto fixedEnvironment = Lifetime::parameter(701);
   const std::array closureParameters{reference(702)};
   const std::array closureCaptures{reference(701)};

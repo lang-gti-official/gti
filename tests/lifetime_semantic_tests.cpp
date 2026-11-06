@@ -46,6 +46,12 @@ namespace std {
                 << (code.empty() ? "" : std::string(" with ") + std::string(code)) << '\n';
       for (const auto &diagnostic : result.diagnostics)
         std::cerr << "  " << diagnostic.code << ": " << diagnostic.message << '\n';
+      if (mir && internal && argc > 2 && name == "projected-only-class-instantiation") {
+        const auto directory = std::filesystem::path(argv[2]);
+        std::filesystem::create_directories(directory);
+        std::ofstream evidence(directory / (std::string(name) + ".mir.txt"));
+        lang::MirPrinter{}.print(result.mir, evidence);
+      }
       if (mir && internal && argc > 2 &&
           (name == "stored-external-reference-keeps-its-declared-region" ||
            name == "borrowed-value-parameter-publishes-stored-suppliers" ||
@@ -432,6 +438,23 @@ int&<a> read<lifetime a>(int&<a> input) {
   return holder.get();
 }
 int main() { int value = 7; return read(value) - 7; }
+)gti", true);
+  check("default-field-keeps-constructor-lifetime-universe", R"gti(
+enum Reading<lifetime a> { empty, value(int&<a> item) };
+struct Default<Reading<source>> {
+  Reading<source> reading = Reading<source>::empty;
+  Default(int count) {}
+};
+int main() { Default<Reading<static>> holder{0}; return 0; }
+)gti", true);
+  check("field-default-keeps-declaration-name-lookup", R"gti(
+int initial_score() { return 7; }
+struct Fixed<int&<source>> {
+  int&<source> value;
+  int score = initial_score();
+  Fixed(int&<source> input, int initial_score) : value(input) {}
+};
+int main() { int value = 2; Fixed<int&> holder{value, 99}; return holder.score - 7; }
 )gti", true);
   check("physical-payload-borrow-keeps-caller-region", R"gti(
 enum State { value(int item) };

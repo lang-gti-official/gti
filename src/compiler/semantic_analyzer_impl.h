@@ -329,6 +329,10 @@ public:
   nominalVarianceRecipes() const override;
   [[nodiscard]] std::optional<SemanticExecutableInstantiation>
   canonicalizeExecutableInstance(const InstanceAnalysisKey &key) override;
+  [[nodiscard]] bool importMemberCallableScopes(
+      GenericSubstitution &substitution, InstanceAnalysisKind kind,
+      std::size_t declaration, const SemanticType &owner, const Token &site) const;
+  [[nodiscard]] GenericSubstitution currentGenericSubstitution(bool includeLifetimes = true) const;
 
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
@@ -3155,6 +3159,8 @@ private:
                                                    std::numeric_limits<std::size_t>::max()) const;
   [[nodiscard]] bool normalizeCallableLifetimeType(SemanticType &type,
                                                  const Token &site) const;
+  [[nodiscard]] bool dependentCallablePattern(const SemanticType &type) const;
+  [[nodiscard]] std::vector<Lifetime> declarationTypeLifetimes(const SemanticType &type) const;
   [[nodiscard]] std::optional<SemanticType> constrainLifetimeType(
       const SemanticType &actual, const SemanticType &expected, int variance,
       std::vector<LifetimeBound> &obligations, bool allowBase = false) const;
@@ -3874,8 +3880,7 @@ private:
   struct ActiveRequirementQuery {
     const void *syntax = nullptr;
     std::vector<SemanticType> arguments;
-    TypeSubstitution types;
-    ValueSubstitution values;
+    GenericSubstitution substitution;
 
     friend bool operator==(const ActiveRequirementQuery &,
                            const ActiveRequirementQuery &) = default;
@@ -7583,6 +7588,8 @@ private:
       GenericParameterId nextId = std::numeric_limits<GenericParameterId>::max();
       std::unordered_map<ExecutableLifetimeKey, ExecutableLifetimeIdentity,
                          ExecutableLifetimeKeyHash> identities;
+      std::unordered_map<ExecutableLifetimeKey, ExecutableLifetimeIdentity,
+                         ExecutableLifetimeKeyHash> memberScopes;
     };
     std::shared_ptr<ExecutableLifetimeRegistry> executableLifetimes =
         std::make_shared<ExecutableLifetimeRegistry>();
@@ -7730,6 +7737,8 @@ private:
     TypeSubstitution instanceTypeSubstitution;
     ValueSubstitution instanceValueSubstitution;
     LifetimeSubstitution instanceLifetimeSubstitution;
+    std::vector<GenericCallableScope> instanceCallableScopes;
+    mutable std::size_t callablePatternTypeDepth = 0;
     std::vector<std::string> currentNamespace;
     SourceUnitId currentSourceUnit = 0;
     std::unordered_set<const VariableDecl *> structuredBindingElements;
@@ -8038,6 +8047,7 @@ private:
       requestSession.instanceValueSubstitution;
   LifetimeSubstitution &instanceLifetimeSubstitution =
       requestSession.instanceLifetimeSubstitution;
+  std::vector<GenericCallableScope> &instanceCallableScopes = requestSession.instanceCallableScopes;
   std::vector<std::string> &currentNamespace = requestSession.currentNamespace;
   SourceUnitId &currentSourceUnit = requestSession.currentSourceUnit;
   std::unordered_set<const VariableDecl *> &predeclaredVariables =
@@ -8175,6 +8185,7 @@ private:
     decltype(RequestSessionState::lifetimeInferences) lifetimeInferences;
     Lifetime currentReceiverLifetime;
     std::size_t deferredNominalFormation = 0;
+    std::size_t callablePatternTypeDepth = 0;
     decltype(RequestSessionState::typePackScopes) typePackScopes;
     decltype(RequestSessionState::requirementScopes) requirementScopes;
     decltype(RequestSessionState::currentNamespace) currentNamespace;

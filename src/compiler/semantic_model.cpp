@@ -111,6 +111,8 @@ RestrictedBorrowResultDomain restrictCompleteBorrowResultDomain(
 SemanticType substituteSemanticType(const SemanticType &type,
                                     const GenericSubstitution &substitution,
                                     const SemanticModel *model) {
+  if (!substitution.valid)
+    return SemanticType::Unknown;
   if (!substitution.callableScopes.empty())
     return substituteScopedGenericType(
         type, substitution,

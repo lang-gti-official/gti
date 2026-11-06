@@ -1306,3 +1306,13 @@ Current gaps and future instance/backend work are tracked in the maintained
 [`docs/plans/implementation-sequence.md`](../plans/implementation-sequence.md),
 the [language restriction ledger](../plans/language-alignment.md), and the
 [optimization plan](../plans/optimization.md).
+
+Canonical method, constructor and destructor owners retain their own universal
+region identities independently of the class layout. Implicit receivers use
+that callable owner type. Nominal argument patterns are matched as one exact
+recipe, including projected lifetime slots and closed callable scopes; an
+unmatched or ambiguous recipe cannot fall back to a type-only substitution.
+Explicit field initializers keep their checked constructor-scope types, and
+MIR maps the layout field recipe into that exact owner view before comparing
+them. Declaration default expressions require checked facts in the consuming
+constructor scope; changing their type tags alone cannot supply those facts.

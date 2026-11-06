@@ -7082,8 +7082,7 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       }
       const SemanticType selected = substituteType(
           alias->type,
-          GenericSubstitution{.types = instanceTypeSubstitution,
-                              .values = instanceValueSubstitution});
+          currentGenericSubstitution(false));
       if (selected.kind == SemanticType::Class && selected.classId != 0 &&
           selected.classId <= classes.size()) {
         completionOwner = selected.classId;
@@ -7866,8 +7865,7 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
   if (const auto qualifier = resolveTypeAliasPath(namespacePath, fromScope)) {
     const SemanticType ownerType = substituteType(
         qualifier->type,
-        GenericSubstitution{.types = instanceTypeSubstitution,
-                            .values = instanceValueSubstitution});
+        currentGenericSubstitution(false));
     if (ownerType.kind == SemanticType::Class) {
       if (auto alias = member(ownerType.classId, path.last().lexeme)) {
         alias->type = substituteType(alias->type, classSubstitution(ownerType));
@@ -14874,6 +14872,11 @@ auto SemanticVisitor::Impl::baseTypeOf(
     lifetimeScope.emplace(lifetimeParameterScopes,
                           lifetimeParametersFor(*type.lifetimeBinder));
   if (type.isNativeFunction() || type.isFunctionSignature()) {
+    struct CallablePatternDepth {
+      std::size_t &depth;
+      ~CallablePatternDepth() { --depth; }
+    } callableDepth{requestSession.callablePatternTypeDepth};
+    ++requestSession.callablePatternTypeDepth;
     const std::size_t parameterCount =
         type.isFunctionSignature() ? *type.functionSignatureParameterCount
                                    : *type.nativeFunctionParameterCount;
@@ -14938,9 +14941,7 @@ auto SemanticVisitor::Impl::baseTypeOf(
           associatedTypeProjection(*protocol, index, arguments->types,
                                    family->types, arguments->lifetimes,
                                    family->lifetimes),
-          GenericSubstitution{.types = instanceTypeSubstitution,
-                              .values = instanceValueSubstitution,
-                              .lifetimes = instanceLifetimeSubstitution});
+          currentGenericSubstitution());
     }
     const auto alias = resolveTypeAliasPath(type, fromScope);
     if (!alias || alias->id == 0 ||
@@ -15115,11 +15116,14 @@ auto SemanticVisitor::Impl::typeOf(
     const TypeRef &type, const std::vector<std::string> &fromScope) const
     -> SemanticType {
   if (const auto normalized = catalog.normalizedNominalTypes.find(&type);
-      normalized != catalog.normalizedNominalTypes.end())
-    return substituteType(normalized->second,
-                          GenericSubstitution{.types = instanceTypeSubstitution,
-                                              .values = instanceValueSubstitution,
-                                              .lifetimes = instanceLifetimeSubstitution});
+      normalized != catalog.normalizedNominalTypes.end()) {
+    if (!instanceCallableScopes.empty() && requestSession.callablePatternTypeDepth)
+      return normalized->second;
+    auto result = substituteType(normalized->second, currentGenericSubstitution());
+    if (!instanceCallableScopes.empty() && !normalizeCallableLifetimeType(result, type.name.last()))
+      return SemanticType::Unknown;
+    return result;
+  }
   SemanticType result = baseTypeOf(type, fromScope);
   for (const auto &pointer : type.pointers) {
     result = SemanticType::rawPointerTo(
@@ -15149,6 +15153,11 @@ auto SemanticVisitor::Impl::typeOf(
     } else if (result.kind != SemanticType::TypePack) {
       return SemanticType::Unknown;
     }
+  }
+  if (!instanceCallableScopes.empty() && !requestSession.callablePatternTypeDepth) {
+    result = substituteType(result, currentGenericSubstitution());
+    if (!normalizeCallableLifetimeType(result, type.name.last()))
+      return SemanticType::Unknown;
   }
   return selectExactClassSpecialization(std::move(result));
 }
@@ -15209,8 +15218,7 @@ auto SemanticVisitor::Impl::parameterBindingType(
           index < function->parameterTypes.size()) {
         type = substituteType(
             function->parameterTypes[index],
-            GenericSubstitution{.types = instanceTypeSubstitution,
-                                .values = instanceValueSubstitution});
+            currentGenericSubstitution(false));
         break;
       }
     }

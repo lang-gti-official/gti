@@ -1,7 +1,85 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
+#include "gti/generic_type_patterns.h"
 
 namespace lang {
+namespace {
+void appendExecutableRegionShape(const SemanticType &type,
+                                 std::vector<std::size_t> &result,
+                                 std::vector<GenericParameterId> bound = {}) {
+  result.push_back(type.quantifiedLifetimes.size());
+  bound.insert(bound.end(), type.quantifiedLifetimes.begin(), type.quantifiedLifetimes.end());
+  const auto region = [&](Lifetime value) {
+    if (!value.specified()) {
+      result.push_back(0);
+      return;
+    }
+    const auto selected = value.kind == Lifetime::Kind::Parameter
+        ? std::find(bound.begin(), bound.end(), value.id) : bound.end();
+    result.push_back(selected == bound.end() ? 1 : 2 + std::size_t(selected - bound.begin()));
+  };
+  region(type.referenceLifetime);
+  result.push_back(type.lifetimeArguments.size());
+  for (const auto value : type.lifetimeArguments)
+    region(value);
+  lifetime_detail::children(type, [&](const auto &child) { appendExecutableRegionShape(child, result, bound); });
+}
+}
+
+auto SemanticVisitor::Impl::importMemberCallableScopes(
+    GenericSubstitution &substitution, InstanceAnalysisKind kind,
+    std::size_t declaration, const SemanticType &owner, const Token &site) const -> bool {
+  if (!substitution.valid)
+    return false;
+  if (substitution.callableScopes.empty())
+    return true;
+  RequestSessionContext::ExecutableLifetimeKey key{
+      .runtime = {.kind = kind, .declaration = declaration,
+                  .classTypes = owner.arguments, .classValues = owner.valueArguments}};
+  for (auto &type : key.runtime.classTypes) {
+    appendExecutableRegionShape(type, key.regionShape);
+    type = eraseTypeLifetimes(std::move(type));
+  }
+  auto &registry = *requestSession.executableLifetimes;
+  auto [entry, inserted] = registry.memberScopes.try_emplace(std::move(key));
+  auto &descriptors = entry->second.parameters;
+  constexpr GenericParameterId highHalf = std::numeric_limits<GenericParameterId>::max() / 2 + 1;
+  std::size_t ordinal = 0;
+  for (auto &scope : substitution.callableScopes) {
+    scope.imports.clear();
+    for (const auto parameter : scope.signature.quantifiedLifetimes) {
+      if (ordinal == descriptors.size()) {
+        if (!inserted || nextGenericParameterId >= highHalf || registry.nextId < highHalf ||
+            semanticModel.findGenericParameter(registry.nextId)) {
+          substitution.valid = false;
+          return false;
+        }
+        auto name = site;
+        name.lexeme = "_invocation" + std::to_string(ordinal + 1);
+        name.generated = true;
+        descriptors.push_back({.id = registry.nextId--, .name = std::move(name),
+                               .lifetime = true, .implicit = true});
+      }
+      const auto &descriptor = descriptors[ordinal++];
+      semanticModel.recordGenericParameter(descriptor);
+      scope.imports.emplace(parameter, Lifetime::parameter(descriptor.id));
+    }
+    for (const auto &[from, to] : scope.regionBindings) {
+      if (from.kind != Lifetime::Kind::Parameter)
+        continue;
+      const auto imported = to.kind == Lifetime::Kind::Parameter ? scope.imports.find(to.id)
+                                                               : scope.imports.end();
+      const auto value = imported == scope.imports.end() ? to : imported->second;
+      const auto [existing, fresh] = substitution.lifetimes.emplace(from.id, value);
+      if (!fresh && existing->second != value) {
+        substitution.valid = false;
+        return false;
+      }
+    }
+  }
+  substitution.valid = ordinal == descriptors.size();
+  return substitution.valid;
+}
 
 auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
     const InstanceAnalysisKey &key)
@@ -75,32 +153,12 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
   }
 
   RequestSessionContext::ExecutableLifetimeKey identity{.runtime = key};
-  const auto shape = [&](auto &&self, const SemanticType &type,
-                         std::vector<GenericParameterId> bound) -> void {
-    identity.regionShape.push_back(type.quantifiedLifetimes.size());
-    bound.insert(bound.end(), type.quantifiedLifetimes.begin(), type.quantifiedLifetimes.end());
-    const auto region = [&](Lifetime value) {
-      if (!value.specified()) {
-        identity.regionShape.push_back(0);
-        return;
-      }
-      const auto selected = value.kind == Lifetime::Kind::Parameter
-          ? std::find(bound.begin(), bound.end(), value.id) : bound.end();
-      identity.regionShape.push_back(selected == bound.end()
-          ? 1 : 2 + std::size_t(selected - bound.begin()));
-    };
-    region(type.referenceLifetime);
-    identity.regionShape.push_back(type.lifetimeArguments.size());
-    for (auto value : type.lifetimeArguments)
-      region(value);
-    lifetime_detail::children(type, [&](const auto &child) { self(self, child, bound); });
-  };
   for (auto &type : identity.runtime.classTypes) {
-    shape(shape, type, {});
+    appendExecutableRegionShape(type, identity.regionShape);
     type = eraseTypeLifetimes(std::move(type));
   }
   for (auto &type : identity.runtime.types) {
-    shape(shape, type, {});
+    appendExecutableRegionShape(type, identity.regionShape);
     type = eraseTypeLifetimes(std::move(type));
   }
   auto &registry = *requestSession.executableLifetimes;
@@ -245,6 +303,24 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
   } else if (enumId) {
     result.lifetimeContract = enums[enumId - 1].lifetimeContract;
   }
+  if (!substitution.valid)
+    return std::nullopt;
+  if (ownerId && (function || constructor || destructor)) {
+    if (!importMemberCallableScopes(substitution, key.kind, key.declaration, result.ownerType, site))
+      return std::nullopt;
+    for (const auto &scope : substitution.callableScopes)
+      for (const auto parameter : scope.signature.quantifiedLifetimes) {
+        const auto imported = scope.imports.at(parameter);
+        if (std::find(result.lifetimeContract.parameters.begin(), result.lifetimeContract.parameters.end(), imported) ==
+            result.lifetimeContract.parameters.end())
+          result.lifetimeContract.parameters.push_back(imported);
+        const auto *descriptor = semanticModel.findGenericParameter(imported.id);
+        if (!descriptor)
+          return std::nullopt;
+        result.liftedLifetimes.push_back(*descriptor);
+      }
+  }
+  result.callableScopes = substitution.callableScopes;
   result.returnType = substituteType(result.returnType, substitution);
   for (auto &parameter : result.parameterTypes)
     parameter = substituteType(parameter, substitution);
@@ -258,8 +334,16 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
   if (ownerId)
     for (const auto &parameter : publicClassInfo(ownerId).genericArgumentPatternLifetimes) {
       const auto selected = substitution.lifetimes.find(parameter.id);
-      if (selected == substitution.lifetimes.end())
+      if (selected == substitution.lifetimes.end()) {
+        const bool scoped = std::any_of(substitution.callableScopes.begin(), substitution.callableScopes.end(),
+            [&](const auto &scope) {
+              return std::any_of(scope.regionBindings.begin(), scope.regionBindings.end(),
+                  [&](const auto &binding) { return binding.first == Lifetime::parameter(parameter.id); });
+            });
+        if (scoped && !function && !constructor && !destructor)
+          continue;
         return std::nullopt;
+      }
       projectedRegions.emplace_back(Lifetime::parameter(parameter.id), selected->second);
     }
   const auto projectedContract = substituteLifetimeContract(

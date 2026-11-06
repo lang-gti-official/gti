@@ -59,6 +59,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   instanceTypeSubstitution.clear();
   instanceValueSubstitution.clear();
   instanceLifetimeSubstitution.clear();
+  instanceCallableScopes.clear();
+  requestSession.callablePatternTypeDepth = 0;
   nextLambdaId = 1;
   requestSession.sourceLambdaIdentities.clear();
   nextSemanticLoanId = 1;
@@ -506,6 +508,7 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
     semanticModel.recordGenericParameter(parameter);
 
   prepareInstanceAnalysis();
+  instanceCallableScopes = canonical->callableScopes;
   instanceAnalysisActive = true;
   instanceBaseModel = &scope.baseModel;
   seedExternalLambdaTypes(functionTypeArguments, scope.baseModel);
@@ -533,8 +536,7 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
   concreteFunction.ownerlessTextParameters.clear();
   concreteFunction.ownerlessTextFields.clear();
   concreteFunction.publishedTextFields.clear();
-  const GenericSubstitution substitution{.types = instanceTypeSubstitution,
-                                         .values = instanceValueSubstitution};
+  const auto substitution = currentGenericSubstitution(false);
   if (retainsLifetimeContract) {
     auto supplierSubstitution = substitution;
     // These are canonical instance binders, including regions projected from
@@ -740,6 +742,7 @@ auto SemanticVisitor::Impl::analyzeConstructorInstance(
   }
 
   prepareInstanceAnalysis();
+  instanceCallableScopes = canonical->callableScopes;
   instanceAnalysisActive = true;
   instanceBaseModel = &scope.baseModel;
   seedExternalLambdaTypes(constructorTypeArguments, scope.baseModel);
@@ -822,6 +825,7 @@ auto SemanticVisitor::Impl::analyzeDestructorInstance(
   semanticModel.record(*classType->declaration, std::move(concreteLifecycle));
 
   prepareInstanceAnalysis();
+  instanceCallableScopes = canonical->callableScopes;
   if (!prepareClassInstanceContext(classId, classTypeArguments,
                                    classValueArguments)) {
     return scope.finish();
@@ -862,6 +866,7 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
     semanticModel.recordGenericParameter(parameter);
 
   prepareInstanceAnalysis();
+  instanceCallableScopes = canonical->callableScopes;
   if (!prepareClassInstanceContext(classId, classTypeArguments,
                                    classValueArguments)) {
     return scope.finish();
@@ -2312,8 +2317,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     const SemanticType declaredType =
         constructorInfo && parameterIndex < constructorInfo->parameterTypes.size()
             ? substituteType(constructorInfo->parameterTypes[parameterIndex],
-                             GenericSubstitution{.types = instanceTypeSubstitution,
-                                                 .values = instanceValueSubstitution})
+                             currentGenericSubstitution(false))
             : parameterBindingType(parameter);
     const SemanticType parameterType =
         parameter.pack && declaredType.kind == SemanticType::TypeParameter
@@ -2419,32 +2423,29 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   if (collectingRawFields)
     declareReceiverState();
 
-  for (const Parameter &parameter : stmt.parameters()) {
-    if (!parameter.name.lexeme.empty()) {
-      const std::size_t parameterIndex = &parameter - stmt.parameters().data();
-      const SemanticType declaredType =
-          parameterIndex < constructorInfo->parameterTypes.size()
-              ? substituteType(constructorInfo->parameterTypes[parameterIndex],
-                               GenericSubstitution{.types = instanceTypeSubstitution,
-                                                   .values = instanceValueSubstitution})
-              : parameterBindingType(parameter);
-      const SemanticType parameterType =
-          parameter.pack && declaredType.kind == SemanticType::TypeParameter
-              ? SemanticType::typePack(declaredType.genericParameterId)
-              : declaredType;
-      recordProgramCleanupEffects(parameterType, tokenSpan(parameter.name));
-      declare(parameter.name, parameterType,
-              parameter.mutability == Mutability::Mutable,
-              SemanticBindingKind::Parameter, nullptr, &parameter);
-      recordParameterEntryLoan(parameter);
-    }
-  }
-
-  if (collectingRawFields) {
+  if (instanceAnalysisActive || collectingRawFields) {
+    // Defaults belong to the field declaration, not the constructor's lexical
+    // parameter scope. Reanalyze selected defaults in this exact executable
+    // owner universe before declaring value parameters, and hide constructor
+    // generic/requirement names without discarding the owner's substitutions.
+    const auto suspend = [](auto &stack) {
+      auto frame = std::move(stack.back());
+      stack.pop_back();
+      return frame;
+    };
+    auto constructorRequirements = suspend(requirementScopes);
+    auto constructorGenericRequirements = suspend(requirementScopes);
+    auto constructorTypes = suspend(typeParameterScopes);
+    auto constructorValues = suspend(valueParameterScopes);
+    auto constructorLifetimes = suspend(lifetimeParameterScopes);
+    auto constructorPacks = suspend(typePackScopes);
+    const bool enclosingFieldInitializer = analyzingFieldInitializer;
+    analyzingFieldInitializer = true;
     for (const auto &field : owner.fields) {
+      if (!field.declaration)
+        continue;
       const auto &declaration = *field.declaration;
-      if (!declaration.initializer() ||
-          std::any_of(stmt.initializers().begin(), stmt.initializers().end(),
+      if (std::any_of(stmt.initializers().begin(), stmt.initializers().end(),
                       [&](const auto &initializer) {
                         return initializer.target.name.last().lexeme ==
                                declaration.name().lexeme;
@@ -2455,19 +2456,55 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
         continue;
       const auto fieldType =
           substituteSymbol(member->second.symbol, openClassType(owner.id)).type;
-      analyzeInitializer(declaration.initializer(), fieldType, false, true);
-      const SemanticPlace fieldPlace{
-          .root = receiverStateSymbol(),
-          .projections = {{.kind = PlaceProjectionKind::Field,
-                           .field = toolingSymbolFor(member->second.symbol)}},
-          .receiver = true};
-      if (recordsDeclarationConversion(*declaration.initializer()))
-        applyRawPointerFields(fieldPlace,
-                              contextualConstructionRawFields(
-                                  *declaration.initializer(), fieldType),
-                              true);
-      else
-        assignRawPointerFields(fieldPlace, declaration.initializer().get());
+      const auto &initializer =
+          !declaration.initializer() && fieldType.kind == SemanticType::Class &&
+                  isDefaultInitializable(fieldType, true)
+              ? semanticModel.implicitFieldInitializer(declaration)
+              : declaration.initializer();
+      if (!initializer)
+        continue;
+      semanticModel.recordFullExpression(declaration, initializer);
+      analyzeInitializer(initializer, fieldType, false, true);
+      if (collectingRawFields) {
+        const SemanticPlace fieldPlace{
+            .root = receiverStateSymbol(),
+            .projections = {{.kind = PlaceProjectionKind::Field,
+                             .field = toolingSymbolFor(member->second.symbol)}},
+            .receiver = true};
+        if (recordsDeclarationConversion(*initializer))
+          applyRawPointerFields(fieldPlace,
+                                contextualConstructionRawFields(*initializer, fieldType),
+                                true);
+        else
+          assignRawPointerFields(fieldPlace, initializer.get());
+      }
+    }
+    analyzingFieldInitializer = enclosingFieldInitializer;
+    typeParameterScopes.push_back(std::move(constructorTypes));
+    valueParameterScopes.push_back(std::move(constructorValues));
+    lifetimeParameterScopes.push_back(std::move(constructorLifetimes));
+    typePackScopes.push_back(std::move(constructorPacks));
+    requirementScopes.push_back(std::move(constructorGenericRequirements));
+    requirementScopes.push_back(std::move(constructorRequirements));
+  }
+
+  for (const Parameter &parameter : stmt.parameters()) {
+    if (!parameter.name.lexeme.empty()) {
+      const std::size_t parameterIndex = &parameter - stmt.parameters().data();
+      const SemanticType declaredType =
+          parameterIndex < constructorInfo->parameterTypes.size()
+              ? substituteType(constructorInfo->parameterTypes[parameterIndex],
+                               currentGenericSubstitution(false))
+              : parameterBindingType(parameter);
+      const SemanticType parameterType =
+          parameter.pack && declaredType.kind == SemanticType::TypeParameter
+              ? SemanticType::typePack(declaredType.genericParameterId)
+              : declaredType;
+      recordProgramCleanupEffects(parameterType, tokenSpan(parameter.name));
+      declare(parameter.name, parameterType,
+              parameter.mutability == Mutability::Mutable,
+              SemanticBindingKind::Parameter, nullptr, &parameter);
+      recordParameterEntryLoan(parameter);
     }
   }
 
@@ -3950,8 +3987,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     const SemanticType declaredType =
         functionInfo && parameterIndex < functionInfo->parameterTypes.size()
             ? substituteType(functionInfo->parameterTypes[parameterIndex],
-                             GenericSubstitution{.types = instanceTypeSubstitution,
-                                                 .values = instanceValueSubstitution})
+                             currentGenericSubstitution(false))
             : parameterBindingType(parameter);
     const SemanticType parameterType =
         parameter.pack && declaredType.kind == SemanticType::TypeParameter
@@ -4413,6 +4449,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
       .lifetimeInferences = std::move(lifetimeInferences),
       .currentReceiverLifetime = currentReceiverLifetime,
       .deferredNominalFormation = requestSession.deferredNominalFormation,
+      .callablePatternTypeDepth = requestSession.callablePatternTypeDepth,
       .typePackScopes = std::move(typePackScopes),
       .requirementScopes = std::move(requirementScopes),
       .currentNamespace = std::move(currentNamespace),
@@ -4471,6 +4508,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
   lifetimeInferences.clear();
   currentReceiverLifetime = {};
   requestSession.deferredNominalFormation = 0;
+  requestSession.callablePatternTypeDepth = 0;
   typePackScopes.clear();
   requirementScopes.clear();
   currentNamespace.clear();
@@ -4527,6 +4565,7 @@ auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
   lifetimeInferences = std::move(state.lifetimeInferences);
   currentReceiverLifetime = state.currentReceiverLifetime;
   requestSession.deferredNominalFormation = state.deferredNominalFormation;
+  requestSession.callablePatternTypeDepth = state.callablePatternTypeDepth;
   typePackScopes = std::move(state.typePackScopes);
   requirementScopes = std::move(state.requirementScopes);
   currentNamespace = std::move(state.currentNamespace);
@@ -11221,6 +11260,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   auto enclosingLifetimeScopes = lifetimeParameterScopes;
   const auto enclosingReceiverLifetime = currentReceiverLifetime;
   auto enclosingTypeSubstitution = instanceTypeSubstitution;
+  auto enclosingCallableScopes = instanceCallableScopes;
+  auto enclosingLifetimeSubstitution = instanceLifetimeSubstitution;
   for (auto &scope : lifetimeParameterScopes)
     for (auto &[name, region] : scope) {
       (void)name;
@@ -11236,6 +11277,30 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   for (auto &[parameter, type] : instanceTypeSubstitution) {
     (void)parameter;
     ambientType(type);
+  }
+  const auto ambientRegion = [&](Lifetime region) {
+    const auto found = std::find_if(ambientLifetimes.begin(), ambientLifetimes.end(),
+        [&](const auto &binding) { return binding.first == region; });
+    return found == ambientLifetimes.end() ? region : found->second;
+  };
+  for (auto &[parameter, region] : instanceLifetimeSubstitution) {
+    (void)parameter;
+    region = ambientRegion(region);
+  }
+  for (auto &capture : instanceCallableScopes) {
+    for (auto &[parameter, region] : capture.imports) {
+      (void)parameter;
+      region = ambientRegion(region);
+    }
+    for (auto &[parameter, type] : capture.capturedTypes) {
+      (void)parameter;
+      ambientType(type);
+    }
+    ambientType(capture.signature);
+    for (auto &[from, to] : capture.regionBindings) {
+      (void)from;
+      to = ambientRegion(to);
+    }
   }
 
   std::unordered_map<std::string, Token> unavailableLocals;
@@ -11458,6 +11523,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   lifetimeParameterScopes = std::move(enclosingLifetimeScopes);
   currentReceiverLifetime = enclosingReceiverLifetime;
   instanceTypeSubstitution = std::move(enclosingTypeSubstitution);
+  instanceCallableScopes = std::move(enclosingCallableScopes);
+  instanceLifetimeSubstitution = std::move(enclosingLifetimeSubstitution);
   restoreRawProgramStorage(std::move(enclosingRawProgramStorage));
 
   std::vector<SemanticType> captureTypes;
@@ -13996,9 +14063,9 @@ auto SemanticVisitor::Impl::makeConstexprInterpreter() const
   context.work = requestSession.constexprWork
                      ? requestSession.constexprWork
                      : std::make_shared<ConstexprWorkBudget>();
-  if (!instanceTypeSubstitution.empty() || !instanceValueSubstitution.empty()) {
-    context.substitutions.push_back({.types = instanceTypeSubstitution,
-                                     .values = instanceValueSubstitution});
+  if (!instanceTypeSubstitution.empty() || !instanceValueSubstitution.empty() ||
+      !instanceCallableScopes.empty()) {
+    context.substitutions.push_back(currentGenericSubstitution(false));
   }
   return context;
 }
@@ -15572,11 +15639,19 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
         classSubstitution(constexprType(resolved->dispatchOwner, context));
   }
 
+  if (functionInfo->ownerClass != 0 &&
+      !importMemberCallableScopes(substitution, InstanceAnalysisKind::Function,
+          functionInfo->id, constexprType(resolved->dispatchOwner, context), declaration->name()))
+    return constexprFailure(callSite, ConstantEvaluationFailure::UnsupportedExpression,
+                            "The selected callable member has no valid invocation scope.");
+
   std::size_t typeArgument = 0;
   std::size_t valueArgument = 0;
   for (const GenericParameterInfo &parameter :
        functionInfo->genericParameters) {
-    if (parameter.pack) {
+    if (parameter.lifetime) {
+      continue;
+    } else if (parameter.pack) {
       std::vector<SemanticType> elements;
       while (typeArgument < resolved->typeArguments.size())
         SemanticType::appendExpandedArgument(

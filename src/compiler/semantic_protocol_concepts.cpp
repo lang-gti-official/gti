@@ -1460,9 +1460,7 @@ auto SemanticVisitor::Impl::blockScopeType(
   }
   return substituteType(
       substituteType(type, substitution),
-      GenericSubstitution{.types = instanceTypeSubstitution,
-                          .values = instanceValueSubstitution,
-                          .lifetimes = instanceLifetimeSubstitution});
+      currentGenericSubstitution());
 }
 
 // Inside a block's function its own associated types are transparent: an
@@ -1778,9 +1776,7 @@ auto SemanticVisitor::Impl::protocolOperationTarget(const QualifiedName &callee)
   if (!resolved)
     return std::nullopt;
   std::vector<SemanticType> arguments;
-  const GenericSubstitution instance{.types = instanceTypeSubstitution,
-                                     .values = instanceValueSubstitution,
-                                     .lifetimes = instanceLifetimeSubstitution};
+  const auto instance = currentGenericSubstitution();
   for (const auto &argument : resolved->types)
     arguments.push_back(substituteType(argument, instance));
   const std::optional<ConformanceMatch> match =
@@ -1878,9 +1874,7 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
         operation.genericParameters[argumentIndex].id, region);
   }
   std::vector<SemanticType> arguments;
-  const GenericSubstitution instance{.types = instanceTypeSubstitution,
-                                     .values = instanceValueSubstitution,
-                                     .lifetimes = instanceLifetimeSubstitution};
+  const auto instance = currentGenericSubstitution();
   for (const auto &argument : resolved.types) {
     arguments.push_back(substituteType(argument, instance));
     if (arguments.back() == SemanticType::Unknown)

@@ -1,5 +1,6 @@
 #include "gti/hir.h"
 #include "gti/instance_analysis_cache.h"
+#include "gti/generic_type_patterns.h"
 #include "gti/lifetime_types.h"
 #include "gti/callable_lifetimes.h"
 
@@ -1589,7 +1590,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         constructionContexts.emplace(&body, substitution);
     if (inserted)
       constructionBodies.push_back(&body);
-    else if (found->second != substitution) {
+    else if (!equivalentGenericSubstitutions(found->second, substitution)) {
       ambiguousConstructionContexts.insert(&body);
       result.errors.emplace_back(
           "construction body has ambiguous instance arguments");
@@ -1704,21 +1705,22 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                               ownerType.arguments, ownerType.valueArguments,
                               ownerType.lifetimeArguments);
     if (!declaration->genericArgumentPatterns.empty()) {
+      GenericSubstitution valuesOnly;
+      valuesOnly.values = substitution.values;
       std::vector<SemanticType> patterns;
       for (const auto &pattern : declaration->genericArgumentPatterns)
-        SemanticType::appendExpandedArgument(patterns,
-            substituteSemanticType(pattern, substitution, &semantics));
-      std::vector<Lifetime> projected;
-      for (const auto &parameter : declaration->genericArgumentPatternLifetimes)
-        projected.push_back(Lifetime::parameter(parameter.id));
-      const auto bindings = matchUniversalTypeArgumentLifetimes(patterns, ownerType.arguments, projected);
-      if (!bindings || bindings->size() != projected.size())
+        patterns.push_back(substituteSemanticType(pattern, valuesOnly, &semantics));
+      const auto matched = deriveGenericArgumentPatternSubstitution(
+          patterns, ownerType.arguments,
+          genericParameterIdentities(publicDeclaration->genericParameters),
+          genericParameterIdentities(declaration->genericArgumentPatternLifetimes),
+          substitution);
+      if (!matched) {
         result.errors.emplace_back("construction context lost its exact projected lifetime arguments");
-      else
-        for (const auto &[parameter, actual] : *bindings)
-          if (const auto [found, inserted] = substitution.lifetimes.emplace(parameter.id, actual);
-              !inserted && found->second != actual)
-            result.errors.emplace_back("construction projected lifetime arguments conflict");
+        substitution.valid = false;
+      } else {
+        substitution = *matched;
+      }
     }
     return substitution;
   };

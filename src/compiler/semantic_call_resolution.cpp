@@ -126,8 +126,7 @@ auto SemanticVisitor::Impl::typeAliasForCallee(const ExprPtr &callee) const
     if (alias) {
       alias->type = substituteType(
           alias->type,
-          GenericSubstitution{.types = instanceTypeSubstitution,
-                              .values = instanceValueSubstitution});
+          currentGenericSubstitution(false));
     }
     return alias;
   };

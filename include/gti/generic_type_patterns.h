@@ -12,6 +12,107 @@ namespace lang {
 
 enum class GenericPatternMatch { Structure, Complete };
 
+// Projection identities used outside invocation nodes belong to the nominal
+// environment. The same identity inside a signature is then fixed by that
+// environment, rather than captured as a new invocation binder.
+[[nodiscard]] inline std::vector<GenericParameterId>
+nominalPatternLifetimeParameters(std::span<const SemanticType> patterns) {
+  std::vector<GenericParameterId> result;
+  const auto visit = [&](auto &&self, const SemanticType &type) -> void {
+    if (type.kind == SemanticType::FunctionSignature || type.kind == SemanticType::NativeFunction)
+      return;
+    const auto add = [&](Lifetime region) {
+      if (region.kind == Lifetime::Kind::Parameter &&
+          std::find(result.begin(), result.end(), region.id) == result.end())
+        result.push_back(region.id);
+    };
+    add(type.referenceLifetime);
+    for (const auto region : type.lifetimeArguments)
+      add(region);
+    lifetime_detail::children(type, [&](const auto &child) { self(self, child); });
+  };
+  for (const auto &pattern : patterns)
+    visit(visit, pattern);
+  return result;
+}
+
+// Proof-local invocation IDs may differ between consumers. Only lexical
+// invocation binders are alpha-renamed: nominal/free regions and imported
+// member universals remain exact. Cache keys may keep their stricter raw
+// identity, but structural proof comparisons use this relation.
+[[nodiscard]] inline bool equivalentGenericSubstitutions(
+    const GenericSubstitution &left, const GenericSubstitution &right) {
+  if (!left.valid || !right.valid || left.values != right.values ||
+      left.lifetimes != right.lifetimes || left.types.size() != right.types.size() ||
+      left.callableScopes.size() != right.callableScopes.size())
+    return false;
+  for (const auto &[id, type] : left.types) {
+    const auto found = right.types.find(id);
+    if (found == right.types.end() || !equivalentLifetimeTypes(type, found->second))
+      return false;
+  }
+  for (const auto &scope : left.callableScopes) {
+    const auto other = std::find_if(right.callableScopes.begin(), right.callableScopes.end(),
+        [&](const auto &candidate) { return candidate.argumentPath == scope.argumentPath; });
+    if (other == right.callableScopes.end() || scope.pattern != other->pattern ||
+        scope.capturedTypes.size() != other->capturedTypes.size() ||
+        scope.regionBindings.size() != other->regionBindings.size() ||
+        scope.imports.size() != other->imports.size())
+      return false;
+    std::vector<LifetimeBinding> bindings;
+    std::vector<LifetimeBinding> parents;
+    for (const auto &ancestor : left.callableScopes) {
+      if (ancestor.argumentPath.size() > scope.argumentPath.size() ||
+          !std::equal(ancestor.argumentPath.begin(), ancestor.argumentPath.end(),
+                      scope.argumentPath.begin()))
+        continue;
+      const auto paired = std::find_if(right.callableScopes.begin(), right.callableScopes.end(),
+          [&](const auto &candidate) { return candidate.argumentPath == ancestor.argumentPath; });
+      if (paired == right.callableScopes.end() ||
+          ancestor.signature.quantifiedLifetimes.size() != paired->signature.quantifiedLifetimes.size())
+        return false;
+      for (std::size_t index = 0; index < ancestor.signature.quantifiedLifetimes.size(); ++index)
+        {
+          const LifetimeBinding binding{Lifetime::parameter(ancestor.signature.quantifiedLifetimes[index]),
+                                        Lifetime::parameter(paired->signature.quantifiedLifetimes[index])};
+          bindings.push_back(binding);
+          if (ancestor.argumentPath != scope.argumentPath)
+            parents.push_back(binding);
+        }
+    }
+    // The signature itself binds its own inventory. Supply only its ancestors
+    // to the recursive alpha comparison.
+    if (!equivalentLifetimeTypes(scope.signature, other->signature, parents))
+      return false;
+    const auto region = [&](Lifetime value) {
+      const auto found = std::find_if(bindings.begin(), bindings.end(),
+          [&](const auto &binding) { return binding.first == value; });
+      return found == bindings.end() ? value : found->second;
+    };
+    for (const auto &[id, type] : scope.capturedTypes) {
+      const auto found = other->capturedTypes.find(id);
+      if (found == other->capturedTypes.end() ||
+          !equivalentLifetimeTypes(type, found->second, bindings))
+        return false;
+    }
+    for (const auto &[from, to] : scope.regionBindings) {
+      const auto found = std::find_if(other->regionBindings.begin(), other->regionBindings.end(),
+          [&](const auto &binding) { return binding.first == from; });
+      if (found == other->regionBindings.end() || region(to) != found->second)
+        return false;
+    }
+    for (const auto &[id, value] : scope.imports) {
+      const auto renamed = region(Lifetime::parameter(id));
+      if (renamed.kind != Lifetime::Kind::Parameter)
+        return false;
+      const auto found = other->imports.find(renamed.id);
+      if (found == other->imports.end() || found->second != value)
+        return false;
+    }
+  }
+  return true;
+}
+
 // Match an already selected type/value recipe. Structural selection deliberately
 // ignores region relationships; Complete is a separate formation obligation and
 // cannot select a different nominal family after a failed relationship.
@@ -24,7 +125,7 @@ deriveGenericArgumentPatternSubstitution(
     std::span<const GenericParameterIdentity> projectedLifetimes,
     GenericSubstitution seed = {},
     GenericPatternMatch mode = GenericPatternMatch::Complete) {
-  if (patterns.size() != actual.size())
+  if (!seed.valid || patterns.size() != actual.size())
     return std::nullopt;
   const auto parameter = [&](GenericParameterId id) -> const GenericParameterIdentity * {
     const auto found = std::find_if(parameters.begin(), parameters.end(),
@@ -59,6 +160,7 @@ deriveGenericArgumentPatternSubstitution(
   for (const auto &parameter : projectedLifetimes)
     seed.lifetimes.erase(parameter.id);
   std::vector<std::size_t> scopes;
+  const auto nominalRegions = nominalPatternLifetimeParameters(patterns);
   std::size_t work = 0;
   const auto scopedActual = [&](Lifetime region) {
     return region.kind == Lifetime::Kind::Parameter &&
@@ -77,7 +179,9 @@ deriveGenericArgumentPatternSubstitution(
     const bool projection = from.kind == Lifetime::Kind::Parameter && projected(from.id);
     const bool hole = from.kind == Lifetime::Kind::Unspecified ||
                       from.kind == Lifetime::Kind::Inference;
-    if (!scopes.empty() && (projection || hole)) {
+    const bool nominalProjection = projection &&
+        std::find(nominalRegions.begin(), nominalRegions.end(), from.id) != nominalRegions.end();
+    if (!scopes.empty() && ((projection && !nominalProjection) || hole)) {
       if (!to.specified())
         return hole;
       // Unspecified slots have no reusable declaration identity. A concrete
@@ -118,10 +222,25 @@ deriveGenericArgumentPatternSubstitution(
     };
     if (const auto found = seed.types.find(id); found != seed.types.end())
       return !scope && equal(found->second);
-    for (const auto &captured : seed.callableScopes)
-      if (const auto found = captured.capturedTypes.find(id);
-          found != captured.capturedTypes.end())
-        return scope && equal(found->second);
+    for (std::size_t index = 0; index < seed.callableScopes.size(); ++index)
+      if (const auto found = seed.callableScopes[index].capturedTypes.find(id);
+          found != seed.callableScopes[index].capturedTypes.end()) {
+        if (!scope)
+          return false;
+        if (index == *scope)
+          return equal(found->second);
+        const auto &previous = seed.callableScopes[index].signature.quantifiedLifetimes;
+        const auto &current = seed.callableScopes[*scope].signature.quantifiedLifetimes;
+        if (previous.size() != current.size())
+          return false;
+        std::vector<LifetimeBinding> alpha;
+        for (std::size_t binder = 0; binder < previous.size(); ++binder)
+          alpha.emplace_back(Lifetime::parameter(previous[binder]), Lifetime::parameter(current[binder]));
+        if (!equivalentLifetimeTypes(found->second, type, alpha))
+          return false;
+        seed.callableScopes[*scope].capturedTypes.emplace(id, std::move(type));
+        return true;
+      }
     if (scope)
       seed.callableScopes[*scope].capturedTypes.emplace(id, std::move(type));
     else
@@ -244,6 +363,8 @@ template <class SubstituteValue, class ResolveType>
 [[nodiscard]] std::optional<SemanticType> substituteScopedGenericType(
     const SemanticType &type, const GenericSubstitution &substitution,
     const SubstituteValue &substituteValue, const ResolveType &resolveType) {
+  if (!substitution.valid)
+    return std::nullopt;
   std::vector<std::size_t> active;
   std::size_t work = 0;
   const auto callable = [](const SemanticType &type) {
@@ -274,7 +395,14 @@ template <class SubstituteValue, class ResolveType>
   };
   const auto scopedRegion = [&](Lifetime region) -> std::optional<Lifetime> {
     std::optional<Lifetime> result;
+    const bool hasActive = std::any_of(active.begin(), active.end(), [&](auto index) {
+      const auto &bindings = substitution.callableScopes[index].regionBindings;
+      return std::any_of(bindings.begin(), bindings.end(),
+                         [&](const auto &binding) { return binding.first == region; });
+    });
     for (std::size_t index = 0; index < substitution.callableScopes.size(); ++index) {
+      if (hasActive && !isActive(index))
+        continue;
       const auto &scope = substitution.callableScopes[index];
       for (const auto &[from, actual] : scope.regionBindings) {
         if (!from.specified() || from != region)
@@ -319,10 +447,15 @@ template <class SubstituteValue, class ResolveType>
     if (input.kind == SemanticType::TypeParameter ||
         (input.kind == SemanticType::TypePack && !input.concretePack)) {
       std::optional<SemanticType> captured;
+      const bool hasActive = std::any_of(active.begin(), active.end(), [&](auto index) {
+        return substitution.callableScopes[index].capturedTypes.contains(input.genericParameterId);
+      });
       for (std::size_t index = 0; index < substitution.callableScopes.size(); ++index) {
         const auto &scope = substitution.callableScopes[index];
         const auto found = scope.capturedTypes.find(input.genericParameterId);
         if (found == scope.capturedTypes.end())
+          continue;
+        if (hasActive && !isActive(index))
           continue;
         auto value = isActive(index) ? std::optional(found->second) : import(found->second, index);
         if (!value || (captured && !equivalentLifetimeTypes(*captured, *value)))
@@ -364,6 +497,12 @@ template <class SubstituteValue, class ResolveType>
                              [&](const auto &binding) { return binding.first == region; });
         });
         if (!relevantType && !relevantRegion)
+          continue;
+        if (std::any_of(active.begin() + savedActive, active.end(), [&](auto selected) {
+              const auto &previous = substitution.callableScopes[selected];
+              return previous.pattern == scope.pattern &&
+                     equivalentLifetimeTypes(previous.signature, scope.signature);
+            }))
           continue;
         // Two independent captured scopes must not acquire a coincidental
         // equality from reused numeric identities.

@@ -15,6 +15,8 @@ struct SemanticLifetimeTestAccess {
   struct CacheChecks {
     bool repeatedHit = false;
     bool distinctLifetimeMiss = false;
+    bool distinctCallableScopeMiss = false;
+    bool invalidSubstitutionRejected = false;
     bool distinctGenerationMiss = false;
     bool distinctBoundaryMiss = false;
     bool workerRefreshed = false;
@@ -45,6 +47,14 @@ struct SemanticLifetimeTestAccess {
     const auto different = key();
     checks.distinctLifetimeMiss = different && !cache->find(*different);
     substitution.lifetimes[1] = Lifetime::staticLifetime();
+    substitution.callableScopes.push_back({.argumentPath = {0},
+        .pattern = SemanticType::functionSignature(SemanticType::typeParameter(11), {}),
+        .signature = SemanticType::functionSignature(SemanticType::Int32, {})});
+    const auto scoped = key();
+    checks.distinctCallableScopeMiss = scoped && !cache->find(*scoped);
+    substitution.valid = false;
+    checks.invalidSubstitutionRejected = !key();
+    substitution = original->substitution;
     ++impl.requestSession.lifetimeContractRevision;
     const auto revised = key();
     checks.distinctGenerationMiss = revised && !cache->find(*revised);
@@ -605,6 +615,59 @@ int main() { return 0; }
          "higher-ranked binder scopes and repeated uses survive alpha-canonicalization");
 }
 
+void testCallablePatternScopes() {
+  const auto parsed = analyze(R"(
+class ScopeCarrier<R(Args...)> {
+public:
+  using Signature = R(Args...);
+  ScopeCarrier() = default;
+  R invoke(Args... args);
+};
+using Selection = for<lifetime a, lifetime b> int&<a>(int&<a>, int&<b>);
+ScopeCarrier<Selection> selected();
+int main() { return 0; }
+)");
+  expectValid(parsed, "callable pattern projections retain their invocation scope until member instantiation");
+  lang::SemanticVisitor visitor;
+  expect(visitor.check(parsed.program), "scoped callable pattern provider accepts the symbolic recipe");
+  const auto *ownerSyntax = lang::stmtAs<lang::ClassDecl>(parsed.program.declarations()[0].get());
+  const auto *selection = alias(parsed, "Selection");
+  if (!ownerSyntax || !selection)
+    return;
+  const lang::FunctionInfo *method = nullptr;
+  for (const auto &member : ownerSyntax->members())
+    if (const auto *function = lang::stmtAs<lang::FunctionDecl>(member.get());
+        function && function->name().lexeme == "invoke")
+      method = visitor.model().findFunction(*function);
+  if (!method) {
+    expect(false, "scoped pattern method metadata exists");
+    return;
+  }
+  const auto instance = visitor.canonicalizeExecutableInstance(
+      {.declaration = method->id, .classTypes = {selection->type}});
+  expect(instance && instance->lifetimeContract.valid() && !instance->callableScopes.empty(),
+         "a concrete member receives a complete fresh invocation contract");
+  if (instance) {
+    std::vector<lang::SemanticType> parameters;
+    for (const auto &parameter : instance->parameterTypes)
+      lang::SemanticType::appendExpandedArgument(parameters, parameter);
+    const auto &stored = instance->ownerType.arguments.front();
+    expect(parameters.size() == 2 &&
+               instance->returnType.referenceLifetime == parameters[0].referenceLifetime &&
+               parameters[0].referenceLifetime != parameters[1].referenceLifetime &&
+               std::find(stored.quantifiedLifetimes.begin(), stored.quantifiedLifetimes.end(),
+                         parameters[0].referenceLifetime.id) == stored.quantifiedLifetimes.end(),
+           "member invocations preserve supplier correlation using universals distinct from the stored signature");
+  }
+  const auto escaped = analyze(R"(
+class Escaping<R(Args...)> { public: R leaked; Escaping(R source) : leaked(source) {} };
+using Selection = for<lifetime a> int&<a>(int&<a>);
+int main() { Escaping<Selection> item{1}; return 0; }
+)");
+  expect(!escaped.semanticValid,
+         "invocation-bound projections cannot escape as an ordinary stored field");
+}
+
 void testInferredCarrierRegions() {
   constexpr std::string_view declarations = R"(
 struct View<lifetime owner> {
@@ -797,6 +860,8 @@ void testPrivateLifetimeWorklist() {
   expect(cacheKeys.repeatedHit, "an unchanged staging request can reuse its result");
   expect(cacheKeys.distinctLifetimeMiss,
          "staged results distinguish explicit lifetime substitutions");
+  expect(cacheKeys.distinctCallableScopeMiss && cacheKeys.invalidSubstitutionRejected,
+         "staged results preserve callable scopes and reject invalid selected-family evidence");
   expect(cacheKeys.distinctGenerationMiss,
          "an inferred contract revision invalidates the previous staging environment");
   expect(cacheKeys.distinctBoundaryMiss,
@@ -1512,6 +1577,7 @@ int main() {
   testNominalVariance();
   testSpecializationLifetimeShape();
   testExecutableLifetimeIdentity();
+  testCallablePatternScopes();
   testInferredCarrierRegions();
   testProjectedPatternLifetimes();
   testEnumInitializerLifetimeComposition();

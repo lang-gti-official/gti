@@ -640,7 +640,10 @@ conditions. Missing initialization, ambiguous producers, stale guards, or an
 unproved conversion cannot establish that view. Semantic scalar-return mapping
 also compares a retained group's guards in the applied formal type's domain;
 it preserves the exact live parent and original ancestry across that conversion.
-Field projection filters sibling
+A structural enum-field region query resolves a unique payload symbol in the
+exact instantiated enum type and uses the stored external region when crossing
+a reference; branch guards, provenance and loan liveness remain independently
+required. Field projection filters sibling
 facts only after proving an exact ordinary Class field chain, and checks complete
 coverage of the selected field's typed enum domains. Crossing an enclosing enum
 guard requires a separate evaluated-selection proof; field projection does not
@@ -651,8 +654,14 @@ contents must match before the copied value adopts the stored group's parent.
 The body-flow replay retains those normalized inputs for the independent
 payload and cleanup-handoff checks; no attached result claim supplies them.
 Value-annotation and return-contract checks share the same producer/storage
-dataflow reconstruction. These facts neither establish nor replace ordinary
-loan, access, escape, movement or cleanup proofs.
+dataflow reconstruction. A conditional complete call or constructor result
+can exclude the declaration's first compact supplier, such as an empty first
+enum field. Its exact active sources therefore use this mandatory complete-set
+replay instead of the scalar first-origin mapper. The reconstructed sources
+must equal the entire published Stored group, including parents, access,
+paths and guards; an attached result set alone grants no authority. These facts
+neither establish nor replace ordinary loan, access, escape, movement or cleanup
+proofs.
 
 A by-value conditional carrier formal, such as a payload enum with a reference
 alternative, names no single stored reference. When such a function's complete
@@ -4712,8 +4721,11 @@ the owning scope ends the whole chain child-first.
 
 Returning a read-only reference parameter directly uses the same transfer as
 the by-value carrier and summarized call-result returns above. The parameter's
-seeded `Parameter` entry loan is the body's whole-extent capability and has no
-producing instruction, so it cannot become the escaping `Return` loan by
+seeded `Parameter` entry loan is the body's whole-extent capability. A whole
+reference formal's entry access must exactly equal its reference type, as for
+captures and concrete pack elements; program verification separately matches
+the root to the declared signature. This entry loan has no producing
+instruction, so it cannot become the escaping `Return` loan by
 reclassification: nothing in the body would ever name the address the return
 publishes, and a backend can only default-initialize that pointer. Lowering
 publishes a fresh parentless escaping `Return` loan from the entry loan's own

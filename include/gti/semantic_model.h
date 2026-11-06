@@ -2227,6 +2227,7 @@ struct GenericSubstitution {
   ValueSubstitution values;
   LifetimeSubstitution lifetimes;
   std::vector<GenericCallableScope> callableScopes;
+  bool valid = true;
   friend bool operator==(const GenericSubstitution &,
                          const GenericSubstitution &) = default;
 };
@@ -3750,6 +3751,7 @@ struct SemanticExecutableInstantiation {
   std::vector<SemanticType> types;
   SemanticType ownerType = SemanticType::Unknown;
   std::vector<GenericParameterInfo> liftedLifetimes;
+  std::vector<GenericCallableScope> callableScopes;
   std::vector<std::vector<GenericParameterId>> classLifetimeParameters;
   std::vector<std::vector<GenericParameterId>> functionLifetimeParameters;
   SemanticType returnType = SemanticType::Void;

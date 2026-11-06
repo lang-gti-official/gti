@@ -2,6 +2,7 @@
 
 #include "diagnostic_registry.h"
 #include "gti/generic_instantiation_limits.h"
+#include "gti/generic_type_patterns.h"
 #include "gti/instance_analysis_cache.h"
 #include "gti/lifetime_types.h"
 #include "gti/callable_lifetimes.h"
@@ -467,9 +468,21 @@ private:
                     const std::vector<CompileTimeValue> &valueArguments) const {
     const auto *publicDeclaration = baseModel
         ? baseModel->findPublicClassType(declaration.id) : nullptr;
-    return instanceSubstitution(publicDeclaration ? publicDeclaration->genericParameters
-                                                 : declaration.genericParameters, typeArguments,
-                                valueArguments);
+    const auto &parameters = publicDeclaration
+        ? publicDeclaration->genericParameters : declaration.genericParameters;
+    auto result = instanceSubstitution(parameters, typeArguments, valueArguments);
+    if (declaration.genericArgumentPatterns.empty())
+      return result;
+    GenericSubstitution valuesOnly;
+    valuesOnly.values = result.values;
+    std::vector<SemanticType> patterns;
+    for (const auto &pattern : declaration.genericArgumentPatterns)
+      patterns.push_back(substitute(pattern, valuesOnly));
+    const auto matched = deriveGenericArgumentPatternSubstitution(
+        patterns, typeArguments, genericParameterIdentities(parameters),
+        genericParameterIdentities(declaration.genericArgumentPatternLifetimes),
+        std::move(result));
+    return matched ? *matched : GenericSubstitution{.valid = false};
   }
 
   [[nodiscard]] static bool hasTypeLifetimes(const SemanticType &type) {
@@ -2701,10 +2714,8 @@ private:
     std::vector<SemanticType> classArguments;
     std::vector<CompileTimeValue> classValueArguments;
     if (snapshot.owner) {
-      const HirClassInstance &owner =
-          output.program.classes[*snapshot.owner - 1];
-      classArguments = owner.typeArguments;
-      classValueArguments = owner.valueArguments;
+      classArguments = snapshot.ownerType.arguments;
+      classValueArguments = snapshot.ownerType.valueArguments;
     }
     // An omitted body needs no primary facts of its own; a concrete instance
     // analysis below still requires them before it runs.
@@ -2718,7 +2729,7 @@ private:
     const std::string enclosingSourceFunctionName = currentSourceFunctionName;
     currentSourceFunctionName = declaration->qualifiedName;
     if (snapshot.owner) {
-      currentReceiverType = output.program.classes[*snapshot.owner - 1].type;
+      currentReceiverType = snapshot.ownerType;
       currentReceiverAccess =
           receiverAllowsMutation(declaration->declaration->receiverMutability())
               ? AccessMode::Mutable
@@ -2951,9 +2962,15 @@ private:
   void processConstructor(std::size_t index) {
     const HirConstructorInstance snapshot = output.program.constructors[index];
     const HirClassInstance owner = output.program.classes[snapshot.owner - 1];
-    const std::vector<SemanticType> &classArguments = owner.typeArguments;
+    const std::vector<SemanticType> &classArguments = snapshot.ownerType.arguments;
     const std::vector<CompileTimeValue> &classValueArguments =
-        owner.valueArguments;
+        snapshot.ownerType.valueArguments;
+    const auto ownerBindings = matchUniversalTypeLifetimes(
+        owner.type, snapshot.ownerType, owner.lifetimeContract.parameters);
+    if (!ownerBindings) {
+      lifecycleValid = false;
+      return;
+    }
     const SemanticType enclosingReceiverType = currentReceiverType;
     const AccessMode enclosingReceiverAccess = currentReceiverAccess;
     const std::string enclosingSourceFunctionName = currentSourceFunctionName;
@@ -2964,7 +2981,7 @@ private:
         "::" +
         (snapshot.generatedDefault ? owner.source->name().lexeme
                                    : snapshot.source->name().lexeme);
-    currentReceiverType = owner.type;
+    currentReceiverType = snapshot.ownerType;
     currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis *analysis =
         snapshot.generatedDefault ? nullptr
@@ -3166,10 +3183,15 @@ private:
     // lower them into the same body as explicit initializers so failure can
     // unwind previously completed fields and constructor parameters.
     SemanticInstanceAnalysis fieldAnalysis;
-    const SemanticModel *fieldModel = baseModel;
+    // Selected source defaults were checked in the constructor's own scope.
+    // Class initializer facts have different universal region identities and
+    // cannot be retagged into this model. Generated defaults retain the
+    // independently checked class initializer model.
+    const SemanticModel *fieldModel = analysis ? &analysis->model : baseModel;
     const auto *fieldOwner = baseModel->findClassType(owner.declaration);
-    if ((fieldOwner && fieldOwner->hasGenericBindings()) ||
-        !classArguments.empty() || !classValueArguments.empty()) {
+    if (snapshot.generatedDefault &&
+        ((fieldOwner && fieldOwner->hasGenericBindings()) ||
+         !classArguments.empty() || !classValueArguments.empty())) {
       const PhaseTimeScope timeScope("hir-instance-analysis", "fields");
       fieldAnalysis = instanceProvider->analyzeClassFieldInitializers(
           owner.declaration, classArguments, classValueArguments);
@@ -3201,7 +3223,12 @@ private:
         lifecycleValid = false;
         continue;
       }
-      initializers.push_back({.targetType = field.info.type,
+      const auto fieldType = substituteTypeLifetimes(field.info.type, *ownerBindings);
+      if (!fieldType) {
+        lifecycleValid = false;
+        continue;
+      }
+      initializers.push_back({.targetType = *fieldType,
                               .field = field.info.symbol,
                               .arguments = {*value},
                               .explicitArgumentCount = 1});
@@ -3264,7 +3291,7 @@ private:
     currentSourceFunctionName =
         (ownerInfo == nullptr ? std::string{} : ownerInfo->qualifiedName) +
         "::~" + snapshot.source->name().lexeme;
-    currentReceiverType = owner.type;
+    currentReceiverType = snapshot.ownerType;
     currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
@@ -3295,7 +3322,7 @@ private:
     HirBody body;
     body.roots =
         lowerStatements(snapshot.source->body()->statements(), *model,
-                        owner.typeArguments, owner.valueArguments, body);
+                        snapshot.ownerType.arguments, snapshot.ownerType.valueArguments, body);
     finalizeLifetimes(body, *model);
     lowerLoans(*model, body, snapshot.source);
     lowerLifetimeBody(model->findLifetimeBody(*snapshot.source->body()), body);

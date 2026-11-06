@@ -372,6 +372,25 @@ auto SemanticVisitor::Impl::normalizeDestructorLifetimeContract(
   destructor.lifetimeContract = std::move(contract);
 }
 
+auto SemanticVisitor::Impl::dependentCallablePattern(const SemanticType &type) const -> bool {
+  if (!isLifetimeInvocationSignature(type) || !currentClass)
+    return false;
+  const auto &owner = classInfo(*currentClass);
+  if (!owner.declaration || owner.declaration->genericArgumentPatterns().empty())
+    return false;
+  const auto depends = [&](auto &&self, const SemanticType &part) -> bool {
+    if ((part.kind == SemanticType::TypeParameter ||
+         (part.kind == SemanticType::TypePack && !part.concretePack)) &&
+        std::any_of(owner.genericParameters.begin(), owner.genericParameters.end(),
+                    [&](const auto &parameter) { return parameter.id == part.genericParameterId; }))
+      return true;
+    bool found = false;
+    lifetime_detail::children(part, [&](const auto &child) { found |= self(self, child); });
+    return found;
+  };
+  return depends(depends, type);
+}
+
 auto SemanticVisitor::Impl::normalizeCallableLifetimeType(
     SemanticType &type, const Token &site) const -> bool {
   std::size_t slot = 0;
@@ -381,6 +400,8 @@ auto SemanticVisitor::Impl::normalizeCallableLifetimeType(
   };
   const auto normalize = [&](auto &&self, SemanticType &current) -> bool {
     if (isLifetimeInvocationSignature(current)) {
+      if (dependentCallablePattern(current))
+        return true; // Its complete invocation is derived from actual pattern arguments.
       SemanticType unused = SemanticType::Void;
       std::vector<SemanticType> parameters{current};
       auto result = normalizeLifetimeSignature(unused, parameters, {}, {}, fresh);
@@ -394,6 +415,28 @@ auto SemanticVisitor::Impl::normalizeCallableLifetimeType(
     return valid;
   };
   return normalize(normalize, type);
+}
+
+auto SemanticVisitor::Impl::declarationTypeLifetimes(const SemanticType &type) const
+    -> std::vector<Lifetime> {
+  std::vector<Lifetime> result;
+  const auto visit = [&](auto &&self, const SemanticType &part,
+                         std::vector<GenericParameterId> bound) -> void {
+    if (dependentCallablePattern(part))
+      return;
+    bound.insert(bound.end(), part.quantifiedLifetimes.begin(), part.quantifiedLifetimes.end());
+    const auto add = [&](Lifetime region) {
+      if (region.specified() && (region.kind != Lifetime::Kind::Parameter ||
+          std::find(bound.begin(), bound.end(), region.id) == bound.end()))
+        appendUnique(result, region);
+    };
+    add(part.referenceLifetime);
+    for (const auto region : part.lifetimeArguments)
+      add(region);
+    lifetime_detail::children(part, [&](const auto &child) { self(self, child, bound); });
+  };
+  visit(visit, type, {});
+  return result;
 }
 
 auto SemanticVisitor::Impl::normalizeLifetimeSignature(
@@ -422,6 +465,8 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
                              std::vector<GenericParameterId> *quantified) -> void {
     if (isLifetimeInvocationSignature(type) ||
         type.kind == SemanticType::FunctionItem) {
+      if (dependentCallablePattern(type))
+        return;
       if (type.arguments.empty()) {
         valid = false;
         return;
@@ -429,7 +474,7 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
       std::vector<Lifetime> inputs;
       for (std::size_t index = 1; index < type.arguments.size(); ++index) {
         self(self, type.arguments[index], true, {}, &type.quantifiedLifetimes);
-        for (const auto region : freeTypeLifetimes(type.arguments[index]))
+        for (const auto region : declarationTypeLifetimes(type.arguments[index]))
           appendUnique(inputs, region);
       }
       self(self, type.arguments.front(), false,
@@ -465,10 +510,13 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
       self(self, child, input, resultRegion, quantified);
     });
   };
+  const auto freeRegions = [&](const SemanticType &type) {
+    return declarationTypeLifetimes(type);
+  };
   std::vector<Lifetime> inputRegions;
   for (auto &parameter : parameterTypes) {
     normalize(normalize, parameter, true, {}, nullptr);
-    for (const auto region : freeTypeLifetimes(parameter)) {
+    for (const auto region : freeRegions(parameter)) {
       appendUnique(inputRegions, region);
       addParameter(region);
     }
@@ -481,7 +529,7 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
   if (borrowedReceiver) {
     resultRegion = contract.receiver;
   } else if (borrowedParameter && *borrowedParameter < parameterTypes.size()) {
-    const auto regions = freeTypeLifetimes(parameterTypes[*borrowedParameter]);
+    const auto regions = freeRegions(parameterTypes[*borrowedParameter]);
     if (regions.size() == 1) {
       resultRegion = regions.front();
     } else if (!regions.empty()) {
@@ -492,7 +540,7 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
     }
   }
   normalize(normalize, returnType, false, resultRegion, nullptr);
-  for (const auto region : freeTypeLifetimes(returnType))
+  for (const auto region : freeRegions(returnType))
     addParameter(region);
   const auto assumptions = guaranteedLifetimeAssumptions(requirements);
   for (const auto bound : assumptions.regions)
@@ -504,7 +552,7 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
   // that region. Preserve opaque types as type bounds, rather than guessing
   // their borrowed fields from generic spelling or backend layout.
   const auto implied = [&](auto &&self, const SemanticType &type) -> void {
-    if (!type.quantifiedLifetimes.empty())
+    if (!type.quantifiedLifetimes.empty() || isLifetimeInvocationSignature(type))
       return; // Quantified assumptions are scoped to that callable's body.
     if (type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
         type.referenceLifetime.declarationRegion())

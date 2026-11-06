@@ -4742,8 +4742,7 @@ auto SemanticVisitor::Impl::collectStoredReferencePaths(
       }
       const SemanticType fieldType = substituteType(
           substituteType(member->second.symbol.type, substitution),
-          GenericSubstitution{.types = instanceTypeSubstitution,
-                              .values = instanceValueSubstitution});
+          currentGenericSubstitution(false));
       if (requireComplete && (fieldType.kind == SemanticType::Unknown ||
                               containsOpenTypeParameter(fieldType))) {
         invalid = true;

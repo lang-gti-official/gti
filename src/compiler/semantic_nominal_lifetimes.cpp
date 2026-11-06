@@ -3,6 +3,7 @@
 #include "gti/lifetime_requirements.h"
 #include "gti/callable_lifetimes.h"
 #include "gti/nominal_variance.h"
+#include "gti/generic_type_patterns.h"
 
 #include <algorithm>
 #include <functional>
@@ -24,7 +25,7 @@ auto SemanticVisitor::Impl::normalizeNominalStoredType(
     return;
   }
   std::vector<LifetimeBinding> bindings;
-  for (const Lifetime region : freeTypeLifetimes(type)) {
+  for (const Lifetime region : declarationTypeLifetimes(type)) {
     if (region.kind != Lifetime::Kind::Inference)
       continue;
     if (inheritedAnonymous) {
@@ -267,6 +268,8 @@ auto SemanticVisitor::Impl::nominalFormationRequirements(
     if (++work > 4096)
       return false;
     if (isLifetimeInvocationSignature(current)) {
+      if (dependentCallablePattern(current))
+        return true;
       if (!catalog.nominalLifetimeContractsReady)
         return true; // Registration revisits signatures after nominal contracts settle.
       // Body types may already fix a carrier slot to a local/inferred region.
@@ -286,6 +289,8 @@ auto SemanticVisitor::Impl::nominalFormationRequirements(
     if (current.kind == SemanticType::Class && current.classId && current.classId <= classes.size()) {
       declaration = &classInfo(current.classId).lifetimeContract;
       substitution = classSubstitution(current);
+      if (!substitution.valid)
+        return false;
       const auto &owner = publicClassInfo(current.classId);
       if (!owner.genericArgumentPatterns.empty()) {
         std::vector<SemanticType> patterns;
@@ -556,9 +561,23 @@ auto SemanticVisitor::Impl::inferNominalVariances() -> void {
   }
   const auto contractFor = [&](auto &owner, std::vector<SemanticType> fields,
                                std::span<const GenericParameterInfo> patternLifetimes = {}) {
+    auto context = currentClass;
+    std::vector<GenericParameterId> nominalPatternRegions;
+    if constexpr (requires { owner.genericArgumentPatterns; }) {
+      context = owner.id;
+      nominalPatternRegions = nominalPatternLifetimeParameters(owner.genericArgumentPatterns);
+    }
+    struct RestoreOwner {
+      std::optional<ClassId> &current;
+      std::optional<ClassId> saved;
+      ~RestoreOwner() { current = saved; }
+    } restoreOwner{currentClass, currentClass};
+    currentClass = context;
     LifetimeSignatureContract seed;
     for (const auto &parameter : patternLifetimes)
-      seed.parameters.push_back(Lifetime::parameter(parameter.id));
+      if (std::find(nominalPatternRegions.begin(), nominalPatternRegions.end(), parameter.id) !=
+          nominalPatternRegions.end())
+        seed.parameters.push_back(Lifetime::parameter(parameter.id));
     for (const auto &parameter : owner.genericParameters)
       if (parameter.lifetime) {
         seed.parameters.push_back(Lifetime::parameter(parameter.id));

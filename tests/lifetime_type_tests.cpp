@@ -173,6 +173,23 @@ void testCallablePatternCaptures() {
   expect(nestedRebuilt && nestedRebuilt->quantifiedLifetimes.empty() &&
              nestedRebuilt->arguments.back() == actual,
          "nested invocation binders stay inside their original signature boundary");
+  auto renamed = actual;
+  renamed.quantifiedLifetimes = {811, 812, 813};
+  renamed.arguments[0].referenceLifetime = Lifetime::parameter(811);
+  renamed.arguments[1].referenceLifetime = Lifetime::parameter(811);
+  renamed.arguments[2].referenceLifetime = Lifetime::parameter(812);
+  const auto alpha = deriveGenericArgumentPatternSubstitution(primary, std::array{renamed}, parameters, {});
+  expect(alpha && *alpha != *captured && equivalentGenericSubstitutions(*alpha, *captured),
+         "proof-local alpha identities retain exact captured scope equality without aliasing raw cache keys");
+  const auto repeatedCapture = deriveGenericArgumentPatternSubstitution(
+      std::array{primary.front(), primary.front()}, std::array{actual, renamed}, parameters, {});
+  expect(repeatedCapture && rebuild(primary.front(), *repeatedCapture) == actual,
+         "repeated pattern participants agree under independent alpha scopes");
+  auto invalid = *captured;
+  invalid.valid = false;
+  expect(!rebuild(primary.front(), invalid) &&
+             !deriveGenericArgumentPatternSubstitution(primary, values, parameters, {}, invalid),
+         "invalid selected-family evidence cannot become an identity substitution");
 
   const std::array projected{GenericParameterIdentity{.id = 13, .lifetime = true}};
   auto shell = SemanticType::referenceTo(r, AccessMode::ReadOnly);
@@ -185,6 +202,11 @@ void testCallablePatternCaptures() {
              refCapture->callableScopes.front().regionBindings ==
                  std::vector<LifetimeBinding>{{Lifetime::parameter(13), a}},
          "a named result-shell projection remains inside the matched invocation scope");
+  const auto repeatedReference = deriveGenericArgumentPatternSubstitution(
+      std::array{referencePattern.front(), referencePattern.front()},
+      std::array{actual, renamed}, parameters, projected);
+  expect(repeatedReference && rebuild(referencePattern.front(), *repeatedReference) == actual,
+         "named projected regions choose the active alpha scope when a recipe is repeated");
   const std::array repeated{SemanticType::functionSignature(shell, {shell})};
   auto unequal = SemanticType::functionSignature(reference(a), {reference(b)});
   unequal.quantifiedLifetimes = {a.id, b.id};

@@ -226,6 +226,27 @@ int&<a> read<lifetime a>(int&<a> input) {
 }
 int main() { int value = 7; return read(value) - 7; }
 """,
+    "projected_owner_field_defaults": """
+int initial_score() { return 7; }
+enum Reading<lifetime a> { empty, value(int&<a> item) };
+struct Default<Reading<source>> {
+  Reading<source> reading = Reading<source>::empty;
+  Default(int count) {}
+};
+struct Fixed<int&<source>> {
+  int&<source> value;
+  int score = initial_score();
+  Fixed(int&<source> input, int initial_score) : value(input) {}
+  int&<source> get() { return this.value; }
+};
+int main() {
+  Default<Reading<static>> empty{0};
+  int value = 2;
+  Fixed<int&> holder{value, 99};
+  if (holder.get() != 2) { return 1; }
+  return holder.score - 7;
+}
+""",
     "physical_payload": """
 enum State<T> { value(T item) };
 T&<region> get<T, lifetime region>(State<T>&<region> state) {

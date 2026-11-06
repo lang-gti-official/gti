@@ -267,9 +267,7 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
       for (const auto &binding : bindings)
         part(binding);
     }
-    const GenericSubstitution genericContext{
-        .types = instanceTypeSubstitution, .values = instanceValueSubstitution,
-        .lifetimes = instanceLifetimeSubstitution};
+    const auto genericContext = currentGenericSubstitution();
     const auto reused = std::find_if(
         proceduralExpansions.begin(), proceduralExpansions.end(),
         [&](const auto &entry) {
