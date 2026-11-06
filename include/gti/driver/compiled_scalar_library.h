@@ -19,8 +19,8 @@ struct ToolchainLayout;
 checkCompiledScalarProject(const ProjectBuildPlan &, const ToolchainLayout &,
                            ProgressObserver *progress = nullptr);
 // Development-only separate compilation with compiler-owned value type and
-// borrow contracts. Generic APIs and producer entry points/globals are
-// rejected.
+// borrow contracts. Producers may own verified passive zero/constant storage;
+// generic APIs, producer entry points and executable storage lifetimes reject.
 struct CompiledScalarLibraryResult {
   CompilationResult compilation;
   std::string bundle;

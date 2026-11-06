@@ -209,22 +209,36 @@ int main() {
     expect(rerun.succeeded(),
            "passive storage did not reset per process: " + rerun.output);
   }
-  for (std::string_view storage :
-       {"int initial() { return 1; } mut int total = initial();",
-        "thread_local mut int total;",
-        "class Guard { public: Guard() = default; ~Guard() {} }; "
-        "Guard guard; mut int total;"}) {
-    write(source, "export module numbers; " + std::string(storage) +
+  struct Rejection {
+    std::string_view storage, code, message;
+  };
+  for (const auto &test :
+       {Rejection{"int initial() { return 1; } mut int total = initial();",
+                  "GTI-B0003", "requires passive program storage"},
+        Rejection{"thread_local mut int total;", "GTI-B0003",
+                  "requires passive program storage"},
+        // Source-owned global cleanup is rejected by semantics before
+        // compiled-unit admission. Keep that earlier safety boundary.
+        Rejection{"class Guard { public: Guard() = default; ~Guard() {} }; "
+                  "Guard guard; mut int total;",
+                  "GTI-S2061", "requires source or owning cleanup"}}) {
+    write(source, "export module numbers; " + std::string(test.storage) +
                       " export int choose(int x) { return total + x; }");
     const auto rejected = buildCompiledScalarLibrary(
         request(root, source, OptimizationLevel::O3), keys(), runtime);
+    const bool storageLimitation = std::any_of(
+        rejected.compilation.diagnostics.begin(),
+        rejected.compilation.diagnostics.end(), [&](const auto &diagnostic) {
+          return diagnostic.code == test.code &&
+                 diagnostic.message.find(test.message) != std::string::npos;
+        });
+    std::string details;
+    for (const auto &diagnostic : rejected.compilation.diagnostics)
+      details += diagnostic.code + ": " + diagnostic.message + "\n";
     expect(!rejected.compilation.succeeded() && rejected.bundle.empty() &&
-               rejected.compilation.backendFailureDetails.value_or("").find(
-                   "requires passive program storage") != std::string::npos,
-           "dynamic/TLS/cleanup storage must fail compiled-unit admission: " +
-               std::string(storage) + ": " +
-               rejected.compilation.backendFailureDetails.value_or(
-                   "no backend failure"));
+               storageLimitation,
+           "unsupported storage must fail at its owning boundary: " +
+               std::string(test.storage) + ": " + details);
   }
   std::cout << "passive namespace/static/constant storage and source-absent "
                "execution passed at O0/O3\n";
