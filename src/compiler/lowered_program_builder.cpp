@@ -1367,6 +1367,7 @@ private:
         source.typeArguments != lowered.typeArguments ||
         source.valueArguments != lowered.valueArguments ||
         source.owner != lowered.owner ||
+        source.ownerType != lowered.ownerType ||
         source.returnType != lowered.returnType ||
         source.parameterTypes != lowered.parameterTypes ||
         !sameCallableParameters(source.callableParameters,
@@ -1426,6 +1427,7 @@ private:
     // verifyHirProgramPlans independently proves their exact reachable
     // inventory; an empty-statements check would reject that verified schedule.
     if (source.id != lowered.id || source.owner != lowered.owner ||
+        source.ownerType != lowered.ownerType ||
         source.generatedDefault != lowered.generatedDefault ||
         source.constexprConstructor != lowered.constexprConstructor ||
         source.requiresUnsafe != lowered.requiresUnsafe ||
@@ -1535,6 +1537,7 @@ private:
     const HirDestructorInstance &source = hir.destructorInstances()[index];
     const MirDestructorInstance &lowered = mir.destructorInstances()[index];
     if (source.id != lowered.id || source.owner != lowered.owner ||
+        source.ownerType != lowered.ownerType ||
         source.liftedLifetimes != lowered.liftedLifetimes ||
         source.lifetimeContract != lowered.lifetimeContract ||
         source.body.placeDomain != lowered.body.placeDomain) {
@@ -2259,6 +2262,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
          .sourceUnit = instance.sourceUnit,
          .declaration = instance.declaration,
          .owner = instance.owner,
+         .ownerType = instance.ownerType,
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
          .instantiationSource = instance.instantiationSite,
@@ -2277,6 +2281,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
          .sourceUnit = instance.sourceUnit,
          .declaration = instance.declaration,
          .owner = instance.owner,
+         .ownerType = instance.ownerType,
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
          .parameterTypes = instance.parameterTypes,
@@ -2294,6 +2299,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
          .id = instance.id,
          .sourceUnit = instance.sourceUnit,
          .owner = instance.owner,
+         .ownerType = instance.ownerType,
          .lifetimeContract = instance.lifetimeContract,
          .source = instance.source == nullptr
                        ? SourceSpan{}

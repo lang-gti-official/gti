@@ -1019,21 +1019,15 @@ concreteMirTypeTraits(const MirProgram &program, const SemanticType &type,
       256 + program.lambdaInstances().size() + program.classInstances().size())
     return std::nullopt;
   if (type.kind == SemanticType::Class) {
-    const auto owner = std::find_if(program.classInstances().begin(),
-                                    program.classInstances().end(),
-                                    [&](const MirClassInstance &candidate) {
-                                      return candidate.type == type;
-                                    });
-    return owner == program.classInstances().end()
-               ? std::nullopt
-               : std::optional{owner->traits};
+    const auto owner = mirClassLifetimeView(program, type);
+    return owner ? std::optional{owner->instance->traits} : std::nullopt;
   }
   if (type.kind == SemanticType::Enum) {
-    if (const auto *enumeration = program.findPayloadEnum(type))
-      return enumeration->traits;
-    return program.findIntegralEnum(type) != nullptr
-               ? std::optional{semanticTraits(type)}
-               : std::nullopt;
+    const auto enumeration = mirEnumLifetimeView(program, type);
+    if (!enumeration)
+      return std::nullopt;
+    return enumeration->payload ? enumeration->payload->traits
+                                : semanticTraits(type);
   }
   if (type.kind == SemanticType::Array) {
     return type.arguments.size() == 1
@@ -1124,8 +1118,9 @@ storagePayloadTraits(const MirProgram &program, const SemanticType &type,
   if (!traits)
     return std::nullopt;
   if (type.kind == SemanticType::Enum) {
-    if (const auto *enumeration = program.findPayloadEnum(type))
-      return enumeration->traits;
+    const auto enumeration = mirEnumLifetimeView(program, type);
+    if (enumeration && enumeration->payload)
+      return enumeration->payload->traits;
   }
   const auto include = [&](const SemanticType &component,
                            bool mergeMovability = true) {
@@ -1139,17 +1134,19 @@ storagePayloadTraits(const MirProgram &program, const SemanticType &type,
     return true;
   };
   if (type.kind == SemanticType::Class) {
-    const auto owner = std::find_if(
-        program.classInstances().begin(), program.classInstances().end(),
-        [&](const auto &candidate) { return candidate.type == type; });
-    if (owner == program.classInstances().end())
+    const auto owner = mirClassLifetimeView(program, type);
+    if (!owner)
       return std::nullopt;
-    for (const auto &base : owner->structuralBases)
-      if (!base.interface && !include(base.type, false))
+    for (const auto &base : owner->instance->structuralBases) {
+      const auto instantiated = owner->instantiate(base.type);
+      if (!instantiated || (!base.interface && !include(*instantiated, false)))
         return std::nullopt;
-    for (const auto &field : owner->declaredFields)
-      if (!include(field.type, false))
+    }
+    for (const auto &field : owner->instance->declaredFields) {
+      const auto instantiated = owner->instantiate(field.type);
+      if (!instantiated || !include(*instantiated, false))
         return std::nullopt;
+    }
   } else if (type.kind == SemanticType::Array) {
     for (std::size_t index = 0; index < type.arguments.size(); ++index) {
       const auto &component = type.arguments[index];
@@ -4122,9 +4119,15 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         }
         const auto *constructorOwner =
             program.findClassInstance(constructorTarget->owner);
+        const auto constructedOwner =
+            mirClassLifetimeView(program, instruction.info.type);
+        const auto constructedSignature =
+            instantiateMirLifetimeTarget(program, instruction);
         if (instruction.kind == MirInstructionKind::Construct &&
-            (constructorOwner == nullptr ||
-             constructorOwner->type != instruction.info.type)) {
+            (constructorOwner == nullptr || !constructedOwner ||
+             constructedOwner->instance != constructorOwner ||
+             !constructedSignature ||
+             constructedSignature->returnType != instruction.info.type)) {
           return verificationFailure(
               body, owner,
               "construction result type differs from its exact constructor "
@@ -5261,9 +5264,10 @@ findStoredCarrierReferenceInventory(const MirProgram &program,
       return invalid ? std::nullopt : std::optional{std::move(paths)};
     }
     if (current.kind == SemanticType::Enum) {
-      const auto *enumeration = program.findPayloadEnum(current);
+      const auto view = mirEnumLifetimeView(program, current);
+      const auto *enumeration = view ? view->payload : nullptr;
       std::vector<MirStoredCarrierReference> paths;
-      if (enumeration == nullptr && program.findIntegralEnum(current)) {
+      if (view && view->integral) {
         visiting.pop_back();
         return paths;
       }
@@ -5278,8 +5282,8 @@ findStoredCarrierReferenceInventory(const MirProgram &program,
           }
           for (std::size_t index = 0; index < variant.payloadTypes.size();
                ++index) {
-            const auto &field = variant.payloadTypes[index];
-            auto children = childInventory(field);
+            const auto field = view->instantiate(variant.payloadTypes[index]);
+            auto children = field ? childInventory(*field) : std::nullopt;
             if (!children || variant.payloadSymbols[index] == 0) {
               invalid = true;
               continue;
@@ -5303,12 +5307,9 @@ findStoredCarrierReferenceInventory(const MirProgram &program,
                  ? std::optional{std::vector<MirStoredCarrierReference>{}}
                  : std::nullopt;
     }
-    const auto instance = std::find_if(program.classInstances().begin(),
-                                       program.classInstances().end(),
-                                       [&](const MirClassInstance &candidate) {
-                                         return candidate.type == current;
-                                       });
-    if (instance == program.classInstances().end()) {
+    const auto view = mirClassLifetimeView(program, current);
+    const auto *instance = view ? view->instance : nullptr;
+    if (!instance) {
       visiting.pop_back();
       return std::nullopt;
     }
@@ -5324,10 +5325,12 @@ findStoredCarrierReferenceInventory(const MirProgram &program,
       invalid = true;
     }
     for (const HirBaseInstance &base : instance->structuralBases) {
-      invalid = invalid || (!base.interface && containsBorrow(base.type));
+      const auto actual = view->instantiate(base.type);
+      invalid = invalid || !actual || (!base.interface && containsBorrow(*actual));
     }
     for (const MirClassFieldInfo &field : instance->declaredFields) {
-      auto children = childInventory(field.type);
+      const auto actual = view->instantiate(field.type);
+      auto children = actual ? childInventory(*actual) : std::nullopt;
       if (!children) {
         invalid = true;
         continue;
@@ -5392,8 +5395,9 @@ findStoredCarrierAlternativeInventory(const MirProgram &program,
     };
     bool complete = true;
     if (current.kind == SemanticType::Enum) {
-      const auto *enumeration = program.findPayloadEnum(current);
-      complete = enumeration != nullptr || program.findIntegralEnum(current);
+      const auto view = mirEnumLifetimeView(program, current);
+      const auto *enumeration = view ? view->payload : nullptr;
+      complete = view.has_value();
       if (enumeration)
         for (std::size_t index = 0; index < enumeration->variants.size();
              ++index) {
@@ -5406,9 +5410,10 @@ findStoredCarrierAlternativeInventory(const MirProgram &program,
             continue;
           }
           for (std::size_t field = 0; field < variant.payloadTypes.size();
-               ++field)
-            complete &= appendChildren(variant.payloadTypes[field],
-                                       variant.payloadSymbols[field], &outer);
+               ++field) {
+            const auto actual = view->instantiate(variant.payloadTypes[field]);
+            complete &= actual && appendChildren(*actual, variant.payloadSymbols[field], &outer);
+          }
         }
     } else {
       const auto traits = storagePayloadTraits(program, current);
@@ -5428,10 +5433,11 @@ findStoredCarrierAlternativeInventory(const MirProgram &program,
               complete &=
                   appendChildren(instance->captureTypes[index],
                                  instance->captureSymbols[index], nullptr);
-        } else if (const auto *instance =
-                       uniqueMirClassInstanceForType(program, current)) {
-          for (const auto &field : instance->declaredFields)
-            complete &= appendChildren(field.type, field.symbol, nullptr);
+        } else if (const auto view = mirClassLifetimeView(program, current)) {
+          for (const auto &field : view->instance->declaredFields) {
+            const auto actual = view->instantiate(field.type);
+            complete &= actual && appendChildren(*actual, field.symbol, nullptr);
+          }
         } else
           complete = false;
       }
@@ -7305,7 +7311,18 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
         }
         actual.insert(place->binding);
       }
-      if (actual != expected) {
+      // A declared lifetime contract is an allowed supplier set. Each body
+      // path may use a subset; the independent complete-return proof checks
+      // its exact origins and every claimed supplier against that contract.
+      const bool declaredLifetimeSuppliers =
+          completeReferenceResult && instance.lifetimeContract.valid() &&
+          instance.lifetimeContract.origin != LifetimeContractOrigin::BodyInferred;
+      const bool preservesSuppliers =
+          declaredLifetimeSuppliers
+              ? std::all_of(actual.begin(), actual.end(),
+                            [&](HirBindingId binding) { return expected.contains(binding); })
+              : actual == expected;
+      if (!preservesSuppliers) {
         return invalidSummary(
             "composed return does not preserve its full formal dependency set");
       }
@@ -8211,9 +8228,11 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
         obligation.dropType.classInstance
             ? program.findClassInstance(*obligation.dropType.classInstance)
             : nullptr;
-    if (classInstance == nullptr || obligation.dropType.lambdaInstance ||
-        obligation.dropType.fixedArray ||
-        classInstance->type != obligation.dropType.type ||
+    const auto cleanupView =
+        mirClassLifetimeView(program, obligation.dropType.type);
+    if (classInstance == nullptr || !cleanupView ||
+        cleanupView->instance != classInstance ||
+        obligation.dropType.lambdaInstance || obligation.dropType.fixedArray ||
         classInstance->destructor != obligation.dropType.destructor) {
       return verificationFailure(
           body, owner,
@@ -8279,20 +8298,15 @@ verifyMirPayloadEnums(const MirProgram &program) {
       return type.arguments.size() == 1 ? query(type.arguments.front(), query)
                                         : std::nullopt;
     case SemanticType::Class: {
-      const auto found = std::find_if(program.classInstances().begin(),
-                                      program.classInstances().end(),
-                                      [&](const MirClassInstance &candidate) {
-                                        return candidate.type == type;
-                                      });
-      return found == program.classInstances().end()
-                 ? std::nullopt
-                 : std::optional<bool>{found->requiresActiveCleanup};
+      const auto view = mirClassLifetimeView(program, type);
+      return view ? std::optional<bool>{view->instance->requiresActiveCleanup}
+                  : std::nullopt;
     }
     case SemanticType::Enum: {
-      const MirPayloadEnum *enumeration = program.findPayloadEnum(type);
-      return enumeration == nullptr
-                 ? std::optional<bool>{false}
-                 : std::optional<bool>{enumeration->requiresActiveCleanup};
+      const auto view = mirEnumLifetimeView(program, type);
+      if (!view)
+        return std::nullopt;
+      return view->payload ? view->payload->requiresActiveCleanup : false;
     }
     case SemanticType::Lambda: {
       const MirLambdaInstance *lambda = program.findLambdaForType(type);
@@ -12129,17 +12143,8 @@ namespace {
 [[nodiscard]] const MirClassInstance *
 uniqueMirClassInstanceForType(const MirProgram &program,
                               const SemanticType &type) {
-  const MirClassInstance *result = nullptr;
-  for (const MirClassInstance &instance : program.classInstances()) {
-    if (instance.type != type) {
-      continue;
-    }
-    if (result != nullptr) {
-      return nullptr;
-    }
-    result = &instance;
-  }
-  return result;
+  const auto view = mirClassLifetimeView(program, type);
+  return view ? view->instance : nullptr;
 }
 
 [[nodiscard]] const MirClassInstance *
@@ -16613,18 +16618,23 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
       continue;
     if (!payload && value.borrowDependencies) {
       auto resultType = value.info.type;
-      if (producer && value.info.category == ValueCategory::Place &&
-          ((producer->operation == MirOperation::PayloadExtract &&
+      if (producer && value.info.category == ValueCategory::Place) {
+        if (producer->operation == MirOperation::PayloadExtract &&
             producer->payloadExtractionKind &&
-            isStoredReferenceExtraction(*producer->payloadExtractionKind)) ||
-           (producer->kind == MirInstructionKind::Call &&
-            producer->functionTarget &&
-            program.findFunctionInstance(*producer->functionTarget) &&
-            program.findFunctionInstance(*producer->functionTarget)
-                    ->returnType ==
-                SemanticType::referenceTo(value.info.type, value.info.access))))
-        resultType =
-            SemanticType::referenceTo(value.info.type, value.info.access);
+            isStoredReferenceExtraction(*producer->payloadExtractionKind))
+          resultType =
+              SemanticType::referenceTo(value.info.type, value.info.access);
+        else if (producer->kind == MirInstructionKind::Call) {
+          const auto signature =
+              instantiateMirLifetimeTarget(program, *producer);
+          if (signature &&
+              signature->returnType.kind == SemanticType::Reference &&
+              signature->returnType.arguments.size() == 1 &&
+              signature->returnType.arguments.front() == value.info.type &&
+              signature->returnType.referenceAccess == value.info.access)
+            resultType = signature->returnType;
+        }
+      }
       if (!completeBorrowSetHasTypedShape(program, resultType,
                                           *value.borrowDependencies))
         return verificationFailure(body, owner,
@@ -19078,20 +19088,15 @@ verifyMirProgramContracts(const MirProgram &program) {
       return type.arguments.size() == 1 ? query(type.arguments.front(), query)
                                         : std::nullopt;
     case SemanticType::Enum: {
-      const MirPayloadEnum *enumeration = program.findPayloadEnum(type);
-      return enumeration == nullptr
-                 ? std::optional<bool>{false}
-                 : std::optional<bool>{enumeration->requiresActiveCleanup};
+      const auto view = mirEnumLifetimeView(program, type);
+      if (!view)
+        return std::nullopt;
+      return view->payload ? view->payload->requiresActiveCleanup : false;
     }
     case SemanticType::Class: {
-      const auto instance = std::find_if(
-          program.classInstances().begin(), program.classInstances().end(),
-          [&](const MirClassInstance &candidate) {
-            return candidate.type == type;
-          });
-      return instance == program.classInstances().end()
-                 ? std::nullopt
-                 : std::optional<bool>{instance->requiresActiveCleanup};
+      const auto view = mirClassLifetimeView(program, type);
+      return view ? std::optional<bool>{view->instance->requiresActiveCleanup}
+                  : std::nullopt;
     }
     case SemanticType::Lambda:
       if (type.lambdaId == 0) {

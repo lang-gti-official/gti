@@ -8255,10 +8255,10 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
     const auto &field = enumerator.payloadTypes[index];
     // A constructor's text input formal is published by each call instead.
     const auto &inputs = requestSession.constructorTextPayloadArguments;
-    if (field.kind == SemanticType::StringView || field == SemanticType::CString)
+    if (field.kind == SemanticType::StringView || field.kind == SemanticType::CString)
       noteLocalTextEscape(call.arguments()[index], LocalTextEscapeKind::Storage,
                           "stored in a payload-enum field");
-    if ((field.kind == SemanticType::StringView || field == SemanticType::CString) &&
+    if ((field.kind == SemanticType::StringView || field.kind == SemanticType::CString) &&
         isOwnerDependentTextExpression(call.arguments()[index]) &&
         std::find(inputs.begin(), inputs.end(),
                   call.arguments()[index].get()) == inputs.end()) {
@@ -14683,8 +14683,8 @@ auto SemanticVisitor::Impl::isComparable(SemanticType left, SemanticType right,
     return numericResult(left, right, leftExpression, rightExpression) !=
            SemanticType::Unknown;
   }
-  if ((left == SemanticType::CString && right == SemanticType::NullPtr) ||
-      (right == SemanticType::CString && left == SemanticType::NullPtr)) {
+  if ((left.kind == SemanticType::CString && right == SemanticType::NullPtr) ||
+      (right.kind == SemanticType::CString && left == SemanticType::NullPtr)) {
     return true;
   }
   if ((left.kind == SemanticType::NativeFunction &&
@@ -14778,7 +14778,8 @@ auto SemanticVisitor::Impl::baseTypeOf(
   }
   const CompilerCapabilityTypeKind compilerCapability =
       compilerCapabilityType(type, fromScope);
-  if (compilerCapability == CompilerCapabilityTypeKind::TextView) {
+  if (compilerCapability == CompilerCapabilityTypeKind::TextView ||
+      compilerCapability == CompilerCapabilityTypeKind::CString) {
     const auto id = resolveClassPath(type.name, fromScope);
     if (!id)
       return SemanticType::Unknown;
@@ -14787,13 +14788,10 @@ auto SemanticVisitor::Impl::baseTypeOf(
                                             type.name.last());
     if (!arguments)
       return SemanticType::Unknown;
-    SemanticType result = SemanticType::StringView;
+    SemanticType result = compilerCapability == CompilerCapabilityTypeKind::TextView
+                              ? SemanticType::StringView : SemanticType::CString;
     result.lifetimeArguments = arguments->lifetimes;
     return result;
-  }
-  if (compilerCapability == CompilerCapabilityTypeKind::CString) {
-    return type.arguments.empty() ? SemanticType::CString
-                                  : SemanticType::Unknown;
   }
   if (compilerCapability == CompilerCapabilityTypeKind::NativeCScalar) {
     const auto selected = resolveClassPath(type.name, fromScope);

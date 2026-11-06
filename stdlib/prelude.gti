@@ -7,7 +7,7 @@ namespace gti_internal {
   // binds their trusted declaration identities to private representations;
   // application declarations with the same spelling remain ordinary types.
   class text_view<lifetime storage> {};
-  class c_string {};
+  class c_string<lifetime storage> {};
   class c_bool {};
   class c_char {};
   class c_schar {};
@@ -83,7 +83,7 @@ namespace gti_internal {
   }
 }
 
-using c_string = gti_internal::c_string;
+using c_string<lifetime storage> = gti_internal::c_string<storage>;
 using c_void = void;
 using c_bool = gti_internal::c_bool;
 using c_char = gti_internal::c_char;

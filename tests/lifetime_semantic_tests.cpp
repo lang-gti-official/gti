@@ -144,6 +144,27 @@ View<a> bad<lifetime a>(int&<a> outside) {
   return View<a>(local);
 }
 )gti", false);
+  check("anonymous-constructor-declaration-contract", R"gti(
+struct Pair {
+  int& first;
+  int& second;
+  Pair(int& left, int& right) : first(left), second(right) {}
+};
+int main() { int a = 3; int b = 8; Pair pair{a, b}; return pair.second - 8; }
+)gti", true);
+  check("explicit-owner-region-is-not-body-inferred", R"gti(
+struct View<lifetime owner> {
+  int&<owner> value;
+  View(int& input) : value(input) {}
+};
+)gti", false, "GTI-S2127");
+  check("anonymous-constructor-local-escape", R"gti(
+struct View {
+  int& value;
+  View(int& input) : value(input) {}
+};
+View bad(int& outside) { int local = 3; return View(local); }
+)gti", false);
   check("ordinary-input-is-not-static", R"gti(
 int&<static> forever(int& input) { return input; }
 )gti", false);

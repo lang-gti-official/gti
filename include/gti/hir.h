@@ -794,6 +794,8 @@ struct HirFunctionInstance {
   FunctionId declaration = 0;
   const FunctionDecl *source = nullptr;
   std::optional<HirClassInstanceId> owner;
+  // Universal owner type in this callable's region scope.
+  SemanticType ownerType = SemanticType::Unknown;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   SemanticType returnType = SemanticType::Unknown;
@@ -901,6 +903,8 @@ struct HirConstructorInstance {
   bool constexprConstructor = false;
   bool requiresUnsafe = false;
   HirClassInstanceId owner = 0;
+  // Universal owner type in this callable's region scope.
+  SemanticType ownerType = SemanticType::Unknown;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<SemanticType> parameterTypes;
@@ -923,6 +927,8 @@ struct HirDestructorInstance {
   SourceUnitId sourceUnit = 0;
   const DestructorDecl *source = nullptr;
   HirClassInstanceId owner = 0;
+  // Universal owner type in this callable's region scope.
+  SemanticType ownerType = SemanticType::Unknown;
   LifetimeSignatureContract lifetimeContract;
   HirBody body;
 };

@@ -64,6 +64,12 @@ mirLifetimeParameterTypesMatch(std::span<const SemanticType> selected,
 [[nodiscard]] std::optional<MirInstantiatedLifetimeSignature>
 instantiateMirLifetimeTarget(const MirProgram &, const MirInstruction &);
 
+// Validate the callable's owner in its own universal scope, then match the
+// exact separately-scoped layout. Region-free legacy records may omit it.
+[[nodiscard]] std::optional<SemanticType> checkedMirCallableOwnerType(
+    const MirProgram &, std::optional<HirClassInstanceId>, const SemanticType &,
+    const LifetimeSignatureContract &);
+
 // A view preserves the actual semantic region type while selecting one
 // universal layout. Matching identifies substitutions; formation obligations
 // still require the body/application proof before representation use.

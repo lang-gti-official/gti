@@ -49,7 +49,7 @@ public:
       return nominalType("std::string_view", {}, {}, type.lifetimeArguments,
                          {});
     case SemanticType::CString:
-      return "c_string";
+      return nominalType("c_string", {}, {}, type.lifetimeArguments, {});
     case SemanticType::NullPtr:
       return "nullptr_t";
     case SemanticType::RawPointer:

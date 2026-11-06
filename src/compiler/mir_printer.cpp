@@ -723,6 +723,8 @@ public:
       lifetimeContract(instance.lifetimeContract);
       output << " lifted-lifetimes=";
       genericIdentities(instance.liftedLifetimes);
+      output << " owner-type=";
+      type(instance.ownerType);
       output << " parameter-bindings=[";
       for (std::size_t index = 0; index < instance.parameterBindings.size();
            ++index) {
@@ -870,6 +872,8 @@ public:
       lifetimeContract(instance.lifetimeContract);
       output << " lifted-lifetimes=";
       genericIdentities(instance.liftedLifetimes);
+      output << " owner-type=";
+      type(instance.ownerType);
       output << " parameters=[";
       for (std::size_t index = 0; index < instance.parameterTypes.size();
            ++index) {
@@ -945,6 +949,8 @@ public:
       lifetimeContract(instance.lifetimeContract);
       output << " lifted-lifetimes=";
       genericIdentities(instance.liftedLifetimes);
+      output << " owner-type=";
+      type(instance.ownerType);
       output << " definition=";
       switch (instance.definitionKind) {
       case MirDefinitionKind::Source:

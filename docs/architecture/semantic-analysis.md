@@ -219,6 +219,26 @@ provenance queries resolve an exact dereferenced capture slot to its entry loan;
 selected fields/elements retain their separate identity. A same-typed captured
 array cannot substitute another capture's loan at a call boundary.
 
+Lifetime signature normalization records declaration parameters, implied
+well-formedness bounds and a Boolean requirement formula before checking a
+body. Input elision creates independent parameters; a receiver or sole input
+can supply an elided output. A call records its actual region bindings,
+inference variables, required relations and exact origin places separately.
+The body of a reusable instance assumes its declared formula; it does not
+attempt to prove universal lifetime requirements without the caller's bindings.
+Conjunction preserves all premises, while disjunction supplies only premises
+guaranteed by every feasible alternative.
+
+Anonymous stored regions remain determined by field structure. A constructor's
+checked initializer-list summary may relate its inputs to those anonymous
+output slots. Those relations become its published declaration contract before
+body checking; arbitrary constructor statements do not infer or narrow them.
+Explicitly named owner regions still require a written input relationship or
+bound. Initializer analysis uses normalized member types, rather than resolving
+omitted source lifetimes a second time. Provenance matching can compare ordinary
+type shape, but conversion and initialization still require the full lifetime
+proof and the existing access, movement and cleanup checks.
+
 ## Generic payload enum signatures
 
 Nominal registration inventories class and enum identities and their ordinary

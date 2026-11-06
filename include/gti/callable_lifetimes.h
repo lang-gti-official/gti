@@ -43,7 +43,8 @@ callableLifetimeContract(const SemanticType &signature) {
     if ((type.kind == SemanticType::Reference &&
          (!type.referenceLifetime.declarationRegion() || type.arguments.size() != 1)) ||
         (type.kind != SemanticType::Reference && type.referenceLifetime != Lifetime{}) ||
-        (type.kind == SemanticType::StringView && type.lifetimeArguments.size() != 1))
+        ((type.kind == SemanticType::StringView || type.kind == SemanticType::CString) &&
+         type.lifetimeArguments.size() != 1))
       return false;
     for (const auto region : type.lifetimeArguments)
       if (!region.declarationRegion())

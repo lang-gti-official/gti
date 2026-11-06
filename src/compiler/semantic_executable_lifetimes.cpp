@@ -31,16 +31,21 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
         constructor = &*owner.designatedConstructor;
       if (owner.reversedDesignatedConstructor && owner.reversedDesignatedConstructor->id == key.declaration)
         constructor = &*owner.reversedDesignatedConstructor;
+      if (owner.copyConstructor && owner.copyConstructor->id == key.declaration)
+        constructor = &*owner.copyConstructor;
+      if (owner.moveConstructor && owner.moveConstructor->id == key.declaration)
+        constructor = &*owner.moveConstructor;
       for (const auto &candidate : owner.constructors)
         if (candidate.id == key.declaration)
           constructor = &candidate;
       if (constructor)
         break;
     }
-    if (!constructor || !constructor->declaration)
+    if (!constructor || !constructor->owner)
       return std::nullopt;
     ownerId = constructor->owner;
-    site = constructor->declaration->name();
+    site = constructor->declaration ? constructor->declaration->name()
+                                    : classInfo(ownerId).name;
   } else if (key.kind == InstanceAnalysisKind::EnumLayout) {
     enumId = key.declaration;
     if (!enumId || enumId > enums.size())
@@ -157,10 +162,14 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
     semanticModel.recordGenericParameter(parameter);
 
   GenericSubstitution substitution;
-  if (ownerId)
+  if (ownerId) {
     substitution = nominalSubstitution(classInfo(ownerId).genericParameters,
         {.types = result.classTypes, .values = key.classValues});
-  else if (enumId)
+    result.ownerType = SemanticType::classType(ownerId, result.classTypes, key.classValues);
+    for (const auto &parameter : classInfo(ownerId).genericParameters)
+      if (parameter.lifetime)
+        result.ownerType.lifetimeArguments.push_back(Lifetime::parameter(parameter.id));
+  } else if (enumId)
     substitution = nominalSubstitution(enums[enumId - 1].genericParameters,
         {.types = result.classTypes, .values = key.classValues});
   if (function || constructor) {
@@ -171,6 +180,8 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
     result.parameterTypes = function ? function->parameterTypes : constructor->parameterTypes;
     result.requirements = function ? function->requirements : constructor->requirements;
     result.lifetimeContract = function ? function->lifetimeContract : constructor->lifetimeContract;
+    if (constructor && !constructor->declaration && !result.lifetimeContract.complete)
+      result.lifetimeContract = classInfo(ownerId).lifetimeContract;
     if (function)
       result.returnType = function->returnType;
   } else if (destructor) {

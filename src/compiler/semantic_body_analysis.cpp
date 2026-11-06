@@ -1,4 +1,5 @@
 #include "semantic_analyzer_impl.h"
+#include "gti/lifetime_types.h"
 
 #include <iterator>
 
@@ -2475,9 +2476,14 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
       }
     }
 
+    const auto initializerType = field == nullptr && base != nullptr
+        ? typeOf(initializer.target, owner.namespaceScope) : SemanticType::Unknown;
     if (field == nullptr && base != nullptr &&
-        typeOf(initializer.target, owner.namespaceScope) == baseType) {
+        eraseTypeLifetimes(initializerType) == eraseTypeLifetimes(baseType)) {
       validateType(initializer.target);
+      if (!applyLifetimeValueConversion(initializerType, baseType, target,
+                                         0, false, true))
+        continue;
       if (initializedBase) {
         report(target,
                "Base '" + typeSpelling(base->type) +
@@ -2502,9 +2508,12 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
                          "' is initialized more than once.");
     }
     SymbolId fieldSymbol = 0;
+    SemanticType fieldType = SemanticType::Unknown;
     if (field != nullptr) {
       const auto member = owner.members.find(target.lexeme);
       if (member != owner.members.end()) {
+        fieldType = substituteSymbol(member->second.symbol,
+                                      openClassType(owner.id)).type;
         fieldSymbol = toolingSymbolFor(member->second.symbol);
         semanticModel.recordOccurrence(
             {.sourceUnit = currentSourceUnit,
@@ -2513,8 +2522,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
              .symbol = fieldSymbol,
              .roles = OccurrenceRole::Reference | OccurrenceRole::Write,
              .name = target.lexeme,
-             .type = member->second.symbol.type,
-             .traits = typeTraits(member->second.symbol.type),
+             .type = fieldType,
+             .traits = typeTraits(fieldType),
              .access = member->second.symbol.assignable ? AccessMode::Mutable
                                                         : AccessMode::ReadOnly,
              .mutableBinding = member->second.symbol.assignable,
@@ -2523,14 +2532,14 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
             initializer,
             ResolvedConstructorInitializerInfo{
                 .kind = ConstructorInitializerTargetKind::Field,
-                .targetType = member->second.symbol.type,
+                .targetType = fieldType,
                 .field = fieldSymbol,
                 .storesReference =
-                    member->second.symbol.type.kind == SemanticType::Reference,
+                    fieldType.kind == SemanticType::Reference,
                 .borrowAccess =
                     isDefaultLibraryMutexGuardCarrier(owner)
                         ? AccessMode::Mutable
-                        : member->second.symbol.type.referenceAccess});
+                        : fieldType.referenceAccess});
       }
     }
     if (field == nullptr) {
@@ -2559,12 +2568,6 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
       if (input.initializer == &initializer && input.payloadArgument != nullptr)
         requestSession.constructorTextPayloadArguments.push_back(
             input.payloadArgument);
-    const SemanticType fieldType =
-        field == nullptr ? SemanticType::Unknown
-                         : typeOf(field->type(),
-                                  field->isMutable() ? Mutability::Mutable
-                                                     : Mutability::Immutable,
-                                  owner.namespaceScope);
     SemanticType valueType = SemanticType::Unknown;
     if (initializer.arguments.size() != 1) {
       report(target,
@@ -13650,7 +13653,7 @@ auto SemanticVisitor::Impl::analyzeParameterDefaults(
                                            : SemanticType::Unknown;
     if (parameterType.kind == SemanticType::Reference ||
         parameterType.kind == SemanticType::RawPointer ||
-        parameterType == SemanticType::CString ||
+        parameterType.kind == SemanticType::CString ||
         (parameterType != SemanticType::Unknown &&
          parameterType.kind != SemanticType::TypeParameter &&
          typeTraits(parameterType).containsBorrowedState)) {

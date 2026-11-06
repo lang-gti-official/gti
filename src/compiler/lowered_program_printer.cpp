@@ -1283,6 +1283,8 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
   for (const LoweredFunctionInstance &instance : program.functionInstances()) {
     output << "lifted-lifetimes=";
     values.genericIdentities(instance.liftedLifetimes);
+    output << " owner-type=";
+    values.semanticType(instance.ownerType);
     output << ' ';
     output << "lifetime-contract=";
     values.semanticLifetimeContract(instance.lifetimeContract);
@@ -1316,6 +1318,8 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
        program.constructorInstances()) {
     output << "lifted-lifetimes=";
     values.genericIdentities(instance.liftedLifetimes);
+    output << " owner-type=";
+    values.semanticType(instance.ownerType);
     output << ' ';
     output << "lifetime-contract=";
     values.semanticLifetimeContract(instance.lifetimeContract);
@@ -1352,6 +1356,8 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
        program.destructorInstances()) {
     output << "lifted-lifetimes=";
     values.genericIdentities(instance.liftedLifetimes);
+    output << " owner-type=";
+    values.semanticType(instance.ownerType);
     output << ' ';
     output << "destructor-instance " << instance.id
            << " unit=" << instance.sourceUnit << " owner=" << instance.owner

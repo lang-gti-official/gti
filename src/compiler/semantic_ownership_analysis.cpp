@@ -1,4 +1,5 @@
 #include "semantic_analyzer_impl.h"
+#include "gti/lifetime_types.h"
 
 #include <stdexcept>
 
@@ -6050,7 +6051,7 @@ auto SemanticVisitor::Impl::payloadBorrowDependencySet(
     // certify an owner-dependent text value as dependency-free, except a
     // constructor's text input, whose owner each call publishes.
     const auto &inputs = requestSession.constructorTextPayloadArguments;
-    if ((field.kind == SemanticType::StringView || field == SemanticType::CString) &&
+    if ((field.kind == SemanticType::StringView || field.kind == SemanticType::CString) &&
         isOwnerDependentTextExpression(argument) &&
         std::find(inputs.begin(), inputs.end(), argument.get()) == inputs.end())
       return std::nullopt;
@@ -6293,6 +6294,12 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
   // Unambiguous reference-returning calls may compose a declared argument
   // origin. Defaults, packs, arbitrary expressions and recursive summaries
   // deliberately do not acquire a guessed dependency contract here.
+  // This query records provenance, not conversion permission. Source and
+  // destination can have distinct declared regions; the constructor's
+  // normalized contract and checked initialization prove their relationship.
+  const auto sameShape = [](const SemanticType &left, const SemanticType &right) {
+    return eraseTypeLifetimes(left) == eraseTypeLifetimes(right);
+  };
   std::vector<const ConstructorDecl *> visiting;
   const auto summarize = [&](const auto &self, const SemanticType &type,
                              const ConstructorDecl *constructor,
@@ -6360,7 +6367,7 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
           if (callee == nullptr || callee->overloads.size() != 1)
             return std::nullopt;
           const auto &candidate = callee->overloads.front();
-          if (candidate.returnType != expected || candidate.parameterPack ||
+          if (!sameShape(candidate.returnType, expected) || candidate.parameterPack ||
               candidate.parameterTypes.size() != call->arguments().size() ||
               candidate.returnBorrowOrigin != BorrowOriginKind::Argument ||
               !candidate.returnBorrowParameters.empty() ||
@@ -6400,7 +6407,7 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
       for (std::size_t index = 0;
            index < parameters.size() && index < parameterTypes.size(); ++index)
         if (parameters[index].name.lexeme == source->name().lexeme &&
-            parameterTypes[index] == expected && !parameters[index].pack)
+            sameShape(parameterTypes[index], expected) && !parameters[index].pack)
           return index;
       return std::nullopt;
     };
@@ -6489,8 +6496,8 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
               argument.bindings.begin(), argument.bindings.end(),
               [&](const auto &binding) {
                 return binding.destination.fields == child.sourceFields &&
-                       binding.destination.reference ==
-                           child.destination.reference;
+                       sameShape(binding.destination.reference,
+                                 child.destination.reference);
               });
           if (origin == argument.bindings.end())
             return {};
@@ -6538,7 +6545,7 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
             bindings.bindings.begin(), bindings.bindings.end(),
             [&](const auto &binding) {
               return binding.destination.fields == sourceFields &&
-                     binding.destination.reference == path.reference;
+                     sameShape(binding.destination.reference, path.reference);
             });
         if (origin == bindings.bindings.end())
           return {};

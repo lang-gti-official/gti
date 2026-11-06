@@ -104,7 +104,8 @@ inline std::optional<std::vector<NominalVariance>> inferNominalVarianceRecipes(
           capability == CompilerCapabilityTypeKind::SharedOwner ||
           capability == CompilerCapabilityTypeKind::OptionalStorage ||
           capability == CompilerCapabilityTypeKind::FunctionPointer ||
-          capability == CompilerCapabilityTypeKind::TextView;
+          capability == CompilerCapabilityTypeKind::TextView ||
+          capability == CompilerCapabilityTypeKind::CString;
       const bool opaque = recipe.cOpaqueHandle || recipe.polymorphic ||
           recipe.classKind == ClassKind::Interface || recipe.forward ||
           recipe.invalidLifetime ||
@@ -129,7 +130,8 @@ inline std::optional<std::vector<NominalVariance>> inferNominalVarianceRecipes(
           if (region.kind == Lifetime::Kind::Parameter)
             observe(region.id, composeTypeVariance(position,
                 nestedNominal.complete ? nestedNominal.lifetimes[slot]
-                : type.kind == SemanticType::StringView ? TypeVariance::Covariant
+                : (type.kind == SemanticType::StringView || type.kind == SemanticType::CString)
+                    ? TypeVariance::Covariant
                                                        : TypeVariance::Invariant));
         }
         for (std::size_t slot = 0; slot < type.arguments.size(); ++slot) {

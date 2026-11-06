@@ -626,6 +626,8 @@ struct LoweredFunctionInstance {
   SourceUnitId sourceUnit = 0;
   FunctionId declaration = 0;
   std::optional<LoweredClassInstanceId> owner;
+  // Universal owner type in this callable's region scope.
+  SemanticType ownerType = SemanticType::Unknown;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::optional<SourceSpan> instantiationSource;
@@ -642,6 +644,8 @@ struct LoweredConstructorInstance {
   SourceUnitId sourceUnit = 0;
   ConstructorId declaration = 0;
   LoweredClassInstanceId owner = 0;
+  // Universal owner type in this callable's region scope.
+  SemanticType ownerType = SemanticType::Unknown;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<SemanticType> parameterTypes;
@@ -658,6 +662,8 @@ struct LoweredDestructorInstance {
   LoweredDestructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   LoweredClassInstanceId owner = 0;
+  // Universal owner type in this callable's region scope.
+  SemanticType ownerType = SemanticType::Unknown;
   LifetimeSignatureContract lifetimeContract;
   SourceSpan source;
 

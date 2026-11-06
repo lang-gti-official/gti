@@ -462,7 +462,12 @@ void combine<T>(T first, T second) {}
 void exercise<lifetime left, lifetime right>(View<left> first, View<right> second) {
   consume(first); consume(second); combine(first, second);
 }
-int main() { return 0; }
+int main() {
+  int leftValue = 3; int rightValue = 5;
+  auto first = View(leftValue); auto second = View(rightValue);
+  exercise(first, second);
+  return 0;
+}
 )");
   expectValid(result, "same-shape borrowed carriers infer common call regions");
   expect(result.hir.valid(), "inferred carrier calls lower with universal instance signatures");
@@ -474,6 +479,8 @@ int main() { return 0; }
         expect(!instance.liftedLifetimes.empty() && instance.lifetimeContract.valid(),
                "native body carries checked universal lifted binder descriptors");
       }
+    if (instances != 1)
+      std::cerr << "consume executable instances: " << instances << '\n';
     expect(instances == 1, "different source lifetimes do not multiply native function instances");
   }
   const auto fixed = analyze(std::string(declarations) + R"(
@@ -485,6 +492,36 @@ int main() { return 0; }
   expect(!fixed.semanticValid && std::any_of(fixed.diagnostics.begin(), fixed.diagnostics.end(),
              [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
          "explicit generic type choices retain their fixed lifetime obligations");
+}
+
+void testCStringRegions() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto analyzeCString = [&](std::string source) {
+    return lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+        "cstring-lifetimes.gti", std::move(source), {root / "prelude.gti"}, {}, {root});
+  };
+  const auto result = analyzeCString(R"(
+c_string<region> relayCString<lifetime region>(c_string<region> value) { return value; }
+void inspectCString<lifetime named>(c_string<named> explicitValue, c_string elidedValue);
+c_string<static> staticCString() { return nullptr; }
+int main() { return 0; }
+)");
+  expectValid(result, "C-string borrowed storage has named, elided, and static lifetime slots");
+  const auto *relay = function(result, "relayCString");
+  expect(relay && relay->returnType.kind == lang::SemanticType::CString &&
+             relay->returnType.lifetimeArguments.size() == 1 &&
+             relay->returnType.lifetimeArguments == relay->parameterTypes.front().lifetimeArguments,
+         "C-string aliases preserve their declared input/result region relationship");
+  const auto *inspect = function(result, "inspectCString");
+  expect(inspect && inspect->parameterTypes.size() == 2 &&
+             inspect->parameterTypes[0].lifetimeArguments.size() == 1 &&
+             inspect->parameterTypes[1].lifetimeArguments.size() == 1 &&
+             inspect->parameterTypes[0].lifetimeArguments != inspect->parameterTypes[1].lifetimeArguments,
+         "unrelated omitted C-string input regions normalize independently");
+  const auto invalid = analyzeCString("void invalid(c_string<int> text); int main() { return 0; }");
+  expect(!invalid.semanticValid && std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+             [](const auto &diagnostic) { return diagnostic.code == "GTI-S2126"; }),
+         "C-string lifetime slots reject ordinary runtime type arguments");
 }
 } // namespace
 
@@ -501,5 +538,6 @@ int main() {
   testSpecializationLifetimeShape();
   testExecutableLifetimeIdentity();
   testInferredCarrierRegions();
+  testCStringRegions();
   return failures == 0 ? 0 : 1;
 }

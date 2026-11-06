@@ -7106,7 +7106,7 @@ auto SemanticVisitor::Impl::validateCAbiAccessSpecifiers(
 auto SemanticVisitor::Impl::cAbiPointerPointeeAllowed(
     const SemanticType &type) const -> bool {
   if (type == SemanticType::Void || isCAbiScalar(type) ||
-      type == SemanticType::CString || isCAbiNativeFunction(type)) {
+      type.kind == SemanticType::CString || isCAbiNativeFunction(type)) {
     return true;
   }
   if (type.kind == SemanticType::RawPointer && type.arguments.size() == 1)

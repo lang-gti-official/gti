@@ -1066,8 +1066,8 @@ auto SemanticVisitor::Impl::callArgumentMatches(const SemanticType &parameter,
     return true;
   }
   if (parameter.kind != SemanticType::Reference) {
-    if (parameter == SemanticType::CString) {
-      return argument == SemanticType::CString ||
+    if (parameter.kind == SemanticType::CString) {
+      return argument.kind == SemanticType::CString ||
              argument.kind == SemanticType::StringView ||
              argument == SemanticType::NullPtr;
     }
@@ -4689,19 +4689,12 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
     // Retain ordinary nominal argument/constraint validation below. Symbolic
     // payloads are checked again under concrete generic substitution.
   }
-  if (compilerCapability == CompilerCapabilityTypeKind::TextView) {
+  if (compilerCapability == CompilerCapabilityTypeKind::TextView ||
+      compilerCapability == CompilerCapabilityTypeKind::CString) {
     if (const auto id = resolveClassPath(type.name, currentNamespace))
       (void)resolveNominalArguments(classInfo(*id).genericParameters,
                                    classInfo(*id).name, type.arguments,
                                    type.name.last(), "GTI-S2034");
-    return;
-  }
-  if (compilerCapability == CompilerCapabilityTypeKind::CString) {
-    if (!type.arguments.empty()) {
-      report(type.name.last(),
-             "gti_internal::c_string does not take generic arguments.",
-             "GTI-S2054");
-    }
     return;
   }
   if (compilerCapability == CompilerCapabilityTypeKind::NativeCScalar) {
@@ -7563,8 +7556,11 @@ auto SemanticVisitor::Impl::beginRequirementScope(const FunctionInfo *function)
     }
   }
   if (instanceAnalysisActive) {
+    // Runtime instances keep universal regions. Their caller proves the
+    // lifetime-bearing Boolean contract; the body assumes that declaration
+    // contract, rather than attempting to prove it with no call bindings.
     if (const std::optional<ConstraintFailure> failure =
-            firstRequirementFailure(requirements)) {
+            firstRequirementFailureBeforeLifetimeApplication(requirements)) {
       requirementScopes.emplace_back();
       if (function->declaration != nullptr) {
         const Token &site =
@@ -7595,7 +7591,7 @@ auto SemanticVisitor::Impl::beginRequirementScope(
   }
   if (instanceAnalysisActive) {
     if (const std::optional<ConstraintFailure> failure =
-            firstRequirementFailure(requirements)) {
+            firstRequirementFailureBeforeLifetimeApplication(requirements)) {
       requirementScopes.emplace_back();
       if (constructor->declaration != nullptr) {
         const Token &site =
@@ -9526,7 +9522,7 @@ auto SemanticVisitor::Impl::nativeFunctionBoundaryTypeAllowed(
   if (type.kind == SemanticType::StringView) {
     return !returnPosition;
   }
-  if (isCAbiScalar(type) || type == SemanticType::CString) {
+  if (isCAbiScalar(type) || type.kind == SemanticType::CString) {
     return true;
   }
   if (type.kind == SemanticType::NativeFunction) {
@@ -9760,7 +9756,7 @@ auto SemanticVisitor::Impl::validateExternCFunction(
   if (function.returnMutability() == Mutability::Mutable ||
       function.returnType().reference ||
       (returnType != SemanticType::Void &&
-       returnType != SemanticType::CString && !isCAbiScalar(returnType) &&
+       returnType.kind != SemanticType::CString && !isCAbiScalar(returnType) &&
        !isCAbiRawPointer(returnType) && !isCAbiRecordType(returnType) &&
        !isCAbiNativeFunction(returnType))) {
     fail(function.returnType().name.last(),
@@ -9780,7 +9776,7 @@ auto SemanticVisitor::Impl::validateExternCFunction(
         parameter.type.reference || !parameter.type.arrayExtents.empty() ||
         (!isCAbiScalar(parameterType) &&
          parameterType.kind != SemanticType::StringView &&
-         parameterType != SemanticType::CString &&
+         parameterType.kind != SemanticType::CString &&
          !isCAbiRawPointer(parameterType) && !isCAbiRecordType(parameterType) &&
          !isCAbiNativeFunction(parameterType))) {
       const Token &location = parameter.name.lexeme.empty()

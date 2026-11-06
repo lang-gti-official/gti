@@ -222,6 +222,13 @@ void nominalRecipes() {
   textView.lifetimeArguments = {Lifetime::parameter(122)};
   expect(readPersistentType(viewBytes, to, {{122}, {}, {}}) == textView,
          "builtin borrowing view regions must survive persistence");
+  SemanticType cString(SemanticType::CString);
+  cString.lifetimeArguments = {Lifetime::parameter(22)};
+  const auto stringBytes = writePersistentType(cString, from, {{22}, {}, {}});
+  cString.lifetimeArguments = {Lifetime::parameter(122)};
+  expect(readPersistentType(stringBytes, to, {{122}, {}, {}}) == cString &&
+             stringBytes != viewBytes,
+         "C string regions retain distinct checked storage identity");
 }
 void contracts() {
   const PersistentLifetimeBindings source{{31, 32}, {}, {}};

@@ -8477,7 +8477,7 @@ auto SemanticVisitor::Impl::callConversionRank(const SemanticType &parameter,
   if (parameter == argument) {
     return 0;
   }
-  if (parameter == SemanticType::CString) {
+  if (parameter.kind == SemanticType::CString) {
     if (argument.kind == SemanticType::StringView) {
       return 1;
     }

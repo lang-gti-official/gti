@@ -846,6 +846,10 @@ private:
          .source =
              constantUnavailable ? nullptr : declaration.bodyDeclaration(),
          .owner = owner,
+         .ownerType = canonical ? canonical->ownerType
+             : declaration.ownerClass ? SemanticType::classType(
+                   declaration.ownerClass, classTypeArguments, classValueArguments)
+                                      : SemanticType::Unknown,
          .typeArguments = std::move(functionTypeArguments),
          .valueArguments = std::move(functionValueArguments),
          .returnType = std::move(returnType),
@@ -1099,6 +1103,8 @@ private:
          .requiresUnsafe =
              declaration != nullptr && declaration->requiresUnsafe,
          .owner = *owner,
+         .ownerType = canonical ? canonical->ownerType
+                                : construction.constructedType,
          .typeArguments = construction.typeArguments,
          .valueArguments = construction.valueArguments,
          .parameterTypes = std::move(universalParameters),
@@ -1161,6 +1167,7 @@ private:
          .sourceUnit = classInstance.sourceUnit,
          .source = lifecycle->declaredDestructor->declaration,
          .owner = owner,
+         .ownerType = canonical ? canonical->ownerType : classInstance.type,
          .lifetimeContract = canonical ? canonical->lifetimeContract : instantiateLifetimeContract(
              lifecycle->declaredDestructor->lifetimeContract,
              classSubstitution(*classType, classInstance.typeArguments,

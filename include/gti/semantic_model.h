@@ -3694,6 +3694,7 @@ private:
 struct SemanticExecutableInstantiation {
   std::vector<SemanticType> classTypes;
   std::vector<SemanticType> types;
+  SemanticType ownerType = SemanticType::Unknown;
   std::vector<GenericParameterInfo> liftedLifetimes;
   std::vector<std::vector<GenericParameterId>> classLifetimeParameters;
   std::vector<std::vector<GenericParameterId>> functionLifetimeParameters;

@@ -573,12 +573,12 @@ void writeType(std::string &out, const SemanticType &type,
     lifetimes.writeTypeParameter(out, type.genericParameterId);
     return;
   }
-  if (type.kind == SemanticType::StringView) {
-    SemanticType expected(SemanticType::StringView);
+  if (type.kind == SemanticType::StringView || type.kind == SemanticType::CString) {
+    SemanticType expected(type.kind);
     expected.lifetimeArguments = type.lifetimeArguments;
     if (type != expected || type.lifetimeArguments.size() > 1)
       reject("noncanonical text-view type payload");
-    append(out, "text-view");
+    append(out, type.kind == SemanticType::StringView ? "text-view" : "c-string");
     append(out, std::to_string(type.lifetimeArguments.size()));
     for (Lifetime region : type.lifetimeArguments) {
       budget.visit(depth + 1);
@@ -694,8 +694,8 @@ SemanticType readType(Reader &r, const PersistentTypeRegistry &registry,
                : registry.resolve(key, std::move(arguments), std::move(values),
                                   std::move(regions));
   }
-  if (wire == "text-view") {
-    SemanticType result(SemanticType::StringView);
+  if (wire == "text-view" || wire == "c-string") {
+    SemanticType result(wire == "text-view" ? SemanticType::StringView : SemanticType::CString);
     const auto size = count(r, 1);
     for (std::size_t index = 0; index < size; ++index) {
       budget.visit(depth + 1);

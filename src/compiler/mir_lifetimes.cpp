@@ -263,6 +263,17 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
     verifyEnum(instance);
   for (const auto &instance : program.payloadEnums())
     verifyEnum(instance);
+  const auto checkOwner = [&](const auto &instance) {
+    if (!checkedMirCallableOwnerType(program, instance.owner, instance.ownerType,
+                                     instance.lifetimeContract))
+      reject("MIR callable owner type does not match its universal scope and exact layout");
+  };
+  for (const auto &instance : program.functionInstances())
+    checkOwner(instance);
+  for (const auto &instance : program.constructorInstances())
+    checkOwner(instance);
+  for (const auto &instance : program.destructorInstances())
+    checkOwner(instance);
   return result;
 }
 
@@ -452,6 +463,24 @@ Lifetime applyLifetime(Lifetime value,
   return value;
 }
 } // namespace
+
+std::optional<SemanticType> checkedMirCallableOwnerType(
+    const MirProgram &program, std::optional<HirClassInstanceId> owner,
+    const SemanticType &type, const LifetimeSignatureContract &contract) {
+  if (!owner)
+    return type == SemanticType::Unknown ? std::optional{type} : std::nullopt;
+  const auto *layout = program.findClassInstance(*owner);
+  if (!layout)
+    return std::nullopt;
+  const auto selected = type == SemanticType::Unknown &&
+                                !containsLifetimeMetadata(layout->type)
+                            ? layout->type : type;
+  if (containsLifetimeMetadata(selected) &&
+      (!contract.valid() || !scopedDeclarationType(selected, contract.parameters)))
+    return std::nullopt;
+  const auto view = mirClassLifetimeView(program, selected);
+  return view && view->instance == layout ? std::optional{selected} : std::nullopt;
+}
 
 std::optional<MirInstantiatedLifetimeSignature>
 instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
@@ -656,7 +685,7 @@ bool mirTypeOutlives(const MirProgram &program, const SemanticType &type,
     for (const auto lifetime : type.lifetimeArguments)
       if (!graph.proves(lifetime, region))
         return false;
-  if (type.kind == SemanticType::StringView &&
+  if ((type.kind == SemanticType::StringView || type.kind == SemanticType::CString) &&
       type.lifetimeArguments.size() != 1)
     return false;
   if (type.kind == SemanticType::Class) {
@@ -977,8 +1006,12 @@ appliedTargetSignature(const MirProgram &program,
         target ? program.findClassInstance(target->owner) : nullptr;
     if (!owner)
       return std::nullopt;
+    const auto ownerType = checkedMirCallableOwnerType(
+        program, target->owner, target->ownerType, target->lifetimeContract);
+    if (!ownerType)
+      return std::nullopt;
     return instantiateMirLifetimeSignature(target->lifetimeContract,
-                                           owner->type, target->parameterTypes,
+                                           *ownerType, target->parameterTypes,
                                            instruction.lifetimeApplication);
   }
   if (instruction.lambdaTarget) {
@@ -1181,7 +1214,7 @@ public:
     for (std::size_t index = 0; index < actual.lifetimeArguments.size();
          ++index) {
       const auto direction = nominal ? nominal->lifetimes[index]
-                             : expected.kind == SemanticType::StringView
+                             : (expected.kind == SemanticType::StringView || expected.kind == SemanticType::CString)
                                  ? TypeVariance::Covariant
                                  : TypeVariance::Invariant;
       if (direction != TypeVariance::Bivariant &&

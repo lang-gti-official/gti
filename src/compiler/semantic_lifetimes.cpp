@@ -290,6 +290,50 @@ auto SemanticVisitor::Impl::normalizeConstructorLifetimeContract(
       result, constructor.parameterTypes, std::move(contract),
       constructor.requirements, fresh);
   constructor.lifetimeContract = std::move(normalized.contract);
+  // Anonymous stored regions are declaration-derived output slots. Their
+  // initializer list can connect them to inputs without making callers name
+  // those hidden slots. This is a serialized constructor contract, not an
+  // inference from arbitrary statements in the constructor body. Explicit
+  // owner regions keep their written input/bound requirements.
+  const auto anonymousOwnerRegion = [&](Lifetime region) {
+    return region.kind == Lifetime::Kind::Parameter &&
+           std::any_of(owner.genericParameters.begin(), owner.genericParameters.end(),
+               [&](const auto &parameter) {
+                 return parameter.lifetime && parameter.implicit &&
+                        parameter.id == region.id;
+               });
+  };
+  if (constructor.declaration &&
+      std::any_of(owner.genericParameters.begin(), owner.genericParameters.end(),
+                  [](const auto &parameter) {
+                    return parameter.lifetime && parameter.implicit;
+                  })) {
+    const auto bindings = storedCarrierConstructorBindings(
+        result, constructor.declaration, constructor.parameterTypes);
+    for (const auto &binding : bindings) {
+      if (binding.parameter >= constructor.parameterTypes.size())
+        continue;
+      SemanticType source = constructor.parameterTypes[binding.parameter];
+      if (!binding.sourceFields.empty()) {
+        const auto sources = storedReferencePaths(source);
+        const auto selected = std::find_if(sources.begin(), sources.end(),
+            [&](const auto &path) { return path.fields == binding.sourceFields; });
+        if (selected == sources.end())
+          continue;
+        source = selected->reference;
+      }
+      std::vector<LifetimeBound> edges;
+      const auto adjusted = constrainLifetimeType(
+          source, binding.destination.reference, 1, edges);
+      if (!adjusted ||
+          eraseTypeLifetimes(*adjusted) !=
+              eraseTypeLifetimes(binding.destination.reference))
+        continue;
+      for (const auto edge : edges)
+        if (anonymousOwnerRegion(edge.longer) || anonymousOwnerRegion(edge.shorter))
+          appendUnique(constructor.lifetimeContract.bounds, edge);
+    }
+  }
   if (normalized.ambiguousResult)
     report(site, "A constructed borrowed type needs a declared relationship "
                  "between its stored lifetimes and constructor inputs.",
@@ -396,7 +440,8 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
     };
     if (type.kind == SemanticType::Reference)
       resolve(type.referenceLifetime);
-    if (type.kind == SemanticType::StringView && type.lifetimeArguments.empty())
+    if ((type.kind == SemanticType::StringView || type.kind == SemanticType::CString) &&
+        type.lifetimeArguments.empty())
       type.lifetimeArguments.emplace_back();
     for (auto &region : type.lifetimeArguments)
       resolve(region);
@@ -498,7 +543,7 @@ auto SemanticVisitor::Impl::lifetimeBoundsForContract(
       // validity for the borrow. Do not infer this from an unchecked pointer.
       if (type.arguments.size() == 1)
         add(type.arguments.front());
-    } else if (type.kind == SemanticType::StringView) {
+    } else if (type.kind == SemanticType::StringView || type.kind == SemanticType::CString) {
       for (const auto region : type.lifetimeArguments)
         (void)result.assume(region, bound.region);
     } else if (type.kind == SemanticType::Class) {
@@ -761,6 +806,15 @@ auto SemanticVisitor::Impl::constrainLifetimeType(
       -> std::optional<SemanticType> {
     if (source == target)
       return source;
+    if (source.kind == SemanticType::StringView &&
+        target.kind == SemanticType::CString) {
+      // Text conversion preserves the same storage. Adapt only the region
+      // spelling here: ordinary conversion rules still prove NUL termination
+      // and decide whether this particular value can become a c_string.
+      auto viewTarget = target;
+      viewTarget.kind = SemanticType::StringView;
+      return self(self, source, viewTarget, mode, false);
+    }
     if (source.kind != target.kind)
       return source; // The ordinary conversion rules still own type shape.
     if (!source.quantifiedLifetimes.empty() ||
@@ -840,7 +894,8 @@ auto SemanticVisitor::Impl::constrainLifetimeType(
     };
     for (std::size_t index = 0; index < source.lifetimeArguments.size(); ++index) {
       const auto direction = nominal ? descriptor.lifetimes[index]
-          : source.kind == SemanticType::StringView ? TypeVariance::Covariant
+          : (source.kind == SemanticType::StringView || source.kind == SemanticType::CString)
+                ? TypeVariance::Covariant
                                                    : TypeVariance::Invariant;
       if (direction != TypeVariance::Bivariant &&
           !region(source.lifetimeArguments[index], target.lifetimeArguments[index],
@@ -1287,7 +1342,8 @@ auto SemanticVisitor::Impl::lifetimeRequirementFailure(
       for (const auto region : type.lifetimeArguments)
         if (!constraints.proves(region, requested.shorter))
           return false;
-      if (type.kind == SemanticType::StringView && type.lifetimeArguments.size() != 1)
+      if ((type.kind == SemanticType::StringView || type.kind == SemanticType::CString) &&
+          type.lifetimeArguments.size() != 1)
         return false;
       if (type.kind == SemanticType::Class) {
         const auto *owner = classInfo(type);

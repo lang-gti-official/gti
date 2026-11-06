@@ -1511,6 +1511,8 @@ struct MirFunctionInstance {
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::optional<HirClassInstanceId> owner;
+  // Universal owner type in this callable's region scope.
+  SemanticType ownerType = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   LifetimeSignatureContract lifetimeContract;
@@ -1644,6 +1646,8 @@ struct MirConstructorInstance {
   std::vector<GenericParameterIdentity> liftedLifetimes;
   HirConstructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
+  // Universal owner type in this callable's region scope.
+  SemanticType ownerType = SemanticType::Unknown;
   bool constexprConstructor = false;
   bool requiresUnsafe = false;
   bool generatedDefault = false;
@@ -1691,6 +1695,8 @@ struct MirDestructorInstance {
   std::vector<GenericParameterIdentity> liftedLifetimes;
   HirDestructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
+  // Universal owner type in this callable's region scope.
+  SemanticType ownerType = SemanticType::Unknown;
   LifetimeSignatureContract lifetimeContract;
   MirDefinitionKind definitionKind = MirDefinitionKind::Declaration;
   bool mayRaiseDefinedFailure = true;
