@@ -411,6 +411,10 @@ def llvm_pin_contract(root):
         cmake.index("target_precompile_headers("), "GTI's own precompiled headers stay enabled"
     assert cmake.count("CMAKE_DISABLE_PRECOMPILE_HEADERS ON") == 1
     toolchain = (root / "scripts/configure_ci_toolchain.sh").read_text()
+    # A stalled mirror must cost minutes, not the six-hour job limit.
+    assert "sudo timeout 300 apt-get" in toolchain and "Acquire::Retries=" in toolchain
+    assert not re.search(r"^\s*sudo apt-get ", toolchain, re.MULTILINE), \
+        "every apt-get call goes through the bounded, retried wrapper"
     assert 'sed -n \'s/^set(GTI_PINNED_LLVM_VERSION' in toolchain, "CI reads the pin, not its own version"
     assert not re.search(r"llvm-[0-9]{2}-dev|llvm@[0-9]{2}|clang-[0-9]{2}\b|llvm-[0-9]{2}/", toolchain), \
         "CI names LLVM only through the pinned major"
