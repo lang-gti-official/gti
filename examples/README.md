@@ -323,6 +323,7 @@ is a teaching helper, not a production server.
 | `075-bounded-arena-pool.gti` | fixed-capacity typed arenas and reusable pools with checked owner-tied access |
 | `076-scalar-atomics.gti` | share-safe integer fetch operations and sleeping completion with acquire wait/notification across managed threads |
 | `077-callable-concepts.gti` | exact reusable predicate, operation, and consuming-action contracts |
+| `owning-enum-packs/main.gti` | store owning string/JSON enum alternatives through variadic map construction, replace and erase them (covered by `enum_pack_runtime`) |
 | `078-owning-payload-enums.gti` | closed payload enums that directly own active-cleanup alternatives |
 | `079-class-scoped-type-aliases.gti` | access-controlled aliases declared as class members |
 | `080-function-items.gti` | exact namespace free functions passed to confined generic callables, including deduced argument packs |

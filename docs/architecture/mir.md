@@ -755,8 +755,9 @@ checks the pack root, element index, type, access and availability; program
 verification checks enum traits against the exact integral or payload enum row.
 Payload enum relocation and lifecycle facts must not fall back to the generic
 scalar-enum defaults. This also applies to enum pack places synthesized while
-lowering constructor arguments or loans. The existing semantic boundary for
-owning payload enums inside by-value packs remains unchanged.
+lowering constructor arguments or loans. Owning payload enum elements in
+by-value packs use the same semantic transport eligibility and individual
+ownership obligations as ordinary by-value parameters.
 
 The combined serialization is `mir-v113`/`lowered-program-v22`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
@@ -3659,6 +3660,11 @@ The bounded direct callable schedule uses those same obligations for argument
 preparation, parameter entry, direct result placement, success activation, and
 defined-failure cleanup. No AST or HIR expression is re-emitted to manufacture
 a payload-enum call boundary.
+Concrete owning enum pack elements use the same ordered owning-parameter
+classification as direct enum inputs. HIR retains one copy/move input and one
+lexical drop obligation per expanded element; MIR stages and transfers those
+obligations through ordinary calls and construction. No pack-wide ownership
+container or backend-specific enum forwarding rule is introduced.
 
 For an admitted ordinary direct field, MIR retains the existing class
 initializer and lifecycle schedule. A payload construction's value-rooted enum
