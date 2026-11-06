@@ -876,7 +876,9 @@ private:
     constructorDiscoveryDepths.push_back(constructorDiscovery);
     discoveredGenericInstances += generic;
     output.program.constructors.push_back(
-        {.id = id,
+        {.codegenAttributes = declaration ? declaration->codegenAttributes
+                                          : FunctionCodegenAttributes{},
+         .id = id,
          .sourceUnit = output.program.classes[*owner - 1].sourceUnit,
          .declaration = identity,
          .source = generatedBody ? nullptr : construction.declaration,
@@ -936,7 +938,8 @@ private:
         nextDiscovery(classInstance.instantiationSite));
     discoveredGenericInstances += generic;
     output.program.destructors.push_back(
-        {.id = id,
+        {.codegenAttributes = lifecycle->declaredDestructor->codegenAttributes,
+         .id = id,
          .sourceUnit = classInstance.sourceUnit,
          .source = lifecycle->declaredDestructor->declaration,
          .owner = owner});

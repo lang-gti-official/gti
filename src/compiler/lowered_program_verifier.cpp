@@ -1491,6 +1491,8 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
         instance.valueArguments != mir.valueArguments || instance.owner == 0 ||
         instance.parameterTypes != mir.parameterTypes ||
         instance.dispatchState != mir.dispatchState ||
+        mir.codegenAttributes != (declaration ? declaration->codegenAttributes
+                                              : FunctionCodegenAttributes{}) ||
         mir.constexprConstructor !=
             (declaration != nullptr && declaration->constexprConstructor) ||
         mir.requiresUnsafe !=
@@ -1742,6 +1744,8 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
       if (payload == nullptr || destructorDeclaration == nullptr ||
           destructor == nullptr || owner == nullptr ||
           classDeclaration == nullptr ||
+          destructor->codegenAttributes !=
+              destructorDeclaration->codegenAttributes ||
           item.identity.owner != payload->destructorInstance ||
           destructorDeclaration->owner != payload->ownerClass ||
           destructor->owner != payload->classInstance ||

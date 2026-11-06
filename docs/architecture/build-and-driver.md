@@ -3096,7 +3096,7 @@ contracts and colliding fully qualified nominal names remain separate work.
 
 `LoweredProgram` retains logical owner/source-unit bindings independently of
 callable reachability, including a library used only for its types. Serialization
-profile `lowered-program-v34` records these bindings. Wire metadata is validated
+profile `lowered-program-v35` records these bindings. Wire metadata is validated
 completely; concrete declaration comparison follows HIR reachability. An unused
 import may lack an instantiated type or function, but every reached GTI declaration
 must still bind to its exact validated callable contract. No new runtime adapter,

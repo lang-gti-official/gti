@@ -103,6 +103,7 @@ function-contract-attributes = function-contract-attribute
 function-contract-attribute = "[[" function-contract-name
                               { "," function-contract-name } "]]" ;
 function-contract-name = "test" | "noreturn" | "track_caller" | "discardable" | "thread_confined_callback"
+                       | "inline" | "noinline" | "cold"
                        | "borrowed_from" "(" ( IDENTIFIER | "this" ) ")" ;
 (* test: defined, safe, non-generic namespace-scope void functions with no
    parameters or attribute arguments. Explicit test targets discover these
@@ -623,8 +624,10 @@ access-specifier       = ( "public" | "protected" | "private" ) ":" ;
 (* `implicit` is contextual: it is a modifier only here, before an ordinary
    constructor's name, `constexpr`, or `consteval`, and an identifier everywhere
    else. *)
+(* Code-generation attributes on lifecycle declarations require a source body;
+   defaulted/deleted lifecycle members cannot carry them. *)
 constructor-declaration
-                       = [ "implicit" | "unsafe" ] [ "constexpr" | "consteval" ] IDENTIFIER
+                       = { function-contract-attribute } [ "implicit" | "unsafe" ] [ "constexpr" | "consteval" ] IDENTIFIER
                          [ generic-parameter-clause ] parameter-clause
                          [ requires-clause ]
                          [ constructor-initializer-list ] block
@@ -649,7 +652,7 @@ constructor-initializer
                        = base-type "(" [ initializer-expression
                          { "," initializer-expression } ] ")" ;
 
-destructor-declaration = "~" IDENTIFIER "(" ")"
+destructor-declaration = { function-contract-attribute } "~" IDENTIFIER "(" ")"
                          ( block | default-member-specifier ) ;
 
 method-declaration     = [ unsafe-function-modifier ]

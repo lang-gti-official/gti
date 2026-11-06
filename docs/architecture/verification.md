@@ -12797,6 +12797,11 @@ rejection, sealed lowering, editor hover signatures, constexpr/defined-virtual c
 `inlinehint`/`noinline`/`cold` attributes (never `alwaysinline`). A body-lowered
 `[[noreturn, inline]]` panic wrapper retains its explicit hint without conflicting
 `noinline` or an invalid LLVM `noreturn` on the failure-status ABI.
+Source-bodied constructor and destructor coverage includes generic owners,
+implicit and constexpr construction, rejection on defaulted/deleted members,
+and policy-loss mutations at the MIR and sealed declaration boundaries.
+The hosted terminal-failure fixture also annotates its constructors and destructor
+to prove that call-boundary hints preserve construction rollback and cleanup order.
 `codegen_attribute_runtime` runs `examples/llvm/codegen-attributes.gti` on LLVM
 O0 and O3, including recursive call boundaries, normal return from a cold
 function, generic/member calls and exactly-once destructor cleanup.

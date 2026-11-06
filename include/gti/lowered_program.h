@@ -441,6 +441,7 @@ struct LoweredFunctionDeclaration {
 };
 
 struct LoweredConstructorDeclaration {
+  FunctionCodegenAttributes codegenAttributes;
   ConstructorId id = 0;
   ClassId owner = 0;
   ConstructorKind kind = ConstructorKind::Ordinary;
@@ -464,6 +465,7 @@ struct LoweredConstructorDeclaration {
 };
 
 struct LoweredDestructorDeclaration {
+  FunctionCodegenAttributes codegenAttributes;
   ClassId owner = 0;
   AccessModifier access = AccessModifier::Public;
   std::optional<SpecialMemberSpecifierKind> specifier;

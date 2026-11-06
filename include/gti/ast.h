@@ -1929,7 +1929,8 @@ public:
                   std::optional<SpecialMemberSpecifier> specifier,
                   std::unique_ptr<BlockStmt> body,
                   std::optional<Token> unsafeKeyword = {},
-                  std::optional<Token> implicitKeyword = {})
+                  std::optional<Token> implicitKeyword = {},
+                  std::vector<FunctionAttribute> functionAttributes = {})
       : constexprKeyword_(std::move(constexprKeyword)), name_(std::move(name)),
         genericParameters_(std::move(genericParameters)),
         parameters_(std::move(parameters)),
@@ -1937,7 +1938,8 @@ public:
         initializers_(std::move(initializers)),
         specifier_(std::move(specifier)), body_(std::move(body)),
         unsafeKeyword_(std::move(unsafeKeyword)),
-        implicitKeyword_(std::move(implicitKeyword)) {}
+        implicitKeyword_(std::move(implicitKeyword)),
+        functionAttributes_(std::move(functionAttributes)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitConstructorDecl(*this);
@@ -1981,6 +1983,11 @@ public:
     return implicitKeyword_;
   }
 
+  [[nodiscard]] const std::vector<FunctionAttribute> &
+  functionAttributes() const {
+    return functionAttributes_;
+  }
+
 private:
   std::optional<Token> constexprKeyword_;
   Token name_;
@@ -1992,15 +1999,18 @@ private:
   std::unique_ptr<BlockStmt> body_;
   std::optional<Token> unsafeKeyword_;
   std::optional<Token> implicitKeyword_;
+  std::vector<FunctionAttribute> functionAttributes_;
 };
 
 class DestructorDecl final : public StmtOfKind<StmtKind::DestructorDecl> {
 public:
   DestructorDecl(Token tilde, Token name,
                  std::optional<SpecialMemberSpecifier> specifier,
-                 std::unique_ptr<BlockStmt> body)
+                 std::unique_ptr<BlockStmt> body,
+                 std::vector<FunctionAttribute> functionAttributes = {})
       : tilde_(std::move(tilde)), name_(std::move(name)),
-        specifier_(std::move(specifier)), body_(std::move(body)) {}
+        specifier_(std::move(specifier)), body_(std::move(body)),
+        functionAttributes_(std::move(functionAttributes)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitDestructorDecl(*this);
@@ -2013,11 +2023,17 @@ public:
   }
   [[nodiscard]] const std::unique_ptr<BlockStmt> &body() const { return body_; }
 
+  [[nodiscard]] const std::vector<FunctionAttribute> &
+  functionAttributes() const {
+    return functionAttributes_;
+  }
+
 private:
   Token tilde_;
   Token name_;
   std::optional<SpecialMemberSpecifier> specifier_;
   std::unique_ptr<BlockStmt> body_;
+  std::vector<FunctionAttribute> functionAttributes_;
 };
 
 class ClassDecl final : public StmtOfKind<StmtKind::ClassDecl> {

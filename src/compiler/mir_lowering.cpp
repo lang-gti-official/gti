@@ -582,7 +582,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
            .ownedParameter = initializer.ownedParameter});
     }
     result.program.constructors.push_back(
-        {.id = instance.id,
+        {.codegenAttributes = instance.codegenAttributes,
+         .id = instance.id,
          .owner = instance.owner,
          .constexprConstructor = instance.constexprConstructor,
          .requiresUnsafe = instance.requiresUnsafe,
@@ -645,7 +646,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
   result.program.destructors.reserve(source.destructorInstances().size());
   for (const HirDestructorInstance &instance : source.destructorInstances()) {
     result.program.destructors.push_back(
-        {.id = instance.id,
+        {.codegenAttributes = instance.codegenAttributes,
+         .id = instance.id,
          .owner = instance.owner,
          .definitionKind =
              instance.source != nullptr && instance.source->body() != nullptr

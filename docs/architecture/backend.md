@@ -6138,7 +6138,7 @@ cleanup ownership is independent of whether the representation needs a byte.
 MIR independently follows the destructor with that field known null and requires
 a terminating path containing only the field observation, inert scalar operations
 and empty lifecycle boundaries. Effects, calls, failure, uncertain branches and
-cycles invalidate the witness. The witness is serialized in `mir-v120`.
+cycles invalidate the witness. The witness is serialized in `mir-v121`.
 
 LLVM omits the separate byte for this witness, uses the pointer for cleanup
 observation, and nulls it after transferring all fields to a move destination.
@@ -6550,6 +6550,15 @@ failure, termination or ownership facts. Other lowering and optimization paths
 must preserve explicit policy and avoid conflicting LLVM attributes. This
 initial slice changes no calling convention or runtime representation and adds
 no C++ backend optimization implementation.
+
+Source constructors and destructors carry the same resolved policy through
+their semantic declarations, concrete HIR/MIR instances and sealed lifecycle
+declarations. Native lifecycle body declarations use the shared attribute
+application routine. HIR/semantic, HIR/MIR and sealed/MIR checks reject lost
+policy; MIR rejects invalid policy values and annotations on generated or
+non-source lifecycle bodies. Generated field/base cleanup retains its existing
+schedule, and no attribute changes the status ABI, rollback or active-drop
+obligations. Explicit default/delete declarations are rejected in semantics.
 
 ### LLVM Function Values And Closure Environments
 
