@@ -4185,26 +4185,26 @@ private:
       lowered.access = loan.access;
       if (function != nullptr && function->owner && *function->owner != 0 &&
           *function->owner <= program.classInstances().size()) {
-        const auto &owner = program.classInstances()[*function->owner - 1];
-        lowered.type = owner.type;
-        lowered.traits = owner.traits;
+        const auto owner = hirLifetimeInstanceView(program.classInstances(), function->ownerType);
+        if (!owner || owner->instance->id != *function->owner) {
+          valid = false;
+          return 0;
+        }
+        lowered.type = function->ownerType;
+        lowered.traits = owner->instance->traits;
         lowered.access = function->source != nullptr &&
                                  receiverAllowsMutation(
                                      function->source->receiverMutability())
                              ? AccessMode::Mutable
                              : AccessMode::ReadOnly;
       } else if (destructor != nullptr) {
-        const auto *owner =
-            destructor->owner != 0 &&
-                    destructor->owner <= program.classInstances().size()
-                ? &program.classInstances()[destructor->owner - 1]
-                : nullptr;
-        if (owner == nullptr) {
+        const auto owner = hirLifetimeInstanceView(program.classInstances(), destructor->ownerType);
+        if (!owner || owner->instance->id != destructor->owner) {
           valid = false;
           return 0;
         }
-        lowered.type = owner->type;
-        lowered.traits = owner->traits;
+        lowered.type = destructor->ownerType;
+        lowered.traits = owner->instance->traits;
         lowered.access = AccessMode::Mutable;
       }
     } else if (const auto local = localSymbols.find(loan.place.root);
@@ -4281,6 +4281,11 @@ private:
         lowered.projections.push_back({.kind = MirProjectionKind::Index,
                                        .selection = projection.selection});
         break;
+      case SemanticLoanPlaceProjectionKind::Base:
+        // Base loan paths require the exact typed adapter introduced with
+        // the atomic path migration, never a field-symbol approximation.
+        valid = false;
+        return 0;
       }
     }
 
@@ -4377,6 +4382,9 @@ private:
         lowered.projections.push_back({.kind = MirProjectionKind::Index,
                                        .selection = projection.selection});
         break;
+      case PlaceProjectionKind::Base:
+        valid = false;
+        return 0;
       }
     }
     return appendPlace(std::move(lowered));

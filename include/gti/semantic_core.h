@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -117,6 +118,7 @@ enum class PlaceProjectionKind {
   ConstantIndex,
   DynamicIndex,
   Dereference,
+  Base,
 };
 
 struct PlaceProjection {
@@ -124,10 +126,44 @@ struct PlaceProjection {
   SymbolId field = 0;
   std::uint64_t index = 0;
   std::size_t selection = 0;
+  // Base names the current declaration and its full direct-base ordinal in
+  // index, including interface entries. A typed walk must prove that the
+  // selected base has storage; an interface cannot supply a borrowed field.
+  ClassId baseOwner = 0;
 
   friend bool operator==(const PlaceProjection &,
                          const PlaceProjection &) = default;
 };
+
+// Rootless structural paths share the place projection vocabulary. This
+// shape check grants no type, origin, active-variant or liveness authority;
+// each consumer must walk the exact instantiated root and declaration graph.
+using BorrowPath = std::vector<PlaceProjection>;
+
+[[nodiscard]] inline bool
+isWellFormedBorrowPath(std::span<const PlaceProjection> path) {
+  for (const auto &projection : path) {
+    switch (projection.kind) {
+    case PlaceProjectionKind::Field:
+      if (!projection.field || projection.index || projection.selection || projection.baseOwner)
+        return false;
+      break;
+    case PlaceProjectionKind::Base:
+      if (!projection.baseOwner || projection.field || projection.selection)
+        return false;
+      break;
+    case PlaceProjectionKind::ConstantIndex:
+      if (projection.field || projection.selection || projection.baseOwner)
+        return false;
+      break;
+    case PlaceProjectionKind::DynamicIndex:
+    case PlaceProjectionKind::Dereference:
+    default:
+      return false;
+    }
+  }
+  return true;
+}
 
 struct PlaceKey {
   PlaceDomain domain;

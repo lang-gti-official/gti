@@ -284,7 +284,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v122 valid=" << program.valid() << '\n';
+    output << "mir-v123 valid=" << program.valid() << '\n';
     if (program.requiresNativeObjectLayout())
       output << "native-object-layout\n";
     for (const auto &recipe : program.nominalVarianceRecipes()) {
@@ -1058,7 +1058,7 @@ public:
   }
 
   void print(const MirBody &value) {
-    output << "mir-body-v94\n";
+    output << "mir-body-v95\n";
     body(value, 0);
   }
 
@@ -1617,7 +1617,7 @@ private:
   void placeProjection(const PlaceProjection &value) {
     output << "projection(" << number(value.kind) << ";field=" << value.field
            << ";index=" << value.index << ";selection=" << value.selection
-           << ')';
+           << ";base-owner=" << value.baseOwner << ')';
   }
 
   void placeKey(const PlaceKey &value) {

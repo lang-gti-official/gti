@@ -28,14 +28,16 @@ void appendExecutableRegionShape(const SemanticType &type,
 
 auto SemanticVisitor::Impl::importMemberCallableScopes(
     GenericSubstitution &substitution, InstanceAnalysisKind kind,
-    std::size_t declaration, const SemanticType &owner, const Token &site) const -> bool {
+    std::size_t declaration, const SemanticType &owner, const Token &site,
+    bool lambdaInvocation) const -> bool {
   if (!substitution.valid)
     return false;
   if (substitution.callableScopes.empty())
     return true;
   RequestSessionContext::ExecutableLifetimeKey key{
       .runtime = {.kind = kind, .declaration = declaration,
-                  .classTypes = owner.arguments, .classValues = owner.valueArguments}};
+                  .classTypes = owner.arguments, .classValues = owner.valueArguments},
+      .regionShape = {lambdaInvocation ? 1U : 0U}};
   for (auto &type : key.runtime.classTypes) {
     appendExecutableRegionShape(type, key.regionShape);
     type = eraseTypeLifetimes(std::move(type));
@@ -46,6 +48,7 @@ auto SemanticVisitor::Impl::importMemberCallableScopes(
   constexpr GenericParameterId highHalf = std::numeric_limits<GenericParameterId>::max() / 2 + 1;
   std::size_t ordinal = 0;
   for (auto &scope : substitution.callableScopes) {
+    const auto previousImports = std::move(scope.imports);
     scope.imports.clear();
     for (const auto parameter : scope.signature.quantifiedLifetimes) {
       if (ordinal == descriptors.size()) {
@@ -72,8 +75,13 @@ auto SemanticVisitor::Impl::importMemberCallableScopes(
       const auto value = imported == scope.imports.end() ? to : imported->second;
       const auto [existing, fresh] = substitution.lifetimes.emplace(from.id, value);
       if (!fresh && existing->second != value) {
-        substitution.valid = false;
-        return false;
+        const auto previous = to.kind == Lifetime::Kind::Parameter ? previousImports.find(to.id)
+                                                                 : previousImports.end();
+        if (!lambdaInvocation || previous == previousImports.end() || existing->second != previous->second) {
+          substitution.valid = false;
+          return false;
+        }
+        existing->second = value;
       }
     }
   }

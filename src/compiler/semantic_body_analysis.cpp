@@ -945,10 +945,26 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
       } else if (const auto *function = stmtAs<FunctionDecl>(member.get());
                  function != nullptr && !function->parameters().empty() &&
                  function->parameters().back().pack) {
+        auto invocation = currentGenericSubstitution();
+        const auto *functionInfo = semanticModel.findFunction(*function);
+        if (!functionInfo || !importMemberCallableScopes(invocation,
+                InstanceAnalysisKind::Function, functionInfo->id,
+                canonical->ownerType, function->name())) {
+          report(function->name(),
+                 "A member parameter pack requires a complete invocation lifetime scope.",
+                 "GTI-S2126");
+          continue;
+        }
+        auto ownerScopes = std::move(instanceCallableScopes);
+        auto ownerLifetimes = std::move(instanceLifetimeSubstitution);
+        instanceCallableScopes = std::move(invocation.callableScopes);
+        instanceLifetimeSubstitution = std::move(invocation.lifetimes);
         const auto &parameters = genericParametersFor(*function);
         beginTypeParameterScope(parameters);
         validateFunctionPacks(*function, parameters);
         endTypeParameterScope();
+        instanceCallableScopes = std::move(ownerScopes);
+        instanceLifetimeSubstitution = std::move(ownerLifetimes);
       }
     }
   };
@@ -10794,6 +10810,14 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   }
   const LambdaId id = sourceIdentity->second.id;
   nextLambdaId = std::max(nextLambdaId, id + 1);
+  struct LambdaPatternDepth {
+    std::size_t &depth;
+    bool active;
+    void finish() { if (active) { --depth; active = false; } }
+    ~LambdaPatternDepth() { finish(); }
+  } patternDepth{requestSession.callablePatternTypeDepth, !instanceCallableScopes.empty()};
+  if (patternDepth.active)
+    ++requestSession.callablePatternTypeDepth;
   if (expr.returnType().name.last().kind == TokenKind::AUTO) {
     report(expr.returnType().name.last(),
            "Lambda return types must be explicit; 'auto' return deduction "
@@ -10858,6 +10882,66 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     }
     parameterTypes.push_back(parameterType);
   }
+  patternDepth.finish();
+
+  std::optional<GenericSubstitution> lambdaInvocationSubstitution;
+  std::vector<Lifetime> lambdaInvocationParameters;
+  if (!instanceCallableScopes.empty()) {
+    auto substitution = currentGenericSubstitution();
+    const auto closed = substituteType(
+        SemanticType::functionSignature(returnType, parameterTypes), substitution);
+    if (closed.kind != SemanticType::FunctionSignature) {
+      report(expr.bracket(), "The lambda signature cannot reconstruct its projected invocation scope.",
+             "GTI-S2126");
+    } else {
+      auto selected = substitution;
+      std::erase_if(selected.callableScopes, [&](const auto &capture) {
+        return std::none_of(capture.signature.quantifiedLifetimes.begin(),
+                            capture.signature.quantifiedLifetimes.end(), [&](auto parameter) {
+          return std::find(closed.quantifiedLifetimes.begin(), closed.quantifiedLifetimes.end(), parameter) !=
+              closed.quantifiedLifetimes.end();
+        });
+      });
+      const auto owner = currentClass ? openClassType(*currentClass) : SemanticType::Unknown;
+      if (!importMemberCallableScopes(selected, InstanceAnalysisKind::Function, id,
+                                       owner, expr.bracket(), true)) {
+        report(expr.bracket(), "The lambda requires a fresh, noncapturing invocation lifetime scope.",
+               "GTI-S2126");
+      } else {
+        for (const auto &capture : selected.callableScopes) {
+          const auto target = std::find_if(substitution.callableScopes.begin(), substitution.callableScopes.end(),
+              [&](const auto &candidate) { return candidate.argumentPath == capture.argumentPath; });
+          if (target != substitution.callableScopes.end())
+            *target = capture;
+          for (const auto parameter : capture.signature.quantifiedLifetimes)
+            lambdaInvocationParameters.push_back(capture.imports.at(parameter));
+        }
+        substitution.lifetimes = std::move(selected.lifetimes);
+        const auto rawReturn = returnType;
+        returnType = substituteType(returnType, substitution);
+        if (returnType != rawReturn) {
+          validateOwningPayloadEnumByValueBoundary(returnType, expr.returnType().name.last(),
+                                                   "lambda return", directOwningPayloadTransport);
+          if (returnType.kind == SemanticType::FunctionSignature ||
+              (returnType.kind != SemanticType::Reference && typeTraits(returnType).containsBorrowedState))
+            report(expr.returnType().name.last(),
+                   "The projected lambda result requires a supported value or reference result contract.",
+                   "GTI-S2027");
+        }
+        for (std::size_t index = 0; index < parameterTypes.size(); ++index) {
+          auto &parameter = parameterTypes[index];
+          const auto rawParameter = parameter;
+          parameter = substituteType(parameter, substitution);
+          if (parameter != rawParameter) {
+            validateOwningPayloadEnumByValueBoundary(parameter, expr.parameters()[index].type.name.last(),
+                                                     "lambda parameter", directOwningPayloadTransport);
+            validateReferenceReferent(parameter, expr.parameters()[index].type.name.last());
+          }
+        }
+        lambdaInvocationSubstitution = std::move(substitution);
+      }
+    }
+  }
 
   std::vector<Lifetime> environmentLifetimes;
   std::vector<LifetimeBinding> environmentBindings;
@@ -10874,6 +10958,15 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   const auto bindAmbient = [&](Lifetime actual) {
     if (actual.kind != Lifetime::Kind::Parameter)
       return;
+    if (std::find(lambdaInvocationParameters.begin(), lambdaInvocationParameters.end(), actual) !=
+        lambdaInvocationParameters.end())
+      return;
+    if (lambdaInvocationSubstitution)
+      if (const auto projected = lambdaInvocationSubstitution->lifetimes.find(actual.id);
+          projected != lambdaInvocationSubstitution->lifetimes.end() &&
+          std::find(lambdaInvocationParameters.begin(), lambdaInvocationParameters.end(), projected->second) !=
+              lambdaInvocationParameters.end())
+        return;
     if (std::any_of(ambientLifetimes.begin(), ambientLifetimes.end(),
                     [&](const auto binding) { return binding.first == actual; }))
       return;
@@ -10954,7 +11047,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     return implicitSyntaxLifetime(expr.bracket(), lifetimeSlot,
                                   "_input" + std::to_string(lifetimeSlot));
   };
-  const bool inferredLambda = !hasExplicitLifetimeContract(expr.returnType()) &&
+  const bool inferredLambda = lambdaInvocationParameters.empty() &&
+      !hasExplicitLifetimeContract(expr.returnType()) &&
       std::none_of(expr.parameters().begin(), expr.parameters().end(), [&](const auto &parameter) {
         return hasExplicitLifetimeContract(parameter.type);
       });
@@ -10962,6 +11056,10 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       requestSession.collectingLambdaLifetimeContract == &expr;
   LifetimeSignatureContract lambdaContract;
   lambdaContract.parameters = environmentLifetimes;
+  lambdaContract.parameters.insert(lambdaContract.parameters.end(),
+                                    lambdaInvocationParameters.begin(), lambdaInvocationParameters.end());
+  if (!lambdaInvocationParameters.empty())
+    lambdaContract.origin = LifetimeContractOrigin::Declared;
   if (!expr.captures().empty())
     lambdaContract.receiver = implicitSyntaxLifetime(
         expr.bracket(), 0, "_receiver", std::numeric_limits<std::size_t>::max() - 2);
@@ -11262,6 +11360,20 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   auto enclosingTypeSubstitution = instanceTypeSubstitution;
   auto enclosingCallableScopes = instanceCallableScopes;
   auto enclosingLifetimeSubstitution = instanceLifetimeSubstitution;
+  if (lambdaInvocationSubstitution) {
+    instanceCallableScopes = lambdaInvocationSubstitution->callableScopes;
+    instanceLifetimeSubstitution = lambdaInvocationSubstitution->lifetimes;
+    for (auto &scope : lifetimeParameterScopes)
+      for (auto &[name, region] : scope) {
+        (void)name;
+        if (region.kind == Lifetime::Kind::Parameter)
+          if (const auto projected = instanceLifetimeSubstitution.find(region.id);
+              projected != instanceLifetimeSubstitution.end() &&
+              std::find(lambdaInvocationParameters.begin(), lambdaInvocationParameters.end(), projected->second) !=
+                  lambdaInvocationParameters.end())
+            region = projected->second;
+      }
+  }
   for (auto &scope : lifetimeParameterScopes)
     for (auto &[name, region] : scope) {
       (void)name;

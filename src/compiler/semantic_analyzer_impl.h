@@ -331,7 +331,8 @@ public:
   canonicalizeExecutableInstance(const InstanceAnalysisKey &key) override;
   [[nodiscard]] bool importMemberCallableScopes(
       GenericSubstitution &substitution, InstanceAnalysisKind kind,
-      std::size_t declaration, const SemanticType &owner, const Token &site) const;
+      std::size_t declaration, const SemanticType &owner, const Token &site,
+      bool lambdaInvocation = false) const;
   [[nodiscard]] GenericSubstitution currentGenericSubstitution(bool includeLifetimes = true) const;
 
   [[nodiscard]] bool

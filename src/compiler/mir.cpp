@@ -1574,6 +1574,10 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
         return false;
       }
       break;
+    case PlaceProjectionKind::Base:
+      // The typed borrow-path adapter owns owner/ordinal proof. Until live
+      // records migrate, this field-only global adapter cannot grant it.
+      return false;
     }
   }
   return true;

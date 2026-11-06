@@ -114,6 +114,66 @@ physicalPayloadSelectionSource(const MirProgram &, const MirBody &,
 storedPayloadSelectionReference(const MirProgram &, const MirBody &,
                                 const MirReferenceSelection &);
 
+// Transient input for the typed-path foundation. Current loan records still
+// have their existing field paths; this is not a second persisted authority.
+// Replace this wrapper with BorrowDependencyCondition when that path migrates.
+struct MirBorrowPathGuard {
+  BorrowPath subobject;
+  SemanticType enumeration = SemanticType::Unknown;
+  std::size_t variant = 0;
+  friend bool operator==(const MirBorrowPathGuard &,
+                         const MirBorrowPathGuard &) = default;
+};
+
+enum class MirBorrowPathRoot { Value, PhysicalReference };
+
+struct MirBorrowPathReferenceCrossing {
+  std::size_t pathOffset = 0;
+  std::size_t projectionOffset = 0;
+  SemanticType reference = SemanticType::Unknown;
+  bool physicalRoot = false;
+  friend bool operator==(const MirBorrowPathReferenceCrossing &,
+                         const MirBorrowPathReferenceCrossing &) = default;
+};
+
+struct MirBorrowPathPayloadSelection {
+  std::size_t pathOffset = 0;
+  std::size_t projectionOffset = 0;
+  SemanticType enumeration = SemanticType::Unknown;
+  std::size_t variant = 0;
+  std::size_t payloadIndex = 0;
+  friend bool operator==(const MirBorrowPathPayloadSelection &,
+                         const MirBorrowPathPayloadSelection &) = default;
+};
+
+struct MirBorrowPathView {
+  SemanticType type = SemanticType::Unknown;
+  AccessMode referenceAccessLimit = AccessMode::ReadOnly;
+  std::vector<MirPlaceProjection> projections;
+  std::vector<MirBorrowPathReferenceCrossing> referenceCrossings;
+  std::vector<MirBorrowPathPayloadSelection> payloadSelections;
+  friend bool operator==(const MirBorrowPathView &,
+                         const MirBorrowPathView &) = default;
+};
+
+// Typed structure only: these queries grant no origin, active-variant,
+// capability, parent, liveness, escape, write or cleanup authority. Physical
+// root-reference treatment is explicit; value roots cannot hide a reference.
+// Base uses the full direct declaration ordinal (including interfaces) in
+// constantIndex and the independently selected concrete instance in selection.
+[[nodiscard]] std::optional<MirBorrowPathView> walkBorrowPath(
+    const MirProgram &, const SemanticType &root, AccessMode rootAccess,
+    std::span<const PlaceProjection>, std::span<const MirBorrowPathGuard>,
+    MirBorrowPathRoot);
+
+// Recover only a path whose forward replay exactly reproduces the canonical
+// projections and payload selections. An SSA index needs an independently
+// canonicalized constant first; absent base ordinals and ambiguous views fail.
+[[nodiscard]] std::optional<BorrowPath> borrowPathForProjections(
+    const MirProgram &, const SemanticType &root, AccessMode rootAccess,
+    std::span<const MirPlaceProjection>, std::span<const MirBorrowPathGuard>,
+    std::span<const MirBorrowPathPayloadSelection>, MirBorrowPathRoot);
+
 // Concrete complete object representation, independent of any lifetime action.
 [[nodiscard]] bool completeObjectType(const MirProgram &program,
                                       const SemanticType &type);

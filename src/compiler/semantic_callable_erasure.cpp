@@ -548,9 +548,12 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
           std::span<const SemanticType>(&parameters[index], 1),
           std::span<const ExprPtr>(&expression, 1), expr.paren());
     }
+    const auto adjusted = index == 0 ? std::optional<SemanticType>{}
+        : callLifetimeArgumentType(invocation, argument.type, parameters[index]);
+    const auto &matchedType = adjusted ? *adjusted : argument.type;
     if (!(argument.forwardedPackElement
-              ? forwardedPackArgumentMatches(parameters[index], argument.type)
-              : callArgumentMatches(parameters[index], argument.type,
+              ? forwardedPackArgumentMatches(parameters[index], matchedType)
+              : callArgumentMatches(parameters[index], matchedType,
                                     expression))) {
       reportCallArgumentMismatch(index, parameters[index], argument.type,
                                  expression, "GTI invocation pointer");

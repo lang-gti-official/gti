@@ -381,6 +381,7 @@ owners = [
   "lifetime_semantics",
   "lifetime_pipeline",
   "lifetime_ir_metadata",
+  "lifetime_borrow_paths",
   "lifetime_hir_signatures",
   "lifetime_mir_contracts",
   "lifetime_payload_conversions",
@@ -519,6 +520,7 @@ paths = [
   "include/gti/mir*",
 ]
 owners = [
+  "lifetime_borrow_paths",
   "reference_parameter_pack_mir",
   "^mir_",
   "borrow_origin_publication",

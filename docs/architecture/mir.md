@@ -456,6 +456,10 @@ completion flag alone is not proof of any outlives relation. Lambda and
 destructor instances retain normalized contracts just as functions and
 constructors do. Authoritative nominal variance is preserved alongside the
 concrete field/base inventory; lowering never derives it from names.
+Abstract receiver-entry places and evaluated `this` expressions both retain
+the exact callable owner type. The independently scoped layout supplies the
+physical field recipe and traits; its universal names cannot become body
+lifetimes in a method or destructor.
 
 Payload operations instantiate the selected enum's sealed variant recipe with
 its exact actual region bindings. Construction reconstructs each source type
@@ -524,8 +528,8 @@ retain descriptors for lifted universal regions and their extended contracts.
 These records are proof metadata and do not authorize runtime erasure by
 themselves.
 
-The combined deterministic serialization is currently `mir-v122`/`mir-body-v94`,
-with `lowered-program-v36` declaration metadata. Function instances and sealed
+The combined deterministic serialization is currently `mir-v123`/`mir-body-v95`,
+with `lowered-program-v37` declaration metadata. Function instances and sealed
 declarations retain the resolved cold hint and default/hint/never inlining policy;
 verification rejects a mismatching or non-source policy. These distinct combined
 identities retain both macro result-region/local-initializer authority and
@@ -640,6 +644,19 @@ conditions. Missing initialization, ambiguous producers, stale guards, or an
 unproved conversion cannot establish that view. Semantic scalar-return mapping
 also compares a retained group's guards in the applied formal type's domain;
 it preserves the exact live parent and original ancestry across that conversion.
+The typed borrow-path query foundation walks exact declaration fields, full
+direct-base ordinals, bounded array or concrete-pack indices, and guarded enum
+payloads through actual nominal lifetime views. Its explicit root role separates
+a physical reference from a stored external-reference crossing. Base projections
+retain both the declaration-vector ordinal and concrete instance; interface
+entries cannot yield storage. Reverse mapping succeeds only when forward replay
+reproduces every projection and payload-selection position, without inherited
+field searches or guessed dereferences. These are structural facts, not origin,
+branch-dominance, capability, liveness or cleanup authority. The foundation is
+currently unused by live loan records: their field paths migrate atomically in
+a later step, and the query's typed guard input is transient rather than a second
+persisted contract. Existing single state-bearing base admission is unchanged.
+
 A structural enum-field region query resolves a unique payload symbol in the
 exact instantiated enum type and uses the stored external region when crossing
 a reference; branch guards, provenance and loan liveness remain independently

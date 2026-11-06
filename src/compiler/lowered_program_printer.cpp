@@ -903,7 +903,8 @@ private:
         const PlaceProjection &projection =
             value.returnBorrowPlace->projections[index];
         output << number(projection.kind) << ':' << projection.field << ':'
-               << projection.index << ':' << projection.selection;
+               << projection.index << ':' << projection.selection << ':'
+               << projection.baseOwner;
       }
       output << ']';
     } else {
@@ -1027,7 +1028,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v36\n";
+  output << "lowered-program-v37\n";
   for (const auto &unit : program.compiledInterfaceUnits())
     output << "compiled-interface-unit " << unit.sourceUnit
            << " package=" << std::quoted(unit.owner.package)

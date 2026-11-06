@@ -666,6 +666,69 @@ int main() { Escaping<Selection> item{1}; return 0; }
 )");
   expect(!escaped.semanticValid,
          "invocation-bound projections cannot escape as an ordinary stored field");
+  const auto invalidComponent = analyze(R"(
+class Reversed<R(A)> { public: using Signature = A(R); Reversed() = default; };
+using Source = void(int);
+int main() { Reversed<Source> item{}; return 0; }
+)");
+  expect(!invalidComponent.semanticValid,
+         "reconstructed callable aliases still reject a substituted void parameter");
+}
+
+void testCallablePatternLambdaScopes() {
+  const auto parsed = analyze(R"(
+class Local<R&<result>(A)> {
+public:
+  Local() = default;
+  R&<result> invoke(A value) {
+    auto relay = [](A input) -> R&<result> { return input; };
+    return relay(value);
+  }
+};
+using Selection = for<lifetime a> int&<a>(int&<a>);
+int main() { Local<Selection> callback{}; int value = 4; return callback.invoke(value); }
+)");
+  expectValid(parsed, "a lambda projected from an invocation recipe does not capture the enclosing invocation");
+  lang::SemanticVisitor visitor;
+  expect(visitor.check(parsed.program), "projected lambda declaration resolves through the ordinary semantic provider");
+  const auto *owner = lang::stmtAs<lang::ClassDecl>(parsed.program.declarations()[0].get());
+  const auto *selection = alias(parsed, "Selection");
+  if (!owner || !selection)
+    return;
+  const lang::FunctionDecl *method = nullptr;
+  for (const auto &member : owner->members())
+    if (const auto *candidate = lang::stmtAs<lang::FunctionDecl>(member.get());
+        candidate && candidate->name().lexeme == "invoke")
+      method = candidate;
+  const auto *info = method ? visitor.model().findFunction(*method) : nullptr;
+  if (!info || !method->body())
+    return;
+  const auto body = visitor.analyzeFunctionInstance(info->id, {selection->type}, {}, {}, {});
+  expect(body.valid(), "the projected lambda body proves its own input/result lifetime relation");
+  if (!body.valid())
+    for (const auto &diagnostic : body.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  const auto *local = lang::stmtAs<lang::VariableDecl>(method->body()->statements()[0].get());
+  const auto *syntax = local ? lang::exprAs<lang::Lambda>(local->initializer().get()) : nullptr;
+  const auto *lambda = syntax ? body.model.findLambda(*syntax) : nullptr;
+  expect(lambda && lambda->type.quantifiedLifetimes.size() == 1 &&
+             std::none_of(lambda->environmentLifetimes.begin(), lambda->environmentLifetimes.end(),
+                          [&](auto region) { return region.id == lambda->type.quantifiedLifetimes.front(); }),
+         "the lambda invocation binder is independent of its fixed environment inventory");
+  const auto escaped = analyze(R"(
+class Local<R&<result>(A)> {
+public:
+  Local() = default;
+  R&<result> invoke(A value) {
+    auto relay = [](A input) -> R&<result> { int local = 1; return local; };
+    return relay(value);
+  }
+};
+using Selection = for<lifetime a> int&<a>(int&<a>);
+int main() { Local<Selection> callback{}; int value = 4; return callback.invoke(value); }
+)");
+  expect(!escaped.semanticValid,
+         "a projected lambda cannot satisfy its invocation result with local storage");
 }
 
 void testInferredCarrierRegions() {
@@ -1578,6 +1641,7 @@ int main() {
   testSpecializationLifetimeShape();
   testExecutableLifetimeIdentity();
   testCallablePatternScopes();
+  testCallablePatternLambdaScopes();
   testInferredCarrierRegions();
   testProjectedPatternLifetimes();
   testEnumInitializerLifetimeComposition();

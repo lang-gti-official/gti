@@ -159,6 +159,43 @@ void owningCleanupShape() {
   expect(mir_detail::sameLifetimeDropShape(source, target),
          "cleanup shape is not an outlives proof; the mandatory stage gate rejects strengthening");
 }
+void structuralBorrowPathShape() {
+  const BorrowPath path{{.kind = PlaceProjectionKind::Base, .index = 1, .baseOwner = 170},
+                        {.kind = PlaceProjectionKind::Field, .field = 171},
+                        {.kind = PlaceProjectionKind::ConstantIndex, .index = 2}};
+  expect(isWellFormedBorrowPath(path) && isWellFormedBorrowPath({}),
+         "borrow paths retain typed base ordinals, stable fields and bounded index shapes");
+  for (int mutation = 0; mutation != 8; ++mutation) {
+    auto changed = path;
+    if (mutation == 0) changed.front().baseOwner = 0;
+    else if (mutation == 1) changed.front().field = 171;
+    else if (mutation == 2) changed.front().selection = 1;
+    else if (mutation == 3) changed[1].baseOwner = 170;
+    else if (mutation == 4) changed[1].field = 0;
+    else if (mutation == 5) changed.back().kind = PlaceProjectionKind::DynamicIndex;
+    else if (mutation == 6) changed.back().kind = PlaceProjectionKind::Dereference;
+    else changed.back().kind = static_cast<PlaceProjectionKind>(999);
+    expect(!isWellFormedBorrowPath(changed),
+           "exportable borrow paths reject body-only operations and mixed projection identities");
+  }
+  PlaceKey whole{.domain = {.snapshot = 1, .body = 2}, .root = 3};
+  auto base = whole;
+  base.projections = {path.front()};
+  auto field = base;
+  field.projections.push_back(path[1]);
+  auto different = base;
+  different.projections.front().index = 2;
+  expect(placeRelation(base, base).relation == PlaceRelation::Equal &&
+             placeRelation(whole, field).relation == PlaceRelation::LeftStrictPrefix &&
+             placeRelation(field, base).relation == PlaceRelation::RightStrictPrefix &&
+             placeRelation(base, different).relation == PlaceRelation::MayAlias,
+         "base paths preserve ancestor overlap without inferring unchecked sibling disjointness");
+  auto malformed = base;
+  malformed.projections.front().baseOwner = 0;
+  expect(placeRelation(malformed, malformed).relation == PlaceRelation::MayAlias &&
+             placeRelation(malformed, field).relation == PlaceRelation::MayAlias,
+         "malformed base metadata cannot prove exact identity or nonoverlap");
+}
 void projectedOnlyNominalRecipe() {
   NominalVarianceRecipe recipe{
       .declaration = 140,
@@ -289,6 +326,7 @@ int main() {
   owningCleanupShape();
   quantifiedNominalLiftInventory();
   projectedOnlyNominalRecipe();
+  structuralBorrowPathShape();
   storedEnumFieldRegion();
   const auto fixedEnvironment = Lifetime::parameter(701);
   const std::array closureParameters{reference(702)};
@@ -484,7 +522,7 @@ int main() {
   const MirPrinter printer;
   const auto original = printer.print(body);
   expect(
-      original.starts_with("mir-body-v94\n"),
+      original.starts_with("mir-body-v95\n"),
       "lifetime-bearing structural metadata requires its own format version");
   auto changed = body;
   changed.blocks[0].instructions[0].lifetimeApplication.callableSignature = fixedProof;

@@ -439,6 +439,16 @@ instead records its external referent's declared region; the enum shell does
 not supply that lifetime. Both paths preserve nested carrier regions and their
 existing access, guard, parent-loan and cleanup obligations.
 
+The shared place vocabulary also defines a staged `BorrowPath`: a rootless
+sequence of field, direct-base, and constant-index projections. A base records
+its declaring owner and the full direct-base ordinal, including interface
+entries. Shape validation rejects body-only dereferences/dynamic indices and
+mixed selector metadata; the exact instantiated type walk must separately
+prove field identity, base storage and index bounds. The structural overlap
+query preserves ancestor overlap and treats unequal bases conservatively.
+Current stored-dependency records still use field paths until their coordinated
+migration; this vocabulary alone does not admit inherited borrowed state.
+
 The shared callable contract derivation obtains each nominal application's
 formation formula from the owning phase. Semantics supplies the instantiated
 declaration contract; MIR supplies its verified nominal view. Inputs and

@@ -441,11 +441,11 @@ int main() { int value = 7; return read(value) - 7; }
 )gti", true);
   check("default-field-keeps-constructor-lifetime-universe", R"gti(
 enum Reading<lifetime a> { empty, value(int&<a> item) };
-struct Default<Reading<source>> {
+struct Default<int&<source>> {
   Reading<source> reading = Reading<source>::empty;
   Default(int count) {}
 };
-int main() { Default<Reading<static>> holder{0}; return 0; }
+int main() { Default<int&<static>> holder{0}; return 0; }
 )gti", true);
   check("field-default-keeps-declaration-name-lookup", R"gti(
 int initial_score() { return 7; }

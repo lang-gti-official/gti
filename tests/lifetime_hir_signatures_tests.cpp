@@ -118,6 +118,38 @@ int main() { int value = 7; return read(value) - 7; }
                "implicit destructor receivers use their canonical callable owner");
       }
   expect(implicitReceiver, "projected-only fixture exercises implicit receiver lowering");
+  const auto checkReceiverPlaces = [&](MirBodyAddress address, const SemanticType &ownerType,
+                                       const MirClassInstance &layout) {
+    const auto *body = findMirBody(result.mir, address);
+    bool distinctReceiver = false;
+    for (const auto &place : body->places) {
+      if (place.root != MirPlaceRootKind::This || !place.projections.empty())
+        continue;
+      expect(place.type == ownerType,
+             "abstract entry and evaluated receivers use the same exact callable owner universe");
+      if (place.type == layout.type)
+        continue;
+      auto invalid = result.mir;
+      auto *changed = findMirBody(invalid, address);
+      changed->places[place.id - 1].type = layout.type;
+      expect(!verifyMirProgram(invalid).valid(),
+             "a receiver entry cannot import the class layout's independent lifetime binders");
+      distinctReceiver = true;
+    }
+    return distinctReceiver;
+  };
+  bool methodReceiver = false, destructorReceiver = false;
+  for (const auto &function : result.mir.functionInstances())
+    if (function.owner)
+      if (const auto *layout = result.mir.findClassInstance(*function.owner))
+        methodReceiver |= checkReceiverPlaces({MirBodyKind::Function, function.id},
+                                              function.ownerType, *layout);
+  for (const auto &destructor : result.mir.destructorInstances())
+    if (const auto *layout = result.mir.findClassInstance(destructor.owner))
+      destructorReceiver |= checkReceiverPlaces({MirBodyKind::Destructor, destructor.id},
+                                                destructor.ownerType, *layout);
+  expect(methodReceiver && destructorReceiver,
+         "method and destructor fixtures each distinguish callable and layout receiver scopes");
   bool fieldMutation = false;
   for (const auto &constructor : result.mir.constructorInstances()) {
     const auto *owner = result.mir.findClassInstance(constructor.owner);

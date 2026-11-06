@@ -3854,6 +3854,16 @@ void SemanticModel::finalizeCallableForwardings() {
   if (!left.valid() || !right.valid()) {
     return {.relation = PlaceRelation::MayAlias};
   }
+  const auto malformedBase = [](const PlaceKey &place) {
+    return std::any_of(place.projections.begin(), place.projections.end(),
+                       [](const PlaceProjection &projection) {
+                         return projection.kind == PlaceProjectionKind::Base
+                                    ? !projection.baseOwner || projection.field || projection.selection
+                                    : projection.baseOwner != 0;
+                       });
+  };
+  if (malformedBase(left) || malformedBase(right))
+    return {.relation = PlaceRelation::MayAlias};
   if (left.receiver != right.receiver || left.root != right.root) {
     return {.relation = PlaceRelation::Disjoint};
   }
@@ -3867,6 +3877,10 @@ void SemanticModel::finalizeCallableForwardings() {
     if (lhs == rhs) {
       continue;
     }
+    // Unequal base projections need a typed layout proof of disjointness.
+    // The shared structural relation deliberately keeps them conservative.
+    if (lhs.kind == PlaceProjectionKind::Base || rhs.kind == PlaceProjectionKind::Base)
+      return {.relation = PlaceRelation::MayAlias};
     if (lhs.kind == PlaceProjectionKind::Field &&
         rhs.kind == PlaceProjectionKind::Field && lhs.field != 0 &&
         rhs.field != 0 && lhs.field != rhs.field) {

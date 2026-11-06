@@ -256,10 +256,10 @@ void testPlans(const FrontendResult &frontend) {
 
   auto lowered = gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
   const auto text = LoweredProgramPrinter().print(lowered);
-  expect(text.starts_with("lowered-program-v36\n") &&
+  expect(text.starts_with("lowered-program-v37\n") &&
              text.find("virtual-dispatch=[{root=") != std::string::npos &&
              text == LoweredProgramPrinter().print(lowered) &&
-             MirPrinter().print(frontend.mir).starts_with("mir-v122 "),
+             MirPrinter().print(frontend.mir).starts_with("mir-v123 "),
          "dispatch selection and paths serialize deterministically");
   auto &sealed = const_cast<LoweredClassInstance &>(*std::find_if(
       lowered.classInstances().begin(), lowered.classInstances().end(),

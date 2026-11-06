@@ -192,6 +192,249 @@ bool nullGuardedDestructor(const MirProgram &program,
   return false;
 }
 
+std::optional<MirBorrowPathView> walkBorrowPath(
+    const MirProgram &program, const SemanticType &root, AccessMode rootAccess,
+    std::span<const PlaceProjection> path,
+    std::span<const MirBorrowPathGuard> guards, MirBorrowPathRoot rootRole) {
+  if (path.size() > 256 || guards.size() > 256 ||
+      !isWellFormedBorrowPath(path) || root == SemanticType::Unknown ||
+      root == SemanticType::Void ||
+      (rootRole != MirBorrowPathRoot::Value &&
+       rootRole != MirBorrowPathRoot::PhysicalReference) ||
+      (rootRole == MirBorrowPathRoot::PhysicalReference) !=
+          (root.kind == SemanticType::Reference))
+    return std::nullopt;
+  for (std::size_t index = 0; index < guards.size(); ++index) {
+    const auto &guard = guards[index];
+    if (!isWellFormedBorrowPath(guard.subobject) ||
+        guard.subobject.size() > path.size() ||
+        !std::equal(guard.subobject.begin(), guard.subobject.end(), path.begin()) ||
+        std::any_of(guards.begin(), guards.begin() + index, [&](const auto &other) {
+          return other.subobject == guard.subobject;
+        }))
+      return std::nullopt;
+  }
+  MirBorrowPathView result{.type = root, .referenceAccessLimit = rootAccess};
+  std::size_t work = 0;
+  const auto dereference = [&](std::size_t pathOffset, bool physicalRoot) {
+    while (result.type.kind == SemanticType::Reference) {
+      if (++work > 512 || result.type.arguments.size() != 1)
+        return false;
+      result.referenceCrossings.push_back(
+          {.pathOffset = pathOffset,
+           .projectionOffset = result.projections.size(),
+           .reference = result.type,
+           .physicalRoot = physicalRoot});
+      if (result.type.referenceAccess == AccessMode::ReadOnly)
+        result.referenceAccessLimit = AccessMode::ReadOnly;
+      const SemanticType referent = result.type.arguments.front();
+      result.type = referent;
+      result.projections.push_back({.kind = MirProjectionKind::Dereference});
+      physicalRoot = false;
+    }
+    return result.type != SemanticType::Unknown && result.type != SemanticType::Void;
+  };
+  if (!dereference(0, rootRole == MirBorrowPathRoot::PhysicalReference))
+    return std::nullopt;
+  for (std::size_t offset = 0; offset <= path.size(); ++offset) {
+    if (++work > 512)
+      return std::nullopt;
+    const auto guard = std::find_if(guards.begin(), guards.end(), [&](const auto &item) {
+      return item.subobject.size() == offset;
+    });
+    std::optional<MirEnumLifetimeView> enumView;
+    if (result.type.kind == SemanticType::Enum) {
+      enumView = mirEnumLifetimeView(program, result.type);
+      if (!enumView)
+        return std::nullopt;
+    }
+    if (guard != guards.end() &&
+        (guard->enumeration != result.type || !enumView || !enumView->payload ||
+         guard->variant >= enumView->payload->variants.size() ||
+         enumView->payload->variants[guard->variant].variantIndex != guard->variant))
+      return std::nullopt;
+    if (offset == path.size()) {
+      if ((result.type.kind == SemanticType::Class && !mirClassLifetimeView(program, result.type)) ||
+          (result.type.kind == SemanticType::Lambda && !mirLambdaCaptureTypes(program, result.type)) ||
+          result.type.kind == SemanticType::TypeParameter ||
+          (result.type.kind == SemanticType::TypePack && !result.type.concretePack))
+        return std::nullopt;
+      return result;
+    }
+    const auto &step = path[offset];
+    SemanticType child = SemanticType::Unknown;
+    MirPlaceProjection projection;
+    switch (step.kind) {
+    case PlaceProjectionKind::Field: {
+      projection = {.kind = MirProjectionKind::Field, .field = step.field};
+      if (result.type.kind == SemanticType::Class) {
+        const auto owner = mirClassLifetimeView(program, result.type);
+        if (!owner)
+          return std::nullopt;
+        const MirClassFieldInfo *selected = nullptr;
+        for (const auto &field : owner->instance->declaredFields)
+          if (field.symbol == step.field) {
+            if (selected)
+              return std::nullopt;
+            selected = &field;
+          }
+        const auto type = selected ? owner->instantiate(selected->type) : std::nullopt;
+        if (!type)
+          return std::nullopt;
+        child = *type;
+      } else if (result.type.kind == SemanticType::Enum) {
+        if (guard == guards.end() || !enumView->payload)
+          return std::nullopt;
+        const auto &variant = enumView->payload->variants[guard->variant];
+        if (variant.payloadTypes.size() != variant.payloadSymbols.size())
+          return std::nullopt;
+        std::optional<std::size_t> selected;
+        for (std::size_t index = 0; index < variant.payloadSymbols.size(); ++index)
+          if (variant.payloadSymbols[index] == step.field) {
+            if (selected)
+              return std::nullopt;
+            selected = index;
+          }
+        const auto type = selected ? enumView->instantiate(variant.payloadTypes[*selected]) : std::nullopt;
+        if (!type)
+          return std::nullopt;
+        result.payloadSelections.push_back(
+            {.pathOffset = offset, .projectionOffset = result.projections.size(),
+             .enumeration = result.type, .variant = guard->variant,
+             .payloadIndex = *selected});
+        child = *type;
+      } else if (result.type.kind == SemanticType::Lambda) {
+        std::optional<std::vector<SymbolId>> symbols;
+        const auto captureTypes = mirLambdaCaptureTypes(program, result.type);
+        if (!captureTypes)
+          return std::nullopt;
+        for (const auto &instance : program.lambdaInstances()) {
+          if (!mirLambdaLifetimeView(instance, result.type))
+            continue;
+          if (instance.captureSymbols.size() != captureTypes->size() ||
+              (symbols && *symbols != instance.captureSymbols))
+            return std::nullopt;
+          symbols = instance.captureSymbols;
+        }
+        if (!symbols)
+          return std::nullopt;
+        std::optional<std::size_t> selected;
+        for (std::size_t index = 0; index < symbols->size(); ++index)
+          if ((*symbols)[index] == step.field) {
+            if (selected)
+              return std::nullopt;
+            selected = index;
+          }
+        if (!selected)
+          return std::nullopt;
+        child = (*captureTypes)[*selected];
+      } else {
+        return std::nullopt;
+      }
+      break;
+    }
+    case PlaceProjectionKind::Base: {
+      if (result.type.kind != SemanticType::Class || result.type.classId != step.baseOwner)
+        return std::nullopt;
+      const auto owner = mirClassLifetimeView(program, result.type);
+      if (!owner || step.index >= owner->instance->structuralBases.size())
+        return std::nullopt;
+      const auto &base = owner->instance->structuralBases[step.index];
+      if (base.interface || !base.instance)
+        return std::nullopt;
+      const auto type = owner->instantiate(base.type);
+      const auto selected = type ? mirClassLifetimeView(program, *type) : std::nullopt;
+      if (!selected || selected->instance->id != base.instance ||
+          selected->instance->kind == ClassKind::Interface)
+        return std::nullopt;
+      child = *type;
+      projection = {.kind = MirProjectionKind::Base,
+                    .constantIndex = step.index, .selection = base.instance};
+      break;
+    }
+    case PlaceProjectionKind::ConstantIndex:
+      if (result.type.kind == SemanticType::Array &&
+          result.type.arguments.size() == 1 && !result.type.arrayLengthParameterId &&
+          step.index < result.type.arrayLength) {
+        child = result.type.arguments.front();
+        projection = {.kind = MirProjectionKind::Index, .constantIndex = step.index};
+      } else if (result.type.kind == SemanticType::TypePack && result.type.concretePack &&
+                 step.index < result.type.arguments.size()) {
+        child = result.type.arguments[step.index];
+        projection = {.kind = MirProjectionKind::PackElement, .constantIndex = step.index};
+      } else {
+        return std::nullopt;
+      }
+      break;
+    case PlaceProjectionKind::DynamicIndex:
+    case PlaceProjectionKind::Dereference:
+    default:
+      return std::nullopt;
+    }
+    result.type = std::move(child);
+    result.projections.push_back(projection);
+    if (!dereference(offset + 1, false))
+      return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+std::optional<BorrowPath> borrowPathForProjections(
+    const MirProgram &program, const SemanticType &root, AccessMode rootAccess,
+    std::span<const MirPlaceProjection> projections,
+    std::span<const MirBorrowPathGuard> guards,
+    std::span<const MirBorrowPathPayloadSelection> selections,
+    MirBorrowPathRoot rootRole) {
+  if (projections.size() > 512 || guards.size() > 256 || selections.size() > 256)
+    return std::nullopt;
+  BorrowPath path;
+  const auto replay = [&]() -> std::optional<MirBorrowPathView> {
+    std::vector<MirBorrowPathGuard> prefixGuards;
+    for (const auto &guard : guards)
+      if (guard.subobject.size() <= path.size())
+        prefixGuards.push_back(guard);
+    const auto view = walkBorrowPath(program, root, rootAccess, path, prefixGuards, rootRole);
+    if (!view || view->projections.size() > projections.size() ||
+        !std::equal(view->projections.begin(), view->projections.end(), projections.begin()))
+      return std::nullopt;
+    return view;
+  };
+  auto view = replay();
+  if (!view)
+    return std::nullopt;
+  while (view->projections.size() < projections.size()) {
+    if (path.size() == 256)
+      return std::nullopt;
+    const auto &step = projections[view->projections.size()];
+    switch (step.kind) {
+    case MirProjectionKind::Field:
+      path.push_back({.kind = PlaceProjectionKind::Field, .field = step.field});
+      break;
+    case MirProjectionKind::Base:
+      if (!step.constantIndex || view->type.kind != SemanticType::Class)
+        return std::nullopt;
+      path.push_back({.kind = PlaceProjectionKind::Base, .index = *step.constantIndex,
+                      .baseOwner = view->type.classId});
+      break;
+    case MirProjectionKind::Index:
+    case MirProjectionKind::PackElement:
+      if (!step.constantIndex)
+        return std::nullopt;
+      path.push_back({.kind = PlaceProjectionKind::ConstantIndex, .index = *step.constantIndex});
+      break;
+    default:
+      return std::nullopt;
+    }
+    view = replay();
+    if (!view)
+      return std::nullopt;
+  }
+  const auto complete = walkBorrowPath(program, root, rootAccess, path, guards, rootRole);
+  return complete && std::equal(complete->payloadSelections.begin(), complete->payloadSelections.end(),
+                                 selections.begin(), selections.end())
+             ? std::optional{std::move(path)} : std::nullopt;
+}
+
 const MirPlace *physicalPayloadSelectionSource(
     const MirProgram &program, const MirBody &body,
     const MirReferenceSelection &selection) {

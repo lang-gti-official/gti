@@ -229,7 +229,7 @@ int main() { int value = 7; return read(value) - 7; }
     "projected_owner_field_defaults": """
 int initial_score() { return 7; }
 enum Reading<lifetime a> { empty, value(int&<a> item) };
-struct Default<Reading<source>> {
+struct Default<int&<source>> {
   Reading<source> reading = Reading<source>::empty;
   Default(int count) {}
 };
@@ -240,7 +240,7 @@ struct Fixed<int&<source>> {
   int&<source> get() { return this.value; }
 };
 int main() {
-  Default<Reading<static>> empty{0};
+  Default<int&<static>> empty{0};
   int value = 2;
   Fixed<int&> holder{value, 99};
   if (holder.get() != 2) { return 1; }
@@ -266,6 +266,17 @@ int main() {
   return read(copied) - 7;
 }
 """,
+    "stored_payload_reference_return": """
+enum Link<lifetime a> { value(int&<a> item) };
+int&<a> select<lifetime a>(Link<a>& link) {
+  switch (link) { case Link<a>::value(auto& payload): return payload; }
+}
+int main() {
+  int value = 7;
+  auto link = Link<_>::value(value);
+  return select(link) - 7;
+}
+""",
     "generic_borrowed_enum": """
 struct View<lifetime a> {
   int&<a> value;
@@ -289,6 +300,22 @@ int32_t invoke<lifetime a>(Count callback, std::string_view<a> value) {
   unsafe { return callback(value); }
 }
 int main() { Count callback = count; return invoke(callback, "text") - 7; }
+""",
+    "projected_callable_lambda": """
+class Local<R&<result>(A)> {
+public:
+  Local() = default;
+  R&<result> invoke(A value) {
+    auto relay = [](A input) -> R&<result> { return input; };
+    return relay(value);
+  }
+};
+using Selection = for<lifetime a> int&<a>(int&<a>);
+int main() {
+  Local<Selection> callback{};
+  int value = 7;
+  return callback.invoke(value) - 7;
+}
 """,
     "higher_ranked_pointer": """
 import std.functional;

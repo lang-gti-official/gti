@@ -4426,6 +4426,13 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
              "alias target or a generic type argument.",
              "GTI-S2093");
     }
+    struct CallableComponents {
+      std::size_t &depth;
+      bool active = true;
+      void finish() { if (active) { --depth; active = false; } }
+      ~CallableComponents() { finish(); }
+    } components{requestSession.callablePatternTypeDepth};
+    ++requestSession.callablePatternTypeDepth;
     for (std::size_t index = 0; index <= count; ++index) {
       const TypeRef &component = type.arguments[index];
       if (component.referenceMutability && !component.reference) {
@@ -4470,14 +4477,30 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
                                    "function signature component", false, true);
       }
     }
+    components.finish();
     if (diagnostics.size() == diagnosticStart) {
       const auto signature = typeOf(type);
       if (signature == SemanticType::Unknown)
         report(type.name.last(),
                "A callable result lifetime requires one input lifetime or an explicit annotation.",
                "GTI-S2127");
-      else
-        validateNominalFormation(signature, type.name.last());
+      else {
+        // A scoped projection is meaningful only after the complete callable
+        // has reconstructed its quantifiers. Check the substituted component
+        // shapes here, without exposing those binders to the owner scope.
+        for (std::size_t index = 0; index < signature.arguments.size(); ++index) {
+          const auto &component = signature.arguments[index];
+          if (component.kind == SemanticType::FunctionSignature ||
+              (index != 0 && component == SemanticType::Void) ||
+              (index == 0 && component.kind == SemanticType::Array))
+            report(type.name.last(),
+                   "A substituted callable component must be a value or reference type; only its result may be void.",
+                   "GTI-S2093");
+          validateReferenceReferent(component, type.name.last());
+        }
+        if (diagnostics.size() == diagnosticStart)
+          validateNominalFormation(signature, type.name.last());
+      }
     }
     return;
   }
@@ -4504,11 +4527,17 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
              "a nullable C function pointer.",
              "GTI-S2076");
     }
-    for (std::size_t index = 0; index < parameterCount; ++index) {
-      validateType(type.arguments[index], false, true);
+    {
+      struct CallableComponents {
+        std::size_t &depth;
+        ~CallableComponents() { --depth; }
+      } components{requestSession.callablePatternTypeDepth};
+      ++requestSession.callablePatternTypeDepth;
+      for (std::size_t index = 0; index < parameterCount; ++index)
+        validateType(type.arguments[index], false, true);
+      validateType(type.arguments.back(), false, true);
     }
-    validateType(type.arguments.back(), false, true);
-    const SemanticType resolved = baseTypeOf(type, currentNamespace);
+    const SemanticType resolved = typeOf(type, currentNamespace);
     const SemanticType *returnType = resolved.nativeFunctionReturnType();
     if (returnType == nullptr ||
         !nativeFunctionBoundaryTypeAllowed(*returnType, true)) {
