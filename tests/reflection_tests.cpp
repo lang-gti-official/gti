@@ -1072,15 +1072,26 @@ public:
         continue;
       }
       const auto queryStart = source.find(queries[index]);
-      expect(std::filesystem::path(error->primary.source).filename() == name &&
-                 error->primary.start >= queryStart &&
-                 error->primary.end <= queryStart + queries[index].size() &&
-                 error->primary.end == error->primary.start + 1 &&
-                 source[error->primary.start] == ')' &&
-                 error->phase == lang::DiagnosticPhase::Semantics &&
-                 error->message.find("concrete generic arguments") !=
-                     std::string::npos &&
-                 !error->related.empty() && error->fixes.empty(),
+      const bool attributed =
+          std::filesystem::path(error->primary.source).filename() == name &&
+          error->primary.start >= queryStart &&
+          error->primary.end <= queryStart + queries[index].size() &&
+          error->primary.end == error->primary.start + 1 &&
+          source[error->primary.start] == ')' &&
+          error->phase == lang::DiagnosticPhase::Semantics &&
+          error->message.find("concrete generic arguments") !=
+              std::string::npos &&
+          !error->related.empty() && error->fixes.empty();
+      if (!attributed) {
+        std::cerr << "  query " << queries[index] << ": "
+                  << error->primary.source << ":" << error->primary.start << "-"
+                  << error->primary.end
+                  << " phase=" << static_cast<int>(error->phase)
+                  << " related=" << error->related.size()
+                  << " fixes=" << error->fixes.size()
+                  << " message=" << error->message << '\n';
+      }
+      expect(attributed,
              "unbound reflection keeps the user's exact call span and library "
              "instance relation without suggesting an invented type");
       expect(!hasCode(result, "GTI-B0001") && !hasCode(result, "GTI-B0003"),
@@ -1186,25 +1197,32 @@ void checkExpansionLimits(const std::filesystem::path &root,
          "separate declarations never share a copy budget");
 }
 
-int main() {
+int main(int argc, char **argv) {
+  if (argc > 1 &&
+      (argc != 2 || std::string_view(argv[1]) != "--unbound-method-queries"))
+    return 2;
   const std::filesystem::path root =
       std::filesystem::path(__FILE__).parent_path().parent_path();
   const std::filesystem::path directory =
       std::filesystem::temp_directory_path() /
       ("gti-reflection-" + std::to_string(::getpid()));
   std::filesystem::create_directories(directory);
-  checkExpansion(root, directory);
-  checkDiagnostics(root, directory);
-  checkFormatter();
-  checkAttributes(root, directory);
-  checkAttributeFormatter();
-  checkTypeFacts(root, directory);
-  checkPhase3(root, directory);
-  checkMethodInvocation(root, directory);
-  checkDefaults(root, directory);
-  checkClassAssertions(root, directory);
-  checkUnboundMethodQueries(root, directory);
-  checkExpansionLimits(root, directory);
+  if (argc == 2) {
+    checkUnboundMethodQueries(root, directory);
+  } else {
+    checkExpansion(root, directory);
+    checkDiagnostics(root, directory);
+    checkFormatter();
+    checkAttributes(root, directory);
+    checkAttributeFormatter();
+    checkTypeFacts(root, directory);
+    checkPhase3(root, directory);
+    checkMethodInvocation(root, directory);
+    checkDefaults(root, directory);
+    checkClassAssertions(root, directory);
+    checkUnboundMethodQueries(root, directory);
+    checkExpansionLimits(root, directory);
+  }
   std::filesystem::remove_all(directory);
   if (failures != 0) {
     std::cerr << failures << " failure(s)\n";
