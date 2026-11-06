@@ -1,0 +1,20 @@
+import std.string;
+import std.memory;
+import std.functional;
+
+// A queued callback owns its complete message, including the active payload.
+enum Message<T> { Empty, Value(T value) };
+int length(Message<std::string>& message) {
+  switch (message) {
+    case Message<std::string>::Value(auto& text): return int(text.size());
+    default: return 0;
+  }
+}
+int main() {
+  auto message = Message<std::string>::Value(std::string("hello"));
+  auto callback = [message = std::move(message)]() -> int {
+    return length(message);
+  };
+  auto task = std::move_only_function<int() &&>(std::move(callback));
+  return std::move(task)() == 5 ? 0 : 1;
+}

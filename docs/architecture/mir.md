@@ -4250,8 +4250,13 @@ program verification ties that projection to the concrete instance. Closure
 movement and drop use the ordinary lambda lifecycle obligation, including
 recursively cleanup-owning captured values. For captures with complete cleanup
 recipes, the obligation retains their exact reverse-order aggregate schedule,
-including nested class/owner/collection cleanup. Destruction failure therefore
-belongs to the enclosing MIR cleanup edge, not native closure teardown.
+including nested class, payload-enum, owner and collection cleanup. A direct
+owning enum capture keeps its exact enum instance, active-cleanup fact and
+variant-selected child schedule. Program verification derives that fact from
+the enum catalogue independently; clearing the capture's cleanup flag is invalid.
+The closure environment owns its concrete captures independently of any enum
+mentioned by its callable signature. Destruction failure therefore belongs to
+the enclosing MIR cleanup edge, not native closure teardown.
 The caller's active failure remains authoritative across calls made by cleanup;
 a callee's next failure cannot enter its own local-cleanup schedule before the
 existing cleanup-emergency path consumes the exact primary and secondary records.

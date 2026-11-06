@@ -389,11 +389,11 @@ auto SemanticVisitor::Impl::containsOwningPayloadEnum(
   if (type.kind == SemanticType::Enum) {
     return requiresActiveCleanupFor(type);
   }
-  if (type.kind == SemanticType::Class) {
-    // Nominal values own their concrete fields through the ordinary class
-    // lifecycle contract. A generic argument is not a stored ownership edge:
-    // an empty tag, inline holder, and indirect collection may all name T.
-    // Direct enum fields are validated at their field declaration instead.
+  if (type.kind == SemanticType::Class || type.kind == SemanticType::Lambda) {
+    // Nominal values and closure environments own their concrete fields through
+    // their ordinary lifecycle contracts. Type arguments are not stored
+    // ownership edges: nominal metadata and callable signatures may name T.
+    // Direct enum fields and captures are validated at their declarations.
     return false;
   }
   if (type.kind == SemanticType::Reference ||
@@ -10492,7 +10492,6 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   } else {
     validateType(expr.returnType());
   }
-  const bool directOwningPayloadTransport = expr.captures().empty();
   const SemanticType returnType = typeOf(expr.returnType());
   if (returnType.kind == SemanticType::FunctionSignature) {
     report(expr.returnType().name.last(),
@@ -10501,8 +10500,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
            "GTI-S2093");
   }
   validateOwningPayloadEnumByValueBoundary(
-      returnType, expr.returnType().name.last(), "lambda return",
-      directOwningPayloadTransport);
+      returnType, expr.returnType().name.last(), "lambda return", true);
   if (returnType.kind != SemanticType::Reference &&
       typeTraits(returnType).containsBorrowedState) {
     report(expr.returnType().name.last(),
@@ -10525,8 +10523,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
             ? SemanticType::typePack(declaredType.genericParameterId)
             : declaredType;
     validateOwningPayloadEnumByValueBoundary(
-        parameterType, parameter.type.name.last(), "lambda parameter",
-        directOwningPayloadTransport);
+        parameterType, parameter.type.name.last(), "lambda parameter", true);
     const SymbolId parameterSymbol =
         recordParameterBinding(parameter, parameterType);
     BindingInfo parameterInfo =
@@ -10642,7 +10639,12 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
         : capture.explicitInitializer() ? LambdaCaptureMode::Move
                                         : LambdaCaptureMode::Copy;
     const SemanticTypeTraits traits = typeTraits(source->type);
-    if (!isBorrowingCapture(mode) && containsOwningPayloadEnum(source->type)) {
+    // An ordinary enum capture owns its active payload through the same
+    // environment lifecycle as a captured class. Conditional borrowed payload
+    // dependencies retain their separate transport boundary.
+    if (!isBorrowingCapture(mode) && containsOwningPayloadEnum(source->type) &&
+        (source->type.kind != SemanticType::Enum ||
+         traits.containsBorrowedState)) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2067", DiagnosticPhase::Semantics, capture.name,
           "Lambda capture '" + capture.name.lexeme + "' cannot " +

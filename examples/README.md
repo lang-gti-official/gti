@@ -227,6 +227,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
+| Queue a callback that owns a payload enum | [Owning enum closures](owning-enum-closures/README.md) |
 | Borrow surrounding state in a callback or signature-erased view | [156: borrowing callbacks](156-borrowing-callbacks.gti) |
 | Model an absent value and initialize it later | [84: optional values](084-optional-values.gti) |
 | Take ownership of an enum alternative's payload in a `switch` | [161: consuming matches](161-consuming-matches.gti) |

@@ -1718,9 +1718,20 @@ leaves the moved-from source without the transferred cleanup obligation.
 The bounded owning family admits direct local values and top-level read-only
 checked-reference observation. It also admits the enum itself by value across
 an ordinary source-defined free function, non-polymorphic method or ordinary
-constructor, and an exact typed captureless lambda. Ordinary argument analysis
+constructor, and an exact typed lambda. Ordinary argument analysis
 selects copy only when the enum's folded traits permit it; otherwise an explicit
 move or fresh value is required.
+
+A lambda may directly own a reference-free payload enum through an explicit
+move capture, or a copy capture when the enum's folded traits permit copying.
+The captured enum retains its active-alternative cleanup inside the environment;
+closure movement, generic forwarding, stored callbacks and consuming invocation
+use the ordinary closure lifecycle. An unused closure still destroys its owned
+captures. A capturing lambda may also accept and return an owning enum by value.
+Capture bindings remain immutable under the general lambda rules: moving a
+value out of a capture is not added by this support. Capturing an owning enum
+whose type also carries conditional borrowed payloads remains a separate
+unsupported dependency-transport family.
 
 An ordinary non-polymorphic class or struct, including a concrete generic
 instance, may contain an owning payload enum as a direct field. The field may
@@ -1766,13 +1777,12 @@ collections and inline optional storage of the enum without public-library
 name recognition. Consuming methods may return an enum field while retaining
 the containing receiver through the caller's full expression.
 
-Polymorphic dispatch, native/runtime declarations, operators,
-and direct enum lambda captures retain `GTI-S2067` at their declaration or capture
-boundary. Unsupported containment retains `GTI-S2067` at the field or
+Polymorphic dispatch, native/runtime declarations and operators retain
+`GTI-S2067` at their declaration boundary. Unsupported containment retains `GTI-S2067` at the field or
 aggregate boundary, before HIR/MIR/backend emission. A direct checked
 reference or raw pointer does not itself contain the referent's ownership
-state. Fixed arrays of direct owning enum elements and direct enum captures
-remain outside this transport slice.
+state. Fixed arrays of direct owning enum elements remain outside this
+transport slice.
 
 Payload alternatives use exact construction. A unit alternative is written
 `Result::empty`; a payload alternative is written `Result::value(arguments)`.
