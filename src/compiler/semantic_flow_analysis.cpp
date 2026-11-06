@@ -593,6 +593,8 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
     if (owner.kind == ProgramEffectOwnerKind::ConcreteInstance &&
         owner.id != 0 && owner.id <= state->queries.size()) {
       const auto query = state->queries[owner.id - 1];
+      if (query.complete)
+        notePrivateLifetimeOpaqueDependency();
       if (!query.complete) {
         if (query.target.kind != ProgramEffectOwnerKind::Function &&
             query.target.kind != ProgramEffectOwnerKind::Constructor &&
@@ -632,6 +634,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
         if (const auto cached =
                 shared ? adoptedPreamble->effectQuery(sharedHash, sharedKey)
                        : nullptr) {
+          notePrivateLifetimeOpaqueDependency();
           replaySharedQuery(owner, query, *cached);
           if (workMetrics != nullptr)
             ++workMetrics->semanticEffectQueryReuses;
@@ -665,6 +668,11 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
                 requestSession.stagedConstants;
             worker->requestSession.executableLifetimes =
                 requestSession.executableLifetimes;
+            worker->requestSession.privateLifetimeDependencies =
+                requestSession.privateLifetimeDependencies;
+            worker->requestSession.lifetimeContractRevision =
+                requestSession.lifetimeContractRevision;
+            worker->reuseConstantEvaluations = reuseConstantEvaluations;
             worker->requestSession.programConcreteEffects = state;
             // An isolated query needs the same pending-body facts as ordinary
             // concrete discovery. Finalize only actually consulted late bodies
@@ -913,6 +921,7 @@ auto SemanticVisitor::Impl::preserveInvalidProgramEffectDiagnostics(
   const auto found = state->invalidInstances.find(key);
   if (found == state->invalidInstances.end())
     return;
+  notePrivateLifetimeOpaqueDependency();
   // A failed effect query is not an empty-effects proof. If ordinary
   // analysis later succeeds (for example after late demand), its selected
   // body still cannot proceed to MIR with unresolved effects. Report the
@@ -4486,7 +4495,8 @@ auto SemanticVisitor::Impl::checkAssignmentResultUse(const Expr &expr,
 }
 
 auto SemanticVisitor::Impl::analyze(const Expr &expr,
-                                    OccurrenceRole requestedRoles)
+                                    OccurrenceRole requestedRoles,
+                                    const EnumeratorRecord *contextualEnumerator)
     -> SemanticType {
   if (!requestSession.recoveryCauses.empty())
     requestSession.recoveryCauses.erase(&expr);
@@ -4542,7 +4552,10 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   if (macroLiteralType)
     enclosingLiteralContext =
         std::exchange(contextualOperatorIntegerType, *macroLiteralType);
-  expr.accept(*this);
+  if (const auto *qualified = exprAs<QualifiedName>(&expr); qualified && contextualEnumerator)
+    analyzeQualifiedName(*qualified, contextualEnumerator);
+  else
+    expr.accept(*this);
   if (macroLiteralType)
     contextualOperatorIntegerType = std::move(enclosingLiteralContext);
   SemanticType result = currentType;
@@ -8157,17 +8170,66 @@ auto SemanticVisitor::Impl::resolveEnumerator(const NamePath &path,
 }
 
 auto SemanticVisitor::Impl::resolveEnumerator(
-    const QualifiedName &expression) const -> std::optional<EnumeratorRecord> {
+    const QualifiedName &expression, const SemanticType *contextualOwner,
+    std::vector<std::pair<LifetimeSyntaxKey, Lifetime>> *contextualBindings) const
+    -> std::optional<EnumeratorRecord> {
   if (expression.name().segments.size() < 2)
     return std::nullopt;
-  const auto ownerType = expression.ownerType()
-                             ? typeOf(*expression.ownerType())
-                             : typeOf(TypeRef(NamePath(std::vector<Token>(
-                                   expression.name().segments.begin(),
-                                   expression.name().segments.end() - 1))));
+  const TypeRef unqualifiedOwner(NamePath(std::vector<Token>(
+      expression.name().segments.begin(), expression.name().segments.end() - 1)));
+  const TypeRef &ownerSyntax = expression.ownerType() ? *expression.ownerType() : unqualifiedOwner;
+  auto ownerType = typeOf(ownerSyntax);
   if (ownerType.kind != SemanticType::Enum || ownerType.enumId == 0 ||
       ownerType.enumId > enums.size())
     return std::nullopt;
+  if (contextualOwner) {
+    std::vector<Lifetime> inferences;
+    std::vector<std::pair<LifetimeSyntaxKey, Lifetime>> inferenceSites;
+    const auto addSite = [&](const Token &token) {
+      const auto key = lifetimeSyntaxKey(token);
+      for (auto entry = lifetimeInferences.lower_bound(key);
+           entry != lifetimeInferences.end() &&
+           std::get<0>(entry->first) == std::get<0>(key) &&
+           std::get<1>(entry->first) == std::get<1>(key) &&
+           std::get<2>(entry->first) == std::get<2>(key); ++entry)
+        {
+          if (entry->second.kind != Lifetime::Kind::Inference)
+            continue;
+          if (std::find(inferences.begin(), inferences.end(), entry->second) == inferences.end())
+            inferences.push_back(entry->second);
+          if (std::none_of(inferenceSites.begin(), inferenceSites.end(),
+                           [&](const auto &site) { return site.first == entry->first; }))
+            inferenceSites.emplace_back(entry->first, entry->second);
+        }
+    };
+    const auto syntaxSites = [&](auto &&self, const TypeRef &type, std::size_t depth) -> bool {
+      if (depth >= 256)
+        return false;
+      if (!type.name.segments.empty())
+        addSite(type.name.last());
+      if (type.reference)
+        addSite(type.referenceLifetime ? type.referenceLifetime->name : *type.reference);
+      if (type.qualifiedOwner && !self(self, *type.qualifiedOwner, depth + 1))
+        return false;
+      for (const auto &argument : type.arguments)
+        if (!self(self, argument, depth + 1))
+          return false;
+      return true;
+    };
+    if (!syntaxSites(syntaxSites, ownerSyntax, 0))
+      return std::nullopt;
+    const auto bindings = matchInferredTypeLifetimes(ownerType, *contextualOwner, inferences);
+    if (!bindings)
+      return std::nullopt;
+    if (contextualBindings)
+      for (const auto &[key, region] : inferenceSites)
+        for (const auto &[parameter, actual] : *bindings)
+          if (parameter == region)
+            contextualBindings->emplace_back(key, actual);
+    // Pattern syntax supplies no new value or loan. Its omitted regions name
+    // the already-checked scrutinee, with every fixed part matched exactly.
+    ownerType = *contextualOwner;
+  }
   const auto &owner = enums[ownerType.enumId - 1];
   const auto found = owner.enumerators.find(expression.name().last().lexeme);
   if (found == owner.enumerators.end())
@@ -8379,8 +8441,9 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
            "GTI-S2067");
     return std::nullopt;
   }
-  const auto enumerator = resolveEnumerator(*qualified);
-  if (!enumerator || enumerator->symbol.type != subjectType) {
+  std::vector<std::pair<LifetimeSyntaxKey, Lifetime>> contextualBindings;
+  const auto enumerator = resolveEnumerator(*qualified, &subjectType, &contextualBindings);
+  if (!enumerator) {
     report(qualified->name().last(),
            "Switch case must name a variant of '" + typeSpelling(subjectType) +
                "'.",
@@ -8392,7 +8455,30 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
   const bool enclosingPayloadReference = allowPayloadEnumeratorReference;
   analyzingCallCallee = true;
   allowPayloadEnumeratorReference = true;
-  (void)analyze(*qualified);
+  {
+    // Validation and tooling must observe the same contextual type as the
+    // pattern. Only this qualifier's exact syntax holes are rebound, and the
+    // request-wide inference inventory is restored after normal analysis.
+    struct SyntaxInferenceScope {
+      std::map<LifetimeSyntaxKey, Lifetime> &inventory;
+      std::vector<std::pair<LifetimeSyntaxKey, Lifetime>> saved;
+      SyntaxInferenceScope(std::map<LifetimeSyntaxKey, Lifetime> &inventory,
+                           const std::vector<std::pair<LifetimeSyntaxKey, Lifetime>> &bindings)
+          : inventory(inventory) {
+        for (const auto &[key, actual] : bindings) {
+          auto &region = inventory.at(key);
+          saved.emplace_back(key, region);
+          region = actual;
+        }
+      }
+      ~SyntaxInferenceScope() {
+        for (const auto &[key, region] : saved)
+          inventory.insert_or_assign(key, region);
+      }
+    } inferenceScope(lifetimeInferences, contextualBindings);
+    (void)analyze(*qualified, OccurrenceRole::Reference | OccurrenceRole::Read,
+                  &*enumerator);
+  }
   allowPayloadEnumeratorReference = enclosingPayloadReference;
   analyzingCallCallee = enclosingCallCallee;
 
@@ -11389,8 +11475,11 @@ auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
       std::any_of(resolved.parameterTypes.begin(),
                   resolved.parameterTypes.end(), containsOpenTypeParameter))
     return nullptr;
-  if (!requestSession.rawResultQueries)
+  if (!requestSession.rawResultQueries ||
+      requestSession.rawResultQueries->lifetimeContractRevision != requestSession.lifetimeContractRevision) {
     requestSession.rawResultQueries = std::make_shared<RawResultQueryState>();
+    requestSession.rawResultQueries->lifetimeContractRevision = requestSession.lifetimeContractRevision;
+  }
   auto state = requestSession.rawResultQueries;
   const auto ownerTypes = owner.kind == SemanticType::Class
                               ? owner.arguments
@@ -11405,8 +11494,10 @@ auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
         entry->function == resolved.function &&
         entry->ownerTypes == ownerTypes && entry->ownerValues == ownerValues &&
         entry->types == resolved.typeArguments &&
-        entry->values == resolved.valueArguments)
+        entry->values == resolved.valueArguments) {
+      notePrivateLifetimeOpaqueDependency();
       return entry;
+    }
   if (topLevel)
     state->familyEntries.clear();
   auto entry = std::make_shared<RawResultQuery>();
@@ -11448,8 +11539,11 @@ auto SemanticVisitor::Impl::rawConstructorResultQuery(
       std::any_of(resolved.typeArguments.begin(), resolved.typeArguments.end(),
                   containsOpenTypeParameter))
     return nullptr;
-  if (!requestSession.rawResultQueries)
+  if (!requestSession.rawResultQueries ||
+      requestSession.rawResultQueries->lifetimeContractRevision != requestSession.lifetimeContractRevision) {
     requestSession.rawResultQueries = std::make_shared<RawResultQueryState>();
+    requestSession.rawResultQueries->lifetimeContractRevision = requestSession.lifetimeContractRevision;
+  }
   auto state = requestSession.rawResultQueries;
   const bool topLevel = state->depth == 0;
   const auto &candidates = topLevel ? state->cachedRoots : state->familyEntries;
@@ -11462,8 +11556,10 @@ auto SemanticVisitor::Impl::rawConstructorResultQuery(
         entry->ownerTypes == resolved.constructedType.arguments &&
         entry->ownerValues == resolved.constructedType.valueArguments &&
         entry->types == resolved.typeArguments &&
-        entry->values == resolved.valueArguments)
+        entry->values == resolved.valueArguments) {
+      notePrivateLifetimeOpaqueDependency();
       return entry;
+    }
   if (topLevel)
     state->familyEntries.clear();
   auto entry = std::make_shared<RawResultQuery>();
@@ -11553,6 +11649,9 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   worker->requestSession.constexprWork = requestSession.constexprWork;
   worker->requestSession.stagedConstants = requestSession.stagedConstants;
   worker->requestSession.executableLifetimes = requestSession.executableLifetimes;
+  worker->requestSession.privateLifetimeDependencies = requestSession.privateLifetimeDependencies;
+  worker->requestSession.lifetimeContractRevision = requestSession.lifetimeContractRevision;
+  worker->reuseConstantEvaluations = reuseConstantEvaluations;
   worker->requestSession.rawResultQueries = state;
   worker->requestSession.collectingRawResult = entry;
   const auto analysis =
@@ -12113,8 +12212,11 @@ auto SemanticVisitor::Impl::applyRawCallWrites(const Expr &expression,
                  : ResolvedCallArguments{};
   const auto span =
       tokenSpan(invocation ? invocation->site : expressionToken(expression));
-  if (!requestSession.rawResultQueries)
+  if (!requestSession.rawResultQueries ||
+      requestSession.rawResultQueries->lifetimeContractRevision != requestSession.lifetimeContractRevision) {
     requestSession.rawResultQueries = std::make_shared<RawResultQueryState>();
+    requestSession.rawResultQueries->lifetimeContractRevision = requestSession.lifetimeContractRevision;
+  }
   const auto state = requestSession.rawResultQueries;
   // A declaration's inferred/global binding type may be completed after an
   // earlier source body was checked. A negative answer is not yet permanent.

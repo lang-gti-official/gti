@@ -67,6 +67,26 @@ int main() {
   return cleanup_trace - 7;
 }
 """,
+    "borrowed_record_copy_cleanup": """
+mut int cleanup_trace = 0;
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  ~View() { cleanup_trace += this.value; }
+};
+int read<lifetime a>(View<a> view) { return view.value; }
+int observe<lifetime a>(int&<a> input) {
+  View<a> view{input};
+  int value = read(view);
+  if (cleanup_trace != 7) { return 1; }
+  return value - 7;
+}
+int main() {
+  int number = 7;
+  if (observe(number) != 0) { return 1; }
+  return cleanup_trace - 14;
+}
+""",
     "lambda_suppliers": """
 int main() {
   auto choose = [](int& left, int& right, bool first) -> int& {
@@ -103,8 +123,8 @@ struct View<lifetime a> {
   View(int&<a> input) : value(input) {}
 };
 enum Box<T> { item(T value) };
-int read<T>(Box<T>& box) {
-  switch (box) { case Box<T>::item(auto& payload): return payload.value; }
+int read<lifetime a>(Box<View<a>>& box) {
+  switch (box) { case Box<View<a>>::item(auto& payload): return payload.value; }
 }
 int main() {
   int number = 7;
@@ -264,6 +284,14 @@ def main():
         if len(failures) == before:
             print(f"lifetime native {label}: LLVM O0/O3 passed", flush=True)
 
+    rejection_codes = {
+        "mutation_before_destructor": {"GTI-S2017"},
+        "unrelated_return": {"GTI-S2127"},
+        "retained_other_supplier": {"GTI-S2017"},
+        "local_record_escape": {"GTI-S2085", "GTI-S2127"},
+    }
+    if rejection_codes.keys() != REJECTIONS.keys():
+        raise RuntimeError("every lifetime rejection needs an explicit owning diagnostic")
     for label, source in REJECTIONS.items():
         def reject():
             path = output / (label + ".gti")
@@ -271,8 +299,11 @@ def main():
             rejected = run([compiler, path, "--backend", "llvm", "-O3", "-o", output / label],
                            label + "-reject", expect_success=False)
             text = rejected.stdout + rejected.stderr
-            if rejected.returncode == 0 or not re.search(r"GTI-S[0-9]+", text) or "GTI-B" in text:
-                raise RuntimeError(f"{label}: expected semantic lifetime rejection; {output / (label + '-reject.log')}")
+            expected = "|".join(sorted(rejection_codes[label]))
+            owning_error = re.search(
+                rf"(?m)^[^\n]*{re.escape(path.name)}:\d+:\d+: error\[({expected})\]:", text)
+            if rejected.returncode == 0 or not owning_error or "GTI-B" in text:
+                raise RuntimeError(f"{label}: expected its owning lifetime diagnostic in the fixture; {output / (label + '-reject.log')}")
         checked(label + "/reject", reject)
 
     # Compare the same identity operation with an explicit and an elided

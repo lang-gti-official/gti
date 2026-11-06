@@ -1,5 +1,10 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
+#include "gti/frontend_work.h"
+
+#include <chrono>
+#include <deque>
+#include <set>
 
 namespace lang {
 
@@ -174,7 +179,28 @@ auto SemanticVisitor::Impl::validateLambdaLifetimeReturn(const ExprPtr &value) -
   }
 }
 
+auto SemanticVisitor::Impl::notePrivateLifetimeDependency(FunctionId function) const
+    -> void {
+  if (function && requestSession.privateLifetimeDependencies)
+    requestSession.privateLifetimeDependencies->functions.insert(function);
+}
+
+auto SemanticVisitor::Impl::notePrivateLifetimeOpaqueDependency() const -> void {
+  if (requestSession.privateLifetimeDependencies)
+    requestSession.privateLifetimeDependencies->opaqueCachedProof = true;
+}
+
 auto SemanticVisitor::Impl::inferPrivateLifetimeContracts() -> void {
+  struct Measure {
+    FrontendWorkMetrics *metrics;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    ~Measure() {
+      if (metrics)
+        metrics->semanticPrivateLifetimeMicroseconds +=
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - start).count();
+    }
+  } measure{workMetrics};
   std::vector<const FunctionDecl *> pending;
   for (const auto &entry : catalog.callableDeclarations)
     if (entry->syntax && entry->lifetimeContract.origin == LifetimeContractOrigin::BodyInferred &&
@@ -182,89 +208,141 @@ auto SemanticVisitor::Impl::inferPrivateLifetimeContracts() -> void {
       pending.push_back(entry->syntax);
   if (pending.empty())
     return;
+  if (workMetrics)
+    workMetrics->semanticPrivateLifetimeCandidates += pending.size();
   const auto candidateIndex = functionCandidateBorrowSummaryIndex();
   // The lattice consists of declaration-region pairs and exact type premises.
-  // Selected calls compose those facts, so revisiting all recursive groups
-  // computes a monotone fixed point independent of source order. The work
-  // bound also catches recursively expanding generic type premises.
-  std::size_t work = 0;
-  bool changed = true;
-  while (changed) {
-    changed = false;
-    for (const auto *syntax : pending) {
-      if (++work > 4096) {
-        report(syntax->name(),
-               "Private lifetime inference exceeded its finite summary budget; declare the recursive relationship explicitly.",
-               "GTI-S2127");
-        for (const auto *incomplete : pending)
-          if (const auto *found = semanticModel.findFunction(*incomplete)) {
-            auto invalid = *found;
-            invalid.lifetimeContract.complete = false;
-            invalid.completeReturnBorrow.reset();
-            invalid.returnBorrowOrigin = BorrowOriginKind::None;
-            invalid.returnBorrowParameters.clear();
-            invalid.returnBorrowFields.clear();
-            semanticModel.record(*incomplete, invalid);
-            if (auto *declaration = catalog.mutableCallable(*incomplete))
-              declaration->lifetimeContract = invalid.lifetimeContract;
-            if (const auto selected = candidateIndex.find(invalid.id); selected != candidateIndex.end())
-              for (auto *candidate : selected->second)
-                candidate->lifetimeContract = invalid.lifetimeContract;
-            publishFunctionBorrowSummary(invalid, candidateIndex);
-          }
-        ++requestSession.lifetimeContractRevision;
-        return;
-      }
-      const auto *found = semanticModel.findFunction(*syntax);
-      if (!found || !found->lifetimeContract.valid())
-        continue;
-      const FunctionInfo function = *found;
-      auto worker = unevaluatedExpressionWorker();
-      if (!worker->catalog.sealed) {
-        worker->catalog.seal();
-        // Inference runs during registration, before the caller's normal
-        // body phase. Sealing changes lookup to the body-flow tables, so
-        // publish the completed declarations there as check/checkResumed do.
-        // Extend retains any already checked prefix-global flow facts.
-        worker->valueFlow.extendBody(worker->catalog);
-      }
-      worker->valueFlow.rebindCallables(worker->catalog);
-      worker->requestSession.collectingPrivateLifetimeContracts = true;
-      std::vector<SemanticType> ownerTypes, types;
-      std::vector<CompileTimeValue> ownerValues, values;
-      if (function.ownerClass) {
-        const auto owner = openClassType(function.ownerClass);
-        ownerTypes = owner.arguments;
-        ownerValues = owner.valueArguments;
-      }
-      for (const auto &parameter : function.genericParameters) {
-        if (parameter.value)
-          values.push_back(CompileTimeValue::parameter(parameter.id));
-        else if (!parameter.lifetime)
-          types.push_back(parameter.pack ? SemanticType::typePack(parameter.id)
-                                         : SemanticType::typeParameter(parameter.id));
-      }
-      const auto analysis = worker->analyzeFunctionInstance(
-          function.id, ownerTypes, ownerValues, types, values);
-      const auto *body = analysis.model.findLifetimeBody(*syntax->body());
-      if (!body)
-        continue;
-      auto inferred = projectInferredLifetimeContract(function.lifetimeContract, *body);
-      if (!inferred || *inferred == function.lifetimeContract)
-        continue;
-      FunctionInfo updated = function;
-      updated.lifetimeContract = std::move(*inferred);
-      refreshDeclaredLifetimeBorrowSummary(updated, true);
-      semanticModel.record(*syntax, updated);
-      if (auto *declaration = catalog.mutableCallable(*syntax))
-        declaration->lifetimeContract = updated.lifetimeContract;
-      if (const auto selected = candidateIndex.find(function.id); selected != candidateIndex.end())
-        for (auto *candidate : selected->second)
-          candidate->lifetimeContract = updated.lifetimeContract;
-      publishFunctionBorrowSummary(updated, candidateIndex);
-      ++requestSession.lifetimeContractRevision;
-      changed = true;
+  // A declaration is revisited when its own assumptions or a contract it read
+  // changes. This includes rejected candidates and speculative concept trials;
+  // recording only the finally selected calls would lose dependencies. Keeping
+  // the union of reads across probes is conservative when overload selection
+  // changes, and computes the same monotone fixed point as whole-catalog sweeps.
+  // The work bound also catches recursively expanding generic type premises.
+  std::unordered_map<FunctionId, std::size_t> indices;
+  for (std::size_t index = 0; index < pending.size(); ++index)
+    if (const auto *function = semanticModel.findFunction(*pending[index]))
+      indices.emplace(function->id, index);
+  std::vector<std::set<std::size_t>> callers(pending.size());
+  std::deque<std::size_t> queue;
+  std::vector<bool> queued(pending.size());
+  const auto enqueue = [&](std::size_t index) {
+    if (!queued[index]) {
+      queued[index] = true;
+      queue.push_back(index);
     }
+  };
+  for (std::size_t index = 0; index < pending.size(); ++index)
+    enqueue(index);
+  std::size_t work = 0;
+  while (!queue.empty()) {
+    const auto index = queue.front();
+    queue.pop_front();
+    queued[index] = false;
+    const auto *syntax = pending[index];
+    if (++work > 4096) {
+      report(syntax->name(),
+             "Private lifetime inference exceeded its finite summary budget; declare the recursive relationship explicitly.",
+             "GTI-S2127");
+      for (const auto *incomplete : pending)
+        if (const auto *found = semanticModel.findFunction(*incomplete)) {
+          auto invalid = *found;
+          invalid.lifetimeContract.complete = false;
+          invalid.completeReturnBorrow.reset();
+          invalid.returnBorrowOrigin = BorrowOriginKind::None;
+          invalid.returnBorrowParameters.clear();
+          invalid.returnBorrowFields.clear();
+          semanticModel.record(*incomplete, invalid);
+          if (auto *declaration = catalog.mutableCallable(*incomplete))
+            declaration->lifetimeContract = invalid.lifetimeContract;
+          if (const auto selected = candidateIndex.find(invalid.id); selected != candidateIndex.end())
+            for (auto *candidate : selected->second)
+              candidate->lifetimeContract = invalid.lifetimeContract;
+          publishFunctionBorrowSummary(invalid, candidateIndex);
+        }
+      ++requestSession.lifetimeContractRevision;
+      return;
+    }
+    const auto *found = semanticModel.findFunction(*syntax);
+    if (!found || !found->lifetimeContract.valid())
+      continue;
+    const FunctionInfo function = *found;
+    auto worker = unevaluatedExpressionWorker();
+    if (!worker->catalog.sealed) {
+      worker->catalog.seal();
+      // Inference runs during registration, before the caller's normal
+      // body phase. Sealing changes lookup to the body-flow tables, so
+      // publish the completed declarations there as check/checkResumed do.
+      // Extend retains any already checked prefix-global flow facts.
+      worker->valueFlow.extendBody(worker->catalog);
+    }
+    worker->valueFlow.rebindCallables(worker->catalog);
+    worker->requestSession.collectingPrivateLifetimeContracts = true;
+    auto dependencies = std::make_shared<RequestSessionContext::PrivateLifetimeDependencyTrace>();
+    worker->requestSession.privateLifetimeDependencies = dependencies;
+    std::vector<SemanticType> ownerTypes, types;
+    std::vector<CompileTimeValue> ownerValues, values;
+    if (function.ownerClass) {
+      const auto owner = openClassType(function.ownerClass);
+      ownerTypes = owner.arguments;
+      ownerValues = owner.valueArguments;
+    }
+    for (const auto &parameter : function.genericParameters) {
+      if (parameter.value)
+        values.push_back(CompileTimeValue::parameter(parameter.id));
+      else if (!parameter.lifetime)
+        types.push_back(parameter.pack ? SemanticType::typePack(parameter.id)
+                                       : SemanticType::typeParameter(parameter.id));
+    }
+    if (workMetrics)
+      ++workMetrics->semanticPrivateLifetimeProbes;
+    SemanticInstanceAnalysis analysis;
+    {
+      // The instance delta can read its base model without passing through
+      // a candidate adapter. Observe that exact base, not absence from the
+      // worker's overlay. Catalog-only reads use the shared trace above.
+      const FunctionDemandScope demands(semanticModel, &dependencies->functions);
+      analysis = worker->analyzeFunctionInstance(
+          function.id, ownerTypes, ownerValues, types, values);
+      if (demands.previous)
+        demands.previous->insert(dependencies->functions.begin(), dependencies->functions.end());
+    }
+    if (dependencies->opaqueCachedProof) {
+      // A reused proof without its own read journal may hide a transitive
+      // contract read. Preserve whole-catalog scheduling for this caller;
+      // an optimization must never turn an absent journal into independence.
+      if (workMetrics)
+        ++workMetrics->semanticPrivateLifetimeOpaqueProbes;
+      for (const auto &[functionId, position] : indices) {
+        (void)position;
+        dependencies->functions.insert(functionId);
+      }
+    }
+    for (const auto dependency : dependencies->functions)
+      if (const auto selected = indices.find(dependency); selected != indices.end())
+        if (callers[selected->second].insert(index).second && workMetrics)
+          ++workMetrics->semanticPrivateLifetimeDependencyEdges;
+    const auto *body = analysis.model.findLifetimeBody(*syntax->body());
+    if (!body)
+      continue;
+    auto inferred = projectInferredLifetimeContract(function.lifetimeContract, *body);
+    if (!inferred || *inferred == function.lifetimeContract)
+      continue;
+    FunctionInfo updated = function;
+    updated.lifetimeContract = std::move(*inferred);
+    refreshDeclaredLifetimeBorrowSummary(updated, true);
+    semanticModel.record(*syntax, updated);
+    if (auto *declaration = catalog.mutableCallable(*syntax))
+      declaration->lifetimeContract = updated.lifetimeContract;
+    if (const auto selected = candidateIndex.find(function.id); selected != candidateIndex.end())
+      for (auto *candidate : selected->second)
+        candidate->lifetimeContract = updated.lifetimeContract;
+    publishFunctionBorrowSummary(updated, candidateIndex);
+    ++requestSession.lifetimeContractRevision;
+    if (workMetrics)
+      ++workMetrics->semanticPrivateLifetimeUpdates;
+    enqueue(index);
+    for (const auto caller : callers[index])
+      enqueue(caller);
   }
 }
 

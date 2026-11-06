@@ -5090,8 +5090,10 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   }
   const auto state = requestSession.completeReturnQueries;
   if (const auto found = state->entries.find(key);
-      found != state->entries.end())
+      found != state->entries.end()) {
+    notePrivateLifetimeOpaqueDependency();
     return found->second->complete ? found->second->result : std::nullopt;
+  }
   const bool discovered = state->discovered.contains(key);
   const bool depthLimit =
       state->depth >= GenericInstantiationLimits::maximumDepth;
@@ -5149,10 +5151,12 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   worker->requestSession.constexprWork = requestSession.constexprWork;
   worker->requestSession.stagedConstants = requestSession.stagedConstants;
   worker->requestSession.executableLifetimes = requestSession.executableLifetimes;
+  worker->requestSession.privateLifetimeDependencies = requestSession.privateLifetimeDependencies;
   worker->requestSession.rawResultQueries = requestSession.rawResultQueries;
   worker->requestSession.completeReturnQueries = state;
   worker->requestSession.lifetimeContractRevision =
       requestSession.lifetimeContractRevision;
+  worker->reuseConstantEvaluations = reuseConstantEvaluations;
   const auto analysis =
       key.kind == InstanceAnalysisKind::Constructor
           ? worker->analyzeConstructorInstance(key.declaration, key.classTypes,
@@ -7010,6 +7014,7 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
 
 auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
     CallableCandidate &function) const -> void {
+  notePrivateLifetimeDependency(function.id);
   FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
       function.returnType, function.parameterTypes, function.ownerClass,
       function.staticMember, function.record().intrinsic, std::nullopt, false,

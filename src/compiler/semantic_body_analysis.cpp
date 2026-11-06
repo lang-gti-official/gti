@@ -7,6 +7,7 @@ namespace lang {
 
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.collectingPrivateLifetimeContracts = false;
+  requestSession.privateLifetimeDependencies.reset();
   requestSession.collectingLambdaLifetimeContract = nullptr;
   requestSession.lifetimeContractRevision = 0;
   requestSession.completeReturnQueries.reset();
@@ -12716,6 +12717,11 @@ auto SemanticVisitor::Impl::visitPostfixExpr(const Postfix &expr) -> void {
 
 auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
     -> void {
+  analyzeQualifiedName(expr, nullptr);
+}
+
+auto SemanticVisitor::Impl::analyzeQualifiedName(
+    const QualifiedName &expr, const EnumeratorRecord *contextualEnumerator) -> void {
   if (expr.ownerType() &&
       protocolConceptOwner(*expr.ownerType(), currentNamespace)) {
     // `C<X>::operation` names a concept operation, which only a call uses.
@@ -12777,7 +12783,8 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
     validateType(*expr.ownerType());
     recordTypeUse(*expr.ownerType());
   }
-  const auto concreteEnumerator = resolveEnumerator(expr);
+  const auto concreteEnumerator = contextualEnumerator
+      ? std::optional<EnumeratorRecord>(*contextualEnumerator) : resolveEnumerator(expr);
   const Symbol *symbol = concreteEnumerator ? &concreteEnumerator->symbol
                                             : resolveQualified(expr.name());
   if (symbol && !concreteEnumerator &&
@@ -12855,7 +12862,8 @@ auto SemanticVisitor::Impl::visitQualifiedNameExpr(const QualifiedName &expr)
     const SemanticType &type = enumerator->symbol.type;
     if (type.enumId != 0 && type.enumId <= enums.size() &&
         !enums[type.enumId - 1].genericParameters.empty() &&
-        type.arguments.empty() && type.valueArguments.empty()) {
+        type.arguments.empty() && type.valueArguments.empty() &&
+        type.lifetimeArguments.empty()) {
       report(expr.name().last(),
              "A generic payload variant requires a concrete enum owner type.",
              "GTI-S2067");

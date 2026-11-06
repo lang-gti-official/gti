@@ -33,6 +33,74 @@ int main() {
     expect(result.syntaxValid && result.semanticValid,
            "reference payload positive passes semantic analysis");
   };
+  const auto checkContextualPattern = [&](const std::string &declaration,
+                                          const std::string &subject,
+                                          const std::string &qualifier,
+                                          bool accepted) {
+    const auto source = declaration +
+        "\nint inspect<lifetime a, lifetime b>(" + subject + " input) {\n"
+        "  switch (input) {\n"
+        "  case " + qualifier + "::item(value): return 1;\n"
+        "  case " + qualifier + "::empty: return 0;\n"
+        "  }\n}\nint main() { return 0; }\n";
+    const auto result = lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics})
+        .analyze(root / "tests" / "contextual-enum-pattern.gti", source);
+    if (!accepted) {
+      expect(result.syntaxValid && !result.semanticValid &&
+                 std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                     [](const auto &diagnostic) { return diagnostic.code == "GTI-S2067"; }),
+             "a switch pattern cannot change fixed region, type or value arguments");
+      return;
+    }
+    acceptedSemantics(result);
+    const auto &occurrences = result.semantics.database().occurrences(result.sourceGraph.entryUnit());
+    expect(std::none_of(occurrences.begin(), occurrences.end(),
+                       [](const auto &occurrence) { return occurrence.name == "_"; }),
+           "contextual lifetime placeholders do not become renameable binder references");
+    bool checked = false;
+    for (const auto &declaration : result.program.declarations()) {
+      const auto *function = lang::stmtAs<lang::FunctionDecl>(declaration.get());
+      if (!function || function->name().lexeme != "inspect" || !function->body())
+        continue;
+      for (const auto &statement : function->body()->statements()) {
+        const auto *switchStatement = lang::stmtAs<lang::SwitchStmt>(statement.get());
+        if (!switchStatement)
+          continue;
+        const auto *subjectInfo = result.semantics.findExpression(*switchStatement->expression());
+        for (const auto &arm : switchStatement->arms())
+          for (const auto &label : arm.labels) {
+            const auto *call = lang::exprAs<lang::Call>(label.value.get());
+            const auto *qualified = lang::exprAs<lang::QualifiedName>(
+                call ? call->callee().get() : label.value.get());
+            const auto *pattern = result.semantics.findPayloadPattern(*label.value);
+            const auto *enumerator = qualified ? result.semantics.findEnumerator(*qualified) : nullptr;
+            const auto *expression = qualified ? result.semantics.findExpression(*qualified) : nullptr;
+            expect(subjectInfo && pattern && enumerator && expression &&
+                       pattern->type == subjectInfo->type &&
+                       enumerator->type == subjectInfo->type && expression->type == subjectInfo->type,
+                   "pattern, enumerator and expression metadata retain the exact scrutinee regions");
+            checked = true;
+          }
+      }
+    }
+    expect(checked, "contextual pattern fixture records its checked enum labels");
+  };
+  const std::string namedReading =
+      "enum Reading<lifetime a> { empty, item(int&<a> value) };";
+  for (const auto &qualifier : {"Reading", "Reading<_>", "Reading<a>"})
+    checkContextualPattern(namedReading, "Reading<a>", qualifier, true);
+  for (const auto &qualifier : {"Reading<b>", "Reading<static>"})
+    checkContextualPattern(namedReading, "Reading<a>", qualifier, false);
+  const std::string packet =
+      "enum Packet<T, uint64_t N, lifetime a> { empty, item(T&<a> value) };";
+  checkContextualPattern(packet, "Packet<int, 3, a>", "Packet<int, 3>", true);
+  checkContextualPattern(packet, "Packet<int, 3, a>", "Packet<int, 3, _>", true);
+  checkContextualPattern(packet, "Packet<int, 3, a>", "Packet<bool, 3, _>", false);
+  checkContextualPattern(packet, "Packet<int, 3, a>", "Packet<int, 4, _>", false);
+  checkContextualPattern("enum Wrapped<T> { empty, item(T value) };",
+                         "Wrapped<int&<a>>", "Wrapped<int&<_>>", true);
+  checkContextualPattern(namedReading + " using Alias<lifetime a> = Reading<a>;",
+                         "Alias<a>", "Alias<_>", true);
   for (const bool exclusive : {false, true}) {
     const auto result = analyze(
         std::string(exclusive

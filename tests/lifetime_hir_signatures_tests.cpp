@@ -1,5 +1,6 @@
 #include "gti/frontend.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 
@@ -11,8 +12,76 @@ void expect(bool condition, const char *message) {
     std::exit(1);
   }
 }
+void constructionLifetimeContexts() {
+  const auto result = Frontend({.stopAfter = FrontendPhase::Hir})
+      .analyze("lifetime-hir-construction-contexts.gti", R"gti(
+struct Token<T> { Token() = default; };
+struct Builder<lifetime a, T> {
+  Builder() { Token<T> token{}; }
+  int make() { Token<T> token{}; return 1; }
+};
+struct Projected<T&<borrowed>> {
+  Projected() = default;
+  int make() { Token<T> token{}; return 1; }
+};
+namespace family { struct Exact<T, lifetime a> { Exact() = default; }; }
+struct family::Exact<int> {
+  Exact() = default;
+  int make() { Token<int> token{}; return 1; }
+};
+int build<lifetime a, T>(T&<a> input) { Token<T> token{}; return 1; }
+int first<lifetime a>(int&<a> input) {
+  auto invoke = []() { return 1; };
+  return invoke();
+}
+int second<lifetime b>(int&<b> input) {
+  auto invoke = []() { return 1; };
+  return invoke();
+}
+int main() {
+  int value = 0;
+  Builder<static, int> builder{};
+  Projected<int&<static>> projected{};
+  family::Exact<int, static> exact{};
+  return build(value) + builder.make() + projected.make() + exact.make() + first(value) + second(value) - 6;
+}
+)gti");
+  if (!result.semanticValid || !result.hir.valid()) {
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "mixed-kind callable and owner construction contexts preserve compact arguments");
+  }
+  expect(verifyHirProgramPlans(result.semantics, result.hir).valid(),
+         "construction context source proof accepts exact canonical lifetime substitutions");
+  auto malformed = result.hir;
+  HirValue *firstCreator = nullptr;
+  HirValue *secondCreator = nullptr;
+  for (const auto &function : malformed.functionInstances()) {
+    if (!function.source)
+      continue;
+    const auto &name = function.source->name().lexeme;
+    if (name != "first" && name != "second")
+      continue;
+    for (const auto &value : function.body.values)
+      if (value.kind == HirValueKind::Lambda) {
+        auto *creator = const_cast<HirValue *>(&value);
+        (name == "first" ? firstCreator : secondCreator) = creator;
+      }
+  }
+  expect(firstCreator && secondCreator, "context mutation fixture has two exact lexical creators");
+  // Make the same checked lambda body claim two parent scopes. Their compact
+  // type/value arguments agree, but their declaration lifetime identities do not.
+  secondCreator->lambdaTarget = firstCreator->lambdaTarget;
+  secondCreator->source = firstCreator->source;
+  secondCreator->info = firstCreator->info;
+  const auto rejected = verifyHirProgramPlans(result.semantics, malformed);
+  expect(std::find(rejected.errors.begin(), rejected.errors.end(),
+                   "construction body has ambiguous instance arguments") != rejected.errors.end(),
+         "a lambda construction body cannot inherit unequal lifetime contexts");
+}
 } // namespace
 int main() {
+  constructionLifetimeContexts();
   const auto result = Frontend({.stopAfter = FrontendPhase::Hir})
                           .analyze("lifetime-hir-signatures.gti", R"gti(
 T&<a> identity<lifetime a, T>(T&<a> value) { return value; }

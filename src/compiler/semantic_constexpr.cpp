@@ -50,6 +50,16 @@ struct StagedHash {
     add(type.genericParameterId);
     add(type.functionId);
     add(type.arrayLength);
+    add(static_cast<std::size_t>(type.referenceLifetime.kind));
+    add(type.referenceLifetime.id);
+    add(type.lifetimeArguments.size());
+    for (const auto region : type.lifetimeArguments) {
+      add(static_cast<std::size_t>(region.kind));
+      add(region.id);
+    }
+    add(type.quantifiedLifetimes.size());
+    for (const auto parameter : type.quantifiedLifetimes)
+      add(parameter);
     add(type.arguments.size());
     for (const auto &argument : type.arguments)
       this->type(argument);
@@ -598,6 +608,13 @@ auto SemanticVisitor::Impl::StagedConstantResults::hash(const Key &key)
     entry.add(value.value);
     substitution += entry.value;
   }
+  for (const auto &[parameter, region] : key.substitution.lifetimes) {
+    StagedHash entry;
+    entry.add(parameter);
+    entry.add(static_cast<std::size_t>(region.kind));
+    entry.add(region.id);
+    substitution += entry.value;
+  }
   hash.add(substitution);
   for (const auto &argument : key.arguments)
     hash.constant(argument);
@@ -622,8 +639,7 @@ auto SemanticVisitor::Impl::StagedConstantResults::same(const Key &left,
          left.parameterTypes == right.parameterTypes &&
          left.defaultArguments == right.defaultArguments &&
          left.designatedArguments == right.designatedArguments &&
-         left.substitution.types == right.substitution.types &&
-         left.substitution.values == right.substitution.values &&
+         left.substitution == right.substitution &&
          left.arguments == right.arguments && left.receiver == right.receiver;
 }
 
@@ -737,7 +753,9 @@ auto SemanticVisitor::Impl::stagedConstantKey(
     return std::nullopt;
   // What the evaluation may execute: the definitions and constructors its
   // worker copies (those declared before this point) and those HIR lowers.
-  std::vector<std::uintptr_t> identity{concreteReanalysis() ? 1U : 0U};
+  std::vector<std::uintptr_t> identity{
+      concreteReanalysis() ? 1U : 0U,
+      static_cast<std::uintptr_t>(requestSession.lifetimeContractRevision)};
   const auto append = [&](std::vector<std::uintptr_t> values) {
     std::sort(values.begin(), values.end());
     identity.push_back(values.size());
@@ -806,6 +824,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   const bool reanalysis = concreteReanalysis();
   StagedWorker &worker = stagedWorker;
   if (worker.impl == nullptr || worker.reanalysis != reanalysis ||
+      worker.lifetimeContractRevision != requestSession.lifetimeContractRevision ||
       worker.declarationOrder != currentDeclarationOrder ||
       worker.definitions != definitions ||
       worker.constructors != constructors) {
@@ -838,13 +857,17 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.impl->defaultArgumentSyntax = defaultArgumentSyntax;
     worker.impl->defaultArgumentDependencies = defaultArgumentDependencies;
     worker.reanalysis = reanalysis;
+    worker.lifetimeContractRevision = requestSession.lifetimeContractRevision;
     worker.declarationOrder = currentDeclarationOrder;
     worker.definitions = definitions;
     worker.constructors = constructors;
   }
   worker.impl->requestSession.constexprWork = work;
+  worker.impl->reuseConstantEvaluations = reuseConstantEvaluations;
+  worker.impl->requestSession.lifetimeContractRevision = requestSession.lifetimeContractRevision;
   worker.impl->requestSession.stagedConstants = requestSession.stagedConstants;
   worker.impl->requestSession.executableLifetimes = requestSession.executableLifetimes;
+  worker.impl->requestSession.privateLifetimeDependencies = requestSession.privateLifetimeDependencies;
   // Concrete constant bodies also demand source access summaries. Share
   // their request-local cycle/depth accounting, not mutable body state.
   worker.impl->requestSession.rawResultQueries =
@@ -1077,6 +1100,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     if (reused != nullptr && reused->depth >= depth &&
         context.work->steps + reused->steps <= compileLimits.constexprSteps &&
         (!reused->voidCompletion || context.allowVoidCompletion)) {
+      notePrivateLifetimeOpaqueDependency();
       context.work->steps += reused->steps;
       appendStagedWarnings(reused->warnings);
       if (reused->nativeObjectLayout)
@@ -1111,6 +1135,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   stagedDetail += " args=" + std::to_string(arguments.size());
   const PhaseTimeScope stagedScope("constexpr-staged-mir", stagedDetail);
   if (closure != nullptr) {
+    notePrivateLifetimeOpaqueDependency();
     context.work->steps += closure->steps;
     appendStagedWarnings(closure->warnings);
     if (closure->nativeObjectLayout)

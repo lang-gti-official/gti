@@ -2200,6 +2200,8 @@ struct GenericSubstitution {
   TypeSubstitution types;
   ValueSubstitution values;
   LifetimeSubstitution lifetimes;
+  friend bool operator==(const GenericSubstitution &,
+                         const GenericSubstitution &) = default;
 };
 
 // One element of an expanded `constexpr for`: the element type the binding

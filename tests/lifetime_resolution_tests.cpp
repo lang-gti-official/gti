@@ -1,11 +1,63 @@
 #include "gti/frontend.h"
 #include "gti/lifetime_types.h"
 #include "gti/semantic_analyzer.h"
+#include "../src/compiler/semantic_analyzer_impl.h"
 
 #include <algorithm>
 #include <iostream>
 #include <string>
 #include <string_view>
+
+namespace lang {
+// Exercise the real staging key and lookup without exposing cache internals as
+// a product API or relying on a timing-sensitive number of source evaluations.
+struct SemanticLifetimeTestAccess {
+  struct CacheChecks {
+    bool repeatedHit = false;
+    bool distinctLifetimeMiss = false;
+    bool distinctGenerationMiss = false;
+    bool workerRefreshed = false;
+  };
+  static CacheChecks stagedLifetimeKeys() {
+    SemanticVisitor analyzer;
+    auto &impl = *analyzer.impl;
+    using Cache = SemanticVisitor::Impl::StagedConstantResults;
+    auto cache = std::make_shared<Cache>();
+    impl.requestSession.stagedConstants = cache;
+    FunctionInfo function{.id = 1};
+    GenericSubstitution substitution;
+    substitution.lifetimes.emplace(1, Lifetime::staticLifetime());
+    const auto key = [&] {
+      return impl.stagedConstantKey(static_cast<const FunctionDecl *>(nullptr),
+                                    &function, {}, substitution, std::nullopt,
+                                    {}, {});
+    };
+    const auto original = key();
+    if (!original)
+      return {};
+    cache->record({.key = *original, .value = ConstantValue{true}});
+    CacheChecks checks;
+    const auto repeated = key();
+    checks.repeatedHit = repeated && cache->find(*repeated);
+    substitution.lifetimes[1] = Lifetime::parameter(2);
+    const auto different = key();
+    checks.distinctLifetimeMiss = different && !cache->find(*different);
+    substitution.lifetimes[1] = Lifetime::staticLifetime();
+    ++impl.requestSession.lifetimeContractRevision;
+    const auto revised = key();
+    checks.distinctGenerationMiss = revised && !cache->find(*revised);
+    impl.catalog.seal();
+    auto work = std::make_shared<SemanticVisitor::Impl::ConstexprWorkBudget>();
+    (void)impl.stagedWorkerFor(impl.semanticModel, work);
+    impl.macroLookupBase = &impl;
+    ++impl.requestSession.lifetimeContractRevision;
+    auto &worker = impl.stagedWorkerFor(impl.semanticModel, work);
+    checks.workerRefreshed = worker.macroLookupBase == &impl &&
+        worker.requestSession.lifetimeContractRevision == impl.requestSession.lifetimeContractRevision;
+    return checks;
+  }
+};
+} // namespace lang
 
 namespace {
 int failures = 0;
@@ -723,6 +775,120 @@ int main() { int firstValue = 1; int secondValue = 2; return first(firstValue, s
   }
 }
 
+void testPrivateLifetimeWorklist() {
+  const auto cacheKeys = lang::SemanticLifetimeTestAccess::stagedLifetimeKeys();
+  expect(cacheKeys.repeatedHit, "an unchanged staging request can reuse its result");
+  expect(cacheKeys.distinctLifetimeMiss,
+         "staged results distinguish explicit lifetime substitutions");
+  expect(cacheKeys.distinctGenerationMiss,
+         "an inferred contract revision invalidates the previous staging environment");
+  expect(cacheKeys.workerRefreshed,
+         "a changed lifetime generation rebuilds the staged worker's semantic snapshot");
+  constexpr std::size_t chainLength = 16;
+  constexpr std::size_t independentCount = 16;
+  const auto checkOrder = [&](bool leafFirst) {
+    std::string source;
+    for (std::size_t order = 0; order < chainLength; ++order) {
+      const auto index = leafFirst ? chainLength - order - 1 : order;
+      source += "static int& chain" + std::to_string(index) +
+                "(int& selected, int& ignored) { return ";
+      source += index + 1 == chainLength
+                    ? "selected; }\n"
+                    : "chain" + std::to_string(index + 1) + "(selected, ignored); }\n";
+    }
+    for (std::size_t index = 0; index < independentCount; ++index)
+      source += "static int& independent" + std::to_string(index) +
+                "(int& selected, int& ignored) { return selected; }\n";
+    source += R"(
+int&<a> relay<lifetime a, lifetime b>(int&<a> selected, int&<b> ignored) {
+  return chain0(selected, ignored);
+}
+int main() { int first = 3; int second = 5; return relay(first, second); }
+)";
+    lang::FrontendWorkMetrics metrics;
+    const auto result = lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics,
+                                        .workMetrics = &metrics})
+                            .analyze("private-lifetime-worklist.gti", source);
+    expectValid(result, "private contract propagation is independent of declaration order");
+    for (std::size_t index = 0; index < chainLength; ++index) {
+      const auto *info = function(result, "chain" + std::to_string(index));
+      expect(info && info->completeReturnBorrow &&
+                 info->completeReturnBorrow->dependencies.size() == 1 &&
+                 info->completeReturnBorrow->dependencies.front().origin == lang::BorrowOriginKind::Argument &&
+                 info->completeReturnBorrow->dependencies.front().parameter == 0,
+             "every relay retains the same exact productive supplier");
+    }
+    const auto maximumProbes = 4 * (chainLength + independentCount);
+    if (metrics.semanticPrivateLifetimeProbes > maximumProbes)
+      std::cerr << "Private lifetime work: candidates=" << metrics.semanticPrivateLifetimeCandidates
+                << " probes=" << metrics.semanticPrivateLifetimeProbes
+                << " updates=" << metrics.semanticPrivateLifetimeUpdates
+                << " edges=" << metrics.semanticPrivateLifetimeDependencyEdges
+                << " opaque=" << metrics.semanticPrivateLifetimeOpaqueProbes << '\n';
+    expect(metrics.semanticPrivateLifetimeCandidates == chainLength + independentCount &&
+               metrics.semanticPrivateLifetimeProbes <= maximumProbes,
+           "a relay update revisits its dependents without rechecking unrelated private bodies");
+  };
+  checkOrder(false);
+  checkOrder(true);
+
+  const std::string precondition = R"(
+void requireStatic(int&<static> value);
+static void relay(int& value) { leaf(value); }
+static void leaf(int& value) { requireStatic(value); }
+)";
+  const auto accepted = analyze(precondition + R"(
+void valid(int&<static> value) { relay(value); }
+int main() { return 0; }
+)");
+  expectValid(accepted, "private inference also propagates a void helper's input preconditions");
+  const auto *relay = function(accepted, "relay");
+  expect(relay && !relay->parameterTypes.empty() &&
+             std::find(relay->lifetimeContract.bounds.begin(), relay->lifetimeContract.bounds.end(),
+                       lang::LifetimeBound{relay->parameterTypes.front().referenceLifetime,
+                                           lang::Lifetime::staticLifetime()}) !=
+                 relay->lifetimeContract.bounds.end(),
+         "a previously unconstrained caller is revisited when its callee requires static storage");
+  const auto rejected = analyze(precondition + R"(
+void invalid(int& value) { relay(value); }
+int main() { return 0; }
+)");
+  expect(!rejected.semanticValid &&
+             std::any_of(rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
+         "a strengthened private precondition rejects a caller without the required relationship");
+
+  const std::string cached = R"(
+static constexpr bool enabled() { return true; }
+static int& choose(int& selected, int& ignored) {
+  if constexpr (enabled()) {
+    if constexpr (enabled()) { return selected; }
+  }
+  return ignored;
+}
+int&<a> invoke<lifetime a, lifetime b>(int&<a> selected, int&<b> ignored) {
+  return choose(selected, ignored);
+}
+int main() { return 0; }
+)";
+  for (const bool reuse : {false, true}) {
+    lang::FrontendWorkMetrics metrics;
+    const auto result = lang::Frontend({.reuseConstantEvaluations = reuse,
+                                        .stopAfter = lang::FrontendPhase::Semantics,
+                                        .workMetrics = &metrics})
+                            .analyze("private-lifetime-cache.gti", cached);
+    expectValid(result, "private lifetime inference agrees with fresh and reused constant proofs");
+    const auto *selected = function(result, "choose");
+    expect(selected && selected->completeReturnBorrow &&
+               selected->completeReturnBorrow->dependencies.size() == 1 &&
+               selected->completeReturnBorrow->dependencies.front().parameter == 0,
+           "cached branch proofs preserve the exact inferred return supplier");
+    if (reuse)
+      expect(metrics.semanticPrivateLifetimeOpaqueProbes != 0,
+             "an unjournaled cached branch proof retains conservative contract dependencies");
+  }
+}
+
 void testProjectedPatternLifetimes() {
   const auto result = analyze(R"(
 enum Outcome<T> { ready(T value), failed(int code) };
@@ -783,7 +949,7 @@ public:
 int&<a> extract<lifetime a>(Borrowed<int&<a>> value) { return value.get(); }
 )";
   const auto result = analyze(declarations + R"(
-int main() { int value = 7; Borrowed<int&> view(value); return extract(view); }
+int main() { int value = 7; Borrowed<int&> view{value}; return extract(view); }
 )");
   expectValid(result, "a named projected region preserves the exact reference shell through fields and methods");
   const auto *owner = record(result, "Borrowed");
@@ -811,6 +977,15 @@ int main() { return 0; }
              std::any_of(kindConflict.diagnostics.begin(), kindConflict.diagnostics.end(),
                          [](const auto &diagnostic) { return diagnostic.code == "GTI-S2126"; }),
          "a projected lifetime name cannot also bind a type");
+  for (const char *source : {
+           "class Duplicate<T&<a>, U&<a>> {}; class Duplicate<T&<a>, U&<b>> {}; int main() { return 0; }",
+           "class Duplicate<R&<a>(T&<a>)> {}; class Duplicate<R&<b>(T&<c>)> {}; int main() { return 0; }"}) {
+    const auto duplicate = analyze(source);
+    expect(!duplicate.semanticValid &&
+               std::any_of(duplicate.diagnostics.begin(), duplicate.diagnostics.end(),
+                           [](const auto &diagnostic) { return diagnostic.code == "GTI-S2006"; }),
+           "declaration families cannot dispatch on projected lifetime relationships");
+  }
 }
 
 void testNominalFormation() {
@@ -993,6 +1168,7 @@ int main() {
   testNominalFormation();
   testCStringRegions();
   testPrivateLifetimeInference();
+  testPrivateLifetimeWorklist();
   testInstantiatedReferenceIdentity();
   testLambdaLifetimeInference();
   testLambdaLifetimeEnvironments();

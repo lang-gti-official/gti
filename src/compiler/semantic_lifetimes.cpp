@@ -1053,6 +1053,7 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
 auto SemanticVisitor::Impl::applyCallLifetimeContract(
     CallableCandidate &function, std::span<const AnalyzedCallArgument> arguments,
     const Token &site, const Expr *receiver, bool diagnose) -> bool {
+  notePrivateLifetimeDependency(function.id);
   const auto reject = [&](std::string_view message) {
     if (diagnose)
       report(site, std::string(message), "GTI-S2127");

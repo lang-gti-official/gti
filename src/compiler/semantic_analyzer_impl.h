@@ -40,6 +40,7 @@ using semantic_spelling::typeRefSpelling;
 class SemanticVisitor::Impl final : public ExprVisitor,
                                     public StmtVisitor,
                                     public SemanticInstanceProvider {
+  friend struct SemanticLifetimeTestAccess;
 public:
   enum class ThreadTransferBoundary { Owned, Scoped };
 
@@ -1488,6 +1489,7 @@ private:
   struct SemanticCatalog;
 
   struct RawResultQueryState {
+    std::uint64_t lifetimeContractRevision = 0;
     // Interned diagnostic records only. Keeping evidence is independent of
     // admitting a complete root result to the bounded reuse cache.
     std::vector<std::shared_ptr<RawResultQuery>> entries;
@@ -2185,9 +2187,9 @@ private:
     // FrontendOptions::reuseConstantEvaluations: false disables both caches,
     // so tests can prove a program means the same with and without them.
     bool enabled = true;
-    // Interned environments: whether a concrete reanalysis is open, then the
-    // definitions and constructors a worker may execute and those HIR may
-    // lower, each sorted.
+    // Interned environments: concrete reanalysis and lifetime-contract
+    // generation, then the definitions and constructors a worker may execute
+    // and those HIR may lower, each sorted.
     std::map<std::vector<std::uintptr_t>, std::size_t> environments;
 
     [[nodiscard]] std::size_t environment(std::vector<std::uintptr_t> identity);
@@ -3105,6 +3107,8 @@ private:
                                     const std::function<Lifetime()> &fresh) const;
   void validateLambdaLifetimeReturn(const ExprPtr &value);
   void inferPrivateLifetimeContracts();
+  void notePrivateLifetimeDependency(FunctionId function) const;
+  void notePrivateLifetimeOpaqueDependency() const;
   [[nodiscard]] std::optional<LifetimeSignatureContract> projectInferredLifetimeContract(
       const LifetimeSignatureContract &declaration,
       const SemanticLifetimeBody &body) const;
@@ -5963,7 +5967,10 @@ private:
 
   SemanticType analyze(const Expr &expr);
 
-  SemanticType analyze(const Expr &expr, OccurrenceRole requestedRoles);
+  SemanticType analyze(const Expr &expr, OccurrenceRole requestedRoles,
+                       const EnumeratorRecord *contextualEnumerator = nullptr);
+  void analyzeQualifiedName(const QualifiedName &expr,
+                            const EnumeratorRecord *contextualEnumerator);
 
   void discardResult(const ExprPtr &expr);
   // Reports a used result of a built-in assignment to a move-only type.
@@ -6611,7 +6618,10 @@ private:
   [[nodiscard]] const EnumeratorRecord *
   resolveEnumerator(const NamePath &path, bool global = false) const;
   [[nodiscard]] std::optional<EnumeratorRecord>
-  resolveEnumerator(const QualifiedName &expression) const;
+  resolveEnumerator(const QualifiedName &expression,
+                    const SemanticType *contextualOwner = nullptr,
+                    std::vector<std::pair<LifetimeSyntaxKey, Lifetime>>
+                        *contextualBindings = nullptr) const;
 
   [[nodiscard]] std::optional<EnumeratorRecord>
   payloadEnumeratorForCallee(const ExprPtr &callee) const;
@@ -7492,6 +7502,13 @@ private:
   // than copying every earlier expression in the caller's program.
   struct RequestSessionContext {
     bool collectingPrivateLifetimeContracts = false;
+    // Shared only by nested probes of this one declaration. Rejected overload
+    // and concept trials still read contracts and therefore remain dependencies.
+    struct PrivateLifetimeDependencyTrace {
+      std::unordered_set<FunctionId> functions;
+      bool opaqueCachedProof = false;
+    };
+    std::shared_ptr<PrivateLifetimeDependencyTrace> privateLifetimeDependencies;
     const Lambda *collectingLambdaLifetimeContract = nullptr;
     std::uint64_t lifetimeContractRevision = 0;
     struct ExecutableLifetimeKey {
@@ -8303,6 +8320,7 @@ private:
   struct StagedWorker {
     std::unique_ptr<Impl> impl;
     bool reanalysis = false;
+    std::uint64_t lifetimeContractRevision = 0;
     std::size_t declarationOrder = 0;
     std::size_t definitions = 0;
     std::size_t constructors = 0;

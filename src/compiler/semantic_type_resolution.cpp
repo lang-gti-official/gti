@@ -28,6 +28,7 @@ auto SemanticVisitor::Impl::nativeFunctionCandidateIsEligible(
 
 auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
     const CallableCandidate &candidate) const -> bool {
+  notePrivateLifetimeDependency(candidate.id);
   if (candidate.ownerClass != 0 || candidate.declaration == nullptr ||
       candidate.id == 0 ||
       std::any_of(candidate.record().genericParameters.begin(),
@@ -7734,7 +7735,7 @@ auto SemanticVisitor::Impl::recordLifetimeParameter(
 
 auto SemanticVisitor::Impl::recordLifetimeUse(const Token &name,
                                              Lifetime lifetime) -> void {
-  if (lifetime.kind != Lifetime::Kind::Parameter)
+  if (lifetime.kind != Lifetime::Kind::Parameter || name.lexeme == "_" || name.completion)
     return;
   const auto *parameter = genericParameterInfo(lifetime.id);
   if (!parameter)
@@ -8715,6 +8716,8 @@ auto SemanticVisitor::Impl::knownConcreteClassAssertionOutcome(
                           .declaration = classId,
                           .classTypes = typeArguments,
                           .classValues = values});
+  if (found != requestSession.classAssertionOutcomes.end())
+    notePrivateLifetimeOpaqueDependency();
   if (found == requestSession.classAssertionOutcomes.end())
     return std::nullopt;
   return found->second;

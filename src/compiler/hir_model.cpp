@@ -1546,8 +1546,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         constructionContexts.emplace(&body, substitution);
     if (inserted)
       constructionBodies.push_back(&body);
-    else if (found->second.types != substitution.types ||
-             found->second.values != substitution.values) {
+    else if (found->second != substitution) {
       ambiguousConstructionContexts.insert(&body);
       result.errors.emplace_back(
           "construction body has ambiguous instance arguments");
@@ -1557,10 +1556,23 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       [&](GenericSubstitution &substitution,
           const std::vector<GenericParameterInfo> &parameters,
           const std::vector<SemanticType> &types,
-          const std::vector<CompileTimeValue> &values) {
-        std::size_t typeIndex = 0, valueIndex = 0;
+          const std::vector<CompileTimeValue> &values,
+          const std::vector<Lifetime> &lifetimes) {
+        std::size_t typeIndex = 0, valueIndex = 0, lifetimeIndex = 0;
         for (const auto &parameter : parameters) {
-          if (!parameter.typeArgumentPath.empty()) {
+          if (parameter.lifetime) {
+            if (lifetimeIndex >= lifetimes.size()) {
+              result.errors.emplace_back("construction lifetime arguments are incomplete");
+              continue;
+            }
+            const auto argument = lifetimes[lifetimeIndex++];
+            if (!argument.specified())
+              result.errors.emplace_back("construction lifetime argument is unspecified");
+            else if (const auto [found, inserted] =
+                         substitution.lifetimes.emplace(parameter.id, argument);
+                     !inserted && found->second != argument)
+              result.errors.emplace_back("construction lifetime arguments conflict");
+          } else if (!parameter.typeArgumentPath.empty()) {
             if (auto type = projectGenericTypeArgument(
                     types, parameter.typeArgumentPath, parameter.id,
                     parameter.pack))
@@ -1600,8 +1612,24 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                   "construction type arguments conflict");
           }
         }
+        if (lifetimeIndex != lifetimes.size())
+          result.errors.emplace_back("construction lifetime arguments exceed their declaration");
       };
-  const auto constructionClassContext = [&](HirClassInstanceId identity) {
+  const auto declaredConstructionLifetimes = [&](const auto &parameters,
+                                                  const LifetimeSignatureContract &contract) {
+    std::vector<Lifetime> lifetimes;
+    for (const auto &parameter : parameters)
+      if (parameter.lifetime) {
+        const auto region = Lifetime::parameter(parameter.id);
+        if (std::find(contract.parameters.begin(), contract.parameters.end(), region) ==
+            contract.parameters.end())
+          result.errors.emplace_back("construction context lacks its callable lifetime binder");
+        lifetimes.push_back(region);
+      }
+    return lifetimes;
+  };
+  const auto constructionClassContext = [&](HirClassInstanceId identity,
+                                             const SemanticType *callableOwner = nullptr) {
     GenericSubstitution substitution;
     const auto *instance =
         identity != 0 && identity <= program.classInstances().size() &&
@@ -1610,10 +1638,45 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             : nullptr;
     const auto *declaration =
         instance ? semantics.findClassType(instance->declaration) : nullptr;
-    if (declaration)
-      bindConstructionArguments(substitution, declaration->genericParameters,
-                                instance->typeArguments,
-                                instance->valueArguments);
+    if (!declaration)
+      return substitution;
+    if (callableOwner && callableOwner->kind == SemanticType::Unknown &&
+        (!instance->lifetimeContract.parameters.empty() || !instance->liftedLifetimes.empty())) {
+      result.errors.emplace_back("construction context lacks its callable owner lifetime scope");
+      return substitution;
+    }
+    const SemanticType &ownerType = callableOwner && callableOwner->kind != SemanticType::Unknown
+        ? *callableOwner : instance->type;
+    if (!matchUniversalTypeLifetimes(instance->type, ownerType,
+                                    instance->lifetimeContract.parameters)) {
+      result.errors.emplace_back("construction context lost its exact callable owner type");
+      return substitution;
+    }
+    const auto *publicDeclaration = semantics.findPublicClassType(instance->declaration);
+    if (!publicDeclaration) {
+      result.errors.emplace_back("construction context lacks its public class arguments");
+      return substitution;
+    }
+    bindConstructionArguments(substitution, publicDeclaration->genericParameters,
+                              ownerType.arguments, ownerType.valueArguments,
+                              ownerType.lifetimeArguments);
+    if (!declaration->genericArgumentPatterns.empty()) {
+      std::vector<SemanticType> patterns;
+      for (const auto &pattern : declaration->genericArgumentPatterns)
+        SemanticType::appendExpandedArgument(patterns,
+            substituteSemanticType(pattern, substitution, &semantics));
+      std::vector<Lifetime> projected;
+      for (const auto &parameter : declaration->genericArgumentPatternLifetimes)
+        projected.push_back(Lifetime::parameter(parameter.id));
+      const auto bindings = matchUniversalTypeArgumentLifetimes(patterns, ownerType.arguments, projected);
+      if (!bindings || bindings->size() != projected.size())
+        result.errors.emplace_back("construction context lost its exact projected lifetime arguments");
+      else
+        for (const auto &[parameter, actual] : *bindings)
+          if (const auto [found, inserted] = substitution.lifetimes.emplace(parameter.id, actual);
+              !inserted && found->second != actual)
+            result.errors.emplace_back("construction projected lifetime arguments conflict");
+    }
     return substitution;
   };
   addConstructionContext(program.module(), {});
@@ -1625,26 +1688,28 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     addConstructionContext(owner.staticFieldInitializers, substitution);
   }
   for (const auto &function : program.functionInstances()) {
-    auto substitution = constructionClassContext(function.owner.value_or(0));
+    auto substitution = constructionClassContext(function.owner.value_or(0), &function.ownerType);
     if (const auto *declaration = semantics.findFunction(function.declaration))
       bindConstructionArguments(substitution, declaration->genericParameters,
-                                function.typeArguments,
-                                function.valueArguments);
+                                function.typeArguments, function.valueArguments,
+                                declaredConstructionLifetimes(declaration->genericParameters,
+                                                               function.lifetimeContract));
     addConstructionContext(function.body, std::move(substitution));
   }
   for (const auto &constructor : program.constructorInstances()) {
-    auto substitution = constructionClassContext(constructor.owner);
+    auto substitution = constructionClassContext(constructor.owner, &constructor.ownerType);
     if (const auto *declaration =
             constructor.source ? semantics.findConstructor(*constructor.source)
                                : nullptr)
       bindConstructionArguments(substitution, declaration->genericParameters,
-                                constructor.typeArguments,
-                                constructor.valueArguments);
+                                constructor.typeArguments, constructor.valueArguments,
+                                declaredConstructionLifetimes(declaration->genericParameters,
+                                                               constructor.lifetimeContract));
     addConstructionContext(constructor.body, std::move(substitution));
   }
   for (const auto &destructor : program.destructorInstances())
     addConstructionContext(destructor.body,
-                           constructionClassContext(destructor.owner));
+                           constructionClassContext(destructor.owner, &destructor.ownerType));
   // Establish an acyclic exact lexical creator graph before propagating
   // instance arguments. Every incoming context must agree; a target ID or
   // an inferred result type cannot supply a missing or conflicting context.

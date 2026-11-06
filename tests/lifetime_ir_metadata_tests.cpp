@@ -13,6 +13,7 @@ struct MirProgramTestAccess {
   static auto &payloads(MirProgram &program) { return program.payloadEnums_; }
   static auto &integrals(MirProgram &program) { return program.integralEnums_; }
   static auto &lambdas(MirProgram &program) { return program.lambdas; }
+  static auto &nominalRecipes(MirProgram &program) { return program.nominalVarianceRecipes_; }
 };
 } // namespace lang
 using namespace lang;
@@ -121,9 +122,40 @@ void cleanupLifetimeRecipes() {
   expect(!mirUniqueCleanupType(program, actualLeaf),
          "ambiguous physical instances cannot select a cleanup target by erased type equality");
 }
+void quantifiedNominalLiftInventory() {
+  auto signature = SemanticType::functionSignature(reference(1001), {reference(1001)});
+  signature.quantifiedLifetimes = {1001};
+  NominalVarianceRecipe recipe{
+      .declaration = 100, .parameters = {{.id = 101}, {.id = 102}}, .complete = true};
+  MirClassInstance wrapper;
+  wrapper.id = 1;
+  wrapper.declaration = recipe.declaration;
+  wrapper.type = SemanticType::classType(recipe.declaration, {signature, SemanticType::Int32});
+  wrapper.liftedLifetimes = {{.id = 1001, .lifetime = true, .implicit = true}};
+  wrapper.lifetimeContract.complete = true;
+  wrapper.variance = {.types = {TypeVariance::Bivariant, TypeVariance::Bivariant}, .complete = true};
+  MirProgram program;
+  MirProgramTestAccess::classes(program) = {wrapper};
+  MirProgramTestAccess::nominalRecipes(program) = {recipe};
+  expect(verifyMirNominalLifetimeRecipes(program).valid(),
+         "a lifted callable binder stays scoped to its exact nominal type argument");
+  auto &instance = MirProgramTestAccess::classes(program).front();
+  instance.liftedLifetimes.front().id = 1002;
+  expect(!verifyMirNominalLifetimeRecipes(program).valid(),
+         "an unused lifted identity cannot claim an unrelated nested callable scope");
+  instance = wrapper;
+  instance.lifetimeContract.parameters = {Lifetime::parameter(1001)};
+  expect(!verifyMirNominalLifetimeRecipes(program).valid(),
+         "a nested callable binder cannot become an owner contract assumption");
+  instance = wrapper;
+  instance.type.arguments.back() = reference(1001);
+  expect(!verifyMirNominalLifetimeRecipes(program).valid(),
+         "a captured invocation binder cannot escape its callable type argument");
+}
 } // namespace
 int main() {
   cleanupLifetimeRecipes();
+  quantifiedNominalLiftInventory();
   const auto fixedEnvironment = Lifetime::parameter(701);
   const std::array closureParameters{reference(702)};
   const std::array closureCaptures{reference(701)};

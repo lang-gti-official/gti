@@ -460,6 +460,12 @@ relationships from their bodies, including mutually recursive helpers; exported
 contracts do not depend on inspecting the implementation. Inference does not
 upgrade read-only access or manufacture an owner for a raw pointer.
 
+In a payload-enum switch label, omitted lifetime arguments and `_` use the
+switched value's exact regions, including holes nested inside type arguments.
+Explicit named regions, ordinary type and value arguments, and reference access
+must still match. The pattern binds payloads from that checked enum instance;
+it does not create a new borrow or convert the enum to another type.
+
 A stored reference with omitted region receives an anonymous declaration slot.
 Distinct fields have distinct slots; constructor binding determines their actual
 origins. Recursive declarations whose omitted slots would expand indefinitely

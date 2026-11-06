@@ -419,6 +419,25 @@ regions are separate from invocation quantifiers, and `static` remains a
 constant. Missing nominal metadata, foreign region identities and malformed
 formula nodes make derivation fail rather than weaken the contract.
 
+Private body-derived lifetime contracts use a declaration dependency worklist.
+Every eligible body is initially probed with the ordinary semantic analyzer;
+changed bounds requeue the declaration and the callers that read its contract.
+The read set includes unsuccessful overload and concept trials, function-item
+formation, and inherited model lookups. Nested probes share only that read
+trace, and reads are conservatively retained across iterations. This reaches
+the same finite fixed point without rechecking unrelated bodies after each
+change. Provisional body facts remain isolated, and ordinary strict body
+analysis validates the finalized contracts before IR publication. Frontend
+work metrics count candidates, body probes, changed summaries and dependency
+edges separately from elapsed time. An unjournaled cached semantic proof makes
+its consumer depend conservatively on all mutable private contracts; metrics
+count those opaque probes so lost precision remains observable. Primitive-only
+expression proofs contain no function reads. No trusted-body validation is
+bypassed, and cached outcomes keep their existing admission rules.
+Staged constant and procedural-expansion keys retain complete generic lifetime
+substitutions and the inferred-contract generation, so a changed declaration
+contract cannot reuse a previously checked execution closure or expansion.
+
 Nominal variance is derived from verified fields and bases by a finite fixed
 point over the variance lattice. Shared references and owned storage preserve
 variance; mutable reference referents and unproven raw storage are invariant.

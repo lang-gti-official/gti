@@ -6,6 +6,12 @@
 #include "gti/nominal_variance.h"
 
 namespace lang {
+namespace {
+bool scopedDeclarationType(const SemanticType &type,
+                           std::span<const Lifetime> declaration,
+                           std::vector<Lifetime> quantified,
+                           std::size_t depth);
+} // namespace
 MirLifetimeApplication
 lowerMirLifetimeApplication(const HirLifetimeApplication &source) {
   MirLifetimeApplication result{.bindings = source.bindings,
@@ -282,7 +288,19 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
   };
   const auto liftsValid = [](std::span<const GenericParameterIdentity> lifted,
                             const LifetimeSignatureContract &contract,
-                            const NominalVarianceRecipe &recipe) {
+                            const NominalVarianceRecipe &recipe,
+                            const SemanticType &type) {
+    if (!scopedDeclarationType(type, contract.parameters, {}, 0))
+      return false;
+    std::vector<GenericParameterId> quantified;
+    const auto collectQuantified = [&](auto &&self, const SemanticType &current) -> void {
+      quantified.insert(quantified.end(), current.quantifiedLifetimes.begin(),
+                        current.quantifiedLifetimes.end());
+      lifetime_detail::children(current, [&](const SemanticType &child) {
+        self(self, child);
+      });
+    };
+    collectQuantified(collectQuantified, type);
     std::vector<GenericParameterId> seen;
     for (const auto &parameter : lifted) {
       if (!parameter.id || !parameter.lifetime || !parameter.implicit || parameter.value ||
@@ -293,8 +311,15 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
           }) || std::any_of(recipe.argumentPatternLifetimes.begin(),
                            recipe.argumentPatternLifetimes.end(), [&](const auto &source) {
             return source.id == parameter.id;
-          }) || std::find(contract.parameters.begin(), contract.parameters.end(),
-                          Lifetime::parameter(parameter.id)) == contract.parameters.end())
+          }))
+        return false;
+      // Canonicalization records fresh identities for both free argument
+      // regions and nested callable binders. The latter remain scoped by the
+      // exact type and must never become nominal declaration assumptions.
+      const bool declared = std::find(contract.parameters.begin(), contract.parameters.end(),
+                                      Lifetime::parameter(parameter.id)) != contract.parameters.end();
+      const bool bound = std::find(quantified.begin(), quantified.end(), parameter.id) != quantified.end();
+      if (!declared && !bound)
         return false;
       seen.push_back(parameter.id);
     }
@@ -319,7 +344,7 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
                  instance.kind == recipe.classKind && instance.cOpaqueHandle == recipe.cOpaqueHandle &&
                  instance.polymorphic == recipe.polymorphic && !recipe.forward && !recipe.invalidLifetime &&
                  instance.variance == expandNominalVarianceRecipe(instance.type, recipe, (*inferred)[*index], recipes) &&
-                 liftsValid(instance.liftedLifetimes, instance.lifetimeContract, recipe);
+                 liftsValid(instance.liftedLifetimes, instance.lifetimeContract, recipe, instance.type);
     std::size_t fields = 0, bases = 0;
     for (const auto &stored : recipe.stored) {
       if (!values) break;
@@ -354,7 +379,7 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
     const auto values = substitution(recipe, instance.type);
     bool valid = values.has_value() && !recipe.invalidLifetime &&
                  instance.variance == expandNominalVarianceRecipe(instance.type, recipe, (*inferred)[*index], recipes) &&
-                 liftsValid(instance.liftedLifetimes, instance.lifetimeContract, recipe);
+                 liftsValid(instance.liftedLifetimes, instance.lifetimeContract, recipe, instance.type);
     std::size_t count = 0;
     if constexpr (std::is_same_v<std::remove_cvref_t<decltype(instance)>, MirPayloadEnum>) {
       for (const auto &variant : instance.variants)

@@ -198,6 +198,7 @@ public:
 private:
   class Impl;
   friend class SemanticPreamble;
+  friend struct SemanticLifetimeTestAccess;
   std::unique_ptr<Impl> impl;
 };
 

@@ -237,6 +237,7 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
     part(std::to_string(currentClass.value_or(0)));
     part(std::to_string(currentDeclarationOrder));
     part(compileLimitsIdentity(compileLimits));
+    part(std::to_string(requestSession.lifetimeContractRevision));
     for (const auto &name : currentNamespace)
       part(name);
     part(call.capturedArguments()->text);
@@ -267,17 +268,18 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
         part(binding);
     }
     const GenericSubstitution genericContext{
-        .types = instanceTypeSubstitution, .values = instanceValueSubstitution};
+        .types = instanceTypeSubstitution, .values = instanceValueSubstitution,
+        .lifetimes = instanceLifetimeSubstitution};
     const auto reused = std::find_if(
         proceduralExpansions.begin(), proceduralExpansions.end(),
         [&](const auto &entry) {
           return reuseConstantEvaluations && entry.key == key &&
-                 entry.genericContext.types == genericContext.types &&
-                 entry.genericContext.values == genericContext.values;
+                 entry.genericContext == genericContext;
         });
     std::optional<ProceduralCachedExpansion> pendingCache;
     std::optional<SealedSyntaxExpression> sealed;
     if (reused != proceduralExpansions.end()) {
+      notePrivateLifetimeOpaqueDependency();
       if (workMetrics)
         ++workMetrics->proceduralExpansionReuses;
       const auto replay = [&](std::size_t cost, std::size_t &used,
@@ -851,6 +853,7 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
   }
   if (const auto &queries = requestSession.rawResultQueries) {
     auto fork = std::make_shared<RawResultQueryState>();
+    fork->lifetimeContractRevision = queries->lifetimeContractRevision;
     fork->depth = queries->depth;
     fork->nextIdentity = queries->nextIdentity;
     fork->hasRawGlobals = queries->hasRawGlobals;

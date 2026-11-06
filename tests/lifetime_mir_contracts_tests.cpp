@@ -289,17 +289,21 @@ int main() {
   for (const auto &function : copiedCarrier.mir.functionInstances())
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions) {
-        if (instruction.kind != MirInstructionKind::CallInput ||
-            instruction.info.type.kind != SemanticType::Class ||
-            instruction.info.type.lifetimeArguments.empty() ||
-            function.parameterTypes.empty() ||
-            function.parameterTypes.front().kind != SemanticType::Class)
+        if (instruction.kind != MirInstructionKind::Call ||
+            instruction.operands.empty())
           continue;
-        const auto &actual = function.parameterTypes.front();
+        const auto signature = instantiateMirLifetimeTarget(copiedCarrier.mir, instruction);
+        if (!signature || signature->parameterTypes.empty() ||
+            signature->parameterTypes.front().kind != SemanticType::Class ||
+            signature->parameterTypes.front().lifetimeArguments.empty() ||
+            instruction.operands.front().type.kind != SemanticType::Class)
+          continue;
+        const auto &actual = instruction.operands.front().type;
+        const auto &expected = signature->parameterTypes.front();
         expect(mirLifetimeValueConversion(copiedCarrier.mir, function.body,
-                                          function.id, actual, instruction.info.type),
-               "a copied carrier's staged regions follow its checked body graph");
-        auto stronger = instruction.info.type;
+                                          function.id, actual, expected),
+               "a copied carrier's applied regions follow its checked body graph");
+        auto stronger = expected;
         stronger.lifetimeArguments.front() = Lifetime::staticLifetime();
         expect(!mirLifetimeValueConversion(copiedCarrier.mir, function.body,
                                            function.id, actual, stronger),
@@ -308,6 +312,50 @@ int main() {
       }
   expect(checkedCopiedValueRegion,
          "copied carrier fixture must exercise an applied nominal value conversion");
+  const auto retainedSelection = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "retained-selection-carrier.gti", R"gti(
+int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; }
+  return right;
+}
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+};
+int main() {
+  int left = 3; int right = 9;
+  int& selected = choose(left, right, false);
+  View view{selected};
+  return view.get() - 9;
+}
+)gti");
+  if (!retainedSelection.canGenerateCode()) {
+    for (const auto &diagnostic : retainedSelection.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    for (const auto &function : retainedSelection.mir.functionInstances()) {
+      std::cerr << "selection function=" << function.id << '\n';
+      for (const auto &loan : function.body.loans) {
+        std::cerr << " loan=" << loan.id << " kind=" << static_cast<int>(loan.kind)
+                  << " source=" << loan.source << " parent=" << loan.parent
+                  << " carriers=" << loan.carriers.size() << " fields=" << loan.designatedFields.size()
+                  << " entry=" << loan.entry << '\n';
+        for (const auto &dependency : loan.additionalDependencies)
+          std::cerr << "  additional source=" << dependency.source
+                    << " parent=" << dependency.parent
+                    << " fields=" << dependency.designatedFields.size() << '\n';
+      }
+      for (const auto &place : function.body.places) {
+        std::cerr << " place=" << place.id << " root=" << static_cast<int>(place.root)
+                  << " binding=" << place.binding << " value=" << place.value << '\n';
+        for (const auto &projection : place.projections)
+          std::cerr << "  projection=" << static_cast<int>(projection.kind)
+                    << " field=" << projection.field << '\n';
+      }
+    }
+  }
+  expect(retainedSelection.canGenerateCode(),
+         "a stored reference must retain every supplier of an intermediate selected reference");
   auto wrongCopiedCarrier = copiedCarrier.mir;
   bool changedCopySource = false;
   for (const auto &immutable : wrongCopiedCarrier.functionInstances()) {

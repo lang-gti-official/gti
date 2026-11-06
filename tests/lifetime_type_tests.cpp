@@ -104,9 +104,58 @@ void testScopedCallableFormation() {
 }
 } // namespace
 
+void testContextualLifetimeInference() {
+  using namespace lang;
+  const auto hole = Lifetime::inference(1001);
+  const auto fixed = Lifetime::parameter(1002);
+  const auto actual = Lifetime::parameter(1003);
+  const std::array holes{hole};
+  auto pattern = SemanticType::enumType(31, {reference(hole), reference(fixed)}, {}, {hole});
+  auto target = SemanticType::enumType(31, {reference(actual), reference(fixed)}, {}, {actual});
+  pattern.valueArguments = target.valueArguments = {CompileTimeValue::uint64(3)};
+  expect(matchInferredTypeLifetimes(pattern, target, holes) ==
+             std::optional{std::vector<LifetimeBinding>{{hole, actual}}},
+         "contextual inference matches repeated syntax holes without changing fixed regions");
+  auto mismatch = target;
+  mismatch.arguments.back().referenceLifetime = actual;
+  expect(!matchInferredTypeLifetimes(pattern, mismatch, holes),
+         "contextual inference preserves explicitly named regions");
+  mismatch = target;
+  mismatch.arguments.front().referenceAccess = AccessMode::Mutable;
+  expect(!matchInferredTypeLifetimes(pattern, mismatch, holes),
+         "contextual inference preserves reference access");
+  mismatch = target;
+  mismatch.arguments.front().arguments.front() = SemanticType::Bool;
+  expect(!matchInferredTypeLifetimes(pattern, mismatch, holes),
+         "contextual inference preserves ordinary type arguments");
+  mismatch = target;
+  mismatch.valueArguments.front() = CompileTimeValue::uint64(4);
+  expect(!matchInferredTypeLifetimes(pattern, mismatch, holes),
+         "contextual inference preserves ordinary value arguments");
+  mismatch = target;
+  mismatch.lifetimeArguments.front() = fixed;
+  expect(!matchInferredTypeLifetimes(pattern, mismatch, holes),
+         "a repeated syntax hole must have one exact contextual region");
+  expect(!matchUniversalTypeLifetimes(pattern, target, holes) &&
+             !matchInferredTypeLifetimes(pattern, target, std::array{fixed}),
+         "universal and inference slot inventories remain distinct");
+  auto leftSignature = SemanticType::functionSignature(reference(Lifetime::parameter(1010)),
+      {reference(Lifetime::parameter(1010)), reference(hole)});
+  leftSignature.quantifiedLifetimes = {1010};
+  auto rightSignature = SemanticType::functionSignature(reference(Lifetime::parameter(1020)),
+      {reference(Lifetime::parameter(1020)), reference(actual)});
+  rightSignature.quantifiedLifetimes = {1020};
+  expect(matchInferredTypeLifetimes(leftSignature, rightSignature, holes).has_value(),
+         "contextual inference retains nested quantified alpha scope");
+  rightSignature.arguments.back().referenceLifetime = Lifetime::parameter(1020);
+  expect(!matchInferredTypeLifetimes(leftSignature, rightSignature, holes),
+         "a contextual hole cannot capture a nested quantified lifetime");
+}
+
 int main() {
   using namespace lang;
   testScopedCallableFormation();
+  testContextualLifetimeInference();
   const auto a = Lifetime::parameter(1);
   const auto b = Lifetime::parameter(2);
   const auto x = Lifetime::parameter(31);

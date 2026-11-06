@@ -6,6 +6,7 @@
 #include "../src/compiler/llvm/native_c_contract.h"
 #include "../src/compiler/llvm/reachability.h"
 #include "cpp_backend_test_support.h"
+#include "gti/mir_verifier.h"
 
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Constants.h>
@@ -63,6 +64,38 @@ VerifiedLoweredProgram fixture(const std::filesystem::path &source,
   if (!frontend.canGenerateCode()) {
     for (const auto &diagnostic : frontend.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    // Keep failures in eagerly checked imported bodies actionable without
+    // dumping whole MIR bodies or losing the source declaration behind an ID.
+    const auto verification = verifyMirProgram(frontend.mir);
+    for (std::size_t index = 0; index < std::min<std::size_t>(16, verification.errors.size()); ++index) {
+      const auto &error = verification.errors[index];
+      std::cerr << "MIR fixture failure kind=" << static_cast<int>(error.bodyKind)
+                << " owner=" << error.owner << " block=" << error.block
+                << " instruction=" << error.instruction;
+      if (error.bodyKind == MirBodyKind::Function)
+        if (const auto *instance = frontend.mir.findFunctionInstance(error.owner))
+          if (const auto *declaration = frontend.semantics.findFunction(instance->declaration))
+            std::cerr << " declaration=" << declaration->qualifiedName;
+      std::cerr << '\n';
+      const auto *body = findMirBody(frontend.mir, {error.bodyKind, error.owner});
+      if (!body) continue;
+      const auto *block = body->findBlock(error.block);
+      if (!block) continue;
+      for (const auto &instruction : block->instructions)
+        if (instruction.id == error.instruction) {
+          std::cerr << " kind=" << static_cast<int>(instruction.kind)
+                    << " target=" << instruction.functionTarget.value_or(0)
+                    << " callsite=" << instruction.callSite
+                    << " result_type=" << static_cast<int>(instruction.info.type.kind)
+                    << " parameters=" << instruction.parameterTypes.size()
+                    << " lifetime_bindings=" << instruction.lifetimeApplication.bindings.size()
+                    << '\n';
+          for (const auto &operand : instruction.operands)
+            std::cerr << " operand=" << static_cast<int>(operand.kind)
+                      << " type=" << static_cast<int>(operand.type.kind)
+                      << " value=" << operand.value << " place=" << operand.place << '\n';
+        }
+    }
     throw std::runtime_error("invalid GTI record fixture");
   }
   std::vector<LoweredProgramIssue> issues;

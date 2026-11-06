@@ -2163,6 +2163,7 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
         .lifetimeArguments = requirement.lifetimeArguments};
   };
   if (shared && adoptedPreamble->provedConcept(proofKey())) {
+    notePrivateLifetimeOpaqueDependency();
     if (workMetrics != nullptr)
       ++workMetrics->semanticConceptProofReuses;
     return std::nullopt;
@@ -2750,6 +2751,7 @@ auto SemanticVisitor::Impl::applyVariadicFunctionTypeArguments(
     const std::vector<CompileTimeValue> &explicitValueArguments,
     const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
     const Token &paren, bool checkedArguments) -> bool {
+  notePrivateLifetimeDependency(function.id);
   if (!explicitValueArguments.empty()) {
     report(paren, "Variadic functions do not admit value generic arguments.",
            "GTI-S2026");
@@ -2923,6 +2925,7 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
     const std::vector<CompileTimeValue> &explicitValueArguments,
     const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
     const Token &paren, bool checkedArguments) -> bool {
+  notePrivateLifetimeDependency(function.id);
   if (function.parameterPack || packGenericParameter(function) != nullptr) {
     return applyVariadicFunctionTypeArguments(
         function, explicitTypeArguments, explicitValueArguments, argumentTypes,
@@ -3288,6 +3291,7 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
     std::vector<SemanticType> &resolvedTypeArguments,
     std::vector<CompileTimeValue> &resolvedValueArguments,
     ConstraintFailure *constraintFailure, bool checkedArguments) -> bool {
+  notePrivateLifetimeDependency(candidate.id);
   // A class-owned pack is prescribed by the receiver, not deduced from this
   // call. Group the prescribed parameters by source argument expression so
   // the ordinary exact argument/ownership checks can also check forwarding.

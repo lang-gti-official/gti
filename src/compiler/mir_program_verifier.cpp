@@ -14915,50 +14915,63 @@ completeBorrowSourcePath(const MirProgram &program,
       const MirLoan *retainedGroup = nullptr;
       Fact retainedContents;
       if (!referenceInput &&
-          target.returnType.kind == SemanticType::Reference &&
-          argument->kind == MirOperandKind::Value && argument->value &&
-          argument->value <= definitions.size()) {
-        const auto *stage = definitions[argument->value - 1];
-        if (stage && stage->kind == MirInstructionKind::CallInput &&
-            (stage->callInputKind == HirCallInputKind::CopyValue ||
-             stage->callInputKind == HirCallInputKind::Value) &&
-            stage->result == argument->value &&
-            stage->callSite == instruction.callSite &&
-            stage->operands.size() == 1) {
-          const MirOperand *copy = &stage->operands.front();
-          if (copy->kind == MirOperandKind::Value && copy->value &&
-              copy->value <= definitions.size()) {
-            const auto *load = definitions[copy->value - 1];
-            if (load && load->kind == MirInstructionKind::Load &&
-                load->result == copy->value && load->operands.size() == 1 &&
-                load->info.type == copy->type &&
-                (load->operands.front().type == load->info.type ||
-                 mirLifetimeValueConversion(program, body, owner,
-                     load->operands.front().type, load->info.type)) &&
-                (load->info.type == stage->info.type ||
-                 mirLifetimeValueConversion(program, body, owner,
-                                             load->info.type, stage->info.type)))
-              copy = &load->operands.front();
+          target.returnType.kind == SemanticType::Reference) {
+        // Neutral Value call stages may have been forwarded to their source
+        // SSA value. Prove the same exact copy with or without that stage;
+        // never infer a retained parent from the argument's type alone.
+        const auto converts = [&](const SemanticType &from,
+                                  const SemanticType &to) {
+          return from == to ||
+                 mirLifetimeValueConversion(program, body, owner, from, to);
+        };
+        const MirOperand *copy = argument;
+        if (copy->kind == MirOperandKind::Value && copy->value &&
+            copy->value <= definitions.size()) {
+          const auto *stage = definitions[copy->value - 1];
+          if (stage && stage->kind == MirInstructionKind::CallInput) {
+            const bool argumentStage =
+                mapping.origin == BorrowOriginKind::Argument &&
+                stage->callInputRole == MirCallInputRole::Argument &&
+                stage->callInputIndex == mapping.parameter;
+            const bool receiverStage =
+                mapping.origin == BorrowOriginKind::Receiver &&
+                stage->callInputRole == MirCallInputRole::Receiver;
+            if ((stage->callInputKind == HirCallInputKind::CopyValue ||
+                 stage->callInputKind == HirCallInputKind::Value) &&
+                (argumentStage || receiverStage) &&
+                stage->result == copy->value &&
+                stage->info.type == copy->type &&
+                stage->callSite == instruction.callSite &&
+                stage->operands.size() == 1 &&
+                converts(stage->operands.front().type, stage->info.type))
+              copy = &stage->operands.front();
+            else
+              copy = nullptr;
           }
-          const auto *copied = copy->kind == MirOperandKind::Copy
-              ? body.findPlace(copy->place) : nullptr;
-          if (copied && copied->root == MirPlaceRootKind::Binding &&
-              copied->projections.empty() &&
-              (copied->type == copy->type ||
-               mirLifetimeValueConversion(program, body, owner,
-                                           copied->type, copy->type)) &&
-              (copy->type == stage->info.type ||
-               mirLifetimeValueConversion(program, body, owner,
-                                           copy->type, stage->info.type)))
-            if (const auto loans = bindingLoans.find(copied->binding);
-                loans != bindingLoans.end() && loans->second.size() == 1)
-              if (const auto *group = body.findLoan(loans->second.front());
-                  group && group->kind == MirLoanKind::Stored) {
-                retainedContents = retainedCarrierInput(state, copied->id);
-                if (retainedContents)
-                  retainedGroup = group;
-              }
         }
+        if (copy && copy->kind == MirOperandKind::Value && copy->value &&
+            copy->value <= definitions.size()) {
+          const auto *load = definitions[copy->value - 1];
+          if (load && load->kind == MirInstructionKind::Load &&
+              load->result == copy->value && load->operands.size() == 1 &&
+              load->info.type == copy->type &&
+              converts(load->operands.front().type, load->info.type))
+            copy = &load->operands.front();
+          else
+            copy = nullptr;
+        }
+        const auto *copied = copy && copy->kind == MirOperandKind::Copy
+            ? body.findPlace(copy->place) : nullptr;
+        if (copied && copied->root == MirPlaceRootKind::Binding &&
+            copied->projections.empty() && converts(copied->type, copy->type))
+          if (const auto loans = bindingLoans.find(copied->binding);
+              loans != bindingLoans.end() && loans->second.size() == 1)
+            if (const auto *group = body.findLoan(loans->second.front());
+                group && group->kind == MirLoanKind::Stored) {
+              retainedContents = retainedCarrierInput(state, copied->id);
+              if (retainedContents)
+                retainedGroup = group;
+            }
       }
       Fact input;
       if (!referenceInput) {

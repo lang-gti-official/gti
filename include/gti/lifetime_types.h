@@ -191,13 +191,12 @@ inline bool equivalentLifetimeTypes(
   return lifetime_detail::equivalent(left, right, std::move(bindings));
 }
 
-// Exact structural matching for a universal declaration view. This only
-// identifies a substitution; callers must separately prove all its bounds.
-inline std::optional<std::vector<LifetimeBinding>> matchUniversalTypeLifetimes(
+namespace lifetime_detail {
+inline std::optional<std::vector<LifetimeBinding>> matchTypeLifetimeSlots(
     const SemanticType &pattern, const SemanticType &actual,
-    std::span<const Lifetime> universals) {
+    std::span<const Lifetime> universals, Lifetime::Kind slotKind) {
   for (std::size_t index = 0; index < universals.size(); ++index)
-    if (universals[index].kind != Lifetime::Kind::Parameter ||
+    if (universals[index].kind != slotKind ||
         !universals[index].specified() ||
         std::find(universals.begin(), universals.begin() + index, universals[index]) !=
             universals.begin() + index)
@@ -274,6 +273,27 @@ inline std::optional<std::vector<LifetimeBinding>> matchUniversalTypeLifetimes(
   if (!match(match, pattern, actual, {}, 0))
     return std::nullopt;
   return result;
+}
+
+} // namespace lifetime_detail
+
+// Exact structural matching for a universal declaration view. This only
+// identifies a substitution; callers must separately prove all its bounds.
+inline std::optional<std::vector<LifetimeBinding>> matchUniversalTypeLifetimes(
+    const SemanticType &pattern, const SemanticType &actual,
+    std::span<const Lifetime> universals) {
+  return lifetime_detail::matchTypeLifetimeSlots(pattern, actual, universals,
+                                                Lifetime::Kind::Parameter);
+}
+
+// Contextual syntax inference changes only the explicitly inventoried holes.
+// Named/free regions, type/value arguments, access and quantified scopes remain
+// exact; this does not establish an outlives conversion or invent an origin.
+inline std::optional<std::vector<LifetimeBinding>> matchInferredTypeLifetimes(
+    const SemanticType &pattern, const SemanticType &actual,
+    std::span<const Lifetime> inferences) {
+  return lifetime_detail::matchTypeLifetimeSlots(pattern, actual, inferences,
+                                                Lifetime::Kind::Inference);
 }
 
 // A generic argument recipe is one structural scope: repeated region slots
