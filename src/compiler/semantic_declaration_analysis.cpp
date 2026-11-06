@@ -906,12 +906,6 @@ auto SemanticVisitor::Impl::registerTypeAlias(
     const std::vector<std::string> &namespaceScope, const ClassDecl *owner,
     AccessModifier access) -> void {
   currentSourceUnit = sourceUnitFor(alias.name());
-  if (!alias.genericParameters().empty()) {
-    reportConformanceError(
-        alias.name(),
-        "A generic associated type definition belongs in a conformance block.");
-    return;
-  }
   const std::string qualified = qualifiedName(lookupScope, alias.name().lexeme);
   const auto duplicate = std::find_if(
       typeAliases.begin(), typeAliases.end(),
