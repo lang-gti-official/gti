@@ -190,6 +190,17 @@ int inspect() {
 }
 int main() { return 0; }
 )gti");
+  check("inherited inline raw field retains definite expired provenance",
+        inheritedAddress + R"gti(
+int inspect() {
+  mut Derived address{};
+  { int dead = 7; address.pointer = &dead; }
+  unsafe { return *address.pointer; }
+}
+int main() { return 0; }
+)gti", true);
+  // Call summaries remain may-flow facts, as in the direct-field/input cases
+  // above. Preserve the expired owner without claiming definite execution.
   check("inherited raw field records expired owner through call write",
         inheritedAddress + R"gti(
 int inspect() {
@@ -198,7 +209,7 @@ int inspect() {
   unsafe { return *selected(address); }
 }
 int main() { return 0; }
-)gti", true);
+)gti", false);
   if (failures)
     return 1;
   std::cout << "Raw audit certainty tests passed\n";

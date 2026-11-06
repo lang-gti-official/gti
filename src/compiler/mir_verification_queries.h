@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gti/concrete_formals.h"
+
 #include "gti/mir.h"
 #include "gti/mir_verifier.h"
 
@@ -296,19 +298,24 @@ functionPointerSignature(const MirProgram &program, const SemanticType &type);
 referenceInitializerCall(const MirProgram &program,
                          const MirConstructorInstance &constructor,
                          const MirConstructorInitializer &initializer);
-// The formal a return-origin contract names, by expanded parameter position.
-// Instance parameter lists are expanded per element and a concrete pack's
-// elements repeat the pack binding, so the origin is the binding plus the
-// element's position within that binding; whether the binding is a pack is a
-// fact of its place type, which callers consult.
-struct MirReturnOriginFormal {
-  HirBindingId binding = 0;
-  std::size_t elementWithinBinding = 0;
-};
+// Derive concrete lanes from exact grouped binding records. Nested pack
+// indices remain part of identity even when their leaf types are equal.
+[[nodiscard]] std::optional<std::vector<ConcreteFormalInput>>
+concreteFormalInputs(const HirBody &, std::span<const SemanticType>,
+                     std::span<const HirBindingId>);
+[[nodiscard]] std::optional<std::vector<ConcreteFormalInput>>
+concreteFormalInputs(const MirBody &, std::span<const SemanticType>,
+                     std::span<const HirBindingId>);
+using MirReturnOriginFormal = ConcreteFormalInput;
 [[nodiscard]] std::optional<MirReturnOriginFormal>
-returnOriginFormal(std::span<const SemanticType> parameterTypes,
-                   std::span<const HirBindingId> parameterBindings,
-                   std::size_t expandedIndex);
+returnOriginFormal(const HirBody &, std::span<const SemanticType>,
+                   std::span<const HirBindingId>, std::size_t expandedIndex);
+[[nodiscard]] std::optional<MirReturnOriginFormal>
+returnOriginFormal(const MirBody &, std::span<const SemanticType>,
+                   std::span<const HirBindingId>, std::size_t expandedIndex);
+// Exact typed formal shell. It does not assert that an entry loan is valid,
+// live or permitted to escape; those facts remain with the owning verifier.
+[[nodiscard]] bool formalInputPlace(const MirPlace &, const ConcreteFormalInput &);
 // A text result that returns one direct text field of its origin formal or
 // receiver (L-OWN-02). It carries the dependency the caller's value holds in
 // that field; inside the callee the field's text is ownerless, so no loan

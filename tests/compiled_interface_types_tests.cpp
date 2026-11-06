@@ -278,7 +278,7 @@ int main() { int left = 3; int right = 7; return choose(left, right) - 7; }
     if (function.definitionKind == MirDefinitionKind::Declaration &&
         function.completeReturnBorrow) {
       auto &claim = *const_cast<MirFunctionInstance &>(function).completeReturnBorrow;
-      claim.dependencies.front().sourceFields.push_back(999999);
+      claim.dependencies.front().sourceFields.push_back(fieldProjection(999999));
       forged = true;
       break;
     }

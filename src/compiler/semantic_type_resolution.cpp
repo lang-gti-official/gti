@@ -2059,132 +2059,22 @@ auto SemanticVisitor::Impl::analyzeConstructorCallArguments(
       contextualConstruction, candidateProbe, checkedArgument);
 }
 
-auto SemanticVisitor::Impl::selectConstructorCallArguments(
-    const Expr *construction, const ReturnStmt *emptyReturn,
-    const SemanticType &type,
-    std::vector<AnalyzedCallArgument> arguments, const Token &paren,
+auto SemanticVisitor::Impl::selectConstructorCandidate(
+    const SemanticType &constructedType,
+    std::vector<AnalyzedCallArgument> &arguments, const Token &paren,
     bool requireExactNullParameter, bool contextualConstruction,
     std::vector<const ConstructorInfo *> *candidateProbe, bool checkedArgument)
-    -> void {
-  if ((construction == nullptr) == (emptyReturn == nullptr) ||
-      (emptyReturn != nullptr &&
-       (emptyReturn->value() || !arguments.empty() || !contextualConstruction ||
-        candidateProbe != nullptr))) {
-    currentType = SemanticType::Unknown;
-    return;
-  }
-  // A probe collects the constructors whose parameter types take these
-  // arguments, whatever access or ownership the selection would then
-  // require. It reports nothing and records nothing.
+    -> std::optional<ConstructorSelection> {
   if (candidateProbe != nullptr)
     candidateProbe->clear();
-  const SemanticType selectedClass = selectExactClassSpecialization(type);
-  const ClassId classId = selectedClass.classId;
-  if (classId == 0 || classId > classes.size()) {
+  if (constructedType.kind != SemanticType::Class ||
+      constructedType.classId == 0 || constructedType.classId > classes.size()) {
     currentType = SemanticType::Unknown;
-    return;
+    return std::nullopt;
   }
-
+  const ClassId classId = constructedType.classId;
   const ClassInfo &owner = classInfo(classId);
-  const GenericSubstitution substitution = classSubstitution(selectedClass);
-  const SemanticType constructedType = selectedClass;
-  if (owner.compilerCapability == CompilerCapabilityTypeKind::ErasedObject ||
-      (owner.compilerCapability ==
-           CompilerCapabilityTypeKind::FunctionPointer &&
-       (arguments.size() != 1 || arguments.front().type != constructedType))) {
-    report(paren,
-           "This opaque capability cannot be constructed as an object; "
-           "use its checked reference or invocation factory.",
-           "GTI-S2019");
-    currentType = SemanticType::Unknown;
-    return;
-  }
-  if (candidateProbe == nullptr &&
-      typeTraits(constructedType).containsBorrowedState &&
-      storedReferencePaths(constructedType).empty()) {
-    const bool fieldAlreadyRejected = std::any_of(
-        owner.fields.begin(), owner.fields.end(), [&](const FieldInfo &field) {
-          return field.declaration != nullptr &&
-                 std::any_of(diagnostics.begin(), diagnostics.end(),
-                             [&](const Diagnostic &diagnostic) {
-                               return diagnostic.code == "GTI-S2045" &&
-                                      diagnostic.primary ==
-                                          tokenSpan(field.declaration->name());
-                             });
-        });
-    if (!fieldAlreadyRejected) {
-      report(paren,
-             "A borrowed aggregate must contain checked stored-reference "
-             "paths through ordinary nominal fields and cannot declare a "
-             "custom destructor.",
-             "GTI-S2045");
-    }
-    currentType = SemanticType::Unknown;
-    return;
-  }
-  if (candidateProbe == nullptr && !isCompilerTrustedRequester(paren) &&
-      typeRequiresThreads(constructedType) &&
-      !validateConcurrentSurfaceAvailability(
-          paren, "This concurrent value",
-          typeRequiresThreads(constructedType, false))) {
-    currentType = SemanticType::Unknown;
-    return;
-  }
-  if (candidateProbe == nullptr && owner.abstract) {
-    report(paren,
-           "Cannot construct abstract " +
-               std::string(classKindSpelling(owner.kind)) + " '" +
-               owner.name.lexeme + "'.",
-           "GTI-S2044");
-  }
-
-  // A same-type fresh result already denotes the destination object. Unlike
-  // std::move(place), its Value category does not request a lifecycle move.
-  // Resolve this before converting-constructor overload selection, including
-  // deleted/private special members. The producer owns all actual execution.
-  const ExprPtr *writtenSource = nullptr;
-  if (const auto *call = exprAs<Call>(construction);
-      call != nullptr && call->arguments().size() == 1)
-    writtenSource = &call->arguments().front();
-  else if (const auto *direct = exprAs<DirectInitializer>(construction);
-           direct != nullptr && direct->arguments().size() == 1)
-    writtenSource = &direct->arguments().front();
-  if (candidateProbe == nullptr && !requireExactNullParameter &&
-      !contextualConstruction && arguments.size() == 1 &&
-      arguments.front().type == constructedType &&
-      !arguments.front().forwardedPackElement && writtenSource != nullptr &&
-      arguments.front().expression == writtenSource &&
-      semanticModel.isFreshClassResult(**arguments.front().expression)) {
-    semanticModel.record(
-        *construction,
-        ResolvedConstructionInfo{
-            .constructedType = constructedType,
-            .parameterTypes = {constructedType},
-            .borrowOrigin = typeTraits(constructedType).containsBorrowedState
-                                ? BorrowOriginKind::Argument
-                                : BorrowOriginKind::None,
-            .borrowAccess = borrowAccess(constructedType),
-            .directInitialization = true});
-    recordSelectedConstructionOccurrence(*construction);
-    currentType = constructedType;
-    return;
-  }
-
-  struct ViableConstructor {
-    const ConstructorInfo *constructor = nullptr;
-    std::vector<SemanticType> parameterTypes;
-    std::vector<SemanticType> typeArguments;
-    std::vector<CompileTimeValue> valueArguments;
-    bool generatedDefault = false;
-    ConstructorKind kind = ConstructorKind::Ordinary;
-    std::vector<AppliedConceptRequirement> requirements;
-    // Argument positions whose written integer literal adopts this
-    // candidate's parameter type. Non-empty places the candidate in the
-    // fallback tier behind every exact candidate.
-    std::vector<std::size_t> contextualIntegerLiteralArguments;
-    std::vector<std::size_t> ephemeralBorrowArguments;
-    CallableCandidate lifetimeCandidate;
-  };
+  const GenericSubstitution substitution = classSubstitution(constructedType);
   struct RejectedConstructorArgument {
     const ConstructorInfo *constructor = nullptr;
     std::vector<SemanticType> parameterTypes;
@@ -2196,7 +2086,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     Token site;
     bool conflicting = false;
   };
-  std::vector<ViableConstructor> viable;
+  std::vector<ConstructorSelection> viable;
   std::vector<const ConstructorInfo *> privateViable;
   std::vector<RejectedConstructorArgument> rejectedArguments;
   std::vector<RejectedConstructorInference> rejectedInferences;
@@ -2600,7 +2490,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     }
   }
   if (candidateProbe != nullptr) {
-    return;
+    return std::nullopt;
   }
 
   if (!contextualConstruction && arguments.empty() &&
@@ -2652,7 +2542,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     // cannot hijack that owner's copy/move lifecycle operation. Preserve the
     // selected (including deleted/private) lifecycle policy before ordinary
     // by-value matching can outrank its reference-shaped formal.
-    std::erase_if(viable, [&](const ViableConstructor &candidate) {
+    std::erase_if(viable, [&](const ConstructorSelection &candidate) {
       return candidate.kind == ConstructorKind::Ordinary &&
              candidate.constructor != nullptr &&
              !candidate.constructor->genericParameters.empty() &&
@@ -2668,19 +2558,19 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   // a call-only temporary borrow or a written integer literal's adopted type
   // is considered when no exact candidate exists, and selection still
   // requires one unique constructor; neither mismatch kind ranks candidates.
-  const auto fallbackCandidate = [](const ViableConstructor &candidate) {
+  const auto fallbackCandidate = [](const ConstructorSelection &candidate) {
     return !candidate.contextualIntegerLiteralArguments.empty() ||
            !candidate.ephemeralBorrowArguments.empty();
   };
   if (std::any_of(viable.begin(), viable.end(),
-                  [&](const ViableConstructor &candidate) {
+                  [&](const ConstructorSelection &candidate) {
                     return !fallbackCandidate(candidate);
                   })) {
     std::erase_if(viable, fallbackCandidate);
   }
   // A fallback position is a viability decision, never a ranking conversion.
   std::vector<SemanticType> rankingArgumentTypes = argumentTypes;
-  for (const ViableConstructor &candidate : viable) {
+  for (const ConstructorSelection &candidate : viable) {
     for (const auto *fallback : {&candidate.contextualIntegerLiteralArguments,
                                  &candidate.ephemeralBorrowArguments}) {
       for (const std::size_t index : *fallback) {
@@ -2691,7 +2581,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   }
   if (!checkedArgument)
     retainBestCallConversionMatches(viable, rankingArgumentTypes,
-                                    [](const ViableConstructor &candidate)
+                                    [](const ConstructorSelection &candidate)
                                         -> const std::vector<SemanticType> & {
                                       return candidate.parameterTypes;
                                     });
@@ -2718,7 +2608,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
         "Use the public factory or default construction surface instead.");
     diagnostics.emplace_back(std::move(diagnostic));
     currentType = constructedType;
-    return;
+    return std::nullopt;
   }
   if (viable.size() != 1) {
     if (!hasUnknownArgument || hasDeferredArgument) {
@@ -2747,12 +2637,12 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
             "parameter type.");
         diagnostics.emplace_back(std::move(diagnostic));
         currentType = constructedType;
-        return;
+        return std::nullopt;
       }
       if (viable.empty() && rejectedConstraint) {
         reportConstraintFailure(paren, *rejectedConstraint);
         currentType = constructedType;
-        return;
+        return std::nullopt;
       }
       if (viable.empty() && attemptedSpecial) {
         const bool moving = *attemptedSpecial == ConstructorKind::Move;
@@ -2774,7 +2664,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                      "remains movable.");
         diagnostics.emplace_back(std::move(diagnostic));
         currentType = constructedType;
-        return;
+        return std::nullopt;
       }
       if (viable.empty() && rejectedArguments.size() == 1) {
         const RejectedConstructorArgument &rejected = rejectedArguments.front();
@@ -2790,7 +2680,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
           reportMoveOnlyReturnCopy(*arguments[index].expression,
                                    arguments[index].type);
           currentType = constructedType;
-          return;
+          return std::nullopt;
         }
         const std::size_t diagnosticCount = diagnostics.size();
         reportCallArgumentMismatch(index, rejected.parameterTypes[index],
@@ -2817,7 +2707,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
           }
         }
         currentType = constructedType;
-        return;
+        return std::nullopt;
       }
       std::string argumentsSpelling;
       for (std::size_t index = 0; index < arguments.size(); ++index) {
@@ -2830,7 +2720,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
           !viable.empty() &&
           std::all_of(
               viable.begin(), viable.end(),
-              [](const ViableConstructor &candidate) {
+              [](const ConstructorSelection &candidate) {
                 return !candidate.contextualIntegerLiteralArguments.empty();
               });
       Diagnostic diagnostic = makeDiagnostic(
@@ -2924,23 +2814,23 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       }
     }
     currentType = constructedType;
-    return;
+    return std::nullopt;
   }
 
-  ViableConstructor &selected = viable.front();
-  const bool selectedReferencePack =
+  ConstructorSelection &selected = viable.front();
+  selected.referencePack =
       selected.constructor && selected.constructor->parameterPack &&
       selected.constructor->declaration &&
       !selected.constructor->declaration->parameters().empty() &&
       selected.constructor->declaration->parameters().back().type.reference;
-  if (selectedReferencePack &&
+  if (selected.referencePack &&
       typeTraits(constructedType).containsBorrowedState) {
     report(paren,
            "A reference parameter pack cannot construct a result with "
            "borrowed state; pack elements cannot escape the call.",
            "GTI-S2023");
     currentType = constructedType;
-    return;
+    return std::nullopt;
   }
   for (const std::size_t index : selected.contextualIntegerLiteralArguments) {
     if (index >= arguments.size() || arguments[index].expression == nullptr) {
@@ -2984,7 +2874,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     }
     if (!valid) {
       currentType = constructedType;
-      return;
+      return std::nullopt;
     }
     argumentTypes.clear();
     argumentTypes.reserve(arguments.size());
@@ -3000,18 +2890,178 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   // constructor merely because Unknown is treated as a wildcard afterward.
   if (hasUnknownArgument) {
     currentType = constructedType;
-    return;
+    return std::nullopt;
   }
 
   if (selected.constructor && !selected.lifetimeCandidate.lifetimeApplication.complete) {
     const auto inputs = lifetimeInputs(selected.constructor);
     if (!applyCallLifetimeContract(selected.lifetimeCandidate, inputs, paren)) {
       currentType = SemanticType::Unknown;
-      return;
+      return std::nullopt;
     }
     selected.parameterTypes = selected.lifetimeCandidate.parameterTypes;
     selected.requirements = selected.lifetimeCandidate.requirements;
   }
+
+  return std::move(selected);
+}
+
+auto SemanticVisitor::Impl::validateConstructorArgumentAccess(
+    std::span<const SemanticType> parameterTypes,
+    std::span<const AnalyzedCallArgument> arguments, const Token &paren) -> void {
+  std::vector<SemanticType> selectedTypes;
+  std::vector<const ExprPtr *> selectedExpressions;
+  std::vector<AnalyzedCallArgument> selectedArguments;
+  for (std::size_t index = 0; index < parameterTypes.size() && index < arguments.size(); ++index) {
+    const auto &parameter = parameterTypes[index];
+    const auto &argument = arguments[index];
+    if (!argument.expression)
+      continue;
+    selectedTypes.push_back(parameter);
+    selectedExpressions.push_back(argument.expression);
+    selectedArguments.push_back(argument);
+    if (parameter.kind != SemanticType::Reference ||
+        parameter.referenceAccess != AccessMode::Mutable)
+      continue;
+    SemanticLoanPlace place;
+    SemanticLoanId parent = 0;
+    if (argument.forwardedPackElement) {
+      const auto *entry = entryBorrowElement(argument);
+      const auto *loan = entry ? semanticModel.findLoan(entry->reference) : nullptr;
+      if (!loan)
+        continue; // The shared exact-lane validator below owns the diagnostic.
+      place = loan->place;
+      parent = loan->id;
+    } else {
+      place = transientLoanPlace(*argument.expression);
+      parent = accessLoan(*argument.expression);
+    }
+    recordMutableBindingUse(place.root);
+    if (place.root != 0 || place.receiver)
+      reportLoanPlaceConflict(paren, place, AccessMode::Mutable,
+          "Mutable constructor argument overlaps a borrow that may still be live.", parent);
+  }
+  validateCallPlaceExclusivityImpl(selectedTypes, selectedExpressions, paren,
+                                   std::nullopt, AccessMode::ReadOnly, false, {},
+                                   selectedArguments);
+}
+
+auto SemanticVisitor::Impl::selectConstructorCallArguments(
+    const Expr *construction, const ReturnStmt *emptyReturn,
+    const SemanticType &type,
+    std::vector<AnalyzedCallArgument> arguments, const Token &paren,
+    bool requireExactNullParameter, bool contextualConstruction,
+    std::vector<const ConstructorInfo *> *candidateProbe, bool checkedArgument)
+    -> void {
+  if ((construction == nullptr) == (emptyReturn == nullptr) ||
+      (emptyReturn != nullptr &&
+       (emptyReturn->value() || !arguments.empty() || !contextualConstruction ||
+        candidateProbe != nullptr))) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  // A probe collects the constructors whose parameter types take these
+  // arguments, whatever access or ownership the selection would then
+  // require. It reports nothing and records nothing.
+  if (candidateProbe != nullptr)
+    candidateProbe->clear();
+  const SemanticType selectedClass = selectExactClassSpecialization(type);
+  const ClassId classId = selectedClass.classId;
+  if (classId == 0 || classId > classes.size()) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+
+  const ClassInfo &owner = classInfo(classId);
+  const SemanticType constructedType = selectedClass;
+  if (owner.compilerCapability == CompilerCapabilityTypeKind::ErasedObject ||
+      (owner.compilerCapability ==
+           CompilerCapabilityTypeKind::FunctionPointer &&
+       (arguments.size() != 1 || arguments.front().type != constructedType))) {
+    report(paren,
+           "This opaque capability cannot be constructed as an object; "
+           "use its checked reference or invocation factory.",
+           "GTI-S2019");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (candidateProbe == nullptr &&
+      typeTraits(constructedType).containsBorrowedState &&
+      storedReferencePaths(constructedType).empty()) {
+    const bool fieldAlreadyRejected = std::any_of(
+        owner.fields.begin(), owner.fields.end(), [&](const FieldInfo &field) {
+          return field.declaration != nullptr &&
+                 std::any_of(diagnostics.begin(), diagnostics.end(),
+                             [&](const Diagnostic &diagnostic) {
+                               return diagnostic.code == "GTI-S2045" &&
+                                      diagnostic.primary ==
+                                          tokenSpan(field.declaration->name());
+                             });
+        });
+    if (!fieldAlreadyRejected) {
+      report(paren,
+             "A borrowed aggregate must contain checked stored-reference "
+             "paths through ordinary nominal fields and cannot declare a "
+             "custom destructor.",
+             "GTI-S2045");
+    }
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (candidateProbe == nullptr && !isCompilerTrustedRequester(paren) &&
+      typeRequiresThreads(constructedType) &&
+      !validateConcurrentSurfaceAvailability(
+          paren, "This concurrent value",
+          typeRequiresThreads(constructedType, false))) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (candidateProbe == nullptr && owner.abstract) {
+    report(paren,
+           "Cannot construct abstract " +
+               std::string(classKindSpelling(owner.kind)) + " '" +
+               owner.name.lexeme + "'.",
+           "GTI-S2044");
+  }
+
+  // A same-type fresh result already denotes the destination object. Unlike
+  // std::move(place), its Value category does not request a lifecycle move.
+  // Resolve this before converting-constructor overload selection, including
+  // deleted/private special members. The producer owns all actual execution.
+  const ExprPtr *writtenSource = nullptr;
+  if (const auto *call = exprAs<Call>(construction);
+      call != nullptr && call->arguments().size() == 1)
+    writtenSource = &call->arguments().front();
+  else if (const auto *direct = exprAs<DirectInitializer>(construction);
+           direct != nullptr && direct->arguments().size() == 1)
+    writtenSource = &direct->arguments().front();
+  if (candidateProbe == nullptr && !requireExactNullParameter &&
+      !contextualConstruction && arguments.size() == 1 &&
+      arguments.front().type == constructedType &&
+      !arguments.front().forwardedPackElement && writtenSource != nullptr &&
+      arguments.front().expression == writtenSource &&
+      semanticModel.isFreshClassResult(**arguments.front().expression)) {
+    semanticModel.record(
+        *construction,
+        ResolvedConstructionInfo{
+            .constructedType = constructedType,
+            .parameterTypes = {constructedType},
+            .borrowOrigin = typeTraits(constructedType).containsBorrowedState
+                                ? BorrowOriginKind::Argument
+                                : BorrowOriginKind::None,
+            .borrowAccess = borrowAccess(constructedType),
+            .directInitialization = true});
+    recordSelectedConstructionOccurrence(*construction);
+    currentType = constructedType;
+    return;
+  }
+
+  auto selection = selectConstructorCandidate(
+      constructedType, arguments, paren, requireExactNullParameter,
+      contextualConstruction, candidateProbe, checkedArgument);
+  if (!selection)
+    return;
+  ConstructorSelection &selected = *selection;
 
   if (selected.constructor != nullptr && selected.constructor->requiresUnsafe) {
     if (!contextualConstruction && construction != nullptr &&
@@ -3061,42 +3111,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
          "Constructor declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
   }
-  for (std::size_t index = 0;
-       index < selected.parameterTypes.size() && index < arguments.size();
-       ++index) {
-    const SemanticType &parameter = selected.parameterTypes[index];
-    const AnalyzedCallArgument &argument = arguments[index];
-    if (parameter.kind != SemanticType::Reference ||
-        parameter.referenceAccess != AccessMode::Mutable ||
-        argument.forwardedPackElement || argument.expression == nullptr) {
-      continue;
-    }
-    const SemanticLoanPlace place = transientLoanPlace(*argument.expression);
-    recordMutableBindingUse(place.root);
-    if (place.root != 0 || place.receiver) {
-      reportLoanPlaceConflict(
-          paren, place, AccessMode::Mutable,
-          "Mutable constructor argument overlaps a borrow that may still "
-          "be live.",
-          accessLoan(*argument.expression));
-    }
-  }
-  std::vector<SemanticType> concreteParameterTypes;
-  std::vector<const ExprPtr *> concreteArguments;
-  const std::size_t concreteCount =
-      std::min(selected.parameterTypes.size(), arguments.size());
-  concreteParameterTypes.reserve(concreteCount);
-  concreteArguments.reserve(concreteCount);
-  for (std::size_t index = 0; index < concreteCount; ++index) {
-    if (arguments[index].forwardedPackElement ||
-        arguments[index].expression == nullptr) {
-      continue;
-    }
-    concreteParameterTypes.push_back(selected.parameterTypes[index]);
-    concreteArguments.push_back(arguments[index].expression);
-  }
-  validateCallPlaceExclusivityImpl(concreteParameterTypes, concreteArguments,
-                                   paren);
+  validateConstructorArgumentAccess(selected.parameterTypes, arguments, paren);
   std::vector<const Expr *> defaultArguments =
       selected.constructor == nullptr ||
               selected.constructor->declaration == nullptr ||
@@ -3398,7 +3413,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     resolved.borrowFields = std::move(textOrigins);
     resolved.dependentTextPublication = true;
   }
-  if ((selectedReferencePack || !resolved.ephemeralBorrowArguments.empty()) &&
+  if ((selected.referencePack || !resolved.ephemeralBorrowArguments.empty()) &&
       (resolved.borrowOrigin != BorrowOriginKind::None ||
        !resolved.borrowFields.empty() || resolved.dependentTextPublication)) {
     report(

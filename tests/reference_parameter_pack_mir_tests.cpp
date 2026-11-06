@@ -71,5 +71,51 @@ int main() { mut Ticket first{}; mut Ticket second{}; update(first, second); ret
   }
   expect(checkedEntry && checkedInput,
          "reference packs publish entry and call authority");
+  const auto carriers = lang::Frontend().analyze("reference-pack-carrier-origins.gti", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+void inspect<T>(T& value) {}
+void relay<Args...>(Args&... values) { (inspect(values), ...); }
+int main() { int first = 3; int second = 8; View left{first}; View right{second}; relay(left, right); return 0; }
+)gti");
+  if (!carriers.canGenerateCode())
+    for (const auto &diagnostic : carriers.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(carriers.canGenerateCode() && lang::verifyMirProgram(carriers.mir).valid(),
+         "reference-to-carrier pack leaves retain separate physical shells and stored external groups");
+  bool checkedGroups = false;
+  for (const auto &function : carriers.mir.functionInstances()) {
+    const lang::MirLoan *first = nullptr;
+    const lang::MirLoan *second = nullptr;
+    for (const auto &loan : function.body.loans) {
+      const auto *place = function.body.findPlace(loan.source);
+      if (!loan.entry || loan.kind != lang::MirLoanKind::Parameter || !loan.storedDependency ||
+          !place || place->projections.empty() ||
+          place->projections.front().kind != lang::MirProjectionKind::PackElement)
+        continue;
+      if (!first) first = &loan;
+      else if (place->binding == function.body.findPlace(first->source)->binding) { second = &loan; break; }
+    }
+    if (!first || !second)
+      continue;
+    expect(first->storedDependency != second->storedDependency,
+           "equal-shaped carrier leaves have distinct exact incoming owner groups");
+    for (int mutation = 0; mutation != 3; ++mutation) {
+      auto forged = carriers.mir;
+      auto *changed = const_cast<lang::MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+      auto &shell = changed->body.loans[first->id - 1];
+      auto &group = changed->body.loans[first->storedDependency - 1];
+      if (mutation == 0) shell.storedDependency = second->storedDependency;
+      if (mutation == 1) group.source = changed->body.loans[second->storedDependency - 1].source;
+      if (mutation == 2) group.entry = false;
+      expect(!lang::verifyMirProgram(forged).valid(),
+             "pack proof rejects a sibling's owners, wrong exact source prefix, or retired incoming group");
+    }
+    checkedGroups = true;
+    break;
+  }
+  expect(checkedGroups, "carrier pack fixture must exercise two independent stored input groups");
   return failures ? 1 : 0;
 }

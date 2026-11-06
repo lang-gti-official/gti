@@ -274,6 +274,72 @@ void derivedGuardsAndInventoryBudget() {
              result.errors.front().message.find("nominal verification context") != std::string::npos,
          "context-free verification rejects metadata-only Base guards before they can imply authority");
 }
+void concreteFormalPaths() {
+  auto reference = SemanticType::referenceTo(SemanticType::Int32);
+  reference.referenceLifetime = Lifetime::parameter(97);
+  const auto pair = SemanticType::concreteTypePack(0, {reference, reference});
+  const auto empty = SemanticType::concreteTypePack(0, {});
+  const auto nested = SemanticType::concreteTypePack(0, {SemanticType::Int32, pair, empty});
+  const std::vector<ConcreteFormalRoot> roots{{.binding = 11, .type = SemanticType::Int32},
+                                           {.binding = 12, .type = nested}};
+  const std::vector<SemanticType> signature{SemanticType::Int32, SemanticType::Int32,
+                                          reference, reference};
+  const auto inputs = deriveConcreteFormalInputs(roots, signature);
+  expect(inputs && inputs->size() == 4 && (*inputs)[2].argument == 2 && (*inputs)[3].argument == 3 &&
+             (*inputs)[2].binding == 12 && (*inputs)[3].binding == 12 &&
+             (*inputs)[2].bindingPrefix == BorrowPath{constantIndexProjection(1), constantIndexProjection(0)} &&
+             (*inputs)[3].bindingPrefix == BorrowPath{constantIndexProjection(1), constantIndexProjection(1)},
+         "equal nested reference leaves retain distinct exact flat ordinals and full structural paths");
+  auto stronger = signature;
+  stronger.back().referenceLifetime = Lifetime::staticLifetime();
+  expect(!deriveConcreteFormalInputs(roots, stronger),
+         "formal projection cannot retag a nested region while matching the signature");
+  auto duplicate = roots;
+  duplicate.back().binding = duplicate.front().binding;
+  expect(!deriveConcreteFormalInputs(duplicate, signature),
+         "one binding cannot silently stand for two source formals");
+  const auto aggregateReference = SemanticType::referenceTo(nested);
+  const std::array<ConcreteFormalRoot, 1> physical{{{.binding = 13, .type = aggregateReference}}};
+  const std::array<SemanticType, 1> physicalSignature{aggregateReference};
+  const auto atom = deriveConcreteFormalInputs(physical, physicalSignature);
+  expect(atom && atom->size() == 1 && atom->front().bindingPrefix.empty() &&
+             atom->front().type == aggregateReference,
+         "a reference to a pack remains one physical-reference formal instead of expanding its referent");
+  auto symbolic = nested;
+  symbolic.concretePack = false;
+  const std::array<ConcreteFormalRoot, 1> unknown{{{.binding = 14, .type = symbolic}}};
+  expect(!deriveConcreteFormalInputs(unknown, signature),
+         "a symbolic grouped parameter supplies no concrete formal path proof");
+
+  MirBody body;
+  body.places.push_back({.id = 1, .root = MirPlaceRootKind::Binding, .binding = 11,
+      .symbol = 21, .type = SemanticType::Int32,
+      .key = PlaceKey{.root = 21}, .initiallyAvailable = true});
+  body.places.push_back({.id = 2, .root = MirPlaceRootKind::Binding, .binding = 12,
+      .symbol = 22, .type = nested,
+      .key = PlaceKey{.root = 22}, .initiallyAvailable = true});
+  const std::array<HirBindingId, 2> bindings{11, 12};
+  const auto checked = concreteFormalInputs(body, signature, bindings);
+  expect(checked && *checked == *inputs,
+         "source-free formal projection derives the same inventory from exact grouped root places");
+  MirPlace leaf{.root = MirPlaceRootKind::Binding, .binding = 12,
+      .projections = {{.kind = MirProjectionKind::PackElement, .constantIndex = 1},
+                      {.kind = MirProjectionKind::PackElement, .constantIndex = 1}},
+      .type = reference, .access = AccessMode::ReadOnly, .traits = semanticTraits(reference),
+      .initiallyAvailable = true};
+  expect(formalInputPlace(leaf, checked->back()), "the exact nested source matches its formal");
+  leaf.projections.back().constantIndex = 0;
+  expect(!formalInputPlace(leaf, checked->back()),
+         "equal-typed sibling leaves cannot substitute for the declared source path");
+  body.places.back().initiallyAvailable = false;
+  expect(!concreteFormalInputs(body, signature, bindings),
+         "a consumed or unavailable group cannot manufacture an incoming parameter witness");
+  body.places.back().initiallyAvailable = true;
+  auto alias = body.places.back(); alias.id = 3; alias.symbol = 23;
+  body.places.push_back(alias);
+  expect(!concreteFormalInputs(body, signature, bindings),
+         "ambiguous grouped root identities fail closed instead of selecting the first alias");
+}
 void serializedOwnerIdentity() {
   MirBody body;
   body.places.push_back({.id = 1, .root = MirPlaceRootKind::Symbol, .symbol = 1,
@@ -292,4 +358,5 @@ int main() {
   packAndCapturePaths();
   derivedGuardsAndInventoryBudget();
   serializedOwnerIdentity();
+  concreteFormalPaths();
 }

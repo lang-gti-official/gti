@@ -2510,10 +2510,11 @@ private:
                            ReceiverMutability receiverMutability,
                            const SemanticBorrowDependencySet &complete,
                            std::vector<LifetimeBound> *requiredLifetimes = nullptr,
-                           std::span<const LambdaCaptureInfo> captures = {});
+                           std::span<const LambdaCaptureInfo> captures = {}) const;
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   completeBaseInitializerBorrow(const ConstructorInitializer &syntax,
-                               const ResolvedConstructorInitializerInfo &selected);
+                               const ResolvedConstructorInitializerInfo &selected,
+                               std::span<const AnalyzedCallArgument> arguments);
   void recordCompleteConstructorBorrow(const ConstructorDecl &constructor);
   std::optional<FunctionBorrowDependencySummary>
   completeConstructorBorrow(const ResolvedConstructionInfo &construction,
@@ -3463,8 +3464,8 @@ private:
   [[nodiscard]] std::vector<SemanticLoanPlace>
   loanPlaces(const ExprPtr &expression, bool transient = false);
 
-  [[nodiscard]] static bool loanPlacesOverlap(const SemanticLoanPlace &left,
-                                              const SemanticLoanPlace &right);
+  [[nodiscard]] bool loanPlacesOverlap(const SemanticLoanPlace &left,
+                                       const SemanticLoanPlace &right) const;
 
   [[nodiscard]] bool loanIsAncestor(SemanticLoanId ancestor,
                                     SemanticLoanId descendant) const;
@@ -3559,7 +3560,8 @@ private:
       std::optional<SemanticLoanPlace> receiver = std::nullopt,
       AccessMode receiverAccess = AccessMode::ReadOnly,
       bool transientReceiver = false,
-      std::span<const SemanticLoanPlace> receiverOrigins = {});
+      std::span<const SemanticLoanPlace> receiverOrigins = {},
+      std::span<const AnalyzedCallArgument> concreteArguments = {});
 
   void validateCallPlaceExclusivity(
       std::span<const SemanticType> parameterTypes,
@@ -4652,6 +4654,31 @@ private:
       bool requireExactNullParameter, bool contextualConstruction,
       std::vector<const ConstructorInfo *> *candidateProbe,
       bool checkedArgument = false);
+
+  struct ConstructorSelection {
+    const ConstructorInfo *constructor = nullptr;
+    std::vector<SemanticType> parameterTypes;
+    std::vector<SemanticType> typeArguments;
+    std::vector<CompileTimeValue> valueArguments;
+    bool generatedDefault = false;
+    ConstructorKind kind = ConstructorKind::Ordinary;
+    std::vector<AppliedConceptRequirement> requirements;
+    std::vector<std::size_t> contextualIntegerLiteralArguments;
+    std::vector<std::size_t> ephemeralBorrowArguments;
+    CallableCandidate lifetimeCandidate;
+    bool referencePack = false;
+  };
+
+  [[nodiscard]] std::optional<ConstructorSelection> selectConstructorCandidate(
+      const SemanticType &type, std::vector<AnalyzedCallArgument> &arguments,
+      const Token &location, bool requireExactNullParameter = false,
+      bool contextualConstruction = false,
+      std::vector<const ConstructorInfo *> *candidateProbe = nullptr,
+      bool checkedArgument = false);
+
+  void validateConstructorArgumentAccess(
+      std::span<const SemanticType> parameterTypes,
+      std::span<const AnalyzedCallArgument> arguments, const Token &location);
 
   void analyzeArrayMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,

@@ -1,4 +1,7 @@
 #include "gti/hir.h"
+#include "gti/concrete_formals.h"
+
+#include <array>
 
 #include "diagnostic_registry.h"
 #include "gti/generic_instantiation_limits.h"
@@ -3058,6 +3061,8 @@ private:
                     .constructor = resolved->constructor,
                     .declaration = resolved->declaration,
                     .constructedType = resolved->targetType,
+                    .typeArguments = resolved->typeArguments,
+                    .valueArguments = resolved->valueArguments,
                     .lifetimeArguments = resolved->lifetimeArguments,
                     .lifetimeApplication = resolved->lifetimeApplication,
                     .parameterTypes = resolved->parameterTypes,
@@ -3072,10 +3077,56 @@ private:
           if (const std::optional<HirValueId> value =
                   lowerExpression(argument, analysis->model, classArguments,
                                   classValueArguments, body)) {
-            lowered.arguments.push_back(*value);
-            initializerValues.push_back(*value);
+            const auto *input = body.findValue(*value);
+            if (resolved && resolved->kind == ConstructorInitializerTargetKind::Base &&
+                input && input->kind == HirValueKind::PackExpansion) {
+              // The source pack remains one checked binding. Its selected
+              // constructor consumes the exact concrete lanes in source order;
+              // these derived projections neither invent a new binding nor
+              // evaluate the source expression again.
+              const auto pack = *input;
+              const std::array<ConcreteFormalRoot, 1> roots{{{.binding = pack.symbol, .type = pack.info.type}}};
+              const std::array<SemanticType, 1> signature{pack.info.type};
+              const auto leaves = deriveConcreteFormalInputs(roots, signature);
+              if (!leaves || pack.operands.size() != 1 ||
+                  leaves->size() != pack.packExpansionElements.size()) {
+                lifecycleValid = false;
+                return;
+              }
+              for (std::size_t lane = 0; lane < leaves->size(); ++lane) {
+                const auto &leaf = (*leaves)[lane];
+                if (pack.packExpansionElements[lane].type != leaf.type) {
+                  lifecycleValid = false;
+                  return;
+                }
+                auto projected = pack.operands.front();
+                for (const auto &step : leaf.bindingPrefix) {
+                  const auto *parent = body.findValue(projected);
+                  if (!parent || step.kind != PlaceProjectionKind::ConstantIndex ||
+                      parent->info.type.kind != SemanticType::TypePack || !parent->info.type.concretePack ||
+                      step.index >= parent->info.type.arguments.size()) {
+                    lifecycleValid = false;
+                    return;
+                  }
+                  const auto child = parent->info.type.arguments[step.index];
+                  const auto next = nextValueId++;
+                  body.values.push_back({.id = next, .kind = HirValueKind::PackElement,
+                      .info = {.type = child, .category = ValueCategory::Place,
+                               .access = AccessMode::ReadOnly, .traits = instanceProvider->traitsFor(child)},
+                      .symbol = pack.symbol, .operands = {projected}, .packElement = step.index});
+                  projected = next;
+                }
+                lowered.arguments.push_back(projected);
+                initializerValues.push_back(projected);
+              }
+            } else {
+              lowered.arguments.push_back(*value);
+              initializerValues.push_back(*value);
+            }
           }
         }
+        if (resolved && resolved->kind == ConstructorInitializerTargetKind::Base)
+          lowered.explicitArgumentCount = lowered.arguments.size();
         if (resolved != nullptr &&
             resolved->kind == ConstructorInitializerTargetKind::Base &&
             !resolved->defaultArguments.empty() && lowered.constructorTarget) {
@@ -7108,27 +7159,23 @@ private:
           !value.info.type.concretePack || value.symbol == 0) {
         lifecycleValid = false;
       } else {
-        value.packExpansionElements.reserve(value.info.type.arguments.size());
-        for (std::size_t index = 0; index < value.info.type.arguments.size();
-             ++index) {
-          const SemanticType &element = value.info.type.arguments[index];
-          const SemanticTypeTraits traits =
-              instanceProvider->traitsFor(element);
-          const bool storedEntry =
-              element.kind == SemanticType::Class &&
-              std::any_of(model.loans().begin(), model.loans().end(),
-                          [&](const SemanticLoanInfo &loan) {
-                            return loan.entry &&
-                                   loan.kind == SemanticLoanKind::StoredValue &&
-                                   loan.place.root == value.symbol &&
-                                   !loan.place.receiver &&
-                                   loan.place.projections.size() == 1 &&
-                                   loan.place.projections.front().kind ==
-                                       PlaceProjectionKind::ConstantIndex &&
-                                   loan.place.projections.front().index ==
-                                       index &&
-                                   !loan.designatedFields.empty();
-                          });
+        const std::array<ConcreteFormalRoot, 1> roots{{{.binding = value.symbol, .type = value.info.type}}};
+        const std::array<SemanticType, 1> signature{value.info.type};
+        const auto inputs = deriveConcreteFormalInputs(roots, signature);
+        if (!inputs) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        value.packExpansionElements.reserve(inputs->size());
+        for (const auto &input : *inputs) {
+          const auto &element = input.type;
+          const auto traits = instanceProvider->traitsFor(element);
+          const bool storedEntry = std::any_of(model.loans().begin(), model.loans().end(),
+              [&](const auto &loan) {
+                return loan.entry && loan.kind == SemanticLoanKind::StoredValue &&
+                       loan.place.root == value.symbol && !loan.place.receiver &&
+                       loan.place.projections == input.bindingPrefix;
+              });
           HirCallInputKind inputKind = HirCallInputKind::Value;
           if (element.kind == SemanticType::Reference) {
             inputKind = element.referenceAccess == AccessMode::Mutable
@@ -7136,12 +7183,12 @@ private:
                             : HirCallInputKind::ReadBorrow;
           } else if (orderedValueParameterType(element)) {
             inputKind = HirCallInputKind::Value;
-          } else if ((element.kind == SemanticType::Class ||
+          } else if ((element.kind == SemanticType::Class || element.kind == SemanticType::Enum ||
                       element.kind == SemanticType::Lambda) &&
                      (!traits.containsBorrowedState || storedEntry) &&
                      traits.copyable) {
             inputKind = HirCallInputKind::CopyValue;
-          } else if ((element.kind == SemanticType::Class ||
+          } else if ((element.kind == SemanticType::Class || element.kind == SemanticType::Enum ||
                       element.kind == SemanticType::Lambda) &&
                      (!traits.containsBorrowedState || storedEntry) &&
                      traits.movable) {

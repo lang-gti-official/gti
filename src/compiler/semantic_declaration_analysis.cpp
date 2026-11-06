@@ -6592,171 +6592,35 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
   const ClassInfo &baseOwner = classInfo(baseType.classId);
   const bool enclosingConstructorInitializer = analyzingConstructorInitializer;
   analyzingConstructorInitializer = true;
-  std::vector<SemanticType> argumentTypes;
-  argumentTypes.reserve(initializer.arguments.size());
+  std::vector<AnalyzedCallArgument> arguments;
+  arguments.reserve(initializer.arguments.size());
   for (const ExprPtr &argument : initializer.arguments) {
-    argumentTypes.emplace_back(analyze(argument));
+    const bool deferred = isContextualArrayArgument(argument) ||
+                          isContextualCallableResultArgument(argument);
+    const SemanticType argumentType = deferred ? SemanticType::Unknown
+                                               : analyze(argument);
+    if (argumentType.kind == SemanticType::TypePack && argumentType.concretePack) {
+      if (!appendConcreteCallArgument(argumentType, argument, arguments)) {
+        analyzingConstructorInitializer = enclosingConstructorInitializer;
+        return;
+      }
+    } else {
+      arguments.push_back({.type = argumentType, .expression = &argument,
+                           .deferred = deferred});
+    }
   }
   analyzingConstructorInitializer = enclosingConstructorInitializer;
 
-  const GenericSubstitution substitution = classSubstitution(baseType);
-  struct ViableConstructor {
-    const ConstructorInfo *constructor = nullptr;
-    std::vector<SemanticType> parameterTypes;
-    bool generatedDefault = false;
-    std::vector<std::size_t> contextualIntegerLiteralArguments;
-    CallableCandidate lifetimeCandidate;
-  };
-  std::vector<ViableConstructor> viable;
   const Token &location = initializer.target.name.last();
-  for (const ConstructorInfo &constructor : baseOwner.constructors) {
-    if (!isCompilerTrustedRequester(location) && constructor.compilerPrivate) {
-      continue;
-    }
-    if (argumentTypes.size() < constructor.requiredParameterCount ||
-        argumentTypes.size() > constructor.parameterTypes.size()) {
-      continue;
-    }
-    std::vector<SemanticType> parameterTypes;
-    parameterTypes.reserve(constructor.parameterTypes.size());
-    bool exact = true;
-    std::vector<std::size_t> literalArguments;
-    for (std::size_t index = 0; index < constructor.parameterTypes.size();
-         ++index) {
-      const SemanticType parameter =
-          substituteType(constructor.parameterTypes[index], substitution);
-      parameterTypes.emplace_back(parameter);
-      if (index >= argumentTypes.size()) {
-        continue;
-      }
-      if (!callArgumentMatches(parameter, argumentTypes[index], initializer.arguments[index]) &&
-          !callArgumentMatches(eraseTypeLifetimes(parameter), eraseTypeLifetimes(argumentTypes[index]),
-                               initializer.arguments[index])) {
-        if (contextualIntegerLiteralArgumentFits(
-                parameter, argumentTypes[index],
-                initializer.arguments[index])) {
-          literalArguments.push_back(index);
-          continue;
-        }
-        exact = false;
-        break;
-      }
-    }
-    if (exact) {
-      const auto canonical = canonicalizeExecutableInstance(
-          {.kind = InstanceAnalysisKind::Constructor, .declaration = constructor.id,
-           .classTypes = baseType.arguments, .classValues = baseType.valueArguments});
-      if (!canonical || canonical->parameterTypes.size() != parameterTypes.size())
-        continue;
-      CallableCandidate lifetime;
-      lifetime.ownerClass = baseType.classId;
-      lifetime.dispatchOwner = baseType;
-      lifetime.returnType = canonical->ownerType;
-      lifetime.parameterTypes = canonical->parameterTypes;
-      lifetime.lifetimeContract = canonical->lifetimeContract;
-      lifetime.requirements = canonical->requirements;
-      lifetime.lifetimeApplication.bindings = canonical->lifetimeApplication.bindings;
-      std::vector<AnalyzedCallArgument> inputs;
-      for (std::size_t index = 0; index < initializer.arguments.size(); ++index)
-        inputs.push_back({.type = std::find(literalArguments.begin(), literalArguments.end(), index) !=
-                                    literalArguments.end() ? parameterTypes[index] : argumentTypes[index],
-                          .expression = &initializer.arguments[index]});
-      if (constructor.declaration)
-        for (std::size_t index = inputs.size(); index < constructor.declaration->parameters().size(); ++index) {
-          const auto &parameter = constructor.declaration->parameters()[index];
-          if (!parameter.defaultArgument)
-            break;
-          const auto *expression = &parameter.defaultArgument->expression;
-          inputs.push_back({.type = semanticModel.typeOf(**expression), .expression = expression});
-        }
-      // Erased types above establish candidate shape only. The ordinary
-      // constructor contract proves every nested region, access and bound
-      // before this candidate can supply executable or borrowed-base facts.
-      if (!applyCallLifetimeContract(lifetime, inputs, location, nullptr, false) ||
-          lifetime.returnType != baseType)
-        continue;
-      parameterTypes = lifetime.parameterTypes;
-      viable.push_back({&constructor, std::move(parameterTypes),
-                        requestsStructuralDefaultConstruction(constructor),
-                        std::move(literalArguments), std::move(lifetime)});
-    }
-  }
-  if (initializer.arguments.empty() &&
-      defaultConstructor(baseOwner) == nullptr &&
-      classCanGenerateDefaultConstructor(baseOwner)) {
-    viable.push_back({nullptr, {}, true});
-  }
-
-  const auto literalFallback = [](const ViableConstructor &candidate) {
-    return !candidate.contextualIntegerLiteralArguments.empty();
-  };
-  if (std::any_of(viable.begin(), viable.end(),
-                  [&](const ViableConstructor &candidate) {
-                    return !literalFallback(candidate);
-                  })) {
-    std::erase_if(viable, literalFallback);
-  }
-  // A literal fallback position is a viability decision, never a ranking
-  // conversion.
-  std::vector<SemanticType> rankingArgumentTypes = argumentTypes;
-  for (const ViableConstructor &candidate : viable) {
-    for (const std::size_t index :
-         candidate.contextualIntegerLiteralArguments) {
-      if (index < rankingArgumentTypes.size())
-        rankingArgumentTypes[index] = SemanticType::Unknown;
-    }
-  }
-  retainBestCallConversionMatches(viable, rankingArgumentTypes,
-                                  [](const ViableConstructor &candidate)
-                                      -> const std::vector<SemanticType> & {
-                                    return candidate.parameterTypes;
-                                  });
-
-  const bool hasUnknownArgument = std::any_of(
-      argumentTypes.begin(), argumentTypes.end(),
-      [](const SemanticType &type) { return type == SemanticType::Unknown; });
-  if (viable.size() != 1) {
-    if (!hasUnknownArgument) {
-      std::string arguments;
-      for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
-        if (index != 0) {
-          arguments += ", ";
-        }
-        arguments += typeSpelling(argumentTypes[index]);
-      }
-      Diagnostic diagnostic = makeDiagnostic(
-          viable.empty() ? "GTI-S2012" : "GTI-S2013",
-          DiagnosticPhase::Semantics, location,
-          viable.empty()
-              ? "No constructor of base '" + typeSpelling(baseType) +
-                    "' exactly matches argument types (" + arguments + ")."
-              : "Base construction of '" + typeSpelling(baseType) +
-                    "' is ambiguous.");
-      for (const ConstructorInfo &candidate : baseOwner.constructors) {
-        if (candidate.declaration != nullptr &&
-            (isCompilerTrustedRequester(location) ||
-             !candidate.compilerPrivate)) {
-          diagnostic.related.push_back(
-              {tokenSpan(candidate.declaration->name()),
-               "Candidate: " + constructorSignatureSpelling(candidate)});
-        }
-      }
-      diagnostics.emplace_back(std::move(diagnostic));
-      if (!viable.empty() &&
-          std::all_of(viable.begin(), viable.end(), literalFallback)) {
-        appendContextualIntegerLiteralAmbiguityHint(
-            viable.front().contextualIntegerLiteralArguments);
-      }
-    }
+  auto selection = selectConstructorCandidate(baseType, arguments, location);
+  if (!selection)
     return;
-  }
-
-  const ViableConstructor &selected = viable.front();
-  for (const std::size_t index : selected.contextualIntegerLiteralArguments) {
-    if (index < initializer.arguments.size() && index < argumentTypes.size()) {
-      argumentTypes[index] = adoptContextualIntegerLiteralArgument(
-          initializer.arguments[index], selected.parameterTypes[index]);
-    }
+  const ConstructorSelection &selected = *selection;
+  if (selected.constructor && selected.lifetimeCandidate.returnType != baseType) {
+    report(location,
+           "A base constructor must produce the exact selected base type and lifetime arguments.",
+           "GTI-S2127");
+    return;
   }
   if (selected.constructor != nullptr && selected.constructor->requiresUnsafe) {
     Diagnostic diagnostic = makeDiagnostic(
@@ -6781,6 +6645,7 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
     diagnostics.emplace_back(std::move(diagnostic));
   }
   std::vector<Lifetime> lifetimeArguments;
+  validateConstructorArgumentAccess(selected.parameterTypes, arguments, location);
   if (selected.constructor)
     for (const auto &parameter : selected.constructor->genericParameters)
       if (parameter.lifetime)
@@ -6802,6 +6667,8 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
                              ? nullptr
                              : selected.constructor->declaration,
           .parameterTypes = selected.parameterTypes,
+          .typeArguments = selected.typeArguments,
+          .valueArguments = selected.valueArguments,
           .lifetimeArguments = std::move(lifetimeArguments),
           .lifetimeApplication = selected.lifetimeCandidate.lifetimeApplication,
           .defaultArguments =
@@ -6810,21 +6677,28 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
                   ? std::vector<const Expr *>{}
                   : omittedDefaultArguments(
                         selected.constructor->declaration->parameters(),
-                        initializer.arguments.size()),
+                        arguments.size()),
           .generatedDefault = selected.generatedDefault});
+  if (const auto *record = semanticModel.findConstructorInitializer(initializer))
+    recordDefaultArgumentDependencies(record->defaultArguments);
   if (typeTraits(baseType).containsBorrowedState) {
     const auto *record = semanticModel.findConstructorInitializer(initializer);
     if (record) {
       auto updated = *record;
-      updated.completeBorrow = completeBaseInitializerBorrow(initializer, updated);
+      updated.completeBorrow = completeBaseInitializerBorrow(initializer, updated, arguments);
       semanticModel.record(initializer, std::move(updated));
     }
   }
-  recordProgramArgumentBoundaryEffects(selected.parameterTypes,
-                                       initializer.arguments);
+  for (std::size_t index = 0; index < arguments.size() &&
+                                  index < selected.parameterTypes.size(); ++index) {
+    const auto &parameter = selected.parameterTypes[index];
+    if ((parameter.kind == SemanticType::Reference ||
+         parameter.kind == SemanticType::RawPointer) && arguments[index].expression)
+      forceProgramStorageBoundaryAccess(*arguments[index].expression);
+  }
   const SourceSpan span = tokenSpan(location);
   recordProgramConstructorDefaultArgumentEffects(
-      selected.constructor, initializer.arguments.size(), span);
+      selected.constructor, arguments.size(), span);
   if (selected.generatedDefault) {
     recordProgramDefaultConstructionEffects(baseType, span);
   } else {
@@ -6832,7 +6706,8 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
                           .id = baseType.classId},
                          span);
     recordProgramSelectedConstructorEffect(selected.constructor, baseType,
-                                           span);
+                                           span, selected.typeArguments,
+                                           selected.valueArguments);
   }
 }
 

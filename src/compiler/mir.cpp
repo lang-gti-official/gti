@@ -2926,7 +2926,13 @@ soleInvokePredecessor(const MirBlockPredecessors &predecessors,
       loan.producedBy != 0 || !loan.storedPath.empty())
     return false;
   const MirPlace *source = body.findPlace(loan.source);
-  if (source == nullptr || !source->projections.empty())
+  if (source == nullptr ||
+      (!source->projections.empty() &&
+       (source->root != MirPlaceRootKind::Binding ||
+        source->type.kind != SemanticType::Reference ||
+        !std::all_of(source->projections.begin(), source->projections.end(),
+                     [](const auto &step) { return step.kind == MirProjectionKind::PackElement; }) ||
+        mirConcretePackElementType(body, *source) == nullptr)))
     return false;
   // A checked text reference borrows two things: the view object and its
   // caller-owned text. Text has an opaque owner dependency, not a nominal
@@ -10970,34 +10976,42 @@ static MirVerificationResult verifyObjectAllocations(const MirBody &body,
 const SemanticType *mirConcretePackElementType(const MirBody &body,
                                                const MirPlace &place) {
   if (place.root != MirPlaceRootKind::Binding || place.projections.empty() ||
-      !place.initiallyAvailable)
+      !place.initiallyAvailable || place.projections.front().kind != MirProjectionKind::PackElement)
     return nullptr;
-  const auto &projection = place.projections.front();
-  if (projection.kind != MirProjectionKind::PackElement ||
-      !projection.constantIndex || projection.field != 0 ||
-      projection.index != 0 || projection.selection != 0)
+  const MirPlace *root = nullptr;
+  for (const auto &candidate : body.places) {
+    if (candidate.id == place.id || candidate.root != MirPlaceRootKind::Binding ||
+        candidate.binding != place.binding || !candidate.projections.empty())
+      continue;
+    if (!candidate.initiallyAvailable || candidate.foreignStorage ||
+        (root && (candidate.type != root->type || candidate.symbol != root->symbol ||
+                  candidate.key != root->key)))
+      return nullptr;
+    root = &candidate;
+  }
+  if (!root)
     return nullptr;
-  const auto root = std::find_if(
-      body.places.begin(), body.places.end(), [&](const MirPlace &candidate) {
-        return candidate.id != place.id &&
-               candidate.root == MirPlaceRootKind::Binding &&
-               candidate.binding == place.binding &&
-               candidate.projections.empty();
-      });
-  if (root == body.places.end() || root->type.kind != SemanticType::TypePack ||
-      !root->type.concretePack ||
-      *projection.constantIndex >= root->type.arguments.size())
+  const SemanticType *element = &root->type;
+  std::size_t prefix = 0;
+  for (const auto &projection : place.projections) {
+    if (projection.kind != MirProjectionKind::PackElement)
+      break;
+    if (!projection.constantIndex || projection.field || projection.index || projection.selection ||
+        element->kind != SemanticType::TypePack || !element->concretePack ||
+        *projection.constantIndex >= element->arguments.size())
+      return nullptr;
+    element = &element->arguments[*projection.constantIndex];
+    ++prefix;
+  }
+  if (std::any_of(place.projections.begin() + prefix, place.projections.end(),
+                  [](const auto &step) { return step.kind == MirProjectionKind::PackElement; }))
     return nullptr;
-  const auto &element =
-      root->type.arguments[static_cast<std::size_t>(*projection.constantIndex)];
-  if (place.projections.size() == 1 &&
-      (element != place.type || place.access != AccessMode::ReadOnly ||
-       (place.type.kind != SemanticType::Class &&
-        place.type.kind != SemanticType::Lambda &&
-        place.type.kind != SemanticType::Enum &&
-        place.traits != semanticTraits(place.type))))
+  if (prefix == place.projections.size() &&
+      (*element != place.type || place.access != AccessMode::ReadOnly ||
+       (place.type.kind != SemanticType::Class && place.type.kind != SemanticType::Lambda &&
+        place.type.kind != SemanticType::Enum && place.traits != semanticTraits(place.type))))
     return nullptr;
-  return &element;
+  return element;
 }
 
 static bool validMirDebugPoint(const MirBody &body, MirDebugPoint point,
@@ -13190,8 +13204,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                            " has an invalid projection");
       }
       if (projection.kind == MirProjectionKind::PackElement) {
-        if (&projection != &place.projections.front() ||
-            mirConcretePackElementType(body, place) == nullptr) {
+        if (mirConcretePackElementType(body, place) == nullptr) {
           return failure(body, owner,
                          "place " + std::to_string(place.id) +
                              " has an invalid concrete pack element");

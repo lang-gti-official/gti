@@ -26,6 +26,70 @@ struct BorrowInventoryBudget {
   }
 };
 
+// Prove only the additional inline-storage case hidden by a Base path: two
+// validated sibling base/field subobjects of the same exact root. The caller
+// supplies an authoritative inline projector that rejects unions, interfaces,
+// enum payloads, indirect storage and mismatched owner/ordinal/type identities.
+// A reference root denotes its referent, but no later reference crossing can
+// turn different physical slots into evidence about their external referents.
+// False is unknown/overlap, never evidence that a malformed path is valid.
+template <typename InlineProjector>
+[[nodiscard]] bool inlineBorrowPathsDisjoint(
+    SemanticType root, std::span<const PlaceProjection> left,
+    std::span<const PlaceProjection> right, InlineProjector &&project) {
+  if (left.size() > borrowInventoryDepthLimit ||
+      right.size() > borrowInventoryDepthLimit ||
+      !isWellFormedBorrowPath(left) || !isWellFormedBorrowPath(right))
+    return false;
+  if (root.kind == SemanticType::Reference) {
+    if (root.arguments.size() != 1)
+      return false;
+    root = SemanticType(root.arguments.front());
+  }
+  SemanticType leftType = root;
+  SemanticType rightType = root;
+  bool diverged = false;
+  const auto inlineParent = [](const SemanticType &type) {
+    return type.kind == SemanticType::Class ||
+           type.kind == SemanticType::Array ||
+           (type.kind == SemanticType::TypePack && type.concretePack);
+  };
+  for (std::size_t index = 0; index < std::max(left.size(), right.size()); ++index) {
+    const bool hasLeft = index < left.size();
+    const bool hasRight = index < right.size();
+    if (!diverged && (!hasLeft || !hasRight))
+      return false; // One path contains the other.
+    if (!diverged && left[index] != right[index]) {
+      const auto &lhs = left[index];
+      const auto &rhs = right[index];
+      const auto sibling = [](const PlaceProjection &step) {
+        return step.kind == PlaceProjectionKind::Base ||
+               step.kind == PlaceProjectionKind::Field;
+      };
+      if (leftType != rightType || leftType.kind != SemanticType::Class ||
+          !sibling(lhs) || !sibling(rhs) ||
+          (lhs.kind != PlaceProjectionKind::Base &&
+           rhs.kind != PlaceProjectionKind::Base))
+        return false;
+      diverged = true;
+    }
+    const auto advance = [&](SemanticType &type, const PlaceProjection &step) {
+      if (!inlineParent(type))
+        return false;
+      const auto child = project(type, step);
+      if (!child || child->kind == SemanticType::Unknown ||
+          child->kind == SemanticType::Reference)
+        return false;
+      type = *child;
+      return true;
+    };
+    if ((hasLeft && !advance(leftType, left[index])) ||
+        (hasRight && !advance(rightType, right[index])))
+      return false;
+  }
+  return diverged;
+}
+
 // The inventory is an authoritative enumeration of typed enum subobjects,
 // including alternatives with no borrowed payload. A selected subset may
 // narrow each domain, but cannot omit an independently stored sibling or an

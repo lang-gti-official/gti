@@ -8,6 +8,8 @@
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
 
+#include <array>
+
 #include <algorithm>
 #include <cstdint>
 #include <map>
@@ -749,6 +751,39 @@ private:
             !resolvedTraits(referent).containsBorrowedState);
   }
 
+  [[nodiscard]] std::optional<ConcreteFormalInput>
+  constructorFormalInput(const HirValue &value) const {
+    if (!constructor)
+      return std::nullopt;
+    BorrowPath reversed;
+    const HirValue *root = &value;
+    while (root->kind == HirValueKind::PackElement) {
+      if (reversed.size() >= borrowInventoryDepthLimit || !root->packElement || root->operands.size() != 1)
+        return std::nullopt;
+      const auto *parent = findValue(root->operands.front());
+      if (!parent || parent->info.type.kind != SemanticType::TypePack || !parent->info.type.concretePack ||
+          *root->packElement >= parent->info.type.arguments.size() ||
+          parent->info.type.arguments[*root->packElement] != root->info.type ||
+          parent->symbol != root->symbol || root->info.category != ValueCategory::Place ||
+          root->info.access != AccessMode::ReadOnly)
+        return std::nullopt;
+      reversed.push_back(constantIndexProjection(*root->packElement));
+      root = parent;
+    }
+    const auto binding = localSymbols.find(root->symbol);
+    if (root->kind != HirValueKind::Variable || binding == localSymbols.end())
+      return std::nullopt;
+    std::reverse(reversed.begin(), reversed.end());
+    const auto inputs = mir_detail::concreteFormalInputs(source, constructor->parameterTypes,
+                                                        constructor->parameterBindings);
+    if (!inputs)
+      return std::nullopt;
+    for (const auto &input : *inputs)
+      if (input.binding == binding->second && input.bindingPrefix == reversed && input.type == value.info.type)
+        return input;
+    return std::nullopt;
+  }
+
   // A reference-base family forwards one exact incoming reference. The
   // semantic formal supplies access and referent type; the existing place
   // engine supplies its evaluated address. No referent value is loaded merely
@@ -764,12 +799,17 @@ private:
     const auto parameter = substituteTypeLifetimes(target->parameterTypes[index],
                                                   initializer.lifetimeApplication.bindings);
     const auto *value = findValue(initializer.arguments[index]);
-    return parameter && parameter->kind == SemanticType::Reference &&
-        parameter->arguments.size() == 1 && value &&
-        value->info.category == ValueCategory::Place &&
-        sameLifetimeConversionShape(value->info.type, parameter->arguments.front()) &&
-        (parameter->referenceAccess == AccessMode::ReadOnly ||
-         value->info.access == AccessMode::Mutable);
+    if (!parameter || parameter->kind != SemanticType::Reference || parameter->arguments.size() != 1 ||
+        !value || value->info.category != ValueCategory::Place)
+      return false;
+    const bool referenceElement = value->kind == HirValueKind::PackElement &&
+        value->info.type.kind == SemanticType::Reference && value->info.type.arguments.size() == 1;
+    if (referenceElement && !constructorFormalInput(*value))
+      return false;
+    const auto &referent = referenceElement ? value->info.type.arguments.front() : value->info.type;
+    const auto access = referenceElement ? value->info.type.referenceAccess : value->info.access;
+    return sameLifetimeConversionShape(referent, parameter->arguments.front()) &&
+        (parameter->referenceAccess == AccessMode::ReadOnly || access == AccessMode::Mutable);
   }
 
   // An owned argument a base initializer moves into a by-value parameter of
@@ -898,17 +938,7 @@ private:
           return nullptr;
         if (value->kind == HirValueKind::Literal)
           continue;
-        const auto local = localSymbols.find(value->symbol);
-        if (value->kind != HirValueKind::Variable ||
-            local == localSymbols.end())
-          return nullptr;
-        const auto formal =
-            std::find(constructor->parameterBindings.begin(),
-                      constructor->parameterBindings.end(), local->second);
-        if (formal == constructor->parameterBindings.end() ||
-            constructor->parameterTypes[static_cast<std::size_t>(
-                formal - constructor->parameterBindings.begin())] !=
-                value->info.type)
+        if (!constructorFormalInput(*value))
           return nullptr;
       }
     }
@@ -4368,9 +4398,9 @@ private:
       }
     }
 
-    const bool packElement =
-        lowered.projections.size() == 1 &&
-        lowered.projections.front().kind == MirProjectionKind::PackElement;
+    const bool packElement = !lowered.projections.empty() &&
+        std::all_of(lowered.projections.begin(), lowered.projections.end(),
+                    [](const auto &step) { return step.kind == MirProjectionKind::PackElement; });
     const MirPlaceId place = packElement
                                  ? appendPackElementPlace(std::move(lowered))
                                  : appendPlace(std::move(lowered));
@@ -5076,7 +5106,9 @@ private:
       }
       const auto *sourcePlace = output.findPlace(placeForValue(pack->id));
       if (!sourcePlace || sourcePlace->root != MirPlaceRootKind::Binding ||
-          sourcePlace->capture != 0 || !sourcePlace->projections.empty() ||
+          sourcePlace->capture != 0 ||
+          !std::all_of(sourcePlace->projections.begin(), sourcePlace->projections.end(),
+                       [](const auto &step) { return step.kind == MirProjectionKind::PackElement; }) ||
           sourcePlace->symbol != pack->symbol ||
           sourcePlace->type != pack->info.type) {
         valid = false;
@@ -5090,7 +5122,8 @@ private:
       projected.traits = resolvedTraits(value->info.type);
       projected.access = AccessMode::ReadOnly;
       projected.sourceValue = 0;
-      projected.key.reset();
+      if (projected.key)
+        projected.key->projections.push_back(constantIndexProjection(*value->packElement));
       place = appendPackElementPlace(std::move(projected));
       break;
     }
@@ -8358,7 +8391,14 @@ private:
         const MirPlaceId packPlaceId =
             local == localSymbols.end() ? 0 : placeForBinding(local->second);
         const MirPlace *resolvedPackPlace = output.findPlace(packPlaceId);
-        const std::vector<SemanticType> &elements = input->info.type.arguments;
+        const std::array<ConcreteFormalRoot, 1> packRoots{{
+            {.binding = local == localSymbols.end() ? 0 : local->second, .type = input->info.type}}};
+        const std::array<SemanticType, 1> packSignature{input->info.type};
+        const auto packInputs = deriveConcreteFormalInputs(packRoots, packSignature);
+        std::vector<SemanticType> elements;
+        if (packInputs)
+          for (const auto &leaf : *packInputs)
+            elements.push_back(leaf.type);
         const std::size_t parameterIndex = call.operands.size();
         const bool followedByDefaults =
             arguments.size() - index - 1 == value.defaultArguments.size() &&
@@ -8375,22 +8415,12 @@ private:
                    (element.kind == SemanticType::Reference &&
                     parameter.arguments == element.arguments)));
         };
-        const bool retainedPackParameter =
-            parameterIndex + 1 == value.parameterTypes.size() &&
-            value.defaultArguments.empty() &&
-            value.parameterTypes[parameterIndex].kind ==
-                SemanticType::TypePack &&
-            value.parameterTypes[parameterIndex].concretePack &&
-            value.parameterTypes[parameterIndex].arguments.size() ==
-                elements.size() &&
-            std::equal(elements.begin(), elements.end(),
-                       value.parameterTypes[parameterIndex].arguments.begin(),
-                       matchesPackInput);
-        const bool flattenedPackParameters =
-            value.parameterTypes.size() == parameterIndex + elements.size() +
-                                               value.defaultArguments.size() &&
-            std::equal(elements.begin(), elements.end(),
-                       value.parameterTypes.begin() + parameterIndex,
+        std::vector<SemanticType> concreteParameters;
+        for (const auto &type : value.parameterTypes)
+          SemanticType::appendExpandedArgument(concreteParameters, type);
+        const bool flattenedPackParameters = packInputs &&
+            concreteParameters.size() == parameterIndex + elements.size() + value.defaultArguments.size() &&
+            std::equal(elements.begin(), elements.end(), concreteParameters.begin() + parameterIndex,
                        matchesPackInput);
         if (!followedByDefaults ||
             input->info.type.kind != SemanticType::TypePack ||
@@ -8400,8 +8430,8 @@ private:
             resolvedPackPlace->symbol != input->symbol ||
             resolvedPackPlace->type.kind != SemanticType::TypePack ||
             !resolvedPackPlace->type.concretePack ||
-            (!retainedPackParameter && !flattenedPackParameters) ||
-            resolvedPackPlace->type.arguments != elements ||
+            !flattenedPackParameters ||
+            resolvedPackPlace->type != input->info.type ||
             input->packExpansionElements.size() != elements.size() ||
             !resolvedPackPlace->key) {
           valid = false;
@@ -8411,10 +8441,7 @@ private:
         for (std::size_t elementIndex = 0; elementIndex < elements.size();
              ++elementIndex) {
           const SemanticType &element = elements[elementIndex];
-          const SemanticType &parameter =
-              retainedPackParameter
-                  ? value.parameterTypes[parameterIndex].arguments[elementIndex]
-                  : value.parameterTypes[parameterIndex + elementIndex];
+          const SemanticType &parameter = concreteParameters[parameterIndex + elementIndex];
           // The selected signature, not the source pack's ownership mode,
           // decides whether this invocation borrows an element. Its owning
           // parameter remains alive until the enclosing body's cleanup.
@@ -8438,14 +8465,13 @@ private:
             continue;
           }
           PlaceKey elementKey = *packPlace.key;
-          elementKey.projections.push_back(
-              {.kind = PlaceProjectionKind::ConstantIndex,
-               .index = elementIndex});
+          const auto &prefix = (*packInputs)[elementIndex].bindingPrefix;
+          elementKey.projections.insert(elementKey.projections.end(), prefix.begin(), prefix.end());
           MirPlace projected = packPlace;
           projected.id = 0;
-          projected.projections.push_back(
-              {.kind = MirProjectionKind::PackElement,
-               .constantIndex = elementIndex});
+          for (const auto &step : prefix)
+            projected.projections.push_back({.kind = MirProjectionKind::PackElement,
+                                            .constantIndex = step.index});
           projected.type = element;
           projected.access = AccessMode::ReadOnly;
           projected.traits = expansion.traits;
@@ -10574,6 +10600,33 @@ private:
     return result;
   }
 
+  [[nodiscard]] MirPlaceId formalInputPlace(const ConcreteFormalInput &input) {
+    const auto root = placeForBinding(input.binding);
+    const auto *original = output.findPlace(root);
+    if (!original)
+      return 0;
+    if (input.bindingPrefix.empty())
+      return original->type == input.type ? root : 0;
+    MirPlace projected = *original;
+    projected.id = 0;
+    for (const auto &step : input.bindingPrefix) {
+      if (step.kind != PlaceProjectionKind::ConstantIndex ||
+          projected.type.kind != SemanticType::TypePack || !projected.type.concretePack ||
+          step.index >= projected.type.arguments.size())
+        return 0;
+      projected.projections.push_back({.kind = MirProjectionKind::PackElement,
+                                      .constantIndex = step.index});
+      if (projected.key)
+        projected.key->projections.push_back(step);
+      const auto child = projected.type.arguments[step.index];
+      projected.type = child;
+    }
+    if (projected.type != input.type)
+      return 0;
+    projected.traits = resolvedTraits(projected.type);
+    return appendPackElementPlace(std::move(projected));
+  }
+
   // The parameter an argument-origin reference result borrows from, for a
   // function or a lambda body; a lambda's contract lives on its instance.
   [[nodiscard]] std::optional<mir_detail::MirReturnOriginFormal>
@@ -10586,13 +10639,13 @@ private:
         return std::nullopt;
       return function->returnBorrowOrigin == BorrowOriginKind::Argument
                  ? mir_detail::returnOriginFormal(
-                       function->parameterTypes, function->parameterBindings,
+                       source, function->parameterTypes, function->parameterBindings,
                        function->returnBorrowParameter)
                  : std::nullopt;
     }
     if (lambda != nullptr) {
       return lambda->returnBorrowOrigin == BorrowOriginKind::Argument
-                 ? mir_detail::returnOriginFormal(lambda->parameterTypes,
+                 ? mir_detail::returnOriginFormal(source, lambda->parameterTypes,
                                                   lambda->parameterBindings,
                                                   lambda->returnBorrowParameter)
                  : std::nullopt;
@@ -10608,17 +10661,7 @@ private:
   // whole binding, or the one pack element the contract names.
   [[nodiscard]] bool sourceIsReturnOriginFormal(const MirPlace &source) const {
     const auto formal = returnBorrowOriginFormal();
-    if (!formal || source.root != MirPlaceRootKind::Binding ||
-        source.binding != formal->binding)
-      return false;
-    if (source.projections.empty())
-      return source.type.kind != SemanticType::TypePack;
-    return source.projections.size() == 1 &&
-           source.projections.front().kind == MirProjectionKind::PackElement &&
-           source.projections.front().constantIndex &&
-           static_cast<std::size_t>(
-               *source.projections.front().constantIndex) ==
-               formal->elementWithinBinding;
+    return formal && mir_detail::formalInputPlace(source, *formal);
   }
   [[nodiscard]] BorrowOriginKind bodyReturnBorrowOrigin() const {
     return function != nullptr ? function->returnBorrowOrigin
@@ -13298,7 +13341,8 @@ private:
       const MirPlace *entryPlace = output.findPlace(sourcePlace);
       const bool textReference =
           entryPlace && entryPlace->root == MirPlaceRootKind::Binding &&
-          entryPlace->projections.empty() &&
+          std::all_of(entryPlace->projections.begin(), entryPlace->projections.end(),
+                      [](const auto &step) { return step.kind == MirProjectionKind::PackElement; }) &&
           entryPlace->type.kind == SemanticType::Reference &&
           entryPlace->type.arguments.size() == 1 &&
           (entryPlace->type.arguments.front().kind ==
@@ -13350,9 +13394,13 @@ private:
         // Do not preseed a future local with the formal's retired authority.
         output.loans[lowered - 1].carriers = {place->binding};
       }
-      if (place && place->projections.size() == 1 &&
-          place->projections.front().kind == MirProjectionKind::PackElement) {
-        packEntryLoans.emplace(sourcePlace, lowered);
+      if (place && !place->projections.empty() &&
+          std::all_of(place->projections.begin(), place->projections.end(),
+                      [](const auto &step) { return step.kind == MirProjectionKind::PackElement; })) {
+        if (kind == MirLoanKind::Parameter || place->type.kind != SemanticType::Reference) {
+          if (!packEntryLoans.emplace(sourcePlace, lowered).second)
+            valid = false;
+        }
       } else {
         for (const HirBindingId carrier : output.loans[lowered - 1].carriers) {
           bindingLoans.insert_or_assign(carrier, lowered);
@@ -13376,34 +13424,17 @@ private:
     if (bindingLoans.contains(binding)) {
       return;
     }
-    MirPlaceId sourcePlace = placeForBinding(binding);
-    const MirPlace *root =
-        sourcePlace != 0 ? output.findPlace(sourcePlace) : nullptr;
-    if (root != nullptr && root->type.kind == SemanticType::TypePack) {
-      // The contract names one element of a concrete pack: seed the entry
-      // loan on that element's place, as every other element access does.
-      const std::size_t element = summarized->elementWithinBinding;
-      if (!root->type.concretePack || !root->key ||
-          element >= root->type.arguments.size()) {
-        return;
-      }
-      MirPlace projected = *root;
-      projected.id = 0;
-      projected.projections.push_back(
-          {.kind = MirProjectionKind::PackElement, .constantIndex = element});
-      projected.key->projections.push_back(
-          {.kind = PlaceProjectionKind::ConstantIndex, .index = element});
-      projected.type = root->type.arguments[element];
-      projected.traits = resolvedTraits(projected.type);
-      sourcePlace = appendPackElementPlace(std::move(projected));
-    }
-    if (sourcePlace == 0 || scopes.empty()) {
+    const MirPlaceId sourcePlace = formalInputPlace(*summarized);
+    if (sourcePlace == 0 || scopes.empty() || packEntryLoans.contains(sourcePlace)) {
       return;
     }
     const MirLoanId loan = createLoan(MirLoanKind::Parameter, sourcePlace,
                                       bodyReturnBorrowAccess(), 0, binding);
     output.loans[loan - 1].entry = true;
-    bindingLoans.insert_or_assign(binding, loan);
+    if (summarized->bindingPrefix.empty())
+      bindingLoans.insert_or_assign(binding, loan);
+    else
+      packEntryLoans.emplace(sourcePlace, loan);
     scopes.front().loans.push_back(loan);
   }
 
@@ -16189,19 +16220,13 @@ private:
                 source && source->root == MirPlaceRootKind::Binding &&
                 types && bindings) {
               for (std::size_t index = 0; index < types->size(); ++index) {
-                const auto formal = mir_detail::returnOriginFormal(*types, *bindings, index);
+                const auto formal = mir_detail::returnOriginFormal(this->source, *types, *bindings, index);
                 if (!formal || (*types)[index].kind != SemanticType::Reference ||
                     source->binding != formal->binding ||
                     std::find(candidate.carriers.begin(), candidate.carriers.end(),
                               formal->binding) == candidate.carriers.end())
                   continue;
-                const bool exact = source->projections.empty()
-                    ? source->type == (*types)[index]
-                    : source->projections.size() == 1 &&
-                      source->projections.front().kind == MirProjectionKind::PackElement &&
-                      source->projections.front().constantIndex &&
-                      static_cast<std::size_t>(*source->projections.front().constantIndex) ==
-                          formal->elementWithinBinding && source->type == (*types)[index];
+                const bool exact = mir_detail::formalInputPlace(*source, *formal);
                 if (exact) {
                   referenceParameterEntry = borrow.loan;
                   break;

@@ -47,6 +47,30 @@ int main() {
 int&<region> identity<lifetime region>(int&<region> value) { return value; }
 int main() { int value = 7; return identity(value) - 7; }
 """,
+    "selected_base_constructor_inputs": """
+struct RegionBase<lifetime a> {
+  int&<a> value;
+  int marker;
+  RegionBase<lifetime input>(int&<input> source, int selected = 7)
+      requires outlives<input, a> : value(source), marker(selected) {}
+};
+struct RegionDerived<lifetime a> : public RegionBase<a> {
+  RegionDerived(int&<a> source) : RegionBase<a>(source) {}
+};
+struct SumBase {
+  int value;
+  SumBase(int first, int second) : value(first + second) {}
+};
+struct SumDerived<Args...> : public SumBase {
+  SumDerived(Args... values) : SumBase(values...) {}
+};
+int main() {
+  int source = 5;
+  RegionDerived derived{source};
+  SumDerived<int, int> sum{3, 8};
+  return derived.value + derived.marker + sum.value - 23;
+}
+""",
     "forwarded_pack_borrow_paths": """
 struct View<lifetime owner> {
   int&<owner> value;
@@ -302,6 +326,30 @@ int&<a> external<lifetime a>(int&<a> input) {
   return pair.value;
 }
 int main() { int value = 7; return external(value) - 7; }
+""",
+    "selected_base_input_lanes": """
+struct SumBase {
+  int value;
+  SumBase(int first, int second) : value(first * 10 + second) {}
+};
+struct SumDerived<Args...> : public SumBase {
+  SumDerived(Args... values) : SumBase(values...) {}
+};
+struct RegionBase<lifetime a> {
+  int&<a> value;
+  int marker;
+  RegionBase<lifetime input>(int&<input> source, int selected = 7)
+      requires outlives<input, a> : value(source), marker(selected) {}
+};
+struct RegionDerived<lifetime a> : public RegionBase<a> {
+  RegionDerived(int&<a> source) : RegionBase<a>(source) {}
+};
+int main() {
+  int number = 5;
+  SumDerived<int, int> sum{3, 8};
+  RegionDerived view{number};
+  return sum.value + view.value + view.marker - 50;
+}
 """,
     "inherited_borrowed_base_rollback": """
 struct Outer {

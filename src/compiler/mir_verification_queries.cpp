@@ -2482,21 +2482,75 @@ bool textFieldResult(const SemanticType &returnType, BorrowOriginKind origin,
           origin == BorrowOriginKind::Argument);
 }
 
+std::optional<std::vector<ConcreteFormalInput>>
+concreteFormalInputs(const HirBody &body, std::span<const SemanticType> types,
+                     std::span<const HirBindingId> bindings) {
+  std::vector<ConcreteFormalRoot> roots;
+  for (const auto binding : bindings) {
+    const HirBinding *found = nullptr;
+    for (const auto &candidate : body.bindings) {
+      if (candidate.id != binding)
+        continue;
+      if (found)
+        return std::nullopt;
+      found = &candidate;
+    }
+    if (!found)
+      return std::nullopt;
+    roots.push_back({.binding = binding, .type = found->info.type});
+  }
+  return deriveConcreteFormalInputs(roots, types);
+}
+
+std::optional<std::vector<ConcreteFormalInput>>
+concreteFormalInputs(const MirBody &body, std::span<const SemanticType> types,
+                     std::span<const HirBindingId> bindings) {
+  std::vector<ConcreteFormalRoot> roots;
+  for (const auto binding : bindings) {
+    const MirPlace *found = nullptr;
+    for (const auto &candidate : body.places) {
+      if (candidate.root != MirPlaceRootKind::Binding ||
+          candidate.binding != binding || !candidate.projections.empty())
+        continue;
+      if (!candidate.initiallyAvailable || candidate.foreignStorage ||
+          (found && (candidate.type != found->type || candidate.symbol != found->symbol ||
+                     candidate.key != found->key)))
+        return std::nullopt;
+      found = &candidate;
+    }
+    if (!found)
+      return std::nullopt;
+    roots.push_back({.binding = binding, .type = found->type});
+  }
+  return deriveConcreteFormalInputs(roots, types);
+}
+
 std::optional<MirReturnOriginFormal>
-returnOriginFormal(std::span<const SemanticType> parameterTypes,
-                   std::span<const HirBindingId> parameterBindings,
-                   std::size_t expandedIndex) {
-  if (expandedIndex >= parameterTypes.size() ||
-      expandedIndex >= parameterBindings.size()) {
-    return std::nullopt;
+returnOriginFormal(const HirBody &body, std::span<const SemanticType> types,
+                   std::span<const HirBindingId> bindings, std::size_t index) {
+  const auto inputs = concreteFormalInputs(body, types, bindings);
+  return inputs && index < inputs->size() ? std::optional((*inputs)[index]) : std::nullopt;
+}
+std::optional<MirReturnOriginFormal>
+returnOriginFormal(const MirBody &body, std::span<const SemanticType> types,
+                   std::span<const HirBindingId> bindings, std::size_t index) {
+  const auto inputs = concreteFormalInputs(body, types, bindings);
+  return inputs && index < inputs->size() ? std::optional((*inputs)[index]) : std::nullopt;
+}
+
+bool formalInputPlace(const MirPlace &place, const ConcreteFormalInput &input) {
+  if (place.root != MirPlaceRootKind::Binding || place.binding != input.binding ||
+      place.type != input.type || place.projections.size() != input.bindingPrefix.size())
+    return false;
+  for (std::size_t index = 0; index < input.bindingPrefix.size(); ++index) {
+    const auto &expected = input.bindingPrefix[index];
+    const auto &actual = place.projections[index];
+    if (expected.kind != PlaceProjectionKind::ConstantIndex ||
+        actual.kind != MirProjectionKind::PackElement ||
+        actual.constantIndex != expected.index || actual.field || actual.index || actual.selection)
+      return false;
   }
-  const HirBindingId binding = parameterBindings[expandedIndex];
-  std::size_t first = expandedIndex;
-  while (first > 0 && parameterBindings[first - 1] == binding) {
-    --first;
-  }
-  return MirReturnOriginFormal{.binding = binding,
-                               .elementWithinBinding = expandedIndex - first};
+  return true;
 }
 
 bool functionPointerOperation(const MirProgram &program,

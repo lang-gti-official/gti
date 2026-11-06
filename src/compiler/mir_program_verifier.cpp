@@ -58,8 +58,9 @@ exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
   // the exact root/index/type/access proof; arbitrary Reference places do not
   // gain an implicit dereference here.
   if (place->type.kind == SemanticType::Reference &&
-      place->projections.size() == 1 &&
-      place->projections.front().kind == MirProjectionKind::PackElement) {
+      !place->projections.empty() &&
+      std::all_of(place->projections.begin(), place->projections.end(),
+                  [](const auto &step) { return step.kind == MirProjectionKind::PackElement; })) {
     const auto *element = mirConcretePackElementType(body, *place);
     if (!element || element->kind != SemanticType::Reference ||
         element->arguments.size() != 1)
@@ -5608,7 +5609,8 @@ struct CompleteBorrowParameterEntry {
 // including every guarded path, and its exact already-materialized referents.
 [[nodiscard]] std::optional<CompleteBorrowParameterEntry>
 completeBorrowParameterEntryFact(const MirProgram &program, const MirBody &body,
-                                 std::size_t owner, HirBindingId binding) {
+                                 std::size_t owner, HirBindingId binding,
+                                 std::span<const PlaceProjection> bindingPrefix = {}) {
   const auto *function = body.kind == MirBodyKind::Function
                              ? program.findFunctionInstance(owner)
                              : nullptr;
@@ -5629,14 +5631,29 @@ completeBorrowParameterEntryFact(const MirProgram &program, const MirBody &body,
       function && function->owner && !function->staticMember && !binding
           ? program.findClassInstance(*function->owner)
           : nullptr;
-  if (!bindings || !types || bindings->size() != types->size() ||
-      (!receiverClass &&
-       (!binding ||
-        std::count(bindings->begin(), bindings->end(), binding) != 1)))
+  if (!bindings || !types || (receiverClass && !bindingPrefix.empty()))
     return std::nullopt;
-  const auto index = std::find(bindings->begin(), bindings->end(), binding) -
-                     bindings->begin();
-  const auto &formal = receiverClass ? receiverClass->type : (*types)[index];
+  std::optional<ConcreteFormalInput> input;
+  if (!receiverClass) {
+    const auto inputs = mir_detail::concreteFormalInputs(body, *types, *bindings);
+    if (!inputs)
+      return std::nullopt;
+    for (const auto &candidate : *inputs)
+      if (candidate.binding == binding &&
+          std::equal(candidate.bindingPrefix.begin(), candidate.bindingPrefix.end(),
+                     bindingPrefix.begin(), bindingPrefix.end())) {
+        if (input)
+          return std::nullopt;
+        input = candidate;
+      }
+    if (!input)
+      return std::nullopt;
+  }
+  const auto receiverType = receiverClass ? checkedMirCallableOwnerType(
+      program, function->owner, function->ownerType, function->lifetimeContract) : std::nullopt;
+  if (receiverClass && !receiverType)
+    return std::nullopt;
+  const auto formal = receiverType ? *receiverType : input->type;
   const bool reference =
       receiverClass || formal.kind == SemanticType::Reference;
   if (!receiverClass && reference && formal.arguments.size() != 1)
@@ -5651,7 +5668,8 @@ completeBorrowParameterEntryFact(const MirProgram &program, const MirBody &body,
     return (receiverClass ? place.root == MirPlaceRootKind::This
                           : place.root == MirPlaceRootKind::Binding &&
                                 place.binding == binding) &&
-           place.type == formal && place.projections.empty() &&
+           place.type == formal &&
+           (receiverClass ? place.projections.empty() : mir_detail::formalInputPlace(place, *input)) &&
            (receiverClass
                 ? place.key && place.key->domain == body.placeDomain &&
                       place.key->receiver && !place.key->root &&
@@ -5719,6 +5737,19 @@ completeBorrowParameterEntryFact(const MirProgram &program, const MirBody &body,
          .conditions = path.conditions});
   }
   return result;
+}
+
+[[nodiscard]] std::optional<CompleteBorrowParameterEntry>
+completeBorrowParameterEntryFactForPlace(const MirProgram &program, const MirBody &body,
+                                         std::size_t owner, const MirPlace &place) {
+  BorrowPath prefix;
+  for (const auto &step : place.projections) {
+    if (step.kind != MirProjectionKind::PackElement || !step.constantIndex ||
+        step.field || step.index || step.selection)
+      return std::nullopt;
+    prefix.push_back(constantIndexProjection(*step.constantIndex));
+  }
+  return completeBorrowParameterEntryFact(program, body, owner, place.binding, prefix);
 }
 
 [[nodiscard]] bool isCarrierReferenceResult(const MirProgram &program,
@@ -6445,16 +6476,12 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
                    ? AccessMode::Mutable
                    : AccessMode::ReadOnly);
       bool parameterEntry = false;
-      if (parameterBindings != nullptr && parameterTypes != nullptr &&
+      if (parameterBindings && parameterTypes &&
           source->root == MirPlaceRootKind::Binding &&
-          source->type.kind == SemanticType::Reference) {
-        for (std::size_t index = 0; index < parameterBindings->size() &&
-                                    index < parameterTypes->size();
-             ++index)
-          parameterEntry = parameterEntry ||
-                           ((*parameterBindings)[index] == source->binding &&
-                            (*parameterTypes)[index] == source->type);
-      }
+          source->type.kind == SemanticType::Reference)
+        if (const auto inputs = mir_detail::concreteFormalInputs(body, *parameterTypes, *parameterBindings))
+          parameterEntry = std::any_of(inputs->begin(), inputs->end(),
+              [&](const auto &input) { return mir_detail::formalInputPlace(*source, input); });
       const bool captureEntry =
           lambda && source->root == MirPlaceRootKind::Symbol &&
           source->capture != 0 &&
@@ -6463,7 +6490,7 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
           source->symbol == lambda->captureSymbols[source->capture - 1] &&
           source->type == lambda->captureTypes[source->capture - 1];
       if ((!receiverEntry && !parameterEntry && !captureEntry) ||
-          !source->projections.empty())
+          (!parameterEntry && !source->projections.empty()))
         return verificationFailure(body, owner,
                                    "abstract stored dependency must name the "
                                    "exact receiver or reference formal");
@@ -6477,8 +6504,8 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
     if (conditional) {
       const auto entry = (source->root == MirPlaceRootKind::Binding ||
                           source->root == MirPlaceRootKind::This)
-                             ? completeBorrowParameterEntryFact(
-                                   program, body, owner, source->binding)
+                             ? completeBorrowParameterEntryFactForPlace(
+                                   program, body, owner, *source)
                              : std::nullopt;
       if (!entry || entry->group != loan.id || entry->carrier != source->id ||
           (abstractEntry &&
@@ -6984,7 +7011,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
     break;
   case BorrowOriginKind::Argument: {
     const std::optional<mir_detail::MirReturnOriginFormal> originFormal =
-        mir_detail::returnOriginFormal(instance.parameterTypes,
+        mir_detail::returnOriginFormal(instance.body, instance.parameterTypes,
                                        instance.parameterBindings,
                                        instance.returnBorrowParameter);
     if (!originFormal || originFormal->binding == 0) {
@@ -7088,19 +7115,13 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
               "exact external referent type");
         }
 
-        const HirBindingId parameterBinding =
-            mir_detail::returnOriginFormal(instance.parameterTypes,
-                                           instance.parameterBindings,
-                                           instance.returnBorrowParameter)
-                ->binding;
+        const HirBindingId parameterBinding = originFormal->binding;
         for (const MirLoan &loan : body.loans) {
           const MirPlace *source = body.findPlace(loan.source);
           const bool exactEntry =
               loan.kind == MirLoanKind::Stored && loan.entry && !loan.escapes &&
               loan.access == instance.returnBorrowAccess && source != nullptr &&
-              source->root == MirPlaceRootKind::Binding &&
-              source->projections.empty() &&
-              source->binding == parameterBinding &&
+              mir_detail::formalInputPlace(*source, *originFormal) &&
               loan.designatedFields == (dynamicTextCarrier
                                             ? BorrowPath{}
                                             : storedCarrierReference->fields) &&
@@ -7334,7 +7355,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           dependencySource->root == MirPlaceRootKind::Binding &&
           [&] {
             const auto formal = mir_detail::returnOriginFormal(
-                instance.parameterTypes, instance.parameterBindings,
+                instance.body, instance.parameterTypes, instance.parameterBindings,
                 instance.returnBorrowParameter);
             return formal && physical.binding == formal->binding &&
                    dependencySource->type.kind == SemanticType::Reference;
@@ -7373,7 +7394,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
         instance.returnBorrowOrigin == BorrowOriginKind::Argument &&
         (source->root != MirPlaceRootKind::Binding || [&] {
           const auto formal = mir_detail::returnOriginFormal(
-              instance.parameterTypes, instance.parameterBindings,
+              instance.body, instance.parameterTypes, instance.parameterBindings,
               instance.returnBorrowParameter);
           return !formal || (instance.returnBorrowParameters.empty() &&
                              source->binding != formal->binding);
@@ -7684,11 +7705,11 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
         loan->parent == 0 && block.terminator.value &&
         block.terminator.value->kind == MirOperandKind::Value) {
       const auto formal = mir_detail::returnOriginFormal(
-          instance.parameterTypes, instance.parameterBindings,
+          instance.body, instance.parameterTypes, instance.parameterBindings,
           instance.returnBorrowParameter);
       const auto entry =
           formal ? completeBorrowParameterEntryFact(program, body, instance.id,
-                                                    formal->binding)
+                                                    formal->binding, formal->bindingPrefix)
                  : std::nullopt;
       const MirLoan *group =
           entry && entry->group ? body.findLoan(entry->group) : nullptr;
@@ -15784,11 +15805,15 @@ completeBorrowSourcePath(const MirProgram &program,
   };
   State initial{.values = std::vector<Fact>(body.values.size()),
                 .places = std::vector<Fact>(body.places.size())};
-  if (parameters)
-    for (const auto binding : *parameters)
-      if (const auto entry =
-              completeBorrowParameterEntryFact(program, body, owner, binding))
-        publish(initial, entry->carrier, entry->dependencies);
+  const auto *entryTypes = function ? &function->parameterTypes
+                         : lambda ? &lambda->parameterTypes
+                         : constructor ? &constructor->parameterTypes : nullptr;
+  if (parameters && entryTypes)
+    if (const auto inputs = mir_detail::concreteFormalInputs(body, *entryTypes, *parameters))
+      for (const auto &input : *inputs)
+        if (const auto entry = completeBorrowParameterEntryFact(
+                program, body, owner, input.binding, input.bindingPrefix))
+          publish(initial, entry->carrier, entry->dependencies);
   if (function && function->owner && !function->staticMember)
     if (const auto entry =
             completeBorrowParameterEntryFact(program, body, owner, 0))
@@ -15933,21 +15958,25 @@ completeBorrowSourcePath(const MirProgram &program,
          sameEntries(left->possibleAlternatives, right->possibleAlternatives);
 }
 
-[[nodiscard]] std::optional<CompleteBorrowSourcePath>
-completeBorrowSourcePath(const MirProgram &program,
-                         const MirFunctionInstance &function,
+struct CompleteBorrowSourceRoot {
+  SemanticType type = SemanticType::Unknown;
+  AccessMode access = AccessMode::ReadOnly;
+  bool physicalCallerStorage = false;
+};
+[[nodiscard]] std::optional<CompleteBorrowSourceRoot>
+completeBorrowSourceRoot(const MirProgram &program, const MirFunctionInstance &function,
                          const BorrowedFieldOrigin &mapping,
-                         const SemanticType *receiverType) {
+                         const SemanticType *receiverType = nullptr) {
   SemanticType type = SemanticType::Unknown;
   bool physicalCallerStorage = false;
-  CompleteBorrowSourcePath source;
+  AccessMode access = AccessMode::ReadOnly;
   if (mapping.origin == BorrowOriginKind::Argument) {
     if (mapping.parameter >= function.parameterTypes.size())
       return std::nullopt;
     type = function.parameterTypes[mapping.parameter];
     if (type.kind == SemanticType::Reference && type.arguments.size() == 1) {
       physicalCallerStorage = true;
-      source.access = type.referenceAccess;
+      access = type.referenceAccess;
       type = SemanticType(type.arguments.front());
     }
   } else if (mapping.origin == BorrowOriginKind::Receiver) {
@@ -15965,7 +15994,7 @@ completeBorrowSourcePath(const MirProgram &program,
       if (!view || view->instance != owner) return std::nullopt;
     }
     physicalCallerStorage = function.receiverMutability != ReceiverMutability::Consuming;
-    source.access = receiverAllowsMutation(function.receiverMutability)
+    access = receiverAllowsMutation(function.receiverMutability)
                         ? AccessMode::Mutable : AccessMode::ReadOnly;
   } else if (mapping.origin == BorrowOriginKind::Global) {
     // Static storage outlives every caller; its program storage place names
@@ -15996,9 +16025,24 @@ completeBorrowSourcePath(const MirProgram &program,
       return std::nullopt;
     type = storage->type;
     physicalCallerStorage = true;
-    source.access = storage->access;
+    access = storage->access;
   } else
     return std::nullopt;
+  return CompleteBorrowSourceRoot{.type = std::move(type), .access = access,
+                                  .physicalCallerStorage = physicalCallerStorage};
+}
+
+[[nodiscard]] std::optional<CompleteBorrowSourcePath>
+completeBorrowSourcePath(const MirProgram &program,
+                         const MirFunctionInstance &function,
+                         const BorrowedFieldOrigin &mapping,
+                         const SemanticType *receiverType) {
+  const auto root = completeBorrowSourceRoot(program, function, mapping, receiverType);
+  if (!root)
+    return std::nullopt;
+  SemanticType type = root->type;
+  const bool physicalCallerStorage = root->physicalCallerStorage;
+  CompleteBorrowSourcePath source{.access = root->access};
   const auto rootRole = type.kind == SemanticType::Reference
       ? mir_detail::MirBorrowPathRoot::PhysicalReference : mir_detail::MirBorrowPathRoot::Value;
   const auto conditions = mir_detail::deriveBorrowPathConditions(
@@ -16194,17 +16238,36 @@ normalizedCompleteReturnBorrow(const MirProgram &program,
     BorrowedFieldOrigin mapping{.resultFields = dependency.designatedFields,
                                 .access = dependency.access,
                                 .resultConditions = dependency.conditions};
+    std::size_t formalPrefix = 0;
     if (source.root == MirPlaceRootKind::This)
       mapping.origin = BorrowOriginKind::Receiver;
     else if (source.root == MirPlaceRootKind::Binding) {
-      const auto formal =
-          std::find(function.parameterBindings.begin(),
-                    function.parameterBindings.end(), source.binding);
-      if (formal == function.parameterBindings.end())
+      const auto inputs = mir_detail::concreteFormalInputs(body, function.parameterTypes,
+                                                           function.parameterBindings);
+      if (!inputs)
+        return std::nullopt;
+      const ConcreteFormalInput *formal = nullptr;
+      for (const auto &input : *inputs) {
+        if (input.binding != source.binding || input.bindingPrefix.size() > source.projections.size())
+          continue;
+        bool matches = true;
+        for (std::size_t index = 0; index < input.bindingPrefix.size(); ++index) {
+          const auto &step = source.projections[index];
+          matches &= step.kind == MirProjectionKind::PackElement &&
+                     step.constantIndex == input.bindingPrefix[index].index &&
+                     !step.field && !step.index && !step.selection;
+        }
+        if (!matches)
+          continue;
+        if (formal)
+          return std::nullopt;
+        formal = &input;
+      }
+      if (!formal)
         return std::nullopt;
       mapping.origin = BorrowOriginKind::Argument;
-      mapping.parameter =
-          std::distance(function.parameterBindings.begin(), formal);
+      mapping.parameter = formal->argument;
+      formalPrefix = formal->bindingPrefix.size();
     } else if (source.root == MirPlaceRootKind::Symbol && source.capture &&
                function.body.kind == MirBodyKind::Lambda) {
       const auto *lambda = program.findLambda(function.id);
@@ -16227,29 +16290,61 @@ normalizedCompleteReturnBorrow(const MirProgram &program,
       mapping.globalRoot = source.symbol;
     } else
       return std::nullopt;
+    const auto root = completeBorrowSourceRoot(program, function, mapping);
+    if (!root)
+      return std::nullopt;
+    const auto role = root->type.kind == SemanticType::Reference
+        ? mir_detail::MirBorrowPathRoot::PhysicalReference : mir_detail::MirBorrowPathRoot::Value;
+    const auto currentPath = [&]() -> std::optional<mir_detail::MirBorrowPathView> {
+      const auto guards = mir_detail::deriveBorrowPathConditions(
+          program, root->type, root->access, mapping.sourceFields, role);
+      return guards ? mir_detail::walkBorrowPath(program, root->type, root->access,
+          mapping.sourceFields, *guards, role) : std::nullopt;
+    };
     std::size_t payloadIndex = 0;
-    for (std::size_t index = 0; index <= source.projections.size(); ++index) {
+    for (std::size_t index = formalPrefix; index <= source.projections.size(); ++index) {
+      if (payloadIndex < source.payloadSelections.size() &&
+          source.payloadSelections[payloadIndex].projectionOffset < index)
+        return std::nullopt;
       while (payloadIndex < source.payloadSelections.size() &&
              source.payloadSelections[payloadIndex].projectionOffset == index) {
         const auto &selection = source.payloadSelections[payloadIndex++];
+        const auto prefix = currentPath();
         const auto view = mirEnumLifetimeView(program, selection.type);
-        if (!view || !view->payload || selection.variant >= view->payload->variants.size())
+        if (!prefix || prefix->type != selection.type || !view || !view->payload ||
+            selection.variant >= view->payload->variants.size())
           return std::nullopt;
         const auto &variant = view->payload->variants[selection.variant];
-        if (selection.field >= variant.payloadSymbols.size() ||
-            selection.field >= variant.payloadTypes.size())
+        if (selection.field >= variant.payloadSymbols.size() || selection.field >= variant.payloadTypes.size())
           return std::nullopt;
         const auto type = view->instantiate(variant.payloadTypes[selection.field]);
         if (!type || type->kind == SemanticType::Reference)
           return std::nullopt;
         mapping.sourceFields.push_back(fieldProjection(variant.payloadSymbols[selection.field]));
+        if (!currentPath())
+          return std::nullopt;
       }
       if (index == source.projections.size())
         break;
       const auto &projection = source.projections[index];
+      if (projection.kind == MirProjectionKind::Dereference)
+        continue; // Canonical reference-root redirection may omit this physical step.
+      const auto prefix = currentPath();
+      if (!prefix)
+        return std::nullopt;
       if (projection.kind == MirProjectionKind::Field)
         mapping.sourceFields.push_back(fieldProjection(projection.field));
-      else if (projection.kind != MirProjectionKind::Dereference)
+      else if (projection.kind == MirProjectionKind::Base && projection.constantIndex &&
+               prefix->type.kind == SemanticType::Class)
+        mapping.sourceFields.push_back(baseProjection(prefix->type.classId, *projection.constantIndex));
+      else if ((projection.kind == MirProjectionKind::Index || projection.kind == MirProjectionKind::PackElement) &&
+               projection.constantIndex)
+        mapping.sourceFields.push_back(constantIndexProjection(*projection.constantIndex));
+      else
+        return std::nullopt;
+      const auto next = currentPath();
+      if (!next || next->projections.size() <= prefix->projections.size() ||
+          next->projections[prefix->projections.size()] != projection)
         return std::nullopt;
     }
     if (payloadIndex != source.payloadSelections.size())
@@ -16753,8 +16848,8 @@ private:
         const auto *carrier = body.findPlace(operand.place);
         const auto entry =
             carrier && carrier->root == MirPlaceRootKind::Binding
-                ? completeBorrowParameterEntryFact(program, body, constructor.id,
-                                                   carrier->binding)
+                ? completeBorrowParameterEntryFactForPlace(program, body, constructor.id,
+                                                           *carrier)
                 : std::nullopt;
         if (!entry || !entry->group || entry->carrier != operand.place ||
             (operand.kind != MirOperandKind::Move &&
@@ -17089,8 +17184,8 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
           const auto entry =
               entrySource && (entrySource->root == MirPlaceRootKind::Binding ||
                               entrySource->root == MirPlaceRootKind::This)
-                  ? completeBorrowParameterEntryFact(program, body, owner,
-                                                     entrySource->binding)
+                  ? completeBorrowParameterEntryFactForPlace(program, body, owner,
+                                                             *entrySource)
                   : std::nullopt;
           const auto parent = expected.parent == transferredGroup->id
                                   ? MirLoanId{0}
@@ -17338,8 +17433,8 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
     if (loan.entry) {
       const auto entry = source && (source->root == MirPlaceRootKind::Binding ||
                                     source->root == MirPlaceRootKind::This)
-                             ? completeBorrowParameterEntryFact(
-                                   program, body, owner, source->binding)
+                             ? completeBorrowParameterEntryFactForPlace(
+                                   program, body, owner, *source)
                              : std::nullopt;
       valid = entry && entry->group == loan.id;
       if (valid)
@@ -17987,37 +18082,9 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
         std::find(loan.carriers.begin(), loan.carriers.end(),
                   source->binding) != loan.carriers.end() &&
         parameters && parameterTypes) {
-      for (std::size_t index = 0;
-           index < parameters->size() && index < parameterTypes->size();
-           ++index) {
-        if ((*parameters)[index] != source->binding)
-          continue;
-        const auto &formal = (*parameterTypes)[index];
-        if (source->projections.empty()) {
-          ownedEntry = ownedEntry || formal == source->type;
-        } else if (source->projections.size() == 1 &&
-                   source->projections.front().kind ==
-                       MirProjectionKind::PackElement &&
-                   source->projections.front().constantIndex &&
-                   index + 1 == parameters->size()) {
-          const auto element = *source->projections.front().constantIndex;
-          const auto pack = std::find_if(
-              body.places.begin(), body.places.end(), [&](const auto &place) {
-                return place.root == MirPlaceRootKind::Binding &&
-                       place.binding == source->binding &&
-                       place.projections.empty() &&
-                       place.type.kind == SemanticType::TypePack &&
-                       place.type.concretePack;
-              });
-          const std::vector<SemanticType> remaining(
-              parameterTypes->begin() + index, parameterTypes->end());
-          ownedEntry =
-              ownedEntry || (pack != body.places.end() &&
-                             element < pack->type.arguments.size() &&
-                             pack->type.arguments[element] == source->type &&
-                             exactParameterRoles({pack->type}, remaining));
-        }
-      }
+      if (const auto inputs = mir_detail::concreteFormalInputs(body, *parameterTypes, *parameters))
+        ownedEntry = std::any_of(inputs->begin(), inputs->end(),
+            [&](const auto &input) { return mir_detail::formalInputPlace(*source, input); });
     }
     const SemanticType carrierType = ownedEntry ? source->type
                                      : producer
@@ -19458,136 +19525,84 @@ verifyMirProgramContracts(const MirProgram &program) {
              .owner = owner,
              .message = "source formal bindings do not match its parameter "
                         "roles"});
-      for (const HirBindingId binding : *parameters) {
-        const auto pack = std::find_if(
-            body.places.begin(), body.places.end(), [&](const MirPlace &place) {
-              return place.root == MirPlaceRootKind::Binding &&
-                     place.binding == binding && place.projections.empty() &&
-                     place.type.kind == SemanticType::TypePack &&
-                     place.type.concretePack;
-            });
-        if (pack == body.places.end())
-          continue;
-        // The element a return-origin contract names seeds its own Parameter
-        // entry loan, exactly as a whole read-only reference formal does.
-        std::optional<std::size_t> summarizedElement;
-        {
-          std::optional<mir_detail::MirReturnOriginFormal> formal;
-          if (const auto *function = program.findFunctionInstance(owner);
-              body.kind == MirBodyKind::Function && function != nullptr &&
-              function->returnBorrowOrigin == BorrowOriginKind::Argument)
-            formal = mir_detail::returnOriginFormal(
-                function->parameterTypes, function->parameterBindings,
-                function->returnBorrowParameter);
-          else if (const auto *lambda = program.findLambda(owner);
-                   body.kind == MirBodyKind::Lambda && lambda != nullptr &&
-                   lambda->returnBorrowOrigin == BorrowOriginKind::Argument)
-            formal = mir_detail::returnOriginFormal(
-                lambda->parameterTypes, lambda->parameterBindings,
-                lambda->returnBorrowParameter);
-          if (formal && formal->binding == binding)
-            summarizedElement = formal->elementWithinBinding;
-        }
-        std::size_t previousOrder = 0;
-        for (std::size_t element = 0; element < pack->type.arguments.size();
-             ++element) {
-          const SemanticType &type = pack->type.arguments[element];
-          const bool summarizedOrigin =
-              summarizedElement == element &&
-              type.kind == SemanticType::Reference &&
-              type.referenceAccess == AccessMode::ReadOnly;
-          const bool mutableReference =
-              type.kind == SemanticType::Reference &&
-              type.referenceAccess == AccessMode::Mutable;
-          // An opaque checked reference carries its hidden owners even when
-          // read-only. Preserve the exact semantic per-element entry witness.
-          const bool erasedReference =
-              type.kind == SemanticType::Reference &&
-              type.arguments.size() == 1 &&
-              exactMirCapabilityClass(program, type.arguments.front(),
-                                      CompilerCapabilityTypeKind::ErasedObject);
-          const auto storedPaths = findStoredCarrierReferences(program, type);
-          const bool storedCarrier =
-              type.kind == SemanticType::Class && !storedPaths.empty();
-          std::size_t entryLoans = 0;
-          for (const MirLoan &loan : body.loans) {
-            const MirPlace *source = body.findPlace(loan.source);
-            if (!loan.entry || source == nullptr ||
-                source->root != MirPlaceRootKind::Binding ||
-                source->binding != binding || source->projections.size() != 1 ||
-                source->projections.front().kind !=
-                    MirProjectionKind::PackElement ||
-                source->projections.front().constantIndex != element)
+      const auto inputs = parameterTypes
+          ? mir_detail::concreteFormalInputs(body, *parameterTypes, *parameters) : std::nullopt;
+      if (!inputs)
+        result.errors.push_back({.bodyKind = body.kind, .owner = owner,
+            .message = "source formals have no exact grouped-to-flat parameter inventory"});
+      if (inputs)
+        for (const HirBindingId binding : concretePackBindings) {
+          std::size_t previousOrder = 0;
+          for (const auto &input : *inputs) {
+            if (input.binding != binding)
               continue;
-            ++entryLoans;
-            const bool exactAccess =
-                ((mutableReference || erasedReference || summarizedOrigin) &&
-                 loan.kind == MirLoanKind::Parameter &&
-                 loan.access == type.referenceAccess) ||
-                (storedCarrier && loan.kind == MirLoanKind::Stored &&
-                 loan.access == storedPaths.front().reference.referenceAccess);
-            if (!exactAccess || (loan.semanticLoan == 0 && !summarizedOrigin) ||
-                loan.escapes || loan.parent != 0 ||
-                loan.carriers != std::vector<HirBindingId>{binding} ||
-                source->type != type || !source->initiallyAvailable) {
-              result.errors.push_back(
-                  {.bodyKind = body.kind,
-                   .owner = owner,
-                   .message =
-                       "borrowed pack element has invalid entry capability"});
+            const auto &type = input.type;
+            const bool reference = type.kind == SemanticType::Reference && type.arguments.size() == 1;
+            const auto &carrier = reference ? type.arguments.front() : type;
+            const auto inventory = findStoredCarrierReferenceInventory(program, carrier);
+            const bool text = carrier.kind == SemanticType::StringView || carrier.kind == SemanticType::CString;
+            const bool stored = text || (inventory && !inventory->empty());
+            const MirLoan *shell = nullptr;
+            const MirLoan *external = nullptr;
+            bool duplicate = false;
+            for (const auto &loan : body.loans) {
+              const auto *source = body.findPlace(loan.source);
+              if (!loan.entry || !source || !mir_detail::formalInputPlace(*source, input))
+                continue;
+              const bool physical = loan.kind == MirLoanKind::Parameter && reference;
+              const bool contents = loan.kind == MirLoanKind::Stored && stored;
+              const auto expectedAccess = physical ? type.referenceAccess
+                  : text ? AccessMode::ReadOnly
+                  : stored && inventory && !inventory->empty()
+                      ? inventory->front().reference.referenceAccess : AccessMode::ReadOnly;
+              auto *&slot = physical ? shell : external;
+              duplicate |= slot != nullptr;
+              slot = &loan;
+              if ((!physical && !contents) || loan.access != expectedAccess ||
+                  loan.semanticLoan == 0 || loan.escapes || loan.parent != 0 ||
+                  !source->initiallyAvailable ||
+                  loan.carriers != (contents && reference ? std::vector<HirBindingId>{}
+                                                          : std::vector<HirBindingId>{binding}))
+                result.errors.push_back({.bodyKind = body.kind, .owner = owner,
+                    .message = "borrowed pack leaf has invalid physical or external entry capability"});
             }
-          }
-          if (entryLoans != (mutableReference || erasedReference ||
-                                     storedCarrier || summarizedOrigin
-                                 ? 1u
-                                 : 0u)) {
-            result.errors.push_back(
-                {.bodyKind = body.kind,
-                 .owner = owner,
-                 .message = "concrete pack parameter lacks exact per-element "
-                            "entry loans"});
-          }
-          const auto traits = concreteMirTypeTraits(program, type);
-          if (!traits) {
-            result.errors.push_back(
-                {.bodyKind = body.kind,
-                 .owner = owner,
-                 .message =
-                     "concrete pack parameter lacks exact element traits"});
-            continue;
-          }
-          std::size_t count = 0;
-          for (const MirDropObligation &drop : body.dropObligations) {
-            if (drop.kind != MirDropObligationKind::Binding ||
-                drop.binding != binding)
+            if (duplicate || bool(shell) != reference || bool(external) != stored ||
+                (shell && shell->storedDependency != (external ? external->id : 0)))
+              result.errors.push_back({.bodyKind = body.kind, .owner = owner,
+                  .message = "concrete pack leaf lacks its exact separate shell and external entry set"});
+            const auto traits = concreteMirTypeTraits(program, type);
+            if (!traits) {
+              result.errors.push_back({.bodyKind = body.kind, .owner = owner,
+                  .message = "concrete pack leaf lacks exact traits"});
               continue;
-            const MirPlace *place = body.findPlace(drop.place);
-            if (place == nullptr || place->projections.size() != 1 ||
-                place->projections.front().kind !=
-                    MirProjectionKind::PackElement ||
-                place->projections.front().constantIndex != element)
-              continue;
-            ++count;
-            if (!drop.initiallyActive || !place->initiallyAvailable ||
-                drop.dropType.type != type ||
-                drop.constructionOrder <= previousOrder) {
-              result.errors.push_back(
-                  {.bodyKind = body.kind,
-                   .owner = owner,
-                   .message = "owning pack element has invalid entry lifetime "
-                              "or cleanup order"});
             }
-            previousOrder = drop.constructionOrder;
+            std::size_t drops = 0;
+            for (const auto &drop : body.dropObligations) {
+              const auto *place = body.findPlace(drop.place);
+              if (drop.kind != MirDropObligationKind::Binding || drop.binding != binding ||
+                  !place || !mir_detail::formalInputPlace(*place, input))
+                continue;
+              ++drops;
+              if (!drop.initiallyActive || !place->initiallyAvailable ||
+                  drop.dropType.type != type || drop.constructionOrder <= previousOrder)
+                result.errors.push_back({.bodyKind = body.kind, .owner = owner,
+                    .message = "owning pack leaf has invalid entry lifetime or cleanup order"});
+              previousOrder = drop.constructionOrder;
+            }
+            if (drops != (traits->drop == DropKind::Lexical ? 1u : 0u))
+              result.errors.push_back({.bodyKind = body.kind, .owner = owner,
+                  .message = "concrete pack leaf lacks exact cleanup coverage"});
           }
-          if (count != (traits->drop == DropKind::Lexical ? 1u : 0u)) {
-            result.errors.push_back(
-                {.bodyKind = body.kind,
-                 .owner = owner,
-                 .message = "concrete pack parameter lacks exact per-element "
-                            "cleanup coverage"});
+          for (const auto &loan : body.loans) {
+            const auto *place = body.findPlace(loan.source);
+            if (!loan.entry || !place || place->root != MirPlaceRootKind::Binding || place->binding != binding)
+              continue;
+            if (std::none_of(inputs->begin(), inputs->end(),
+                  [&](const auto &input) { return mir_detail::formalInputPlace(*place, input); }))
+              result.errors.push_back({.bodyKind = body.kind, .owner = owner,
+                  .message = "pack entry names no exact concrete formal leaf"});
           }
         }
-      }
     }
     for (const MirPlace &place : body.places) {
       const bool resolvedPackElement =
@@ -22244,78 +22259,65 @@ verifyMirProgramContracts(const MirProgram &program) {
               const auto *address = input && input->operands.size() == 1
                                         ? &input->operands.front()
                                         : nullptr;
-              const auto *place =
-                  address ? instance.body.findPlace(address->place) : nullptr;
-              const auto formal =
-                  place ? std::find(instance.parameterBindings.begin(),
-                                    instance.parameterBindings.end(),
-                                    place->binding)
-                        : instance.parameterBindings.end();
-              const auto ordinal = static_cast<std::size_t>(
-                  formal - instance.parameterBindings.begin());
-              const auto *source = ordinal < instance.parameterTypes.size()
-                                       ? &instance.parameterTypes[ordinal]
-                                       : nullptr;
-              const auto *loan =
-                  address && address->kind == MirOperandKind::Loan
-                      ? instance.body.findLoan(address->loan)
-                      : nullptr;
-              const auto *entryPlace =
-                  loan ? instance.body.findPlace(loan->source) : nullptr;
-              const bool exactEntryLoan =
-                  loan && loan->kind == MirLoanKind::Parameter && loan->entry &&
-                  loan->parent == 0 && loan->additionalDependencies.empty() &&
-                  loan->designatedFields.empty() && loan->conditions.empty() &&
-                  entryPlace && place && source &&
-                  entryPlace->root == MirPlaceRootKind::Binding &&
-                  entryPlace->binding == place->binding &&
-                  entryPlace->projections.empty() &&
-                  entryPlace->initiallyAvailable &&
-                  entryPlace->type == *source &&
+              const auto *loan = address && address->kind == MirOperandKind::Loan
+                  ? instance.body.findLoan(address->loan) : nullptr;
+              const auto *place = address ? instance.body.findPlace(address->place) : nullptr;
+              if (!place && loan)
+                place = instance.body.findPlace(loan->source);
+              const auto inputs = mir_detail::concreteFormalInputs(instance.body,
+                  instance.parameterTypes, instance.parameterBindings);
+              const ConcreteFormalInput *formal = nullptr;
+              if (inputs && place)
+                for (const auto &candidate : *inputs) {
+                  if (candidate.type.kind != SemanticType::Reference || candidate.type.arguments.size() != 1 ||
+                      place->root != MirPlaceRootKind::Binding || place->binding != candidate.binding)
+                    continue;
+                  bool exact = mir_detail::formalInputPlace(*place, candidate);
+                  if (!exact && place->projections.size() == candidate.bindingPrefix.size() + 1 &&
+                      place->projections.back().kind == MirProjectionKind::Dereference &&
+                      place->type == candidate.type.arguments.front()) {
+                    auto shell = *place;
+                    shell.projections.pop_back();
+                    shell.type = candidate.type;
+                    exact = mir_detail::formalInputPlace(shell, candidate);
+                  }
+                  if (!exact)
+                    continue;
+                  if (formal) { formal = nullptr; break; }
+                  formal = &candidate;
+                }
+              const auto *source = formal ? &formal->type : nullptr;
+              const auto *entryPlace = loan ? instance.body.findPlace(loan->source) : nullptr;
+              const bool exactEntryLoan = loan && formal && entryPlace &&
+                  loan->kind == MirLoanKind::Parameter && loan->entry && !loan->parent &&
+                  loan->additionalDependencies.empty() && loan->designatedFields.empty() && loan->conditions.empty() &&
+                  mir_detail::formalInputPlace(*entryPlace, *formal) && entryPlace->initiallyAvailable &&
                   loan->access == source->referenceAccess &&
-                  std::find(loan->carriers.begin(), loan->carriers.end(),
-                            place->binding) != loan->carriers.end() &&
-                  (parameter->referenceAccess == AccessMode::ReadOnly ||
-                   loan->access == AccessMode::Mutable);
-              exactArguments =
-                  input && input->kind == MirInstructionKind::CallInput &&
-                  input->callSite == 0 &&
-                  input->constructorInitializer ==
-                      instruction.constructorInitializer &&
-                  input->callInputRole == MirCallInputRole::Argument &&
-                  input->callInputIndex == index &&
-                  input->hirValue == initializer.arguments[index] &&
-                  input->info.type == *parameter && input->lifecycle.empty() &&
-                  !input->preparedParameterDrop && place &&
-                  place->root == MirPlaceRootKind::Binding &&
-                  formal != instance.parameterBindings.end() &&
-                  place->sourceValue == initializer.arguments[index] &&
-                  place->projections.size() == 1 &&
-                  place->projections.front() ==
-                      MirPlaceProjection{.kind =
-                                             MirProjectionKind::Dereference} &&
+                  std::find(loan->carriers.begin(), loan->carriers.end(), formal->binding) != loan->carriers.end() &&
+                  (parameter->referenceAccess == AccessMode::ReadOnly || loan->access == AccessMode::Mutable);
+              exactArguments = input && input->kind == MirInstructionKind::CallInput &&
+                  input->callSite == 0 && input->constructorInitializer == instruction.constructorInitializer &&
+                  input->callInputRole == MirCallInputRole::Argument && input->callInputIndex == index &&
+                  input->hirValue == initializer.arguments[index] && input->info.type == *parameter &&
+                  input->lifecycle.empty() && !input->preparedParameterDrop && place && formal &&
+                  (place->sourceValue == initializer.arguments[index] ||
+                   mir_detail::formalInputPlace(*place, *formal)) &&
                   parameter->arguments.size() == 1 &&
-                  forwardableBaseReferent(program,
-                                          parameter->arguments.front()) &&
-                  place->type == parameter->arguments.front() && source &&
-                  source->kind == SemanticType::Reference &&
-                  source->arguments == parameter->arguments &&
-                  operand.type == *parameter &&
-                  operand.type == instruction.parameterTypes[index] &&
+                  forwardableBaseReferent(program, parameter->arguments.front()) &&
+                  mirBorrowedPlaceMatches(program, instance.body, place, parameter->arguments.front(),
+                                          parameter->referenceAccess, true) &&
+                  source && sameLifetimeConversionShape(source->arguments.front(), parameter->arguments.front()) &&
+                  operand.type == *parameter && operand.type == instruction.parameterTypes[index] &&
                   address && address->type == *parameter &&
-                  (source->referenceAccess == AccessMode::Mutable
-                       ? exactEntryLoan
-                       : (exactEntryLoan || !address->loan)) &&
+                  (source->referenceAccess == AccessMode::Mutable ? exactEntryLoan
+                                                               : (exactEntryLoan || !address->loan)) &&
                   ((parameter->referenceAccess == AccessMode::ReadOnly &&
                     input->callInputKind == HirCallInputKind::ReadBorrow &&
-                    (address->kind == MirOperandKind::BorrowRead ||
-                     exactEntryLoan)) ||
+                    (address->kind == MirOperandKind::BorrowRead || exactEntryLoan)) ||
                    (parameter->referenceAccess == AccessMode::Mutable &&
                     input->callInputKind == HirCallInputKind::MutableBorrow &&
-                    (address->kind == MirOperandKind::BorrowWrite ||
-                     exactEntryLoan) &&
-                    source->referenceAccess == AccessMode::Mutable &&
-                    place->access == AccessMode::Mutable));
+                    (address->kind == MirOperandKind::BorrowWrite || exactEntryLoan) &&
+                    source->referenceAccess == AccessMode::Mutable));
               continue;
             }
             const MirValue *value = operand.kind == MirOperandKind::Value

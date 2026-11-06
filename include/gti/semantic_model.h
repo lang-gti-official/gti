@@ -1554,6 +1554,8 @@ struct ResolvedConstructorInitializerInfo {
   ConstructorId constructor = 0;
   const ConstructorDecl *declaration = nullptr;
   std::vector<SemanticType> parameterTypes;
+  std::vector<SemanticType> typeArguments;
+  std::vector<CompileTimeValue> valueArguments;
   std::vector<Lifetime> lifetimeArguments;
   SemanticLifetimeApplication lifetimeApplication;
   // Complete borrowed-state producer evidence captured at initializer

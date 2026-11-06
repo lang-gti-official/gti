@@ -677,15 +677,28 @@ before argument effects are retired. MIR reconstructs it from the selected
 constructor summary, checked lifetime application and staged operands, then
 matches the exact destination, sources, parents, permissions and guards. An
 absent set is never a known-empty result. Rollback and cleanup remain separate
-mandatory proofs. Borrowed-base source admission stays gated while this wider
-constructor family completes validation; the one state-bearing base rule is
-unchanged.
+mandatory proofs. Borrowed-base source admission uses these structural records;
+the mandatory program and native gates continue to reject incomplete proof. The
+one state-bearing base rule is unchanged.
 
 Reference and alternative inventories use one bounded work budget per query
 (4096 structural/leaf or emitted-alternative steps, depth 256). Arrays and
 concrete packs consume the same budget across all elements; exhaustion returns
 unknown rather than truncating a complete inventory. Equal element types still
 have distinct constant-index paths.
+
+Concrete formal inputs are derived from the grouped binding tree and the
+flattened callable signature. Each lane retains its exact flat ordinal, binding,
+full constant-index prefix and leaf type; repeated equal types cannot identify a
+lane. The same bounded derivation serves semantic entry publication, HIR and MIR
+queries. Only concrete packs expand; a reference to a pack remains one reference
+input. Reference leaves keep their physical parameter loan separate from any
+stored external-reference group. MIR checks both entries and their exact link,
+including copied or forwarded carrier lanes. Written base-initializer pack
+expansions produce prepared lanes in that same order, before trailing defaults;
+selected constructor type/value arguments and lifetime applications remain exact.
+The nontrivial owning-input lifecycle policy is checked independently of this
+structural expansion.
 
 Body lowering runs `verifyMirBodyStructure`, a provisional structural check.
 Only the unconditional final `verifyMirProgram` runs the complete body loan,

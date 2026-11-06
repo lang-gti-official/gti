@@ -631,6 +631,22 @@ constructor name and its optional trailing requirements before an initializer
 list. Semantics owns their nested scope, exact inference, constraint
 validation, and whether a constructor value parameter is inferable from one
 fixed-array context.
+Ordinary construction and direct-base initialization share constructor candidate
+selection, including generic inference, lifetime application, constraints and
+conversion ranking. Forwarded concrete packs contribute exact flattened input
+lanes to a fixed-arity target. Selected base records retain constructor type,
+value and lifetime arguments; omitted defaults and program effects use the same
+flattened count. Plain defaults remain checked in their declaration scope, and
+S2077 continues to require borrowed boundaries explicitly. A checked base
+producer can be normalized back to the enclosing constructor's exact formal
+binding paths without repeating declaration-only overload selection.
+
+Semantic, HIR and MIR formal inventories derive flat argument ordinals from
+grouped parameter bindings through one bounded structural helper. Only concrete
+pack nodes expand; a reference to a pack remains one reference. Repeated element
+types retain distinct constant-index paths. The inventory proves correspondence
+only: active entry loans, permitted access, argument exclusivity and complete
+result dependencies remain separate checks.
 
 `FunctionDecl` also retains one receiver mode. Non-static members are read-only
 by default, use trailing `mut` for mutable access, or trailing `&&` for owned

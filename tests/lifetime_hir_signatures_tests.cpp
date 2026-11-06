@@ -14,6 +14,66 @@ void expect(bool condition, const char *message) {
     std::exit(1);
   }
 }
+void selectedBaseInputs() {
+  const auto result = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "selected-base-input-lanes.gti", R"gti(
+struct SumBase {
+  int value;
+  SumBase(int first, int second) : value(first * 10 + second) {}
+};
+struct SumDerived<Args...> : public SumBase {
+  SumDerived(Args... values) : SumBase(values...) {}
+};
+struct RegionBase<lifetime a> {
+  int&<a> value;
+  int marker;
+  RegionBase<lifetime input>(int&<input> source, int selected = 7)
+      requires outlives<input, a> : value(source), marker(selected) {}
+};
+struct RegionDerived<lifetime a> : public RegionBase<a> {
+  RegionDerived(int&<a> source) : RegionBase<a>(source) {}
+};
+int main() {
+  int number = 5;
+  SumDerived<int, int> sum{3, 8};
+  RegionDerived view{number};
+  return sum.value + view.value + view.marker - 50;
+}
+)gti");
+  if (!result.semanticValid || !result.mir.valid()) {
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    for (const auto &error : verifyMirProgram(result.mir).errors)
+      std::cerr << error.message << '\n';
+    expect(false, "selected Base constructors retain exact pack lanes, lifetime binders and defaults through MIR");
+  }
+  bool checked = false;
+  for (const auto &constructor : result.hir.constructorInstances()) {
+    if (!constructor.source || constructor.source->name().lexeme != "SumDerived")
+      continue;
+    expect(constructor.initializers.size() == 1 && constructor.initializers.front().arguments.size() == 2 &&
+               constructor.initializers.front().explicitArgumentCount == 2,
+           "a written pack expansion maps to two exact explicit Base inputs");
+    for (std::size_t index = 0; index < 2; ++index) {
+      const auto *value = constructor.body.findValue(constructor.initializers.front().arguments[index]);
+      expect(value && value->kind == HirValueKind::PackElement && value->packElement == index,
+             "Base input order is the exact selected source pack projection");
+    }
+    auto forged = result.mir;
+    auto *instance = const_cast<MirConstructorInstance *>(forged.findConstructorInstance(constructor.id));
+    bool mutated = false;
+    for (auto &block : instance->body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::InitializeBase && instruction.operands.size() == 2) {
+          std::swap(instruction.operands[0], instruction.operands[1]);
+          mutated = true;
+        }
+    expect(mutated && !verifyMirProgram(forged).valid(),
+           "source-free Base proof rejects swapping equal-typed selected input lanes");
+    checked = true;
+  }
+  expect(checked, "fixed-arity Base pack fixture must instantiate its selected owner");
+}
 void constructionLifetimeContexts() {
   const auto result = Frontend({.stopAfter = FrontendPhase::Hir})
       .analyze("lifetime-hir-construction-contexts.gti", R"gti(
@@ -225,6 +285,7 @@ int main() {
   projectedOnlyCallableOwners();
   nativeInvocationContexts();
   constructionLifetimeContexts();
+  selectedBaseInputs();
   const auto result = Frontend({.stopAfter = FrontendPhase::Hir})
                           .analyze("lifetime-hir-signatures.gti", R"gti(
 T&<a> identity<lifetime a, T>(T&<a> value) { return value; }

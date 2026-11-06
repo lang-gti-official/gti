@@ -1,5 +1,6 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/borrow_conditions.h"
+#include "gti/concrete_formals.h"
 #include "gti/lifetime_types.h"
 
 #include <stdexcept>
@@ -5512,42 +5513,23 @@ auto SemanticVisitor::Impl::formalBorrowInputs(
     std::span<const Parameter> parameters,
     std::span<const SemanticType> signature) const
     -> std::optional<std::vector<FormalBorrowInput>> {
-  std::vector<SemanticType> flatTypes;
-  for (const auto &type : signature)
-    SemanticType::appendExpandedArgument(flatTypes, type);
-  std::vector<FormalBorrowInput> result;
-  const auto append = [&](auto &&self, SymbolId binding, const SemanticType &type,
-                          BorrowPath prefix) -> bool {
-    if (prefix.size() >= 256)
-      return false;
-    if (type.kind == SemanticType::TypePack) {
-      if (!type.concretePack)
-        return false;
-      for (std::size_t index = 0; index < type.arguments.size(); ++index) {
-        auto element = prefix;
-        element.push_back(constantIndexProjection(index));
-        if (!self(self, binding, type.arguments[index], std::move(element)))
-          return false;
-      }
-      return true;
-    }
-    const auto ordinal = result.size();
-    if (ordinal >= flatTypes.size() || type != flatTypes[ordinal])
-      return false;
-    result.push_back({.argument = ordinal, .binding = binding,
-                      .bindingPrefix = std::move(prefix), .type = type});
-    return true;
-  };
-  std::unordered_set<SymbolId> bindings;
+  std::vector<ConcreteFormalRoot> roots;
   for (const auto &parameter : parameters) {
     const auto *binding = semanticModel.findBinding(parameter);
-    if (!binding || !binding->symbol || !bindings.insert(binding->symbol).second ||
-        (parameter.pack && binding->type.kind != SemanticType::TypePack) ||
-        !append(append, binding->symbol, binding->type, {}))
+    if (!binding || (parameter.pack && binding->type.kind != SemanticType::TypePack))
       return std::nullopt;
+    roots.push_back({.binding = binding->symbol, .type = binding->type});
   }
-  return result.size() == flatTypes.size() ? std::optional(std::move(result))
-                                         : std::nullopt;
+  auto inputs = deriveConcreteFormalInputs(roots, signature);
+  if (!inputs)
+    return std::nullopt;
+  std::vector<FormalBorrowInput> result;
+  result.reserve(inputs->size());
+  for (auto &input : *inputs)
+    result.push_back({.argument = input.argument, .binding = input.binding,
+                      .bindingPrefix = std::move(input.bindingPrefix),
+                      .type = std::move(input.type)});
+  return result;
 }
 
 auto SemanticVisitor::Impl::normalizedCompleteReturnBorrow(
@@ -5567,7 +5549,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
     ReceiverMutability receiverMutability,
     const SemanticBorrowDependencySet &complete,
     std::vector<LifetimeBound> *requiredLifetimes,
-    std::span<const LambdaCaptureInfo> captures)
+    std::span<const LambdaCaptureInfo> captures) const
     -> std::optional<FunctionBorrowDependencySummary> {
   const auto formals = formalBorrowInputs(parameters, function.parameterTypes);
   if (!formals)
@@ -6384,7 +6366,8 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
 
 auto SemanticVisitor::Impl::completeBaseInitializerBorrow(
     const ConstructorInitializer &syntax,
-    const ResolvedConstructorInitializerInfo &selected)
+    const ResolvedConstructorInitializerInfo &selected,
+    std::span<const AnalyzedCallArgument> arguments)
     -> std::optional<SemanticBorrowDependencySet> {
   if (selected.kind != ConstructorInitializerTargetKind::Base ||
       !selected.lifetimeApplication.complete)
@@ -6398,7 +6381,9 @@ auto SemanticVisitor::Impl::completeBaseInitializerBorrow(
                   [](const auto &path) { return !path.conditions.empty(); })) {
     ResolvedConstructionInfo construction{
         .constructor = selected.constructor, .declaration = selected.declaration,
-        .constructedType = type, .lifetimeArguments = selected.lifetimeArguments,
+        .constructedType = type, .typeArguments = selected.typeArguments,
+        .valueArguments = selected.valueArguments,
+        .lifetimeArguments = selected.lifetimeArguments,
         .lifetimeApplication = selected.lifetimeApplication,
         .parameterTypes = selected.parameterTypes,
         .generatedDefault = selected.generatedDefault};
@@ -6430,16 +6415,20 @@ auto SemanticVisitor::Impl::completeBaseInitializerBorrow(
   ResolvedCallInfo publication;
   publication.returnType = type;
   publication.parameterTypes = selected.parameterTypes;
-  std::vector<AnalyzedCallArgument> inputs;
-  for (const auto &argument : syntax.arguments)
-    inputs.push_back({.type = semanticModel.typeOf(*argument), .expression = &argument});
+  // These are the evaluated, flattened lanes that selected the constructor.
+  // Reconstructing from written expressions loses pack element identities and
+  // can read a moved binding after its invocation permission has ended.
+  std::vector<AnalyzedCallArgument> inputs(arguments.begin(), arguments.end());
   if (selected.declaration)
     for (std::size_t index = inputs.size(); index < selected.declaration->parameters().size(); ++index) {
       const auto &parameter = selected.declaration->parameters()[index];
       if (!parameter.defaultArgument)
         break;
       const auto *expression = &parameter.defaultArgument->expression;
-      inputs.push_back({.type = semanticModel.typeOf(**expression), .expression = expression});
+      const auto observed = semanticModel.typeOf(**expression);
+      if (observed == SemanticType::Unknown)
+        return std::nullopt;
+      inputs.push_back({.type = observed, .expression = expression});
     }
   return instantiateCompleteBorrowArguments(publication, *summary, inputs);
 }
@@ -7145,6 +7134,113 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
           return index;
       return std::nullopt;
     };
+    // A checked initializer is stronger evidence than a declaration scan:
+    // its complete producer set already identifies the selected overload,
+    // flattened lanes and live input loans at the evaluation point. Normalize
+    // that exact set back to this constructor's formals; never re-select a
+    // different declaration because its spelling looks easier to summarize.
+    const auto selectedBaseBindings = [&](const ConstructorInitializer &syntax,
+                                           const SemanticType &expected)
+        -> std::optional<ArgumentBindings> {
+      const auto *selected = semanticModel.findConstructorInitializer(syntax);
+      if (!selected)
+        return std::nullopt;
+      if (selected->kind != ConstructorInitializerTargetKind::Base ||
+          selected->targetType != expected ||
+          !selected->lifetimeApplication.complete || !selected->completeBorrow)
+        return ArgumentBindings{};
+      const auto *record = semanticModel.findConstructor(*constructor);
+      if (!record)
+        return ArgumentBindings{};
+      FunctionInfo publication;
+      publication.returnType = expected;
+      publication.parameterTypes.assign(parameterTypes.begin(), parameterTypes.end());
+      publication.lifetimeContract = record->lifetimeContract;
+      const auto summary = normalizedCompleteBorrow(
+          publication, constructor->parameters(), ReceiverMutability::Consuming,
+          *selected->completeBorrow);
+      if (!summary)
+        return ArgumentBindings{};
+      const auto destinationPaths = storedReferencePaths(expected);
+      std::vector<SemanticType> flatParameters;
+      for (const auto &parameter : parameterTypes)
+        SemanticType::appendExpandedArgument(flatParameters, parameter);
+      ArgumentBindings result{.valid = true};
+      for (const auto &dependency : summary->dependencies) {
+        if (dependency.origin != BorrowOriginKind::Argument ||
+            dependency.parameter >= flatParameters.size())
+          return ArgumentBindings{};
+        const auto destination = std::find_if(
+            destinationPaths.begin(), destinationPaths.end(), [&](const auto &path) {
+              const auto conditions = storedBorrowConditions(expected, path.conditions);
+              return storedBorrowPath(expected, path.fields) == dependency.resultFields &&
+                     conditions && *conditions == dependency.resultConditions &&
+                     path.reference.referenceAccess == dependency.access;
+            });
+        if (destination == destinationPaths.end())
+          return ArgumentBindings{};
+        const auto &parameter = flatParameters[dependency.parameter];
+        std::vector<StoredField> sourceFields;
+        if (parameter.kind != SemanticType::Reference || !dependency.sourceFields.empty()) {
+          const auto sources = storedReferencePaths(parameter);
+          const auto source = std::find_if(sources.begin(), sources.end(), [&](const auto &path) {
+            const auto conditions = storedBorrowConditions(parameter, path.conditions);
+            return storedBorrowPath(parameter, path.fields) == dependency.sourceFields &&
+                   conditions && *conditions == dependency.sourceConditions;
+          });
+          if (source == sources.end())
+            return ArgumentBindings{};
+          sourceFields = source->fields;
+        } else if (!dependency.sourceConditions.empty()) {
+          return ArgumentBindings{};
+        }
+        const auto previous = std::find_if(result.bindings.begin(), result.bindings.end(),
+                                           [&](const auto &binding) {
+          return binding.destination.fields == destination->fields;
+        });
+        if (previous != result.bindings.end()) {
+          // This legacy declaration binding form has one source per stored
+          // path. A complete selected producer may have several; it must use
+          // the complete constructor query rather than silently pick one.
+          if (previous->parameter != dependency.parameter ||
+              previous->sourceFields != sourceFields)
+            return ArgumentBindings{};
+        } else {
+          result.bindings.push_back({.destination = *destination,
+                                     .parameter = dependency.parameter,
+                                     .sourceFields = std::move(sourceFields)});
+        }
+      }
+      // Only a condition present in every possible alternative is a known
+      // selected variant. An empty supplier list alone establishes no branch.
+      if (!summary->possibleAlternatives.empty())
+        for (const auto &condition : summary->possibleAlternatives.front().conditions) {
+          if (!std::all_of(summary->possibleAlternatives.begin(),
+                           summary->possibleAlternatives.end(), [&](const auto &alternative) {
+                return std::find(alternative.conditions.begin(), alternative.conditions.end(),
+                                 condition) != alternative.conditions.end();
+              }))
+            continue;
+          bool found = false;
+          for (const auto &path : destinationPaths)
+            for (const auto &candidate : path.conditions)
+              if (storedBorrowPath(expected, candidate.subobject) == condition.subobject &&
+                  candidate.enumeration == condition.enumeration) {
+                auto selectedCondition = candidate;
+                selectedCondition.variant = condition.variant;
+                if (std::none_of(result.selectedVariants.begin(), result.selectedVariants.end(),
+                                 [&](const auto &existing) {
+                      return sameConditionPlace(existing, selectedCondition) &&
+                             existing.variant == selectedCondition.variant;
+                    }))
+                  result.selectedVariants.push_back(std::move(selectedCondition));
+                found = true;
+              }
+          if (!found)
+            return ArgumentBindings{};
+        }
+      return result;
+    };
     const auto constructBindings = [&](const auto &argumentSelf,
                                         const SemanticType &expected,
                                         std::span<const ExprPtr> sourceArguments,
@@ -7375,9 +7471,13 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
         auto entry = std::find_if(fieldBindings.begin(), fieldBindings.end(),
                                   [&](const auto &cached) { return cached.first == head; });
         if (entry == fieldBindings.end()) {
-          auto bindings = head.base
-              ? constructBindings(argumentBindings, fieldType, initializer.arguments, 0)
-              : argumentBindings(argumentBindings, initializer.arguments.front(), fieldType, 0);
+          auto selectedBindings = head.base ? selectedBaseBindings(initializer, fieldType)
+                                            : std::nullopt;
+          auto bindings = selectedBindings
+              ? std::move(*selectedBindings)
+              : head.base
+                    ? constructBindings(argumentBindings, fieldType, initializer.arguments, 0)
+                    : argumentBindings(argumentBindings, initializer.arguments.front(), fieldType, 0);
           fieldBindings.emplace_back(head, std::move(bindings));
           entry = std::prev(fieldBindings.end());
           for (auto condition : entry->second.selectedVariants) {
@@ -10186,9 +10286,44 @@ auto SemanticVisitor::Impl::loanPlace(const Expr *expression)
 }
 
 auto SemanticVisitor::Impl::loanPlacesOverlap(const SemanticLoanPlace &left,
-                                              const SemanticLoanPlace &right)
+                                              const SemanticLoanPlace &right) const
     -> bool {
-  return placesMayOverlap(left, right);
+  if (!placesMayOverlap(left, right))
+    return false;
+  if (left.domain != right.domain || !left.valid() || !right.valid() ||
+      left.receiver != right.receiver || left.root != right.root)
+    return true;
+  const auto hasBase = [](const auto &path) {
+    return std::any_of(path.begin(), path.end(), [](const auto &step) {
+      return step.kind == PlaceProjectionKind::Base;
+    });
+  };
+  if (!hasBase(left.projections) && !hasBase(right.projections))
+    return true;
+  SemanticType root = SemanticType::Unknown;
+  if (left.receiver) {
+    if (!currentClass)
+      return true;
+    root = openClassType(*currentClass);
+  } else {
+    const auto *record = semanticModel.database().findSymbol(left.root);
+    if (!record && instanceBaseModel)
+      record = instanceBaseModel->database().findSymbol(left.root);
+    if (!record)
+      return true;
+    root = substituteType(record->type, currentGenericSubstitution());
+  }
+  return !inlineBorrowPathsDisjoint(root, left.projections, right.projections,
+      [&](const SemanticType &type, const PlaceProjection &step)
+          -> std::optional<SemanticType> {
+        if (type.kind == SemanticType::Class) {
+          const auto *owner = classInfo(type);
+          if (!owner || (owner->kind != ClassKind::Class &&
+                         owner->kind != ClassKind::Struct))
+            return std::nullopt;
+        }
+        return borrowedPathElement(type, step);
+      });
 }
 
 auto SemanticVisitor::Impl::loanIsAncestor(SemanticLoanId ancestor,
@@ -11279,7 +11414,8 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
     std::span<const SemanticType> parameterTypes,
     std::span<const ExprPtr *> arguments, const Token &location,
     std::optional<SemanticLoanPlace> receiver, AccessMode receiverAccess,
-    bool transientReceiver, std::span<const SemanticLoanPlace> receiverOrigins)
+    bool transientReceiver, std::span<const SemanticLoanPlace> receiverOrigins,
+    std::span<const AnalyzedCallArgument> concreteArguments)
     -> void {
   struct CallPlace {
     // These are possible owners of one evaluated reference, not separate
@@ -11317,6 +11453,56 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
     diagnostics.emplace_back(std::move(diagnostic));
   };
   for (std::size_t index = 0; index < count; ++index) {
+    if (index < concreteArguments.size() &&
+        concreteArguments[index].forwardedPackElement) {
+      const auto &argument = concreteArguments[index];
+      const auto &parameter = parameterTypes[index];
+      const bool reference = parameter.kind == SemanticType::Reference;
+      if (!reference && !typeTraits(parameter).containsBorrowedState)
+        continue;
+      const auto *element = entryBorrowElement(argument);
+      if (!element) {
+        report(location, "A forwarded borrowed argument requires its exact active parameter-pack entry.",
+               "GTI-S2017");
+        return;
+      }
+      if (reference) {
+        const auto *loan = semanticModel.findLoan(element->reference);
+        if (!loan && argument.type.kind == SemanticType::Reference) {
+          report(location, "A forwarded reference argument requires an active reference entry loan.",
+                 "GTI-S2017");
+          return;
+        }
+        std::vector<SemanticLoanPlace> origins;
+        if (loan) {
+          origins.push_back(loan->place);
+          for (const auto &dependency : loan->additionalDependencies)
+            appendUniquePlace(origins, dependency.place);
+        } else {
+          // Borrowing a by-value pack lane for this call uses its own storage,
+          // not an invented external reference loan. The exact entry lookup
+          // above established its current availability and typed prefix.
+          const auto *expansion = exprAs<PackExpansion>(argument.expression->get());
+          const auto *carrier = expansion ? resolve(expansion->name()) : nullptr;
+          const auto root = carrier ? symbolForDeclaration(carrier->declaration) : 0;
+          if (!root) {
+            report(location, "A forwarded argument requires an exact parameter-pack binding.",
+                   "GTI-S2017");
+            return;
+          }
+          origins.push_back({.root = root, .projections = element->bindingPrefix});
+        }
+        places.push_back({.origins = std::move(origins),
+                          .access = parameter.referenceAccess, .argument = index});
+      } else {
+        for (const auto &dependency : storedBorrowDependencies(argument))
+          places.push_back({.origins = {dependency.place}, .access = dependency.access,
+                            .argument = index});
+      }
+      // A pack expansion names its already-evaluated entry lanes. It has no
+      // nested operand evaluation to replay once per flattened lane.
+      continue;
+    }
     if (reportCommaTransientConflict(*arguments[index], location)) {
       return;
     }
@@ -11472,6 +11658,9 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
   std::vector<RetainedProduction> productions;
   std::vector<std::pair<std::size_t, SemanticLoanPlace>> reads;
   for (std::size_t index = 0; index < count; ++index) {
+    if (index < concreteArguments.size() &&
+        concreteArguments[index].forwardedPackElement)
+      continue;
     std::vector<SemanticLoanPlace> argumentReads;
     std::vector<TransientBorrowProduction> argumentProductions;
     appendTransientReadPlaces(*arguments[index], argumentReads,

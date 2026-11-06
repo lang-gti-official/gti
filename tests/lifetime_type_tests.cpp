@@ -21,6 +21,62 @@ lang::SemanticType reference(lang::Lifetime region,
   return type;
 }
 
+void testInlineBorrowPathDisjointness() {
+  using namespace lang;
+  const auto root = SemanticType::classType(13, {SemanticType::Int32});
+  const auto base = SemanticType::classType(11);
+  const auto project = [&](const SemanticType &type, const PlaceProjection &step)
+      -> std::optional<SemanticType> {
+    if (type == root) {
+      if (step == baseProjection(13, 1) || step == fieldProjection(114))
+        return base;
+      if (step == fieldProjection(113))
+        return SemanticType::Int32;
+    }
+    if (type == base) {
+      if (step == fieldProjection(111))
+        return SemanticType::Int32;
+      if (step == fieldProjection(112))
+        return reference(Lifetime::parameter(1));
+    }
+    return std::nullopt;
+  };
+  const BorrowPath inherited{baseProjection(13, 1), fieldProjection(111)};
+  const BorrowPath direct{fieldProjection(113)};
+  const auto disjoint = [&](const SemanticType &type, const BorrowPath &left,
+                             const BorrowPath &right) {
+    return inlineBorrowPathsDisjoint(type, left, right, project);
+  };
+  expect(disjoint(root, inherited, direct) && disjoint(root, direct, inherited),
+         "exact inherited and direct inline fields are disjoint in either order");
+  expect(disjoint(SemanticType::referenceTo(root, AccessMode::Mutable), inherited, direct),
+         "a reference root denotes its checked inline referent storage");
+  expect(disjoint(root, inherited, {fieldProjection(114), fieldProjection(111)}),
+         "equal leaf declarations in separate inline subobjects stay distinct");
+  expect(!disjoint(root, inherited, inherited) &&
+             !disjoint(root, inherited, {baseProjection(13, 1)}) &&
+             !disjoint(root, {}, direct),
+         "equal places and ancestor storage remain overlapping");
+  expect(!disjoint(root, {baseProjection(13, 1), fieldProjection(112)}, direct) &&
+             !disjoint(root, inherited, {fieldProjection(114), fieldProjection(112)}),
+         "separate physical fields never prove external reference referents disjoint");
+  for (auto malformed : {BorrowPath{baseProjection(12, 1), fieldProjection(111)},
+                         BorrowPath{baseProjection(13, 0), fieldProjection(111)},
+                         BorrowPath{baseProjection(13, 1), fieldProjection(999)}})
+    expect(!disjoint(root, malformed, direct),
+           "wrong base owner, interface ordinal or undeclared field cannot prove separation");
+  expect(!disjoint(SemanticType::classType(13, {SemanticType::Bool}), inherited, direct),
+         "an unavailable concrete nominal view cannot reuse a different instance");
+  auto indirect = inherited;
+  indirect.push_back({.kind = PlaceProjectionKind::Dereference});
+  expect(!disjoint(root, indirect, direct),
+         "dereferencing an indirect sibling never grants inline disjointness");
+  const auto unavailable = [](const SemanticType &, const PlaceProjection &)
+      -> std::optional<SemanticType> { return std::nullopt; };
+  expect(!inlineBorrowPathsDisjoint(root, inherited, direct, unavailable),
+         "missing inline-layout authority remains conservative");
+}
+
 void testBorrowConditionTransport() {
   using namespace lang;
   const auto a = Lifetime::parameter(501);
@@ -476,6 +532,7 @@ void testNativeInvocationScopes() {
 }
 
 int main() {
+  testInlineBorrowPathDisjointness();
   testBorrowConditionTransport();
   testBorrowAlternativeCoverage();
   testCallablePatternCaptures();

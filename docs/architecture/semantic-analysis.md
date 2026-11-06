@@ -3234,7 +3234,15 @@ arrow access retains the owner/dereference/field key; restoring the field can
 therefore make the whole owner movable again in both semantics and MIR.
 
 A resolved non-static instance field always forms a receiver-rooted `PlaceKey`
-with a field projection, whether the source spells `field` or `this.field`.
+with its exact declaring field projection, whether the source spells `field` or
+`this.field`. Inherited fields retain each `Base` projection's declaring owner
+and full direct-base ordinal, including positions occupied by interfaces.
+The context-free place relation keeps unequal base projections conservative.
+Semantic loan overlap additionally derives inline disjointness from the exact
+root type and validated base/field paths. Every suffix must remain in inline
+storage; a reference field, indirect dereference, enum payload, union, missing
+layout or mismatched owner cannot supply this proof. Independent external
+referents still require their checked origins rather than different field slots.
 Borrow-return validation consumes that resolved identity, so lexical locals and
 parameters that shadow a field remain symbol-rooted and independent. HIR
 canonicalizes the unqualified field value to the same implicit-receiver member

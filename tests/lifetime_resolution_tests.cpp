@@ -156,7 +156,8 @@ lang::FrontendResult analyze(std::string_view source) {
 void expectValid(const lang::FrontendResult &result, std::string_view message) {
   if (!result.semanticValid)
     for (const auto &diagnostic : result.diagnostics)
-      std::cerr << diagnostic.code << " at line " << diagnostic.primary.line
+      std::cerr << diagnostic.code << " at " << diagnostic.primary.source
+                << ':' << diagnostic.primary.line
                 << ": " << diagnostic.message << '\n';
   expect(result.semanticValid, message);
 }
@@ -1792,7 +1793,7 @@ int main() {
   int value = 7;
   Reading first = relay.invoke(Reading::present(value));
   Reading<static> empty = relay.invoke(Reading<static>::missing(0));
-  switch (first) { case Reading::present(auto& selected): { return selected - 7; } case Reading::missing(auto code): { return 1; } }
+  switch (first) { case Reading::present(auto& selected): { return selected - 7; } case Reading::missing(auto& code): { return 1; } }
 }
 )");
   expectValid(conditional, "forwarded carrier packs preserve complete guarded and empty alternatives");
@@ -1815,6 +1816,120 @@ int main() { twice(Owned()); return 0; }
          "entry projection cannot revive a pack consumed by an earlier forwarding call");
 }
 
+void testSelectedBaseConstructorInputs() {
+  const std::string declarations = R"(
+struct RegionBase<lifetime a> {
+  int&<a> value;
+  int marker;
+  RegionBase<lifetime input>(int&<input> source, int selected = 7)
+      requires outlives<input, a> : value(source), marker(selected) {}
+};
+struct RegionDerived<lifetime a> : public RegionBase<a> {
+  RegionDerived(int&<a> source) : RegionBase<a>(source) {}
+};
+int&<a> relay<lifetime a>(int&<a> source) {
+  RegionDerived<a> derived{source};
+  return derived.value;
+}
+)";
+  const auto selected = analyze(declarations + R"(
+int main() { int source = 5; RegionDerived derived{source}; return relay(source) + derived.marker - 12; }
+)");
+  expectValid(selected,
+              "selected base constructors preserve lifetime-only binders and plain trailing defaults");
+  const auto escape = analyze(declarations + R"(
+int main() { int source = 5; RegionDerived<static> escaped{source}; return escaped.value; }
+)");
+  expect(!escape.semanticValid,
+         "selected base constructor inference cannot lengthen a fixed static owner region");
+  const auto fixedPack = analyze(R"(
+struct SumBase {
+  int value;
+  SumBase(int first, int second) : value(first + second) {}
+};
+struct SumDerived<Args...> : public SumBase {
+  SumDerived(Args... values) : SumBase(values...) {}
+};
+int main() { SumDerived<int, int> value{3, 8}; return value.value - 11; }
+)");
+  expectValid(fixedPack,
+              "a forwarded concrete pack selects a fixed-arity base constructor by flattened inputs");
+  const auto borrowedDefault = analyze(R"(
+int global = 3;
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input = global) : value(input) {}
+};
+int main() { return 0; }
+)");
+  expect(!borrowedDefault.semanticValid &&
+             std::any_of(borrowedDefault.diagnostics.begin(), borrowedDefault.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2077"; }),
+         "borrowing constructor defaults remain explicit under S2077");
+  const auto exclusive = analyze(R"(
+struct Base<lifetime a> {
+  mut int&<a> first; mut int&<a> second;
+  Base(mut int&<a> left, mut int&<a> right) : first(left), second(right) {}
+};
+struct Derived<lifetime a> : public Base<a> {
+  Derived(mut int&<a> input) : Base<a>(input, input) {}
+};
+int main() { return 0; }
+)");
+  expect(!exclusive.semanticValid,
+         "base initialization cannot duplicate one exclusive source across selected inputs");
+}
+
+void testCheckedReferenceErasureLifetimeAuthority() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto prelude = std::filesystem::weakly_canonical(root / "prelude.gti");
+  const auto capabilities = std::filesystem::weakly_canonical(root / "std/detail/memory_capabilities.gti");
+  const auto entry = std::filesystem::weakly_canonical(root / "__trusted_tests__/lifetime-erasure.gti");
+  const std::string capabilitySource = R"(
+export module detail.memory_capabilities;
+namespace gti_internal {
+export class erased_object {};
+export erased_object& erase_reference<T>(T& object);
+export mut erased_object& erase_reference_mut<T>(mut T& object);
+export unsafe T& restore_reference<T>(erased_object& object);
+export unsafe mut T& restore_reference_mut<T>(mut erased_object& object);
+}
+)";
+  const auto check = [&](std::string source) {
+    source.insert(0, "import \"../std/detail/memory_capabilities.gti\";\n");
+    return lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+        entry, source, {prelude, entry},
+        {{prelude.string(), ""}, {capabilities.string(), capabilitySource},
+         {entry.string(), source}}, {root});
+  };
+  const std::string wrappers = R"(
+using Opaque = gti_internal::erased_object;
+Opaque& erase<T>(T& source) { return gti_internal::erase_reference(source); }
+mut Opaque& erase_mut<T>(mut T& source) { return gti_internal::erase_reference_mut(source); }
+unsafe T& restore<T>(Opaque& source) { unsafe { return gti_internal::restore_reference<T>(source); } }
+unsafe mut T& restore_mut<T>(mut Opaque& source) { unsafe { return gti_internal::restore_reference_mut<T>(source); } }
+)";
+  const auto valid = check(wrappers + R"(
+int main() {
+  mut int value = 3;
+  unsafe { restore_mut<int>(erase_mut(value)) = 7; return restore<int>(erase(value)) - 7; }
+}
+)");
+  expectValid(valid, "checked type erasure preserves the physical input lifetime through generic source wrappers");
+  const auto escaping = check(wrappers + R"(
+Opaque&<static> invalid() { int local = 3; return erase(local); }
+int main() { return 0; }
+)");
+  expect(!escaping.semanticValid,
+         "checked erasure cannot make a local object satisfy a static return lifetime");
+  const auto wrongAccess = check(wrappers + R"(
+mut Opaque& invalid(int& source) { return erase_mut(source); }
+int main() { return 0; }
+)");
+  expect(!wrongAccess.semanticValid,
+         "checked erasure cannot manufacture mutable access to a shared source");
+}
+
 void testOwnedPointeeLifetimeAuthority() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto prelude = std::filesystem::weakly_canonical(root / "prelude.gti");
@@ -1831,7 +1946,7 @@ export mut T& unique_owner_borrow_mut<T>(mut unique_owner<T>& value);
 )";
   const std::string declarations = R"(
 class Vessel<T> {
-  mut gti_internal::unique_owner<T> storage;
+  mut gti_internal::unique_owner<T> storage = nullptr;
 public:
   Vessel() : storage(gti_internal::allocate_unique_owner<T>()) {}
   T& read() { return gti_internal::unique_owner_borrow(this.storage); }
@@ -1857,7 +1972,7 @@ int main() { return 0; }
          "a checked owning projection cannot make a local owner outlive its returned borrow");
   const auto wrongAccess = check(R"(
 class Vessel<T> {
-  gti_internal::unique_owner<T> storage;
+  gti_internal::unique_owner<T> storage = nullptr;
 public:
   mut T& invalid() { return gti_internal::unique_owner_borrow(this.storage); }
 };
@@ -1870,7 +1985,9 @@ int main() { return 0; }
 
 int main() {
   testForwardedPackBorrowPaths();
+  testSelectedBaseConstructorInputs();
   testOwnedPointeeLifetimeAuthority();
+  testCheckedReferenceErasureLifetimeAuthority();
   testNominalArguments();
   testTransparentAliases();
   testHigherRankedAlias();
