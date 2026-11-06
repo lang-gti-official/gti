@@ -53,10 +53,17 @@ version 2 adds an interface-metadata blob. Its first profile carries only fixed
 scalar function keys and a fixed result/calling contract, with no general module
 map or AST/HIR/MIR serialization. Object payloads are opaque to the codec; the
 scalar importer separately validates their format, target and symbol closure.
-The current callable profile is version 3 and is available through normal project
+The current callable profile is version 4 and is available through normal project
 commands. Historical scalar profiles are not silently reinterpreted. Exact
 bytes/limits are specified in the owning
 [architecture document](../architecture/build-and-driver.md#compiled-library-bundle-foundation).
+
+Version 4 preserves the existing `[[inline]]`, `[[noinline]]` and `[[cold]]`
+requests in callable metadata and sealed import/export bindings. The exported
+symbol digest includes the policy to reject stale metadata/object combinations.
+These requests do not change source overload identity or calling convention.
+Both the producer wrapper and consumer declaration receive the policy; imported
+bodies, LTO and forced cross-library inlining remain separate work.
 
 ## Evidence and authority inventory
 
