@@ -3748,7 +3748,8 @@ public:
   bool nativeRawFieldStage(const MirBody &mir,
                            const MirInstruction &stage) const {
     if ((stage.kind != MirInstructionKind::Load &&
-         stage.kind != MirInstructionKind::Assign) ||
+         stage.kind != MirInstructionKind::Assign &&
+         stage.kind != MirInstructionKind::CallInput) ||
         stage.receiver || stage.functionTarget || stage.constructorTarget ||
         stage.bodyTarget || stage.lambdaTarget || stage.nativeCalleeType)
       return false;
@@ -3764,6 +3765,52 @@ public:
       }
       return false;
     };
+    if (stage.kind == MirInstructionKind::CallInput) {
+      const bool mutableBorrow =
+          stage.callInputKind == HirCallInputKind::MutableBorrow;
+      if (stage.tombstone || !stage.rawMemoryAccess || !stage.result ||
+          !stage.callSite || !stage.hirValue || stage.destination ||
+          stage.callInputRole != MirCallInputRole::Argument ||
+          (!mutableBorrow &&
+           stage.callInputKind != HirCallInputKind::ReadBorrow) ||
+          stage.operands.size() != 1 ||
+          stage.info.type.kind != SemanticType::Reference ||
+          stage.info.type.arguments.size() != 1 ||
+          stage.info.type.referenceAccess !=
+              (mutableBorrow ? AccessMode::Mutable : AccessMode::ReadOnly))
+        return false;
+      const auto &input = stage.operands.front();
+      const auto *place = mir.findPlace(input.place);
+      const auto *result = mir.findValue(*stage.result);
+      if (input.kind != (mutableBorrow ? MirOperandKind::BorrowWrite
+                                       : MirOperandKind::BorrowRead) ||
+          input.value || input.loan || input.literal ||
+          input.type != stage.info.type || !place || !field(place->id) ||
+          place->type != stage.info.type.arguments.front() ||
+          (mutableBorrow && place->access != AccessMode::Mutable) || !result ||
+          result->definition != stage.id ||
+          result->info.type != stage.info.type)
+        return false;
+      // This stage borrows the exact verified field address; it does not load
+      // or copy the enclosing object. Its consuming parameter retains the
+      // checked reference type and the ordinary MIR loan/cleanup obligations.
+      for (const auto &block : mir.blocks)
+        for (const auto &call : block.instructions) {
+          const auto index = stage.callInputIndex;
+          if (!call.tombstone &&
+              (call.kind == MirInstructionKind::Call ||
+               call.kind == MirInstructionKind::Construct) &&
+              call.callSite == stage.callSite &&
+              index < call.parameterTypes.size() &&
+              index < call.operands.size() &&
+              call.parameterTypes[index] == stage.info.type &&
+              call.operands[index].kind == MirOperandKind::Value &&
+              call.operands[index].value == *stage.result &&
+              call.operands[index].type == stage.info.type)
+            return true;
+        }
+      return false;
+    }
     if (stage.destination && field(*stage.destination))
       return true;
     return std::any_of(

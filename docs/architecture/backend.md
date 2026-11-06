@@ -1821,6 +1821,16 @@ loan or a second drop obligation. MIR retains the unsafe store and raw-memory
 effects; construction, old-value cleanup, publication and staged-value failure
 cleanup use the existing replacement schedule unchanged.
 
+Raw class-field addresses can also bind read-only or mutable reference
+arguments, including constructor arguments. Native admission proves the complete
+raw projection, final reference type, permitted access and exact consuming
+parameter. It does not copy the containing owner or relax lexical unsafe rules.
+A native C call result may bind an immutable temporary reference argument: the
+value-rooted temporary must identify that exact verified call result, and the
+consumer must use the matching reference type. The original call owns the
+foreign effect; staging the result does not execute another foreign access.
+Existing MIR temporary lifetime and cleanup obligations remain in force.
+
 A failure-free source call has no Invoke edge: MIR activates its result's
 value obligation with the call's own final `Initialize` event, after any
 by-value input it consumed has transferred out. Every result slot that a

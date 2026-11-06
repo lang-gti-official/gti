@@ -419,29 +419,47 @@ bool nativeCFunctionBorrowInputContract(const MirProgram &program,
 bool nativeCResultInputContract(const MirProgram &program,
                                 const TargetInfo &target, const MirBody &body,
                                 const MirInstruction &instruction) {
+  const bool borrowed =
+      instruction.callInputKind == HirCallInputKind::ReadTemporaryBorrow;
   if (instruction.tombstone ||
       instruction.kind != MirInstructionKind::CallInput ||
       instruction.callInputRole != MirCallInputRole::Argument ||
       (instruction.callInputKind != HirCallInputKind::Value &&
-       instruction.callInputKind != HirCallInputKind::MoveValue) ||
+       instruction.callInputKind != HirCallInputKind::MoveValue && !borrowed) ||
       instruction.unsafeOperation != UnsafeOperationKind::ForeignPointerCall ||
       instruction.rawMemoryAccess || !instruction.result ||
       instruction.receiver || instruction.functionTarget ||
       instruction.lambdaTarget || instruction.constructorTarget ||
       instruction.nativeCalleeType || instruction.nativeCallbackAdapter ||
       instruction.intrinsic != IntrinsicKind::None || !instruction.callSite ||
-      !instruction.hirValue || instruction.operands.size() != 1 ||
-      !nativeCValueContract(program, target, instruction.info.type,
-                            NativeCValueRole::Result))
+      !instruction.hirValue || instruction.operands.size() != 1)
     return false;
   const auto &input = instruction.operands.front();
-  const auto *value = input.kind == MirOperandKind::Value
-                          ? body.findValue(input.value)
-                          : nullptr;
+  const auto &type = instruction.info.type;
+  const MirValue *value = nullptr;
+  if (borrowed) {
+    const auto *place = body.findPlace(input.place);
+    if (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
+        type.referenceAccess != AccessMode::ReadOnly ||
+        input.kind != MirOperandKind::BorrowRead || input.value || input.loan ||
+        input.literal || !place || place->root != MirPlaceRootKind::Value ||
+        !place->projections.empty() || place->type != type.arguments.front() ||
+        place->sourceValue != instruction.hirValue)
+      return false;
+    value = body.findValue(place->value);
+  } else {
+    if (input.kind != MirOperandKind::Value || input.place || input.loan ||
+        input.literal)
+      return false;
+    value = body.findValue(input.value);
+  }
+  const auto &producedType = borrowed ? type.arguments.front() : type;
   const auto *result = body.findValue(*instruction.result);
-  if (!value || input.type != instruction.info.type ||
-      value->info.type != input.type || !result ||
-      result->info.type != input.type || result->definition != instruction.id)
+  if (!value || input.type != type || value->info.type != producedType ||
+      !result || result->info.type != type ||
+      result->definition != instruction.id ||
+      !nativeCValueContract(program, target, producedType,
+                            NativeCValueRole::Result))
     return false;
   bool canonical = false, produced = false, consumed = false;
   for (const auto &block : body.blocks)
@@ -449,8 +467,8 @@ bool nativeCResultInputContract(const MirProgram &program,
       if (stage.id == instruction.id)
         canonical = stage == instruction;
       if (stage.id == value->definition)
-        produced = stage.result == input.value &&
-                   stage.info.type == input.type &&
+        produced = !stage.tombstone && stage.result == value->id &&
+                   stage.info.type == producedType &&
                    stage.hirValue == instruction.hirValue &&
                    (nativeCDirectCallContract(program, target, body, stage) ||
                     nativeCIndirectCallContract(program, target, body, stage));
@@ -469,7 +487,8 @@ bool nativeCResultInputContract(const MirProgram &program,
       }
     }
   // The unsafe effect belongs to the exact producing C call. Staging its
-  // already-produced value executes no second foreign access; destination and
+  // already-produced value (including an immutable borrow of its exact
+  // temporary) executes no second foreign access; destination and
   // prepared-parameter cleanup remain separate verified MIR obligations.
   return canonical && produced && consumed;
 }

@@ -807,13 +807,21 @@ void emitCountedTextProbes(Session &session) {
 void checkNativeResultInputs(Session &session) {
   const auto &program = session.program().mir();
   const auto &target = session.program().target();
-  unsigned inputs = 0;
+  unsigned inputs = 0, borrowed = 0;
   for (const auto &function : program.functionInstances())
     for (const auto &block : function.body.blocks)
       for (const auto &stage : block.instructions) {
         if (!nativeCResultInputContract(program, target, function.body, stage))
           continue;
         ++inputs;
+        const bool temporaryBorrow =
+            stage.callInputKind == HirCallInputKind::ReadTemporaryBorrow;
+        borrowed += temporaryBorrow;
+        const auto producerValue = [](const auto &body, const auto &input) {
+          const auto &operand = input.operands.front();
+          const auto *place = body.findPlace(operand.place);
+          return place ? place->value : operand.value;
+        };
         const auto malformed = [&](const auto &mutate) {
           auto body = function.body;
           MirInstruction *selected = nullptr;
@@ -836,29 +844,40 @@ void checkNativeResultInputs(Session &session) {
         malformed([](auto &, auto &value) {
           value.callInputKind = HirCallInputKind::MutableBorrow;
         });
-        malformed(
-            [](auto &, auto &value) { value.operands.front().value = 0; });
-        malformed([](auto &body, auto &value) {
+        malformed([&](auto &, auto &value) {
+          if (temporaryBorrow)
+            value.operands.front().place = 0;
+          else
+            value.operands.front().value = 0;
+        });
+        malformed([](auto &, auto &value) {
+          value.operands.front().type = SemanticType::Bool;
+        });
+        malformed([&](auto &body, auto &value) {
+          const auto produced = producerValue(body, value);
           for (auto &block : body.blocks)
             for (auto &producer : block.instructions)
-              if (producer.result == value.operands.front().value)
+              if (producer.result == produced)
                 producer.hirValue = 0;
         });
-        malformed([](auto &body, auto &value) {
+        malformed([&](auto &body, auto &value) {
+          const auto produced = producerValue(body, value);
           for (auto &block : body.blocks)
             for (auto &producer : block.instructions)
-              if (producer.result == value.operands.front().value)
+              if (producer.result == produced)
                 producer.nativeCalleeType.reset();
         });
         malformed([](auto &body, auto &value) {
           for (auto &block : body.blocks)
             for (auto &call : block.instructions)
-              if (call.kind == MirInstructionKind::Call &&
+              if ((call.kind == MirInstructionKind::Call ||
+                   call.kind == MirInstructionKind::Construct) &&
                   call.callSite == value.callSite)
                 call.operands[value.callInputIndex].value = 0;
         });
       }
-  require(inputs != 0, "native result fixture needs exact staged C results");
+  require(borrowed != 0 && borrowed < inputs,
+          "native result fixture needs exact staged C results");
 }
 
 void checkFunctionBorrows(Session &session) {
