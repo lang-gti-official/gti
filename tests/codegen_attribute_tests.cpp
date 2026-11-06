@@ -234,8 +234,13 @@ struct Plain {
   [[cold]] Plain() {}
   [[inline]] ~Plain() {}
 };
+struct Unsafe {
+  int value;
+  [[noinline]] unsafe Unsafe(int value) : value(value) {}
+};
 static_assert(Constant(3).value == 3);
 int main() {
+  unsafe { Unsafe value{3}; if (value.value != 3) { return 1; } }
   { Box<int> box{7}; if (box.value != 7) { return 1; } }
   Converted converted = 2;
   Constant constant{3};
@@ -376,7 +381,7 @@ int main() {
                        .starts_with("[["),
            "destructor signatures include optimization policy");
   }
-  expect(constructors == 4 && destructors == 2,
+  expect(constructors == 5 && destructors == 2,
          "generic and ordinary lifecycle policies survive lowering");
   session.verify();
 }

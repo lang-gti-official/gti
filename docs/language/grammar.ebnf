@@ -103,6 +103,7 @@ function-contract-attributes = function-contract-attribute
 function-contract-attribute = "[[" function-contract-name
                               { "," function-contract-name } "]]" ;
 function-contract-name = "test" | "noreturn" | "track_caller" | "discardable" | "thread_confined_callback"
+                       | "inline" | "noinline" | "cold"
                        | "borrowed_from" "(" ( IDENTIFIER | "this" ) ")" ;
 (* test: defined, safe, non-generic namespace-scope void functions with no
    parameters or attribute arguments. Explicit test targets discover these
