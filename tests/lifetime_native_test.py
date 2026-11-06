@@ -232,6 +232,7 @@ enum Reading<lifetime a> { empty, value(int&<a> item) };
 struct Default<int&<source>> {
   Reading<source> reading = Reading<source>::empty;
   Default(int count) {}
+  Default(int&<source> item, int count) : reading(Reading<source>::value(item)) {}
 };
 struct Fixed<int&<source>> {
   int&<source> value;
@@ -244,7 +245,12 @@ int main() {
   int value = 2;
   Fixed<int&> holder{value, 99};
   if (holder.get() != 2) { return 1; }
-  return holder.score - 7;
+  if (holder.score != 7) { return 2; }
+  Default<int&> active{value, 0};
+  switch (active.reading) {
+    case Reading<_>::empty: return 3;
+    case Reading<_>::value(auto& item): return item - 2;
+  }
 }
 """,
     "physical_payload": """
@@ -302,17 +308,33 @@ int32_t invoke<lifetime a>(Count callback, std::string_view<a> value) {
 int main() { Count callback = count; return invoke(callback, "text") - 7; }
 """,
     "projected_callable_lambda": """
-class Local<R&<result>(A)> {
+class Local<R&<result>(R&<result>)> {
 public:
   Local() = default;
-  R&<result> invoke(A value) {
-    auto relay = [](A input) -> R&<result> { return input; };
+  R&<result> invoke(R&<result> value) {
+    auto relay = [](R&<result> input) -> R&<result> { return input; };
     return relay(value);
   }
 };
 using Selection = for<lifetime a> int&<a>(int&<a>);
 int main() {
   Local<Selection> callback{};
+  int value = 7;
+  return callback.invoke(value) - 7;
+}
+""",
+    "complete_callable_projection": """
+class Captured<R(A)> {
+public:
+  Captured() = default;
+  A invoke(A value) {
+    auto relay = [](A input) -> A { return input; };
+    return relay(value);
+  }
+};
+using Selection = for<lifetime a> int&<a>(int&<a>);
+int main() {
+  Captured<Selection> callback{};
   int value = 7;
   return callback.invoke(value) - 7;
 }

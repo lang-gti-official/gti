@@ -6081,11 +6081,21 @@ auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
                  initializer.target.name.last().lexeme ==
                      field.declaration->name().lexeme;
         });
-    if (!fieldSymbol || initialized == constructor.initializers().end() ||
-        initialized->arguments.size() != 1)
+    if (!fieldSymbol ||
+        (initialized != constructor.initializers().end() &&
+         initialized->arguments.size() != 1))
+      return;
+    // A selected declaration default is checked in this constructor's own
+    // semantic model and lifetime universe. Its complete domain contributes
+    // exactly as an explicit initializer does; an empty alternative is still
+    // a positive initialization fact, not a missing supplier contract.
+    const auto &initializer = initialized != constructor.initializers().end()
+                                  ? initialized->arguments.front()
+                                  : semanticModel.resolvedFieldInitializer(*field.declaration);
+    if (!initializer)
       return;
     const auto input =
-        completeBorrowDependencySetForType(initialized->arguments.front().get(), fieldType);
+        completeBorrowDependencySetForType(initializer.get(), fieldType);
     if (!input)
       return;
     for (auto dependency : input->dependencies) {

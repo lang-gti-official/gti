@@ -292,6 +292,25 @@ void testScopedCallableFormation() {
          "a callable owns exact nominal formation premises in its invocation scope");
   expect(!callableLifetimeContract(signature),
          "nominal callable formation requires authoritative declaration lookup");
+  for (const auto receiver : {ReceiverMutability::Mutable, ReceiverMutability::Consuming}) {
+    auto qualified = signature;
+    qualified.signatureReceiver = receiver;
+    expect(callableLifetimeContract(qualified, formation) == contract,
+           "general callable formation preserves lifetime premises for mutable and consuming interfaces");
+    GenericParameterId local = 1200;
+    const auto proof = makeCallableLifetimeSignature(qualified, formation,
+        [&] { return Lifetime::parameter(local++); });
+    expect(proof && proof->signature.signatureReceiver == receiver &&
+               callableLifetimeCarrierMatches(*proof, qualified, formation),
+           "qualified callable formation retains the exact receiver qualifier");
+    auto unqualified = qualified;
+    unqualified.signatureReceiver = ReceiverMutability::ReadOnly;
+    expect(proof && !callableLifetimeCarrierMatches(*proof, unqualified, formation),
+           "a callable carrier cannot change its checked receiver qualifier");
+    qualified.kind = SemanticType::NativeFunction;
+    expect(!callableLifetimeContract(qualified, formation),
+           "native ABI signatures cannot forge a receiver qualifier");
+  }
   auto carrier = SemanticType::classType(42, {signature});
   const auto outer = SemanticType::functionSignature(SemanticType::Void, {carrier});
   const auto outerContract = callableLifetimeContract(outer, formation);

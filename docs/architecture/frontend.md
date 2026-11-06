@@ -458,6 +458,21 @@ scope without adding those premises to its enclosing signature. Fixed carrier
 regions are separate from invocation quantifiers, and `static` remains a
 constant. Missing nominal metadata, foreign region identities and malformed
 formula nodes make derivation fail rather than weaken the contract.
+Mutable and consuming function-signature qualifiers remain part of the exact
+callable type during formation. GTI invocation pointers independently require
+a read-only signature; native ABI pointers cannot carry receiver qualifiers.
+
+Generic callable patterns derive transient scope captures from their stored
+`genericArgumentPatterns` recipe and the exact actual argument. A projection
+containing an invocation binder stays in `GenericSubstitution::callableScopes`,
+separate from ordinary type substitutions. Reconstructing a callable closes
+those binders; a method or local lambda opens the selected scope with fresh
+universal identities. Field and alias uses cannot expose a captured binder
+outside that scope. Raw substitution keys retain complete scope identities,
+while proof comparisons alpha-rename lexical binders and keep fixed environment
+and imported invocation choices exact. Declaration refresh restores the owning
+pattern context; concrete reconstruction still must resolve elision and prove
+nominal formation before publication.
 
 Native function-pointer signatures use this same invocation scope. Elided
 regions in their inputs become invocation quantifiers, rather than stored

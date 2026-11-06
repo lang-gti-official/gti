@@ -452,14 +452,25 @@ return obligations. HIR qualifies semantic places to its body and replaces
 source expressions with stable value IDs; MIR maps those witnesses to exact
 places, rejecting stale domains and ambiguous temporary materializations.
 These maps and completion states participate in the sealed fingerprint; a
-completion flag alone is not proof of any outlives relation. Lambda and
+completion flag alone is not proof of any outlives relation. Direct reference
+arguments may differ in free region annotations only when their exact target is
+independently instantiated; mandatory body replay then proves the original
+place's outer and nested region relationships. Pointee shape, mutable access and
+argument tags remain exact. Lambda and
 destructor instances retain normalized contracts just as functions and
 constructors do. Authoritative nominal variance is preserved alongside the
 concrete field/base inventory; lowering never derives it from names.
 Abstract receiver-entry places and evaluated `this` expressions both retain
 the exact callable owner type. The independently scoped layout supplies the
 physical field recipe and traits; its universal names cannot become body
-lifetimes in a method or destructor.
+lifetimes in a method or destructor. Abstract stored-entry verification checks
+that callable owner through the exact class-instance view as well.
+
+Complete constructor summaries include the selected declaration defaults from
+the constructor's own checked semantic model, alongside explicit initializers.
+An ownerless enum alternative contributes its complete guarded domain. A default
+that an explicit initializer overrides contributes no dependency facts; the
+selected initializer must independently retain every active owner.
 
 Payload operations instantiate the selected enum's sealed variant recipe with
 its exact actual region bindings. Construction reconstructs each source type
@@ -520,7 +531,13 @@ The shared variance fixed point operates on these recipes, retaining slot
 identity when concrete arguments coincide. Lifetimes projected inside generic
 argument patterns have a separate binder inventory. Matching the substituted
 pattern against the actual public arguments binds those regions without adding
-top-level lifetime arguments. Public type slots selected by specialization
+top-level lifetime arguments. Callable patterns use the same scoped matcher as
+semantics: projected result and parameter types retain the complete invocation
+binder inventory, including unused binders, and can be reconstructed only inside
+a closed callable field. A captured binder cannot escape into ordinary storage.
+Known owner region substitutions apply once after this scoped reconstruction;
+lexical binder alpha-renaming never changes fixed regions or their correlations.
+Public type slots selected by specialization
 patterns are conservatively invariant; precise variance composition through
 pattern positions is not implemented. Ordinary declared lifetime slots retain
 the variance derived from their stored uses. Concrete executable instances also

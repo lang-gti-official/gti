@@ -491,16 +491,29 @@ auto SemanticVisitor::Impl::nominalVarianceRecipes() const
 }
 
 auto SemanticVisitor::Impl::refreshNominalLifetimeSignatures() -> void {
-  for (const auto &alias : typeAliases)
+  struct OwnerScope {
+    std::optional<ClassId> &current;
+    std::optional<ClassId> saved;
+    ~OwnerScope() { current = saved; }
+  };
+  for (const auto &alias : typeAliases) {
+    OwnerScope context{currentClass, currentClass};
+    currentClass = alias.ownerClass ? std::optional(alias.ownerClass) : std::nullopt;
     if (alias.declaration && alias.type != SemanticType::Unknown &&
         !nominalFormationRequirements(alias.type))
       report(alias.declaration->name(),
              "This alias has an unresolved scoped lifetime formation contract.", "GTI-S2127");
+  }
   const auto candidates = functionCandidateBorrowSummaryIndex();
   const auto collect = [&](LifetimeSignatureContract &contract,
                            const SemanticType &result,
                            std::span<const SemanticType> parameters,
                            ClassId owner, const Token &site) {
+    // Revisit a symbolic pattern in the same declaration context that owns
+    // its unresolved projections. Concrete instances still reconstruct and
+    // prove the complete callable before publication.
+    OwnerScope context{currentClass, currentClass};
+    currentClass = owner ? std::optional(owner) : std::nullopt;
     const bool previouslyValid = contract.valid();
     bool valid = collectNominalFormationAssumptions(result, contract);
     for (const auto &parameter : parameters)

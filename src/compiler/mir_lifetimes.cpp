@@ -4,6 +4,7 @@
 #include "gti/lifetime_requirements.h"
 #include "gti/callable_lifetimes.h"
 #include "gti/nominal_variance.h"
+#include "gti/generic_type_patterns.h"
 
 namespace lang {
 namespace {
@@ -257,32 +258,37 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
       std::vector<LifetimeBinding> knownRegions;
       for (const auto &[id, actual] : values.lifetimes)
         knownRegions.emplace_back(Lifetime::parameter(id), actual);
+      // Re-derive every projected type and region under its complete lexical
+      // callable scope. Raw R/Args projections alone would expose invocation
+      // binders as free storage types before the recipe could close them.
+      GenericSubstitution patternValues;
+      patternValues.values = values.values;
       std::vector<SemanticType> patterns;
       for (const auto &pattern : recipe.argumentPatterns) {
         const auto replaced = substituteTypeLifetimes(
-            substituteSemanticType(pattern, values), knownRegions);
+            substituteSemanticType(pattern, patternValues), knownRegions);
         const auto selected = replaced ? selectedType(selectedType, *replaced)
                                        : std::nullopt;
         if (!selected)
           return std::nullopt;
-        SemanticType::appendExpandedArgument(patterns, *selected);
+        patterns.push_back(*selected);
       }
-      std::vector<Lifetime> projectedRegions;
-      for (const auto &parameter : recipe.argumentPatternLifetimes)
-        projectedRegions.push_back(Lifetime::parameter(parameter.id));
-      const auto bindings = matchUniversalTypeArgumentLifetimes(
-          patterns, type.arguments, projectedRegions);
-      if (!bindings || bindings->size() != projectedRegions.size())
+      const auto matched = deriveGenericArgumentPatternSubstitution(
+          patterns, type.arguments, *parameters,
+          recipe.argumentPatternLifetimes, std::move(values));
+      if (!matched)
         return std::nullopt;
-      for (const auto &[parameter, actual] : *bindings)
-        if (!values.lifetimes.emplace(parameter.id, actual).second)
-          return std::nullopt;
+      values = *matched;
     }
     return values;
   };
   const auto instantiate = [&](const SemanticType &type, const GenericSubstitution &values)
       -> std::optional<SemanticType> {
     auto result = substituteSemanticType(type, values);
+    if (result.kind == SemanticType::Unknown)
+      return std::nullopt;
+    // Scoped reconstruction applies its own captures/imports. Ordinary free
+    // lifetime substitutions still run once, simultaneously, after that step.
     std::vector<LifetimeBinding> regions;
     for (const auto &[id, value] : values.lifetimes)
       regions.emplace_back(Lifetime::parameter(id), value);
@@ -456,6 +462,12 @@ const CallableLifetimeSignature *checkedMirCallableLifetimeSignature(
     if (!owner || owner->instance->compilerCapability != CompilerCapabilityTypeKind::FunctionPointer)
       return nullptr;
     signature = &carrier->arguments.front();
+    // General callable type formation can preserve mutable/consuming
+    // signatures. This invocation capability still lends a read-only carrier;
+    // its operation policy is distinct from signature well-formedness.
+    if (signature->kind != SemanticType::FunctionSignature ||
+        signature->signatureReceiver != ReceiverMutability::ReadOnly)
+      return nullptr;
   }
   const auto &callable = *instruction.lifetimeApplication.callableSignature;
   if (!callableLifetimeCarrierMatches(callable, *signature,

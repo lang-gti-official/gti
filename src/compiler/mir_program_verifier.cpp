@@ -48,7 +48,7 @@ exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
                                            const MirPlace *place,
                                            const SemanticType &pointee,
                                            AccessMode access,
-                                           bool stagedLifetimeProof = false) {
+                                           bool independentlyReplayedLifetimes = false) {
   if (!place)
     return false;
   const SemanticType *physical = &place->type;
@@ -67,10 +67,12 @@ exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
     physical = &element->arguments.front();
     physicalAccess = element->referenceAccess;
   }
-  // This checks physical shape/access only. Every CallInput also undergoes
-  // independent lifetime replay against the original place and body graph.
+  // This checks physical shape/access only. The caller may permit region
+  // variation solely for CallInput or an independently instantiated target;
+  // both undergo mandatory lifetime replay against the original place and
+  // body graph before program verification can succeed.
   return (*physical == pointee ||
-          (stagedLifetimeProof && sameLifetimeConversionShape(*physical, pointee)) ||
+          (independentlyReplayedLifetimes && sameLifetimeConversionShape(*physical, pointee)) ||
           (physical->kind == SemanticType::Class &&
            pointee.kind == SemanticType::Class &&
            mirPublicBaseConversion(program, *physical, pointee))) &&
@@ -3779,11 +3781,14 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                                         : nullptr;
         const bool exactBorrowKind = operand.kind == expectedKind;
         const bool exactLoanKind = provenance != nullptr;
+        const bool replayedLifetimeInput = parameter.referenceLifetime.specified() &&
+            (instruction.kind == MirInstructionKind::CallInput ||
+             instantiateMirLifetimeTarget(program, instruction).has_value());
         if (source == nullptr || parameter.arguments.size() != 1 ||
             operand.type != parameter || (!exactBorrowKind && !exactLoanKind) ||
             !mirBorrowedPlaceMatches(program, body, source,
                                      parameter.arguments.front(),
-                                     parameter.referenceAccess) ||
+                                     parameter.referenceAccess, replayedLifetimeInput) ||
             (parameter.referenceAccess == AccessMode::Mutable &&
              exactLoanKind && provenance->access != AccessMode::Mutable)) {
           return verificationFailure(
@@ -6428,15 +6433,19 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
                                      ? &constructor->parameterTypes
                                      : nullptr;
     if (abstractEntry || loan.carriers.empty()) {
-      const auto *receiver = function != nullptr && function->owner
-                                 ? program.findClassInstance(*function->owner)
-                             : destructor != nullptr
-                                 ? program.findClassInstance(destructor->owner)
-                                 : nullptr;
+      const auto receiver = function != nullptr && function->owner
+                                ? checkedMirCallableOwnerType(
+                                      program, function->owner, function->ownerType,
+                                      function->lifetimeContract)
+                            : destructor != nullptr
+                                ? checkedMirCallableOwnerType(
+                                      program, destructor->owner, destructor->ownerType,
+                                      destructor->lifetimeContract)
+                                : std::nullopt;
       const bool receiverEntry =
-          source->root == MirPlaceRootKind::This && receiver != nullptr &&
+          source->root == MirPlaceRootKind::This && receiver &&
           (destructor != nullptr || !function->staticMember) &&
-          carrierType == receiver->type &&
+          carrierType == *receiver &&
           source->access ==
               (destructor != nullptr ||
                        receiverAllowsMutation(function->receiverMutability)

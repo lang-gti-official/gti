@@ -447,6 +447,33 @@ struct Default<int&<source>> {
 };
 int main() { Default<int&<static>> holder{0}; return 0; }
 )gti", true);
+  check("explicit-field-initializer-replaces-ownerless-default", R"gti(
+enum Reading<lifetime a> { empty, value(int&<a> item) };
+struct Default<int&<source>> {
+  Reading<source> reading = Reading<source>::empty;
+  Default(int count) {}
+  Default(int&<source> item, int count) : reading(Reading<source>::value(item)) {}
+};
+int main() {
+  int value = 7;
+  Default<int&> active{value, 0};
+  switch (active.reading) {
+    case Reading<_>::empty: return 1;
+    case Reading<_>::value(auto& item): return item - 7;
+  }
+}
+)gti", true);
+  check("overridden-ownerless-default-cannot-hide-an-escaping-reference", R"gti(
+enum Reading<lifetime a> { empty, value(int&<a> item) };
+struct Default<int&<source>> {
+  Reading<source> reading = Reading<source>::empty;
+  Default(int&<source> item) : reading(Reading<source>::value(item)) {}
+};
+Default<int&<static>> invalid() {
+  int value = 7;
+  return Default<int&<static>>{value};
+}
+)gti", false, "GTI-S2127");
   check("field-default-keeps-declaration-name-lookup", R"gti(
 int initial_score() { return 7; }
 struct Fixed<int&<source>> {

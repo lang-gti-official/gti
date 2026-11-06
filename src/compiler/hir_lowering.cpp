@@ -359,7 +359,14 @@ private:
   [[nodiscard]] SemanticType
   substitute(const SemanticType &type,
              const GenericSubstitution &substitution) const {
-    return substituteSemanticType(type, substitution, baseModel);
+    auto result = substituteSemanticType(type, substitution, baseModel);
+    if (substitution.lifetimes.empty())
+      return result;
+    std::vector<LifetimeBinding> regions;
+    for (const auto &[parameter, actual] : substitution.lifetimes)
+      regions.emplace_back(Lifetime::parameter(parameter), actual);
+    return substituteTypeLifetimes(std::move(result), regions)
+        .value_or(SemanticType::Unknown);
   }
 
   [[nodiscard]] static std::vector<const Expr *>

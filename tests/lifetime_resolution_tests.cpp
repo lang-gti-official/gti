@@ -673,15 +673,36 @@ int main() { Reversed<Source> item{}; return 0; }
 )");
   expect(!invalidComponent.semanticValid,
          "reconstructed callable aliases still reject a substituted void parameter");
+  const auto qualified = analyze(R"(
+class Mutable<R(Args...) mut> {
+public:
+  using Signature = R(Args...) mut;
+  Mutable() = default;
+  R invoke(Args... args) mut;
+};
+class Consuming<R&<result>(Args...) &&> {
+public:
+  using Signature = R&<result>(Args...) &&;
+  Consuming() = default;
+  R&<result> invoke(Args... args) &&;
+};
+using MutableSelection = for<lifetime a> int&<a>(int&<a>) mut;
+using ConsumingSelection = for<lifetime a> int&<a>(int&<a>) &&;
+Mutable<MutableSelection> mutableCallback();
+Consuming<ConsumingSelection> consumingCallback();
+int main() { return 0; }
+)");
+  expectValid(qualified,
+              "mutable and consuming invocation recipes remain well formed at declaration refresh");
 }
 
 void testCallablePatternLambdaScopes() {
   const auto parsed = analyze(R"(
-class Local<R&<result>(A)> {
+class Local<R&<result>(R&<result>)> {
 public:
   Local() = default;
-  R&<result> invoke(A value) {
-    auto relay = [](A input) -> R&<result> { return input; };
+  R&<result> invoke(R&<result> value) {
+    auto relay = [](R&<result> input) -> R&<result> { return input; };
     return relay(value);
   }
 };
@@ -716,11 +737,11 @@ int main() { Local<Selection> callback{}; int value = 4; return callback.invoke(
                           [&](auto region) { return region.id == lambda->type.quantifiedLifetimes.front(); }),
          "the lambda invocation binder is independent of its fixed environment inventory");
   const auto escaped = analyze(R"(
-class Local<R&<result>(A)> {
+class Local<R&<result>(R&<result>)> {
 public:
   Local() = default;
-  R&<result> invoke(A value) {
-    auto relay = [](A input) -> R&<result> { int local = 1; return local; };
+  R&<result> invoke(R&<result> value) {
+    auto relay = [](R&<result> input) -> R&<result> { int local = 1; return local; };
     return relay(value);
   }
 };
@@ -729,6 +750,32 @@ int main() { Local<Selection> callback{}; int value = 4; return callback.invoke(
 )");
   expect(!escaped.semanticValid,
          "a projected lambda cannot satisfy its invocation result with local storage");
+  const auto unrelated = analyze(R"(
+class Unrelated<R&<result>(A)> {
+public:
+  R&<result> invoke(A value) {
+    auto relay = [](A input) -> R&<result> { return input; };
+    return relay(value);
+  }
+};
+int main() { return 0; }
+)");
+  expect(!unrelated.semanticValid,
+         "a projected lambda cannot infer a relation between unrelated result and parameter types");
+  const auto completeType = analyze(R"(
+class Captured<R(A)> {
+public:
+  Captured() = default;
+  A invoke(A value) {
+    auto relay = [](A input) -> A { return input; };
+    return relay(value);
+  }
+};
+using Selection = for<lifetime a> int&<a>(int&<a>);
+int main() { Captured<Selection> callback{}; int value = 4; return callback.invoke(value); }
+)");
+  expectValid(completeType,
+              "an exact invocation projection imports a complete reference parameter and result type");
 }
 
 void testInferredCarrierRegions() {

@@ -26,10 +26,21 @@ namespace callable_lifetime_detail {
 inline std::optional<LifetimeSignatureContract>
 deriveContract(const SemanticType &signature,
                const CallableNominalFormation &nominalFormation, std::size_t &work) {
-  if (!isLifetimeInvocationSignature(signature) ||
-      signature.arguments.empty() ||
-      signature.signatureReceiver != ReceiverMutability::ReadOnly)
+  if (!isLifetimeInvocationSignature(signature) || signature.arguments.empty())
     return std::nullopt;
+  // Receiver qualifiers describe general callable interfaces. The consumers
+  // that form or invoke an ABI/invocation pointer own their narrower policy.
+  switch (signature.signatureReceiver) {
+  case ReceiverMutability::ReadOnly:
+    break;
+  case ReceiverMutability::Mutable:
+  case ReceiverMutability::Consuming:
+    if (signature.kind == SemanticType::NativeFunction)
+      return std::nullopt;
+    break;
+  default:
+    return std::nullopt;
+  }
   LifetimeSignatureContract contract;
   contract.origin = LifetimeContractOrigin::Declared;
   const auto add = [&](Lifetime region) {

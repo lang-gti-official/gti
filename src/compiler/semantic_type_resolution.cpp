@@ -5201,11 +5201,31 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
   if (resolved.kind == SemanticType::Reference && !type.reference &&
       !typeMetadata && !contractedReferenceResult &&
       !type.qualifiedOwner && resolveTypeParameter(type.name)) {
-    report(type.name.last(),
-           "A reference type substituted into a " + std::string(context) +
-               " requires an explicit reference declarator; keep the generic "
-               "argument as the referent type and write '&' at the binding.",
-           "GTI-S2017");
+    const auto parameter = *resolveTypeParameter(type.name);
+    const auto directParticipant = [&](auto &&self, const SemanticType &part, bool root) -> bool {
+      if (!root && (part.kind == SemanticType::FunctionSignature ||
+                    part.kind == SemanticType::NativeFunction))
+        return false;
+      if ((part.kind == SemanticType::TypeParameter || part.kind == SemanticType::TypePack) &&
+          part.genericParameterId == parameter.genericParameterId)
+        return true;
+      bool found = false;
+      lifetime_detail::children(part, [&](const auto &child) { found |= self(self, child, false); });
+      return found;
+    };
+    const bool scopedProjection = parameter.kind == SemanticType::TypeParameter &&
+        std::any_of(instanceCallableScopes.begin(), instanceCallableScopes.end(),
+                    [&](const auto &scope) { return directParticipant(directParticipant, scope.pattern, true); }) &&
+        substituteType(parameter, currentGenericSubstitution()) == resolved;
+    // The matched callable recipe supplies a complete parameter type, and
+    // opening its scope proves every invocation-bound reference identity.
+    // An ordinary generic substitution has no such binding authority.
+    if (!scopedProjection)
+      report(type.name.last(),
+             "A reference type substituted into a " + std::string(context) +
+                 " requires an explicit reference declarator; keep the generic "
+                 "argument as the referent type and write '&' at the binding.",
+             "GTI-S2017");
   }
   if (type.reference) {
     if (type.reference->kind == TokenKind::AND && !allowRvalueReference) {

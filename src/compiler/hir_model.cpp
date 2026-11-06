@@ -9,6 +9,20 @@
 #include <unordered_set>
 
 namespace lang {
+namespace {
+SemanticType substituteHirSemanticType(const SemanticType &type,
+                                      const GenericSubstitution &substitution,
+                                      const SemanticModel *model) {
+  auto result = substituteSemanticType(type, substitution, model);
+  if (substitution.lifetimes.empty())
+    return result;
+  std::vector<LifetimeBinding> regions;
+  for (const auto &[parameter, actual] : substitution.lifetimes)
+    regions.emplace_back(Lifetime::parameter(parameter), actual);
+  return substituteTypeLifetimes(std::move(result), regions)
+      .value_or(SemanticType::Unknown);
+}
+} // namespace
 
 const HirValue *HirBody::valueForSource(const Expr &source) const {
   for (auto value = values.rbegin(); value != values.rend(); ++value)
@@ -1105,7 +1119,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           !exactDispatchPath(row.rootPath, row.rootOwner) ||
           !exactDispatchPath(row.targetPath, row.targetOwner) ||
           program.classInstances()[row.targetOwner - 1].type !=
-              substituteSemanticType(selected->targetOwner, substitution,
+              substituteHirSemanticType(selected->targetOwner, substitution,
                                      &semantics) ||
           !root->virtualMethod || !target->virtualMethod ||
           root->staticMember || target->staticMember ||
@@ -1126,7 +1140,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           alias.declaration != primary->id || alias.declaration == 0 ||
           containsUnresolvedGeneric(alias.type) ||
           alias.type !=
-              substituteSemanticType(primary->type, substitution, &semantics))
+              substituteHirSemanticType(primary->type, substitution, &semantics))
         result.errors.emplace_back(
             "HIR class alias differs from its exact semantic owner/type");
     }
@@ -1707,9 +1721,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     if (!declaration->genericArgumentPatterns.empty()) {
       GenericSubstitution valuesOnly;
       valuesOnly.values = substitution.values;
+      valuesOnly.lifetimes = substitution.lifetimes;
       std::vector<SemanticType> patterns;
       for (const auto &pattern : declaration->genericArgumentPatterns)
-        patterns.push_back(substituteSemanticType(pattern, valuesOnly, &semantics));
+        patterns.push_back(substituteHirSemanticType(pattern, valuesOnly, &semantics));
       const auto matched = deriveGenericArgumentPatternSubstitution(
           patterns, ownerType.arguments,
           genericParameterIdentities(publicDeclaration->genericParameters),
@@ -1914,7 +1929,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           construction != nullptr
               ? semantics.resolveExactClassSpecialization(
                     reduceComputedTypeProjections(
-                        substituteSemanticType(construction->constructedType,
+                        substituteHirSemanticType(construction->constructedType,
                                                substitution, &semantics),
                         semantics))
               : SemanticType::Unknown;

@@ -290,6 +290,117 @@ void storedEnumFieldRegion() {
            "enum field region proof rejects missing, ambiguous, malformed and strengthened paths");
   }
 }
+void scopedCallableNominalRecipe() {
+  const auto result = SemanticType::typeParameter(1601);
+  const auto arguments = SemanticType::typePack(1602);
+  const auto pattern = SemanticType::functionSignature(result, {arguments});
+  auto storedPattern = pattern;
+  storedPattern.kind = SemanticType::NativeFunction;
+  auto signature = SemanticType::functionSignature(reference(1611),
+                                                    {reference(1611), reference(1612)});
+  signature.quantifiedLifetimes = {1611, 1612, 1613};
+  auto storedSignature = signature;
+  storedSignature.kind = SemanticType::NativeFunction;
+  NominalVarianceRecipe recipe{
+      .declaration = 160,
+      .argumentPatterns = {pattern},
+      .parameters = {{.id = 1601, .typeArgumentPath = {0, 0}},
+                     {.id = 1602, .pack = true, .typeArgumentPath = {0, 1}},
+                     {.id = 1621, .lifetime = true},
+                     {.id = 1622, .lifetime = true}},
+      .stored = {{.symbol = 1631, .type = storedPattern},
+                 {.index = 1, .symbol = 1632, .type = reference(1621)},
+                 {.index = 2, .symbol = 1633, .type = reference(1622)}},
+      .complete = true};
+  MirClassInstance instance;
+  instance.id = 1;
+  instance.declaration = recipe.declaration;
+  instance.type = SemanticType::classType(recipe.declaration, {signature}, {},
+                                         {Lifetime::parameter(1622), Lifetime::parameter(1623)});
+  instance.liftedLifetimes = {{.id = 1611, .lifetime = true, .implicit = true},
+                            {.id = 1612, .lifetime = true, .implicit = true},
+                            {.id = 1613, .lifetime = true, .implicit = true},
+                            {.id = 1623, .lifetime = true, .implicit = true}};
+  instance.lifetimeContract = {.parameters = {Lifetime::parameter(1622), Lifetime::parameter(1623)},
+                               .complete = true};
+  instance.declaredFields = {{.symbol = 1631, .type = storedSignature},
+                             {.symbol = 1632, .type = reference(1622)},
+                             {.symbol = 1633, .type = reference(1623)}};
+  instance.variance = {.types = {TypeVariance::Invariant},
+                      .lifetimes = {TypeVariance::Covariant, TypeVariance::Covariant},
+                      .complete = true};
+  MirProgram program;
+  MirProgramTestAccess::classes(program) = {instance};
+  MirProgramTestAccess::nominalRecipes(program) = {recipe};
+  expect(verifyMirNominalLifetimeRecipes(program).valid(),
+         "MIR reconstructs a closed callable with unused binders and applies ordinary region maps once");
+  auto alpha = program;
+  auto &alphaField = MirProgramTestAccess::classes(alpha).front().declaredFields.front().type;
+  alphaField.quantifiedLifetimes = {1641, 1642, 1643};
+  alphaField.arguments[0].referenceLifetime = Lifetime::parameter(1641);
+  alphaField.arguments[1].referenceLifetime = Lifetime::parameter(1641);
+  alphaField.arguments[2].referenceLifetime = Lifetime::parameter(1642);
+  expect(verifyMirNominalLifetimeRecipes(alpha).valid(),
+         "closed stored callable scopes compare by exact alpha correspondence");
+  for (int mutation = 0; mutation != 9; ++mutation) {
+    auto invalid = program;
+    auto &changed = MirProgramTestAccess::classes(invalid).front();
+    auto &source = MirProgramTestAccess::nominalRecipes(invalid).front();
+    if (mutation == 0)
+      changed.declaredFields.front().type.quantifiedLifetimes.pop_back();
+    else if (mutation == 1)
+      changed.declaredFields.front().type.arguments.front().referenceLifetime = Lifetime::parameter(1612);
+    else if (mutation == 2)
+      changed.declaredFields.front().type.arguments.front().referenceLifetime = Lifetime::staticLifetime();
+    else if (mutation == 3)
+      changed.declaredFields[1].type.referenceLifetime = Lifetime::parameter(1623);
+    else if (mutation == 4)
+      changed.declaredFields[1].type.referenceLifetime = Lifetime::parameter(1621);
+    else if (mutation == 5) {
+      source.stored.front().type = result;
+      changed.declaredFields.front().type = reference(1611);
+    } else if (mutation == 6) {
+      source.stored.front().type = result;
+      changed.declaredFields.front().type = SemanticType::Unknown;
+    } else if (mutation == 7)
+      changed.type.arguments.front().quantifiedLifetimes.push_back(1611);
+    else
+      changed.declaredFields.front().type.arguments.back().referenceLifetime = Lifetime::parameter(1699);
+    expect(!verifyMirNominalLifetimeRecipes(invalid).valid(),
+           "scoped recipes reject lost binders, changed correlations, free escape and chained substitutions");
+  }
+  auto named = program;
+  auto &namedRecipe = MirProgramTestAccess::nominalRecipes(named).front();
+  auto shell = SemanticType::referenceTo(result, AccessMode::ReadOnly, Lifetime::parameter(1651));
+  namedRecipe.argumentPatterns = {SemanticType::functionSignature(shell, {arguments})};
+  namedRecipe.argumentPatternLifetimes = {{.id = 1651, .lifetime = true}};
+  namedRecipe.parameters.front().typeArgumentPath = {0, 0, 0};
+  namedRecipe.stored.front().type = namedRecipe.argumentPatterns.front();
+  namedRecipe.stored.front().type.kind = SemanticType::NativeFunction;
+  expect(verifyMirNominalLifetimeRecipes(named).valid(),
+         "a projected named region remains scoped to its complete callable recipe");
+  auto fixed = named;
+  MirProgramTestAccess::nominalRecipes(fixed).front().argumentPatterns.front()
+      .arguments.front().referenceLifetime = Lifetime::staticLifetime();
+  MirProgramTestAccess::nominalRecipes(fixed).front().argumentPatternLifetimes.clear();
+  expect(!verifyMirNominalLifetimeRecipes(fixed).valid(),
+         "fixed static callable regions cannot match arbitrary invocation binders");
+  auto repeated = named;
+  auto &repeatedRecipe = MirProgramTestAccess::nominalRecipes(repeated).front();
+  repeatedRecipe.parameters.erase(repeatedRecipe.parameters.begin() + 1);
+  repeatedRecipe.argumentPatterns = {SemanticType::functionSignature(shell, {shell})};
+  repeatedRecipe.stored.front().type = repeatedRecipe.argumentPatterns.front();
+  repeatedRecipe.stored.front().type.kind = SemanticType::NativeFunction;
+  auto &repeatedClass = MirProgramTestAccess::classes(repeated).front();
+  repeatedClass.type.arguments.front().arguments.pop_back();
+  repeatedClass.declaredFields.front().type.arguments.pop_back();
+  expect(verifyMirNominalLifetimeRecipes(repeated).valid(),
+         "repeated named slots preserve the same invocation relationship");
+  repeatedClass.type.arguments.front().arguments.back().referenceLifetime = Lifetime::parameter(1612);
+  repeatedClass.declaredFields.front().type.arguments.back().referenceLifetime = Lifetime::parameter(1612);
+  expect(!verifyMirNominalLifetimeRecipes(repeated).valid(),
+         "a selected structural family cannot weaken a repeated named region relationship");
+}
 void quantifiedNominalLiftInventory() {
   auto signature = SemanticType::functionSignature(reference(1001), {reference(1001)});
   signature.quantifiedLifetimes = {1001};
@@ -325,6 +436,7 @@ int main() {
   cleanupLifetimeRecipes();
   owningCleanupShape();
   quantifiedNominalLiftInventory();
+  scopedCallableNominalRecipe();
   projectedOnlyNominalRecipe();
   structuralBorrowPathShape();
   storedEnumFieldRegion();

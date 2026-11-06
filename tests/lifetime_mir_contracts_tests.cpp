@@ -1,5 +1,6 @@
 #include "../src/compiler/mir_lifetimes.h"
 #include "gti/frontend.h"
+#include "gti/callable_lifetimes.h"
 #include "gti/mir_verifier.h"
 #include "gti/mir_printer.h"
 
@@ -939,6 +940,37 @@ int main() {
         instruction.lifetimeApplication.callableSignature->contract.typeBounds.clear();
   expect(!verifyMirProgram(corruptPointer).valid(),
          "MIR must derive callable obligations independently from the trusted carrier");
+  for (const auto qualifier : {ReceiverMutability::Mutable, ReceiverMutability::Consuming}) {
+    bool checkedForming = false;
+    bool checkedInvocation = false;
+    for (const auto address : enumerateMirBodyAddresses(pointer.mir))
+      if (const auto *body = findMirBody(pointer.mir, address))
+        for (const auto &block : body->blocks)
+          for (const auto &original : block.instructions) {
+            const bool forming = original.intrinsic == IntrinsicKind::FunctionPointerFromItem;
+            if (!forming && original.intrinsic != IntrinsicKind::FunctionPointerInvoke)
+              continue;
+            auto forged = pointer.mir;
+            for (const auto &immutable : forged.classInstances())
+              if (immutable.compilerCapability == CompilerCapabilityTypeKind::FunctionPointer)
+                const_cast<MirClassInstance &>(immutable).type.arguments.front().signatureReceiver = qualifier;
+            auto instruction = original;
+            auto &carrier = forming ? instruction.info.type
+                                    : instruction.parameterTypes.front().arguments.front();
+            carrier.arguments.front().signatureReceiver = qualifier;
+            auto &callable = *instruction.lifetimeApplication.callableSignature;
+            callable.signature.signatureReceiver = qualifier;
+            expect(mirClassLifetimeView(forged, carrier).has_value() &&
+                       callableLifetimeCarrierMatches(callable, carrier.arguments.front()),
+                   "qualifier forgery remains a well-formed exact carrier for the pointer-policy control");
+            expect(checkedMirCallableLifetimeSignature(forged, instruction) == nullptr,
+                   "MIR pointer forming and invocation reject mutable or consuming interface forgery");
+            checkedForming |= forming;
+            checkedInvocation |= !forming;
+          }
+    expect(checkedForming && checkedInvocation,
+           "pointer qualifier policy is checked independently at forming and invocation");
+  }
   const auto nominalPointer = trustedCapability("lifetime-pointer-nominal.gti", R"gti(
 import std.detail_function_pointer_impl;
 struct Holder<T, lifetime a> {
@@ -959,6 +991,42 @@ int main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(nominalPointer.canGenerateCode(),
          "higher-ranked nominal input formation must reach independently verified MIR");
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto forged = nominalPointer.mir;
+    bool changedArgument = false;
+    bool rejectedArgument = false;
+    for (const auto address : enumerateMirBodyAddresses(forged))
+      if (auto *body = findMirBody(forged, address))
+        for (auto &block : body->blocks)
+          for (auto &instruction : block.instructions) {
+            if (instruction.intrinsic != IntrinsicKind::FunctionPointerInvoke ||
+                instruction.parameterTypes.size() != 2 || instruction.operands.size() != 2)
+              continue;
+            auto &parameter = instruction.parameterTypes.back();
+            if (parameter.kind != SemanticType::Reference || parameter.arguments.size() != 1 ||
+                parameter.arguments.front().kind != SemanticType::Class ||
+                parameter.arguments.front().lifetimeArguments.size() != 1)
+              continue;
+            expect(verifyMirLifetimeApplications(forged, *body, address.owner).valid(),
+                   "nominal pointer arguments have independent source and region proof");
+            if (mutation == 0) {
+              body->lifetimeBody.obligations.clear();
+              for (auto &currentBlock : body->blocks)
+                for (auto &current : currentBlock.instructions)
+                  current.lifetimeApplication.obligations.clear();
+            } else if (mutation == 1) {
+              parameter.arguments.front().lifetimeArguments.front() = Lifetime::parameter(UINT64_MAX);
+              instruction.operands.back().type = parameter;
+            } else {
+              parameter.referenceAccess = AccessMode::Mutable;
+              instruction.operands.back().type = parameter;
+            }
+            changedArgument = true;
+            rejectedArgument = !verifyMirLifetimeApplications(forged, *body, address.owner).valid();
+          }
+    expect(changedArgument && rejectedArgument && !verifyMirProgram(forged).valid(),
+           "direct nominal arguments cannot bypass missing edges, region scope or exact parameter access");
+  }
   auto omittedNominalRequirement = nominalPointer.mir;
   bool rejectedNominalRequirement = false;
   for (const auto address : enumerateMirBodyAddresses(omittedNominalRequirement))
