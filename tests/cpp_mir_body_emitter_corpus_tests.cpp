@@ -300,8 +300,7 @@ void testGeneralTextStepMatchesProductionEmission() {
         source.filename() == "161-consuming-matches.gti" ||
         source.filename() == "175-thread-local-storage.gti" ||
         source.filename() == "186-scalar-temporary-borrows.gti" ||
-        source.filename() == "187-operator-temporary-borrows.gti" ||
-        source.filename() == "191-reference-parameter-packs.gti";
+        source.filename() == "187-operator-temporary-borrows.gti";
     // These source examples intentionally use LLVM-only operations. Keep a
     // positive unsupported-operation assertion rather than silently dropping
     // them; the native corpus oracle executes both LLVM endpoints.
@@ -310,14 +309,16 @@ void testGeneralTextStepMatchesProductionEmission() {
     const bool boundedArray =
         source.filename() == "182-bounded-array-borrows.gti";
     const bool aggregateConstant =
-        source.filename() == "183-immediate-functions.gti";
+        source.filename() == "183-immediate-functions.gti" ||
+        source.filename() == "191-reference-parameter-packs.gti";
+    const bool consumingRange = source.filename() == "186-consuming-ranges.gti";
     if (source.filename() == "066-managed-threads.gti" ||
         source.filename() == "098-shared-ownership.gti" ||
         source.filename() == "178-wrapping-atomic-counters.gti" ||
         source.filename() == "179-weak-ownership.gti" ||
         source.filename() == "180-compact-source-owners.gti" || generalLayout ||
         boundedArray || aggregateConstant || temporaryReference ||
-        freshClassSubscript) {
+        freshClassSubscript || consumingRange) {
       bool unsupported = false;
       try {
         static_cast<void>(gti_test::emitCpp(frontend, frontend.mir,
@@ -330,9 +331,13 @@ void testGeneralTextStepMatchesProductionEmission() {
             : generalLayout     ? "general sizeof/alignof"
             : boundedArray      ? "generic fixed-array reference signatures"
             : aggregateConstant ? "aggregate constant publication"
+            : consumingRange    ? "raw object extraction"
                                 : "wrapping atomic read-modify-write";
         unsupported =
             std::string(error.what()).find(limitation) != std::string::npos;
+        if (!unsupported)
+          std::cerr << source.filename() << ": expected C++ limitation '"
+                    << limitation << "', got '" << error.what() << "'\n";
       }
       expect(unsupported,
              "LLVM-only corpus source must report its C++ support boundary");

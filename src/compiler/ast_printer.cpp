@@ -38,12 +38,8 @@ void AstPrinter::visitBinaryExpr(const Binary &expr) {
 }
 
 void AstPrinter::visitCallExpr(const Call &expr) {
-  if (expr.capturedArguments()) {
-    result = "(proc-call " + printPtr(expr.callee()) + "!" +
-             expr.capturedArguments()->text + ")";
-    return;
-  }
-  std::string text = "(call " + printPtr(expr.callee());
+  std::string text =
+      (expr.macroBang() ? "(macro-call " : "(call ") + printPtr(expr.callee());
   if (!expr.typeArguments().empty()) {
     text += "<";
     for (std::size_t index = 0; index < expr.typeArguments().size(); ++index) {
@@ -53,6 +49,10 @@ void AstPrinter::visitCallExpr(const Call &expr) {
       text += typeToString(expr.typeArguments()[index]);
     }
     text += ">";
+  }
+  if (expr.capturedArguments()) {
+    result = text + "!" + expr.capturedArguments()->text + ")";
+    return;
   }
   for (const auto &argument : expr.arguments()) {
     text += " " + printPtr(argument);

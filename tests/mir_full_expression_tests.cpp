@@ -1,3 +1,4 @@
+#include "../src/compiler/mir_verification_queries.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
@@ -10,7 +11,104 @@
 #include <string_view>
 #include <vector>
 
+namespace {
+bool indexedMaterializations() {
+  using namespace lang;
+  MirBody body;
+  body.blocks.push_back({.id = 1});
+  MirInstruction producer;
+  producer.id = 1;
+  producer.kind = MirInstructionKind::Compute;
+  producer.hirValue = 7;
+  producer.result = 1;
+  producer.info.type = SemanticType::Int32;
+  body.blocks.front().instructions.push_back(producer);
+  body.values.push_back(
+      {.id = 1, .sourceValue = 7, .definitionBlock = 1, .definition = 1});
+  MirPlace place;
+  place.root = MirPlaceRootKind::Temporary;
+  place.temporary = 1;
+  place.sourceValue = 7;
+  const auto check = [&](bool expected) {
+    const auto scanned = findMirTemporaryMaterialization(body, place, 7);
+    const auto *definition = mir_detail::definitionFor(body, 1);
+    mir_detail::MirBodyReadScope scope(body);
+    const auto indexed = findMirTemporaryMaterialization(body, place, 7);
+    return static_cast<bool>(scanned) == expected &&
+           indexed.value == scanned.value &&
+           indexed.producer == scanned.producer &&
+           mir_detail::definitionFor(body, 1) == definition;
+  };
+  if (!check(true))
+    return false;
+  {
+    mir_detail::MirBodyReadScope outer(body);
+    {
+      mir_detail::MirBodyReadScope nested(body);
+      if (!check(true))
+        return false;
+    }
+    MirBody other = body;
+    other.values.front().sourceValue = 8;
+    {
+      mir_detail::MirBodyReadScope nested(other);
+      if (findMirTemporaryMaterialization(other, place, 7) || !check(true))
+        return false;
+    }
+    if (!check(true))
+      return false;
+  }
+  // Re-entering after an edit must not reuse pointers or source identities.
+  body.values.front().sourceValue = 8;
+  if (!check(false))
+    return false;
+  body.values.front().sourceValue = 7;
+  body.blocks.front().instructions.front().hirValue = 8;
+  if (!check(false))
+    return false;
+  body.blocks.front().instructions.front().hirValue = 7;
+  // A second producer with the same source must remain ambiguous.
+  producer.id = 2;
+  producer.result = 2;
+  body.blocks.front().instructions.push_back(producer);
+  body.values.push_back(
+      {.id = 2, .sourceValue = 7, .definitionBlock = 1, .definition = 2});
+  if (!check(false))
+    return false;
+  place.root = MirPlaceRootKind::Value;
+  place.temporary = 0;
+  place.value = 1;
+  if (!check(true))
+    return false;
+  // Malformed duplicate IDs preserve the full predicate's original scan:
+  // the first instruction has the wrong result, the second is the producer.
+  body.values.pop_back();
+  body.blocks.front().instructions.front().result = 2;
+  body.blocks.front().instructions.back().id = 1;
+  body.blocks.front().instructions.back().result = 1;
+  if (!check(true))
+    return false;
+  // A matching block label cannot substitute for the defining block itself.
+  body.blocks.front().instructions.clear();
+  producer.result = 1;
+  body.blocks.push_back({.id = 1, .instructions = {producer}});
+  body.values.front().definition = 2;
+  if (!check(false))
+    return false;
+  body.values.front().definitionBlock = 9;
+  if (!check(false))
+    return false;
+  body.values.front().definitionBlock = 1;
+  body.values.front().definition = 99;
+  return check(false);
+}
+} // namespace
+
 int main() {
+  if (!indexedMaterializations()) {
+    std::cerr << "indexed materialization lookup changed scan semantics\n";
+    return 1;
+  }
   const auto standardLibrary =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto forwarded = lang::Frontend().analyze(

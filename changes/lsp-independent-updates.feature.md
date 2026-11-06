@@ -1,1 +1,0 @@
-Publish compatible LSP components independently and build protocol-only changes against a validated compiler SDK. Managed editors can use explicit `gtiup update lsp` updates while retaining their selected compiler and resources.

@@ -41,7 +41,7 @@ void discoveryBoundary() {
 #macro ignore<F>(F callback) {}
 int main() {
   int value = 1;
-  ignore([value]() -> void { int local = value; });
+  ignore!([value]() -> void { int local = value; });
   return 0;
 }
 )");
@@ -97,13 +97,13 @@ void tests() {
 mut int total = 0;
 #macro twice<F>(F callback) { callback(); callback(); }
 #macro invoke<F>(F callback) { callback(); }
-#macro nested<F>(F callback) { invoke(callback); }
+#macro nested<F>(F callback) { invoke!(callback); }
 int main() {
   int value = 7;
-  twice([value]() -> void { total += value; });
-  nested([]() -> void { total += 1; });
+  twice!([value]() -> void { total += value; });
+  nested!([]() -> void { total += 1; });
   auto named = []() -> void { total += 2; };
-  invoke(named);
+  invoke!(named);
   return total == 17 ? 0 : 1;
 }
 )",
@@ -115,7 +115,7 @@ int main() {
 #macro invoke<F>(F callback) { callback(); }
 void observe<T>(T value) {}
 void generic<T>(T value) {
-  invoke([value]() -> void { observe(value); });
+  invoke!([value]() -> void { observe(value); });
 }
 int main() { generic(1); generic(true); return 0; }
 )",
@@ -126,8 +126,8 @@ int main() { generic(1); generic(true); return 0; }
 mut int total = 0;
 #macro invoke<F>(F callback) { callback(); }
 int main() {
-  invoke([]() -> void {
-    invoke([]() -> void { total += 1; });
+  invoke!([]() -> void {
+    invoke!([]() -> void { total += 1; });
   });
   return total == 1 ? 0 : 1;
 }
@@ -141,8 +141,8 @@ import std.memory;
 #macro when<F>(bool enabled, F callback) { if (enabled) { callback(); } }
 int main() {
   auto owner = std::make_unique<int>(7);
-  ignore([owned = std::move(owner)]() -> void { int value = *owned; });
-  when(false, [owned = std::move(owner)]() -> void { int value = *owned; });
+  ignore!([owned = std::move(owner)]() -> void { int value = *owned; });
+  when!(false, [owned = std::move(owner)]() -> void { int value = *owned; });
   return *owner == 7 ? 0 : 1;
 }
 )",
@@ -154,9 +154,9 @@ int main() {
 }
 int main() {
   mut int value = 1;
-  when_mut(false, [mut &value]() -> void { value += 100; });
+  when_mut!(false, [mut &value]() -> void { value += 100; });
   value += 1;
-  when_mut(true, [mut &value]() -> void { value += 1; });
+  when_mut!(true, [mut &value]() -> void { value += 1; });
   return value == 3 ? 0 : 1;
 }
 )",
@@ -167,7 +167,7 @@ int main() {
 #macro invoke<F>(F action) { action(); }
 int main() {
   mut int value = 1;
-  invoke([mut &value]() -> void { value += 1; });
+  invoke!([mut &value]() -> void { value += 1; });
   return 0;
 }
 )",
@@ -179,7 +179,7 @@ import std.memory;
 #macro twice<F>(F callback) { callback(); callback(); }
 int main() {
   auto owner = std::make_unique<int>(7);
-  twice([owned = std::move(owner)]() -> void { int value = *owned; });
+  twice!([owned = std::move(owner)]() -> void { int value = *owned; });
   return 0;
 }
 )",
@@ -192,7 +192,7 @@ import std.memory;
 int main() {
   auto owner = std::make_unique<int>(7);
   auto& held = owner;
-  invoke([owned = std::move(owner)]() -> void { int value = *owned; });
+  invoke!([owned = std::move(owner)]() -> void { int value = *owned; });
   return *held;
 }
 )",
@@ -201,7 +201,7 @@ int main() {
   rejected(R"(
 #macro ignore<F>(F callback) {}
 int main() {
-  ignore([]() -> int { return missing; });
+  ignore!([]() -> int { return missing; });
   return 0;
 }
 )",
@@ -213,7 +213,7 @@ import std.memory;
 #macro F repeated<F>(F expression) { F first = expression; return expression; }
 int main() {
   auto owner = std::make_unique<int>(7);
-  auto callback = repeated([owned = std::move(owner)]() -> int { return *owned; });
+  auto callback = repeated!([owned = std::move(owner)]() -> int { return *owned; });
   return 0;
 }
 )",
@@ -223,7 +223,7 @@ int main() {
 #macro F keep<F>(F expression) { return expression; }
 int main() {
   int value = 7;
-  auto callback = keep([&value]() -> int { return value; });
+  auto callback = keep!([&value]() -> int { return value; });
   return callback();
 }
 )",
@@ -236,10 +236,10 @@ void constrainedMacroQueryCycle() {
   options.stopAfter = lang::FrontendPhase::Semantics;
   const std::string source = R"(
 concept recursive_query<T> = requires(T value) {
-  { constrained(value) } -> int;
+  { constrained!(value) } -> int;
 };
 #macro int constrained<T>(T value) requires recursive_query<T> { return 1; }
-int main() { return constrained(1); }
+int main() { return constrained!(1); }
 )";
   const auto result =
       lang::Frontend(options).analyze("macro-query-cycle.gti", source);
@@ -301,7 +301,7 @@ int step<T>(Wrap<T> value) requires available<T> { return 1; }
 #macro int constrained<T>(T value) requires available<T> { return 1; }
 int main() {
   Wrap<Wrap<Leaf>> value{};
-  return constrained(value) - 1;
+  return constrained!(value) - 1;
 }
 )");
   if (!finite.semanticValid)

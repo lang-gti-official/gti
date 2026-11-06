@@ -8,8 +8,21 @@
 namespace lang {
 
 auto SemanticVisitor::Impl::analyzeCapturedCall(const Call &call) -> bool {
-  // Name lookup precedes any inspection/type-probe of the opaque argument.
-  // Ordinary lexical shadowing is therefore the same as other calls.
+  // Resolution selects one syntax alternative before argument analysis.
+  // Procedural definitions receive raw tokens; typed definitions use the
+  // parser's expressions, preserving substitution and ordinary lexical scope.
+  // A partial marked callee still uses the normal name-completion machinery;
+  // failed macro lookup must not swallow an editor's completion request.
+  if (const auto *name = exprAs<Variable>(call.callee().get());
+      name && name->name().completion) {
+    visitVariableExpr(*name);
+    return true;
+  }
+  if (const auto *name = exprAs<QualifiedName>(call.callee().get());
+      name && name->name().last().completion) {
+    visitQualifiedNameExpr(*name);
+    return true;
+  }
   const auto symbol = resolveExpressionSymbol(call.callee());
   const FunctionDecl *procedural = nullptr;
   if (symbol && symbol->type == SemanticType::Function) {
@@ -56,10 +69,22 @@ auto SemanticVisitor::Impl::analyzeCapturedCall(const Call &call) -> bool {
   }
   if (!call.capturedArguments())
     return false;
+  if (symbol && symbol->type == SemanticType::Function &&
+      std::any_of(symbol->overloads.begin(), symbol->overloads.end(),
+                  [](const auto &candidate) {
+                    return candidate.record().macroExpansion;
+                  })) {
+    if (call.macroArgumentErrors().empty())
+      return false;
+    diagnostics.insert(diagnostics.end(), call.macroArgumentErrors().begin(),
+                       call.macroArgumentErrors().end());
+    currentType = SemanticType::Unknown;
+    return true;
+  }
   currentType = SemanticType::Unknown;
   diagnostics.push_back(makeDiagnostic(
       DiagnosticId::MacroExpansion, call.paren(),
-      {"The name before '!' must resolve to one imported procedural macro."}));
+      {"The name before '!' must resolve to a typed or procedural macro."}));
   return true;
 }
 
@@ -884,8 +909,6 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
   if (nativeStackNearlyExhausted())
     return onFreshNativeStack(
         [&] { return analyzeMacroCall(writtenCall, statement); });
-  if (currentFunctionDeclaration && currentFunctionDeclaration->isMacro())
-    return false;
   const Call *call = &writtenCall;
   if (macroProbe && macroProbeCall == call)
     return false;
@@ -917,6 +940,29 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
     diagnostics.push_back(
         makeDiagnostic(DiagnosticId::MacroExpansion, call->paren(), {message}));
   };
+  if (!call->macroBang()) {
+    currentType = SemanticType::Unknown;
+    reject("Macro invocations require '!' before the argument list.");
+    auto &diagnostic = diagnostics.back();
+    diagnostic.primary = tokenSpan(callableToken(call->callee()));
+    if (call->leftParen()) {
+      auto insertion = tokenSpan(*call->leftParen());
+      insertion.end = insertion.start;
+      diagnostic.fixes.push_back(
+          {.span = std::move(insertion),
+           .replacement = "!",
+           .message = "Mark this macro invocation with '!'.",
+           .preferred = true,
+           .applicability = RepairApplicability::MachineApplicable});
+    }
+    if (symbol->overloads.front().declaration)
+      diagnostic.related.push_back(
+          {tokenSpan(symbol->overloads.front().declaration->name()),
+           "The macro is declared here."});
+    return true;
+  }
+  if (currentFunctionDeclaration && currentFunctionDeclaration->isMacro())
+    return false;
   if (std::any_of(symbol->overloads.begin(), symbol->overloads.end(),
                   [](const CallableCandidate &candidate) {
                     return candidate.declaration &&

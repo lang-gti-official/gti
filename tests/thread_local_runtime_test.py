@@ -150,8 +150,8 @@ public:
   MacroOwner saved{expression};
   return saved;
 }
-thread_local int32_t macro_configured = select_macro(macro_seed > 0, macro_seed);
-thread_local MacroOwner macro_owner = own_macro(macro_configured);
+thread_local int32_t macro_configured = select_macro!(macro_seed > 0, macro_seed);
+thread_local MacroOwner macro_owner = own_macro!(macro_configured);
 int32_t verify_macro_state() {
   macro_report.activate();
   if (macro_owner.read() != 7 || macro_owner.read() != 7 ||

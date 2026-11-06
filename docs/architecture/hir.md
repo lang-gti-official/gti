@@ -785,6 +785,11 @@ shared semantic substitution kernel, including exact specializations. A lambda
 uses its exact lexical creator and must have one compatible context; missing,
 conflicting or cyclic creator contexts cannot establish construction authority.
 No argument is inferred from the construction result type.
+Construction-plan verification indexes the body's values by ID and its
+non-executing aliases by source for the duration of that read-only pass.
+Indexes preserve first-match behavior for malformed duplicate IDs/sources;
+they accelerate lookup without replacing producer, uniqueness, sequencing or
+construction-provenance checks, and never survive a body edit.
 
 An unsafe expression is the same grouping value after frontend permission
 checking. Exact unsafe operations on its operand retain their ordinary

@@ -93,21 +93,21 @@ import std.source_location;
 import std.memory;
 int effect() { return 19; }
 #macro std::string_view named<T>(T argument) {
-  return std::expression_text(argument);
+  return std::expression_text!(argument);
 }
-#macro std::string_view nested<T>(T argument) { return named(argument); }
+#macro std::string_view nested<T>(T argument) { return named!(argument); }
 #macro std::string_view defaulted(int argument = 6 /* default */ + 1) {
-  return nested(argument);
+  return nested!(argument);
 }
 int main() {
-  std::string_view direct = std::expression_text( effect( /* inside */ ) );
-  std::string_view forwarded = nested((3 /* λ */ + 4));
-  std::string_view unicode = std::expression_text("λβ");
-  std::string_view from_default = defaulted();
+  std::string_view direct = std::expression_text!( effect( /* inside */ ) );
+  std::string_view forwarded = nested!((3 /* λ */ + 4));
+  std::string_view unicode = std::expression_text!("λβ");
+  std::string_view from_default = defaulted!();
   mut std::unique_ptr<int> owner = std::make_unique<int>(7);
-  std::string_view named_owner = std::expression_text(owner);
-  std::string_view moved = std::expression_text(std::move(owner));
-  std::string_view borrowed = std::expression_text(*owner);
+  std::string_view named_owner = std::expression_text!(owner);
+  std::string_view moved = std::expression_text!(std::move(owner));
+  std::string_view borrowed = std::expression_text!(*owner);
   owner.reset();
   return int32_t(direct.size() + forwarded.size() + unicode.size() +
                  from_default.size() + named_owner.size() + moved.size() +
@@ -143,7 +143,7 @@ int main() {
 
   const auto crlf =
       analyze("import std.source_location;\r\n"
-              "int main() { std::string_view text = std::expression_text("
+              "int main() { std::string_view text = std::expression_text!("
               "(1 /* λ */ +\r\n 2)); return int32_t(text.size()); }\r\n");
   expect(
       crlf.canGenerateCode() &&
@@ -187,9 +187,9 @@ void testRejections() {
   const auto composed = analyze(R"gti(
 import std.source_location;
 #macro std::string_view composed(int argument) {
-  return std::expression_text(argument + 1);
+  return std::expression_text!(argument + 1);
 }
-int main() { std::string_view text = composed(2); return 0; }
+int main() { std::string_view text = composed!(2); return 0; }
 )gti");
   expect(!composed.canGenerateCode(),
          "synthetic compound expression text should fail closed");
@@ -208,7 +208,7 @@ int main() { std::string_view text = composed(2); return 0; }
   const std::string invalidSource = R"gti(
 import std.source_location;
 int main() {
-  std::string_view text = std::expression_text(missing_expression + 1);
+  std::string_view text = std::expression_text!(missing_expression + 1);
   return 0;
 }
 )gti";
@@ -227,7 +227,7 @@ int main() {
 import std.source_location;
 int main() {
   int* pointer = nullptr;
-  std::string_view text = std::expression_text(*pointer);
+  std::string_view text = std::expression_text!(*pointer);
   return 0;
 }
 )gti");
@@ -260,7 +260,7 @@ int main() {
       lang::Frontend(options).analyze("unavailable-source.gti",
                                       "import std.source_location;\n"
                                       "int main() { std::string_view text = "
-                                      "std::expression_text(2); return 0; }",
+                                      "std::expression_text!(2); return 0; }",
                                       {library / "prelude.gti"}, {}, {library});
   expect(parsed.sourceValid && parsed.syntaxValid,
          "unavailable-source fixture should retain valid loaded syntax");
@@ -313,23 +313,23 @@ import std.memory;
 import std.assert;
 constexpr std::string_view fallback = "synthetic condition";
 #macro std::string_view composed(int expression) {
-  return std::expression_text(expression + 1, fallback);
+  return std::expression_text!(expression + 1, fallback);
 }
-#macro std::string_view forwarded(int expression) { return composed(expression); }
+#macro std::string_view forwarded(int expression) { return composed!(expression); }
 #macro std::string_view owner_text<T>(T expression) {
-  return std::expression_text((expression), "owner fallback");
+  return std::expression_text!((expression), "owner fallback");
 }
-#macro checked(int expression) { std::assert(expression > 0); }
+#macro checked(int expression) { std::assert!(expression > 0); }
 int main() {
   mut int counter = 0;
-  std::string_view exact = std::expression_text(++counter, "unused fallback");
-  std::string_view synthetic = forwarded(++counter);
+  std::string_view exact = std::expression_text!(++counter, "unused fallback");
+  std::string_view synthetic = forwarded!(++counter);
   mut std::unique_ptr<int> owner = std::make_unique<int>(7);
-  std::string_view named = owner_text(owner);
-  std::string_view moved = owner_text(std::move(owner));
-  std::string_view borrowed = owner_text(*owner);
+  std::string_view named = owner_text!(owner);
+  std::string_view moved = owner_text!(std::move(owner));
+  std::string_view borrowed = owner_text!(*owner);
   owner.reset();
-  checked(3);
+  checked!(3);
   return counter;
 }
 )gti");
@@ -351,7 +351,7 @@ int main() {
 import std.source_location;
 std::string_view dynamic() { return "dynamic"; }
 int main() {
-  std::string_view text = std::expression_text(1, dynamic());
+  std::string_view text = std::expression_text!(1, dynamic());
   return 0;
 }
 )gti");
@@ -367,7 +367,7 @@ int main() {
   const auto invalid = analyze(R"gti(
 import std.source_location;
 int main() {
-  std::string_view text = std::expression_text(missing, "explicit fallback");
+  std::string_view text = std::expression_text!(missing, "explicit fallback");
   return 0;
 }
 )gti");

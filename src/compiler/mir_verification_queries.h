@@ -4,10 +4,38 @@
 #include "gti/mir_verifier.h"
 
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <span>
 
 namespace lang::mir_detail {
+
+// Read-only verification acceleration, never proof authority. The body must
+// remain immutable for this scope. Nested scopes reuse the same body's index
+// or restore the previous body's index. No index survives an editor mutation.
+class MirBodyReadScope {
+public:
+  explicit MirBodyReadScope(const MirBody &body);
+  ~MirBodyReadScope();
+  MirBodyReadScope(const MirBodyReadScope &) = delete;
+  MirBodyReadScope &operator=(const MirBodyReadScope &) = delete;
+
+private:
+  struct Index;
+  static thread_local const Index *current;
+  const Index *previous;
+  std::unique_ptr<Index> owned;
+  friend std::optional<std::span<const MirValue *const>>
+  indexedSourceValues(const MirBody &, HirValueId);
+  friend std::optional<const MirInstruction *>
+  indexedInstruction(const MirBody &, const MirBlock &, MirInstructionId);
+};
+// nullopt means no applicable index: the caller retains its scan semantics.
+[[nodiscard]] std::optional<std::span<const MirValue *const>>
+indexedSourceValues(const MirBody &body, HirValueId source);
+[[nodiscard]] std::optional<const MirInstruction *>
+indexedInstruction(const MirBody &body, const MirBlock &block,
+                   MirInstructionId id);
 
 // Validate the semantic representation witness against the executable null
 // path, without interpreting the non-null destructor or inspecting source.

@@ -50,8 +50,8 @@ int32_t read_external() { unsafe { return external_value; } }
   int32_t native_copy = read_external();
   return saved + native_copy;
 }
-int32_t process_result = lexical_value(process_value + per_thread_value);
-thread_local int32_t per_thread_result = lexical_value(per_thread_value);
+int32_t process_result = lexical_value!(process_value + per_thread_value);
+thread_local int32_t per_thread_result = lexical_value!(per_thread_value);
 int32_t invoke(int32_t argument) {
   int32_t caller = argument;
   return per_thread_result + caller;

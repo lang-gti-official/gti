@@ -687,7 +687,7 @@ The current implemented foundation includes:
   compositions that the current C++ backend does not yet admit; this is a
   separate constructor-rollback coverage limit, not a fallback to the
   declaration location. It also provides the source-defined value macro
-  `std::expression_text(expression)`, returning a literal-backed
+  `std::expression_text!(expression)`, returning a literal-backed
   `std::string_view` with static lifetime and no runtime allocation. Its
   expression must type-check, but is never evaluated, moved, copied or
   runtime-borrowed. The text contains the exact source bytes from the first
@@ -699,7 +699,7 @@ The current implemented foundation includes:
   children, or syntax without an available written source origin, is rejected
   rather than given a reconstructed spelling. The result is read-only metadata,
   with no token substitution or token-pasting operation.
-  The overload `std::expression_text(expression, fallback)` uses the exact text
+  The overload `std::expression_text!(expression, fallback)` uses the exact text
   when available and otherwise returns the explicit fallback. The fallback must
   be compile-time literal-backed `std::string_view` text, even when the exact
   expression origin is available. Both arguments are type-checked without

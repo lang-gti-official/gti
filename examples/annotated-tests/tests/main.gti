@@ -7,8 +7,8 @@ namespace engine::tests {
   [[test]]
   void fresh_scene_state() {
     executions++;
-    std::testing::check_eq(executions, 1, "Each test gets a fresh process");
-    std::testing::check_ne(executions, 0);
+    std::testing::check_eq!(executions, 1, "Each test gets a fresh process");
+    std::testing::check_ne!(executions, 0);
     std::testing::check_string_eq("scene-ready", "scene-ready");
     std::testing::check_approx(1.0, 1.001, 0.01);
     mut std::vector<int> actual{};

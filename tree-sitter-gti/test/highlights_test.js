@@ -809,6 +809,11 @@ for (const [text, name] of [["sized", "type"], ["integral", "type"], ["invoke", 
   }
 }
 
+for (const spelling of ["macro_highlight!(", "policy::macro_highlight<int>!(", "html!({"]) {
+  const row = fixtureLines.findIndex((line) => line.includes(spelling));
+  requireCapture(row, spelling.startsWith("html") ? "html" : "macro_highlight", "function.macro");
+}
+
 const codegenRow = fixtureLines.findIndex((line) => line.includes("int hinted_highlight"));
 requireCapture(codegenRow, "inline", "attribute");
 requireCapture(codegenRow, "cold", "attribute");
