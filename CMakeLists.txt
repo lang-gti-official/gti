@@ -551,7 +551,9 @@ add_library(
   "src/compiler/semantic_flow_analysis.cpp"
   "src/compiler/semantic_ownership_analysis.cpp"
   "src/compiler/semantic_lifetimes.cpp"
+  "src/compiler/semantic_lifetime_requirements.cpp"
   "src/compiler/semantic_nominal_lifetimes.cpp"
+  "src/compiler/semantic_executable_lifetimes.cpp"
   "src/compiler/semantic_callable_erasure.cpp"
   "src/compiler/semantic_type_resolution.cpp"
 )

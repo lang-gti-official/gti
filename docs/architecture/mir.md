@@ -457,6 +457,23 @@ destructor instances retain normalized contracts just as functions and
 constructors do. Authoritative nominal variance is preserved alongside the
 concrete field/base inventory; lowering never derives it from names.
 
+Callable lifetime applications retain a universal function signature and fixed
+bindings for its free carrier regions. The trusted function-pointer capability
+selects the actual carrier signature. MIR reconstructs it by capture-avoiding
+substitution, derives the implied input type bounds, and instantiates only the
+higher-ranked binders for invocation. The declaration's permitted supplier set
+is retained even when the current target body uses only a subset. Full target
+requirement formulas are evaluated against the caller graph; semantic predicate
+truth belongs to the exact target instance and cannot be supplied by a call.
+
+A program-level nominal recipe graph preserves symbolic generic identities,
+fields, bases, payload paths, specialization families and trusted capabilities.
+The shared variance fixed point operates on these recipes, retaining slot
+identity when concrete arguments coincide. Concrete executable instances also
+retain descriptors for lifted universal regions and their extended contracts.
+These records are proof metadata and do not authorize runtime erasure by
+themselves.
+
 The combined deterministic serialization is currently `mir-v121`/`mir-body-v94`,
 with `lowered-program-v35` declaration metadata. Function instances and sealed
 declarations retain the resolved cold hint and default/hint/never inlining policy;

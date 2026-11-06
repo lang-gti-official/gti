@@ -359,8 +359,9 @@ paths = [
   "src/compiler/semantic_flow_analysis.cpp",
   "src/compiler/semantic_constexpr.cpp",
   "src/compiler/semantic_ownership*",
-  "src/compiler/semantic_lifetimes.cpp",
+  "src/compiler/semantic_lifetime*.cpp",
   "src/compiler/semantic_nominal_lifetimes.cpp",
+  "src/compiler/semantic_executable_lifetimes.cpp",
   "src/compiler/semantic_type*",
 ]
 owners = [

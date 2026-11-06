@@ -17798,6 +17798,7 @@ verifyOwnedPointeeProjection(const MirProgram &program,
 static MirVerificationResult
 verifyMirProgramContracts(const MirProgram &program) {
   MirVerificationResult result;
+  appendVerification(result, verifyMirNominalLifetimeRecipes(program));
   if (!program.valid()) {
     result.errors.push_back({.bodyKind = MirBodyKind::Module,
                              .message = "MIR program is marked invalid"});

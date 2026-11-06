@@ -12,7 +12,60 @@ template <typename T> void appendUnique(std::vector<T> &values, const T &value) 
 struct LifetimeAssumptions {
   std::vector<LifetimeBound> regions;
   std::vector<LifetimeTypeBound> types;
+  bool impossible = false;
 };
+
+LifetimeAssumptions guaranteedLifetimeAssumptions(
+    const LifetimeRequirementFormula &formula) {
+  using Kind = LifetimeRequirementNode::Kind;
+  std::vector<LifetimeAssumptions> facts;
+  for (const auto &node : formula.nodes) {
+    LifetimeAssumptions result;
+    if (node.kind == Kind::Region) {
+      result.regions.push_back(node.bound);
+    } else if (node.kind == Kind::Type) {
+      result.types.push_back({node.type, node.bound.shorter});
+    } else if (node.kind == Kind::SemanticPredicate) {
+      result.impossible = node.semanticTruth && !*node.semanticTruth;
+    } else if (node.left < facts.size() && node.right < facts.size()) {
+      const auto &left = facts[node.left];
+      const auto &right = facts[node.right];
+      if (node.kind == Kind::All) {
+        result = left;
+        result.impossible = left.impossible || right.impossible;
+        for (const auto edge : right.regions)
+          appendUnique(result.regions, edge);
+        for (const auto &bound : right.types)
+          appendUnique(result.types, bound);
+      } else if (left.impossible || right.impossible) {
+        result = left.impossible ? right : left;
+      } else {
+        LifetimeBounds leftBounds, rightBounds;
+        for (const auto edge : left.regions)
+          (void)leftBounds.assume(edge.longer, edge.shorter);
+        for (const auto edge : right.regions)
+          (void)rightBounds.assume(edge.longer, edge.shorter);
+        auto candidates = left.regions;
+        for (const auto edge : right.regions)
+          appendUnique(candidates, edge);
+        for (const auto edge : candidates)
+          if (leftBounds.proves(edge.longer, edge.shorter) &&
+              rightBounds.proves(edge.longer, edge.shorter))
+            appendUnique(result.regions, edge);
+        for (const auto &bound : left.types)
+          if (std::any_of(right.types.begin(), right.types.end(), [&](const auto &other) {
+                return equivalentLifetimeTypes(bound.type, other.type) &&
+                       rightBounds.proves(other.region, bound.region);
+              }))
+            appendUnique(result.types, bound);
+      }
+    } else {
+      return {};
+    }
+    facts.push_back(std::move(result));
+  }
+  return formula.root < facts.size() ? facts[formula.root] : LifetimeAssumptions{};
+}
 
 // A conjunction guarantees both sides. A disjunction guarantees only facts
 // shared by both sides; treating every written bound as an assumption would
@@ -147,7 +200,10 @@ auto SemanticVisitor::Impl::normalizeFunctionLifetimeContract(
   };
   addParameter(contract.receiver);
   if (function.ownerClass != 0) {
-    for (const auto &parameter : classInfo(function.ownerClass).genericParameters)
+    const auto &owner = classInfo(function.ownerClass);
+    contract.bounds = owner.lifetimeContract.bounds;
+    contract.typeBounds = owner.lifetimeContract.typeBounds;
+    for (const auto &parameter : owner.genericParameters)
       if (parameter.lifetime)
         addParameter(Lifetime::parameter(parameter.id));
   }
@@ -215,7 +271,7 @@ auto SemanticVisitor::Impl::normalizeConstructorLifetimeContract(
   const auto &owner = classInfo(constructor.owner);
   const Token site = constructor.declaration ? constructor.declaration->name()
                                            : owner.name;
-  LifetimeSignatureContract contract;
+  LifetimeSignatureContract contract = owner.lifetimeContract;
   for (const auto *parameters : std::array<const std::vector<GenericParameterInfo> *, 2>{
                                    &owner.genericParameters,
                                    &constructor.genericParameters})
@@ -245,7 +301,7 @@ auto SemanticVisitor::Impl::normalizeDestructorLifetimeContract(
   const auto &owner = classInfo(destructor.owner);
   const Token site = destructor.declaration ? destructor.declaration->tilde()
                                           : owner.name;
-  LifetimeSignatureContract contract;
+  LifetimeSignatureContract contract = owner.lifetimeContract;
   contract.receiver = implicitSyntaxLifetime(site, 0, "this");
   contract.parameters.push_back(contract.receiver);
   for (const auto &parameter : owner.genericParameters)
@@ -304,7 +360,8 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
   const auto normalize = [&](auto &&self, SemanticType &type, bool input,
                              Lifetime resultRegion,
                              std::vector<GenericParameterId> *quantified) -> void {
-    if (type.kind == SemanticType::FunctionSignature) {
+    if (type.kind == SemanticType::FunctionSignature ||
+        type.kind == SemanticType::FunctionItem) {
       if (type.arguments.empty()) {
         valid = false;
         return;
@@ -398,6 +455,19 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
   };
   for (const auto &parameter : parameterTypes)
     implied(implied, parameter);
+  if (const auto requirementsFormula = buildLifetimeRequirements(requirements)) {
+    // Re-normalizing a concrete instance refreshes predicate facts without
+    // duplicating the same declaration formula or changing its leaf ordinals.
+    if (!requirements.empty())
+      contract.requirements = *requirementsFormula;
+    const auto guaranteed = guaranteedLifetimeAssumptions(contract.requirements);
+    for (const auto edge : guaranteed.regions)
+      appendUnique(contract.bounds, edge);
+    for (const auto &bound : guaranteed.types)
+      appendUnique(contract.typeBounds, bound);
+  } else {
+    valid = false;
+  }
   contract.complete = valid;
   return {.contract = std::move(contract), .ambiguousResult = ambiguousResult};
 }
@@ -534,6 +604,11 @@ auto SemanticVisitor::Impl::lifetimeOfOriginPlace(
                 projection.kind == PlaceProjectionKind::DynamicIndex) &&
                type.kind == SemanticType::Array && type.arguments.size() == 1) {
       type = SemanticType(type.arguments.front());
+      reference();
+    } else if (projection.kind == PlaceProjectionKind::ConstantIndex &&
+               type.kind == SemanticType::TypePack && type.concretePack &&
+               projection.index < type.arguments.size()) {
+      type = SemanticType(type.arguments[projection.index]);
       reference();
     } else if (projection.kind == PlaceProjectionKind::Dereference &&
                type.kind == SemanticType::RawPointer) {
@@ -678,12 +753,14 @@ auto SemanticVisitor::Impl::commitLifetimeApplication(
 
 auto SemanticVisitor::Impl::constrainLifetimeType(
     const SemanticType &actual, const SemanticType &expected, int variance,
-    std::vector<LifetimeBound> &obligations) const
+    std::vector<LifetimeBound> &obligations, bool allowBase) const
     -> std::optional<SemanticType> {
   std::vector<std::pair<SemanticType, SemanticType>> active;
   const auto relate = [&](auto &&self, const SemanticType &source,
-                          const SemanticType &target, int mode)
+                          const SemanticType &target, int mode, bool allowProjection)
       -> std::optional<SemanticType> {
+    if (source == target)
+      return source;
     if (source.kind != target.kind)
       return source; // The ordinary conversion rules still own type shape.
     if (!source.quantifiedLifetimes.empty() ||
@@ -700,6 +777,8 @@ auto SemanticVisitor::Impl::constrainLifetimeType(
       ~Pop() { values.pop_back(); }
     } pop{active};
     if (source.kind == SemanticType::Class && source.classId != target.classId) {
+      if (!allowProjection)
+        return source;
       std::vector<SemanticType> matches;
       std::vector<SemanticType> visited;
       const auto project = [&](auto &&walk, const SemanticType &type) -> void {
@@ -724,7 +803,7 @@ auto SemanticVisitor::Impl::constrainLifetimeType(
         return source;
       if (matches.size() != 1)
         return std::nullopt;
-      return self(self, matches.front(), target, mode);
+      return self(self, matches.front(), target, mode, false);
     }
     if (source.kind == SemanticType::Enum && source.enumId != target.enumId)
       return source;
@@ -783,14 +862,14 @@ auto SemanticVisitor::Impl::constrainLifetimeType(
         // unrelated runtime type identity. Recurse invariantly for shape,
         // then discard only this position's lifetime obligations.
         std::vector<LifetimeBound> saved = obligations;
-        auto child = self(self, source.arguments[index], target.arguments[index], 0);
+        auto child = self(self, source.arguments[index], target.arguments[index], 0, false);
         obligations = std::move(saved);
         if (!child)
           return std::nullopt;
         adjusted.arguments[index] = std::move(*child);
       } else {
         auto child = self(self, source.arguments[index], target.arguments[index],
-                          compose(direction));
+                          compose(direction), target.kind == SemanticType::Reference);
         if (!child)
           return std::nullopt;
         adjusted.arguments[index] = std::move(*child);
@@ -798,7 +877,36 @@ auto SemanticVisitor::Impl::constrainLifetimeType(
     }
     return adjusted;
   };
-  return relate(relate, actual, expected, variance);
+  return relate(relate, actual, expected, variance, allowBase);
+}
+
+auto SemanticVisitor::Impl::applyLifetimeValueConversion(
+    const SemanticType &actual, const SemanticType &expected, const Token &site,
+    int variance, bool allowBase, bool diagnose) -> std::optional<SemanticType> {
+  std::vector<LifetimeBound> obligations;
+  auto adjusted = constrainLifetimeType(actual, expected, variance, obligations, allowBase);
+  if (!adjusted)
+    return std::nullopt;
+  LifetimeInferenceConstraints graph(currentLifetimeBounds());
+  bool valid = true;
+  for (const auto edge : loanFlow.lifetimeObligations)
+    valid = graph.require(edge.longer, edge.shorter) && valid;
+  for (const auto edge : obligations)
+    valid = graph.require(edge.longer, edge.shorter) && valid;
+  if (!valid || graph.failure()) {
+    if (diagnose)
+      report(site, "This value conversion requires a lifetime relationship "
+                   "that the current borrowing contract does not prove.",
+             "GTI-S2127");
+    return std::nullopt;
+  }
+  for (const auto edge : obligations) {
+    appendUnique(loanFlow.lifetimeObligations, edge);
+    for (const auto region : {edge.longer, edge.shorter})
+      if (region.kind == Lifetime::Kind::Inference)
+        appendUnique(loanFlow.lifetimeVariables, region);
+  }
+  return adjusted;
 }
 
 auto SemanticVisitor::Impl::callLifetimeArgumentType(
@@ -814,7 +922,8 @@ auto SemanticVisitor::Impl::callLifetimeArgumentType(
   const int variance = expected.kind == SemanticType::Reference &&
                                expected.referenceAccess == AccessMode::Mutable
                            ? 0 : 1;
-  auto adjusted = constrainLifetimeType(actual, target, variance, obligations);
+  auto adjusted = constrainLifetimeType(actual, target, variance, obligations,
+                                        expected.kind == SemanticType::Reference);
   if (!adjusted)
     return std::nullopt;
   LifetimeInferenceConstraints graph(currentLifetimeBounds());
@@ -997,7 +1106,7 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
                                  ? actual.arguments.front() : actual;
       if (!constrainLifetimeType(referent, parameter.arguments.front(),
                                  parameter.referenceAccess == AccessMode::Mutable ? 0 : 1,
-                                 application.obligations))
+                                 application.obligations, true))
         return reject("The argument's nested lifetimes do not match the parameter contract.");
     } else if (!constrainLifetimeType(actual, parameter, 1, application.obligations)) {
       return reject("The argument's lifetime contract does not match the parameter.");
@@ -1042,15 +1151,6 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
     std::vector<LifetimeBound> &values; std::size_t size;
     ~Restore() { values.resize(size); }
   } restore{loanFlow.lifetimeObligations, previous};
-  for (const auto &bound : application.typeObligations) {
-    AppliedConceptRequirement requirement{.lifetimeBound = LifetimeBound{{}, bound.region},
-                                           .outlivesType = bound.type};
-    if (const auto failure = lifetimeRequirementFailure(requirement)) {
-      if (diagnose)
-        reportConstraintFailure(site, *failure);
-      return false;
-    }
-  }
   auto requirements = function.requirements;
   for (auto &requirement : requirements) {
     for (auto &type : requirement.arguments)
@@ -1066,6 +1166,32 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
       requirement.outlivesType = substituteTypeLifetimes(
           *requirement.outlivesType, application.bindings);
   }
+  auto formula = buildLifetimeRequirements(requirements);
+  if (!formula)
+    return reject("The lifetime requirement graph is recursive or exceeds its bounded size.");
+  for (const auto &bound : application.typeObligations) {
+    const auto root = formula->nodes.size();
+    formula->nodes.push_back({.kind = LifetimeRequirementNode::Kind::Type,
+                              .bound = {{}, bound.region}, .type = bound.type});
+    if (formula->root == LifetimeRequirementNode::invalidIndex) {
+      formula->root = root;
+    } else {
+      formula->nodes.push_back({.kind = LifetimeRequirementNode::Kind::All,
+                                .left = formula->root, .right = root});
+      formula->root = formula->nodes.size() - 1;
+    }
+  }
+  const auto previousApplicationEdges = application.obligations.size();
+  if (!applyLifetimeRequirements(*formula, application, site, diagnose))
+    return false;
+  loanFlow.lifetimeObligations.insert(
+      loanFlow.lifetimeObligations.end(),
+      application.obligations.begin() + previousApplicationEdges,
+      application.obligations.end());
+  for (const auto edge : application.obligations)
+    for (const auto region : {edge.longer, edge.shorter})
+      if (region.kind == Lifetime::Kind::Inference)
+        appendUnique(application.variables, region);
   if (const auto failure = firstRequirementFailure(requirements)) {
     if (diagnose)
       reportConstraintFailure(site, *failure);

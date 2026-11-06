@@ -312,6 +312,10 @@ public:
   [[nodiscard]] NominalVariance nominalVariance(const SemanticType &type) const override;
   [[nodiscard]] LifetimeSignatureContract
   nominalLifetimeContract(const SemanticType &type) const override;
+  [[nodiscard]] std::vector<NominalVarianceRecipe>
+  nominalVarianceRecipes() const override;
+  [[nodiscard]] std::optional<SemanticExecutableInstantiation>
+  canonicalizeExecutableInstance(const InstanceAnalysisKey &key) override;
 
   [[nodiscard]] bool
   requiresActiveCleanupFor(const SemanticType &type) const override;
@@ -666,6 +670,10 @@ public:
   template <typename Analyze>
   [[nodiscard]] SemanticInstanceAnalysis
   analyzeReusableInstance(InstanceAnalysisKey key, Analyze analyze) {
+    if (const auto canonical = canonicalizeExecutableInstance(key)) {
+      key.classTypes = canonical->classTypes;
+      key.types = canonical->types;
+    }
     if (!lateDemandReady || bodyPhaseActive || instanceAnalysisActive ||
         !prepareInstanceReuse()) {
       auto result = withLateDemand(analyze);
@@ -1036,6 +1044,11 @@ private:
                  : declaration;
     }
   };
+
+  [[nodiscard]] bool universalizeFunctionCandidate(
+      CallableCandidate &candidate, std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &valueArguments,
+      std::span<const GenericParameterId> inferredTypeParameters);
 
   void bindOutOfClassDefinitions(const StmtList &statements,
                                  std::vector<std::string> scope);
@@ -3088,7 +3101,10 @@ private:
                                                  const Token &site) const;
   [[nodiscard]] std::optional<SemanticType> constrainLifetimeType(
       const SemanticType &actual, const SemanticType &expected, int variance,
-      std::vector<LifetimeBound> &obligations) const;
+      std::vector<LifetimeBound> &obligations, bool allowBase = false) const;
+  [[nodiscard]] std::optional<SemanticType> applyLifetimeValueConversion(
+      const SemanticType &actual, const SemanticType &expected, const Token &site,
+      int variance = 1, bool allowBase = false, bool diagnose = false);
   [[nodiscard]] std::optional<SemanticType> callLifetimeArgumentType(
       const CallableCandidate &function, const SemanticType &actual,
       const SemanticType &expected) const;
@@ -3105,6 +3121,11 @@ private:
   [[nodiscard]] LifetimeBounds currentLifetimeBounds() const;
   [[nodiscard]] LifetimeBounds lifetimeBoundsForContract(
       const LifetimeSignatureContract &contract) const;
+  [[nodiscard]] std::optional<LifetimeRequirementFormula> buildLifetimeRequirements(
+      std::span<const AppliedConceptRequirement> requirements) const;
+  [[nodiscard]] bool applyLifetimeRequirements(
+      const LifetimeRequirementFormula &requirements,
+      SemanticLifetimeApplication &application, const Token &site, bool diagnose);
   [[nodiscard]] Lifetime lifetimeOfOriginPlace(
       const SemanticLoanPlace &place) const;
   [[nodiscard]] Lifetime borrowedExpressionLifetime(const Expr *expression) const;
@@ -3113,6 +3134,7 @@ private:
                                                 bool diagnose = true);
   void recordReferenceLifetimeBinding(const SemanticType &reference,
                                       const ExprPtr &initializer);
+  void refreshDeclaredLifetimeBorrowSummary(FunctionInfo &function) const;
   [[nodiscard]] Lifetime implicitFunctionLifetime(const FunctionDecl &function,
                                                  std::size_t slot,
                                                  std::string_view name);
@@ -4291,8 +4313,8 @@ private:
   [[nodiscard]] static bool
   nativeFunctionCandidateIsEligible(const CallableCandidate &candidate);
 
-  [[nodiscard]] static bool
-  functionItemCandidateIsEligible(const CallableCandidate &candidate);
+  [[nodiscard]] bool
+  functionItemCandidateIsEligible(const CallableCandidate &candidate) const;
 
   [[nodiscard]] bool
   nativeFunctionCandidateMatches(const CallableCandidate &candidate,
@@ -7412,6 +7434,34 @@ private:
   // semantic facts. Speculative expression checks use a model delta rather
   // than copying every earlier expression in the caller's program.
   struct RequestSessionContext {
+    struct ExecutableLifetimeKey {
+      InstanceAnalysisKey runtime;
+      // Alpha-normalized bound uses preserve HRTB equality and scope. All
+      // free occurrences have the same marker, independently of caller IDs.
+      std::vector<std::size_t> regionShape;
+      friend bool operator==(const ExecutableLifetimeKey &,
+                             const ExecutableLifetimeKey &) = default;
+    };
+    struct ExecutableLifetimeKeyHash {
+      std::size_t operator()(const ExecutableLifetimeKey &key) const {
+        auto hash = InstanceAnalysisKeyHash{}(key.runtime);
+        for (auto component : key.regionShape)
+          hash ^= component + 0x9e3779b9U + (hash << 6) + (hash >> 2);
+        return hash;
+      }
+    };
+    struct ExecutableLifetimeIdentity {
+      std::vector<GenericParameterInfo> parameters;
+    };
+    // These IDs never rewind with InstanceAnalysisScope. Their disjoint high
+    // half and per-request cache keep nested body requests collision-free.
+    struct ExecutableLifetimeRegistry {
+      GenericParameterId nextId = std::numeric_limits<GenericParameterId>::max();
+      std::unordered_map<ExecutableLifetimeKey, ExecutableLifetimeIdentity,
+                         ExecutableLifetimeKeyHash> identities;
+    };
+    std::shared_ptr<ExecutableLifetimeRegistry> executableLifetimes =
+        std::make_shared<ExecutableLifetimeRegistry>();
     struct OwnerlessTextCallUse {
       const FunctionDecl *caller = nullptr;
       FunctionId callee = 0;

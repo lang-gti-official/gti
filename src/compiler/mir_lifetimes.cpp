@@ -1,5 +1,7 @@
 #include "mir_lifetimes.h"
 #include "gti/lifetime_types.h"
+#include "gti/callable_lifetimes.h"
+#include "gti/nominal_variance.h"
 
 namespace lang {
 MirLifetimeApplication
@@ -8,12 +10,299 @@ lowerMirLifetimeApplication(const HirLifetimeApplication &source) {
                                 .variables = source.variables,
                                 .obligations = source.obligations,
                                 .typeObligations = source.typeObligations,
+                                .callableSignature = source.callableSignature,
                                 .complete = source.complete};
   for (const auto &origin : source.origins)
     result.origins.push_back({.region = origin.region,
                               .key = origin.place,
                               .source = origin.source});
   return result;
+}
+
+std::optional<MirClassLifetimeView> mirClassLifetimeView(
+    const MirProgram &program, const SemanticType &type) {
+  if (type.kind != SemanticType::Class)
+    return std::nullopt;
+  std::optional<MirClassLifetimeView> selected;
+  for (const auto &instance : program.classInstances()) {
+    if (instance.declaration != type.classId)
+      continue;
+    const auto bindings = matchUniversalTypeLifetimes(
+        instance.type, type, instance.lifetimeContract.parameters);
+    if (!bindings)
+      continue;
+    if (selected)
+      return std::nullopt;
+    selected = MirClassLifetimeView{&instance, *bindings};
+  }
+  return selected;
+}
+
+std::optional<MirEnumLifetimeView> mirEnumLifetimeView(
+    const MirProgram &program, const SemanticType &type) {
+  if (type.kind != SemanticType::Enum)
+    return std::nullopt;
+  std::optional<MirEnumLifetimeView> selected;
+  const auto select = [&](const auto &instance, bool payload) {
+    if (instance.declaration != type.enumId)
+      return true;
+    const auto bindings = matchUniversalTypeLifetimes(
+        instance.type, type, instance.lifetimeContract.parameters);
+    if (!bindings)
+      return true;
+    if (selected)
+      return false;
+    MirEnumLifetimeView view;
+    if constexpr (std::is_same_v<std::remove_cvref_t<decltype(instance)>, MirPayloadEnum>)
+      view.payload = &instance;
+    else
+      view.integral = &instance;
+    (void)payload;
+    view.bindings = *bindings;
+    selected = std::move(view);
+    return true;
+  };
+  for (const auto &instance : program.integralEnums())
+    if (!select(instance, false))
+      return std::nullopt;
+  for (const auto &instance : program.payloadEnums())
+    if (!select(instance, true))
+      return std::nullopt;
+  return selected;
+}
+
+MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program) {
+  MirVerificationResult result;
+  const auto reject = [&](std::string message) {
+    result.errors.push_back({.bodyKind = MirBodyKind::Module, .message = std::move(message)});
+  };
+  const auto &recipes = program.nominalVarianceRecipes();
+  const auto inferred = inferNominalVarianceRecipes(recipes);
+  if (!inferred) {
+    reject("MIR nominal variance recipe graph is malformed or incomplete");
+    return result;
+  }
+  const auto findRecipe = [&](SemanticType::Kind kind, std::uint64_t id)
+      -> std::optional<std::size_t> {
+    for (std::size_t index = 0; index < recipes.size(); ++index)
+      if (recipes[index].kind == kind && recipes[index].declaration == id)
+        return index;
+    return std::nullopt;
+  };
+  const auto selectedType = [&](auto &&self, SemanticType type) -> std::optional<SemanticType> {
+    bool valid = true;
+    lifetime_detail::children(type, [&](SemanticType &child) {
+      auto selected = self(self, child);
+      if (selected)
+        child = std::move(*selected);
+      else
+        valid = false;
+    });
+    if (!valid)
+      return std::nullopt;
+    if (type.kind != SemanticType::Class)
+      return type;
+    const NominalVarianceRecipe *selected = nullptr;
+    for (const auto &recipe : recipes)
+      if (recipe.exactSpecializationPrimary == type.classId &&
+          recipe.exactTypeArguments == type.arguments &&
+          recipe.exactValueArguments == type.valueArguments) {
+        if (selected)
+          return std::nullopt;
+        selected = &recipe;
+      }
+    if (selected)
+      type.classId = selected->declaration;
+    return type;
+  };
+  const auto substitution = [&](const NominalVarianceRecipe &recipe, const SemanticType &type)
+      -> std::optional<GenericSubstitution> {
+    GenericSubstitution values;
+    std::size_t types = 0, constants = 0, regions = 0;
+    bool projected = false;
+    for (const auto &parameter : recipe.parameters) {
+      if (parameter.lifetime) {
+        if (regions >= type.lifetimeArguments.size())
+          return std::nullopt;
+        values.lifetimes.emplace(parameter.id, type.lifetimeArguments[regions++]);
+      } else if (parameter.value) {
+        if (constants >= type.valueArguments.size())
+          return std::nullopt;
+        values.values.emplace(parameter.id, type.valueArguments[constants++]);
+      } else if (!parameter.typeArgumentPath.empty()) {
+        const auto argument = projectGenericTypeArgument(type.arguments, parameter.typeArgumentPath,
+                                                         parameter.id, parameter.pack);
+        if (!argument)
+          return std::nullopt;
+        values.types.emplace(parameter.id, *argument);
+        projected = true;
+      } else if (parameter.pack) {
+        if (types > type.arguments.size())
+          return std::nullopt;
+        std::vector<SemanticType> tail(type.arguments.begin() + types, type.arguments.end());
+        values.types.emplace(parameter.id, SemanticType::concreteTypePack(parameter.id, std::move(tail)));
+        types = type.arguments.size();
+      } else {
+        if (types >= type.arguments.size())
+          return std::nullopt;
+        values.types.emplace(parameter.id, type.arguments[types++]);
+      }
+    }
+    if (regions != type.lifetimeArguments.size() ||
+        (!recipe.exactSpecializationPrimary &&
+         (constants != type.valueArguments.size() ||
+          (!projected && types != type.arguments.size()))))
+      return std::nullopt;
+    if (recipe.exactSpecializationPrimary &&
+        (recipe.exactTypeArguments != type.arguments || recipe.exactValueArguments != type.valueArguments))
+      return std::nullopt;
+    return values;
+  };
+  const auto instantiate = [&](const SemanticType &type, const GenericSubstitution &values)
+      -> std::optional<SemanticType> {
+    auto result = substituteSemanticType(type, values);
+    std::vector<LifetimeBinding> regions;
+    for (const auto &[id, value] : values.lifetimes)
+      regions.emplace_back(Lifetime::parameter(id), value);
+    auto replaced = substituteTypeLifetimes(std::move(result), regions);
+    return replaced ? selectedType(selectedType, std::move(*replaced)) : std::nullopt;
+  };
+  const auto liftsValid = [](std::span<const GenericParameterIdentity> lifted,
+                            const LifetimeSignatureContract &contract,
+                            const NominalVarianceRecipe &recipe) {
+    std::vector<GenericParameterId> seen;
+    for (const auto &parameter : lifted) {
+      if (!parameter.id || !parameter.lifetime || !parameter.implicit || parameter.value ||
+          parameter.pack || !parameter.typeArgumentPath.empty() ||
+          std::find(seen.begin(), seen.end(), parameter.id) != seen.end() ||
+          std::any_of(recipe.parameters.begin(), recipe.parameters.end(), [&](const auto &source) {
+            return source.id == parameter.id;
+          }) || std::find(contract.parameters.begin(), contract.parameters.end(),
+                          Lifetime::parameter(parameter.id)) == contract.parameters.end())
+        return false;
+      seen.push_back(parameter.id);
+    }
+    return true;
+  };
+  const auto required = [](const auto &instance) {
+    return instance.variance.complete || !instance.type.lifetimeArguments.empty() ||
+           !instance.liftedLifetimes.empty();
+  };
+  for (const auto &instance : program.classInstances()) {
+    if (!required(instance))
+      continue; // Legacy region-free MIR carries no variance authority.
+    const auto index = findRecipe(SemanticType::Class, instance.declaration);
+    if (!index) {
+      reject("MIR class variance lacks its exact declaration storage recipe");
+      continue;
+    }
+    const auto &recipe = recipes[*index];
+    const auto values = substitution(recipe, instance.type);
+    bool valid = values.has_value() &&
+                 instance.compilerCapability == recipe.compilerCapability &&
+                 instance.kind == recipe.classKind && instance.cOpaqueHandle == recipe.cOpaqueHandle &&
+                 instance.polymorphic == recipe.polymorphic && !recipe.forward && !recipe.invalidLifetime &&
+                 instance.variance == expandNominalVarianceRecipe(instance.type, recipe, (*inferred)[*index]) &&
+                 liftsValid(instance.liftedLifetimes, instance.lifetimeContract, recipe);
+    std::size_t fields = 0, bases = 0;
+    for (const auto &stored : recipe.stored) {
+      if (!values) break;
+      const auto type = instantiate(stored.type, *values);
+      if (stored.kind == NominalStoredTypeKind::Field) {
+        valid = type && stored.index == fields && fields < instance.declaredFields.size() &&
+                stored.symbol != 0 && stored.symbol == instance.declaredFields[fields].symbol &&
+                equivalentLifetimeTypes(*type, instance.declaredFields[fields].type) && valid;
+        ++fields;
+      } else if (stored.kind == NominalStoredTypeKind::Base) {
+        valid = type && stored.index == bases && bases < instance.structuralBases.size() &&
+                stored.symbol == 0 && stored.interface == instance.structuralBases[bases].interface &&
+                equivalentLifetimeTypes(*type, instance.structuralBases[bases].type) && valid;
+        ++bases;
+      } else {
+        valid = false;
+      }
+    }
+    valid = fields == instance.declaredFields.size() && bases == instance.structuralBases.size() && valid;
+    if (!valid)
+      reject("MIR class variance or concrete storage disagrees with its symbolic declaration recipe");
+  }
+  const auto verifyEnum = [&](const auto &instance) {
+    if (!required(instance))
+      return;
+    const auto index = findRecipe(SemanticType::Enum, instance.declaration);
+    if (!index) {
+      reject("MIR enum variance lacks its exact declaration payload recipe");
+      return;
+    }
+    const auto &recipe = recipes[*index];
+    const auto values = substitution(recipe, instance.type);
+    bool valid = values.has_value() && !recipe.invalidLifetime &&
+                 instance.variance == expandNominalVarianceRecipe(instance.type, recipe, (*inferred)[*index]) &&
+                 liftsValid(instance.liftedLifetimes, instance.lifetimeContract, recipe);
+    std::size_t count = 0;
+    if constexpr (std::is_same_v<std::remove_cvref_t<decltype(instance)>, MirPayloadEnum>) {
+      for (const auto &variant : instance.variants)
+        count += variant.payloadTypes.size();
+      for (const auto &stored : recipe.stored) {
+        if (!values) break;
+        const auto type = instantiate(stored.type, *values);
+        const auto variant = std::find_if(instance.variants.begin(), instance.variants.end(),
+            [&](const auto &candidate) { return candidate.variantIndex == stored.variant; });
+        valid = type && stored.kind == NominalStoredTypeKind::Payload && stored.symbol &&
+                variant != instance.variants.end() && stored.index < variant->payloadTypes.size() &&
+                stored.index < variant->payloadSymbols.size() &&
+                stored.symbol == variant->payloadSymbols[stored.index] &&
+                equivalentLifetimeTypes(*type, variant->payloadTypes[stored.index]) && valid;
+      }
+    }
+    valid = count == recipe.stored.size() && valid;
+    if (!valid)
+      reject("MIR enum variance or payload storage disagrees with its symbolic declaration recipe");
+  };
+  for (const auto &instance : program.integralEnums())
+    verifyEnum(instance);
+  for (const auto &instance : program.payloadEnums())
+    verifyEnum(instance);
+  return result;
+}
+
+const CallableLifetimeSignature *checkedMirCallableLifetimeSignature(
+    const MirProgram &program, const MirInstruction &instruction) {
+  const bool forming = instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem;
+  if ((!forming && instruction.intrinsic != IntrinsicKind::FunctionPointerInvoke) ||
+      !instruction.lifetimeApplication.callableSignature)
+    return nullptr;
+  const SemanticType *carrier = nullptr;
+  if (forming) {
+    carrier = &instruction.info.type;
+  } else if (!instruction.parameterTypes.empty()) {
+    const auto &parameter = instruction.parameterTypes.front();
+    if (parameter.kind == SemanticType::Reference && parameter.arguments.size() == 1 &&
+        parameter.referenceAccess == AccessMode::ReadOnly &&
+        parameter.referenceLifetime == Lifetime{})
+      carrier = &parameter.arguments.front();
+  }
+  if (!carrier || carrier->kind != SemanticType::Class || carrier->arguments.size() != 1)
+    return nullptr;
+  const auto owner = mirClassLifetimeView(program, *carrier);
+  const auto &callable = *instruction.lifetimeApplication.callableSignature;
+  if (!owner || owner->instance->compilerCapability != CompilerCapabilityTypeKind::FunctionPointer ||
+      !callableLifetimeCarrierMatches(callable, carrier->arguments.front()))
+    return nullptr;
+  if (!forming) {
+    const auto &bindings = instruction.lifetimeApplication.bindings;
+    for (const auto fixed : callable.signatureBindings)
+      if (std::find(bindings.begin(), bindings.end(), fixed) == bindings.end())
+        return nullptr;
+    for (const auto id : callable.signature.quantifiedLifetimes) {
+      const auto found = std::find_if(bindings.begin(), bindings.end(), [&](const auto binding) {
+        return binding.first == Lifetime::parameter(id);
+      });
+      if (found == bindings.end() || found->second.kind != Lifetime::Kind::Inference)
+        return nullptr;
+    }
+  }
+  return &callable;
 }
 
 namespace {
@@ -76,7 +365,9 @@ bool resolveMirLifetimeOrigins(MirLifetimeApplication &application,
 
 bool preservesHirLifetimeApplication(const HirLifetimeApplication &source,
                                      const MirLifetimeApplication &lowered) {
-  return source.bindings == lowered.bindings && preservesFacts(source, lowered);
+  return source.bindings == lowered.bindings &&
+         source.callableSignature == lowered.callableSignature &&
+         preservesFacts(source, lowered);
 }
 
 MirLifetimeBody lowerMirLifetimeBody(const HirLifetimeBody &source) {
@@ -117,7 +408,8 @@ bool scopedDeclarationType(const SemanticType &type,
                            std::size_t depth = 0) {
   if (depth >= 256 ||
       (!type.quantifiedLifetimes.empty() &&
-       type.kind != SemanticType::FunctionSignature) ||
+       type.kind != SemanticType::FunctionSignature &&
+       type.kind != SemanticType::FunctionItem) ||
       (type.referenceLifetime != Lifetime{} &&
        type.kind != SemanticType::Reference))
     return false;
@@ -172,7 +464,8 @@ instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
                   containsLifetimeMetadata);
   const bool contractRequirements =
       !contract.parameters.empty() || !contract.bounds.empty() ||
-      !contract.typeBounds.empty() || contract.receiver != Lifetime{};
+      !contract.typeBounds.empty() || !contract.requirements.nodes.empty() ||
+      contract.receiver != Lifetime{};
   const bool applicationRequirements =
       !application.bindings.empty() || !application.variables.empty() ||
       !application.obligations.empty() ||
@@ -186,7 +479,7 @@ instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
         returnType, std::vector<SemanticType>(parameterTypes.begin(),
                                               parameterTypes.end())};
   }
-  if (!contract.valid() || !application.complete ||
+  if (!contract.valid() || !contract.requirements.resolved() || !application.complete ||
       application.bindings.size() != contract.parameters.size() ||
       !scopedDeclarationType(returnType, contract.parameters))
     return std::nullopt;
@@ -195,6 +488,10 @@ instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
       return std::nullopt;
   for (const auto &bound : contract.typeBounds)
     if (!scopedDeclarationType(bound.type, contract.parameters))
+      return std::nullopt;
+  for (const auto &node : contract.requirements.nodes)
+    if (node.kind == LifetimeRequirementNode::Kind::Type &&
+        !scopedDeclarationType(node.type, contract.parameters))
       return std::nullopt;
   for (std::size_t index = 0; index < application.variables.size(); ++index) {
     const auto variable = application.variables[index];
@@ -281,26 +578,36 @@ expandedLifetimeAssumptions(const MirProgram &program,
         (type.kind == SemanticType::TypePack && !type.concretePack))
       continue; // Opaque types retain an exact bound, never their arguments'.
     if (type.kind == SemanticType::Class) {
-      const auto owner = std::find_if(
-          program.classInstances().begin(), program.classInstances().end(),
-          [&](const auto &candidate) { return candidate.type == type; });
-      if (owner == program.classInstances().end())
+      const auto owner = mirClassLifetimeView(program, type);
+      if (!owner)
         return std::nullopt;
-      for (const auto &field : owner->declaredFields)
-        addType(field.type, bound.region);
-      for (const auto &base : owner->structuralBases)
-        if (!base.interface)
-          addType(base.type, bound.region);
+      for (const auto &field : owner->instance->declaredFields) {
+        const auto instantiated = owner->instantiate(field.type);
+        if (!instantiated)
+          return std::nullopt;
+        addType(*instantiated, bound.region);
+      }
+      for (const auto &base : owner->instance->structuralBases)
+        if (!base.interface) {
+          const auto instantiated = owner->instantiate(base.type);
+          if (!instantiated)
+            return std::nullopt;
+          addType(*instantiated, bound.region);
+        }
       continue;
     }
     if (type.kind == SemanticType::Enum) {
-      if (const auto *enumeration = program.findPayloadEnum(type)) {
-        for (const auto &variant : enumeration->variants)
-          for (const auto &field : variant.payloadTypes)
-            addType(field, bound.region);
-      } else if (!program.findIntegralEnum(type)) {
+      const auto enumeration = mirEnumLifetimeView(program, type);
+      if (!enumeration)
         return std::nullopt;
-      }
+      if (enumeration->payload)
+        for (const auto &variant : enumeration->payload->variants)
+          for (const auto &field : variant.payloadTypes) {
+            const auto instantiated = enumeration->instantiate(field);
+            if (!instantiated)
+              return std::nullopt;
+            addType(*instantiated, bound.region);
+          }
       continue;
     }
     if (type.kind == SemanticType::FunctionSignature) {
@@ -353,31 +660,34 @@ bool mirTypeOutlives(const MirProgram &program, const SemanticType &type,
       type.lifetimeArguments.size() != 1)
     return false;
   if (type.kind == SemanticType::Class) {
-    const auto instance = std::find_if(
-        program.classInstances().begin(), program.classInstances().end(),
-        [&](const auto &candidate) { return candidate.type == type; });
-    if (instance == program.classInstances().end())
+    const auto instance = mirClassLifetimeView(program, type);
+    if (!instance)
       return false;
-    for (const auto &field : instance->declaredFields)
-      if (!mirTypeOutlives(program, field.type, region, contract, graph,
-                           pending))
+    for (const auto &field : instance->instance->declaredFields) {
+      const auto instantiated = instance->instantiate(field.type);
+      if (!instantiated || !mirTypeOutlives(program, *instantiated, region, contract, graph, pending))
         return false;
-    for (const auto &base : instance->structuralBases)
-      if (!base.interface && !mirTypeOutlives(program, base.type, region,
-                                              contract, graph, pending))
-        return false;
+    }
+    for (const auto &base : instance->instance->structuralBases)
+      if (!base.interface) {
+        const auto instantiated = instance->instantiate(base.type);
+        if (!instantiated || !mirTypeOutlives(program, *instantiated, region, contract, graph, pending))
+          return false;
+      }
     return true;
   }
   if (type.kind == SemanticType::Enum) {
-    if (const auto *enumeration = program.findPayloadEnum(type)) {
-      for (const auto &variant : enumeration->variants)
-        for (const auto &field : variant.payloadTypes)
-          if (!mirTypeOutlives(program, field, region, contract, graph,
-                               pending))
+    const auto enumeration = mirEnumLifetimeView(program, type);
+    if (!enumeration)
+      return false;
+    if (enumeration->payload)
+      for (const auto &variant : enumeration->payload->variants)
+        for (const auto &field : variant.payloadTypes) {
+          const auto instantiated = enumeration->instantiate(field);
+          if (!instantiated || !mirTypeOutlives(program, *instantiated, region, contract, graph, pending))
             return false;
-      return true;
-    }
-    return program.findIntegralEnum(type) != nullptr;
+        }
+    return true;
   }
   if (type.kind == SemanticType::FunctionSignature &&
       !type.quantifiedLifetimes.empty()) {
@@ -392,6 +702,46 @@ bool mirTypeOutlives(const MirProgram &program, const SemanticType &type,
             valid;
   });
   return valid;
+}
+bool satisfiesLifetimeRequirements(
+    const MirProgram &program, const LifetimeSignatureContract &target,
+    std::span<const LifetimeBinding> bindings,
+    const LifetimeSignatureContract &assumptions,
+    const LifetimeInferenceConstraints &graph) {
+  if (target.requirements.nodes.empty())
+    return true;
+  if (!target.valid() || !target.requirements.resolved())
+    return false;
+  std::vector<bool> values;
+  for (const auto &node : target.requirements.nodes) {
+    using Kind = LifetimeRequirementNode::Kind;
+    bool satisfied = false;
+    switch (node.kind) {
+    case Kind::Region:
+      satisfied = graph.proves(applyLifetime(node.bound.longer, bindings),
+                                applyLifetime(node.bound.shorter, bindings));
+      break;
+    case Kind::Type: {
+      const auto type = substituteTypeLifetimes(node.type, bindings);
+      std::vector<SemanticType> pending;
+      satisfied = type && mirTypeOutlives(
+          program, *type, applyLifetime(node.bound.shorter, bindings),
+          assumptions, graph, pending);
+      break;
+    }
+    case Kind::SemanticPredicate:
+      satisfied = *node.semanticTruth; // Exact target-instance fact, never call-local truth.
+      break;
+    case Kind::All:
+      satisfied = values[node.left] && values[node.right];
+      break;
+    case Kind::Any:
+      satisfied = values[node.left] || values[node.right];
+      break;
+    }
+    values.push_back(satisfied);
+  }
+  return values[target.requirements.root];
 }
 } // namespace
 
@@ -408,6 +758,10 @@ verifyMirLifetimeBodyFacts(const MirProgram &program, const MirBody &body,
                              .instruction = instruction,
                              .message = std::move(message)});
   };
+  if (!declaredContract.requirements.resolved()) {
+    reject("MIR callable retains an unresolved semantic lifetime predicate");
+    return result;
+  }
   const auto expanded = expandedLifetimeAssumptions(program, declaredContract);
   if (!expanded) {
     reject("MIR declaration type-outlives assumptions have no exact structural "
@@ -586,6 +940,24 @@ const LifetimeSignatureContract &bodyLifetimeContract(const MirProgram &program,
   return absent;
 }
 
+const LifetimeSignatureContract *appliedTargetContract(
+    const MirProgram &program, const MirInstruction &instruction) {
+  if (instruction.functionTarget) {
+    const auto *target = program.findFunctionInstance(*instruction.functionTarget);
+    return target ? &target->lifetimeContract : nullptr;
+  }
+  if (instruction.constructorTarget) {
+    const auto *target = program.findConstructorInstance(*instruction.constructorTarget);
+    return target ? &target->lifetimeContract : nullptr;
+  }
+  if (instruction.lambdaTarget) {
+    const auto *target = program.findLambda(*instruction.lambdaTarget);
+    return target ? &target->lifetimeContract : nullptr;
+  }
+  const auto *callable = checkedMirCallableLifetimeSignature(program, instruction);
+  return callable ? &callable->contract : nullptr;
+}
+
 std::optional<MirInstantiatedLifetimeSignature>
 appliedTargetSignature(const MirProgram &program,
                        const MirInstruction &instruction) {
@@ -616,6 +988,19 @@ appliedTargetSignature(const MirProgram &program,
     return instantiateMirLifetimeSignature(
         target->lifetimeContract, target->returnType, target->parameterTypes,
         instruction.lifetimeApplication);
+  }
+  if (instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke) {
+    const auto *callable = checkedMirCallableLifetimeSignature(program, instruction);
+    if (!callable)
+      return std::nullopt;
+    auto result = instantiateMirLifetimeSignature(
+        callable->contract, callable->signature.arguments.front(),
+        std::span(callable->signature.arguments).subspan(1),
+        instruction.lifetimeApplication);
+    if (result)
+      result->parameterTypes.insert(result->parameterTypes.begin(),
+                                    instruction.parameterTypes.front());
+    return result;
   }
   return std::nullopt;
 }
@@ -751,9 +1136,10 @@ public:
             matches.push_back(type);
           return;
         }
-        if (const auto *instance = nominalClass(type))
-          for (const auto &base : instance->structuralBases)
-            self(self, base.type);
+        if (const auto instance = mirClassLifetimeView(program, type))
+          for (const auto &base : instance->instance->structuralBases)
+            if (const auto projected = instance->instantiate(base.type))
+              self(self, *projected);
       };
       project(project, actual);
       return matches.size() == 1 &&
@@ -777,10 +1163,9 @@ public:
       if (const auto *owner = nominalClass(expected))
         nominal = &owner->variance;
     } else if (expected.kind == SemanticType::Enum) {
-      if (const auto *enumeration = program.findPayloadEnum(expected))
-        nominal = &enumeration->variance;
-      else if (const auto *enumeration = program.findIntegralEnum(expected))
-        nominal = &enumeration->variance;
+      if (const auto enumeration = mirEnumLifetimeView(program, expected))
+        nominal = enumeration->payload ? &enumeration->payload->variance
+                                       : &enumeration->integral->variance;
     }
     if ((expected.kind == SemanticType::Class ||
          expected.kind == SemanticType::Enum) &&
@@ -824,10 +1209,8 @@ public:
 
 private:
   const MirClassInstance *nominalClass(const SemanticType &type) const {
-    const auto found = std::find_if(
-        program.classInstances().begin(), program.classInstances().end(),
-        [&](const auto &instance) { return instance.type == type; });
-    return found == program.classInstances().end() ? nullptr : &*found;
+    const auto view = mirClassLifetimeView(program, type);
+    return view ? view->instance : nullptr;
   }
 
   Lifetime declaredPlaceRegion(const MirPlace &place) const {
@@ -870,17 +1253,20 @@ private:
         if (!dereference())
           return {};
       } else if (projection.kind == MirProjectionKind::Field) {
-        const auto *owner = nominalClass(type);
+        const auto owner = mirClassLifetimeView(program, type);
         if (!owner)
           return {};
         const auto field = std::find_if(
-            owner->declaredFields.begin(), owner->declaredFields.end(),
+            owner->instance->declaredFields.begin(), owner->instance->declaredFields.end(),
             [&](const auto &candidate) {
               return candidate.symbol == projection.field;
             });
-        if (field == owner->declaredFields.end())
+        if (field == owner->instance->declaredFields.end())
           return {};
-        type = field->type;
+        const auto instantiated = owner->instantiate(field->type);
+        if (!instantiated)
+          return {};
+        type = *instantiated;
       } else if (projection.kind == MirProjectionKind::Index &&
                  type.kind == SemanticType::Array &&
                  type.arguments.size() == 1) {
@@ -891,10 +1277,20 @@ private:
                  *projection.constantIndex < type.arguments.size()) {
         type = type.arguments[*projection.constantIndex];
       } else if (projection.kind == MirProjectionKind::Base) {
-        const auto *base = program.findClassInstance(projection.selection);
-        if (!base)
+        const auto owner = mirClassLifetimeView(program, type);
+        if (!owner)
           return {};
-        type = base->type;
+        const auto base = std::find_if(owner->instance->structuralBases.begin(),
+                                      owner->instance->structuralBases.end(),
+                                      [&](const auto &candidate) {
+                                        return candidate.instance == projection.selection;
+                                      });
+        if (base == owner->instance->structuralBases.end())
+          return {};
+        const auto instantiated = owner->instantiate(base->type);
+        if (!instantiated)
+          return {};
+        type = *instantiated;
       } else {
         return {};
       }
@@ -994,7 +1390,8 @@ MirVerificationResult verifyMirLifetimeApplications(const MirProgram &program,
           instruction.kind == MirInstructionKind::InitializeBase) {
         const bool hasTarget = instruction.functionTarget ||
                                instruction.constructorTarget ||
-                               instruction.lambdaTarget;
+                               instruction.lambdaTarget ||
+                               instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke;
         if (!hasTarget) {
           const auto &application = instruction.lifetimeApplication;
           if (!application.bindings.empty() || !application.variables.empty() ||
@@ -1007,13 +1404,21 @@ MirVerificationResult verifyMirLifetimeApplications(const MirProgram &program,
           continue;
         }
         const auto signature = appliedTargetSignature(program, instruction);
-        if (!signature) {
+        if (!signature || (instruction.intrinsic != IntrinsicKind::FunctionPointerInvoke &&
+                           instruction.lifetimeApplication.callableSignature)) {
           reject("MIR call lifetime substitution does not cover its exact "
                  "target contract",
                  block.id, instruction.id);
           continue;
         }
         const auto &application = instruction.lifetimeApplication;
+        const auto *targetContract = appliedTargetContract(program, instruction);
+        if (!targetContract || !satisfiesLifetimeRequirements(
+                program, *targetContract, application.bindings, *expanded, graph)) {
+          reject("MIR call does not satisfy its exact target lifetime requirement formula",
+                 block.id, instruction.id);
+          continue;
+        }
         const bool requiresRegions =
             containsLifetimeMetadata(signature->returnType) ||
             std::any_of(signature->parameterTypes.begin(),
@@ -1039,6 +1444,11 @@ MirVerificationResult verifyMirLifetimeApplications(const MirProgram &program,
           continue;
         }
         for (std::size_t index = 0; index < selected.size(); ++index) {
+          // The trusted pointer carrier is borrowed only for invocation. Its
+          // exact signature and storage borrow have independent checks; it is
+          // not one of the signature's potential result suppliers.
+          if (index == 0 && instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke)
+            continue;
           const auto &expected = selected[index];
           const auto actual = relations.actualType(instruction.operands[index]);
           if (!actual) {
@@ -1187,6 +1597,34 @@ bool mirLifetimeCallSignatureMatches(const MirInstruction &instruction,
       instruction.lifetimeApplication);
   return signature && appliedSignatureMatches(instruction, *signature);
 }
+bool mirCallableLifetimeTargetMatches(
+    const MirProgram &program, const CallableLifetimeSignature &callable,
+    const SemanticType &returnType, std::span<const SemanticType> parameters,
+    const LifetimeSignatureContract &contract) {
+  const auto bindings = callableLifetimeTargetBindings(
+      returnType, parameters, contract, callable.signature);
+  const auto assumptions = expandedLifetimeAssumptions(program, callable.contract);
+  if (!bindings || !assumptions)
+    return false;
+  LifetimeBounds bounds;
+  for (const auto edge : assumptions->bounds)
+    if (!bounds.assume(edge.longer, edge.shorter))
+      return false;
+  LifetimeInferenceConstraints graph(bounds);
+  for (const auto edge : contract.bounds)
+    if (!graph.proves(applyLifetime(edge.longer, *bindings),
+                      applyLifetime(edge.shorter, *bindings)))
+      return false;
+  for (const auto &bound : contract.typeBounds) {
+    const auto type = substituteTypeLifetimes(bound.type, *bindings);
+    std::vector<SemanticType> pending;
+    if (!type || !mirTypeOutlives(program, *type, applyLifetime(bound.region, *bindings),
+                                 *assumptions, graph, pending))
+      return false;
+  }
+  return satisfiesLifetimeRequirements(program, contract, *bindings, *assumptions, graph);
+}
+
 std::optional<MirInstantiatedLifetimeSignature>
 instantiateMirLifetimeTarget(const MirProgram &program,
                              const MirInstruction &instruction) {

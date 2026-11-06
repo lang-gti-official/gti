@@ -287,6 +287,56 @@ public:
     output << "mir-v121 valid=" << program.valid() << '\n';
     if (program.requiresNativeObjectLayout())
       output << "native-object-layout\n";
+    for (const auto &recipe : program.nominalVarianceRecipes()) {
+      output << "nominal-variance-recipe kind=" << number(recipe.kind)
+             << " declaration=" << recipe.declaration
+             << " family=" << recipe.familyPrimary
+             << " exact-primary=" << recipe.exactSpecializationPrimary
+             << " capability=" << number(recipe.compilerCapability)
+             << " class-kind=" << number(recipe.classKind)
+             << " opaque=" << recipe.cOpaqueHandle
+             << " polymorphic=" << recipe.polymorphic
+             << " forward=" << recipe.forward
+             << " invalid=" << recipe.invalidLifetime
+             << " complete=" << recipe.complete << " parameters=[";
+      for (std::size_t index = 0; index < recipe.parameters.size(); ++index) {
+        separator(index);
+        const auto &parameter = recipe.parameters[index];
+        output << parameter.id << ':' << parameter.pack << ':' << parameter.value
+               << ':' << parameter.lifetime << ':' << parameter.implicit << ":[";
+        for (std::size_t part = 0; part < parameter.typeArgumentPath.size(); ++part) {
+          separator(part);
+          output << parameter.typeArgumentPath[part];
+        }
+        output << ']';
+      }
+      output << "],exact-types=[";
+      for (std::size_t index = 0; index < recipe.exactTypeArguments.size(); ++index) {
+        separator(index);
+        type(recipe.exactTypeArguments[index]);
+      }
+      output << "],exact-values=[";
+      for (std::size_t index = 0; index < recipe.exactValueArguments.size(); ++index) {
+        separator(index);
+        const auto &argument = recipe.exactValueArguments[index];
+        output << number(argument.kind) << ':' << argument.value << ':' << argument.parameterId;
+      }
+      output << "],patterns=[";
+      for (std::size_t index = 0; index < recipe.argumentPatterns.size(); ++index) {
+        separator(index);
+        type(recipe.argumentPatterns[index]);
+      }
+      output << "],stored=[";
+      for (std::size_t index = 0; index < recipe.stored.size(); ++index) {
+        separator(index);
+        const auto &stored = recipe.stored[index];
+        output << number(stored.kind) << ':' << stored.index << ':' << stored.symbol
+               << ':' << stored.variant << ':' << stored.interface << ':';
+        type(stored.type);
+      }
+      output << "]\n";
+    }
+
     for (const auto &storage : program.foreignStorageDeclarations()) {
       output << "foreign-storage symbol=" << storage.symbol
              << " external=" << std::quoted(storage.externalSymbol)
@@ -415,6 +465,8 @@ public:
       variance(enumeration.variance);
       output << " lifetime-contract=";
       lifetimeContract(enumeration.lifetimeContract);
+      output << " lifted-lifetimes=";
+      genericIdentities(enumeration.liftedLifetimes);
       output << " underlying=";
       type(enumeration.underlyingType);
       output << '\n';
@@ -428,6 +480,8 @@ public:
       variance(enumeration.variance);
       output << " lifetime-contract=";
       lifetimeContract(enumeration.lifetimeContract);
+      output << " lifted-lifetimes=";
+      genericIdentities(enumeration.liftedLifetimes);
       output << " active-cleanup=" << enumeration.requiresActiveCleanup << ' ';
       traits(enumeration.traits);
       output << " variants=[";
@@ -462,6 +516,8 @@ public:
       variance(instance.variance);
       output << " lifetime-contract=";
       lifetimeContract(instance.lifetimeContract);
+      output << " lifted-lifetimes=";
+      genericIdentities(instance.liftedLifetimes);
       output << ' ';
       traits(instance.traits);
       output << " transfer-policy=" << number(instance.transferPolicy)
@@ -665,6 +721,8 @@ public:
       }
       output << "] lifetime-contract=";
       lifetimeContract(instance.lifetimeContract);
+      output << " lifted-lifetimes=";
+      genericIdentities(instance.liftedLifetimes);
       output << " parameter-bindings=[";
       for (std::size_t index = 0; index < instance.parameterBindings.size();
            ++index) {
@@ -810,6 +868,8 @@ public:
       }
       output << "] lifetime-contract=";
       lifetimeContract(instance.lifetimeContract);
+      output << " lifted-lifetimes=";
+      genericIdentities(instance.liftedLifetimes);
       output << " parameters=[";
       for (std::size_t index = 0; index < instance.parameterTypes.size();
            ++index) {
@@ -883,6 +943,8 @@ public:
       output << "destructor @" << instance.id << " owner=" << instance.owner
              << " lifetime-contract=";
       lifetimeContract(instance.lifetimeContract);
+      output << " lifted-lifetimes=";
+      genericIdentities(instance.liftedLifetimes);
       output << " definition=";
       switch (instance.definitionKind) {
       case MirDefinitionKind::Source:
@@ -1206,6 +1268,22 @@ private:
     output << "]}";
   }
 
+  void genericIdentities(std::span<const GenericParameterIdentity> parameters) {
+    output << '[';
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      separator(index);
+      const auto &parameter = parameters[index];
+      output << parameter.id << ':' << parameter.pack << ':' << parameter.value
+             << ':' << parameter.lifetime << ':' << parameter.implicit << ":[";
+      for (std::size_t part = 0; part < parameter.typeArgumentPath.size(); ++part) {
+        separator(part);
+        output << parameter.typeArgumentPath[part];
+      }
+      output << ']';
+    }
+    output << ']';
+  }
+
   void lifetime(Lifetime value) {
     output << '{' << number(value.kind) << ':' << value.id << '}';
   }
@@ -1254,7 +1332,24 @@ private:
       placeKey(origin.key);
       output << ":source=" << origin.source;
     }
-    output << "]}";
+    output << "],callable=";
+    if (application.callableSignature) {
+      const auto &callable = *application.callableSignature;
+      type(callable.signature);
+      output << ":contract=";
+      lifetimeContract(callable.contract);
+      output << ":fixed=[";
+      for (std::size_t index = 0; index < callable.signatureBindings.size(); ++index) {
+        separator(index);
+        lifetime(callable.signatureBindings[index].first);
+        output << "=>";
+        lifetime(callable.signatureBindings[index].second);
+      }
+      output << ']';
+    } else {
+      output << '-';
+    }
+    output << "}";
   }
 
   void lifetimeContract(const LifetimeSignatureContract &value) {
@@ -1277,6 +1372,23 @@ private:
       type(value.typeBounds[index].type);
       output << ':';
       lifetime(value.typeBounds[index].region);
+    }
+    output << "],requirements-root=" << value.requirements.root << ",requirements=[";
+    for (std::size_t index = 0; index < value.requirements.nodes.size(); ++index) {
+      separator(index);
+      const auto &node = value.requirements.nodes[index];
+      output << number(node.kind) << ':' << node.left << ':' << node.right
+             << ':' << node.predicate << ':';
+      if (node.semanticTruth)
+        output << *node.semanticTruth;
+      else
+        output << '-';
+      output << ':';
+      lifetime(node.bound.longer);
+      output << ':';
+      lifetime(node.bound.shorter);
+      output << ':';
+      type(node.type);
     }
     output << "],receiver=";
     lifetime(value.receiver);

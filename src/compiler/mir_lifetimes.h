@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/mir.h"
+#include "gti/lifetime_types.h"
 #include "gti/mir_verifier.h"
 
 namespace lang {
@@ -32,6 +33,10 @@ instantiateMirLifetimeSignature(const LifetimeSignatureContract &,
                                 std::span<const SemanticType> parameterTypes,
                                 const MirLifetimeApplication &);
 
+// Reconstruct declaration variance and verify every concrete storage recipe.
+[[nodiscard]] MirVerificationResult
+verifyMirNominalLifetimeRecipes(const MirProgram &);
+
 // Independently checks the body-wide graph, exact type obligations and
 // application-to-body preservation. Call/store/return reconstruction is a
 // separate prerequisite, so this result alone never authorizes erasure.
@@ -58,5 +63,36 @@ mirLifetimeParameterTypesMatch(std::span<const SemanticType> selected,
                                                    const MirLambdaInstance &);
 [[nodiscard]] std::optional<MirInstantiatedLifetimeSignature>
 instantiateMirLifetimeTarget(const MirProgram &, const MirInstruction &);
+
+// A view preserves the actual semantic region type while selecting one
+// universal layout. Matching identifies substitutions; formation obligations
+// still require the body/application proof before representation use.
+struct MirClassLifetimeView {
+  const MirClassInstance *instance = nullptr;
+  std::vector<LifetimeBinding> bindings;
+  [[nodiscard]] std::optional<SemanticType> instantiate(const SemanticType &type) const {
+    return substituteTypeLifetimes(type, bindings);
+  }
+};
+struct MirEnumLifetimeView {
+  const MirIntegralEnum *integral = nullptr;
+  const MirPayloadEnum *payload = nullptr;
+  std::vector<LifetimeBinding> bindings;
+  [[nodiscard]] std::optional<SemanticType> instantiate(const SemanticType &type) const {
+    return substituteTypeLifetimes(type, bindings);
+  }
+};
+[[nodiscard]] std::optional<MirClassLifetimeView>
+mirClassLifetimeView(const MirProgram &, const SemanticType &);
+[[nodiscard]] std::optional<MirEnumLifetimeView>
+mirEnumLifetimeView(const MirProgram &, const SemanticType &);
+
+// The carrier capability and its exact type select the source-free authority.
+[[nodiscard]] const CallableLifetimeSignature *
+checkedMirCallableLifetimeSignature(const MirProgram &, const MirInstruction &);
+[[nodiscard]] bool mirCallableLifetimeTargetMatches(
+    const MirProgram &, const CallableLifetimeSignature &,
+    const SemanticType &returnType, std::span<const SemanticType> parameters,
+    const LifetimeSignatureContract &);
 
 } // namespace lang

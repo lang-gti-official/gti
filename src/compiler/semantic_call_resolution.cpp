@@ -3065,7 +3065,11 @@ auto SemanticVisitor::Impl::tryInferTypeArguments(
       substitution.types.emplace(pattern.genericParameterId, argument);
       return true;
     }
-    if (found->second != argument) {
+    // Region shape may agree provisionally during deduction. The selected
+    // candidate must still instantiate and prove its complete lifetime
+    // contract before publication; this comparison supplies no borrow proof.
+    if (found->second != argument &&
+        eraseTypeLifetimes(found->second) != eraseTypeLifetimes(argument)) {
       if (conflictingParameter != nullptr) {
         *conflictingParameter = pattern.genericParameterId;
       }
@@ -3205,7 +3209,8 @@ auto SemanticVisitor::Impl::tryInferTypeArguments(
             : SemanticType::concreteTypePack(tail->id, std::move(elements));
     const auto [found, inserted] =
         substitution.types.emplace(tail->id, inferred);
-    if (!inserted && found->second != inferred) {
+    if (!inserted && found->second != inferred &&
+        eraseTypeLifetimes(found->second) != eraseTypeLifetimes(inferred)) {
       if (conflictingParameter != nullptr) {
         *conflictingParameter = tail->id;
       }
@@ -3314,7 +3319,8 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
       }
       return false;
     }
-    return true;
+    return universalizeFunctionCandidate(resolved, resolvedTypeArguments,
+                                          resolvedValueArguments, {});
   }
 
   const GenericParameterInfo *pack = packGenericParameter(candidate);
@@ -3403,6 +3409,17 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
     }
   }
 
+  std::vector<GenericParameterId> inferredTypeParameters;
+  std::size_t explicitTypeIndex = 0;
+  for (const auto &parameter : candidate.record().genericParameters) {
+    if (parameter.value || parameter.lifetime)
+      continue;
+    const bool explicitType = explicitTypeIndex < explicitTypeArguments.size();
+    if (!explicitType && substitution.types.contains(parameter.id))
+      inferredTypeParameters.push_back(parameter.id);
+    explicitTypeIndex = parameter.pack ? explicitTypeArguments.size()
+                                      : explicitTypeIndex + 1;
+  }
   if (!applyGenericDefaults(candidate.record().genericParameters, substitution,
                             candidate.record().genericParameters.front().name,
                             false, false)) {
@@ -3536,6 +3553,10 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
   }
   resolvedTypeArguments.insert(resolvedTypeArguments.end(), packTypes.begin(),
                                packTypes.end());
+  if (pack && explicitTypeArguments.size() <= fixedGenerics &&
+      std::find(inferredTypeParameters.begin(), inferredTypeParameters.end(), pack->id) ==
+          inferredTypeParameters.end())
+    inferredTypeParameters.push_back(pack->id);
   if (candidate.parameterPack && std::any_of(packTypes.begin(), packTypes.end(),
                                              [](const SemanticType &argument) {
                                                return argument ==
@@ -3603,7 +3624,8 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
       resolved.returnBorrowPlace = dynamicText->place;
     }
   }
-  return true;
+  return universalizeFunctionCandidate(resolved, resolvedTypeArguments,
+                                        resolvedValueArguments, inferredTypeParameters);
 }
 
 auto SemanticVisitor::Impl::containsLambdaType(const SemanticType &type)
@@ -8268,6 +8290,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   if (function.returnType.kind == SemanticType::Enum ||
       (function.returnType.kind == SemanticType::Class &&
        typeTraits(function.returnType).containsBorrowedState) ||
+      (function.returnType.kind == SemanticType::Reference &&
+       function.lifetimeContract.valid()) ||
       conditionalReferenceReturn(function.returnType, function.parameterTypes,
                                  function.dispatchOwner)) {
     const auto complete = completeFunctionReturnBorrow(

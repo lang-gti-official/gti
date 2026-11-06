@@ -604,6 +604,7 @@ struct LoweredVirtualDispatch {
 };
 
 struct LoweredClassInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   NominalVariance variance;
   LifetimeSignatureContract lifetimeContract;
   LoweredClassInstanceId id = 0;
@@ -619,6 +620,8 @@ struct LoweredClassInstance {
 };
 
 struct LoweredFunctionInstance {
+  LifetimeSignatureContract lifetimeContract;
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   LoweredFunctionInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   FunctionId declaration = 0;
@@ -633,6 +636,8 @@ struct LoweredFunctionInstance {
 };
 
 struct LoweredConstructorInstance {
+  LifetimeSignatureContract lifetimeContract;
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   LoweredConstructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ConstructorId declaration = 0;
@@ -649,6 +654,7 @@ struct LoweredConstructorInstance {
 };
 
 struct LoweredDestructorInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   LoweredDestructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   LoweredClassInstanceId owner = 0;

@@ -18,10 +18,10 @@ export module meta;
 
 namespace gti_internal {
 export uint64_t meta_field_count<T>();
-export std::string_view meta_field_name<T, uint64_t I>();
+export std::string_view<static> meta_field_name<T, uint64_t I>();
 export bool meta_field_is_public<T, uint64_t I>();
 export bool meta_field_has_default<T, uint64_t I>();
-export std::string_view meta_type_name<T>();
+export std::string_view<static> meta_type_name<T>();
 export uint64_t meta_type_kind<T>();
 export uint64_t meta_field_attribute_count<T, uint64_t I>();
 export bool meta_field_has_attribute<T, A, uint64_t I>();
@@ -30,23 +30,23 @@ export bool meta_type_has_attribute<T, A>();
 export bool meta_type_trait<T, uint64_t Trait>();
 export bool meta_type_relation<T, U, uint64_t Relation>();
 export uint64_t meta_enumerator_count<E>();
-export std::string_view meta_enumerator_name<E, uint64_t I>();
+export std::string_view<static> meta_enumerator_name<E, uint64_t I>();
 export E meta_enumerator_value<E, uint64_t I>();
 export uint64_t meta_payload_count<E, uint64_t I>();
-export std::string_view meta_payload_name<E, uint64_t I, uint64_t P>();
+export std::string_view<static> meta_payload_name<E, uint64_t I, uint64_t P>();
 export uint64_t meta_base_count<T>();
 export uint64_t meta_argument_count<T>();
 export uint64_t meta_method_count<T>();
-export std::string_view meta_method_name<T, uint64_t I>();
+export std::string_view<static> meta_method_name<T, uint64_t I>();
 export bool meta_method_trait<T, uint64_t I, uint64_t Trait>();
 export uint64_t meta_method_parameter_count<T, uint64_t I>();
-export std::string_view meta_parameter_name<T, uint64_t I, uint64_t P>();
+export std::string_view<static> meta_parameter_name<T, uint64_t I, uint64_t P>();
 export uint64_t meta_constructor_count<T>();
 export uint64_t meta_constructor_parameter_count<T, uint64_t I>();
-export std::string_view meta_constructor_parameter_name<T, uint64_t I, uint64_t P>();
+export std::string_view<static> meta_constructor_parameter_name<T, uint64_t I, uint64_t P>();
 export uint64_t meta_declaration_line<T, uint64_t Kind, uint64_t I>();
-export std::string_view meta_declaration_file<T>();
-export std::string_view meta_type_primary_name<T>();
+export std::string_view<static> meta_declaration_file<T>();
+export std::string_view<static> meta_type_primary_name<T>();
 export T meta_construct<T, Values...>(Values... values);
 }
 
@@ -170,7 +170,7 @@ export @compiler_type("meta_type") struct type<T> {
 public:
   constexpr type() {}
   /// The qualified spelling of `T`.
-  constexpr std::string_view name() { return gti_internal::meta_type_name<T>(); }
+  constexpr std::string_view<static> name() { return gti_internal::meta_type_name<T>(); }
   constexpr bool is_struct() { return gti_internal::meta_type_kind<T>() == uint64_t(1); }
   constexpr bool is_class() { return gti_internal::meta_type_kind<T>() == uint64_t(2); }
   constexpr bool is_interface() { return gti_internal::meta_type_kind<T>() == uint64_t(3); }
@@ -268,18 +268,18 @@ public:
   /// none.
   constexpr uint64_t line() { return gti_internal::meta_declaration_line<T, 0, 0>(); }
   /// The source file of the declaration of `T`, as the compiler names it.
-  constexpr std::string_view file() { return gti_internal::meta_declaration_file<T>(); }
+  constexpr std::string_view<static> file() { return gti_internal::meta_declaration_file<T>(); }
   /// The qualified name of the declaration `T` is an instance of, without
   /// arguments (`std::vector` for `std::vector<int>`); the type's own
   /// spelling for a non-generic type.
-  constexpr std::string_view primary_name() { return gti_internal::meta_type_primary_name<T>(); }
+  constexpr std::string_view<static> primary_name() { return gti_internal::meta_type_primary_name<T>(); }
 };
 
 /// Describes parameter `P` of method `I` of `T`.
 export @compiler_type("meta_parameter") struct parameter<T, uint64_t I, uint64_t P> {
 public:
   constexpr parameter() {}
-  constexpr std::string_view name() { return gti_internal::meta_parameter_name<T, I, P>(); }
+  constexpr std::string_view<static> name() { return gti_internal::meta_parameter_name<T, I, P>(); }
   constexpr uint64_t index() { return P; }
   constexpr type<parameter_type<T, I, P>> type() {
     return std::meta::type<parameter_type<T, I, P>>();
@@ -294,7 +294,7 @@ public:
   /// and arguments. The declaration identity is fixed by T and I.
   return_type<T, I> invoke<Args...>(Args... arguments);
   /// The declared name, or the operator spelling (`operator+`).
-  constexpr std::string_view name() { return gti_internal::meta_method_name<T, I>(); }
+  constexpr std::string_view<static> name() { return gti_internal::meta_method_name<T, I>(); }
   constexpr uint64_t index() { return I; }
   constexpr bool is_static() { return gti_internal::meta_method_trait<T, I, 0>(); }
   constexpr bool is_operator() { return gti_internal::meta_method_trait<T, I, 1>(); }
@@ -320,7 +320,7 @@ public:
 export @compiler_type("meta_constructor_parameter") struct constructor_parameter<T, uint64_t I, uint64_t P> {
 public:
   constexpr constructor_parameter() {}
-  constexpr std::string_view name() { return gti_internal::meta_constructor_parameter_name<T, I, P>(); }
+  constexpr std::string_view<static> name() { return gti_internal::meta_constructor_parameter_name<T, I, P>(); }
   constexpr uint64_t index() { return P; }
   constexpr type<constructor_parameter_type<T, I, P>> type() {
     return std::meta::type<constructor_parameter_type<T, I, P>>();
@@ -344,7 +344,7 @@ export @compiler_type("meta_payload_field") struct payload_field<E, uint64_t I, 
 public:
   constexpr payload_field() {}
   /// The payload field's declared name.
-  constexpr std::string_view name() { return gti_internal::meta_payload_name<E, I, P>(); }
+  constexpr std::string_view<static> name() { return gti_internal::meta_payload_name<E, I, P>(); }
   /// The payload field's position within its enumerator.
   constexpr uint64_t index() { return P; }
   /// The exact payload field type as a type metaobject.
@@ -358,7 +358,7 @@ export @compiler_type("meta_enumerator") struct enumerator<E, uint64_t I> {
 public:
   constexpr enumerator() {}
   /// The enumerator's declared name.
-  constexpr std::string_view name() { return gti_internal::meta_enumerator_name<E, I>(); }
+  constexpr std::string_view<static> name() { return gti_internal::meta_enumerator_name<E, I>(); }
   /// The enumerator's position in declaration order.
   constexpr uint64_t index() { return I; }
   /// The enumerator as a value of `E`; rejected for a payload enum
@@ -377,7 +377,7 @@ export @compiler_type("meta_field") struct field<T, uint64_t I> {
 public:
   constexpr field() {}
   /// The field's declared name.
-  constexpr std::string_view name() { return gti_internal::meta_field_name<T, I>(); }
+  constexpr std::string_view<static> name() { return gti_internal::meta_field_name<T, I>(); }
   /// The field's position in declaration order.
   constexpr uint64_t index() { return I; }
   constexpr bool is_public() { return gti_internal::meta_field_is_public<T, I>(); }
@@ -468,8 +468,8 @@ export expected<T, E> construct<T, E, Producer>(mut Producer& producer) {
 }
 
 export constexpr type<T> type_of<T>() { return type<T>(); }
-export constexpr std::string_view name_of<T>() { return gti_internal::meta_type_name<T>(); }
-export constexpr std::string_view primary_name_of<T>() { return gti_internal::meta_type_primary_name<T>(); }
+export constexpr std::string_view<static> name_of<T>() { return gti_internal::meta_type_name<T>(); }
+export constexpr std::string_view<static> primary_name_of<T>() { return gti_internal::meta_type_primary_name<T>(); }
 export constexpr bool is_struct<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(1); }
 export constexpr bool is_class<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(2); }
 export constexpr bool is_enum<T>() { return gti_internal::meta_type_kind<T>() == uint64_t(5); }
@@ -522,7 +522,7 @@ export constexpr bool is_enum_underlying<E, U>() { return gti_internal::meta_typ
 
 /// The first declared name matching an integral enum value, or "<unknown>".
 /// Returned text has static lifetime; payload enums are excluded.
-export std::string_view enum_name<E>(E value)
+export std::string_view<static> enum_name<E>(E value)
   requires std::meta::is_integral_enum<E>() {
   constexpr for (auto enumerator : std::meta::enumerators_of<E>()) {
     if (value == enumerator.value()) {

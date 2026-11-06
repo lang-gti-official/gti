@@ -230,7 +230,9 @@ bool SemanticVisitor::Impl::prepareInstanceReuse() {
 bool SemanticVisitor::Impl::reusableInstanceType(
     const SemanticType &type) const {
   if (type.genericParameterId != 0 || type.functionId != 0 ||
-      type.lambdaId != 0 || type.arrayLengthParameterId != 0)
+      type.lambdaId != 0 || type.arrayLengthParameterId != 0 ||
+      type.referenceLifetime.specified() || !type.lifetimeArguments.empty() ||
+      !type.quantifiedLifetimes.empty())
     return false;
   switch (type.kind) {
   case SemanticType::Unknown:
@@ -322,6 +324,8 @@ bool SemanticVisitor::Impl::reusableInstanceKey(
   case InstanceAnalysisKind::ClassFieldInitializers:
     return key.declaration != 0 && key.declaration <= classes.size() &&
            trustedUnit(classInfo(key.declaration).sourceUnit);
+  case InstanceAnalysisKind::EnumLayout:
+    return false;
   }
   return false;
 }
@@ -344,6 +348,9 @@ const Stmt *SemanticVisitor::Impl::instanceDeclarationSyntax(
     return key.declaration == 0 || key.declaration > classes.size()
                ? nullptr
                : classInfo(key.declaration).declaration;
+  case InstanceAnalysisKind::EnumLayout:
+    return key.declaration == 0 || key.declaration > enums.size()
+               ? nullptr : enums[key.declaration - 1].declaration;
   }
   return nullptr;
 }

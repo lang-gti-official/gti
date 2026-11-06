@@ -5143,6 +5143,7 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   worker->nextLambdaId = nextLambdaId;
   worker->requestSession.constexprWork = requestSession.constexprWork;
   worker->requestSession.stagedConstants = requestSession.stagedConstants;
+  worker->requestSession.executableLifetimes = requestSession.executableLifetimes;
   worker->requestSession.rawResultQueries = requestSession.rawResultQueries;
   worker->requestSession.completeReturnQueries = state;
   const auto analysis =
@@ -6854,6 +6855,36 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
   function.returnBorrowPlace = summary.place;
 }
 
+auto SemanticVisitor::Impl::refreshDeclaredLifetimeBorrowSummary(
+    FunctionInfo &function) const -> void {
+  if (!function.lifetimeContract.valid() ||
+      function.lifetimeContract.origin == LifetimeContractOrigin::BodyInferred ||
+      function.returnType.kind != SemanticType::Reference ||
+      function.intrinsic != IntrinsicKind::None)
+    return;
+  const auto summary = functionReturnBorrowSummary(
+      function.returnType, function.parameterTypes, function.ownerClass,
+      function.staticMember, function.intrinsic, std::nullopt, false,
+      &function.lifetimeContract);
+  function.returnBorrowOrigin = summary.origin;
+  function.returnBorrowParameter = summary.parameter;
+  function.returnBorrowAccess = summary.access;
+  function.returnBorrowParameters = summary.parameters;
+  function.returnBorrowFields = summary.fields;
+  function.returnBorrowPlace = summary.place;
+  function.explicitReturnBorrowOrigin = true;
+  if (summary.origin == BorrowOriginKind::Argument ||
+      summary.origin == BorrowOriginKind::Receiver) {
+    auto dependencies = summary.fields;
+    if (dependencies.empty())
+      dependencies.push_back({.origin = summary.origin,
+                              .parameter = summary.parameter,
+                              .access = summary.access});
+    function.completeReturnBorrow =
+        FunctionBorrowDependencySummary{.dependencies = std::move(dependencies)};
+  }
+}
+
 auto SemanticVisitor::Impl::isConditionalBorrowResult(
     const SemanticType &type) const -> bool {
   const auto inventory = storedReferenceInventory(type);
@@ -6948,16 +6979,17 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
 
 auto SemanticVisitor::Impl::resolveGenericReturnBorrowContract(
     const FunctionInfo &declaration, FunctionInfo &instance) -> void {
+  const FunctionDecl *syntax = declaration.bodyDeclaration();
+  if (syntax == nullptr || !syntax->hasFunctionAttribute("borrowed_from")) {
+    refreshDeclaredLifetimeBorrowSummary(instance);
+    return;
+  }
   instance.returnBorrowOrigin = BorrowOriginKind::None;
   instance.returnBorrowParameter = 0;
   instance.returnBorrowParameters.clear();
   instance.returnBorrowFields.clear();
   instance.completeReturnBorrow.reset();
   instance.returnBorrowPlace.reset();
-  const FunctionDecl *syntax = declaration.bodyDeclaration();
-  if (syntax == nullptr) {
-    return;
-  }
   const GenericReturnBorrowContract contract = genericReturnBorrowContract(
       *syntax, instance.returnType, instance.parameterTypes,
       instance.ownerClass, instance.staticMember);
@@ -8927,7 +8959,7 @@ auto SemanticVisitor::Impl::selectedReferenceDependencies(
     return std::nullopt;
   const auto *loan = semanticModel.findLoan(place.root->retainedLoan);
   if (loan == nullptr || loan->kind != SemanticLoanKind::Reference ||
-      !loan->referenceSelection)
+      (!loan->referenceSelection && loan->additionalDependencies.empty()))
     return std::nullopt;
   std::vector<SemanticLoanDependency> result;
   const auto append = [&](SemanticLoanDependency dependency) {
@@ -11631,11 +11663,13 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     if (sourceLoan == nullptr) {
       return;
     }
-    if (sourceLoan->referenceSelection &&
+    if ((sourceLoan->referenceSelection ||
+         !sourceLoan->additionalDependencies.empty()) &&
         carrier->type.kind == SemanticType::Reference) {
       const auto selectedPlace = semanticPlace(expression);
       auto dependencies = selectedReferenceDependencies(selectedPlace);
-      if (!dependencies || !selectedPlace.projections.empty() ||
+      if (!dependencies ||
+          (sourceLoan->referenceSelection && !selectedPlace.projections.empty()) ||
           source->transfer) {
         report(sourceToken,
                "A selected reference can currently be reborrowed only at "
@@ -14000,8 +14034,10 @@ auto SemanticVisitor::Impl::analyzeSourceLocationIntrinsicCall(
   const IntrinsicKind intrinsic = declaration.record().intrinsic;
   const bool text = intrinsic == IntrinsicKind::SourceFileName ||
                     intrinsic == IntrinsicKind::SourceFunctionName;
-  const SemanticType result =
+  SemanticType result =
       text ? SemanticType::StringView : SemanticType::UInt32;
+  if (text)
+    result.lifetimeArguments = {Lifetime::staticLifetime()};
   if (!expr.typeArguments().empty() || !expr.arguments().empty() ||
       declaration.returnType != result || !declaration.parameterTypes.empty()) {
     report(expr.paren(),
@@ -14620,13 +14656,15 @@ auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
       indices.push_back(*index);
     }
   }
-  const SemanticType result =
+  SemanticType result =
       shape->subjectResult && subject ? *subject : shape->result;
+  if (!shape->subjectResult && result.kind == SemanticType::StringView)
+    result.lifetimeArguments = {Lifetime::staticLifetime()};
   if (!subject || *subject == SemanticType::Unknown ||
       (shape->types == 2 &&
        (!attribute || *attribute == SemanticType::Unknown)) ||
       !indicesResolved || indices.size() != shape->indices ||
-      (!shape->subjectResult && declaration.returnType != shape->result)) {
+      (!shape->subjectResult && declaration.returnType != result)) {
     report(expr.paren(),
            "A reflection capability takes its subject as generic arguments, "
            "no call arguments, and must retain its exact standard-library "
@@ -14975,6 +15013,7 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       return;
     }
     currentType = SemanticType::StringView;
+    currentType.lifetimeArguments = {Lifetime::staticLifetime()};
     semanticModel.record(expr, ResolvedCallInfo{.returnType = currentType,
                                                 .intrinsic = intrinsic});
     semanticModel.recordConstant(
@@ -15036,15 +15075,28 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       return;
     }
     const SemanticType ownerType = arguments[witness];
-    arguments.front() =
-        SemanticType::rawPointerTo(SemanticType::Char, AccessMode::ReadOnly);
-    arguments[witness] =
-        SemanticType::referenceTo(ownerType, AccessMode::ReadOnly);
-    currentType = counted ? SemanticType::StringView : SemanticType::CString;
+    CallableCandidate selected;
+    std::vector<SemanticType> typeArguments;
+    std::vector<CompileTimeValue> valueArguments;
+    ConstraintFailure failure;
+    if (!tryInstantiateFunction(declaration, {ownerType}, {}, arguments,
+                                expr.arguments(), selected, typeArguments,
+                                valueArguments, &failure) ||
+        !applyCallLifetimeContract(selected, arguments, expr.arguments(), expr.paren())) {
+      report(expr.paren(), "A raw text assertion must preserve the checked "
+                           "owner's exact lifetime contract.", "GTI-S2127");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    commitLifetimeApplication(selected.lifetimeApplication);
+    currentType = selected.returnType;
     semanticModel.record(
         expr, ResolvedCallInfo{.returnType = currentType,
-                               .parameterTypes = std::move(arguments),
-                               .typeArguments = {ownerType},
+                               .parameterTypes = std::move(selected.parameterTypes),
+                               .typeArguments = std::move(typeArguments),
+                               .valueArguments = std::move(valueArguments),
+                               .lifetimeApplication = std::move(selected.lifetimeApplication),
+                               .requirements = std::move(selected.requirements),
                                .intrinsic = intrinsic,
                                .borrowOrigin = BorrowOriginKind::Argument,
                                .borrowArgument = witness,

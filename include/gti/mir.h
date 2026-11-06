@@ -45,6 +45,7 @@ struct MirLifetimeApplication {
   std::vector<LifetimeBound> obligations;
   std::vector<LifetimeTypeBound> typeObligations;
   std::vector<MirLifetimeOrigin> origins;
+  std::optional<CallableLifetimeSignature> callableSignature;
   bool complete = false;
   friend bool operator==(const MirLifetimeApplication &,
                          const MirLifetimeApplication &) = default;
@@ -1406,6 +1407,7 @@ struct MirClassTypeAlias {
 };
 
 struct MirClassInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   NominalVariance variance;
   LifetimeSignatureContract lifetimeContract;
   HirClassInstanceId id = 0;
@@ -1500,6 +1502,7 @@ enum class MirDefinitionKind {
 };
 
 struct MirFunctionInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   HirFunctionInstanceId id = 0;
   FunctionId declaration = 0;
   // The instance's substituted generic arguments in declaration order;
@@ -1638,6 +1641,7 @@ struct MirConstructorDispatchState {
 };
 
 struct MirConstructorInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   HirConstructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
   bool constexprConstructor = false;
@@ -1684,6 +1688,7 @@ struct MirDestructorDispatchState {
 };
 
 struct MirDestructorInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   HirDestructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
   LifetimeSignatureContract lifetimeContract;
@@ -1949,6 +1954,7 @@ struct MirHostedStartupPlan {
 
 // Exact numeric representation selected by semantics for a payload-free enum.
 struct MirIntegralEnum {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   NominalVariance variance;
   LifetimeSignatureContract lifetimeContract;
   EnumId declaration = 0;
@@ -1974,6 +1980,7 @@ struct MirPayloadEnumVariant {
 };
 
 struct MirPayloadEnum {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   NominalVariance variance;
   LifetimeSignatureContract lifetimeContract;
   EnumId declaration = 0;
@@ -2005,6 +2012,10 @@ struct MirThreadLocalStorage {
 
 class MirProgram {
 public:
+  [[nodiscard]] const std::vector<NominalVarianceRecipe> &nominalVarianceRecipes() const {
+    return nominalVarianceRecipes_;
+  }
+
   [[nodiscard]] std::uint64_t semanticSnapshot() const {
     return semanticSnapshot_;
   }
@@ -2205,6 +2216,8 @@ public:
   friend bool operator==(const MirProgram &, const MirProgram &) = default;
 
 private:
+  std::vector<NominalVarianceRecipe> nominalVarianceRecipes_;
+
   std::vector<ForeignStorageInfo> foreignStorage_;
   friend class MirLowerer;
   friend struct MirProgramTestAccess;

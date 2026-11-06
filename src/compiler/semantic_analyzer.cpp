@@ -109,6 +109,15 @@ LifetimeSignatureContract SemanticVisitor::nominalLifetimeContract(
   return impl->nominalLifetimeContract(type);
 }
 
+std::optional<SemanticExecutableInstantiation>
+SemanticVisitor::canonicalizeExecutableInstance(const InstanceAnalysisKey &key) {
+  return impl->canonicalizeExecutableInstance(key);
+}
+
+std::vector<NominalVarianceRecipe> SemanticVisitor::nominalVarianceRecipes() const {
+  return impl->nominalVarianceRecipes();
+}
+
 bool SemanticVisitor::requiresActiveCleanupFor(const SemanticType &type) const {
   return impl->requiresActiveCleanupFor(type);
 }

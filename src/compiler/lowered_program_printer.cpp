@@ -168,6 +168,22 @@ public:
   }
 
   void semanticType(const SemanticType &value) { type(value); }
+  void genericIdentities(std::span<const GenericParameterIdentity> parameters) {
+    output << '[';
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+      separator(index);
+      const auto &parameter = parameters[index];
+      output << parameter.id << ':' << parameter.pack << ':' << parameter.value
+             << ':' << parameter.lifetime << ':' << parameter.implicit << ":[";
+      for (std::size_t part = 0; part < parameter.typeArgumentPath.size(); ++part) {
+        separator(part);
+        output << parameter.typeArgumentPath[part];
+      }
+      output << ']';
+    }
+    output << ']';
+  }
+
   void nominalVariance(const NominalVariance &value) { variance(value); }
   void semanticLifetimeContract(const LifetimeSignatureContract &value) {
     lifetimeContract(value);
@@ -325,6 +341,23 @@ private:
       type(value.typeBounds[index].type);
       output << ':';
       lifetime(value.typeBounds[index].region);
+    }
+    output << "],requirements-root=" << value.requirements.root << ",requirements=[";
+    for (std::size_t index = 0; index < value.requirements.nodes.size(); ++index) {
+      separator(index);
+      const auto &node = value.requirements.nodes[index];
+      output << number(node.kind) << ':' << node.left << ':' << node.right
+             << ':' << node.predicate << ':';
+      if (node.semanticTruth)
+        output << *node.semanticTruth;
+      else
+        output << '-';
+      output << ':';
+      lifetime(node.bound.longer);
+      output << ':';
+      lifetime(node.bound.shorter);
+      output << ':';
+      type(node.type);
     }
     output << "],receiver=";
     lifetime(value.receiver);
@@ -1210,6 +1243,9 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
 
   output << "class-instances " << program.classInstances().size() << '\n';
   for (const LoweredClassInstance &instance : program.classInstances()) {
+    output << "lifted-lifetimes=";
+    values.genericIdentities(instance.liftedLifetimes);
+    output << ' ';
     output << "variance=";
     values.nominalVariance(instance.variance);
     output << " lifetime-contract=";
@@ -1245,6 +1281,12 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
 
   output << "function-instances " << program.functionInstances().size() << '\n';
   for (const LoweredFunctionInstance &instance : program.functionInstances()) {
+    output << "lifted-lifetimes=";
+    values.genericIdentities(instance.liftedLifetimes);
+    output << ' ';
+    output << "lifetime-contract=";
+    values.semanticLifetimeContract(instance.lifetimeContract);
+    output << ' ';
     output << "function-instance " << instance.id
            << " unit=" << instance.sourceUnit
            << " declaration=" << instance.declaration << " owner=";
@@ -1272,6 +1314,12 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
          << '\n';
   for (const LoweredConstructorInstance &instance :
        program.constructorInstances()) {
+    output << "lifted-lifetimes=";
+    values.genericIdentities(instance.liftedLifetimes);
+    output << ' ';
+    output << "lifetime-contract=";
+    values.semanticLifetimeContract(instance.lifetimeContract);
+    output << ' ';
     output << "constructor-instance " << instance.id
            << " unit=" << instance.sourceUnit
            << " declaration=" << instance.declaration
@@ -1302,6 +1350,9 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
          << '\n';
   for (const LoweredDestructorInstance &instance :
        program.destructorInstances()) {
+    output << "lifted-lifetimes=";
+    values.genericIdentities(instance.liftedLifetimes);
+    output << ' ';
     output << "destructor-instance " << instance.id
            << " unit=" << instance.sourceUnit << " owner=" << instance.owner
            << " source=";

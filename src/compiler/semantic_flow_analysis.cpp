@@ -1,4 +1,5 @@
 #include "semantic_analyzer_impl.h"
+#include "gti/lifetime_types.h"
 
 namespace lang {
 namespace {
@@ -662,6 +663,8 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
             worker->requestSession.constexprWork = requestSession.constexprWork;
             worker->requestSession.stagedConstants =
                 requestSession.stagedConstants;
+            worker->requestSession.executableLifetimes =
+                requestSession.executableLifetimes;
             worker->requestSession.programConcreteEffects = state;
             // An isolated query needs the same pending-body facts as ordinary
             // concrete discovery. Finalize only actually consulted late bodies
@@ -5150,6 +5153,10 @@ auto SemanticVisitor::Impl::analyzeInitializer(
               (!isInteger(expectedType) || integerFits(expectedType, *literal))
           ? analyzeContextualIntegerOperand(expr, expectedType)
           : analyzeExpectedCallableResult(expr, expectedType);
+  if (expr && expectedType.kind != SemanticType::Reference &&
+      expectedType != result && expectedType.kind == result.kind &&
+      (!freeTypeLifetimes(expectedType).empty() || !freeTypeLifetimes(result).empty()))
+    (void)applyLifetimeValueConversion(result, expectedType, expressionToken(expr));
   if (allowExactNullConstruction && expr &&
       expectedType.kind == SemanticType::Class &&
       result == SemanticType::NullPtr) {
@@ -11533,6 +11540,7 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   // work account across this isolated worker instead of restarting it.
   worker->requestSession.constexprWork = requestSession.constexprWork;
   worker->requestSession.stagedConstants = requestSession.stagedConstants;
+  worker->requestSession.executableLifetimes = requestSession.executableLifetimes;
   worker->requestSession.rawResultQueries = state;
   worker->requestSession.collectingRawResult = entry;
   const auto analysis =
@@ -14550,10 +14558,17 @@ auto SemanticVisitor::Impl::isOwnershipAssignable(
       target.acceptsNullInitialization() && value == SemanticType::NullPtr) {
     return true;
   }
-  if (!isAssignable(target, value, expression.get())) {
+  SemanticType compatible = value;
+  if (target != value) {
+    CallableCandidate checked;
+    checked.lifetimeApplication.complete = true;
+    if (const auto adjusted = callLifetimeArgumentType(checked, value, target))
+      compatible = *adjusted;
+  }
+  if (!isAssignable(target, compatible, expression.get())) {
     return false;
   }
-  if (target != value || !expression || target.kind == SemanticType::TypePack) {
+  if (target != compatible || !expression || target.kind == SemanticType::TypePack) {
     return true;
   }
   const ExpressionInfo *info = semanticModel.findExpression(*expression);

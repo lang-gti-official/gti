@@ -285,6 +285,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
   result.program.executionProfile_ = source.executionProfile();
   result.program.programKind_ = source.programKind();
   result.program.foreignStorage_ = source.foreignStorageDeclarations();
+  result.program.nominalVarianceRecipes_ = source.nominalVarianceRecipes();
   result.program.target_ = source.analysisSeal().target;
   result.program.semanticSnapshot_ = source.analysisSeal().programSnapshot;
   result.program.nativeObjectLayout_ = source.requiresNativeObjectLayout();
@@ -292,7 +293,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
   for (const HirEnum &enumeration : source.enumDeclarations()) {
     if (!enumeration.payload) {
       result.program.integralEnums_.push_back(
-          {.variance = enumeration.variance,
+          {.liftedLifetimes = enumeration.liftedLifetimes,
+           .variance = enumeration.variance,
            .lifetimeContract = enumeration.lifetimeContract,
            .declaration = enumeration.declaration,
            .type = enumeration.type,
@@ -300,7 +302,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
            .underlyingType = enumeration.underlyingType});
       continue;
     }
-    MirPayloadEnum lowered{.variance = enumeration.variance,
+    MirPayloadEnum lowered{.liftedLifetimes = enumeration.liftedLifetimes,
+                           .variance = enumeration.variance,
                            .lifetimeContract = enumeration.lifetimeContract,
                            .declaration = enumeration.declaration,
                            .sourceUnit = enumeration.sourceUnit,
@@ -333,6 +336,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
   result.program.classes.reserve(source.classInstances().size());
   for (const HirClassInstance &instance : source.classInstances()) {
     MirClassInstance lowered{
+        .liftedLifetimes = instance.liftedLifetimes,
         .variance = instance.variance,
         .lifetimeContract = instance.lifetimeContract,
         .id = instance.id,
@@ -453,7 +457,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
       callableParameters.emplace_back(std::move(lowered));
     }
     result.program.functions.push_back(
-        {.id = instance.id,
+        {.liftedLifetimes = instance.liftedLifetimes,
+         .id = instance.id,
          .declaration = instance.declaration,
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
@@ -607,7 +612,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
            .ownedParameter = initializer.ownedParameter});
     }
     result.program.constructors.push_back(
-        {.id = instance.id,
+        {.liftedLifetimes = instance.liftedLifetimes,
+         .id = instance.id,
          .owner = instance.owner,
          .constexprConstructor = instance.constexprConstructor,
          .requiresUnsafe = instance.requiresUnsafe,
@@ -681,7 +687,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
   result.program.destructors.reserve(source.destructorInstances().size());
   for (const HirDestructorInstance &instance : source.destructorInstances()) {
     result.program.destructors.push_back(
-        {.id = instance.id,
+        {.liftedLifetimes = instance.liftedLifetimes,
+         .id = instance.id,
          .owner = instance.owner,
          .lifetimeContract = instance.lifetimeContract,
          .definitionKind =

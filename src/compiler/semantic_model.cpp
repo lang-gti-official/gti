@@ -1,4 +1,5 @@
 #include "gti/semantic_model.h"
+#include "gti/lifetime_types.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1560,7 +1561,7 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
     }
     SemanticType primary = SemanticType::classType(
         info->exactSpecializationPrimary, info->exactTypeArguments,
-        info->exactValueArguments);
+        info->exactValueArguments, value.lifetimeArguments);
     return self(self, std::move(primary));
   };
   const SemanticType key = canonicalize(canonicalize, type);
@@ -1575,7 +1576,11 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
                      model->exactClassSpecializations.end(),
                      [&](const ExactClassSpecializationRecord &candidate) {
                        return candidate.primary == key.classId &&
-                              candidate.typeArguments == key.arguments &&
+                              candidate.typeArguments.size() == key.arguments.size() &&
+                              std::equal(candidate.typeArguments.begin(), candidate.typeArguments.end(),
+                                         key.arguments.begin(), [](const auto &left, const auto &right) {
+                                           return eraseTypeLifetimes(left) == eraseTypeLifetimes(right);
+                                         }) &&
                               candidate.valueArguments == key.valueArguments;
                      });
     return found == model->exactClassSpecializations.end()
@@ -1583,7 +1588,8 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
                : found->specialization;
   };
   const ClassId specialization = find(find, this);
-  return specialization == 0 ? type : SemanticType::classType(specialization);
+  return specialization == 0 ? type : SemanticType::classType(
+      specialization, {}, {}, std::move(type.lifetimeArguments));
 }
 
 [[nodiscard]] const TypeAliasInfo *
@@ -2682,6 +2688,38 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
   };
   countLifetimeBody(blockLifetimeBodies);
   countLifetimeBody(expressionLifetimeBodies);
+  const auto countContract = [&](const LifetimeSignatureContract &contract) {
+    lifetimeFacts += contract.parameters.size() + contract.bounds.size() +
+                     contract.typeBounds.size() + contract.requirements.nodes.size();
+  };
+  const auto countApplications = [&](const auto &records) {
+    for (const auto &[_, record] : records) {
+      const auto &application = record.lifetimeApplication;
+      lifetimeFacts += application.bindings.size() + application.variables.size() +
+                       application.obligations.size() + application.typeObligations.size() +
+                       application.origins.size();
+      if (application.callableSignature) {
+        const auto &callable = *application.callableSignature;
+        lifetimeFacts += callable.signatureBindings.size() + callable.signature.arguments.size();
+        countContract(callable.contract);
+      }
+    }
+  };
+  countApplications(calls);
+  countApplications(lambdaCalls);
+  countApplications(operators);
+  countApplications(projectionOperators);
+  countApplications(contextualConversions);
+  countApplications(constructions);
+  countApplications(contextualConstructions);
+  for (const auto &[_, function] : functions)
+    countContract(function.lifetimeContract);
+  for (const auto &[_, lambda] : lambdas)
+    countContract(lambda.lifetimeContract);
+  for (const auto &[_, owner] : classTypes)
+    countContract(owner.lifetimeContract);
+  for (const auto &[_, enumeration] : enumTypes)
+    countContract(enumeration.lifetimeContract);
   // Records hold nested types and vectors whose allocator footprint is not
   // exposed; charge a deliberately generous per-record estimate so the LRU
   // bound is conservative rather than byte-exact.

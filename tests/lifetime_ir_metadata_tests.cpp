@@ -1,5 +1,7 @@
 #include "../src/compiler/mir_lifetimes.h"
 #include "gti/mir_printer.h"
+#include "gti/callable_lifetimes.h"
+#include "gti/nominal_variance.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -19,6 +21,92 @@ SemanticType reference(GenericParameterId id) {
 }
 } // namespace
 int main() {
+  auto quantified = SemanticType::functionSignature(reference(101), {reference(101)});
+  quantified.quantifiedLifetimes = {101};
+  const auto quantifiedContract = callableLifetimeContract(quantified);
+  expect(quantifiedContract && quantifiedContract->parameters ==
+                                  std::vector<Lifetime>{Lifetime::parameter(101)} &&
+             quantifiedContract->typeBounds.size() == 1,
+         "callable contracts derive scoped universal inputs and exact referent bounds");
+  CallableLifetimeSignature quantifiedProof{.signature = quantified,
+                                             .contract = *quantifiedContract};
+  auto alpha = SemanticType::functionSignature(reference(202), {reference(202)});
+  alpha.quantifiedLifetimes = {202};
+  expect(callableLifetimeCarrierMatches(quantifiedProof, alpha),
+         "higher-ranked carrier identities compare by scoped alpha equivalence");
+  quantifiedProof.signatureBindings = {{Lifetime::parameter(101), Lifetime::staticLifetime()}};
+  expect(!callableLifetimeCarrierMatches(quantifiedProof, alpha),
+         "fixed carrier substitutions cannot instantiate a quantified binder");
+  auto fixedSignature = SemanticType::functionSignature(reference(303), {reference(303)});
+  CallableLifetimeSignature fixedProof{
+      .signature = fixedSignature,
+      .contract = *callableLifetimeContract(fixedSignature),
+      .signatureBindings = {{Lifetime::parameter(303), Lifetime::local(404)}}};
+  const auto fixedCarrier = substituteTypeLifetimes(fixedSignature, fixedProof.signatureBindings);
+  expect(fixedCarrier && callableLifetimeCarrierMatches(fixedProof, *fixedCarrier),
+         "a universal carrier slot reconstructs its exact local region without publishing it");
+  fixedProof.signatureBindings[0].second = Lifetime::local(405);
+  expect(!callableLifetimeCarrierMatches(fixedProof, *fixedCarrier),
+         "changing a fixed carrier region fails exact signature identity");
+  fixedProof.signatureBindings[0].second = Lifetime::local(404);
+  fixedProof.contract.typeBounds.clear();
+  expect(!callableLifetimeCarrierMatches(fixedProof, *fixedCarrier),
+         "a complete flag cannot replace the derived callable type-outlives obligations");
+  const auto targetBindings = callableLifetimeTargetBindings(
+      reference(303), std::array{reference(303)},
+      *callableLifetimeContract(fixedSignature), quantified);
+  expect(targetBindings && *targetBindings ==
+              std::vector<LifetimeBinding>{{Lifetime::parameter(303), Lifetime::parameter(101)}},
+         "a universal target may implement an alpha-renamed higher-ranked signature");
+  auto requested = SemanticType::functionSignature(reference(101), {reference(101), reference(102)});
+  requested.quantifiedLifetimes = {101, 102};
+  CallableLifetimeSignature requestedProof{
+      .signature = requested, .contract = *callableLifetimeContract(requested)};
+  auto constrainedSignature = SemanticType::functionSignature(reference(303), {reference(303), reference(304)});
+  auto constrained = *callableLifetimeContract(constrainedSignature);
+  using RequirementKind = LifetimeRequirementNode::Kind;
+  constrained.requirements.nodes = {
+      {.kind = RequirementKind::Region,
+       .bound = {Lifetime::parameter(303), Lifetime::parameter(304)}},
+      {.kind = RequirementKind::Region,
+       .bound = {Lifetime::parameter(304), Lifetime::parameter(303)}},
+      {.kind = RequirementKind::Any, .left = 0, .right = 1}};
+  constrained.requirements.root = 2;
+  MirProgram callableProgram;
+  expect(!mirCallableLifetimeTargetMatches(callableProgram, requestedProof, reference(303),
+                                           std::array{reference(303), reference(304)}, constrained),
+         "a target disjunction cannot disappear behind empty guaranteed bounds");
+  requested.arguments[2] = reference(101);
+  requestedProof = {.signature = requested, .contract = *callableLifetimeContract(requested)};
+  expect(mirCallableLifetimeTargetMatches(callableProgram, requestedProof, reference(303),
+                                          std::array{reference(303), reference(304)}, constrained),
+         "a proved disjunct suffices without assuming every leaf");
+  constrained.requirements.nodes[0] = {.kind = RequirementKind::SemanticPredicate, .predicate = 0};
+  expect(!mirCallableLifetimeTargetMatches(callableProgram, requestedProof, reference(303),
+                                           std::array{reference(303), reference(304)}, constrained),
+         "unresolved target predicate truth cannot reach executable proof");
+  NominalVarianceRecipe shared{
+      .declaration = 1, .parameters = {{.id = 501}, {.id = 502, .lifetime = true}},
+      .stored = {{.symbol = 601, .type = SemanticType::referenceTo(
+          SemanticType::typeParameter(501), AccessMode::ReadOnly, Lifetime::parameter(502))}},
+      .complete = true};
+  auto exclusive = shared;
+  exclusive.declaration = 2;
+  exclusive.stored[0].type.referenceAccess = AccessMode::Mutable;
+  const auto inferred = inferNominalVarianceRecipes(std::array{shared, exclusive});
+  expect(inferred && (*inferred)[0].types == std::vector{TypeVariance::Covariant} &&
+             (*inferred)[1].types == std::vector{TypeVariance::Invariant} &&
+             (*inferred)[1].lifetimes == std::vector{TypeVariance::Covariant},
+         "shared symbolic recipes distinguish mutable referents from covariant borrow regions");
+  auto specialization = exclusive;
+  specialization.exactSpecializationPrimary = 1;
+  specialization.stored[0].type = SemanticType::rawPointerTo(reference(502));
+  const auto family = inferNominalVarianceRecipes(std::array{shared, specialization});
+  expect(family && (*family)[0].lifetimes == std::vector{TypeVariance::Invariant},
+         "an exact specialization constrains the complete family's lifetime variance");
+  specialization.parameters.push_back(specialization.parameters.front());
+  expect(!inferNominalVarianceRecipes(std::array{shared, specialization}),
+         "duplicate symbolic parameter identities cannot enter variance proof");
   MirBody body;
   body.returnType = reference(1);
   body.entry = 1;
@@ -50,6 +138,13 @@ int main() {
       original.starts_with("mir-body-v94\n"),
       "lifetime-bearing structural metadata requires its own format version");
   auto changed = body;
+  changed.blocks[0].instructions[0].lifetimeApplication.callableSignature = fixedProof;
+  const auto callableBytes = printer.print(changed);
+  changed.blocks[0].instructions[0].lifetimeApplication.callableSignature->signatureBindings[0].second =
+      Lifetime::local(406);
+  expect(printer.print(changed) != callableBytes,
+         "fixed callable regions participate in structural MIR identity");
+  changed = body;
   changed.returnType.referenceLifetime = Lifetime::staticLifetime();
   expect(
       printer.print(changed) != original,

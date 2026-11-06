@@ -843,6 +843,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   }
   worker.impl->requestSession.constexprWork = work;
   worker.impl->requestSession.stagedConstants = requestSession.stagedConstants;
+  worker.impl->requestSession.executableLifetimes = requestSession.executableLifetimes;
   // Concrete constant bodies also demand source access summaries. Share
   // their request-local cycle/depth accounting, not mutable body state.
   worker.impl->requestSession.rawResultQueries =

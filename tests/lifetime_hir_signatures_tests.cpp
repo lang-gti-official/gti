@@ -16,15 +16,15 @@ int main() {
   const auto result = Frontend({.stopAfter = FrontendPhase::Hir})
                           .analyze("lifetime-hir-signatures.gti", R"gti(
 T&<a> identity<lifetime a, T>(T&<a> value) { return value; }
-int&<first> first<lifetime first>(int&<first> value) {
-  return identity<first, int>(value);
+int&<a_first> first<lifetime a_first>(int&<a_first> value) {
+  return identity<a_first, int>(value);
 }
-int&<second> second<lifetime second>(int&<second> value) {
-  return identity<second, int>(value);
+int&<a_second> second<lifetime a_second>(int&<a_second> value) {
+  return identity<a_second, int>(value);
 }
 struct Box<lifetime owner, T> { T value; };
 int main() {
-  Box<static, int> box;
+  Box<static, int> box{};
   int value = 17;
   return first(value) + second(value) - 34;
 }

@@ -2,6 +2,8 @@
 
 #include "diagnostic_registry.h"
 #include "gti/generic_instantiation_limits.h"
+#include "gti/instance_analysis_cache.h"
+#include "gti/lifetime_types.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/support.h"
 
@@ -175,6 +177,7 @@ public:
       }
       processPendingInstances();
     }
+    output.program.nominalVarianceRecipes_ = provider.nominalVarianceRecipes();
     finishSourceDebugInventory();
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
                             !hasErrorDiagnostics(output.diagnostics) &&
@@ -215,6 +218,7 @@ private:
   HirLoweringResult finishConstant() {
     ensurePlaceDomain(output.program.moduleBody);
     processPendingInstances();
+    output.program.nominalVarianceRecipes_ = instanceProvider->nominalVarianceRecipes();
     finishSourceDebugInventory();
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
                             !hasErrorDiagnostics(output.diagnostics) &&
@@ -373,6 +377,7 @@ private:
                                   .obligations = application.obligations,
                                   .typeObligations =
                                       application.typeObligations,
+                                  .callableSignature = application.callableSignature,
                                   .complete = application.complete};
     for (const auto &origin : application.origins) {
       HirValueId source = 0;
@@ -457,21 +462,52 @@ private:
                                 valueArguments);
   }
 
+  [[nodiscard]] static bool hasTypeLifetimes(const SemanticType &type) {
+    bool found = type.referenceLifetime.specified() ||
+        !type.lifetimeArguments.empty() || !type.quantifiedLifetimes.empty();
+    lifetime_detail::children(type, [&](const auto &child) {
+      found = hasTypeLifetimes(child) || found;
+    });
+    return found;
+  }
+
   [[nodiscard]] LifetimeSignatureContract
   instantiateLifetimeContract(const LifetimeSignatureContract &declaration,
                               const GenericSubstitution &substitution) const {
     auto result = declaration;
     for (auto &bound : result.typeBounds)
       bound.type = substitute(bound.type, substitution);
+    for (auto &node : result.requirements.nodes)
+      if (node.kind == LifetimeRequirementNode::Kind::Type)
+        node.type = substitute(node.type, substitution);
     return result;
   }
 
   [[nodiscard]] std::optional<HirClassInstanceId>
   enqueueClass(const SemanticType &type,
                std::optional<SourceSpan> site = std::nullopt) {
-    const SemanticType resolvedType =
+    SemanticType resolvedType =
         baseModel == nullptr ? type
                              : baseModel->resolveExactClassSpecialization(type);
+    std::optional<SemanticExecutableInstantiation> canonical;
+    if (resolvedType.kind == SemanticType::Class && resolvedType.classId) {
+      canonical = instanceProvider->canonicalizeExecutableInstance(
+          {.kind = InstanceAnalysisKind::ClassFieldInitializers,
+           .declaration = resolvedType.classId, .classTypes = resolvedType.arguments,
+           .classValues = resolvedType.valueArguments});
+      if (!canonical && hasTypeLifetimes(resolvedType)) {
+        lifecycleValid = false;
+        return std::nullopt;
+      }
+      if (canonical)
+        resolvedType.arguments = canonical->classTypes;
+      if (const auto *declaration = baseModel->findClassType(resolvedType.classId)) {
+        resolvedType.lifetimeArguments.clear();
+        for (const auto &parameter : declaration->genericParameters)
+          if (parameter.lifetime)
+            resolvedType.lifetimeArguments.push_back(Lifetime::parameter(parameter.id));
+      }
+    }
     // An existing instance discovered its arguments when it was created, and
     // admission is monotone, so revisiting them can only propagate a first
     // instantiation site. Re-walking them on every hit made each lookup of a
@@ -574,9 +610,13 @@ private:
                  : status;
     };
     output.program.classes.push_back(
-        {.variance = instanceProvider->nominalVariance(resolvedType),
+        {.liftedLifetimes = canonical
+             ? genericParameterIdentities(canonical->liftedLifetimes)
+             : std::vector<GenericParameterIdentity>{},
+         .variance = instanceProvider->nominalVariance(resolvedType),
          .lifetimeContract =
-             instanceProvider->nominalLifetimeContract(resolvedType),
+             canonical ? canonical->lifetimeContract
+                       : instanceProvider->nominalLifetimeContract(resolvedType),
          .id = id,
          .sourceUnit = declaration->sourceUnit,
          .declaration = resolvedType.classId,
@@ -650,7 +690,7 @@ private:
 
   [[nodiscard]] HirFunctionInstanceId
   enqueueFunction(const FunctionInfo &declaration,
-                  const std::vector<SemanticType> &classTypeArguments,
+                  std::vector<SemanticType> classTypeArguments,
                   const std::vector<CompileTimeValue> &classValueArguments,
                   std::vector<SemanticType> functionTypeArguments,
                   std::vector<CompileTimeValue> functionValueArguments,
@@ -688,6 +728,22 @@ private:
         declaration.ownerClass == 0
             ? nullptr
             : baseModel->findClassType(declaration.ownerClass);
+    const auto canonical = instanceProvider->canonicalizeExecutableInstance(
+        {.kind = InstanceAnalysisKind::Function, .declaration = declaration.id,
+         .classTypes = classTypeArguments, .classValues = classValueArguments,
+         .types = functionTypeArguments, .values = functionValueArguments});
+    if (!canonical &&
+        (std::any_of(classTypeArguments.begin(), classTypeArguments.end(),
+                     hasTypeLifetimes) ||
+         std::any_of(functionTypeArguments.begin(), functionTypeArguments.end(),
+                     hasTypeLifetimes))) {
+      lifecycleValid = false;
+      return 0;
+    }
+    if (canonical) {
+      classTypeArguments = canonical->classTypes;
+      functionTypeArguments = canonical->types;
+    }
     GenericSubstitution instance =
         genericOwner == nullptr
             ? GenericSubstitution{}
@@ -705,8 +761,13 @@ private:
     parameterTypes.reserve(declaration.parameterTypes.size());
     for (const auto &parameter : declaration.parameterTypes)
       parameterTypes.push_back(substitute(parameter, instance));
-    const auto lifetimeContract =
+    auto lifetimeContract =
         instantiateLifetimeContract(declaration.lifetimeContract, instance);
+    if (canonical) {
+      returnType = canonical->returnType;
+      parameterTypes = canonical->parameterTypes;
+      lifetimeContract = canonical->lifetimeContract;
+    }
     // Calls can discover an instance through individual arguments or through
     // one forwarded pack. Virtual members are also seeded from declarations.
     // These paths must publish the same concrete signature; source pack
@@ -776,7 +837,10 @@ private:
     if (constantUnavailable)
       constantUnavailableFunctions.push_back(id);
     output.program.functions.push_back(
-        {.id = id,
+        {.liftedLifetimes = canonical
+             ? genericParameterIdentities(canonical->liftedLifetimes)
+             : std::vector<GenericParameterIdentity>{},
+         .id = id,
          .sourceUnit = declaration.sourceUnit,
          .declaration = declaration.id,
          .source =
@@ -893,14 +957,35 @@ private:
   }
 
   [[nodiscard]] HirConstructorInstanceId
-  enqueueConstructor(const ResolvedConstructionInfo &construction,
+  enqueueConstructor(const ResolvedConstructionInfo &requestedConstruction,
                      std::optional<SourceSpan> site = std::nullopt) {
+    auto construction = requestedConstruction;
     const auto *declaration =
         construction.declaration == nullptr
             ? nullptr
             : baseModel->findConstructor(*construction.declaration);
     const bool constant =
         declaration != nullptr && declaration->constexprConstructor;
+    const auto canonical = instanceProvider->canonicalizeExecutableInstance(
+        {.kind = construction.generatedDefault
+                     ? InstanceAnalysisKind::ClassFieldInitializers
+                     : InstanceAnalysisKind::Constructor,
+         .declaration = construction.generatedDefault
+                            ? construction.constructedType.classId
+                            : construction.constructor,
+         .classTypes = construction.constructedType.arguments,
+         .classValues = construction.constructedType.valueArguments,
+         .types = construction.typeArguments, .values = construction.valueArguments});
+    if (!canonical && (hasTypeLifetimes(construction.constructedType) ||
+        std::any_of(construction.typeArguments.begin(), construction.typeArguments.end(),
+                    hasTypeLifetimes))) {
+      lifecycleValid = false;
+      return 0;
+    }
+    if (canonical) {
+      construction.constructedType.arguments = canonical->classTypes;
+      construction.typeArguments = canonical->types;
+    }
     if (constantClosure && !construction.generatedDefault &&
         (!constant ||
          std::find(constantConstructors.begin(), constantConstructors.end(),
@@ -948,10 +1033,16 @@ private:
                                              substitute(parameter, instance));
     else
       universalParameters = construction.parameterTypes;
-    const auto lifetimeContract =
+    auto lifetimeContract =
         declaration != nullptr ? instantiateLifetimeContract(
                                      declaration->lifetimeContract, instance)
                                : LifetimeSignatureContract{};
+    if (canonical) {
+      lifetimeContract = canonical->lifetimeContract;
+      universalParameters.clear();
+      for (const auto &parameter : canonical->parameterTypes)
+        SemanticType::appendExpandedArgument(universalParameters, parameter);
+    }
     const ConstructorId identity = generatedBody ? 0 : construction.constructor;
     // A dependent text publication is a call-site fact; it never forms the
     // constructor's own borrow summary.
@@ -996,7 +1087,10 @@ private:
     constructorDiscoveryDepths.push_back(constructorDiscovery);
     discoveredGenericInstances += generic;
     output.program.constructors.push_back(
-        {.id = id,
+        {.liftedLifetimes = canonical
+             ? genericParameterIdentities(canonical->liftedLifetimes)
+             : std::vector<GenericParameterIdentity>{},
+         .id = id,
          .sourceUnit = output.program.classes[*owner - 1].sourceUnit,
          .declaration = identity,
          .source = generatedBody ? nullptr : construction.declaration,
@@ -1056,12 +1150,18 @@ private:
     destructorDiscoveryDepths.push_back(
         nextDiscovery(classInstance.instantiationSite));
     discoveredGenericInstances += generic;
+    const auto canonical = instanceProvider->canonicalizeExecutableInstance(
+        {.kind = InstanceAnalysisKind::Destructor, .declaration = classInstance.declaration,
+         .classTypes = classInstance.typeArguments, .classValues = classInstance.valueArguments});
     output.program.destructors.push_back(
-        {.id = id,
+        {.liftedLifetimes = canonical
+             ? genericParameterIdentities(canonical->liftedLifetimes)
+             : std::vector<GenericParameterIdentity>{},
+         .id = id,
          .sourceUnit = classInstance.sourceUnit,
          .source = lifecycle->declaredDestructor->declaration,
          .owner = owner,
-         .lifetimeContract = instantiateLifetimeContract(
+         .lifetimeContract = canonical ? canonical->lifetimeContract : instantiateLifetimeContract(
              lifecycle->declaredDestructor->lifetimeContract,
              classSubstitution(*classType, classInstance.typeArguments,
                                classInstance.valueArguments))});
@@ -1115,7 +1215,23 @@ private:
     return concrete;
   }
 
-  void enqueueEnum(const SemanticType &type) {
+  void enqueueEnum(SemanticType type) {
+    const auto canonical = instanceProvider->canonicalizeExecutableInstance(
+        {.kind = InstanceAnalysisKind::EnumLayout, .declaration = type.enumId,
+         .classTypes = type.arguments, .classValues = type.valueArguments});
+    if (!canonical && hasTypeLifetimes(type)) {
+      lifecycleValid = false;
+      return;
+    }
+    if (canonical) {
+      type.arguments = canonical->classTypes;
+      if (const auto *declaration = baseModel->findEnumType(type.enumId)) {
+        type.lifetimeArguments.clear();
+        for (const auto &parameter : declaration->genericParameters)
+          if (parameter.lifetime)
+            type.lifetimeArguments.push_back(Lifetime::parameter(parameter.id));
+      }
+    }
     if (std::any_of(output.program.enums.begin(), output.program.enums.end(),
                     [&](const HirEnum &item) { return item.type == type; })) {
       return;
@@ -1132,9 +1248,12 @@ private:
     if (!info) {
       return;
     }
-    HirEnum lowered{.variance = instanceProvider->nominalVariance(type),
-                    .lifetimeContract =
-                        instanceProvider->nominalLifetimeContract(type),
+    HirEnum lowered{.liftedLifetimes = canonical
+                        ? genericParameterIdentities(canonical->liftedLifetimes)
+                        : std::vector<GenericParameterIdentity>{},
+                    .variance = instanceProvider->nominalVariance(type),
+                    .lifetimeContract = canonical ? canonical->lifetimeContract
+                        : instanceProvider->nominalLifetimeContract(type),
                     .declaration = info->id,
                     .type = type,
                     .sourceUnit = info->sourceUnit,

@@ -67,6 +67,7 @@ struct SemanticLifetimeApplication {
   std::vector<LifetimeBound> obligations;
   std::vector<LifetimeTypeBound> typeObligations;
   std::vector<SemanticLifetimeOrigin> origins;
+  std::optional<CallableLifetimeSignature> callableSignature;
   bool complete = false;
   friend bool operator==(const SemanticLifetimeApplication &,
                          const SemanticLifetimeApplication &) = default;
@@ -713,6 +714,64 @@ enum class CompilerCapabilityTypeKind {
   SharedOwner,
   UninitializedStorage,
   NativeCScalar,
+};
+
+// AST-free declaration recipes used to prove variance against concrete MIR
+// storage. These retain slot identity even when several actual arguments alias.
+struct GenericParameterIdentity {
+  GenericParameterId id = 0;
+  bool pack = false;
+  bool value = false;
+  bool lifetime = false;
+  bool implicit = false;
+  std::vector<std::size_t> typeArgumentPath;
+  friend bool operator==(const GenericParameterIdentity &,
+                         const GenericParameterIdentity &) = default;
+};
+
+using NominalVarianceParameter = GenericParameterIdentity;
+inline std::vector<GenericParameterIdentity>
+genericParameterIdentities(std::span<const GenericParameterInfo> parameters) {
+  std::vector<GenericParameterIdentity> result;
+  for (const auto &parameter : parameters)
+    result.push_back({.id = parameter.id, .pack = parameter.pack,
+                      .value = parameter.value, .lifetime = parameter.lifetime,
+                      .implicit = parameter.implicit,
+                      .typeArgumentPath = parameter.typeArgumentPath});
+  return result;
+}
+
+enum class NominalStoredTypeKind { Field, Base, Payload };
+struct NominalStoredTypeRecipe {
+  NominalStoredTypeKind kind = NominalStoredTypeKind::Field;
+  std::size_t index = 0;
+  SymbolId symbol = 0;
+  std::size_t variant = 0;
+  bool interface = false;
+  SemanticType type = SemanticType::Unknown;
+  friend bool operator==(const NominalStoredTypeRecipe &,
+                         const NominalStoredTypeRecipe &) = default;
+};
+
+struct NominalVarianceRecipe {
+  SemanticType::Kind kind = SemanticType::Class;
+  std::uint64_t declaration = 0;
+  std::uint64_t familyPrimary = 0;
+  std::uint64_t exactSpecializationPrimary = 0;
+  std::vector<SemanticType> exactTypeArguments;
+  std::vector<CompileTimeValue> exactValueArguments;
+  std::vector<SemanticType> argumentPatterns;
+  std::vector<NominalVarianceParameter> parameters;
+  std::vector<NominalStoredTypeRecipe> stored;
+  CompilerCapabilityTypeKind compilerCapability = CompilerCapabilityTypeKind::None;
+  ClassKind classKind = ClassKind::Class;
+  bool cOpaqueHandle = false;
+  bool polymorphic = false;
+  bool forward = false;
+  bool invalidLifetime = false;
+  bool complete = false;
+  friend bool operator==(const NominalVarianceRecipe &,
+                         const NominalVarianceRecipe &) = default;
 };
 
 enum class ProgramEntryKind {
@@ -3627,6 +3686,22 @@ public:
 
 private:
   const SemanticModel &semantics;
+};
+
+// Executable identity is universal in every free region occurring inside a
+// generic type argument. A particular caller supplies those choices only in
+// lifetimeApplication; its local regions never become body identities.
+struct SemanticExecutableInstantiation {
+  std::vector<SemanticType> classTypes;
+  std::vector<SemanticType> types;
+  std::vector<GenericParameterInfo> liftedLifetimes;
+  std::vector<std::vector<GenericParameterId>> classLifetimeParameters;
+  std::vector<std::vector<GenericParameterId>> functionLifetimeParameters;
+  SemanticType returnType = SemanticType::Void;
+  std::vector<SemanticType> parameterTypes;
+  std::vector<AppliedConceptRequirement> requirements;
+  LifetimeSignatureContract lifetimeContract;
+  SemanticLifetimeApplication lifetimeApplication;
 };
 
 struct SemanticInstanceAnalysis {

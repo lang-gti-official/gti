@@ -758,6 +758,38 @@ struct LifetimeTypeBound {
                          const LifetimeTypeBound &) = default;
 };
 
+// Postorder declaration requirements. Only groups containing a region/type
+// outlives relation appear here. Ordinary predicates in a mixed group retain
+// a declaration-local ordinal; semantics resolves their truth for the exact
+// type/value instance. MIR checks the call against that target-instance fact,
+// never against a truth value supplied by the call application.
+struct LifetimeRequirementNode {
+  enum class Kind { Region, Type, SemanticPredicate, All, Any };
+  static constexpr std::size_t invalidIndex = static_cast<std::size_t>(-1);
+  Kind kind = Kind::Region;
+  LifetimeBound bound;
+  SemanticType type = SemanticType::Unknown;
+  std::size_t left = invalidIndex;
+  std::size_t right = invalidIndex;
+  std::size_t predicate = invalidIndex;
+  std::optional<bool> semanticTruth;
+  friend bool operator==(const LifetimeRequirementNode &,
+                         const LifetimeRequirementNode &) = default;
+};
+
+struct LifetimeRequirementFormula {
+  std::vector<LifetimeRequirementNode> nodes;
+  std::size_t root = LifetimeRequirementNode::invalidIndex;
+  [[nodiscard]] bool resolved() const {
+    return std::all_of(nodes.begin(), nodes.end(), [](const auto &node) {
+      return node.kind != LifetimeRequirementNode::Kind::SemanticPredicate ||
+             node.semanticTruth.has_value();
+    });
+  }
+  friend bool operator==(const LifetimeRequirementFormula &,
+                         const LifetimeRequirementFormula &) = default;
+};
+
 // The normalized, caller-visible region interface. Declaration parameters are
 // universal; no local/inferred region may be published here. Actual places,
 // access permissions and drop obligations remain in the borrow contract.
@@ -765,6 +797,7 @@ struct LifetimeSignatureContract {
   std::vector<Lifetime> parameters;
   std::vector<LifetimeBound> bounds;
   std::vector<LifetimeTypeBound> typeBounds;
+  LifetimeRequirementFormula requirements;
   Lifetime receiver;
   LifetimeContractOrigin origin = LifetimeContractOrigin::Elided;
   bool complete = false;
@@ -797,6 +830,42 @@ struct LifetimeSignatureContract {
                  declared(bound.region);
         }))
       return false;
+    if (requirements.nodes.empty()) {
+      if (requirements.root != LifetimeRequirementNode::invalidIndex)
+        return false;
+    } else {
+      if (requirements.root != requirements.nodes.size() - 1 ||
+          requirements.nodes.size() > 4096)
+        return false;
+      for (std::size_t index = 0; index < requirements.nodes.size(); ++index) {
+        const auto &node = requirements.nodes[index];
+        using Kind = LifetimeRequirementNode::Kind;
+        if (node.kind == Kind::All || node.kind == Kind::Any) {
+          if (node.left >= index || node.right >= index ||
+              node.type != SemanticType::Unknown || node.bound != LifetimeBound{} ||
+              node.predicate != LifetimeRequirementNode::invalidIndex || node.semanticTruth)
+            return false;
+        } else {
+          if (node.left != LifetimeRequirementNode::invalidIndex ||
+              node.right != LifetimeRequirementNode::invalidIndex)
+            return false;
+          if (node.kind == Kind::SemanticPredicate) {
+            if (node.predicate == LifetimeRequirementNode::invalidIndex ||
+                node.type != SemanticType::Unknown || node.bound != LifetimeBound{})
+              return false;
+          } else if (node.kind == Kind::Region || node.kind == Kind::Type) {
+            if (!declared(node.bound.shorter) || node.semanticTruth ||
+                node.predicate != LifetimeRequirementNode::invalidIndex ||
+                (node.kind == Kind::Region
+                     ? !declared(node.bound.longer) || node.type != SemanticType::Unknown
+                     : node.bound.longer != Lifetime{} || node.type == SemanticType::Unknown))
+              return false;
+          } else {
+            return false;
+          }
+        }
+      }
+    }
     return std::all_of(bounds.begin(), bounds.end(), [&](LifetimeBound bound) {
       return bound.longer.declarationRegion() &&
              bound.shorter.declarationRegion() && declared(bound.longer) &&
@@ -806,6 +875,17 @@ struct LifetimeSignatureContract {
 
   friend bool operator==(const LifetimeSignatureContract &,
                          const LifetimeSignatureContract &) = default;
+};
+
+// A source-free callable retains a universal signature and the exact fixed
+// instantiation of its free carrier regions. Higher-ranked binders remain
+// scoped in signature and are instantiated separately for each invocation.
+struct CallableLifetimeSignature {
+  SemanticType signature = SemanticType::Unknown;
+  LifetimeSignatureContract contract;
+  std::vector<LifetimeBinding> signatureBindings;
+  friend bool operator==(const CallableLifetimeSignature &,
+                         const CallableLifetimeSignature &) = default;
 };
 
 // A declaration-bound monotone predicate over concurrency facts. Source concept

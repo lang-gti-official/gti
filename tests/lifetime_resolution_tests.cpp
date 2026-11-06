@@ -1,5 +1,6 @@
 #include "gti/frontend.h"
 #include "gti/lifetime_types.h"
+#include "gti/semantic_analyzer.h"
 
 #include <algorithm>
 #include <iostream>
@@ -23,7 +24,8 @@ lang::FrontendResult analyze(std::string_view source) {
 void expectValid(const lang::FrontendResult &result, std::string_view message) {
   if (!result.semanticValid)
     for (const auto &diagnostic : result.diagnostics)
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      std::cerr << diagnostic.code << " at line " << diagnostic.primary.line
+                << ": " << diagnostic.message << '\n';
   expect(result.semanticValid, message);
 }
 
@@ -56,11 +58,20 @@ const lang::ClassTypeInfo *record(const lang::FrontendResult &result,
 
 void testAnonymousNominalRegions() {
   const auto result = analyze(R"(
-struct PairView { int& first; int& second; };
+struct PairView {
+  int& first; int& second;
+  PairView(int& left, int& right) : first(left), second(right) {}
+};
 using PairAlias = PairView;
-struct Nested { PairAlias left; PairAlias right; };
-struct Derived : public PairView { int& third; };
-struct Packed<Ts...> { int& anchor; };
+struct Nested {
+  PairAlias left; PairAlias right;
+  Nested(PairAlias first, PairAlias second) : left(first), right(second) {}
+};
+struct Derived : public PairView {
+  int& third;
+  Derived(int& first, int& second, int& last) : PairView(first, second), third(last) {}
+};
+struct Packed<Ts...> { int& anchor; Packed(int& value) : anchor(value) {} };
 enum Event { first(int& value), second(int& value) };
 void inspect(PairView pair, Nested nested, Derived derived, Packed<int, bool> packed, Event event);
 int main() { return 0; }
@@ -96,12 +107,19 @@ int main() { return 0; }
 
 void testNominalVariance() {
   const auto result = analyze(R"(
-struct Shared<T, lifetime a> { T&<a> value; };
-struct Exclusive<T, lifetime a> { mut T&<a> value; };
-struct Raw<T> { T* pointer; };
-struct Owned<T> { T value; void replace(T other) mut; };
+struct Shared<T, lifetime a> {
+  T&<a> value; Shared(T&<a> source) : value(source) {}
+};
+struct Exclusive<T, lifetime a> {
+  mut T&<a> value; Exclusive(mut T&<a> source) : value(source) {}
+};
+struct Raw<T> { T* pointer = nullptr; };
+struct Owned<T> { T value; Owned(T initial) : value(initial) {} void replace(T other) mut; };
 struct Unused<T, lifetime a> {};
-struct Node<lifetime a> { Node<a>* next; int&<a> value; };
+struct Node<lifetime a> {
+  Node<a>* next = nullptr; int&<a> value;
+  Node(int&<a> source) : value(source) {}
+};
 int main() { return 0; }
 )");
   expectValid(result, "explicit recursive types and verified nominal variance resolve");
@@ -131,7 +149,7 @@ int main() { return 0; }
   }
 
   for (const std::string &source : {
-           std::string("struct Recursive { Recursive* next; int& value; }; int main() { return 0; }"),
+           std::string("struct Recursive { Recursive* next = nullptr; int& value; Recursive(int& source) : value(source) {} }; int main() { return 0; }"),
            std::string("using Cycle = Cycle; int main() { return 0; }")}) {
     const auto invalid = analyze(source);
     expect(!invalid.semanticValid,
@@ -141,8 +159,10 @@ int main() { return 0; }
 
 void testSpecializationLifetimeShape() {
   const auto result = analyze(R"(
-namespace family { struct View<T, lifetime a> { T&<a> value; }; }
-struct family::View<int> { int&<a> value; };
+namespace family {
+  struct View<T, lifetime a> { T&<a> value; View(T&<a> source) : value(source) {} };
+}
+struct family::View<int> { int&<a> value; View(int&<a> source) : value(source) {} };
 void inspect<lifetime selected>(family::View<int, selected> value);
 int main() { return 0; }
 )");
@@ -161,12 +181,17 @@ int main() { return 0; }
     expect(false, "specialized lifetime-bearing parameter metadata is available");
   }
   for (const std::string &definition : {
-           std::string("struct family::View<int> { int&<a> value; int& extra; };"),
-           std::string("struct family::View<int, static> { int&<static> value; };")}) {
+           std::string("struct family::View<int> { int&<a> value; int& extra; View(int&<a> first, int& second) : value(first), extra(second) {} };"),
+           std::string("struct family::View<int, static> { int&<static> value; View(int&<static> source) : value(source) {} };")}) {
     const auto invalid = analyze(
-        "namespace family { struct View<T, lifetime a> { T&<a> value; }; } " +
+        "namespace family { struct View<T, lifetime a> { T&<a> value; View(T&<a> source) : value(source) {} }; } " +
         definition + " int main() { return 0; }");
-    expect(!invalid.semanticValid,
+    expect(!invalid.semanticValid &&
+               std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                           [](const auto &diagnostic) {
+                             return diagnostic.message.find("cannot add anonymous lifetime") != std::string::npos ||
+                                    diagnostic.message.find("cannot select a lifetime") != std::string::npos;
+                           }),
            "specializations cannot add hidden region arity or select on a lifetime");
   }
 }
@@ -358,6 +383,109 @@ int main() { int value = 7; exercise(value, value); return 0; }
            "explicit call arguments reject wrong kinds and unknown lifetime names");
   }
 }
+void testExecutableLifetimeIdentity() {
+  const auto parsed = analyze(R"(
+struct Phantom<lifetime left, lifetime right> {};
+void keep<T>(T value) {}
+void nested<T>(T value) { keep(value); }
+int main() { return 0; }
+)");
+  expectValid(parsed, "executable lifetime identity fixture resolves");
+  lang::SemanticVisitor visitor;
+  expect(visitor.check(parsed.program), "canonical instance provider accepts source declarations");
+  const auto *keepSyntax = lang::stmtAs<lang::FunctionDecl>(parsed.program.declarations()[1].get());
+  const auto *nestedSyntax = lang::stmtAs<lang::FunctionDecl>(parsed.program.declarations()[2].get());
+  const auto *phantomSyntax = lang::stmtAs<lang::ClassDecl>(parsed.program.declarations()[0].get());
+  if (!keepSyntax || !nestedSyntax || !phantomSyntax)
+    return;
+  const auto *keep = visitor.model().findFunction(*keepSyntax);
+  const auto *nested = visitor.model().findFunction(*nestedSyntax);
+  const auto *phantom = visitor.model().findClassType(*phantomSyntax);
+  if (!keep || !nested || !phantom)
+    return;
+  auto same = lang::SemanticType::classType(phantom->id);
+  same.lifetimeArguments = {lang::Lifetime::local(41), lang::Lifetime::local(41)};
+  auto different = same;
+  different.lifetimeArguments.back() = lang::Lifetime::local(42);
+  const auto first = visitor.canonicalizeExecutableInstance(
+      {.declaration = keep->id, .types = {same}});
+  const auto second = visitor.canonicalizeExecutableInstance(
+      {.declaration = keep->id, .types = {different}});
+  expect(first && second && first->types == second->types &&
+             first->lifetimeContract == second->lifetimeContract,
+         "caller region identities and incidental equality share one universal instance");
+  if (!first || !second)
+    return;
+  expect(first->types[0].lifetimeArguments.size() == 2 &&
+             first->types[0].lifetimeArguments[0] != first->types[0].lifetimeArguments[1] &&
+             first->lifetimeApplication.bindings.size() == 2 &&
+             first->lifetimeApplication.bindings[0].second == first->lifetimeApplication.bindings[1].second &&
+             second->lifetimeApplication.bindings[0].second != second->lifetimeApplication.bindings[1].second,
+         "separate universal occurrences retain per-call equal or independent choices");
+  const auto nestedAnalysis = visitor.analyzeFunctionInstance(nested->id, {}, {}, {same}, {});
+  expect(nestedAnalysis.valid(), "nested concrete body analysis accepts universal lifted arguments");
+  const auto replay = visitor.canonicalizeExecutableInstance(
+      {.declaration = keep->id, .types = {same}});
+  expect(replay && replay->types == first->types,
+         "nested instance analysis never rewinds or reuses another lifted identity");
+  auto callback = lang::SemanticType::functionSignature(
+      lang::SemanticType::referenceTo(lang::SemanticType::Int32, lang::AccessMode::ReadOnly,
+                                     lang::Lifetime::parameter(8001)),
+      {lang::SemanticType::referenceTo(lang::SemanticType::Int32, lang::AccessMode::ReadOnly,
+                                      lang::Lifetime::parameter(8001))});
+  callback.quantifiedLifetimes = {8001};
+  const auto higherRanked = visitor.canonicalizeExecutableInstance(
+      {.declaration = keep->id, .types = {callback}});
+  callback.quantifiedLifetimes = {9001};
+  callback.arguments[0].referenceLifetime = lang::Lifetime::parameter(9001);
+  callback.arguments[1].referenceLifetime = lang::Lifetime::parameter(9001);
+  const auto alpha = visitor.canonicalizeExecutableInstance(
+      {.declaration = keep->id, .types = {callback}});
+  expect(higherRanked && alpha && higherRanked->types == alpha->types &&
+             higherRanked->lifetimeApplication.bindings.empty() &&
+             higherRanked->types[0].arguments[0].referenceLifetime ==
+                 higherRanked->types[0].arguments[1].referenceLifetime,
+         "higher-ranked binder scopes and repeated uses survive alpha-canonicalization");
+}
+
+void testInferredCarrierRegions() {
+  constexpr std::string_view declarations = R"(
+struct View<lifetime owner> {
+  int&<owner> value;
+  View(int&<owner> source) : value(source) {}
+};
+void consume<T>(T value) {}
+void combine<T>(T first, T second) {}
+)";
+  const auto result = lang::Frontend({.stopAfter = lang::FrontendPhase::Hir}).analyze(
+      "lifetime-instance-reuse.gti", std::string(declarations) + R"(
+void exercise<lifetime left, lifetime right>(View<left> first, View<right> second) {
+  consume(first); consume(second); combine(first, second);
+}
+int main() { return 0; }
+)");
+  expectValid(result, "same-shape borrowed carriers infer common call regions");
+  expect(result.hir.valid(), "inferred carrier calls lower with universal instance signatures");
+  if (const auto *target = function(result, "consume")) {
+    std::size_t instances = 0;
+    for (const auto &instance : result.hir.functionInstances())
+      if (instance.declaration == target->id) {
+        ++instances;
+        expect(!instance.liftedLifetimes.empty() && instance.lifetimeContract.valid(),
+               "native body carries checked universal lifted binder descriptors");
+      }
+    expect(instances == 1, "different source lifetimes do not multiply native function instances");
+  }
+  const auto fixed = analyze(std::string(declarations) + R"(
+void rejected<lifetime left, lifetime right>(View<left> first, View<right> second) {
+  combine<View<left>>(first, second);
+}
+int main() { return 0; }
+)");
+  expect(!fixed.semanticValid && std::any_of(fixed.diagnostics.begin(), fixed.diagnostics.end(),
+             [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
+         "explicit generic type choices retain their fixed lifetime obligations");
+}
 } // namespace
 
 int main() {
@@ -371,5 +499,7 @@ int main() {
   testAnonymousNominalRegions();
   testNominalVariance();
   testSpecializationLifetimeShape();
+  testExecutableLifetimeIdentity();
+  testInferredCarrierRegions();
   return failures == 0 ? 0 : 1;
 }

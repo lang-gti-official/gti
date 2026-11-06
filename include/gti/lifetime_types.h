@@ -180,6 +180,91 @@ inline bool equivalentLifetimeTypes(
   return lifetime_detail::equivalent(left, right, std::move(bindings));
 }
 
+// Exact structural matching for a universal declaration view. This only
+// identifies a substitution; callers must separately prove all its bounds.
+inline std::optional<std::vector<LifetimeBinding>> matchUniversalTypeLifetimes(
+    const SemanticType &pattern, const SemanticType &actual,
+    std::span<const Lifetime> universals) {
+  for (std::size_t index = 0; index < universals.size(); ++index)
+    if (universals[index].kind != Lifetime::Kind::Parameter ||
+        !universals[index].specified() ||
+        std::find(universals.begin(), universals.begin() + index, universals[index]) !=
+            universals.begin() + index)
+      return std::nullopt;
+  std::vector<LifetimeBinding> result;
+  const auto match = [&](auto &&self, const SemanticType &source,
+                         const SemanticType &target,
+                         std::vector<LifetimeBinding> quantified,
+                         std::size_t depth) -> bool {
+    if (depth >= 256 || source.quantifiedLifetimes.size() != target.quantifiedLifetimes.size() ||
+        source.lifetimeArguments.size() != target.lifetimeArguments.size())
+      return false;
+    for (std::size_t index = 0; index < source.quantifiedLifetimes.size(); ++index) {
+      const auto from = Lifetime::parameter(source.quantifiedLifetimes[index]);
+      const auto to = Lifetime::parameter(target.quantifiedLifetimes[index]);
+      if (!from.specified() || !to.specified() ||
+          std::find(universals.begin(), universals.end(), from) != universals.end() ||
+          std::any_of(quantified.begin(), quantified.end(), [&](const auto binding) {
+            return binding.first == from || binding.second == to;
+          }) || std::any_of(result.begin(), result.end(), [&](const auto binding) {
+            return binding.second == to;
+          }))
+        return false;
+      quantified.emplace_back(from, to);
+    }
+    const auto region = [&](Lifetime from, Lifetime to) {
+      for (const auto binding : quantified) {
+        if (binding.first == from)
+          return binding.second == to;
+        if (binding.second == to)
+          return false;
+      }
+      if (std::find(universals.begin(), universals.end(), from) == universals.end())
+        return from == to;
+      if (!to.specified())
+        return false;
+      for (const auto binding : result)
+        if (binding.first == from)
+          return binding.second == to;
+      result.emplace_back(from, to);
+      return true;
+    };
+    if (!region(source.referenceLifetime, target.referenceLifetime))
+      return false;
+    for (std::size_t index = 0; index < source.lifetimeArguments.size(); ++index)
+      if (!region(source.lifetimeArguments[index], target.lifetimeArguments[index]))
+        return false;
+    auto left = source;
+    auto right = target;
+    const auto shell = [](SemanticType &type) {
+      type.arguments.clear();
+      type.lambdaEnclosingClassTypes.clear();
+      type.lambdaEnclosingFunctionTypes.clear();
+      type.referenceLifetime = {};
+      type.lifetimeArguments.clear();
+      type.quantifiedLifetimes.clear();
+    };
+    shell(left);
+    shell(right);
+    if (left != right)
+      return false;
+    const auto children = [&](const auto &a, const auto &b) {
+      if (a.size() != b.size())
+        return false;
+      for (std::size_t index = 0; index < a.size(); ++index)
+        if (!self(self, a[index], b[index], quantified, depth + 1))
+          return false;
+      return true;
+    };
+    return children(source.arguments, target.arguments) &&
+           children(source.lambdaEnclosingClassTypes, target.lambdaEnclosingClassTypes) &&
+           children(source.lambdaEnclosingFunctionTypes, target.lambdaEnclosingFunctionTypes);
+  };
+  if (!match(match, pattern, actual, {}, 0))
+    return std::nullopt;
+  return result;
+}
+
 // Representation-only operation. Semantic conversion, overload selection and
 // borrow verification must use the original types and their contracts. This
 // helper alone is not evidence that erasing a caller's obligations is sound.

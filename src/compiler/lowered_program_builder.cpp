@@ -1207,6 +1207,7 @@ private:
       if (!lowered || source.sourceUnit != lowered->sourceUnit ||
           source.variance != lowered->variance ||
           source.lifetimeContract != lowered->lifetimeContract ||
+          source.liftedLifetimes != lowered->liftedLifetimes ||
           source.underlyingType != lowered->underlyingType)
         return reject("integral enum differs between HIR and MIR");
       continue;
@@ -1215,6 +1216,7 @@ private:
     if (lowered == nullptr || source.sourceUnit != lowered->sourceUnit ||
         source.variance != lowered->variance ||
         source.lifetimeContract != lowered->lifetimeContract ||
+          source.liftedLifetimes != lowered->liftedLifetimes ||
         source.traits != lowered->traits ||
         source.requiresActiveCleanup != lowered->requiresActiveCleanup ||
         source.enumerators.size() != lowered->variants.size()) {
@@ -1243,6 +1245,7 @@ private:
     if (source.id != lowered.id || source.declaration != lowered.declaration ||
         source.type != lowered.type || source.kind != lowered.kind ||
         source.variance != lowered.variance ||
+        source.liftedLifetimes != lowered.liftedLifetimes ||
         source.lifetimeContract != lowered.lifetimeContract ||
         source.traits != lowered.traits ||
         source.generatedDefaultRequiresSchedule !=
@@ -1368,6 +1371,7 @@ private:
         source.parameterTypes != lowered.parameterTypes ||
         !sameCallableParameters(source.callableParameters,
                                 lowered.callableParameters) ||
+        source.liftedLifetimes != lowered.liftedLifetimes ||
         source.lifetimeContract != lowered.lifetimeContract ||
         source.parameterBindings != lowered.parameterBindings ||
         source.entryKind != lowered.entryKind ||
@@ -1432,6 +1436,7 @@ private:
         source.typeArguments != lowered.typeArguments ||
         source.valueArguments != lowered.valueArguments ||
         source.parameterTypes != lowered.parameterTypes ||
+        source.liftedLifetimes != lowered.liftedLifetimes ||
         source.lifetimeContract != lowered.lifetimeContract ||
         source.parameterBindings != lowered.parameterBindings ||
         source.body.placeDomain != lowered.body.placeDomain) {
@@ -1530,6 +1535,7 @@ private:
     const HirDestructorInstance &source = hir.destructorInstances()[index];
     const MirDestructorInstance &lowered = mir.destructorInstances()[index];
     if (source.id != lowered.id || source.owner != lowered.owner ||
+        source.liftedLifetimes != lowered.liftedLifetimes ||
         source.lifetimeContract != lowered.lifetimeContract ||
         source.body.placeDomain != lowered.body.placeDomain) {
       return reject("destructor instance " + std::to_string(index + 1) +
@@ -2061,6 +2067,10 @@ LoweredProgramBuild LoweredProgramBuilder::build(
       optimizedMir.sourceDebugProfile() != sourceMir.sourceDebugProfile())
     addIssue(build.issues, LoweredProgramIssueKind::FrontendMismatch,
              "MIR source-debug profile differs from its frontend request");
+  if (sourceMir.nominalVarianceRecipes() != hir.nominalVarianceRecipes() ||
+      optimizedMir.nominalVarianceRecipes() != sourceMir.nominalVarianceRecipes())
+    addIssue(build.issues, LoweredProgramIssueKind::FrontendMismatch,
+             "MIR nominal variance recipes differ from the accepted declaration graph");
   for (const auto address : enumerateMirBodyAddresses(sourceMir)) {
     const auto *sourceBody = debugHirBody(hir, address);
     const auto *mirBody = findMirBody(sourceMir, address);
@@ -2227,7 +2237,8 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   lowered.classInstances_.reserve(hir.classInstances().size());
   for (const HirClassInstance &instance : hir.classInstances()) {
     lowered.classInstances_.push_back(
-        {.variance = instance.variance,
+        {.liftedLifetimes = instance.liftedLifetimes,
+         .variance = instance.variance,
          .lifetimeContract = instance.lifetimeContract,
          .id = instance.id,
          .sourceUnit = instance.sourceUnit,
@@ -2242,7 +2253,9 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   lowered.functionInstances_.reserve(hir.functionInstances().size());
   for (const HirFunctionInstance &instance : hir.functionInstances()) {
     lowered.functionInstances_.push_back(
-        {.id = instance.id,
+        {.lifetimeContract = instance.lifetimeContract,
+         .liftedLifetimes = instance.liftedLifetimes,
+         .id = instance.id,
          .sourceUnit = instance.sourceUnit,
          .declaration = instance.declaration,
          .owner = instance.owner,
@@ -2258,7 +2271,9 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     const auto *sourceConstructor =
         sourceMir.findConstructorInstance(instance.id);
     lowered.constructorInstances_.push_back(
-        {.id = instance.id,
+        {.lifetimeContract = instance.lifetimeContract,
+         .liftedLifetimes = instance.liftedLifetimes,
+         .id = instance.id,
          .sourceUnit = instance.sourceUnit,
          .declaration = instance.declaration,
          .owner = instance.owner,
@@ -2275,7 +2290,8 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   lowered.destructorInstances_.reserve(hir.destructorInstances().size());
   for (const HirDestructorInstance &instance : hir.destructorInstances()) {
     lowered.destructorInstances_.push_back(
-        {.id = instance.id,
+        {.liftedLifetimes = instance.liftedLifetimes,
+         .id = instance.id,
          .sourceUnit = instance.sourceUnit,
          .owner = instance.owner,
          .lifetimeContract = instance.lifetimeContract,

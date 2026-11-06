@@ -55,7 +55,7 @@ int main() { int left = 3; int right = 8; return wrong(left, right); }
   check("subobject-preserves-owner-region", R"gti(
 struct Number { int value = 7; };
 int&<a> field<lifetime a>(Number&<a> number) { return number.value; }
-int main() { Number number; return field(number) - 7; }
+int main() { Number number{}; return field(number) - 7; }
 )gti", true);
   check("common-region-cannot-escape-as-first-input", R"gti(
 int&<a> choose<lifetime a>(int&<a> first, int&<a> second, bool pick_first) {
@@ -74,6 +74,17 @@ int main() {
   int& result = first(left, right);
   right = 9;
   return result;
+}
+)gti", false);
+  check("declared-suppliers-survive-alias", R"gti(
+int&<a> first<lifetime a>(int&<a> left, int&<a> right) { return left; }
+int main() {
+  int left = 3;
+  mut int right = 8;
+  int& result = first(left, right);
+  int& alias = result;
+  right = 9;
+  return alias;
 }
 )gti", false);
   check("declared-suppliers-end-at-last-use", R"gti(
@@ -100,6 +111,37 @@ int&<shorter> shorten<lifetime longer, lifetime shorter>(int&<longer> input)
   check("undeclared-outlives", R"gti(
 int&<shorter> shorten<lifetime longer, lifetime shorter>(int&<longer> input) {
   return input;
+}
+)gti", false);
+  check("named-outlives-contract", R"gti(
+concept Survives<lifetime longer, lifetime shorter> = outlives<longer, shorter>;
+int&<shorter> shorten<lifetime longer, lifetime shorter>(int&<longer> input)
+  requires Survives<longer, shorter> { return input; }
+)gti", true);
+  check("disjunctive-requirement-inference", R"gti(
+int&<a> identity<lifetime a, lifetime b>(int&<a> input)
+  requires outlives<a, b> || outlives<b, a> { return input; }
+int main() { int value = 7; return identity(value) - 7; }
+)gti", true);
+  check("disjunction-is-not-two-assumptions", R"gti(
+int&<b> bad<lifetime a, lifetime b>(int&<a> input)
+  requires outlives<a, b> || outlives<b, a> { return input; }
+)gti", false);
+  check("borrowed-record-construction", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+int main() { int number = 7; View view{number}; return view.value - 7; }
+)gti", true);
+  check("borrowed-record-escape", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+View<a> bad<lifetime a>(int&<a> outside) {
+  int local = 7;
+  return View<a>(local);
 }
 )gti", false);
   check("ordinary-input-is-not-static", R"gti(

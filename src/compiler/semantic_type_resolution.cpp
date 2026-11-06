@@ -27,10 +27,15 @@ auto SemanticVisitor::Impl::nativeFunctionCandidateIsEligible(
 }
 
 auto SemanticVisitor::Impl::functionItemCandidateIsEligible(
-    const CallableCandidate &candidate) -> bool {
+    const CallableCandidate &candidate) const -> bool {
   if (candidate.ownerClass != 0 || candidate.declaration == nullptr ||
-      candidate.id == 0 || !candidate.record().genericParameters.empty() ||
+      candidate.id == 0 ||
+      std::any_of(candidate.record().genericParameters.begin(),
+                  candidate.record().genericParameters.end(),
+                  [](const auto &parameter) { return !parameter.lifetime; }) ||
       candidate.record().parameterPack || !candidate.requirements.empty() ||
+      ((!candidate.record().genericParameters.empty() ||
+        !candidate.requirements.empty()) && !candidate.lifetimeContract.valid()) ||
       candidate.virtualMethod || candidate.pureVirtual ||
       candidate.overrideMethod || candidate.compilerPrivate ||
       candidate.record().intrinsic != IntrinsicKind::None ||
@@ -251,8 +256,11 @@ auto SemanticVisitor::Impl::analyzeFunctionItem(
     diagnostics.emplace_back(std::move(diagnostic));
     return SemanticType::Unknown;
   }
-  const SemanticType itemType = SemanticType::functionItemType(
+  SemanticType itemType = SemanticType::functionItemType(
       selected->id, selected->returnType, selected->parameterTypes);
+  for (const auto parameter : selected->lifetimeContract.parameters)
+    if (parameter.kind == Lifetime::Kind::Parameter)
+      itemType.quantifiedLifetimes.push_back(parameter.id);
   semanticModel.recordFunctionItemSelection(
       expression, FunctionItemSelectionInfo{
                       .function = selected->id,
@@ -2134,6 +2142,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     // fallback tier behind every exact candidate.
     std::vector<std::size_t> contextualIntegerLiteralArguments;
     std::vector<std::size_t> ephemeralBorrowArguments;
+    CallableCandidate lifetimeCandidate;
   };
   struct RejectedConstructorArgument {
     const ConstructorInfo *constructor = nullptr;
@@ -2151,6 +2160,20 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   std::vector<RejectedConstructorArgument> rejectedArguments;
   std::vector<RejectedConstructorInference> rejectedInferences;
   std::optional<ConstraintFailure> rejectedConstraint;
+  const auto lifetimeInputs = [&](const ConstructorInfo *constructor) {
+    auto inputs = arguments;
+    if (constructor && constructor->declaration)
+      for (std::size_t index = inputs.size();
+           index < constructor->declaration->parameters().size(); ++index) {
+        const auto &parameter = constructor->declaration->parameters()[index];
+        if (!parameter.defaultArgument)
+          break;
+        const auto *expression = &parameter.defaultArgument->expression;
+        inputs.push_back({.type = semanticModel.typeOf(**expression),
+                          .expression = expression});
+      }
+    return inputs;
+  };
   // std::meta::construct selects the generated designated constructor, which
   // ordinary positional construction never considers.
   std::vector<const ConstructorInfo *> candidates;
@@ -2216,12 +2239,25 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       }
       inferred = currentInferred && inferred;
     }
+    // Preserve the distinction between deduced types and defaulted types.
+    // Only deduction can choose shorter regions for an occurrence of T;
+    // a default such as View<static> is an explicit declaration contract.
+    std::vector<GenericParameterId> inferredTypeParameters;
+    for (const auto &parameter : constructor.genericParameters)
+      if (!parameter.value && !parameter.lifetime &&
+          (parameter.pack || constructorSubstitution.types.contains(parameter.id)))
+        inferredTypeParameters.push_back(parameter.id);
+    if (!applyGenericDefaults(constructor.genericParameters,
+                              constructorSubstitution, paren, false, false))
+      continue;
     std::vector<SemanticType> constructorTypeArguments;
     std::vector<CompileTimeValue> constructorValueArguments;
     const GenericParameterInfo *missingParameter = nullptr;
     for (const GenericParameterInfo &parameter :
          constructor.genericParameters) {
-      if (parameter.pack) {
+      if (parameter.lifetime) {
+        continue; // Region arguments are inferred by the shared call contract.
+      } else if (parameter.pack) {
         for (std::size_t index = fixedCount; index < arguments.size();
              ++index) {
           constructorTypeArguments.push_back(
@@ -2276,15 +2312,14 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       }
       continue;
     }
+    GenericSubstitution signatureSubstitution = constructorSubstitution;
+    signatureSubstitution.lifetimes.clear();
     std::vector<AppliedConceptRequirement> requirements =
         constructor.requirements;
-    for (AppliedConceptRequirement &requirement : requirements) {
-      for (SemanticType &argument : requirement.arguments) {
-        argument = substituteType(argument, constructorSubstitution);
-      }
-    }
+    for (AppliedConceptRequirement &requirement : requirements)
+      requirement = substituteRequirement(requirement, signatureSubstitution);
     if (const std::optional<ConstraintFailure> failure =
-            firstRequirementFailure(requirements)) {
+            firstRequirementFailureBeforeLifetimeApplication(requirements)) {
       if (!rejectedConstraint) {
         rejectedConstraint = *failure;
       }
@@ -2295,19 +2330,102 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                                                      : fixedCount);
     for (std::size_t index = 0; index < fixedCount; ++index) {
       parameterTypes.push_back(substituteType(constructor.parameterTypes[index],
-                                              constructorSubstitution));
+                                              signatureSubstitution));
     }
     if (constructor.parameterPack) {
       for (std::size_t index = fixedCount; index < arguments.size(); ++index) {
         const auto &pattern = constructor.parameterTypes.back();
-        parameterTypes.push_back(
+        auto parameter =
             pattern.kind == SemanticType::Reference &&
                     arguments[index].type.kind != SemanticType::TypePack
                 ? SemanticType::referenceTo(
                       packObjectType(arguments[index].type),
                       pattern.referenceAccess)
-                : arguments[index].type);
+                : arguments[index].type;
+        if (parameter.kind == SemanticType::Reference)
+          parameter.referenceLifetime = pattern.referenceLifetime;
+        parameterTypes.push_back(std::move(parameter));
       }
+    }
+    CallableCandidate lifetimeCandidate;
+    const auto canonical = canonicalizeExecutableInstance(
+        {.kind = InstanceAnalysisKind::Constructor, .declaration = constructor.id,
+         .classTypes = constructedType.arguments,
+         .classValues = constructedType.valueArguments,
+         .types = constructorTypeArguments, .values = constructorValueArguments});
+    if (!canonical)
+      continue;
+    auto universalOwner = openClassType(classId);
+    universalOwner.arguments = canonical->classTypes;
+    universalOwner.valueArguments = constructedType.valueArguments;
+    lifetimeCandidate.returnType = std::move(universalOwner);
+    std::vector<SemanticType> expandedParameters;
+    for (const auto &parameter : canonical->parameterTypes)
+      SemanticType::appendExpandedArgument(expandedParameters, parameter);
+    std::size_t parameterPosition = 0;
+    bool groupedParameters = true;
+    for (const auto &parameter : parameterTypes) {
+      if (parameter.kind == SemanticType::TypePack && parameter.concretePack) {
+        std::vector<SemanticType> prior;
+        SemanticType::appendExpandedArgument(prior, parameter);
+        if (parameterPosition + prior.size() > expandedParameters.size()) {
+          groupedParameters = false;
+          break;
+        }
+        lifetimeCandidate.parameterTypes.push_back(SemanticType::concreteTypePack(
+            parameter.genericParameterId,
+            std::vector<SemanticType>(expandedParameters.begin() + parameterPosition,
+                expandedParameters.begin() + parameterPosition + prior.size())));
+        parameterPosition += prior.size();
+      } else {
+        if (parameterPosition == expandedParameters.size()) {
+          groupedParameters = false;
+          break;
+        }
+        lifetimeCandidate.parameterTypes.push_back(expandedParameters[parameterPosition++]);
+      }
+    }
+    if (!groupedParameters || parameterPosition != expandedParameters.size())
+      continue;
+    std::vector<GenericParameterId> inferredRegions;
+    std::size_t typeIndex = 0;
+    for (const auto &parameter : constructor.genericParameters) {
+      if (parameter.value || parameter.lifetime)
+        continue;
+      const bool deduced = std::find(inferredTypeParameters.begin(),
+          inferredTypeParameters.end(), parameter.id) != inferredTypeParameters.end();
+      const auto count = parameter.pack ? canonical->types.size() - typeIndex : 1;
+      for (std::size_t element = 0;
+           element < count && typeIndex < canonical->types.size(); ++element, ++typeIndex)
+        if (deduced) {
+          const auto &regions = canonical->functionLifetimeParameters[typeIndex];
+          inferredRegions.insert(inferredRegions.end(), regions.begin(), regions.end());
+        }
+    }
+    // Owner and defaulted type arguments are fixed. Deduced constructor-local
+    // type arguments may infer a common region across their uses.
+    for (const auto binding : canonical->lifetimeApplication.bindings)
+      if (std::find(inferredRegions.begin(), inferredRegions.end(), binding.first.id) ==
+          inferredRegions.end())
+        lifetimeCandidate.lifetimeApplication.bindings.push_back(binding);
+    constructorTypeArguments = canonical->types;
+    lifetimeCandidate.ownerClass = classId;
+    lifetimeCandidate.dispatchOwner = constructedType;
+    lifetimeCandidate.dispatchOwner.arguments = canonical->classTypes;
+    lifetimeCandidate.lifetimeContract = canonical->lifetimeContract;
+    lifetimeCandidate.requirements = canonical->requirements;
+    parameterTypes = lifetimeCandidate.parameterTypes;
+    requirements = lifetimeCandidate.requirements;
+    const bool deferredLifetimes = std::any_of(
+        arguments.begin(), arguments.end(), [](const auto &argument) {
+          return argument.deferred || argument.type == SemanticType::Unknown;
+        });
+    if (!deferredLifetimes) {
+      const auto inputs = lifetimeInputs(&constructor);
+      if (!applyCallLifetimeContract(lifetimeCandidate, inputs, paren, nullptr, false))
+        continue;
+      parameterTypes = lifetimeCandidate.parameterTypes;
+      requirements = lifetimeCandidate.requirements;
     }
     if (checkedArgument) {
       if (arguments.size() != 1 || parameterTypes.empty())
@@ -2348,6 +2466,14 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                     contextualCallArgumentPotentiallyMatches(
                         parameterType, argument.type, *argument.expression,
                         argument.deferred);
+      if (!matches && argument.expression && !requireExactNullParameter)
+        if (const auto adjusted = callLifetimeArgumentType(
+                lifetimeCandidate, argument.type, parameterType))
+          matches = argument.forwardedPackElement
+                        ? forwardedPackArgumentMatches(parameterType, *adjusted)
+                        : contextualCallArgumentPotentiallyMatches(
+                              parameterType, *adjusted, *argument.expression,
+                              argument.deferred);
       if (!matches && !requireExactNullParameter && !argument.deferred &&
           !argument.forwardedPackElement && argument.expression &&
           constructor.kind == ConstructorKind::Ordinary &&
@@ -2399,7 +2525,8 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                         requestsStructuralDefaultConstruction(constructor),
                         ConstructorKind::Ordinary, std::move(requirements),
                         std::move(literalArguments),
-                        std::move(ephemeralBorrowArguments)});
+                        std::move(ephemeralBorrowArguments),
+                        std::move(lifetimeCandidate)});
     } else if (rejectedArgument &&
                (isCompilerTrustedRequester(paren) ||
                 !constructor.compilerPrivate) &&
@@ -2759,7 +2886,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     return;
   }
 
-  const ViableConstructor &selected = viable.front();
+  ViableConstructor &selected = viable.front();
   const bool selectedReferencePack =
       selected.constructor && selected.constructor->parameterPack &&
       selected.constructor->declaration &&
@@ -2833,6 +2960,16 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   if (hasUnknownArgument) {
     currentType = constructedType;
     return;
+  }
+
+  if (selected.constructor && !selected.lifetimeCandidate.lifetimeApplication.complete) {
+    const auto inputs = lifetimeInputs(selected.constructor);
+    if (!applyCallLifetimeContract(selected.lifetimeCandidate, inputs, paren)) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    selected.parameterTypes = selected.lifetimeCandidate.parameterTypes;
+    selected.requirements = selected.lifetimeCandidate.requirements;
   }
 
   if (selected.constructor != nullptr && selected.constructor->requiresUnsafe) {
@@ -3138,6 +3275,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       .constructedType = constructedType,
       .typeArguments = selected.typeArguments,
       .valueArguments = selected.valueArguments,
+      .lifetimeApplication = selected.lifetimeCandidate.lifetimeApplication,
       .requirements = selected.requirements,
       .parameterTypes = selected.parameterTypes,
       .ephemeralBorrowArguments = selected.ephemeralBorrowArguments,
@@ -3155,6 +3293,14 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       .borrowFields = std::move(storedFields),
       .generatedDefault = selected.generatedDefault,
       .kind = selected.kind};
+  if (selected.constructor)
+    for (const auto &parameter : selected.constructor->genericParameters)
+      if (parameter.lifetime)
+        for (const auto binding : resolved.lifetimeApplication.bindings)
+          if (binding.first == Lifetime::parameter(parameter.id)) {
+            resolved.lifetimeArguments.push_back(binding.second);
+            break;
+          }
   if (conditionalFields && selected.kind == ConstructorKind::Ordinary &&
       !containsOpenTypeParameter(constructedType)) {
     const auto summary = completeConstructorBorrow(resolved, tokenSpan(paren));
@@ -3212,6 +3358,8 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     currentType = constructedType;
     return;
   }
+  if (resolved.lifetimeApplication.complete)
+    commitLifetimeApplication(resolved.lifetimeApplication);
   if (emptyReturn != nullptr) {
     std::optional<ConstantValue> immediateValue;
     const bool immediate = resolved.declaration &&
@@ -5040,8 +5188,13 @@ auto SemanticVisitor::Impl::validateReferenceBinding(
     return;
   }
   const SemanticType &referent = reference.arguments[0];
-  if (initializerType != SemanticType::Unknown && initializerType != referent &&
-      !isPublicBaseConversion(initializerType, referent)) {
+  const auto adjusted = applyLifetimeValueConversion(
+      initializerType, referent, expressionToken(initializer),
+      reference.referenceAccess == AccessMode::Mutable ? 0 : 1, true, true);
+  if (!adjusted)
+    return;
+  if (initializerType != SemanticType::Unknown && *adjusted != referent &&
+      !isPublicBaseConversion(*adjusted, referent)) {
     report(expressionToken(initializer),
            "Reference requires an exact '" + typeSpelling(referent) +
                "' initializer, but received '" + typeSpelling(initializerType) +

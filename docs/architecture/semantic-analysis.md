@@ -1954,6 +1954,25 @@ packs, selected construction, capabilities, callables, and borrowed-return
 origins. HIR is not a second type checker; it asks semantics for the concrete
 facts it needs.
 
+Region-bearing generic type arguments pass through the provider's
+`canonicalizeExecutableInstance` query before executable discovery or body
+reanalysis. Each free region occurrence receives an instance-owned universal
+parameter; coincident caller regions do not make independent occurrences equal
+inside the body. Higher-ranked binders preserve their scope and repeated uses
+under alpha-renaming. The canonical type arguments, normalized signature,
+formation requirements and lifetime contract identify the reusable instance.
+Actual caller choices remain in `SemanticLifetimeApplication` bindings.
+Explicit and default type arguments fix those choices; deduced arguments may
+infer a common valid region only through the ordinary checked call application.
+
+Lifted parameter identities occupy a checked, non-rewinding request-owned
+range. Nested analysis workers share that registry, while a preamble adoption
+copies it for the new request. Every consuming model records the descriptors;
+HIR and MIR retain their reduced kind and identity metadata alongside the
+universal contract. Region-bearing instance-cache keys are not reused across
+editor snapshots until that cache can independently remap these identities.
+Native representation erasure remains downstream of lifetime verification.
+
 `HirLowerer` receives the immutable base `SemanticModel` and a narrow
 `SemanticInstanceProvider`; it cannot start a fresh semantic request or mutate
 the visitor facade. The provider adapts the existing request-local
@@ -4145,9 +4164,12 @@ parameter-bearing and quantified types. `static` requires no binder. Local and
 unresolved inference regions cannot cross this interface. Absent annotations on
 existing reference types remain distinct from an explicit region.
 
-A separate `gti.lifetime-contract.1:` record preserves complete signature
+A separate `gti.lifetime-contract.2:` record preserves complete signature
 parameters, outlives bounds, exact type-outlives bounds, receiver region and
-contract origin. Bound ordering and duplicates normalize; alpha-renaming does
+contract origin. Boolean requirements retain their postfix `All`/`Any` topology,
+exact region/type leaves and declaration-local semantic predicate identity.
+A predicate may remain unresolved in a generic declaration artifact; executable
+MIR requires the exact instance's semantic truth. Bound ordering and duplicates normalize; alpha-renaming does
 not change bytes, while changing a relation does. Generic type references use
 positions in the supplied type declaration context. Nominal types in bounds
 require the same explicit registry as ordinary recipes. Associated projections use explicitly registered `gti.concept-key.1:` and

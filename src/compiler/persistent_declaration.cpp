@@ -1006,7 +1006,7 @@ writePersistentLifetimeContract(const LifetimeSignatureContract &contract,
     if (contract.parameters[index] !=
         Lifetime::parameter(bindings.parameters[index]))
       reject("lifetime contract bindings disagree with declaration");
-  std::string out = "gti.lifetime-contract.1:";
+  std::string out = "gti.lifetime-contract.2:";
   const auto origin = contract.origin;
   if (origin != LifetimeContractOrigin::Declared &&
       origin != LifetimeContractOrigin::Elided &&
@@ -1039,10 +1039,38 @@ writePersistentLifetimeContract(const LifetimeSignatureContract &contract,
     lifetimes.write(encoded, bound.region);
     typeBounds.insert(std::move(encoded));
   }
-  lifetimes.finish(false);
   append(out, std::to_string(typeBounds.size()));
   for (const auto &bound : typeBounds)
     append(out, bound, byteLimit);
+  append(out, std::to_string(contract.requirements.nodes.size()));
+  for (const auto &node : contract.requirements.nodes) {
+    using Kind = LifetimeRequirementNode::Kind;
+    switch (node.kind) {
+    case Kind::Region:
+      append(out, "region");
+      lifetimes.write(out, node.bound.longer);
+      lifetimes.write(out, node.bound.shorter);
+      break;
+    case Kind::Type:
+      append(out, "type");
+      preflightType(node.type, preflight, 0);
+      writeType(out, node.type, registry, budget, lifetimes, 0);
+      lifetimes.write(out, node.bound.shorter);
+      break;
+    case Kind::SemanticPredicate:
+      append(out, "predicate");
+      append(out, std::to_string(node.predicate));
+      append(out, !node.semanticTruth ? "unresolved" : *node.semanticTruth ? "true" : "false");
+      break;
+    case Kind::All:
+    case Kind::Any:
+      append(out, node.kind == Kind::All ? "all" : "any");
+      append(out, std::to_string(node.left));
+      append(out, std::to_string(node.right));
+      break;
+    }
+  }
+  lifetimes.finish(false);
   return out;
 }
 LifetimeSignatureContract
@@ -1055,7 +1083,7 @@ LifetimeSignatureContract
 readPersistentLifetimeContract(std::string_view bytes,
                                const PersistentTypeRegistry &registry,
                                const PersistentLifetimeBindings &bindings) {
-  constexpr std::string_view prefix = "gti.lifetime-contract.1:";
+  constexpr std::string_view prefix = "gti.lifetime-contract.2:";
   if (bytes.size() > byteLimit || !bytes.starts_with(prefix))
     reject("unsupported persistent lifetime contract format");
   LifetimeCodec lifetimes(bindings);
@@ -1094,6 +1122,38 @@ readPersistentLifetimeContract(std::string_view bytes,
       reject("trailing type-outlives bound data");
     result.typeBounds.push_back({std::move(type), region});
   }
+  const auto requirementCount = count(reader, 4096);
+  for (std::size_t index = 0; index < requirementCount; ++index) {
+    const auto kind = reader.field();
+    LifetimeRequirementNode node;
+    using Kind = LifetimeRequirementNode::Kind;
+    if (kind == "region") {
+      node.kind = Kind::Region;
+      node.bound.longer = lifetimes.read(reader);
+      node.bound.shorter = lifetimes.read(reader);
+    } else if (kind == "type") {
+      node.kind = Kind::Type;
+      node.type = readType(reader, registry, budget, lifetimes, 0);
+      node.bound.shorter = lifetimes.read(reader);
+    } else if (kind == "predicate") {
+      node.kind = Kind::SemanticPredicate;
+      node.predicate = count(reader, LifetimeRequirementNode::invalidIndex - 1);
+      const auto truth = reader.field();
+      if (truth == "true" || truth == "false")
+        node.semanticTruth = truth == "true";
+      else if (truth != "unresolved")
+        reject("invalid persistent semantic predicate truth");
+    } else if (kind == "all" || kind == "any") {
+      node.kind = kind == "all" ? Kind::All : Kind::Any;
+      node.left = count(reader, 4095);
+      node.right = count(reader, 4095);
+    } else {
+      reject("invalid persistent lifetime requirement kind");
+    }
+    result.requirements.nodes.push_back(std::move(node));
+  }
+  if (requirementCount)
+    result.requirements.root = requirementCount - 1;
   lifetimes.finish(true);
   if (!reader.bytes.empty() ||
       writePersistentLifetimeContract(result, registry, bindings) != bytes)

@@ -49,6 +49,7 @@ struct HirLifetimeApplication {
   std::vector<LifetimeBound> obligations;
   std::vector<LifetimeTypeBound> typeObligations;
   std::vector<HirLifetimeOrigin> origins;
+  std::optional<CallableLifetimeSignature> callableSignature;
   bool complete = false;
   friend bool operator==(const HirLifetimeApplication &,
                          const HirLifetimeApplication &) = default;
@@ -652,6 +653,7 @@ struct HirEnumerator {
 };
 
 struct HirEnum {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   NominalVariance variance;
   LifetimeSignatureContract lifetimeContract;
   EnumId declaration = 0;
@@ -705,6 +707,7 @@ struct HirVirtualDispatch {
 };
 
 struct HirClassInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   NominalVariance variance;
   LifetimeSignatureContract lifetimeContract;
   HirClassInstanceId id = 0;
@@ -785,6 +788,7 @@ struct HirCallableParameter {
 };
 
 struct HirFunctionInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   HirFunctionInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   FunctionId declaration = 0;
@@ -885,6 +889,7 @@ struct HirConstructorInitializer {
 };
 
 struct HirConstructorInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   HirConstructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ConstructorId declaration = 0;
@@ -913,6 +918,7 @@ struct HirConstructorInstance {
 };
 
 struct HirDestructorInstance {
+  std::vector<GenericParameterIdentity> liftedLifetimes;
   HirDestructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   const DestructorDecl *source = nullptr;
@@ -994,6 +1000,10 @@ struct HirEmbeddingPlan {
 
 class HirProgram {
 public:
+  [[nodiscard]] const std::vector<NominalVarianceRecipe> &nominalVarianceRecipes() const {
+    return nominalVarianceRecipes_;
+  }
+
   [[nodiscard]] bool requiresNativeObjectLayout() const {
     return nativeObjectLayout_;
   }
@@ -1135,6 +1145,8 @@ public:
   }
 
 private:
+  std::vector<NominalVarianceRecipe> nominalVarianceRecipes_;
+
   std::vector<ForeignStorageInfo> foreignStorage_;
   std::vector<std::shared_ptr<const Stmt>> sourceStatementOwners_;
   friend class HirLowerer;

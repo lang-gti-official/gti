@@ -148,6 +148,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.cThreadCallUses.clear();
   requestSession.rawBorrowCallUses.clear();
   requestSession.rawResultQueries.reset();
+  requestSession.executableLifetimes =
+      std::make_shared<RequestSessionContext::ExecutableLifetimeRegistry>();
   requestSession.openReanalyses.reset();
   requestSession.assertionsOwnedUpChain = false;
   requestSession.classAssertionOutcomes.clear();
@@ -462,12 +464,18 @@ auto SemanticVisitor::Impl::attachTokenDocumentation(SymbolId symbol,
 }
 
 auto SemanticVisitor::Impl::analyzeFunctionInstance(
-    FunctionId functionId, const std::vector<SemanticType> &classTypeArguments,
+    FunctionId functionId, const std::vector<SemanticType> &requestedClassTypes,
     const std::vector<CompileTimeValue> &classValueArguments,
-    const std::vector<SemanticType> &functionTypeArguments,
+    const std::vector<SemanticType> &requestedFunctionTypes,
     const std::vector<CompileTimeValue> &functionValueArguments)
     -> SemanticInstanceAnalysis {
   const FunctionInfo *function = semanticModel.findFunction(functionId);
+  auto canonical = canonicalizeExecutableInstance(
+      {.kind = InstanceAnalysisKind::Function, .declaration = functionId,
+       .classTypes = requestedClassTypes, .classValues = classValueArguments,
+       .types = requestedFunctionTypes, .values = functionValueArguments});
+  const auto &classTypeArguments = canonical ? canonical->classTypes : requestedClassTypes;
+  const auto &functionTypeArguments = canonical ? canonical->types : requestedFunctionTypes;
   InstanceAnalysisScope scope(*this, {.kind = InstanceAnalysisKind::Function,
                                       .declaration = functionId,
                                       .classTypes = classTypeArguments,
@@ -477,6 +485,14 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
   if (function == nullptr || function->declaration == nullptr) {
     return scope.finish();
   }
+  if (!canonical) {
+    report(function->declaration->name(),
+           "A concrete executable instance requires a complete universal lifetime contract.",
+           "GTI-S2127");
+    return scope.finish();
+  }
+  for (const auto &parameter : canonical->liftedLifetimes)
+    semanticModel.recordGenericParameter(parameter);
 
   prepareInstanceAnalysis();
   instanceAnalysisActive = true;
@@ -509,6 +525,16 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
   for (SemanticType &parameter : concreteFunction.parameterTypes) {
     parameter = substituteType(parameter, substitution);
   }
+  for (auto &bound : concreteFunction.lifetimeContract.typeBounds)
+    bound.type = substituteType(bound.type, substitution);
+  concreteFunction.returnType = canonical->returnType;
+  concreteFunction.parameterTypes = canonical->parameterTypes;
+  concreteFunction.requirements = canonical->requirements;
+  concreteFunction.lifetimeContract = canonical->lifetimeContract;
+  // Declaration lifetime suppliers remain an interface promise even when a
+  // particular executable body uses only a subset. Rebuild after type/value
+  // substitution; body inference must not erase the caller's other loans.
+  refreshDeclaredLifetimeBorrowSummary(concreteFunction);
   // A generic class method's open field requirements bind exactly the fields
   // that are text in this instance (L-OWN-02).
   if (function->ownerClass != 0 &&
@@ -613,9 +639,9 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
 
 auto SemanticVisitor::Impl::analyzeConstructorInstance(
     ConstructorId constructorId,
-    const std::vector<SemanticType> &classTypeArguments,
+    const std::vector<SemanticType> &requestedClassTypes,
     const std::vector<CompileTimeValue> &classValueArguments,
-    const std::vector<SemanticType> &constructorTypeArguments,
+    const std::vector<SemanticType> &requestedConstructorTypes,
     const std::vector<CompileTimeValue> &constructorValueArguments)
     -> SemanticInstanceAnalysis {
   const ConstructorInfo *constructor = nullptr;
@@ -640,6 +666,12 @@ auto SemanticVisitor::Impl::analyzeConstructorInstance(
       break;
     }
   }
+  const auto canonical = canonicalizeExecutableInstance(
+      {.kind = InstanceAnalysisKind::Constructor, .declaration = constructorId,
+       .classTypes = requestedClassTypes, .classValues = classValueArguments,
+       .types = requestedConstructorTypes, .values = constructorValueArguments});
+  const auto &classTypeArguments = canonical ? canonical->classTypes : requestedClassTypes;
+  const auto &constructorTypeArguments = canonical ? canonical->types : requestedConstructorTypes;
   InstanceAnalysisScope scope(*this, {.kind = InstanceAnalysisKind::Constructor,
                                       .declaration = constructorId,
                                       .classTypes = classTypeArguments,
@@ -648,6 +680,32 @@ auto SemanticVisitor::Impl::analyzeConstructorInstance(
                                       .values = constructorValueArguments});
   if (constructor == nullptr || constructor->declaration == nullptr) {
     return scope.finish();
+  }
+  if (!canonical) {
+    report(constructor->declaration->name(),
+           "A constructor instance requires a complete universal lifetime contract.",
+           "GTI-S2127");
+    return scope.finish();
+  }
+  for (const auto &parameter : canonical->liftedLifetimes)
+    semanticModel.recordGenericParameter(parameter);
+  const auto *ownerSyntax = classInfo(constructor->owner).declaration;
+  if (const auto *lifecycle = semanticModel.findClassLifecycle(*ownerSyntax)) {
+    auto concrete = *lifecycle;
+    const auto update = [&](ConstructorInfo &info) {
+      if (info.id == constructorId) {
+        info.parameterTypes = canonical->parameterTypes;
+        info.requirements = canonical->requirements;
+        info.lifetimeContract = canonical->lifetimeContract;
+      }
+    };
+    for (auto &info : concrete.constructors)
+      update(info);
+    if (concrete.declaredCopyConstructor)
+      update(*concrete.declaredCopyConstructor);
+    if (concrete.declaredMoveConstructor)
+      update(*concrete.declaredMoveConstructor);
+    semanticModel.record(*ownerSyntax, std::move(concrete));
   }
 
   prepareInstanceAnalysis();
@@ -661,7 +719,9 @@ auto SemanticVisitor::Impl::analyzeConstructorInstance(
   std::size_t typeIndex = 0;
   std::size_t valueIndex = 0;
   for (const GenericParameterInfo &parameter : constructor->genericParameters) {
-    if (parameter.pack) {
+    if (parameter.lifetime) {
+      continue;
+    } else if (parameter.pack) {
       std::vector<SemanticType> elements(
           constructorTypeArguments.begin() +
               static_cast<std::ptrdiff_t>(typeIndex),
@@ -698,10 +758,14 @@ auto SemanticVisitor::Impl::analyzeConstructorInstance(
 }
 
 auto SemanticVisitor::Impl::analyzeDestructorInstance(
-    ClassId classId, const std::vector<SemanticType> &classTypeArguments,
+    ClassId classId, const std::vector<SemanticType> &requestedClassTypes,
     const std::vector<CompileTimeValue> &classValueArguments)
     -> SemanticInstanceAnalysis {
   const ClassTypeInfo *classType = semanticModel.findClassType(classId);
+  const auto canonical = canonicalizeExecutableInstance(
+      {.kind = InstanceAnalysisKind::Destructor, .declaration = classId,
+       .classTypes = requestedClassTypes, .classValues = classValueArguments});
+  const auto &classTypeArguments = canonical ? canonical->classTypes : requestedClassTypes;
   const ClassLifecycleInfo *lifecycle =
       classType == nullptr || classType->declaration == nullptr
           ? nullptr
@@ -714,6 +778,17 @@ auto SemanticVisitor::Impl::analyzeDestructorInstance(
       lifecycle->declaredDestructor->declaration == nullptr) {
     return scope.finish();
   }
+  if (!canonical) {
+    report(classType->declaration->name(),
+           "A destructor instance requires a complete universal lifetime contract.",
+           "GTI-S2127");
+    return scope.finish();
+  }
+  for (const auto &parameter : canonical->liftedLifetimes)
+    semanticModel.recordGenericParameter(parameter);
+  auto concreteLifecycle = *lifecycle;
+  concreteLifecycle.declaredDestructor->lifetimeContract = canonical->lifetimeContract;
+  semanticModel.record(*classType->declaration, std::move(concreteLifecycle));
 
   prepareInstanceAnalysis();
   if (!prepareClassInstanceContext(classId, classTypeArguments,
@@ -730,10 +805,14 @@ auto SemanticVisitor::Impl::analyzeDestructorInstance(
 }
 
 auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
-    ClassId classId, const std::vector<SemanticType> &classTypeArguments,
+    ClassId classId, const std::vector<SemanticType> &requestedClassTypes,
     const std::vector<CompileTimeValue> &classValueArguments)
     -> SemanticInstanceAnalysis {
   const ClassTypeInfo *classType = semanticModel.findClassType(classId);
+  const auto canonical = canonicalizeExecutableInstance(
+      {.kind = InstanceAnalysisKind::ClassFieldInitializers, .declaration = classId,
+       .classTypes = requestedClassTypes, .classValues = classValueArguments});
+  const auto &classTypeArguments = canonical ? canonical->classTypes : requestedClassTypes;
   InstanceAnalysisScope scope(
       *this, {.kind = InstanceAnalysisKind::ClassFieldInitializers,
               .declaration = classId,
@@ -742,6 +821,14 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
   if (classType == nullptr || classType->declaration == nullptr) {
     return scope.finish();
   }
+  if (!canonical) {
+    report(classType->declaration->name(),
+           "A stored-type instance requires a complete universal lifetime contract.",
+           "GTI-S2127");
+    return scope.finish();
+  }
+  for (const auto &parameter : canonical->liftedLifetimes)
+    semanticModel.recordGenericParameter(parameter);
 
   prepareInstanceAnalysis();
   if (!prepareClassInstanceContext(classId, classTypeArguments,
@@ -2754,7 +2841,9 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
   currentReceiverMutability = ReceiverMutability::Mutable;
   loanFlow = {};
   loanFlow.lifetimeBlock = stmt.body().get();
-  if (owner.destructor)
+  if (const auto *destructor = semanticModel.findDestructor(stmt))
+    loanFlow.lifetimeContract = destructor->lifetimeContract;
+  else if (owner.destructor)
     loanFlow.lifetimeContract = owner.destructor->lifetimeContract;
   valueControlFlow.clear();
   ++functionDepth;
@@ -8106,9 +8195,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     // A computed compiler type (`std::meta::field_type<T, I>`) may denote a
     // scalar once its arguments are concrete; the call is then the explicit
     // conversion that scalar's own name would spell.
-    const SemanticType constructed = selectExactClassSpecialization(
-        SemanticType::classType(calleeType.classId, genericArguments.types,
-                                genericArguments.values));
+    SemanticType requestedClass = SemanticType::classType(
+        calleeType.classId, genericArguments.types, genericArguments.values);
+    requestedClass.lifetimeArguments = genericArguments.lifetimes;
+    const SemanticType constructed = selectExactClassSpecialization(requestedClass);
     if (constructed.kind == SemanticType::Class && constructed.classId != 0 &&
         constructed.classId <= classes.size() &&
         containsOpenTypeParameter(constructed)) {

@@ -1,29 +1,12 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
+#include "gti/nominal_variance.h"
 
 #include <algorithm>
 #include <functional>
 #include <unordered_map>
 
 namespace lang {
-namespace {
-TypeVariance joinVariance(TypeVariance left, TypeVariance right) {
-  if (left == TypeVariance::Bivariant)
-    return right;
-  if (right == TypeVariance::Bivariant || left == right)
-    return left;
-  return TypeVariance::Invariant;
-}
-
-TypeVariance composeVariance(TypeVariance outer, TypeVariance inner) {
-  if (outer == TypeVariance::Bivariant || inner == TypeVariance::Bivariant)
-    return TypeVariance::Bivariant;
-  if (outer == TypeVariance::Invariant || inner == TypeVariance::Invariant)
-    return TypeVariance::Invariant;
-  return outer == inner ? TypeVariance::Covariant : TypeVariance::Contravariant;
-}
-} // namespace
-
 auto SemanticVisitor::Impl::normalizeNominalStoredType(
     const TypeRef &syntax, const Token &owner,
     std::vector<GenericParameterInfo> &parameters,
@@ -289,129 +272,78 @@ auto SemanticVisitor::Impl::nominalLifetimeContract(const SemanticType &type) co
   return result;
 }
 
-auto SemanticVisitor::Impl::inferNominalVariances() -> void {
-  const auto initialize = [&](auto &owner) {
-    owner.variance = {.types = std::vector<TypeVariance>(
-                          genericTypeParameterCount(owner.genericParameters), TypeVariance::Bivariant),
-                      .lifetimes = std::vector<TypeVariance>(
-                          genericLifetimeParameterCount(owner.genericParameters), TypeVariance::Bivariant),
-                      .complete = true};
-  };
-  for (auto &owner : classes)
-    initialize(owner);
-  for (auto &owner : enums)
-    initialize(owner);
+auto SemanticVisitor::Impl::nominalVarianceRecipes() const
+    -> std::vector<NominalVarianceRecipe> {
+  std::vector<NominalVarianceRecipe> result;
+  result.reserve(classes.size() + enums.size());
+  for (const auto &owner : classes) {
+    NominalVarianceRecipe recipe{
+        .kind = SemanticType::Class, .declaration = owner.id,
+        .familyPrimary = owner.definitionFamilyPrimary,
+        .exactSpecializationPrimary = owner.exactSpecializationPrimary,
+        .exactTypeArguments = owner.exactTypeArguments,
+        .exactValueArguments = owner.exactValueArguments,
+        .argumentPatterns = owner.genericArgumentPatterns,
+        .parameters = genericParameterIdentities(owner.genericParameters),
+        .compilerCapability = owner.compilerCapability,
+        .classKind = owner.kind, .cOpaqueHandle = owner.cOpaqueHandle,
+        .polymorphic = owner.polymorphic,
+        .forward = !owner.declaration || owner.declaration->isForwardDeclaration(),
+        .invalidLifetime = owner.lifetimeState == NominalLifetimeState::Invalid,
+        .complete = true};
+    for (std::size_t index = 0; index < owner.bases.size(); ++index)
+      recipe.stored.push_back({.kind = NominalStoredTypeKind::Base, .index = index,
+                               .interface = owner.bases[index].interface,
+                               .type = owner.bases[index].type});
+    for (std::size_t index = 0; index < owner.fields.size(); ++index) {
+      const auto *field = owner.fields[index].declaration;
+      if (!field)
+        continue;
+      if (const auto member = owner.members.find(field->name().lexeme);
+          member != owner.members.end())
+        recipe.stored.push_back({.kind = NominalStoredTypeKind::Field, .index = index,
+                                 .symbol = symbolForDeclaration(field->name()),
+                                 .type = member->second.symbol.type});
+    }
+    result.push_back(std::move(recipe));
+  }
+  for (const auto &owner : enums) {
+    NominalVarianceRecipe recipe{
+        .kind = SemanticType::Enum, .declaration = owner.id,
+        .parameters = genericParameterIdentities(owner.genericParameters),
+        .invalidLifetime = owner.lifetimeState == NominalLifetimeState::Invalid,
+        .complete = true};
+    for (const auto &[name, variant] : owner.enumerators) {
+      (void)name;
+      for (std::size_t index = 0; index < variant.payloadTypes.size(); ++index)
+        recipe.stored.push_back({.kind = NominalStoredTypeKind::Payload, .index = index,
+                                 .symbol = index < variant.payloadSymbols.size()
+                                     ? variant.payloadSymbols[index] : 0,
+                                 .variant = variant.variantIndex,
+                                 .type = variant.payloadTypes[index]});
+    }
+    std::sort(recipe.stored.begin(), recipe.stored.end(), [](const auto &left, const auto &right) {
+      return std::pair(left.variant, left.index) < std::pair(right.variant, right.index);
+    });
+    result.push_back(std::move(recipe));
+  }
+  return result;
+}
 
-  // Each slot only ascends the four-element variance lattice. This fixed point
-  // handles mutually recursive explicit nominal types without unfolding them.
-  bool changed = true;
-  while (changed) {
-    changed = false;
-    const auto infer = [&](auto &owner, const std::vector<SemanticType> &stored,
-                           bool opaque, bool ownedCapability) {
-      auto next = owner.variance;
-      std::unordered_map<GenericParameterId, TypeVariance *> slots;
-      std::size_t typeIndex = 0, lifetimeIndex = 0;
-      for (const auto &parameter : owner.genericParameters)
-        if (parameter.lifetime)
-          slots.emplace(parameter.id, &next.lifetimes[lifetimeIndex++]);
-        else if (!parameter.value)
-          slots.emplace(parameter.id, &next.types[typeIndex++]);
-      const auto observe = [&](GenericParameterId id, TypeVariance position) {
-        if (const auto slot = slots.find(id); slot != slots.end())
-          *slot->second = joinVariance(*slot->second, position);
-      };
-      if (opaque || ownedCapability)
-        for (const auto &[id, unused] : slots) {
-          (void)unused;
-          observe(id, opaque ? TypeVariance::Invariant : TypeVariance::Covariant);
-        }
-      const auto visit = [&](const auto &self, const SemanticType &type,
-                              TypeVariance position) -> void {
-        if (position == TypeVariance::Bivariant)
-          return;
-        if (type.kind == SemanticType::TypeParameter || type.kind == SemanticType::TypePack)
-          observe(type.genericParameterId, position);
-        if (type.kind == SemanticType::Reference &&
-            type.referenceLifetime.kind == Lifetime::Kind::Parameter)
-          observe(type.referenceLifetime.id, position);
-        const auto nominal = nominalVariance(type);
-        for (std::size_t index = 0; index < type.lifetimeArguments.size(); ++index) {
-          const auto region = type.lifetimeArguments[index];
-          if (region.kind == Lifetime::Kind::Parameter)
-            observe(region.id, composeVariance(position,
-                nominal.complete ? nominal.lifetimes[index]
-                : type.kind == SemanticType::StringView ? TypeVariance::Covariant
-                                                       : TypeVariance::Invariant));
-        }
-        for (std::size_t index = 0; index < type.arguments.size(); ++index) {
-          TypeVariance nested = TypeVariance::Covariant;
-          if (nominal.complete)
-            nested = nominal.types[index];
-          else if (type.kind == SemanticType::Class || type.kind == SemanticType::Enum ||
-                   type.kind == SemanticType::RawPointer ||
-                   (type.kind == SemanticType::Reference &&
-                    type.referenceAccess == AccessMode::Mutable))
-            nested = TypeVariance::Invariant;
-          else if (type.kind == SemanticType::FunctionSignature ||
-                   type.kind == SemanticType::NativeFunction)
-            nested = index == 0 ? TypeVariance::Covariant : TypeVariance::Contravariant;
-          self(self, type.arguments[index], composeVariance(position, nested));
-        }
-      };
-      for (const auto &type : stored)
-        visit(visit, type, TypeVariance::Covariant);
-      if (next != owner.variance) {
-        owner.variance = std::move(next);
-        changed = true;
-      }
-    };
-    for (auto &owner : classes) {
-      std::vector<SemanticType> fields;
-      for (const auto &base : owner.bases)
-        fields.push_back(base.type);
-      for (const auto &field : owner.fields)
-        if (const auto member = owner.members.find(field.declaration->name().lexeme);
-            member != owner.members.end())
-          fields.push_back(member->second.symbol.type);
-      const auto capability = owner.compilerCapability;
-      const bool ownedCapability = capability == CompilerCapabilityTypeKind::UniqueOwner ||
-          capability == CompilerCapabilityTypeKind::SharedOwner ||
-          capability == CompilerCapabilityTypeKind::OptionalStorage ||
-          capability == CompilerCapabilityTypeKind::FunctionPointer ||
-          capability == CompilerCapabilityTypeKind::TextView;
-      const bool opaque = owner.cOpaqueHandle || owner.polymorphic ||
-          owner.kind == ClassKind::Interface || !owner.declaration ||
-          owner.declaration->isForwardDeclaration() ||
-          owner.lifetimeState == NominalLifetimeState::Invalid ||
-          (capability != CompilerCapabilityTypeKind::None && !ownedCapability);
-      infer(owner, fields, opaque, ownedCapability);
-    }
-    for (auto &owner : enums) {
-      std::vector<SemanticType> fields;
-      for (const auto &[name, variant] : owner.enumerators) {
-        (void)name;
-        fields.insert(fields.end(), variant.payloadTypes.begin(), variant.payloadTypes.end());
-      }
-      infer(owner, fields, owner.lifetimeState == NominalLifetimeState::Invalid, false);
-    }
-    // An open primary must not promise covariance that one exact definition
-    // violates. Selection changes storage, not the family's region contract.
-    for (auto &owner : classes) {
-      if (!owner.exactSpecializationPrimary)
-        continue;
-      auto &primary = classInfo(owner.exactSpecializationPrimary);
-      if (owner.variance.lifetimes.size() != primary.variance.lifetimes.size())
-        continue;
-      for (std::size_t index = 0; index < owner.variance.lifetimes.size(); ++index) {
-        const auto combined = joinVariance(owner.variance.lifetimes[index],
-                                            primary.variance.lifetimes[index]);
-        changed = changed || combined != owner.variance.lifetimes[index] ||
-                              combined != primary.variance.lifetimes[index];
-        owner.variance.lifetimes[index] = combined;
-        primary.variance.lifetimes[index] = combined;
-      }
-    }
+auto SemanticVisitor::Impl::inferNominalVariances() -> void {
+  const auto recipes = nominalVarianceRecipes();
+  const auto inferred = inferNominalVarianceRecipes(recipes);
+  if (inferred) {
+    for (std::size_t index = 0; index < recipes.size(); ++index)
+      if (recipes[index].kind == SemanticType::Class)
+        classInfo(recipes[index].declaration).variance = (*inferred)[index];
+      else
+        enums[recipes[index].declaration - 1].variance = (*inferred)[index];
+  } else {
+    for (auto &owner : classes)
+      owner.variance = {};
+    for (auto &owner : enums)
+      owner.variance = {};
   }
   const auto contractFor = [&](auto &owner, std::vector<SemanticType> fields) {
     LifetimeSignatureContract seed;
