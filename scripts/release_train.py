@@ -51,6 +51,11 @@ BACKPORT_LABEL = "backport"
 CUT_LABELS = ("rollup=never", "release-cut")
 CUT_BRANCH_PREFIX = "release-cut/"
 GATE_CHECK = "CI gate"
+# How long the cut job waits for its PR's CI gate. The wait holds only the
+# read-only workflow token: a GitHub App installation token lives one hour and
+# cannot be extended, so the App token that queues the PR is minted after it.
+GATE_WAIT_SECONDS = 9000
+GATE_POLL_SECONDS = 60
 # The daily sanitizer workflow. Its verdict job names the commit it checked
 # out, because a scheduled or dispatched run's head_sha is main's tip when it
 # started, not the commit it sanitized.
@@ -516,23 +521,52 @@ def cut_body(cut: dict[str, str]) -> str:
             "commit. Do not push to this branch; close it to abandon the cut.\n")
 
 
+def gate_run(request: Request, sha: str) -> dict[str, Any] | None:
+    """The newest CI gate check run on a commit, read with GITHUB_TOKEN."""
+    query = urllib.parse.urlencode({"check_name": GATE_CHECK, "per_page": 100})
+    listing = request(f"{source.repository_path(REPOSITORY)}/commits/{sha}/check-runs?{query}") or {}
+    runs = [run for run in listing.get("check_runs", []) if run.get("name") == GATE_CHECK]
+    return max(runs, key=lambda run: run.get("id", 0)) if runs else None
+
+
+def await_gate(request: Request, number: str, sha: str, sleep=time.sleep, monotonic=time.monotonic,
+               wait_seconds: int = GATE_WAIT_SECONDS, poll_seconds: int = GATE_POLL_SECONDS) -> dict[str, str]:
+    """Wait for a release-cut PR's CI gate with the read-only workflow token.
+
+    Returns gate=success, or gate=waiting when the wait ends first: the next
+    train, or a dispatch with stage=cut, resumes the open PR."""
+    if not re.fullmatch(r"[0-9a-f]{40}", sha) or not re.fullmatch(r"[1-9][0-9]*", number):
+        raise TrainError("await-gate needs a PR number and the cut's full 40-hex commit")
+    deadline = monotonic() + wait_seconds
+    while True:
+        run = gate_run(request, sha)
+        if run and run.get("status") == "completed":
+            if run.get("conclusion") != "success":
+                raise TrainError(f"release cut PR #{number} failed its {GATE_CHECK} check")
+            print(f"Release cut PR #{number} passed its {GATE_CHECK} at {sha}")
+            return {"gate": "success"}
+        if monotonic() >= deadline:
+            print(f"::notice::Release cut PR #{number} is still waiting for {GATE_CHECK}; "
+                  "the next train, or a dispatch with stage=cut, queues it")
+            return {"gate": "waiting"}
+        sleep(poll_seconds)
+
+
 class Delivery:
     """Open, label and enqueue a release-cut PR with the App token.
 
     Writes use only the App installation token (GH_TOKEN): a PR opened with
-    GITHUB_TOKEN would trigger no PR checks. GITHUB_TOKEN only reads the
-    merge-queue CI history, which the App cannot."""
+    GITHUB_TOKEN would trigger no PR checks. GITHUB_TOKEN only reads the CI
+    gate and the merge-queue CI history, which the App cannot. Each App token
+    is minted for one short step and never held across the CI gate wait."""
 
     ENQUEUE = ("mutation($id: ID!, $head: GitObjectID!) { enqueuePullRequest(input: "
                "{pullRequestId: $id, expectedHeadOid: $head}) { mergeQueueEntry { position } } }")
     QUEUE = ("query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { "
              "mergeQueue(branch: \"main\") { entries(first: 100) { nodes { pullRequest { number } } } } } }")
 
-    def __init__(self, api, runs: Request, token: str, sleep=time.sleep, monotonic=time.monotonic,
-                 wait_seconds: int = 9000, poll_seconds: int = 60):
+    def __init__(self, api, runs: Request, token: str):
         self.api, self.runs, self.token = api, runs, token
-        self.sleep, self.monotonic = sleep, monotonic
-        self.wait_seconds, self.poll_seconds = wait_seconds, poll_seconds
 
     def push(self, worktree: Path, commit: str, branch: str) -> None:
         # An explicit canonical URL: the token is never sent to another host.
@@ -553,11 +587,16 @@ class Delivery:
                 if str((pr.get("head") or {}).get("ref", "")).startswith(CUT_BRANCH_PREFIX)
                 and ((pr.get("head") or {}).get("repo") or {}).get("full_name") == REPOSITORY]
 
-    def gate(self, sha: str) -> dict[str, Any] | None:
-        query = urllib.parse.urlencode({"check_name": GATE_CHECK, "per_page": 100})
-        runs = [run for run in (self.api.request("GET", f"/commits/{sha}/check-runs?{query}") or {})
-                .get("check_runs", []) if run.get("name") == GATE_CHECK]
-        return max(runs, key=lambda run: run.get("id", 0)) if runs else None
+    def pull(self, number: str, sha: str) -> dict[str, Any]:
+        """The open release-cut PR #number, still at the exact head the gate passed."""
+        pr = self.api.request("GET", f"/pulls/{int(number)}") or {}
+        head = pr.get("head") or {}
+        if (pr.get("state") != "open" or not str(head.get("ref", "")).startswith(CUT_BRANCH_PREFIX)
+                or (head.get("repo") or {}).get("full_name") != REPOSITORY):
+            raise TrainError(f"PR #{number} is not an open release cut PR")
+        if head.get("sha") != sha:
+            raise TrainError(f"release cut PR #{number} moved from {sha} to {head.get('sha')}")
+        return pr
 
     def queued(self) -> set[int]:
         owner, name = REPOSITORY.split("/")
@@ -574,7 +613,7 @@ class Delivery:
                 if str(run.get("head_branch", "")).startswith(prefix)]
 
     def enqueue(self, pr: dict[str, Any]) -> str:
-        """Wait for the PR's CI gate, then queue its exact head."""
+        """Queue the PR's exact head once its CI gate passed; never wait here."""
         number, head = pr["number"], pr["head"]["sha"]
         if number in self.queued():
             print(f"Release cut PR #{number} is already in the merge queue")
@@ -584,20 +623,15 @@ class Delivery:
                for run in history):
             raise TrainError(f"release cut PR #{number} failed in the merge queue; fix or close it "
                              "before the train cuts again")
-        deadline = self.monotonic() + self.wait_seconds
-        while True:
-            run = self.gate(head)
-            if run and run.get("status") == "completed":
-                if run.get("conclusion") != "success":
-                    raise TrainError(f"release cut PR #{number} failed its {GATE_CHECK} check")
-                self.api.graphql(self.ENQUEUE, {"id": pr["node_id"], "head": head})
-                print(f"Queued release cut PR #{number} at {head}")
-                return "enqueued"
-            if self.monotonic() >= deadline:
-                print(f"::notice::Release cut PR #{number} is still waiting for {GATE_CHECK}; "
-                      "the next train, or a dispatch with stage=cut, queues it")
-                return "waiting"
-            self.sleep(self.poll_seconds)
+        run = gate_run(self.runs, head)
+        if not run or run.get("status") != "completed":
+            print(f"::notice::Release cut PR #{number} is still waiting for {GATE_CHECK}")
+            return "waiting"
+        if run.get("conclusion") != "success":
+            raise TrainError(f"release cut PR #{number} failed its {GATE_CHECK} check")
+        self.api.graphql(self.ENQUEUE, {"id": pr["node_id"], "head": head})
+        print(f"Queued release cut PR #{number} at {head}")
+        return "enqueued"
 
 
 def run_cut(repository: str, event: str, ref: str, min_age: str, title: str, worktree: Path,
@@ -610,9 +644,11 @@ def run_cut(repository: str, event: str, ref: str, min_age: str, title: str, wor
         if len(pending) > 1:
             raise TrainError("more than one release cut PR is open; close all but one")
         if pending:
-            state = delivery.enqueue(pending[0])
-            return skip(f"release cut PR #{pending[0]['number']} is open ({state}); "
-                        "no new cut until it merges or is closed")
+            # The later steps wait for its gate and queue it with a fresh token.
+            open_pr = pending[0]
+            return skip(f"release cut PR #{open_pr['number']} is open; "
+                        "no new cut until it merges or is closed",
+                        pr=str(open_pr["number"]), head=open_pr["head"]["sha"])
     selected = select_cut(repository, ref, hours, now, evidence, request, sanitized,
                           weekly=event != "workflow_dispatch")
     if selected["cut"] != "true":
@@ -622,8 +658,7 @@ def run_cut(repository: str, event: str, ref: str, min_age: str, title: str, wor
         return cut
     delivery.push(worktree, cut["commit"], cut["branch"])
     pr = delivery.open(cut)
-    pr["head"] = {"sha": cut["commit"]}
-    return {**cut, "pr": str(pr["number"]), "queue": delivery.enqueue(pr)}
+    return {**cut, "pr": str(pr["number"]), "head": cut["commit"]}
 
 
 # --------------------------------------------------------------------------
@@ -1485,6 +1520,8 @@ def main(argv: list[str] | None = None) -> int:
     command("train-plan", "event", "ref", "stage", "output")
     command("cut", "repository", "event", "ref", "min-age-hours", "title", "worktree", "output") \
         .add_argument("--dry-run", action="store_true")
+    command("await-gate", "pr", "sha", "output")
+    command("queue", "repository", "pr", "sha", "output")
     command("select-beta", "repository", "ref", "output")
     command("confirm", "sha", "version")
     command("verify-assets", "directory", "version")
@@ -1521,6 +1558,16 @@ def main(argv: list[str] | None = None) -> int:
                              arguments.min_age_hours, arguments.title, Path(arguments.worktree),
                              now_utc(), nightly_evidence_reader(), delivery, reader(),
                              sanitizer_reader())
+        elif name == "await-gate":
+            values = await_gate(reader(), arguments.pr, arguments.sha)
+        elif name == "queue":
+            check_repository(arguments.repository)
+            import agent_workflow
+            token = os.environ.get("GH_TOKEN", "").strip()
+            if not token:
+                raise TrainError("GH_TOKEN (a freshly minted release App token) is required to queue the cut")
+            delivery = Delivery(agent_workflow.GitHub(token=token), reader(), token)
+            values = {"queue": delivery.enqueue(delivery.pull(arguments.pr, arguments.sha))}
         elif name == "select-beta":
             check_repository(arguments.repository)
             values = select_beta(arguments.repository, arguments.ref, evidence_reader(),

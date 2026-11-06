@@ -595,8 +595,22 @@ def train_contract(root):
                                                                         "GTI_ROLLUP_APP_PRIVATE_KEY"}
     assert not re.search(r"secrets\.[A-Za-z]", train["plan"] + train["promote"]), \
         "only the cut job holds the App secrets"
-    assert re.findall(r"GH_TOKEN: (.*)", train["cut"]) == ["${{ steps.token.outputs.token }}"]
-    assert "actions/create-github-app-token@" in train["cut"] and "repositories: gti" in train["cut"]
+    # An App installation token lives one hour: the cut PR's CI gate wait
+    # holds only GITHUB_TOKEN, and a second token is minted to queue it.
+    assert re.findall(r"GH_TOKEN: (.*)", train["cut"]) == ["${{ steps.token.outputs.token }}",
+                                                           "${{ steps.queue-token.outputs.token }}"]
+    assert train["cut"].count("actions/create-github-app-token@") == 2
+    assert train["cut"].count("repositories: gti") == 2
+    ordered(train["cut"], ["id: token", "release_train.py cut", "release_train.py await-gate",
+                           "id: queue-token", "release_train.py queue "],
+            "the cut opens, waits read-only, then mints the queueing token")
+    wait = train["cut"].split("Wait for the release cut PR's CI gate", 1)[1].split("- name:", 1)[0]
+    assert "GH_TOKEN" not in wait and "GTI_GITHUB_TOKEN: ${{ github.token }}" in wait
+    queue_token = train["cut"].split("id: queue-token", 1)[1].split("- name:", 1)[0]
+    assert "steps.gate.outputs.gate == 'success'" in queue_token
+    assert "permission-merge-queues: write" in queue_token and "permission-contents" not in queue_token
+    opener = train["cut"].split("id: token", 1)[1].split("- uses:", 1)[0]
+    assert "permission-merge-queues" not in opener, "the PR opener's token cannot queue"
     assert "permission-workflows" not in train["cut"]
     for job, body in train.items():
         writes = re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE)

@@ -541,9 +541,12 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    commits the result with its `Release-Cut:` trailer, pushes
    `release-cut/<version>` and opens the pull request with the gti-rollup App
    token (a `GITHUB_TOKEN` PR would get no PR checks). It labels the PR
-   `rollup=never` and `release-cut`, waits up to 150 minutes for its `CI gate`
-   and queues its exact head with `enqueuePullRequest`. An open cut PR is
-   resumed instead of cutting again; one the queue rejected stops the train
+   `rollup=never` and `release-cut`, then waits up to 150 minutes for its
+   `CI gate` holding only the read-only `GITHUB_TOKEN`. An App installation
+   token lives one hour and cannot be extended, and the cut PR's checks take
+   about that long, so a second App token is minted after the gate passes and
+   queues the exact head with `enqueuePullRequest`. An open cut PR is resumed
+   the same way instead of cutting again; one the queue rejected stops the train
    until it is closed (delete its branch with it). The PR body declares
    `release_version_policy` and `cut_release_policy` as its `Validation:` T1.
    The App has no Workflows permission and the cut touches only `VERSION`,
