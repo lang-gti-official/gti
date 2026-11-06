@@ -175,9 +175,9 @@ int main() { return 0; }
              "resolved reference access survives selection");
       if (entry) {
         auto external = entry->place;
-        for (const auto field : entry->designatedFields)
-          external.projections.push_back(
-              {.kind = lang::PlaceProjectionKind::Field, .field = field});
+        external.projections.insert(external.projections.end(),
+                                    entry->designatedFields.begin(),
+                                    entry->designatedFields.end());
         expect(loan.place == external &&
                    loan.referenceSelection->fields == entry->designatedFields &&
                    loan.referenceSelection->conditions == entry->conditions,
