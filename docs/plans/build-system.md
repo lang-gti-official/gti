@@ -1846,6 +1846,18 @@ remain usable without sources. The `compiled_dependency_project` example covers
 these paths. Package-qualified source edges, zero-source-read freshness, input-race
 publication proofs and general cache/report integration remain F4 prerequisites.
 
+Artifact-selection progress (F4): a project dependency build now retains the
+exact bytes returned by each successful producer or validated cache hit. A
+driver-owned bounded snapshot collection shares those immutable inputs through
+the graph, including external bundles after first selection. Replacing or
+deleting a selected artifact cannot change a later consumer's inputs. Selection
+does not confer trust: every consumer still validates compatibility, object code
+and dependency receipts. The `compiled_scalar_library` regression replaces a
+library with a different valid revision, deletes producer sources and artifacts,
+and executes both the old and newly selected snapshots at O0/O3. Malformed,
+incompatible, conflicting and oversized selections reject. Whole-source/toolchain
+snapshot consistency and zero-source-read freshness remain separate prerequisites.
+
 Next coherent outcomes: general ownership and lifecycle metadata, generic/staged
 constexpr recipes, complete multi-module ownership/re-export contracts, composable exactly-once
 globals/TLS, and artifact-aware diagnostic provenance/LSP snapshots. Production

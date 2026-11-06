@@ -41,6 +41,13 @@ reusableCompiledScalarLibraryTarget(const CompilationRequest &,
                                     std::span<const CompiledLibraryImport>,
                                     const std::filesystem::path &runtime,
                                     const std::filesystem::path &artifact);
+// Same validation as the boolean query, retaining the bytes it actually read.
+[[nodiscard]] CompiledLibrarySnapshot
+reusableCompiledScalarLibrarySnapshot(const CompilationRequest &,
+                                      const CompiledLibraryTarget &,
+                                      std::span<const CompiledLibraryImport>,
+                                      const std::filesystem::path &runtime,
+                                      const std::filesystem::path &artifact);
 struct CompiledScalarConsumerResult {
   CompilationResult compilation;
   std::vector<LibraryBundleMember> objects;

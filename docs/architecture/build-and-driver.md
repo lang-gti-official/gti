@@ -3099,6 +3099,23 @@ malformed artifacts use existing driver validation diagnostics.
 
 Compatibility binds compiler executable, runtime archive, LLVM/backend ABI,
 target/layout/CPU/features, optimization, execution profile and configuration.
+One project build retains an immutable snapshot of each selected `.gtilib`.
+Successful producer builds return their exact published bytes; cache hits return
+the bytes whose compatibility, source fingerprint and object were validated.
+The driver-owned `CompiledLibrarySnapshots` collection shares these selections
+through dependency chains and diamonds. External artifact inputs are read once
+on first selection. Later replacement or deletion of an artifact path cannot
+silently change an already selected dependency; a later build selects afresh.
+Selections are bounded to 64 paths and 256 MiB of aggregate bundle bytes, and
+conflicting selections for the same normalized absolute path reject.
+
+`CompiledLibraryImport::snapshot` supplies owned bytes rather than a filesystem
+read; it is not an admission receipt. The normal decoder, compiler/runtime and
+target compatibility, package identity, object validation and exact dependency
+receipts are checked for every consumer. Source-target freshness still reads the
+producer's source graph. This is an artifact-selection snapshot, not an atomic
+snapshot of every source file, toolchain file or independently built target.
+
 Logical package/target labels identify a library independently of interface edits.
 Checksums establish integrity, not producer authentication. Explicit artifacts
 need no producer sources; automatic source-target builds additionally compare a

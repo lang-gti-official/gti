@@ -1,5 +1,6 @@
 #include "../src/driver/compiled_scalar_support.h"
 #include "gti/compiled_scalar_unit.h"
+#include "gti/driver/build.h"
 #include "gti/driver/compiled_scalar_library.h"
 #include "gti/driver/process.h"
 #include "gti/driver/project.h"
@@ -183,6 +184,122 @@ void projectCheckTests(const std::filesystem::path &root,
       result.status == CheckStatus::ArtifactFailure &&
           result.driverDiagnostic && !std::filesystem::exists(root / "build"),
       "compatibility input failure must return a read-only artifact failure");
+}
+void snapshotTests(const std::filesystem::path &root,
+                   const std::filesystem::path &runtime) {
+  write(root / "stdlib/prelude.gti", "");
+  const auto source = root / "producer/library.gti";
+  const auto artifact = root / "numbers.gtilib";
+  const auto consumer = root / "consumer/main.gti";
+  const auto facade = root / "consumer/api.gti";
+  const CompiledLibraryTarget target{"example/numbers", "numbers", {"choose"}};
+  for (const auto level : {OptimizationLevel::O0, OptimizationLevel::O3}) {
+    write(source,
+          "export module numbers; export int choose(int x) { return x; }");
+    const auto producerRequest = request(root, source, level);
+    const auto buildRequest = ExecutableBuildRequest(
+        producerRequest,
+        {.standardLibrary = standardLibraryLayout(root / "stdlib"),
+         .runtimeLibrary = runtime},
+        root / "producer.o", artifact, "c++", {}, false, true, true, {}, {},
+        BuildCachePolicy{.root = root / "cache"}, {}, target);
+    auto built = buildExecutable(buildRequest);
+    expect(built.succeeded() && built.compiledLibrarySnapshot &&
+               *built.compiledLibrarySnapshot == read(artifact),
+           "producer must return its exact published artifact bytes");
+    auto reused = buildExecutable(buildRequest);
+    expect(reused.succeeded() && reused.cache.status == BuildCacheStatus::Hit &&
+               reused.compiledLibrarySnapshot &&
+               *reused.compiledLibrarySnapshot ==
+                   *built.compiledLibrarySnapshot,
+           "cache hit must retain the exact validated artifact bytes");
+    CompiledLibrarySnapshots first;
+    first.retain(artifact, reused.compiledLibrarySnapshot);
+    first.retain(artifact, built.compiledLibrarySnapshot);
+    // Replace the path with another valid bundle from the same logical
+    // library, then delete all producer sources and the selected artifact.
+    write(source,
+          "export module numbers; export int choose(int x) { return x + 1; }");
+    auto replacement = buildExecutable(buildRequest);
+    expect(replacement.succeeded() && replacement.compiledLibrarySnapshot &&
+               *replacement.compiledLibrarySnapshot !=
+                   *reused.compiledLibrarySnapshot,
+           "source edit must build a different library snapshot");
+    std::vector<CompiledLibraryImport> inputs{
+        {"example/numbers", "numbers", artifact, facade}};
+    auto oldSelection = first.select(inputs);
+    CompiledLibrarySnapshots nextBuild;
+    auto newSelection = nextBuild.select(inputs);
+    expect(oldSelection.front().snapshot == reused.compiledLibrarySnapshot &&
+               *newSelection.front().snapshot ==
+                   *replacement.compiledLibrarySnapshot,
+           "each build must retain its own artifact selection");
+    std::filesystem::remove_all(source.parent_path());
+    std::filesystem::remove(artifact);
+    expect(first.select(inputs).front().snapshot ==
+                   oldSelection.front().snapshot &&
+               nextBuild.select(inputs).front().snapshot ==
+                   newSelection.front().snapshot,
+           "selected dependencies must not be reopened or recopied");
+    for (int revision = 0; revision < 2; ++revision) {
+      write(consumer, "import \"api.gti\"; int main() { return choose(7) - " +
+                          std::to_string(7 + revision) + "; }");
+      linkAndRun(root, runtime,
+                 compileCompiledScalarConsumer(
+                     request(root, consumer, level),
+                     revision ? newSelection : oldSelection, runtime));
+    }
+    rejects(
+        [&] { first.retain(artifact, replacement.compiledLibrarySnapshot); },
+        "replacing a selection within the same build");
+    auto corrupted = oldSelection;
+    corrupted.front().snapshot = std::make_shared<const std::string>("broken");
+    rejects(
+        [&] {
+          (void)compileCompiledScalarConsumer(request(root, consumer, level),
+                                              corrupted, runtime);
+        },
+        "in-memory bytes bypassing integrity checks");
+    auto incompatible = decodeLibraryBundle(*oldSelection.front().snapshot);
+    incompatible.identity.runtime = std::string(64, '0');
+    corrupted.front().snapshot =
+        std::make_shared<const std::string>(encodeLibraryBundle(incompatible));
+    rejects(
+        [&] {
+          (void)compileCompiledScalarConsumer(request(root, consumer, level),
+                                              corrupted, runtime);
+        },
+        "checksummed in-memory bytes bypassing runtime compatibility");
+    auto wrongOwner = oldSelection;
+    wrongOwner.front().package = "another/package";
+    rejects(
+        [&] {
+          (void)compileCompiledScalarConsumer(request(root, consumer, level),
+                                              wrongOwner, runtime);
+        },
+        "snapshot bypassing selected package identity");
+  }
+  CompiledLibrarySnapshots limited;
+  const auto small = std::make_shared<const std::string>("x");
+  for (int i = 0; i < 64; ++i)
+    limited.retain(root / std::to_string(i), small);
+  limited.retain(root / "0", small);
+  rejects([&] { limited.retain(root / "64", small); },
+          "more than 64 selections");
+  CompiledLibrarySnapshots byteLimited;
+  const auto block = std::make_shared<const std::string>(4 * 1024 * 1024, 'x');
+  for (int i = 0; i < 63; ++i)
+    byteLimited.retain(root / std::to_string(i), block);
+  rejects(
+      [&] {
+        byteLimited.retain(root / "63", std::make_shared<const std::string>(
+                                            8 * 1024 * 1024, 'x'));
+      },
+      "aggregate snapshot bytes exceeding the bundle limit");
+  rejects([&] { byteLimited.retain(root / "null", {}); }, "null snapshot");
+  std::cout
+      << "published/cache-hit snapshot handoff, replacement/deletion, "
+         "source-absent O0/O3 execution and bounded untrusted inputs passed\n";
 }
 void negativeTests(const std::filesystem::path &root,
                    const std::filesystem::path &runtime,
@@ -451,6 +568,7 @@ int main(int argc, char **argv) {
     TemporaryDirectory tmp;
     const std::filesystem::path examples = argv[2];
     projectCheckTests(tmp.path / "check-project", argv[1]);
+    snapshotTests(tmp.path / "snapshots", argv[1]);
     write(tmp.path / "stdlib/prelude.gti", "");
     for (auto level : {OptimizationLevel::O0, OptimizationLevel::O1,
                        OptimizationLevel::O3}) {
