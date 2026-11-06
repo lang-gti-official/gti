@@ -241,6 +241,19 @@ if(GTI_BUNDLE_LLVM)
       message(FATAL_ERROR "GTI: could not download LLVM ${GTI_PINNED_LLVM_VERSION} from ${gti_llvm_release_url} after ${gti_llvm_download_attempts} attempts (${gti_llvm_download_message})")
     endif()
   endforeach()
+  # LLVM 23 builds precompiled headers by default with Clang, including Apple
+  # clang. CI's object cache (scripts/configure_ci_cache.sh) deliberately keeps
+  # ccache's sloppiness empty, and ccache refuses to cache any compile that
+  # consumes a PCH without pch_defines,time_macros sloppiness: the macOS
+  # prebuild fell from 98.5% to 16.9% cacheable calls when the pin moved to
+  # 23.1.4. Disable PCH for the bundled LLVM/Clang only, the way LLVM itself
+  # does for GCC and sccache. The setting is a directory-scope variable that
+  # LLVM's subdirectory inherits at configure time; it is restored before any
+  # GTI target exists, so GTI's own precompiled headers are unaffected.
+  if(DEFINED CMAKE_DISABLE_PRECOMPILE_HEADERS)
+    set(gti_saved_disable_precompile_headers "${CMAKE_DISABLE_PRECOMPILE_HEADERS}")
+  endif()
+  set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON)
   if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.28)
     FetchContent_Declare(
       llvm_project
@@ -268,6 +281,12 @@ if(GTI_BUNDLE_LLVM)
       add_subdirectory("${llvm_project_SOURCE_DIR}/llvm"
                        "${llvm_project_BINARY_DIR}" EXCLUDE_FROM_ALL)
     endif()
+  endif()
+  if(DEFINED gti_saved_disable_precompile_headers)
+    set(CMAKE_DISABLE_PRECOMPILE_HEADERS "${gti_saved_disable_precompile_headers}")
+    unset(gti_saved_disable_precompile_headers)
+  else()
+    unset(CMAKE_DISABLE_PRECOMPILE_HEADERS)
   endif()
   set(GTI_LLVM_VERSION "${GTI_PINNED_LLVM_VERSION}")
   set(GTI_LLVM_INCLUDE_DIRS "${llvm_project_SOURCE_DIR}/llvm/include"
