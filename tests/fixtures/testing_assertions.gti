@@ -72,25 +72,25 @@ int main(int argc, std::vector<std::string> argv) {
   auto values_view = values.as_span();
   auto others_view = others.as_span();
   if (argc == 1) {
-    std::testing::check_eq(sample::operand(7), sample::operand(7), sample::message());
-    std::testing::check_ne(sample::operand(7), sample::operand(9), sample::message());
+    std::testing::check_eq!(sample::operand(7), sample::operand(7), sample::message());
+    std::testing::check_ne!(sample::operand(7), sample::operand(9), sample::message());
     std::testing::check(sample::operand_calls == 4 && sample::message_calls == 0,
                         "Operands must run once; successful messages stay deferred");
-    std::testing::check_eq(true, true);
-    std::testing::check_eq('a', 'a');
-    std::testing::check_eq(int8_t(1), int8_t(1));
-    std::testing::check_eq(uint8_t(1), uint8_t(1));
-    std::testing::check_eq(int16_t(1), int16_t(1));
-    std::testing::check_eq(uint16_t(1), uint16_t(1));
-    std::testing::check_eq(int64_t(1), int64_t(1));
-    std::testing::check_eq(uint64_t(1), uint64_t(1));
-    std::testing::check_eq(uint32_t(1), uint32_t(1));
-    std::testing::check_eq(1.0, 1.0);
-    std::testing::check_eq(double(1.0), double(1.0));
-    std::testing::check_eq(actual, actual);
-    std::testing::check_ne(actual, expected);
-    std::testing::check_eq(owned, equal_owned);
-    std::testing::check_ne(owned, other_owned);
+    std::testing::check_eq!(true, true);
+    std::testing::check_eq!('a', 'a');
+    std::testing::check_eq!(int8_t(1), int8_t(1));
+    std::testing::check_eq!(uint8_t(1), uint8_t(1));
+    std::testing::check_eq!(int16_t(1), int16_t(1));
+    std::testing::check_eq!(uint16_t(1), uint16_t(1));
+    std::testing::check_eq!(int64_t(1), int64_t(1));
+    std::testing::check_eq!(uint64_t(1), uint64_t(1));
+    std::testing::check_eq!(uint32_t(1), uint32_t(1));
+    std::testing::check_eq!(1.0, 1.0);
+    std::testing::check_eq!(double(1.0), double(1.0));
+    std::testing::check_eq!(actual, actual);
+    std::testing::check_ne!(actual, expected);
+    std::testing::check_eq!(owned, equal_owned);
+    std::testing::check_ne!(owned, other_owned);
     std::testing::check(*owned.value == 7 && *equal_owned.value == 7,
                         "Checking must not consume owners");
     std::testing::check(sample::format_calls == 0, "Successful checks must not format");
@@ -107,8 +107,8 @@ int main(int argc, std::vector<std::string> argv) {
     std::println("assertions-passed");
     return 0;
   }
-  if (argv[std::size_t(1)] == "eq") { std::testing::check_eq(actual, expected); } // eq-site
-  if (argv[std::size_t(1)] == "ne") { std::testing::check_ne(actual, actual); } // ne-site
+  if (argv[std::size_t(1)] == "eq") { std::testing::check_eq!(actual, expected); } // eq-site
+  if (argv[std::size_t(1)] == "ne") { std::testing::check_ne!(actual, actual); } // ne-site
   if (argv[std::size_t(1)] == "string") { std::testing::check_string_eq("ready", "really"); } // string-site
   if (argv[std::size_t(1)] == "string-length") { std::testing::check_string_eq("ready", "ready!"); }
   if (argv[std::size_t(1)] == "string-escaped") { std::testing::check_string_eq("a\n\"\\", "a\t\"\\"); }
@@ -124,12 +124,12 @@ int main(int argc, std::vector<std::string> argv) {
   }
   if (argv[std::size_t(1)] == "owned") {
     sample::report_counts = true;
-    std::testing::check_eq(owned, other_owned);
+    std::testing::check_eq!(owned, other_owned);
   }
   if (argv[std::size_t(1)] == "broken") {
     sample::Broken first{7};
     sample::Broken second{9};
-    std::testing::check_eq(first, second);
+    std::testing::check_eq!(first, second);
   }
   return 1;
 }

@@ -1548,8 +1548,8 @@ void libraryMacroScopes(LlvmCodegenOptimization optimization) {
 import std.testing;
 int32_t twice(int32_t value) { return value * 2; }
 int main() {
-  std::testing::check_eq(twice(2), 4);
-  std::testing::check_ne(twice(3), 5);
+  std::testing::check_eq!(twice(2), 4);
+  std::testing::check_ne!(twice(3), 5);
   return 0;
 }
 )gti",

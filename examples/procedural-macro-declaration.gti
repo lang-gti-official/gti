@@ -10,4 +10,4 @@ import std.syntax;
 // Same-module invocation remains outside the imported-definition profile.
 // Ordinary typed macros and ordinary braced arguments retain their behavior.
 #macro int twice(int value) { return value + value; }
-int main() { return twice(3) == 6 ? 0 : 1; }
+int main() { return twice!(3) == 6 ? 0 : 1; }

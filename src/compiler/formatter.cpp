@@ -2369,7 +2369,7 @@ private:
         next->kind == Kind::Colon ||
         (next->kind == Kind::Operator &&
          (next->text == "&&" || next->text == "||" || next->text == "==" ||
-          next->text == "!=" || next->text == "?")) ||
+          next->text == "!=" || next->text == "?" || next->text == "!")) ||
         next->text == "and" || next->text == "or") {
       return true;
     }

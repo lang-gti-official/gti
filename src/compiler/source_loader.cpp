@@ -758,10 +758,35 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   // original tokens before any directives, module edges or cached replay can
   // publish effects. Malformed groups are also inspected through their error
   // boundary; the parser owns the delimiter diagnostic.
+  const auto macroNameBefore = [&](std::size_t end) {
+    if (lexed[end].kind == TokenKind::IDENTIFIER)
+      return true;
+    // Explicit type arguments precede the marker. A comparison such as
+    // `value > !(condition)` is ordinary negation, not macro input.
+    if (lexed[end].kind != TokenKind::GREATER &&
+        lexed[end].kind != TokenKind::SHIFT_RIGHT)
+      return false;
+    std::size_t depth = 0;
+    for (std::size_t cursor = end + 1; cursor != 0;) {
+      const auto kind = lexed[--cursor].kind;
+      if (kind == TokenKind::GREATER)
+        ++depth;
+      else if (kind == TokenKind::SHIFT_RIGHT)
+        depth += 2;
+      else if (kind == TokenKind::LESS) {
+        if (--depth == 0)
+          return cursor != 0 && lexed[cursor - 1].kind == TokenKind::IDENTIFIER;
+      } else if (kind == TokenKind::SEMICOLON ||
+                 kind == TokenKind::LEFT_BRACE ||
+                 kind == TokenKind::RIGHT_BRACE) {
+        return false;
+      }
+    }
+    return false;
+  };
   bool invalidCapture = false;
   for (std::size_t i = 2; i < lexed.size(); ++i) {
-    if (lexed[i - 2].kind != TokenKind::IDENTIFIER ||
-        lexed[i - 1].kind != TokenKind::BANG ||
+    if (!macroNameBefore(i - 2) || lexed[i - 1].kind != TokenKind::BANG ||
         lexed[i].kind != TokenKind::LEFT_PAREN)
       continue;
     const auto group = balancedSyntax(lexed, i);

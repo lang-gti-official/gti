@@ -1,0 +1,1 @@
+All typed macro invocations now require `!`, like procedural macros: `std::assert!(condition)`, `macro!(value)` and `macro<T>!(value)`. Declarations and evaluation rules are unchanged. Old calls receive a targeted insertion fix. Editor completion, highlighting, formatting, shipped examples and standard-library calls use the new spelling.

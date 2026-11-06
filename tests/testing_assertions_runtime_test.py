@@ -64,9 +64,9 @@ def main():
                                 if (f"// {marker}" in source if marker else '== "nan"' in source))
                     assert f"{fixture.name}:{line}:" in failed.stderr, (mode, line, failed.stderr)
         for name, statement in {
-            "mixed-types": "int a = 1; bool b = true; std::testing::check_eq(a, b);",
+            "mixed-types": "int a = 1; bool b = true; std::testing::check_eq!(a, b);",
             "non-floating": "std::testing::check_approx(1, 1, 0);",
-            "no-equality": "Item a{}; Item b{}; std::testing::check_eq(a, b);",
+            "no-equality": "Item a{}; Item b{}; std::testing::check_eq!(a, b);",
         }.items():
             source = temporary / f"{name}.gti"
             source.write_text('import std.testing;\nstruct Item {};\nint main() { ' + statement + ' return 0; }\n')

@@ -243,6 +243,9 @@ private:
         copy->setArgumentGeometry(*tok(node.leftParen()),
                                   toks(node.argumentCommas()));
       }
+      if (node.macroBang())
+        copy->setMacroBang(tok(*node.macroBang()));
+      copy->setMacroArgumentErrors(node.macroArgumentErrors());
       if (node.capturedArguments()) {
         auto input = std::make_shared<SyntaxCapture>(*node.capturedArguments());
         for (auto &token : input->tokens)

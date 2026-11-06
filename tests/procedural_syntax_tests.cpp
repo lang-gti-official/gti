@@ -305,6 +305,19 @@ void semantics() {
       std::cerr << d.code << ": " << d.message << '\n';
   check(ordinary.canGenerateCode(),
         "ordinary braced calls keep configuration directive behavior");
+  auto negation =
+      analyze("int main(){ bool result = !(\n#define NEGATED_FLAG\nfalse);\n"
+              "#ifndef NEGATED_FLAG\n#error \"flag lost\"\n#endif\nreturn "
+              "result ? 0 : 1; }");
+  check(negation.canGenerateCode(),
+        "ordinary negation is not a macro-input boundary");
+  for (const std::string name : {"typed!", "typed<int>!"}) {
+    auto input = analyze("#macro typed<T>(T value) {} int main(){ " + name +
+                         "(\n#define HIDDEN_FLAG\n1); return 0; }");
+    check(!input.sourceValid,
+          "typed and generic macro input reject loader effects");
+    diagnostic(input, "must be outside macro input");
+  }
   const std::string selectedSource =
       "import \"library.gti\"; int main() { return html!({ "
       "<h1>{unknown}</h1> }) - 42; }";
@@ -332,7 +345,7 @@ void semantics() {
       "exactly one braced");
   diagnostic(
       analyze("import \"library.gti\"; int main() { html({1}); return 0; }"),
-      "name!({...})");
+      "require '!'");
   diagnostic(analyze("import \"library.gti\"; int main() { int html = 1; "
                      "html!({x}); return 0; }"),
              "name before '!'");
@@ -352,7 +365,7 @@ void semantics() {
   const std::string directiveSource =
       "html!({\n#define STOLEN\nimport \"missing.gti\";\n});";
   auto directives = analyze(directiveSource);
-  diagnostic(directives, "must be outside procedural macro input");
+  diagnostic(directives, "must be outside macro input");
   const auto define = directiveSource.find("#define");
   if (const auto *directiveDiagnostic = locatedDiagnostic(
           directives, "GTI-I0015", lang::DiagnosticPhase::SourceLoading, define,
@@ -670,7 +683,7 @@ export #macro(proc) std::syntax::expr target_value(std::syntax::tokens input) {
   const std::string reusedSource = R"gti(
 import "library.gti";
 #macro int double_value(int value) { return value + value; }
-int main(){ return double_value(identity!({21})) - 42; }
+int main(){ return double_value!(identity!({21})) - 42; }
 )gti";
   for (bool reuse : {true, false}) {
     lang::FrontendWorkMetrics metrics;
