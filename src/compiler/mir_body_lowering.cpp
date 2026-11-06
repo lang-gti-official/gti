@@ -1067,6 +1067,7 @@ private:
     MirBlockId target = 0;
     std::size_t keepScopes = 0;
     std::vector<SemanticLoanId> exitLoans;
+    bool hasBreak = false;
   };
 
   struct ContinueContext {
@@ -13982,6 +13983,7 @@ private:
         valid = false;
         return;
       }
+      breakContexts.back().hasBreak = true;
       endSemanticLoansIfActive(breakContexts.back().exitLoans, id);
       emitScopeExit(breakContexts.back().keepScopes);
       terminate({.kind = MirTerminatorKind::Goto,
@@ -15692,6 +15694,7 @@ private:
     breakContexts.push_back({.target = exitBlock,
                              .keepScopes = switchScopes.size(),
                              .exitLoans = statement.endedLoans});
+    bool fallsThrough = !coversEveryValue;
     for (std::size_t armIndex = 0; armIndex < statement.switchArms.size();
          ++armIndex) {
       current = armBlocks[armIndex];
@@ -15826,6 +15829,7 @@ private:
       }
       lowerStatements(statement.switchArms[armIndex].statements);
       if (!terminated()) {
+        fallsThrough = true;
         if (temporaryDrops != switchTemporaryDrops) {
           valid = false;
         }
@@ -15835,12 +15839,20 @@ private:
       }
       scopes.pop_back();
     }
+    fallsThrough = fallsThrough || breakContexts.back().hasBreak;
     breakContexts.pop_back();
     current = exitBlock;
     scopes = std::move(exitScopes);
     temporaryDrops = switchTemporaryDrops;
     bindingLoans = std::move(exitBindingLoans);
     callTransferredLoanEndpoints = switchTransferEndpoints;
+    // Like an if whose branches all terminate, an exhaustive switch with no
+    // completing arm or break has no continuation. Do not lower subsequent
+    // statements into a disconnected CFG: fallible expressions there would
+    // split their roots and cleanup markers across unreachable blocks.
+    if (!fallsThrough)
+      terminate({.kind = MirTerminatorKind::Unreachable,
+                 .hirStatement = statement.id});
   }
 
   // A parameter loan describes the caller-owned dependency, not necessarily
