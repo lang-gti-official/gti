@@ -4483,9 +4483,9 @@ Scalar-initialization dataflow covers integral, boolean, character,
 floating-point, raw-pointer and null-pointer local storage. A checked local
 `Borrow`, load, move or call input requires definite initialization, even when
 later reads use a reference projection. Full-expression value temporaries keep
-their separate exact lifecycle producer protocol. Existing-place debug queries
-consume the same availability proof; recoverable source-value event publication
-retains its narrower integral type profile.
+their separate exact lifecycle producer protocol. Debug queries retain their
+existing integral-or-lifecycle coverage, and recoverable source-value event
+publication retains its narrower integral type profile.
 
 When lowering re-roots a projected place at a loan whose source is a
 reference carrier itself — a reference parameter's entry loan rather than a

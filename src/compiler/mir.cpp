@@ -2062,9 +2062,11 @@ struct MirPlaceObservationSink {
         }
       lifetimeForPlace.emplace(request.place, std::move(obligations));
       coverage.try_emplace(
-          request.place, place &&
-                             (lifetime || tracksScalarInitialization(*place)) &&
-                             place->key && place->key->valid());
+          request.place,
+          place &&
+              (lifetime || (tracksScalarInitialization(*place) &&
+                            isIntegralInitializationType(place->type))) &&
+              place->key && place->key->valid());
     }
     // A dropped scalar needs a unique canonical lifetime, not just the
     // initialization pass's storage bit.
