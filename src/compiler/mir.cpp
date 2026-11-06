@@ -2267,12 +2267,16 @@ verifyMirScalarInitializationFlow(const MirBody &body, std::size_t owner,
           const MirInstruction &instruction) -> MirVerificationResult {
     const auto requireAvailable =
         [&](const MirOperand &operand) -> std::optional<MirVerificationResult> {
+      // A local checked reference needs an initialized referent just as a
+      // staged call input does. Checking only invocations misses a removed
+      // Initialize followed by Borrow: later loads name the reference's
+      // projected place rather than this tracked scalar storage.
       const bool referenceInput =
           (operand.kind == MirOperandKind::BorrowRead ||
            operand.kind == MirOperandKind::BorrowWrite) &&
-          (instruction.kind == MirInstructionKind::Borrow ||
-           orderedInvocation(instruction) ||
-           instruction.kind == MirInstructionKind::CallInput);
+          (orderedInvocation(instruction) ||
+           instruction.kind == MirInstructionKind::CallInput ||
+           instruction.kind == MirInstructionKind::Borrow);
       if ((operand.kind != MirOperandKind::Copy &&
            operand.kind != MirOperandKind::Move && !referenceInput) ||
           operand.place == 0 || operand.place > storageForPlace.size()) {
