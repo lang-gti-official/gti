@@ -13,14 +13,19 @@ scaling = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(scaling)
 
 
+# Linear MIR-only growth (4x), for cases that model only the native profile.
+LINEAR_MIR = {"base": [1], "small": [2], "large": [5]}
+
+
 class ScalingMeasurement(unittest.TestCase):
-    def check_model(self, samples):
-        calls = {name: 0 for name in samples}
-        def measure(compiler, source, timeout):
+    def check_model(self, samples, mir_samples=LINEAR_MIR):
+        profiles = {False: samples, True: mir_samples}
+        calls = {(mir, name): 0 for mir in profiles for name in profiles[mir]}
+        def measure(compiler, source, timeout, flags=None, *, mir=False):
             name = source.stem
-            index = calls[name]
-            calls[name] += 1
-            values = samples[name]
+            index = calls[mir, name]
+            calls[mir, name] += 1
+            values = profiles[mir][name]
             return values[min(index, len(values) - 1)]
         with mock.patch.object(scaling, "compile_seconds", side_effect=measure), \
              mock.patch.object(scaling.sys, "argv", ["scaling", "compiler"]), \
@@ -48,6 +53,15 @@ class ScalingMeasurement(unittest.TestCase):
     def test_persistent_excess_growth_is_not_discarded(self):
         self.assertEqual(self.check_model({"base": [5.28], "small": [5.58],
                                           "large": [10.19]}), 1)
+
+    def test_mir_profile_sixfold_boundary(self):
+        native = {"base": [5], "small": [6], "large": [9]}
+        self.assertEqual(self.check_model(native, {"base": [1], "small": [2], "large": [7]}), 0)
+        self.assertEqual(self.check_model(native, {"base": [1], "small": [2], "large": [7.01]}), 1)
+
+    def test_mir_regression_fails_when_native_passes(self):
+        self.assertEqual(self.check_model({"base": [5], "small": [6], "large": [9]},
+                                          {"base": [1], "small": [2], "large": [17]}), 1)
 
 
 if __name__ == "__main__":

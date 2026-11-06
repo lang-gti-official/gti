@@ -652,7 +652,10 @@ findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
   }
 
   MirTemporaryMaterialization result;
-  for (const MirValue &candidate : body.values) {
+  const auto indexed = mir_detail::indexedSourceValues(body, sourceValue);
+  const auto count = indexed ? indexed->size() : body.values.size();
+  for (std::size_t i = 0; i < count; ++i) {
+    const MirValue &candidate = indexed ? *(*indexed)[i] : body.values[i];
     if (candidate.sourceValue != sourceValue ||
         (place.root == MirPlaceRootKind::Value &&
          candidate.id != place.value)) {
@@ -662,37 +665,46 @@ findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
     if (block == nullptr) {
       continue;
     }
-    const auto definition = std::find_if(
-        block->instructions.begin(), block->instructions.end(),
-        [&](const MirInstruction &instruction) {
-          return instruction.id == candidate.definition &&
-                 instruction.result == candidate.id &&
-                 instruction.hirValue == sourceValue &&
-                 (instruction.kind == MirInstructionKind::Call ||
-                  instruction.kind == MirInstructionKind::Construct ||
-                  (instruction.kind == MirInstructionKind::Compute &&
-                   (isPassiveScalarValueType(instruction.info.type) ||
-                    instruction.info.type.kind == SemanticType::Enum ||
-                    (instruction.info.type.kind == SemanticType::StringView &&
-                     instruction.operation == MirOperation::Literal))) ||
-                  (instruction.kind == MirInstructionKind::Compute &&
-                   ((instruction.operation == MirOperation::Closure &&
-                     instruction.info.type.kind == SemanticType::Lambda) ||
-                    (instruction.operation == MirOperation::FunctionItem &&
-                     instruction.info.type.kind ==
-                         SemanticType::FunctionItem))) ||
-                  (place.root == MirPlaceRootKind::Temporary &&
-                   (instruction.kind == MirInstructionKind::Move ||
-                    instruction.kind == MirInstructionKind::Load) &&
-                   instruction.operands.size() == 1 &&
-                   instruction.operands.front().place == place.id &&
-                   instruction.operands.front().kind ==
-                       (instruction.kind == MirInstructionKind::Move
-                            ? MirOperandKind::Move
-                            : MirOperandKind::Copy) &&
-                   !instruction.ownership && instruction.lifecycle.empty()));
-        });
-    if (definition == block->instructions.end()) {
+    const auto matches = [&](const MirInstruction &instruction) {
+      return instruction.id == candidate.definition &&
+             instruction.result == candidate.id &&
+             instruction.hirValue == sourceValue &&
+             (instruction.kind == MirInstructionKind::Call ||
+              instruction.kind == MirInstructionKind::Construct ||
+              (instruction.kind == MirInstructionKind::Compute &&
+               (isPassiveScalarValueType(instruction.info.type) ||
+                instruction.info.type.kind == SemanticType::Enum ||
+                (instruction.info.type.kind == SemanticType::StringView &&
+                 instruction.operation == MirOperation::Literal))) ||
+              (instruction.kind == MirInstructionKind::Compute &&
+               ((instruction.operation == MirOperation::Closure &&
+                 instruction.info.type.kind == SemanticType::Lambda) ||
+                (instruction.operation == MirOperation::FunctionItem &&
+                 instruction.info.type.kind == SemanticType::FunctionItem))) ||
+              (place.root == MirPlaceRootKind::Temporary &&
+               (instruction.kind == MirInstructionKind::Move ||
+                instruction.kind == MirInstructionKind::Load) &&
+               instruction.operands.size() == 1 &&
+               instruction.operands.front().place == place.id &&
+               instruction.operands.front().kind ==
+                   (instruction.kind == MirInstructionKind::Move
+                        ? MirOperandKind::Move
+                        : MirOperandKind::Copy) &&
+               !instruction.ownership && instruction.lifecycle.empty()));
+    };
+    const auto lookup =
+        mir_detail::indexedInstruction(body, *block, candidate.definition);
+    const MirInstruction *definition = nullptr;
+    if (lookup) {
+      if (*lookup && matches(**lookup))
+        definition = *lookup;
+    } else {
+      const auto found = std::find_if(block->instructions.begin(),
+                                      block->instructions.end(), matches);
+      if (found != block->instructions.end())
+        definition = &*found;
+    }
+    if (!definition) {
       continue;
     }
     if (result) {
@@ -3001,6 +3013,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   const MirPersistentStorageEffectQuery *query = nullptr,
                   std::span<const SymbolId> persistent = {},
                   MirPlaceObservationSink *observations = nullptr) {
+  const mir_detail::MirBodyReadScope readScope(body);
   std::unordered_map<MirInstructionId,
                      std::vector<const MirPersistentStorageAccess *>>
       ambient;
@@ -3408,25 +3421,78 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
     if (handoffs[loan.id - 1])
       retiringHandoffs.emplace(handoffs[loan.id - 1]->retirement, loan.id);
   }
-  std::vector<std::optional<MirLoanState>> blockEntries(body.blocks.size());
-  MirLoanState entryState(body.loans.size(), MirLoanFlowState::Inactive);
+  // Sparse CFG snapshots omit inactive loans, not their proof obligations.
+  // Use the original dense representation when IDs would cost more than the
+  // state vector: a function with many simultaneously live loans must not pay
+  // a memory multiplier for this optimization.
+  using SparseLoans = std::vector<std::pair<MirLoanId, MirLoanFlowState>>;
+  using LoanSnapshot = std::variant<SparseLoans, MirLoanState>;
+  const auto snapshot = [&](SparseLoans loans) -> LoanSnapshot {
+    if (loans.capacity() >
+        body.loans.size() / sizeof(SparseLoans::value_type)) {
+      MirLoanState dense(body.loans.size(), MirLoanFlowState::Inactive);
+      for (const auto &[id, state] : loans)
+        dense[id - 1] = state;
+      return dense;
+    }
+    return loans;
+  };
+  std::vector<std::optional<LoanSnapshot>> blockEntries(body.blocks.size());
+  SparseLoans entryState;
   for (const MirLoan &loan : body.loans) {
     if (loan.entry) {
-      entryState[loan.id - 1] = MirLoanFlowState::Active;
+      entryState.emplace_back(loan.id, MirLoanFlowState::Active);
     }
   }
-  blockEntries[body.entry - 1] = std::move(entryState);
+  blockEntries[body.entry - 1] = snapshot(std::move(entryState));
   std::queue<MirBlockId> pending;
   pending.push(body.entry);
+  MirLoanState active(body.loans.size(), MirLoanFlowState::Inactive);
+  std::set<MirLoanId> liveLoans;
 
   while (!pending.empty()) {
     const MirBlockId blockId = pending.front();
     pending.pop();
     const MirBlock &block = body.blocks[blockId - 1];
-    MirLoanState active = *blockEntries[blockId - 1];
+    for (const auto id : liveLoans)
+      active[id - 1] = MirLoanFlowState::Inactive;
+    liveLoans.clear();
+    const auto &incoming = *blockEntries[blockId - 1];
+    if (const auto *dense = std::get_if<MirLoanState>(&incoming)) {
+      active = *dense;
+      for (std::size_t i = 0; i < active.size(); ++i)
+        if (active[i] != MirLoanFlowState::Inactive)
+          liveLoans.insert(i + 1);
+    } else {
+      for (const auto &[id, state] : std::get<SparseLoans>(incoming)) {
+        active[id - 1] = state;
+        liveLoans.insert(id);
+      }
+    }
+    // Enumerate only non-inactive loans at access checks, in original ID order.
+    // Mutations still go through the existing state vector; refresh exactly
+    // the touched IDs before reading this derived membership index.
+    std::set<MirLoanId> changedLoans;
+    const auto liveLoanIds = [&]() -> const std::set<MirLoanId> & {
+      for (const auto id : changedLoans) {
+        if (active[id - 1] == MirLoanFlowState::Inactive)
+          liveLoans.erase(id);
+        else
+          liveLoans.insert(id);
+      }
+      changedLoans.clear();
+      return liveLoans;
+    };
+    const auto hasLoanState = [&](auto predicate) {
+      const auto &ids = liveLoanIds();
+      return std::any_of(ids.begin(), ids.end(), [&](MirLoanId id) {
+        return predicate(active[id - 1]);
+      });
+    };
     bool loanStateChanged = false;
     const auto changingLoan = [&](MirLoanId loan) -> MirLoanFlowState & {
       loanStateChanged = true;
+      changedLoans.insert(loan);
       return active[loan - 1];
     };
     // A consuming arm is a closed local transition, not permission inherited
@@ -3727,9 +3793,9 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       // only its exact declared field paths; the shell's access and the
       // referent's independent access both bound a write through such a path.
       std::unordered_set<MirLoanId> abstractAccesses;
-      for (const MirLoan &loan : body.loans) {
-        if (active[loan.id - 1] == MirLoanFlowState::Inactive ||
-            !abstractStoredEntry(body, loan))
+      for (const auto id : liveLoanIds()) {
+        const auto &loan = body.loans[id - 1];
+        if (!abstractStoredEntry(body, loan))
           continue;
         const MirPlace *source = body.findPlace(loan.source);
         const MirCanonicalPlace origin =
@@ -3855,7 +3921,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         }
       }
 
-      for (const MirLoan &loan : body.loans) {
+      for (const auto id : liveLoanIds()) {
+        const auto &loan = body.loans[id - 1];
         const MirLoanFlowState loanState = active[loan.id - 1];
         if (loanState == MirLoanFlowState::Inactive ||
             isParkedLoan(loanState) || loan.id == exemptLoan ||
@@ -4253,9 +4320,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                      origin.capture == 0)
               ready.push_back(origin.symbol);
           };
-          for (const auto &loan : body.loans) {
-            if (active[loan.id - 1] == MirLoanFlowState::Inactive)
-              continue;
+          for (const auto id : liveLoanIds()) {
+            const auto &loan = body.loans[id - 1];
             retainOrigin(loan.source);
             for (const auto &dependency : loan.additionalDependencies)
               retainOrigin(dependency.source);
@@ -4315,7 +4381,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                          "only the exact readonly range endpoint may execute "
                          "while its cursor is parked",
                          block.id, instruction.id);
-      } else if (std::any_of(active.begin(), active.end(), isParkedLoan)) {
+      } else if (hasLoanState(isParkedLoan)) {
         return failure(body, owner,
                        "parked loan has no exact range endpoint inventory",
                        block.id, instruction.id);
@@ -4423,10 +4489,9 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         }
         activatedForCommit.reset();
       }
-      const bool hasReservation =
-          std::any_of(active.begin(), active.end(), [](MirLoanFlowState state) {
-            return state == MirLoanFlowState::Reserved;
-          });
+      const bool hasReservation = hasLoanState([](MirLoanFlowState state) {
+        return state == MirLoanFlowState::Reserved;
+      });
       if (hasReservation && (instruction.rawMemoryAccess ||
                              instruction.synchronization.kind !=
                                  SynchronizationOperationKind::None)) {
@@ -4672,7 +4737,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                              " has an ambiguous reserved place",
                          block.id, instruction.id);
         }
-        for (const MirLoan &other : body.loans) {
+        for (const auto id : liveLoanIds()) {
+          const auto &other = body.loans[id - 1];
           if (other.id == loan || other.id == parent ||
               active[other.id - 1] == MirLoanFlowState::Inactive ||
               isLoanAncestor(body, other.id, loan) ||
@@ -4844,7 +4910,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                              " cannot exclusively reborrow a read-only parent",
                          block.id, instruction.id);
         }
-        for (const MirLoan &other : body.loans) {
+        for (const auto id : liveLoanIds()) {
+          const auto &other = body.loans[id - 1];
           if (other.id == parent ||
               active[other.id - 1] == MirLoanFlowState::Inactive ||
               isLoanAncestor(body, other.id, parent) ||
@@ -5888,7 +5955,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                    loanPermitsPlace(body, *dependency, childPlace,
                                     AccessMode::ReadOnly, bindingLoans, active);
           };
-          for (const MirLoan &other : body.loans) {
+          for (const auto id : liveLoanIds()) {
+            const auto &other = body.loans[id - 1];
             if (other.id == parent ||
                 active[other.id - 1] == MirLoanFlowState::Inactive ||
                 isLoanAncestor(body, other.id, parent) ||
@@ -5997,7 +6065,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                      block.id);
     }
 
-    if (std::any_of(active.begin(), active.end(), isParkedLoan)) {
+    if (hasLoanState(isParkedLoan)) {
       const auto found =
           std::find_if(body.rangeIterations.begin(), body.rangeIterations.end(),
                        [&](const auto &range) {
@@ -6116,39 +6184,88 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       }
     }
 
+    SparseLoans outgoingLoans;
+    for (const auto id : liveLoanIds())
+      outgoingLoans.emplace_back(id, active[id - 1]);
+    const auto outgoing = snapshot(std::move(outgoingLoans));
+    const auto validJoin = [&](MirLoanId loan, MirLoanFlowState before,
+                               MirLoanFlowState incoming) {
+      return before == incoming ||
+             (conditionalDependencies.contains(loan) && !isParkedLoan(before) &&
+              !isParkedLoan(incoming) &&
+              !loanFlowContains(before, MirLoanFlowState::Reserved) &&
+              !loanFlowContains(incoming, MirLoanFlowState::Reserved));
+    };
     for (const MirBlockId successor : successors(block.terminator)) {
-      std::optional<MirLoanState> &entry = blockEntries[successor - 1];
+      auto &entry = blockEntries[successor - 1];
       if (!entry) {
-        entry = active;
+        entry = outgoing;
         pending.push(successor);
         continue;
       }
-      if (*entry == active) {
+      if (*entry == outgoing)
+        continue;
+      if (std::holds_alternative<MirLoanState>(*entry) ||
+          std::holds_alternative<MirLoanState>(outgoing)) {
+        MirLoanState joined(body.loans.size(), MirLoanFlowState::Inactive);
+        if (const auto *dense = std::get_if<MirLoanState>(&*entry))
+          joined = *dense;
+        else
+          for (const auto &[id, state] : std::get<SparseLoans>(*entry))
+            joined[id - 1] = state;
+        bool changed = false;
+        for (std::size_t i = 0; i < active.size(); ++i) {
+          const auto before = joined[i];
+          const auto incoming = active[i];
+          if (before == incoming)
+            continue;
+          if (!validJoin(i + 1, before, incoming))
+            return failure(
+                body, owner,
+                "loan " + std::to_string(i + 1) +
+                    " has inconsistent active/suspended state at CFG join",
+                successor);
+          joined[i] = static_cast<MirLoanFlowState>(
+              static_cast<unsigned>(before) | static_cast<unsigned>(incoming));
+          changed = changed || joined[i] != before;
+        }
+        if (changed) {
+          entry = std::move(joined);
+          pending.push(successor);
+        }
         continue;
       }
-      bool changed = false;
-      for (std::size_t index = 0; index < active.size(); ++index) {
-        if ((*entry)[index] == active[index])
-          continue;
-        const MirLoanId loan = index + 1;
-        if (!conditionalDependencies.contains(loan) ||
-            isParkedLoan((*entry)[index]) || isParkedLoan(active[index]) ||
-            loanFlowContains((*entry)[index], MirLoanFlowState::Reserved) ||
-            loanFlowContains(active[index], MirLoanFlowState::Reserved)) {
+      const auto &previousLoans = std::get<SparseLoans>(*entry);
+      const auto &nextLoans = std::get<SparseLoans>(outgoing);
+      SparseLoans joined;
+      auto left = previousLoans.begin();
+      auto right = nextLoans.begin();
+      while (left != previousLoans.end() || right != nextLoans.end()) {
+        const MirLoanId loan = left == previousLoans.end() ? right->first
+                               : right == nextLoans.end()
+                                   ? left->first
+                                   : std::min(left->first, right->first);
+        const auto before = left != previousLoans.end() && left->first == loan
+                                ? (left++)->second
+                                : MirLoanFlowState::Inactive;
+        const auto incoming = right != nextLoans.end() && right->first == loan
+                                  ? (right++)->second
+                                  : MirLoanFlowState::Inactive;
+        if (!validJoin(loan, before, incoming)) {
           return failure(
               body, owner,
               "loan " + std::to_string(loan) +
                   " has inconsistent active/suspended state at CFG join",
               successor);
         }
-        const auto joined = static_cast<MirLoanFlowState>(
-            static_cast<unsigned>((*entry)[index]) |
-            static_cast<unsigned>(active[index]));
-        changed = changed || joined != (*entry)[index];
-        (*entry)[index] = joined;
+        joined.emplace_back(loan, static_cast<MirLoanFlowState>(
+                                      static_cast<unsigned>(before) |
+                                      static_cast<unsigned>(incoming)));
       }
-      if (changed)
+      if (joined != previousLoans) {
+        entry = snapshot(std::move(joined));
         pending.push(successor);
+      }
     }
   }
   return {};
@@ -10757,6 +10874,7 @@ static MirVerificationResult verifyMirSourceDebugStructure(const MirBody &body,
 static MirVerificationResult
 verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                   MirPlaceObservationSink *observations) {
+  const mir_detail::MirBodyReadScope readScope(body);
   if (auto sourceDebug = verifyMirSourceDebugStructure(body, owner);
       !sourceDebug.valid())
     return sourceDebug;
@@ -10805,6 +10923,22 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                      "program-constant substitution inventory is invalid");
     }
   }
+
+  // Call-input validation needs every matching obligation, including
+  // duplicates. Group once; selecting one arbitrary owner would weaken the
+  // independent uniqueness checks below.
+  std::unordered_map<HirValueId, std::vector<const MirDropObligation *>>
+      valueDropObligations;
+  for (const auto &drop : body.dropObligations)
+    if (drop.kind == MirDropObligationKind::Value)
+      valueDropObligations[drop.value].push_back(&drop);
+  const auto dropsForValue =
+      [&](HirValueId value) -> std::span<const MirDropObligation *const> {
+    const auto found = valueDropObligations.find(value);
+    return found == valueDropObligations.end()
+               ? std::span<const MirDropObligation *const>{}
+               : std::span<const MirDropObligation *const>{found->second};
+  };
 
   const auto validPlace = [&](MirPlaceId id) {
     return body.findPlace(id) != nullptr;
@@ -11690,11 +11824,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           return false;
       }
       std::vector<MirDropObligationId> obligations;
-      for (const MirDropObligation &obligation : body.dropObligations) {
-        if (obligation.kind == MirDropObligationKind::Value &&
-            obligation.value == source->sourceValue &&
-            obligation.dropType.type == input.info.type) {
-          obligations.push_back(obligation.id);
+      for (const auto *obligation : dropsForValue(source->sourceValue)) {
+        if (obligation->dropType.type == input.info.type) {
+          obligations.push_back(obligation->id);
         }
       }
       if (input.preparedParameterDrop) {
@@ -11973,13 +12105,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         return false;
       }
 
-      std::vector<const MirDropObligation *> obligations;
-      for (const MirDropObligation &obligation : body.dropObligations) {
-        if (obligation.kind == MirDropObligationKind::Value &&
-            obligation.value == input.hirValue) {
-          obligations.push_back(&obligation);
-        }
-      }
+      const auto obligations = dropsForValue(input.hirValue);
       if (obligations.size() != 1 ||
           obligations.front()->place != operand.place ||
           obligations.front()->dropType.type != input.info.type ||
@@ -12125,13 +12251,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         return false;
       }
 
-      std::vector<const MirDropObligation *> obligations;
-      for (const MirDropObligation &obligation : body.dropObligations) {
-        if (obligation.kind == MirDropObligationKind::Value &&
-            obligation.value == input.hirValue) {
-          obligations.push_back(&obligation);
-        }
-      }
+      const auto obligations = dropsForValue(input.hirValue);
       if (obligations.size() != 1 ||
           obligations.front()->place != operand.place ||
           obligations.front()->dropType.type != referent ||

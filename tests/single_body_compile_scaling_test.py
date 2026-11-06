@@ -15,7 +15,9 @@ the frozen C++ backend cannot emit the formatting calls' scalar temporary
 reference arguments. Four times
 the statements must cost well under eight times the work: linear growth costs
 about four times, while the former quadratic and cubic searches cost sixteen
-times or far more.
+times or far more. A separate 90/360-block MIR-only profile caps growth at
+six times, exposing compiler-phase scaling without native LLVM/linker costs.
+Both profiles use paired baseline subtraction and the median of three samples.
 """
 
 from __future__ import annotations
@@ -71,13 +73,14 @@ def program(repetitions: int) -> str:
     return PRELUDE + "\nint main() {\n" + BLOCK * repetitions + "  return 0;\n}\n"
 
 
-def compile_seconds(compiler: str, source: Path, timeout: float) -> float:
-    """Return the child CPU seconds of one clean native LLVM build."""
-    output = source.with_suffix(".exe")
+def compile_seconds(compiler: str, source: Path, timeout: float,
+                    flags: list[str] = BUILD_FLAGS, *, mir: bool = False) -> float:
+    """Return child CPU seconds for one clean native build or MIR emission."""
+    output = source.with_suffix(".mir" if mir else ".exe")
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
     try:
         result = subprocess.run(
-            [compiler, str(source), *BUILD_FLAGS, "-o", str(output)],
+            [compiler, str(source), *flags, "-o", str(output)],
             capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise SystemExit(
@@ -88,49 +91,64 @@ def compile_seconds(compiler: str, source: Path, timeout: float) -> float:
         raise SystemExit(
             f"{source.name}: compiler exited {result.returncode}\n{result.stderr}")
     if not output.is_file() or output.stat().st_size == 0:
-        raise SystemExit(f"{source.name}: no executable was built")
+        raise SystemExit(f"{source.name}: no output was produced")
     return ((after.ru_utime - before.ru_utime) +
             (after.ru_stime - before.ru_stime))
 
 
-def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: single_body_compile_scaling_test.py <gti>", file=sys.stderr)
-        return 2
-    compiler = sys.argv[1]
+def profile(compiler: str, *, mir: bool) -> bool:
+    """Measure one profile; report and return False when growth exceeds its limit."""
+    # The native check includes LLVM and linking. The larger MIR-only case
+    # prevents fixed native-toolchain costs from hiding verifier regressions.
+    small_size, limit = (90, 6.0) if mir else (SMALL, GROWTH_LIMIT)
+    large_size = 4 * small_size
+    flags = ["-O1", "--emit-mir"] if mir else BUILD_FLAGS
+    label = "MIR" if mir else "native LLVM"
     with tempfile.TemporaryDirectory(prefix="gti-single-body-") as temporary:
         directory = Path(temporary)
         sources = {}
-        for name, repetitions in (("base", 1), ("small", SMALL),
-                                  ("large", LARGE)):
+        for name, repetitions in (("base", 1), ("small", small_size),
+                                  ("large", large_size)):
             sources[name] = directory / f"{name}.gti"
             sources[name].write_text(program(repetitions))
 
-        # Warm each workload before measuring. Then keep baseline and body
-        # measurements together instead of subtracting independent minima from
-        # different phases of runner startup/cache/CPU conditions.
-        for source in sources.values():
-            compile_seconds(compiler, source, timeout=300)
+        def measure(name: str, timeout: float = 300) -> float:
+            return compile_seconds(compiler, sources[name], timeout,
+                                   flags, mir=mir)
+
+        for name in sources:
+            measure(name)
         growth_samples = []
         for sample in range(RUNS):
-            base = compile_seconds(compiler, sources["base"], timeout=300)
-            small = compile_seconds(compiler, sources["small"], timeout=300)
-            large = compile_seconds(compiler, sources["large"],
-                                    timeout=max(300.0, 40.0 * small))
+            base = measure("base")
+            small = measure("small")
+            large = measure("large", max(300.0, 40.0 * small))
             small_body = max(small - base, MINIMUM_BODY_SECONDS)
             growth_samples.append(max(large - base, 0.0) / small_body)
-            print(f"sample {sample + 1}: cpu seconds base {base:.2f}, "
-                  f"{SMALL} blocks {small:.2f}, {LARGE} blocks {large:.2f}; "
+            print(f"{label} sample {sample + 1}: cpu seconds base {base:.2f}, "
+                  f"{small_size} blocks {small:.2f}, {large_size} blocks {large:.2f}; "
                   f"body growth {growth_samples[-1]:.2f}x", flush=True)
 
     growth = statistics.median(growth_samples)
-    print(f"median body growth {growth:.2f}x for {LARGE // SMALL}x statements")
-    if growth > GROWTH_LIMIT:
-        print(f"single-body compile time grew {growth:.2f}x for "
-              f"{LARGE // SMALL}x statements (limit {GROWTH_LIMIT:.0f}x)",
+    print(f"{label} median body growth {growth:.2f}x for 4x statements")
+    if growth > limit:
+        print(f"{label} single-body compile time grew {growth:.2f}x "
+              f"for 4x statements (limit {limit:.0f}x)", file=sys.stderr)
+        return False
+    return True
+
+
+def main() -> int:
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and
+                                      sys.argv[2] != "--mir-only"):
+        print("usage: single_body_compile_scaling_test.py <gti> [--mir-only]",
               file=sys.stderr)
-        return 1
-    return 0
+        return 2
+    compiler = sys.argv[1]
+    # Run both profiles even when the first fails, so one report shows both.
+    passed = profile(compiler, mir=False) if len(sys.argv) == 2 else True
+    passed = profile(compiler, mir=True) and passed
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":
