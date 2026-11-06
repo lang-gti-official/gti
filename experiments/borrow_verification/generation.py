@@ -273,6 +273,10 @@ def compiler_core_examples():
         'failure_cleanup':['defined-failure','failure-cleanup','owned-allocation','free'],
         'allocation_reuse':['allocation-generation','free','reallocate'],
     }
+    # This end-to-end witness follows the published finite input count, so the
+    # four inputs exercise both zero-trip and repeated execution. The independent
+    # named-model example retains its separate explicit three-iteration schedule.
+    examples['loop_borrow_end']['body'][1].pop('iterations')
     for name,features in coverage.items():
         witnesses[name]={'program':examples[name], 'features':features,
             'heap_owners':['o'] if name in ('normal_cleanup','failure_cleanup','allocation_reuse') else []}

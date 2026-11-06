@@ -130,19 +130,93 @@ class LabTests(unittest.TestCase):
             with patch('campaign.analyze', return_value={'classification': 'syntax-error'}):
                 self.assertEqual('source-adapter-error', compiler_comparison(examples['shared_read'], args, out)['classification'])
 
-    def test_reduction_preserves_both_classification_and_violated_rule(self):
-        from campaign import compiler_comparison
-        original = core_examples()['overlapping_mutable']
-        rule = check(original).violation.split(':')[0]
+    def test_compiler_reduction_preserves_each_required_failure_category(self):
+        from campaign import compiler_comparison, reduce_compiler_finding, violation_rule
+        examples = core_examples()
         args = argparse.Namespace(no_native=True)
-        with tempfile.TemporaryDirectory() as directory, patch('campaign.analyze', return_value={'classification': 'accepted'}):
-            def predicate(program):
-                return ((check(program).violation or '').split(':')[0] == rule
-                        and compiler_comparison(program, args, Path(directory))['classification'] == 'accepted-model-violation')
-            reduced, attempts = shrink(original, predicate, budget=30)
-            self.assertTrue(predicate(reduced))
+        witnesses = (
+            ('overlapping_mutable', 'accepted', 'accepted-model-violation'),
+            ('shared_read', 'rejected', 'conservative-rejection-or-model-error'),
+            ('shared_read', 'lowering-rejection', 'lowering-rejection'),
+            ('shared_read', 'internal-error', 'internal-error'),
+        )
+        for name, injected, expected in witnesses:
+            with self.subTest(classification=expected), tempfile.TemporaryDirectory() as directory:
+                original = examples[name]
+                baseline = check(original)
+                with patch('campaign.analyze', return_value={'classification': injected}), patch('campaign.native') as native:
+                    record = compiler_comparison(original, args, Path(directory))
+                    self.assertEqual(expected, record['classification'])
+                    reduced, attempts = reduce_compiler_finding(original, record, args, Path(directory), 30)
+                    self.assertEqual(expected, compiler_comparison(reduced, args, Path(directory))['classification'])
+                    self.assertEqual((baseline.status, violation_rule(baseline)),
+                                     (check(reduced).status, violation_rule(check(reduced))))
+                    self.assertLess(len(reduced['body']), len(original['body']))
+                    self.assertLessEqual(attempts, 30)
+                    native.assert_not_called()
+
+    def test_lowering_reduction_does_not_switch_to_another_compiler_error(self):
+        from campaign import compiler_comparison, reduce_compiler_finding
+        original = core_examples()['shared_read']
+        args = argparse.Namespace(no_native=True)
+        def injected(source, *args):
+            return {'classification': 'lowering-rejection' if 'std::println(labv_r_' in source else 'internal-error'}
+        with tempfile.TemporaryDirectory() as directory, patch('campaign.analyze', side_effect=injected):
+            record = compiler_comparison(original, args, Path(directory))
+            reduced, attempts = reduce_compiler_finding(original, record, args, Path(directory), 30)
+            self.assertEqual('lowering-rejection', compiler_comparison(reduced, args, Path(directory))['classification'])
+            self.assertTrue(any(n['op'] == 'read' for n in reduced['body']))
+            self.assertLess(len(reduced['body']), len(original['body']))
+
+    def test_noneligible_reduction_does_not_report_false_replay_evidence(self):
+        from campaign import reduce_compiler_finding
+        args = argparse.Namespace(no_native=True)
+        with tempfile.TemporaryDirectory() as directory, patch('campaign.compiler_comparison') as compare:
+            for classification in ('timeout', 'unsupported-source', 'native-disagreement-or-adapter-error'):
+                self.assertIsNone(reduce_compiler_finding(core_examples()['shared_read'],
+                    {'classification': classification}, args, Path(directory), 30))
+            compare.assert_not_called()
+
+    def test_model_fault_reduction_uses_the_campaign_predicate(self):
+        from campaign import model_comparison, reduce_model_finding, violation_rule
+        original = core_examples()['overlapping_mutable']
+        # A real intentional reference-analysis fault; the concrete executor
+        # remains unmodified and discovers the incompatible access independently.
+        with patch('campaign.check', side_effect=lambda p: check(p, mutation='overlap')):
+            static, concrete, failure = model_comparison(original)
+            self.assertEqual('model-accepted-invalid-execution', failure)
+            rules = {violation_rule(r) for r in concrete if r.status == 'rejected'}
+            reduced, attempts = reduce_model_finding(original, failure, budget=30)
+            _, observed, reduced_failure = model_comparison(reduced)
+            self.assertEqual(failure, reduced_failure)
+            self.assertEqual(rules, {violation_rule(r) for r in observed if r.status == 'rejected'})
             self.assertLess(len(reduced['body']), len(original['body']))
             self.assertLessEqual(attempts, 30)
+
+    def test_each_designated_semantic_mutation_witness_is_mandatory(self):
+        from compiler_mutation import REQUIRED_WITNESSES, mandatory_witnesses_killed
+        complete = [{'name': name, 'killed_by_semantic_stage_expectation': True} for name in REQUIRED_WITNESSES]
+        complete.append({'name': 'call_overlap', 'killed_by_semantic_stage_expectation': False})
+        self.assertTrue(mandatory_witnesses_killed(complete))
+        for name in REQUIRED_WITNESSES:
+            with self.subTest(missing=name):
+                self.assertFalse(mandatory_witnesses_killed([c for c in complete if c['name'] != name]))
+            with self.subTest(failed=name):
+                self.assertFalse(mandatory_witnesses_killed([
+                    {**c, 'killed_by_semantic_stage_expectation': False} if c['name'] == name else c for c in complete]))
+
+    def test_core_loop_uses_zero_and_repeated_input_counts(self):
+        from generation import compiler_core_examples
+        from model import execute
+        from source_bridge import render_core
+        witness = compiler_core_examples()['loop_borrow_end']
+        for count, observations in ((0, [1]), (2, [1, 1, 1])):
+            with self.subTest(count=count):
+                result = execute(witness['program'], inputs={'count': count})
+                self.assertEqual('accepted', result.status)
+                self.assertEqual(observations, result.observations)
+                source = render_core(witness['program'], observations, {'count': count})
+                self.assertIn(' < ' + str(count) + ';', source)
 
 
 if __name__ == '__main__':

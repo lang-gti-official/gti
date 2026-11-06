@@ -76,6 +76,54 @@ def compiler_comparison(program, args, directory, runtime=True):
     return record
 
 
+REDUCIBLE_COMPILER_FINDINGS = frozenset({
+    'accepted-model-violation', 'conservative-rejection-or-model-error',
+    'lowering-rejection', 'internal-error',
+})
+
+
+def violation_rule(result):
+    return (result.violation or '').split(':')[0]
+
+
+def reduce_compiler_finding(program, record, args, directory, budget):
+    """Use the campaign's actual eligibility and invariant-preserving predicate.
+
+    Native-only disagreements require execution-aware reduction and are not
+    silently reduced using this semantic/lowering-only path. Unsupported shapes
+    and a different model rule can never replace the original counterexample.
+    """
+    classification = record['classification']
+    if budget <= 0 or classification not in REDUCIBLE_COMPILER_FINDINGS:
+        return None
+    original = check(program)
+    signature = original.status, violation_rule(original)
+    compiler_attempts = [0]
+    def preserves(trial):
+        candidate = check(trial)
+        if (candidate.status, violation_rule(candidate)) != signature:
+            return False
+        compiler_attempts[0] += 1
+        observed = compiler_comparison(trial, args,
+            directory / ('reduce-' + str(compiler_attempts[0])), runtime=False)
+        return observed['classification'] == classification
+    return shrink(program, preserves, budget=budget)
+
+
+def reduce_model_finding(program, failure, budget=100, expected=None):
+    """Preserve the disagreement class and concrete violated rules under faults."""
+    def signature(trial):
+        static, concrete, classification = model_comparison(trial)
+        if expected is not None and static.status != expected:
+            classification = 'hand-derived-expectation-mismatch'
+        violated = tuple(sorted({violation_rule(r) for r in concrete if r.status == 'rejected'}))
+        return classification, static.status, violated
+    original = signature(program)
+    if original[0] != failure:
+        return program, 0
+    return shrink(program, lambda p: signature(p) == original, budget=budget)
+
+
 def phase2(args):
     if args.max_length < 0 or args.max_length > 4 or args.count > 100000:
         raise ValueError('Campaign bounds: max-length 0..4, seeded count <=100000')
@@ -104,7 +152,7 @@ def phase2(args):
                       'concrete': [r.to_dict() for r in concrete], 'failure': failure}
             if failure:
                 failures += 1
-                minimized, attempts = shrink(program, lambda p: model_comparison(p)[2] == failure, budget=100)
+                minimized, attempts = reduce_model_finding(program, failure, budget=100, expected=expected)
                 record.update(minimized=minimized, reduction_attempts=attempts)
             records.append(record)
     model_seconds = time.perf_counter() - model_start
@@ -137,17 +185,9 @@ def phase2(args):
                                     '--program', str(directory / 'model.json'),
                                     '--build', str(args.build), '--probe', str(args.probe),
                                     '--out', str(directory / 'replayed')]
-                if args.reduce_compiler and result['classification'] in ('accepted-model-violation', 'internal-error', 'conservative-rejection-or-model-error'):
-                    original_class = result['classification']
-                    original_violation = (check(program).violation or '').split(':')[0]
-                    attempts = [0]
-                    def preserves(trial):
-                        if (check(trial).violation or '').split(':')[0] != original_violation:
-                            return False
-                        attempts[0] += 1
-                        reduced = compiler_comparison(trial, args, directory / ('reduce-' + str(attempts[0])), runtime=False)
-                        return reduced['classification'] == original_class
-                    reduced, attempts_count = shrink(program, preserves, budget=args.reduce_compiler)
+                reduction = reduce_compiler_finding(program, result, args, directory, args.reduce_compiler)
+                if reduction is not None:
+                    reduced, attempts_count = reduction
                     (directory / 'reduced-model.json').write_text(json.dumps(reduced, indent=2) + '\n')
                     result['reduction_attempts'] = attempts_count
                     result['reduced_replay'] = [str(directory / 'reduced-model.json') if a == str(directory / 'model.json')

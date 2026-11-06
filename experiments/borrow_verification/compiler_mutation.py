@@ -19,6 +19,13 @@ ANCHOR = '''auto SemanticVisitor::Impl::reportBorrowConflict(
     const Token &token, const std::vector<SemanticLoanId> &loans,
     std::string message, bool rawAudit) -> void {'''
 
+REQUIRED_WITNESSES = ('shared_write_conflict', 'mutable_alias_conflict', 'move_while_borrowed')
+
+
+def mandatory_witnesses_killed(records):
+    killed = {c['name'] for c in records if c['killed_by_semantic_stage_expectation']}
+    return all(name in killed for name in REQUIRED_WITNESSES)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -67,7 +74,8 @@ def main():
                   and changed.get('probe', {}).get('semantic_valid') is True)
         result['cases'].append({'name': case.name, 'baseline': baseline, 'mutant': changed,
                                 'killed_by_semantic_stage_expectation': killed})
-    result['killed'] = any(c['killed_by_semantic_stage_expectation'] for c in result['cases'])
+    result['required_witnesses'] = list(REQUIRED_WITNESSES)
+    result['killed'] = mandatory_witnesses_killed(result['cases'])
     result['production_source_unchanged'] = source.read_text() == original
     (args.out / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({'killed': result['killed'], 'build_seconds': build_seconds, 'report': str(args.out / 'report.json')}))

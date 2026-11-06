@@ -25,6 +25,8 @@ soundness and compiler-correspondence proofs are not implemented.
   index errors do not masquerade as evidence for an ownership rule.
 - `compiler_mutation.py` builds a separate probe with one real semantic conflict
   check disabled. It does not modify the production source or compiler archive.
+  Shared-write, mutable-alias and owner-move witnesses must each detect the
+  disabled check; an additional call-overlap witness is reported separately.
 - `model.py` has separate static and concrete transition implementations,
   including storage identity/generations, field overlap, reborrows, move/reinit,
   branches, loop fixed points, direct calls, reference returns, temporary call
