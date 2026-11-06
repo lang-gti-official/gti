@@ -9,6 +9,14 @@ resolved calls, ownership operations, and cleanup. Verified optimized MIR is
 the executable component of the backend-neutral `LoweredProgram`; `MirProgram`
 alone is not the complete backend API.
 
+An exhaustive switch has a completing continuation only when an arm completes
+normally or a `break` targets that switch. If all arms terminate, lowering marks
+the unused exit unreachable, as it does for an `if` whose branches terminate.
+Following statements are not emitted into a disconnected CFG. Nested loop or
+switch breaks retain their own targets; partial switches keep their unmatched
+continuation. Full-expression root/cleanup ordering remains independently
+verified, including when a generic compile-time branch contains the switch.
+
 ## Projected references and existing-value allocation
 
 A local reference initialized from a projected address retains that exact

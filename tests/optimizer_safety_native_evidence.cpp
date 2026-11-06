@@ -3,6 +3,7 @@
 #include "gti/llvm_backend.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimizer.h"
+#include "temporary_directory.h"
 
 #include "cpp_backend_test_support.h"
 
@@ -34,8 +35,8 @@ std::string environmentPath(const char *name) {
 
 lang::FrontendResult analyzeTrusted(std::string_view source) {
   const std::filesystem::path stdlibRoot = environmentPath("GTI_STDLIB_PATH");
-  const std::filesystem::path entry = std::filesystem::temp_directory_path() /
-                                      "gti-optimizer-safety-evidence.gti";
+  const std::filesystem::path entry =
+      gti_test::temporaryDirectory() / "gti-optimizer-safety-evidence.gti";
   const std::string entryKey =
       std::filesystem::weakly_canonical(entry).string();
   return lang::Frontend().analyze(
@@ -853,7 +854,7 @@ int main(int argc, char **argv) {
   const std::string compiler = argc > 1 ? argv[1] : "c++";
   std::error_code error;
   const std::filesystem::path directory =
-      std::filesystem::temp_directory_path() / "gti-optimizer-safety-evidence";
+      gti_test::temporaryDirectory() / "gti-optimizer-safety-evidence";
   std::filesystem::remove_all(directory, error);
   std::filesystem::create_directories(directory, error);
 

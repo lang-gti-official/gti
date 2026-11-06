@@ -18,11 +18,8 @@ void positiveAndProofs() {
     for (const auto &diagnostic : frontend.diagnostics)
       std::cerr << diagnostic.primary.line << ": " << diagnostic.message
                 << '\n';
-    const auto log =
-        std::filesystem::temp_directory_path() / "gti-fresh-callable-proof.mir";
-    std::ofstream output(log);
-    lang::MirPrinter().print(frontend.mir, output);
-    std::cerr << "Fresh callable proof MIR: " << log << '\n';
+    std::cerr << "Fresh callable proof MIR:\n";
+    lang::MirPrinter().print(frontend.mir, std::cerr);
   }
   expect(frontend.canGenerateCode(),
          "fresh callable arguments preserve exact checked lifetimes");

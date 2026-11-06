@@ -2,6 +2,7 @@
 #include "gti/lowered_program_builder.h"
 #include "gti/mir_constant_evaluator.h"
 #include "gti/mir_lowering.h"
+#include "temporary_directory.h"
 
 namespace {
 
@@ -680,7 +681,7 @@ int main() {
 
 void testStandardString() {
   const std::filesystem::path entry =
-      std::filesystem::temp_directory_path() / "gti-standard-string/main.gti";
+      gti_test::temporaryDirectory() / "gti-standard-string/main.gti";
   const lang::FrontendResult valid = lang::Frontend().analyze(
       entry, R"(
 import std.string;
@@ -5550,7 +5551,7 @@ public:
          "generic paths have a complete representation");
 
   const std::filesystem::path root =
-      std::filesystem::temp_directory_path() / "gti-static-storage";
+      gti_test::temporaryDirectory() / "gti-static-storage";
   const std::filesystem::path entry = root / "main.gti";
   const std::filesystem::path left = root / "left.gti";
   const std::filesystem::path right = root / "right.gti";
@@ -6332,7 +6333,7 @@ int main() { return selected_value() + local_state(); }
            "GTI rather than being skipped as text");
 
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "gti-configuration-includes";
+        gti_test::temporaryDirectory() / "gti-configuration-includes";
     const std::filesystem::path entry = root / "main.gti";
     const std::filesystem::path dependency = root / "flags.gti";
     const std::string dependencyKey = fixtureSourcePath(dependency).string();
