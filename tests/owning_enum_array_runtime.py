@@ -28,6 +28,7 @@ def run_enum_array_cases(compiler, modes):
         (0, "2\n1\n9\n", ""),
     ]
     executions.append((70, "3\n2\n1\n9\n", failure(23)))
+    executions.append((0, "1\n2\n3\n9\n", ""))
     cases = [
         (fixtures / "owning_enum_array_lifetimes.gti", executions),
         (fixtures / "owning_enum_array_thread_local.gti", [(0, "0\n4\n3\n", "")]),

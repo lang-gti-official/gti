@@ -1785,7 +1785,7 @@ and direct enum lambda captures retain `GTI-S2067` at their declaration or captu
 boundary. Unsupported containment retains `GTI-S2067` at the field or
 aggregate boundary, before HIR/MIR/backend emission. A direct checked
 reference or raw pointer does not itself contain the referent's ownership
-state. Direct enum captures remain outside this transport slice.
+state.
 
 Payload alternatives use exact construction. A unit alternative is written
 `Result::empty`; a payload alternative is written `Result::value(arguments)`.

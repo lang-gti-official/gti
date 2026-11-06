@@ -980,6 +980,20 @@ int main() {
   expect(countCode(missingElements, "GTI-S2015") == 2,
          "owning enum arrays require every element to be initialized");
 
+  const auto arrayCapture =
+      analyzeWithPrelude("owning-payload-array-capture.gti", arrayPrelude + R"(
+int main() {
+  holder values[2] = {holder::one(resource()), holder::none};
+  auto callback = [items = std::move(values)]() -> int32_t { return 0; };
+  return callback();
+}
+)");
+  expect(countCode(arrayCapture, "GTI-S2067") == 1 &&
+             hasMessage(arrayCapture, "Lambda capture 'items'") &&
+             hasMessage(arrayCapture, "holder[2]"),
+         "array storage admission does not silently enable owning array "
+         "captures");
+
   const lang::FrontendResult unsupportedFieldOwners =
       analyze("owning-payload-unsupported-field-owners.gti", R"(
 class resource {

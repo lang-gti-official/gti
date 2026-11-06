@@ -64,9 +64,14 @@ int main(int argc, std::vector<std::string> argv) {
     Event<Token> values[2] = {Event<Token>::Owned(Token(1)), Event<Token>::Owned(Token(2))};
     auto moved = std::move(values);
     if (id(moved[0]) != 1 || id(moved[1]) != 2) return 7;
-  } else {
+  } else if (argc == 12) {
     mut Event<Token> values[2] = {Event<Token>::Owned(Token(1)), Event<Token>::Owned(Token(2))};
     values[0] = produce(3, 0);
+  } else {
+    mut Event<Token> values[2] = {Event<Token>::Owned(Token(1)), Event<Token>::Owned(Token(2))};
+    auto received = std::move(values[0]);
+    values[0] = Event<Token>::Owned(Token(3));
+    if (id(received) != 1 || id(values[0]) != 3) return 8;
   }
   return 0;
 }
