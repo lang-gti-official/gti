@@ -1,5 +1,6 @@
 #include "gti/hir.h"
 #include "gti/instance_analysis_cache.h"
+#include "gti/lifetime_types.h"
 
 #include <algorithm>
 #include <functional>
@@ -1824,7 +1825,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         const HirClassInstance *owner = nullptr;
         bool unique = true;
         for (const auto &candidate : program.classInstances()) {
-          if (candidate.type != value.info.type)
+          if (!matchUniversalTypeLifetimes(candidate.type, value.info.type,
+                                            candidate.lifetimeContract.parameters))
             continue;
           if (owner != nullptr)
             unique = false;
@@ -1833,7 +1835,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         const bool exactOwner =
             owner != nullptr && unique &&
             !containsUnresolvedGeneric(selectedType) &&
-            sameFamilySelection(selectedType, owner->type, semantics);
+            matchUniversalTypeLifetimes(owner->type, selectedType,
+                                        owner->lifetimeContract.parameters) &&
+            sameFamilySelection(selectedType, value.info.type, semantics);
         if (!exactOwner ||
             owner->defaultConstructor != SpecialMemberStatus::Generated ||
             owner->generatedDefaultRequiresSchedule ||
@@ -1868,7 +1872,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const bool inPlace =
           value.intrinsic == IntrinsicKind::ObjectConstruct ||
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
-      bool exactResult = owner != nullptr && value.info.type == owner->type &&
+      bool exactResult = owner != nullptr &&
+                         value.info.type == selectedType &&
                          value.intrinsic == IntrinsicKind::None;
       if (inPlace && owner != nullptr && !value.parameterTypes.empty()) {
         const auto &storage = value.parameterTypes.front();
@@ -1879,7 +1884,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         exactResult =
             value.info.type == SemanticType::Void &&
             storage.arguments.size() == 1 &&
-            storage.arguments.front() == owner->type &&
+            storage.arguments.front() == selectedType &&
             (value.intrinsic == IntrinsicKind::ObjectConstruct
                  ? storage.kind == SemanticType::RawPointer
                  : storageOwner != nullptr &&
@@ -1893,9 +1898,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       // Resolve the primary construction through this concrete instance's
       // declaration-bound arguments, including exact class specializations.
       // The selected constructor must belong to that exact resolved type.
-      const bool exactOwner = owner != nullptr &&
-                              !containsUnresolvedGeneric(selectedType) &&
-                              owner->type == selectedType;
+      const bool exactOwner =
+          owner != nullptr && !containsUnresolvedGeneric(selectedType) &&
+          matchUniversalTypeLifetimes(owner->type, selectedType,
+                                      owner->lifetimeContract.parameters) &&
+          target != nullptr &&
+          matchUniversalTypeLifetimes(target->ownerType, selectedType,
+                                      target->lifetimeContract.parameters);
       if (target == nullptr || !target->generatedDefault || owner == nullptr ||
           !exactOwner || !exactResult ||
           value.definedFailure.propagation != propagation)
@@ -2494,27 +2503,64 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           (contractTarget != nullptr && contractTarget->neverReturns) ||
           value.noNormalBorrowResultProof.has_value();
       if (const auto &proof = value.noNormalBorrowResultProof; proof) {
-        const auto &selected = proof->call();
+        const auto sameAppliedType = [&](const SemanticType &universal,
+                                         const SemanticType &actual) {
+          const auto applied = substituteTypeLifetimes(
+              universal, value.lifetimeApplication.bindings);
+          return applied && equivalentLifetimeTypes(*applied, actual);
+        };
+        const auto sameAppliedTypes = [&](const auto &universal, const auto &actual) {
+          if (universal.size() != actual.size()) return false;
+          for (std::size_t index = 0; index < universal.size(); ++index)
+            if (!sameAppliedType(universal[index], actual[index])) return false;
+          return true;
+        };
+        const auto sameApplication = [&](const SemanticLifetimeApplication &selected) {
+          return selected.bindings == value.lifetimeApplication.bindings &&
+                 selected.variables == value.lifetimeApplication.variables &&
+                 selected.obligations == value.lifetimeApplication.obligations &&
+                 selected.typeObligations == value.lifetimeApplication.typeObligations &&
+                 selected.callableSignature == value.lifetimeApplication.callableSignature &&
+                 selected.complete == value.lifetimeApplication.complete;
+        };
+        bool exactSelection = false;
+        if (const auto *selected = proof->functionCall()) {
+          exactSelection = contractTarget && !value.lambdaTarget &&
+              !contractTarget->neverReturns &&
+              value.dispatch == CallDispatch::Static &&
+              selected->function == contractTarget->declaration &&
+              selected->returnType.kind == SemanticType::Reference &&
+              sameAppliedType(contractTarget->returnType, selected->returnType) &&
+              selected->parameterTypes == value.parameterTypes &&
+              sameAppliedTypes(contractTarget->parameterTypes, selected->parameterTypes) &&
+              sameAppliedTypes(contractTarget->typeArguments, selected->typeArguments) &&
+              selected->valueArguments == contractTarget->valueArguments &&
+              selected->dispatchOwner == value.dispatchOwner &&
+              selected->noNormalBorrowResult && selected->neverReturns &&
+              sameApplication(selected->lifetimeApplication);
+        } else if (const auto *selected = proof->lambdaCall()) {
+          const auto *lambda = value.lambdaTarget
+              ? program.findLambda(*value.lambdaTarget) : nullptr;
+          exactSelection = lambda && !value.functionTarget &&
+              selected->lambda == lambda->declaration &&
+              selected->returnType.kind == SemanticType::Reference &&
+              sameAppliedType(lambda->returnType, selected->returnType) &&
+              selected->parameterTypes == value.parameterTypes &&
+              sameAppliedTypes(lambda->parameterTypes, selected->parameterTypes) &&
+              selected->capability == lambda->capability &&
+              selected->noNormalBorrowResult && selected->neverReturns &&
+              sameApplication(selected->lifetimeApplication);
+        }
         if (value.kind != HirValueKind::Call ||
-            value.intrinsic != IntrinsicKind::None || !contractTarget ||
-            contractTarget->neverReturns ||
-            value.dispatch != CallDispatch::Static ||
+            value.intrinsic != IntrinsicKind::None || !exactSelection ||
             proof->source() != value.source ||
             proof->snapshot() != semantics.analysisSeal().programSnapshot ||
-            selected.function != contractTarget->declaration ||
-            selected.returnType.kind != SemanticType::Reference ||
-            selected.returnType != contractTarget->returnType ||
-            selected.parameterTypes != value.parameterTypes ||
-            selected.parameterTypes != contractTarget->parameterTypes ||
-            selected.typeArguments != contractTarget->typeArguments ||
-            selected.valueArguments != contractTarget->valueArguments ||
-            selected.dispatchOwner != value.dispatchOwner ||
-            !selected.noNormalBorrowResult || !selected.neverReturns ||
             value.borrowDependencies) {
           result.errors.emplace_back("HIR impossible normal result lost its "
                                      "exact semantic call proof");
         }
       }
+
       const bool expectedTracking =
           (value.kind == HirValueKind::Call &&
            (intrinsicContract ? intrinsicContract->tracksCaller()

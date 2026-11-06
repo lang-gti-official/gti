@@ -468,7 +468,7 @@ TypeLayout Layouts::closure(const SemanticType &type) {
   LambdaRecord *selected = nullptr;
   for (auto &[id, candidate] : lambdas) {
     (void)id;
-    if (session.representations().sameType(candidate.instance->type, type) && !selected)
+    if (mirLambdaLifetimeView(*candidate.instance, type) && !selected)
       selected = &candidate;
   }
   if (!selected)

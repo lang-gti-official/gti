@@ -1136,6 +1136,10 @@ struct LambdaCaptureInfo {
 struct LambdaInfo {
   LambdaId id = 0;
   const Lambda *declaration = nullptr;
+  // The body and layout use this universal environment. Expression types
+  // instantiate its fixed environment slots for the concrete closure value.
+  SemanticType type = SemanticType::Unknown;
+  std::vector<Lifetime> environmentLifetimes;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   LifetimeSignatureContract lifetimeContract;
@@ -2296,7 +2300,12 @@ makeSemanticAnalysisSeal(const Program &program, const TargetInfo &target,
 class SemanticNoNormalBorrowResultProof {
 public:
   [[nodiscard]] const Call *source() const { return source_; }
-  [[nodiscard]] const ResolvedCallInfo &call() const { return call_; }
+  [[nodiscard]] const ResolvedCallInfo *functionCall() const {
+    return std::get_if<ResolvedCallInfo>(&call_);
+  }
+  [[nodiscard]] const ResolvedLambdaCallInfo *lambdaCall() const {
+    return std::get_if<ResolvedLambdaCallInfo>(&call_);
+  }
   [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
 
 private:
@@ -2304,8 +2313,11 @@ private:
   SemanticNoNormalBorrowResultProof(const Call &source, ResolvedCallInfo call,
                                     std::uint64_t snapshot)
       : source_(&source), call_(std::move(call)), snapshot_(snapshot) {}
+  SemanticNoNormalBorrowResultProof(const Call &source, ResolvedLambdaCallInfo call,
+                                    std::uint64_t snapshot)
+      : source_(&source), call_(std::move(call)), snapshot_(snapshot) {}
   const Call *source_;
-  ResolvedCallInfo call_;
+  std::variant<ResolvedCallInfo, ResolvedLambdaCallInfo> call_;
   std::uint64_t snapshot_;
 };
 

@@ -12011,10 +12011,21 @@ private:
       if (lambda == nullptr) {
         valid = false;
       } else {
+        const auto environment = matchUniversalTypeLifetimes(
+            lambda->type, value->info.type, lambda->environmentLifetimes);
         instruction.closureCaptureTypes.reserve(lambda->captures.size());
         instruction.closureCaptureModes.reserve(lambda->captures.size());
-        for (const LambdaCaptureInfo &capture : lambda->captures) {
-          instruction.closureCaptureTypes.push_back(capture.type);
+        if (!environment) {
+          valid = false;
+        } else for (std::size_t index = 0; index < lambda->captures.size(); ++index) {
+          const auto &capture = lambda->captures[index];
+          const auto instantiated = substituteTypeLifetimes(capture.type, *environment);
+          const auto actualCaptures = value->info.type.lambdaCaptureTypes();
+          if (!instantiated || index >= actualCaptures.size() ||
+              !equivalentLifetimeTypes(*instantiated, actualCaptures[index])) {
+            valid = false; break;
+          }
+          instruction.closureCaptureTypes.push_back(actualCaptures[index]);
           instruction.closureCaptureModes.push_back(capture.mode);
         }
       }

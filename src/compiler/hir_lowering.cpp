@@ -2079,7 +2079,8 @@ private:
 
   [[nodiscard]] static bool lambdaMatchesType(const HirLambda &lambda,
                                               const SemanticType &type) {
-    return type.kind == SemanticType::Lambda && lambda.type == type;
+    return type.kind == SemanticType::Lambda &&
+           matchUniversalTypeLifetimes(lambda.type, type, lambda.environmentLifetimes).has_value();
   }
 
   void seedLambdaTarget(const SemanticType &type) {
@@ -4834,8 +4835,9 @@ private:
     output.program.lambdas[id - 1] = {
         .id = id,
         .declaration = info->id,
+        .environmentLifetimes = info->environmentLifetimes,
         .source = &lambda,
-        .type = model.typeOf(lambda),
+        .type = info->type.kind == SemanticType::Unknown ? model.typeOf(lambda) : info->type,
         .returnType = info->returnType,
         .parameterTypes = info->parameterTypes,
         .lifetimeContract = info->lifetimeContract,
@@ -7455,9 +7457,22 @@ private:
               output.program.lambdas.begin(), output.program.lambdas.end(),
               [&](const HirLambda &candidate) {
                 const SemanticType calleeType = model.typeOf(*call->callee());
-                return candidate.returnType == resolved->returnType &&
-                       candidate.parameterTypes == resolved->parameterTypes &&
-                       lambdaMatchesType(candidate, calleeType);
+                const auto matches = [&](const SemanticType &universal,
+                                         const SemanticType &actual) {
+                  const auto applied = substituteTypeLifetimes(
+                      universal, resolved->lifetimeApplication.bindings);
+                  return applied && equivalentLifetimeTypes(*applied, actual);
+                };
+                if (!lambdaMatchesType(candidate, calleeType) ||
+                    candidate.parameterTypes.size() != resolved->parameterTypes.size() ||
+                    !matches(candidate.returnType, resolved->returnType))
+                  return false;
+                for (std::size_t index = 0;
+                     index < candidate.parameterTypes.size(); ++index)
+                  if (!matches(candidate.parameterTypes[index],
+                               resolved->parameterTypes[index]))
+                    return false;
+                return true;
               });
           if (existing != output.program.lambdas.end()) {
             value.lambdaTarget = existing->id;

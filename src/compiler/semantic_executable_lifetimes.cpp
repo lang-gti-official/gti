@@ -133,6 +133,48 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
   const auto lift = [&](auto &&self, SemanticType &type,
                         std::vector<LifetimeBinding> bound,
                         std::vector<GenericParameterId> &free) -> void {
+    if (type.hasLambdaShape()) {
+      const auto *lambda = semanticModel.findLambda(type.lambdaId);
+      if (!lambda && instanceBaseModel)
+        lambda = instanceBaseModel->findLambda(type.lambdaId);
+      const auto environment = lambda && lambda->type.hasLambdaShape()
+          ? matchUniversalTypeLifetimes(lambda->type, type, lambda->environmentLifetimes)
+          : std::nullopt;
+      if (!environment || environment->size() != lambda->environmentLifetimes.size()) {
+        valid = false;
+        return;
+      }
+      std::vector<LifetimeBinding> liftedEnvironment;
+      for (const auto parameter : lambda->environmentLifetimes) {
+        const auto actual = std::find_if(environment->begin(), environment->end(),
+            [&](const auto binding) { return binding.first == parameter; });
+        if (actual == environment->end()) {
+          valid = false;
+          return;
+        }
+        const auto enclosing = std::find_if(bound.rbegin(), bound.rend(),
+            [&](const auto binding) { return binding.first == actual->second; });
+        Lifetime universal;
+        if (enclosing != bound.rend()) {
+          universal = enclosing->second;
+        } else {
+          universal = Lifetime::parameter(fresh());
+          result.lifetimeApplication.bindings.emplace_back(universal, actual->second);
+          free.push_back(universal.id);
+        }
+        liftedEnvironment.emplace_back(parameter, universal);
+        // The declaration recipe repeats this same environment slot in its
+        // signature and capture fields. Preserve that declared correlation,
+        // independently of equality between separate actual capture regions.
+        bound.emplace_back(universal, universal);
+      }
+      const auto canonical = substituteTypeLifetimes(lambda->type, liftedEnvironment);
+      if (!canonical) {
+        valid = false;
+        return;
+      }
+      type = *canonical;
+    }
     for (auto &id : type.quantifiedLifetimes) {
       const auto source = Lifetime::parameter(id);
       id = fresh();

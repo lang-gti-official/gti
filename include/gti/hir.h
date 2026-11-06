@@ -625,6 +625,7 @@ hirInitializerReachabilityBatch(
 struct HirLambda {
   HirLambdaId id = 0;
   LambdaId declaration = 0;
+  std::vector<Lifetime> environmentLifetimes;
   const Lambda *source = nullptr;
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;

@@ -103,6 +103,23 @@ mirClassLifetimeView(const MirProgram &, const SemanticType &);
 [[nodiscard]] std::optional<MirEnumLifetimeView>
 mirEnumLifetimeView(const MirProgram &, const SemanticType &);
 
+// An exact closure instance owns invocation and cleanup. Environment matching
+// substitutes only its fixed slots; per-invocation quantified regions remain
+// bound in the carrier type and cannot become environment choices.
+struct MirLambdaLifetimeView {
+  const MirLambdaInstance *instance = nullptr;
+  std::vector<LifetimeBinding> bindings;
+  [[nodiscard]] std::optional<SemanticType> instantiate(const SemanticType &type) const {
+    return substituteTypeLifetimes(type, bindings);
+  }
+};
+[[nodiscard]] std::optional<MirLambdaLifetimeView>
+mirLambdaLifetimeView(const MirLambdaInstance &, const SemanticType &);
+// Compatible physical capture inventory only; this never selects a callable
+// body or cleanup target when several concrete bodies share one environment.
+[[nodiscard]] std::optional<std::vector<SemanticType>>
+mirLambdaCaptureTypes(const MirProgram &, const SemanticType &);
+
 // The carrier capability and its exact type select the source-free authority.
 [[nodiscard]] const CallableLifetimeSignature *
 checkedMirCallableLifetimeSignature(const MirProgram &, const MirInstruction &);

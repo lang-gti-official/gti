@@ -1713,6 +1713,7 @@ struct MirDestructorInstance {
 struct MirLambdaInstance {
   HirLambdaId id = 0;
   LambdaId declaration = 0;
+  std::vector<Lifetime> environmentLifetimes;
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;

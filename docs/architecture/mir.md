@@ -457,6 +457,13 @@ destructor instances retain normalized contracts just as functions and
 constructors do. Authoritative nominal variance is preserved alongside the
 concrete field/base inventory; lowering never derives it from names.
 
+An exact local origin also proves that its value type is valid for that local
+borrow. This lets an owned generic value be borrowed without a public
+`T:static` promise. MIR derives that premise from the resolved place type;
+it does not accept an arbitrary supplied type bound. The premise stays local
+to the body, cannot extend the origin to a universal or static region, and
+does not replace availability, loan endpoint or cleanup verification.
+
 Callable lifetime applications retain a universal function signature and fixed
 bindings for its free carrier regions. The trusted function-pointer capability
 selects the actual carrier signature. MIR reconstructs it by capture-avoiding
@@ -481,6 +488,8 @@ field and variant come from the typed `PayloadExtract(BorrowValue)` operation,
 independently of the selection annotation. Return-summary normalization retains
 that executable selector while tracing caller-owned storage, including generic
 payload types whose complete stored-reference inventory is not yet concrete.
+Reference-region checking replays that same exact selection to the carrier's
+declared region or checked local origin.
 The physical selection cannot claim external-owner transfer authority. Variant
 dominance, access, parent liveness and cleanup remain separate required proofs.
 

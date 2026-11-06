@@ -846,7 +846,17 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
                               .lifetimeContract = lambda->lifetimeContract,
                               .returnBorrowOrigin = lambda->returnBorrowOrigin,
                               .returnBorrowParameter = lambda->returnBorrowParameter,
-                              .returnBorrowAccess = lambda->returnBorrowAccess};
+                              .returnBorrowAccess = lambda->returnBorrowAccess,
+                              .dispatchOwner = calleeType};
+  if (lambda->environmentLifetimes.size() != calleeType.lifetimeArguments.size()) {
+    report(call.paren(), "The lambda value has an incomplete lifetime environment.",
+           "GTI-S2127");
+    valid = false;
+  } else {
+    for (std::size_t index = 0; index < lambda->environmentLifetimes.size(); ++index)
+      selected.lifetimeApplication.bindings.emplace_back(
+          lambda->environmentLifetimes[index], calleeType.lifetimeArguments[index]);
+  }
   if (lambda->completeReturnBorrow) {
     selected.returnBorrowFields = lambda->completeReturnBorrow->dependencies;
     for (const auto &supplier : selected.returnBorrowFields)
@@ -856,7 +866,8 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
         selected.returnBorrowParameters.push_back(supplier.parameter);
   }
   if (valid)
-    valid = applyCallLifetimeContract(selected, *arguments, call.paren());
+    valid = applyCallLifetimeContract(selected, *arguments, call.paren(),
+                                      call.callee().get());
   const std::size_t count =
       std::min(arguments->size(), selected.parameterTypes.size());
   std::vector<SemanticType> ordinaryParameterTypes;

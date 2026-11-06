@@ -21,6 +21,29 @@ SemanticType reference(GenericParameterId id) {
 }
 } // namespace
 int main() {
+  const auto fixedEnvironment = Lifetime::parameter(701);
+  const std::array closureParameters{reference(702)};
+  const std::array closureCaptures{reference(701)};
+  MirLambdaInstance closure{
+      .id = 1, .declaration = 70, .environmentLifetimes = {fixedEnvironment},
+      .type = SemanticType::lambdaType(70, reference(702), closureParameters, closureCaptures),
+      .returnType = reference(702), .parameterTypes = {reference(702)},
+      .lifetimeContract = {.parameters = {fixedEnvironment, Lifetime::parameter(702)}, .complete = true},
+      .captureTypes = {reference(701)}};
+  closure.type.lifetimeArguments = {fixedEnvironment};
+  closure.type.quantifiedLifetimes = {702};
+  const auto actualClosure = substituteTypeLifetimes(
+      closure.type, std::array{LifetimeBinding{fixedEnvironment, Lifetime::staticLifetime()}});
+  expect(actualClosure && mirLambdaLifetimeView(closure, *actualClosure),
+         "closure environment choices instantiate every occurrence while invocation stays quantified");
+  auto changedCapture = *actualClosure;
+  changedCapture.arguments.back().referenceLifetime = Lifetime::local(71);
+  expect(!mirLambdaLifetimeView(closure, changedCapture),
+         "closure matching rejects a capture inconsistent with its fixed environment slot");
+  auto changedInvocation = *actualClosure;
+  changedInvocation.arguments.front().referenceLifetime = Lifetime::staticLifetime();
+  expect(!mirLambdaLifetimeView(closure, changedInvocation),
+         "a fixed environment choice cannot specialize a quantified invocation result");
   auto quantified = SemanticType::functionSignature(reference(101), {reference(101)});
   quantified.quantifiedLifetimes = {101};
   const auto quantifiedContract = callableLifetimeContract(quantified);

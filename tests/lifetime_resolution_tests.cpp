@@ -550,6 +550,9 @@ static int& mutualSecond(bool done, int& selected, int& ignored) {
 int&<a> explicitRelay<lifetime a, lifetime b>(int&<a> selected, int&<b> ignored) {
   return first(selected, ignored);
 }
+int&<a> explicitMutualRelay<lifetime a, lifetime b>(int&<a> selected, int&<b> ignored) {
+  return mutualSecond(true, selected, ignored);
+}
 int main() { int firstValue = 1; int secondValue = 2; return first(firstValue, secondValue) + recurse(false, firstValue, secondValue); }
 )");
   expectValid(result, "private omitted lifetime contracts infer selected and recursive suppliers");
@@ -569,8 +572,13 @@ int main() { int firstValue = 1; int secondValue = 2; return first(firstValue, s
                bounds.proves(info->parameterTypes[selected].referenceLifetime,
                              info->returnType.referenceLifetime) &&
                !bounds.proves(info->parameterTypes[ignored].referenceLifetime,
-                              info->returnType.referenceLifetime),
-           "private recursive fixed point preserves only productive return suppliers");
+                              info->returnType.referenceLifetime) &&
+               info->completeReturnBorrow &&
+               info->completeReturnBorrow->dependencies.size() == 1 &&
+               info->completeReturnBorrow->dependencies.front().origin ==
+                   lang::BorrowOriginKind::Argument &&
+               info->completeReturnBorrow->dependencies.front().parameter == selected,
+           std::string("private recursive fixed point preserves only productive return suppliers: ") + name);
   }
   const auto *both = function(result, "both");
   lang::LifetimeBounds bothBounds;
@@ -581,7 +589,8 @@ int main() { int firstValue = 1; int secondValue = 2; return first(firstValue, s
              bothBounds.proves(both->parameterTypes[1].referenceLifetime,
                                both->returnType.referenceLifetime) &&
              bothBounds.proves(both->parameterTypes[2].referenceLifetime,
-                               both->returnType.referenceLifetime),
+                               both->returnType.referenceLifetime) &&
+             both->completeReturnBorrow && both->completeReturnBorrow->dependencies.size() == 2,
          "distinct return paths infer every permitted supplier");
   for (const std::string source : {
            "int& publicBoundary(int& first, int& second) { return first; } int main() { return 0; }",
@@ -672,6 +681,57 @@ int main() {
            "lambda inference preserves every supplier and cannot return body-local storage");
   }
 }
+
+void testLambdaLifetimeEnvironments() {
+  const auto result = analyze(R"(
+int&<a> ambient<lifetime a, lifetime b>(int&<a> selected, int&<b> ignored) {
+  auto fixed = [](int&<a> value) -> int&<a> { return value; };
+  return fixed(selected);
+}
+int&<a> externalCapture<lifetime a>(int&<a> source) {
+  auto get = [&source]() -> int& { return source; };
+  return get();
+}
+void acceptStatic<F>(F callback) requires outlives<F, static> {}
+int invoke<F>(F callback) { return callback(); }
+int main() {
+  auto identity = [](int& value) -> int& { return value; };
+  acceptStatic(identity);
+  int left = 1;
+  int right = 2;
+  auto choose = [&left, &right](bool first) -> int& {
+    if (first) { return left; }
+    return right;
+  };
+  auto owned = [left]() -> int& { return left; };
+  auto external = [&left]() -> int& { return left; };
+  return choose(true) + owned() + invoke(external);
+}
+)");
+  expectValid(result, "closure environments preserve ambient and captured lifetime relationships");
+  const auto *ambient = function(result, "ambient");
+  const auto *binding = ambient && ambient->declaration && ambient->declaration->body()
+      ? lang::stmtAs<lang::VariableDecl>(ambient->declaration->body()->statements().front().get())
+      : nullptr;
+  const auto *syntax = binding ? lang::exprAs<lang::Lambda>(binding->initializer().get()) : nullptr;
+  const auto *lambda = syntax ? result.semantics.findLambda(*syntax) : nullptr;
+  const auto actual = syntax ? result.semantics.typeOf(*syntax) : lang::SemanticType::Unknown;
+  expect(lambda && lambda->type.hasLambdaShape() &&
+             !lambda->environmentLifetimes.empty() &&
+             lambda->type.lifetimeArguments == lambda->environmentLifetimes &&
+             actual.lifetimeArguments.size() == lambda->environmentLifetimes.size() &&
+             actual.lifetimeArguments != lambda->environmentLifetimes,
+         "canonical lambda environment slots are distinct from each closure value's fixed choices");
+  for (const std::string source : {
+           "int&<b> invalid<lifetime a, lifetime b>(int&<a> first, int&<b> second) { auto fixed = [](int&<a> value) -> int&<a> { return value; }; return fixed(second); } int main() { return 0; }",
+           "int&<a> invalid<lifetime a>(int&<a> source) { int local = 1; auto get = [&local]() -> int& { return local; }; return get(); } int main() { return 0; }",
+           "int&<a> invalid<lifetime a>(int&<a> source) { int local = 1; auto get = [local]() -> int& { return local; }; return get(); } int main() { return 0; }",
+           "void acceptStatic<F>(F callback) requires outlives<F, static> {} int main() { int local = 1; auto get = [&local]() -> int& { return local; }; acceptStatic(get); return 0; }"}) {
+    const auto invalid = analyze(source);
+    expect(!invalid.semanticValid,
+           "fixed closure environments reject incompatible input, local escape and static storage promises");
+  }
+}
 } // namespace
 
 int main() {
@@ -690,5 +750,6 @@ int main() {
   testCStringRegions();
   testPrivateLifetimeInference();
   testLambdaLifetimeInference();
+  testLambdaLifetimeEnvironments();
   return failures == 0 ? 0 : 1;
 }

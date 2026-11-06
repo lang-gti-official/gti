@@ -978,6 +978,12 @@ public:
     for (const MirLambdaInstance &instance : program.lambdaInstances()) {
       output << "lambda @" << instance.id << " type=";
       type(instance.type);
+      output << " environment-regions=[";
+      for (std::size_t index = 0; index < instance.environmentLifetimes.size(); ++index) {
+        separator(index);
+        lifetime(instance.environmentLifetimes[index]);
+      }
+      output << ']';
       output << " returns=";
       type(instance.returnType);
       output << " lifetime-contract=";

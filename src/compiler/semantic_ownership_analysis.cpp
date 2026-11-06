@@ -5081,9 +5081,14 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
     -> std::optional<FunctionBorrowDependencySummary> {
   // Reuse ordinary typed body analysis for both callable and constructor
   // publication. Only normalized declaration-relative facts leave the worker.
-  if (!requestSession.completeReturnQueries)
+  if (!requestSession.completeReturnQueries ||
+      requestSession.completeReturnQueries->lifetimeContractRevision !=
+          requestSession.lifetimeContractRevision) {
     requestSession.completeReturnQueries =
         std::make_shared<CompleteReturnQueryState>();
+    requestSession.completeReturnQueries->lifetimeContractRevision =
+        requestSession.lifetimeContractRevision;
+  }
   const auto state = requestSession.completeReturnQueries;
   if (const auto found = state->entries.find(key);
       found != state->entries.end())
@@ -5147,6 +5152,8 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   worker->requestSession.executableLifetimes = requestSession.executableLifetimes;
   worker->requestSession.rawResultQueries = requestSession.rawResultQueries;
   worker->requestSession.completeReturnQueries = state;
+  worker->requestSession.lifetimeContractRevision =
+      requestSession.lifetimeContractRevision;
   const auto analysis =
       key.kind == InstanceAnalysisKind::Constructor
           ? worker->analyzeConstructorInstance(key.declaration, key.classTypes,
@@ -5206,7 +5213,8 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
     const FunctionInfo &function, std::span<const Parameter> parameters,
     ReceiverMutability receiverMutability,
     const SemanticBorrowDependencySet &complete,
-    std::vector<LifetimeBound> *requiredLifetimes)
+    std::vector<LifetimeBound> *requiredLifetimes,
+    std::span<const LambdaCaptureInfo> captures)
     -> std::optional<FunctionBorrowDependencySummary> {
   if (parameters.size() != function.parameterTypes.size())
     return std::nullopt;
@@ -5295,6 +5303,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
     SemanticType sourceType = SemanticType::Unknown;
     Lifetime sourceRegion;
     bool physicalCallerStorage = false;
+    bool sourceThroughExternalReference = false;
     AccessMode sourceAccess = AccessMode::ReadOnly;
     if (dependency.place.receiver) {
       if (dependency.place.root != 0 || function.ownerClass == 0 ||
@@ -5328,6 +5337,30 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
           sourceType = SemanticType(sourceType.arguments.front());
         }
       }
+      if (normalized.origin == BorrowOriginKind::None)
+        for (const auto &capture : captures) {
+          if (!capture.bindingSymbol || capture.bindingSymbol != dependency.place.root)
+            continue;
+          if (normalized.origin != BorrowOriginKind::None)
+            return std::nullopt;
+          normalized.origin = BorrowOriginKind::Receiver;
+          normalized.sourceFields.push_back(capture.bindingSymbol);
+          sourceType = capture.type;
+          sourceRegion = function.lifetimeContract.receiver;
+          physicalCallerStorage = receiverMutability != ReceiverMutability::Consuming;
+          sourceAccess = receiverAllowsMutation(receiverMutability)
+                             ? AccessMode::Mutable : AccessMode::ReadOnly;
+          if (sourceType.kind == SemanticType::Reference) {
+            if (sourceType.arguments.size() != 1)
+              return std::nullopt;
+            sourceRegion = sourceType.referenceLifetime;
+            sourceAccess = sourceType.referenceAccess;
+            sourceThroughExternalReference = true;
+            sourceType = SemanticType(sourceType.arguments.front());
+          } else if (isBorrowingCapture(capture.mode)) {
+            return std::nullopt; // Borrowed capture storage must be an exact reference.
+          }
+        }
       // Global or static storage outlives every caller: the result depends
       // on that exact static place, as a legacy Global origin does.
       if (normalized.origin == BorrowOriginKind::None)
@@ -5376,7 +5409,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
       }
       parent = loan->parent;
     }
-    bool externalReferent = false;
+    bool externalReferent = sourceThroughExternalReference;
     for (const auto &projection : selectedPlace.projections) {
       // A class's checked pointee accessor (an owning handle's operator*)
       // reaches storage that class owns: the path ends at the handle, whose
@@ -6955,9 +6988,10 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
 }
 
 auto SemanticVisitor::Impl::refreshDeclaredLifetimeBorrowSummary(
-    FunctionInfo &function) const -> void {
+    FunctionInfo &function, bool includeInferred) const -> void {
   if (!function.lifetimeContract.valid() ||
-      function.lifetimeContract.origin == LifetimeContractOrigin::BodyInferred ||
+      (!includeInferred &&
+       function.lifetimeContract.origin == LifetimeContractOrigin::BodyInferred) ||
       function.returnType.kind != SemanticType::Reference ||
       function.intrinsic != IntrinsicKind::None)
     return;

@@ -34,6 +34,7 @@
     "embedding_header_cpp20_oracle",
     "layout_query_native_boundary",
     "layout_query_pipeline",
+    "lifetime_native",
     "llvm_admission",
     "llvm_atomic_contracts",
     "llvm_atomic_execution",

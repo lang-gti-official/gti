@@ -1053,19 +1053,14 @@ concreteMirTypeTraits(const MirProgram &program, const SemanticType &type,
   }
   if (type.kind != SemanticType::Lambda)
     return semanticTraits(type);
-  const auto lambda = std::find_if(program.lambdaInstances().begin(),
-                                   program.lambdaInstances().end(),
-                                   [&](const MirLambdaInstance &candidate) {
-                                     return candidate.type == type;
-                                   });
-  if (lambda == program.lambdaInstances().end() || !type.hasLambdaShape() ||
-      !std::equal(lambda->captureTypes.begin(), lambda->captureTypes.end(),
-                  type.lambdaCaptureTypes().begin(),
-                  type.lambdaCaptureTypes().end()))
+  const auto captures = mirLambdaCaptureTypes(program, type);
+  if (!captures || !type.hasLambdaShape() ||
+      !std::equal(captures->begin(), captures->end(),
+                  type.lambdaCaptureTypes().begin(), type.lambdaCaptureTypes().end()))
     return std::nullopt;
   SemanticTypeTraits traits;
   traits.relocation = mirTypeRelocationKind(program, type);
-  for (const SemanticType &captureType : lambda->captureTypes) {
+  for (const SemanticType &captureType : *captures) {
     const auto capture = concreteMirTypeTraits(program, captureType, depth + 1);
     if (!capture)
       return std::nullopt;
@@ -3539,11 +3534,17 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
               instruction.lambdaTarget
                   ? program.findLambda(*instruction.lambdaTarget)
                   : nullptr;
+          const auto environment = lambda
+              ? mirLambdaLifetimeView(*lambda, instruction.info.type) : std::nullopt;
+          std::vector<SemanticType> actualCaptures;
+          if (environment)
+            actualCaptures.assign(instruction.info.type.lambdaCaptureTypes().begin(),
+                                   instruction.info.type.lambdaCaptureTypes().end());
           const bool exactCaptures =
               lambda != nullptr &&
               instruction.info.type.kind == SemanticType::Lambda &&
-              lambda->type == instruction.info.type &&
-              instruction.closureCaptureTypes == lambda->captureTypes &&
+              environment.has_value() &&
+              instruction.closureCaptureTypes == actualCaptures &&
               instruction.closureCaptureModes == lambda->captureModes &&
               instruction.operands.size() == lambda->captureTypes.size();
           if (!exactCaptures) {
@@ -3557,7 +3558,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                lambda != nullptr && index < instruction.operands.size();
                ++index) {
             const MirOperand &capture = instruction.operands[index];
-            const bool exactType = capture.type == lambda->captureTypes[index];
+            const bool exactType = capture.type == actualCaptures[index];
             const auto mode = lambda->captureModes[index];
             const auto *place = body.findPlace(capture.place);
             const auto *loan = body.findLoan(capture.loan);
@@ -3601,11 +3602,11 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                   MirLoanDependency{
                       .source = instruction.operands[index].place,
                       .designatedFields = {lambda->captureSymbols[index]},
-                      .access = lambda->captureTypes[index].referenceAccess});
+                      .access = actualCaptures[index].referenceAccess});
               continue;
             }
             const auto paths = findStoredCarrierReferences(
-                program, lambda->captureTypes[index]);
+                program, actualCaptures[index]);
             if (paths.empty())
               continue;
             auto inputs = dependencySources(
@@ -3939,7 +3940,18 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                   "; target origin " +
                   std::to_string(static_cast<int>(target->returnBorrowOrigin)) +
                   ", parameter " +
-                  std::to_string(target->returnBorrowParameter) + ")",
+                  std::to_string(target->returnBorrowParameter) +
+                  (instruction.borrowArguments != target->returnBorrowParameters
+                       ? "; supplier parameters differ" : "") +
+                  (instruction.borrowFields != target->returnBorrowFields
+                       ? "; supplier fields differ" : "") +
+                  (instruction.borrowAccess != target->returnBorrowAccess
+                       ? "; access differs" : "") +
+                  (instruction.borrowPlace != target->returnBorrowPlace
+                       ? "; supplier place differs" : "") +
+                  (instruction.restoresReferenceResult != target->restoresReferenceResult ||
+                           instruction.restoredBorrowFields != target->restoredBorrowFields
+                       ? "; restored result differs" : "") + ")",
               block.id, instruction.id);
         }
         if (!mirLifetimeParameterTypesMatch(
@@ -13597,7 +13609,12 @@ using CompleteBorrowCallSummaryLookup =
   result.parameterTypes = lambda.parameterTypes;
   result.lifetimeContract = lambda.lifetimeContract;
   result.parameterBindings = lambda.parameterBindings;
-  result.staticMember = true;
+  result.staticMember = false;
+  result.receiverMutability = lambda.capability == CallableInvocationCapability::Once
+      ? ReceiverMutability::Consuming
+      : lambda.capability == CallableInvocationCapability::Mutable
+          ? ReceiverMutability::Mutable : ReceiverMutability::ReadOnly;
+  result.body.kind = MirBodyKind::Lambda;
   result.returnBorrowOrigin = lambda.returnBorrowOrigin;
   result.returnBorrowParameter = lambda.returnBorrowParameter;
   result.returnBorrowAccess = lambda.returnBorrowAccess;
@@ -14011,7 +14028,8 @@ struct CompleteBorrowSourcePath {
 [[nodiscard]] std::optional<CompleteBorrowSourcePath>
 completeBorrowSourcePath(const MirProgram &program,
                          const MirFunctionInstance &function,
-                         const BorrowedFieldOrigin &mapping);
+                         const BorrowedFieldOrigin &mapping,
+                         const SemanticType *receiverType = nullptr);
 
 [[nodiscard]] CompleteBorrowFlow reconstructCompleteBorrowFlow(
     const MirProgram &program, const MirBody &body, std::size_t owner,
@@ -14756,7 +14774,11 @@ completeBorrowSourcePath(const MirProgram &program,
     };
     for (std::size_t index = 0; index < summary.dependencies.size(); ++index) {
       const auto &mapping = summary.dependencies[index];
-      const auto path = completeBorrowSourcePath(program, target, mapping);
+      const auto *receiverType = instruction.receiver ? &instruction.receiver->type : nullptr;
+      if (receiverType && receiverType->kind == SemanticType::Reference &&
+          receiverType->arguments.size() == 1)
+        receiverType = &receiverType->arguments.front();
+      const auto path = completeBorrowSourcePath(program, target, mapping, receiverType);
       if (!path || path->externalReferences > 1)
         continue;
       if (mapping.origin == BorrowOriginKind::Global) {
@@ -15573,7 +15595,8 @@ completeBorrowSourcePath(const MirProgram &program,
 [[nodiscard]] std::optional<CompleteBorrowSourcePath>
 completeBorrowSourcePath(const MirProgram &program,
                          const MirFunctionInstance &function,
-                         const BorrowedFieldOrigin &mapping) {
+                         const BorrowedFieldOrigin &mapping,
+                         const SemanticType *receiverType) {
   SemanticType type = SemanticType::Unknown;
   bool physicalCallerStorage = false;
   CompleteBorrowSourcePath source;
@@ -15587,19 +15610,22 @@ completeBorrowSourcePath(const MirProgram &program,
       type = SemanticType(type.arguments.front());
     }
   } else if (mapping.origin == BorrowOriginKind::Receiver) {
-    const auto *owner =
-        function.owner ? program.findClassInstance(*function.owner) : nullptr;
-    if (!owner || function.staticMember || mapping.parameter != 0)
-      return std::nullopt;
-    type = function.ownerType == SemanticType::Unknown ? owner->type : function.ownerType;
-    const auto view = mirClassLifetimeView(program, type);
-    if (!view || view->instance != owner)
-      return std::nullopt;
-    physicalCallerStorage =
-        function.receiverMutability != ReceiverMutability::Consuming;
+    if (function.body.kind == MirBodyKind::Lambda) {
+      const auto *lambda = program.findLambda(function.id);
+      if (!lambda || mapping.parameter) return std::nullopt;
+      type = receiverType ? *receiverType : lambda->type;
+      if (!mirLambdaLifetimeView(*lambda, type)) return std::nullopt;
+    } else {
+      const auto *owner = function.owner ? program.findClassInstance(*function.owner) : nullptr;
+      if (!owner || function.staticMember || mapping.parameter != 0)
+        return std::nullopt;
+      type = function.ownerType == SemanticType::Unknown ? owner->type : function.ownerType;
+      const auto view = mirClassLifetimeView(program, type);
+      if (!view || view->instance != owner) return std::nullopt;
+    }
+    physicalCallerStorage = function.receiverMutability != ReceiverMutability::Consuming;
     source.access = receiverAllowsMutation(function.receiverMutability)
-                        ? AccessMode::Mutable
-                        : AccessMode::ReadOnly;
+                        ? AccessMode::Mutable : AccessMode::ReadOnly;
   } else if (mapping.origin == BorrowOriginKind::Global) {
     // Static storage outlives every caller; its program storage place names
     // the exact type and mutability the selected path starts from.
@@ -15637,7 +15663,17 @@ completeBorrowSourcePath(const MirProgram &program,
     if (!symbol)
       return std::nullopt;
     SemanticType field = SemanticType::Unknown;
-    if (const auto view = mirEnumLifetimeView(program, type); view && view->payload) {
+    if (type.kind == SemanticType::Lambda && function.body.kind == MirBodyKind::Lambda) {
+      const auto *lambda = program.findLambda(function.id);
+      const auto view = lambda ? mirLambdaLifetimeView(*lambda, type) : std::nullopt;
+      if (!view || lambda->captureSymbols.size() != lambda->captureTypes.size())
+        return std::nullopt;
+      for (std::size_t index = 0; index < lambda->captureSymbols.size(); ++index)
+        if (lambda->captureSymbols[index] == symbol) {
+          if (field != SemanticType::Unknown) return std::nullopt;
+          field = type.lambdaCaptureTypes()[index];
+        }
+    } else if (const auto view = mirEnumLifetimeView(program, type); view && view->payload) {
       const auto *enumeration = view->payload;
       for (std::size_t alternative = 0;
            alternative < enumeration->variants.size(); ++alternative) {
@@ -15698,13 +15734,13 @@ completeBorrowSourcePath(const MirProgram &program,
       function.lifetimeContract.origin == LifetimeContractOrigin::BodyInferred ||
       function.returnType.kind != SemanticType::Reference ||
       !mapping.resultFields.empty() || !mapping.resultConditions.empty() ||
-      !mapping.sourceFields.empty() || !mapping.sourceConditions.empty() ||
+      !mapping.sourceConditions.empty() ||
       mapping.globalRoot || mapping.access != function.returnType.referenceAccess)
     return false;
   Lifetime source;
   AccessMode access = AccessMode::ReadOnly;
   if (mapping.origin == BorrowOriginKind::Argument) {
-    if (mapping.parameter >= function.parameterTypes.size())
+    if (!mapping.sourceFields.empty() || mapping.parameter >= function.parameterTypes.size())
       return false;
     const auto &parameter = function.parameterTypes[mapping.parameter];
     if (parameter.kind != SemanticType::Reference || parameter.arguments.size() != 1)
@@ -15712,11 +15748,26 @@ completeBorrowSourcePath(const MirProgram &program,
     source = parameter.referenceLifetime;
     access = parameter.referenceAccess;
   } else if (mapping.origin == BorrowOriginKind::Receiver) {
-    if (!function.owner || function.staticMember || mapping.parameter)
-      return false;
-    source = function.lifetimeContract.receiver;
-    access = receiverAllowsMutation(function.receiverMutability)
-                 ? AccessMode::Mutable : AccessMode::ReadOnly;
+    if (function.body.kind == MirBodyKind::Lambda) {
+      const auto *lambda = program.findLambda(function.id);
+      if (!lambda || mapping.parameter || mapping.sourceFields.size() != 1 ||
+          lambda->captureSymbols.size() != lambda->captureTypes.size()) return false;
+      const auto found = std::find(lambda->captureSymbols.begin(), lambda->captureSymbols.end(),
+                                   mapping.sourceFields.front());
+      if (found == lambda->captureSymbols.end()) return false;
+      const auto &capture = lambda->captureTypes[found - lambda->captureSymbols.begin()];
+      source = capture.kind == SemanticType::Reference ? capture.referenceLifetime
+                                                      : function.lifetimeContract.receiver;
+      access = capture.kind == SemanticType::Reference ? capture.referenceAccess
+          : receiverAllowsMutation(function.receiverMutability) ? AccessMode::Mutable
+                                                               : AccessMode::ReadOnly;
+    } else {
+      if (!function.owner || function.staticMember || mapping.parameter ||
+          !mapping.sourceFields.empty()) return false;
+      source = function.lifetimeContract.receiver;
+      access = receiverAllowsMutation(function.receiverMutability)
+                   ? AccessMode::Mutable : AccessMode::ReadOnly;
+    }
   } else {
     return false;
   }
@@ -15827,6 +15878,15 @@ normalizedCompleteReturnBorrow(const MirProgram &program,
       mapping.origin = BorrowOriginKind::Argument;
       mapping.parameter =
           std::distance(function.parameterBindings.begin(), formal);
+    } else if (source.root == MirPlaceRootKind::Symbol && source.capture &&
+               function.body.kind == MirBodyKind::Lambda) {
+      const auto *lambda = program.findLambda(function.id);
+      if (!lambda || source.capture > lambda->captureSymbols.size() ||
+          source.capture > lambda->captureTypes.size() ||
+          lambda->captureSymbols[source.capture - 1] != source.symbol)
+        return std::nullopt;
+      mapping.origin = BorrowOriginKind::Receiver;
+      mapping.sourceFields.push_back(source.symbol);
     } else if (source.root == MirPlaceRootKind::Symbol && source.symbol != 0 &&
                std::any_of(body.places.begin(), body.places.end(),
                            [&](const MirPlace &place) {

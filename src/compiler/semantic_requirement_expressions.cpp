@@ -178,6 +178,7 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
             *requestSession.programConcreteEffects);
   if (const auto &queries = requestSession.completeReturnQueries) {
     auto copy = std::make_shared<CompleteReturnQueryState>();
+    copy->lifetimeContractRevision = queries->lifetimeContractRevision;
     copy->depth = queries->depth;
     copy->discovered = queries->discovered;
     copy->completed = queries->completed;

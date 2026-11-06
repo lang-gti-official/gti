@@ -752,10 +752,18 @@ SemanticModel::ownerlessTextContractProof(
 
 std::optional<SemanticNoNormalBorrowResultProof>
 SemanticModel::noNormalBorrowResultProof(const Call &call) const {
-  const auto *selected = findCall(call);
-  if (!selected || !selected->noNormalBorrowResult ||
-      selected->intrinsic != IntrinsicKind::None || !selected->function ||
-      selected->dispatch != CallDispatch::Static || !selected->neverReturns)
+  if (const auto *selected = findCall(call)) {
+    if (!selected->noNormalBorrowResult ||
+        selected->intrinsic != IntrinsicKind::None || !selected->function ||
+        selected->dispatch != CallDispatch::Static || !selected->neverReturns ||
+        findLambdaCall(call))
+      return std::nullopt;
+    return SemanticNoNormalBorrowResultProof(call, *selected,
+                                             analysisSeal().programSnapshot);
+  }
+  const auto *selected = findLambdaCall(call);
+  if (!selected || !selected->lambda || !selected->noNormalBorrowResult ||
+      !selected->neverReturns)
     return std::nullopt;
   return SemanticNoNormalBorrowResultProof(call, *selected,
                                            analysisSeal().programSnapshot);

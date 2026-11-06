@@ -1,5 +1,6 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
+#include "gti/lifetime_requirements.h"
 #include "gti/nominal_variance.h"
 
 #include <algorithm>
@@ -397,20 +398,17 @@ auto SemanticVisitor::Impl::inferNominalVariances() -> void {
     auto selectedPrimary = primary.lifetimeContract;
     for (auto &bound : selectedPrimary.typeBounds)
       bound.type = substituteType(bound.type, substitution);
-    std::vector<AppliedConceptRequirement> assumptions;
-    for (const auto bound : selectedPrimary.bounds)
-      assumptions.push_back({.lifetimeBound = bound});
-    for (const auto &bound : selectedPrimary.typeBounds)
-      assumptions.push_back({.lifetimeBound = LifetimeBound{{}, bound.region},
-                             .outlivesType = bound.type});
-    requirementScopes.push_back(std::move(assumptions));
-    bool compatible = selectedPrimary.valid();
-    for (const auto bound : owner.lifetimeContract.bounds)
-      compatible = !lifetimeRequirementFailure({.lifetimeBound = bound}) && compatible;
-    for (const auto &bound : owner.lifetimeContract.typeBounds)
-      compatible = !lifetimeRequirementFailure(
-          {.lifetimeBound = LifetimeBound{{}, bound.region}, .outlivesType = bound.type}) && compatible;
-    requirementScopes.pop_back();
+    const bool compatible = selectedPrimary.valid() &&
+        visitLifetimeAssumptionCases(selectedPrimary, [&](const auto &assumptions) {
+          LifetimeInferenceConstraints proof(lifetimeBoundsForContract(assumptions));
+          for (const auto bound : owner.lifetimeContract.bounds)
+            if (!proof.proves(bound.longer, bound.shorter))
+              return false;
+          for (const auto &bound : owner.lifetimeContract.typeBounds)
+            if (!proveLifetimeTypeOutlives(bound.type, bound.region, assumptions, proof))
+              return false;
+          return true;
+        }).proof == LifetimeFormulaProof::Proven;
     if (!compatible) {
       owner.lifetimeContract.complete = false;
       report(owner.name,

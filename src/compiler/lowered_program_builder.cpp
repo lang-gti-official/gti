@@ -1549,6 +1549,7 @@ private:
     const HirLambda &source = hir.lambdaInstances()[index];
     const MirLambdaInstance &lowered = mir.lambdaInstances()[index];
     if (source.id != lowered.id || source.declaration != lowered.declaration ||
+        source.environmentLifetimes != lowered.environmentLifetimes ||
         source.type != lowered.type ||
         source.returnType != lowered.returnType ||
         source.parameterTypes != lowered.parameterTypes ||
@@ -2311,6 +2312,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     LoweredLambdaInstance loweredLambda{
         .id = instance.id,
         .declaration = instance.declaration,
+        .environmentLifetimes = instance.environmentLifetimes,
         .type = instance.type,
         .returnType = instance.returnType,
         .lifetimeContract = instance.lifetimeContract,

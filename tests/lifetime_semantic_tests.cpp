@@ -213,6 +213,32 @@ public:
 };
 int main() { Holder<int> holder{7}; return holder.get() - 7; }
 )gti", true);
+  check("owned-generic-value-has-local-validity", R"gti(
+int observe<T, lifetime a>(T&<a> value) requires outlives<T, a> { return 7; }
+int inspect<T>(T value) { return observe(value); }
+int main() { return inspect(42) - 7; }
+)gti", true);
+  check("owned-generic-receiver-has-local-validity", R"gti(
+class Box<T> {
+  T value;
+public:
+  Box(T input) : value(input) {}
+  int inspect() { return 7; }
+};
+int inspect<T>(Box<T> value) { return value.inspect(); }
+int main() { Box<int> box{42}; return inspect(box) - 7; }
+)gti", true);
+  check("local-generic-validity-does-not-imply-static", R"gti(
+int require_static<T>(T& value) requires outlives<T, static> { return 7; }
+int inspect<T>(T value) { return require_static(value); }
+)gti", false, "GTI-S2127");
+  check("local-generic-validity-does-not-escape", R"gti(
+int observe<T, lifetime a>(T&<a> value) requires outlives<T, a> { return 7; }
+T&<a> bad<T, lifetime a>(T value, T&<a> outside) {
+  observe(value);
+  return value;
+}
+)gti", false);
   check("generic-payload-reference-alias", R"gti(
 enum State<T> { left(T item), right(T item) };
 T&<a> get<T, lifetime a>(State<T>&<a> state) {

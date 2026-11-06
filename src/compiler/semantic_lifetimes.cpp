@@ -257,9 +257,9 @@ auto SemanticVisitor::Impl::normalizeFunctionLifetimeContract(
 }
 
 auto SemanticVisitor::Impl::implicitSyntaxLifetime(
-    const Token &site, std::size_t slot, std::string_view name) const -> Lifetime {
-  auto &parameters = lifetimeBinders[lifetimeSyntaxKey(
-      site, std::numeric_limits<std::size_t>::max())];
+    const Token &site, std::size_t slot, std::string_view name,
+    std::size_t identity) const -> Lifetime {
+  auto &parameters = lifetimeBinders[lifetimeSyntaxKey(site, identity)];
   if (parameters.size() <= slot)
     parameters.resize(slot + 1);
   auto &parameter = parameters[slot];
@@ -624,6 +624,13 @@ auto SemanticVisitor::Impl::lifetimeOfOriginPlace(
         (symbol->kind == SymbolKind::GlobalVariable || symbol->staticMember))
       region = Lifetime::staticLifetime();
   }
+  if (!place.receiver && currentLambdaReturn)
+    for (const auto &capture : currentLambdaReturn->captures)
+      if (capture.bindingSymbol && capture.bindingSymbol == place.root) {
+        type = capture.type;
+        region = currentLambdaReturn->lifetimeContract.receiver;
+        break;
+      }
   if (!place.receiver)
     for (const auto &[symbol, declared] : loanFlow.lifetimeInputTypes)
       if (symbol == place.root) {
@@ -1190,6 +1197,13 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
     std::vector<LifetimeBound> &values; std::size_t size;
     ~Restore() { values.resize(size); }
   } restore{loanFlow.lifetimeObligations, previous};
+  const auto previousOrigins = loanFlow.lifetimeOrigins.size();
+  loanFlow.lifetimeOrigins.insert(loanFlow.lifetimeOrigins.end(),
+                                  application.origins.begin(), application.origins.end());
+  struct RestoreOrigins {
+    std::vector<SemanticLifetimeOrigin> &values; std::size_t size;
+    ~RestoreOrigins() { values.resize(size); }
+  } restoreOrigins{loanFlow.lifetimeOrigins, previousOrigins};
   auto requirements = function.requirements;
   for (auto &requirement : requirements) {
     for (auto &type : requirement.arguments)
@@ -1301,6 +1315,18 @@ auto SemanticVisitor::Impl::proveLifetimeTypeOutlives(
     if (type.kind == SemanticType::Reference &&
         !constraints.proves(type.referenceLifetime, region))
       return false;
+    if (type.kind == SemanticType::Lambda) {
+      const auto *lambda = semanticModel.findLambda(type.lambdaId);
+      if (!type.hasLambdaShape() || !lambda ||
+          lambda->captures.size() != type.lambdaCaptureTypes().size())
+        return false;
+      // A closure stores its captures. Per-invocation signature binders and
+      // ambient slots used only in that signature are not stored borrows.
+      for (const auto &capture : type.lambdaCaptureTypes())
+        if (!self(self, capture))
+          return false;
+      return true;
+    }
     if (type.kind != SemanticType::Class && type.kind != SemanticType::Enum)
       for (const auto lifetime : type.lifetimeArguments)
         if (!constraints.proves(lifetime, region))
@@ -1405,6 +1431,23 @@ auto SemanticVisitor::Impl::lifetimeRequirementFailure(
     auto explicitContract = *assumptionCase;
     explicitContract.bounds = assumptions.regions;
     explicitContract.typeBounds = assumptions.types;
+    // A checked local storage witness establishes its exact value type for
+    // that local borrow. In particular, borrowing an owned opaque T does not
+    // require the public caller to promise T:static. These facts remain body
+    // local: the local anchor cannot outlive a universal result region, and
+    // ordinary availability, loan endpoints and cleanup still prove the use.
+    for (const auto &origin : loanFlow.lifetimeOrigins) {
+      if (origin.region.kind != Lifetime::Kind::Local || !origin.source)
+        continue;
+      auto type = semanticModel.typeOf(*origin.source);
+      if (type.kind == SemanticType::Unknown)
+        continue;
+      appendUnique(explicitContract.typeBounds,
+                   LifetimeTypeBound{type, origin.region});
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+        appendUnique(explicitContract.typeBounds,
+                     LifetimeTypeBound{type.arguments.front(), origin.region});
+    }
     satisfied = proveLifetimeTypeOutlives(*requirement.outlivesType,
         requested.shorter, explicitContract, constraints);
   }

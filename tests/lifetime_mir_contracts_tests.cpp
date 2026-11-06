@@ -1,6 +1,7 @@
 #include "../src/compiler/mir_lifetimes.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
+#include "gti/mir_printer.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -104,6 +105,8 @@ int main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     for (const auto &error : verifyMirProgram(lambda.mir).errors)
       std::cerr << error.message << '\n';
+    for (const auto &function : lambda.mir.functionInstances())
+      std::cerr << MirPrinter{}.print(function.body);
     expect(false, "a local lambda must preserve both inferred result suppliers in MIR");
   }
   expect(lambda.mir.lambdaInstances().size() == 1 &&

@@ -1,4 +1,5 @@
 #include "mir_lifetimes.h"
+#include "mir_verification_queries.h"
 #include "gti/lifetime_types.h"
 #include "gti/lifetime_requirements.h"
 #include "gti/callable_lifetimes.h"
@@ -17,6 +18,52 @@ lowerMirLifetimeApplication(const HirLifetimeApplication &source) {
     result.origins.push_back({.region = origin.region,
                               .key = origin.place,
                               .source = origin.source});
+  return result;
+}
+
+std::optional<MirLambdaLifetimeView> mirLambdaLifetimeView(
+    const MirLambdaInstance &instance, const SemanticType &type) {
+  if (type.kind != SemanticType::Lambda ||
+      instance.type.kind != SemanticType::Lambda ||
+      type.lambdaId != instance.declaration ||
+      instance.type.lambdaId != instance.declaration ||
+      instance.type.lifetimeArguments != instance.environmentLifetimes ||
+      type.lifetimeArguments.size() != instance.environmentLifetimes.size() ||
+      !instance.type.hasLambdaShape() ||
+      instance.type.lambdaReturnType() == nullptr ||
+      *instance.type.lambdaReturnType() != instance.returnType ||
+      !std::equal(instance.type.lambdaParameterTypes().begin(),
+                  instance.type.lambdaParameterTypes().end(),
+                  instance.parameterTypes.begin(), instance.parameterTypes.end()) ||
+      !std::equal(instance.type.lambdaCaptureTypes().begin(),
+                  instance.type.lambdaCaptureTypes().end(),
+                  instance.captureTypes.begin(), instance.captureTypes.end()))
+    return std::nullopt;
+  for (const auto region : instance.environmentLifetimes)
+    if (region.kind != Lifetime::Kind::Parameter ||
+        std::find(instance.lifetimeContract.parameters.begin(),
+                  instance.lifetimeContract.parameters.end(), region) ==
+            instance.lifetimeContract.parameters.end())
+      return std::nullopt;
+  const auto bindings = matchUniversalTypeLifetimes(
+      instance.type, type, instance.environmentLifetimes);
+  return bindings ? std::optional(MirLambdaLifetimeView{&instance, *bindings})
+                  : std::nullopt;
+}
+
+std::optional<std::vector<SemanticType>> mirLambdaCaptureTypes(
+    const MirProgram &program, const SemanticType &type) {
+  std::optional<std::vector<SemanticType>> result;
+  for (const auto &instance : program.lambdaInstances()) {
+    const auto view = mirLambdaLifetimeView(instance, type);
+    if (!view) continue;
+    // Matching already validates every repeated environment occurrence and
+    // scoped invocation binder. Keep the caller's alpha-renamed nested types.
+    std::vector<SemanticType> captures(type.lambdaCaptureTypes().begin(),
+                                       type.lambdaCaptureTypes().end());
+    if (result && *result != captures) return std::nullopt;
+    result = std::move(captures);
+  }
   return result;
 }
 
@@ -461,7 +508,8 @@ bool scopedDeclarationType(const SemanticType &type,
   if (depth >= 256 ||
       (!type.quantifiedLifetimes.empty() &&
        type.kind != SemanticType::FunctionSignature &&
-       type.kind != SemanticType::FunctionItem) ||
+       type.kind != SemanticType::FunctionItem &&
+       type.kind != SemanticType::Lambda) ||
       (type.referenceLifetime != Lifetime{} &&
        type.kind != SemanticType::Reference))
     return false;
@@ -723,7 +771,14 @@ expandedLifetimeAssumptions(const MirProgram &program,
           }
       continue;
     }
-    if (type.kind == SemanticType::FunctionSignature) {
+    if (type.kind == SemanticType::Lambda) {
+      const auto captures = mirLambdaCaptureTypes(program, type);
+      if (!captures) return std::nullopt;
+      for (const auto &capture : *captures) addType(capture, bound.region);
+      continue;
+    }
+    if (type.kind == SemanticType::FunctionSignature ||
+        type.kind == SemanticType::FunctionItem) {
       for (const auto region : freeTypeLifetimes(type))
         if (!addRegion(region, bound.region))
           return std::nullopt;
@@ -765,7 +820,8 @@ bool mirTypeOutlives(const MirProgram &program, const SemanticType &type,
   if (type.kind == SemanticType::Reference &&
       !graph.proves(type.referenceLifetime, region))
     return false;
-  if (type.kind != SemanticType::Class && type.kind != SemanticType::Enum)
+  if (type.kind != SemanticType::Class && type.kind != SemanticType::Enum &&
+      type.kind != SemanticType::Lambda)
     for (const auto lifetime : type.lifetimeArguments)
       if (!graph.proves(lifetime, region))
         return false;
@@ -802,7 +858,16 @@ bool mirTypeOutlives(const MirProgram &program, const SemanticType &type,
         }
     return true;
   }
-  if (type.kind == SemanticType::FunctionSignature &&
+  if (type.kind == SemanticType::Lambda) {
+    const auto captures = mirLambdaCaptureTypes(program, type);
+    if (!captures) return false;
+    for (const auto &capture : *captures)
+      if (!mirTypeOutlives(program, capture, region, contract, graph, pending))
+        return false;
+    return true;
+  }
+  if ((type.kind == SemanticType::FunctionSignature ||
+       type.kind == SemanticType::FunctionItem) &&
       !type.quantifiedLifetimes.empty()) {
     for (const auto lifetime : freeTypeLifetimes(type))
       if (!graph.proves(lifetime, region))
@@ -833,6 +898,30 @@ bool satisfiesLifetimeRequirements(
         applyLifetime(node.bound.shorter, bindings), assumptions, graph, pending);
   });
   return proof.value_or(false);
+}
+
+LifetimeSignatureContract withLocalStorageLifetimeFacts(
+    const MirBody &body, LifetimeSignatureContract assumptions) {
+  const auto add = [&](const SemanticType &type, Lifetime region) {
+    const LifetimeTypeBound bound{type, region};
+    if (std::find(assumptions.typeBounds.begin(), assumptions.typeBounds.end(), bound) ==
+        assumptions.typeBounds.end())
+      assumptions.typeBounds.push_back(bound);
+  };
+  // Use only the independently resolved exact origin place. This is a
+  // body-local premise, not a declaration assumption or a promise that an
+  // opaque type outlives any caller-chosen region. Availability and lifetime
+  // verification remain responsible for every executable use of this place.
+  for (const auto &origin : body.lifetimeBody.origins) {
+    const auto *place = body.findPlace(origin.place);
+    if (origin.region.kind != Lifetime::Kind::Local || !place ||
+        place->foreignStorage || place->type.kind == SemanticType::Unknown)
+      continue;
+    add(place->type, origin.region);
+    if (place->type.kind == SemanticType::Reference && place->type.arguments.size() == 1)
+      add(place->type.arguments.front(), origin.region);
+  }
+  return assumptions;
 }
 
 } // namespace
@@ -1004,9 +1093,10 @@ verifyMirLifetimeBodyFactsForCase(const MirProgram &program, const MirBody &body
            "declaration contract");
     return result;
   }
+  const auto localAssumptions = withLocalStorageLifetimeFacts(body, contract);
   for (const auto &bound : facts.typeObligations) {
     std::vector<SemanticType> pending;
-    if (!mirTypeOutlives(program, bound.type, bound.region, contract, graph,
+    if (!mirTypeOutlives(program, bound.type, bound.region, localAssumptions, graph,
                          pending))
       reject("MIR body cannot prove an exact type-outlives obligation");
   }
@@ -1368,7 +1458,10 @@ private:
     return view ? view->instance : nullptr;
   }
 
-  Lifetime declaredPlaceRegion(const MirPlace &place) const {
+  Lifetime declaredPlaceRegion(const MirPlace &place,
+                               std::size_t depth = 0) const {
+    if (depth >= 256)
+      return {};
     const MirPlace *root = &place;
     if (!place.projections.empty()) {
       const auto found = std::find_if(
@@ -1393,6 +1486,40 @@ private:
     else if (root->root == MirPlaceRootKind::Symbol && root->symbol &&
              !program.findThreadLocalStorage(root->symbol))
       region = Lifetime::staticLifetime();
+    else if (root->root == MirPlaceRootKind::Value) {
+      // BorrowValue materializes a reference to physical payload storage.
+      // Its lifetime is the checked carrier's lifetime, not the payload
+      // value type's (possibly opaque) stored-reference inventory. Replay the
+      // exact extraction and selector; an arbitrary Value-root place is not
+      // evidence that the carrier supplies the borrow.
+      const MirReferenceSelection *selected = nullptr;
+      for (const auto &loan : body.loans)
+        if (loan.referenceSelection &&
+            loan.referenceSelection->kind == ReferenceSelectionKind::PhysicalPayload &&
+            loan.referenceSelection->value == root->value) {
+          const auto &candidate = *loan.referenceSelection;
+          const auto *source = mir_detail::physicalPayloadSelectionSource(
+              program, body, candidate);
+          if (!source || source->id != root->id ||
+              (selected && *selected != candidate))
+            return {};
+          selected = &candidate;
+        }
+      if (selected) {
+        const auto *carrier = body.findPlace(selected->carrier);
+        if (!carrier)
+          return {};
+        region = declaredPlaceRegion(*carrier, depth + 1);
+        if (!region.specified())
+          for (const auto &origin : body.lifetimeBody.origins)
+            if (origin.place == carrier->id ||
+                (carrier->key && origin.key.valid() && *carrier->key == origin.key)) {
+              if (region.specified() && region != origin.region)
+                return {};
+              region = origin.region;
+            }
+      }
+    }
     const auto dereference = [&] {
       if (type.kind != SemanticType::Reference || type.arguments.size() != 1)
         return false;
@@ -1575,6 +1702,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
   for (const auto bound : body.lifetimeBody.obligations)
     (void)graph.require(bound.longer, bound.shorter);
   const MirLifetimeRelations relations(program, body, *expanded, graph);
+  const auto localAssumptions = withLocalStorageLifetimeFacts(body, *expanded);
   const auto reject = [&](std::string message, MirBlockId block,
                           MirInstructionId instruction = 0) {
     result.errors.push_back({.bodyKind = body.kind,
@@ -1616,7 +1744,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
         const auto &application = instruction.lifetimeApplication;
         const auto *targetContract = appliedTargetContract(program, instruction);
         if (!targetContract || !satisfiesLifetimeRequirements(
-                program, *targetContract, application.bindings, *expanded, graph)) {
+                program, *targetContract, application.bindings, localAssumptions, graph)) {
           reject("MIR call does not satisfy its exact target lifetime requirement formula",
                  block.id, instruction.id);
           continue;

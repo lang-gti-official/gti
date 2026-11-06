@@ -141,8 +141,8 @@ auto SemanticVisitor::Impl::validateLambdaLifetimeReturn(const ExprPtr &value) -
                           .staticMember = true};
   std::vector<LifetimeBound> required;
   const auto normalized = normalizedCompleteBorrow(
-      signature, context.declaration->parameters(), ReceiverMutability::ReadOnly, *complete,
-      loanFlow.collectingLifetimeContract ? &required : nullptr);
+      signature, context.declaration->parameters(), currentReceiverMutability, *complete,
+      loanFlow.collectingLifetimeContract ? &required : nullptr, context.captures);
   if (!normalized) {
     report(expressionToken(value),
            "Every possible owner returned by the lambda must satisfy its lifetime contract and preserve access and cleanup obligations.",
@@ -230,7 +230,7 @@ auto SemanticVisitor::Impl::inferPrivateLifetimeContracts() -> void {
         continue;
       FunctionInfo updated = function;
       updated.lifetimeContract = std::move(*inferred);
-      refreshDeclaredLifetimeBorrowSummary(updated);
+      refreshDeclaredLifetimeBorrowSummary(updated, true);
       semanticModel.record(*syntax, updated);
       if (auto *declaration = catalog.mutableCallable(*syntax))
         declaration->lifetimeContract = updated.lifetimeContract;
@@ -238,6 +238,7 @@ auto SemanticVisitor::Impl::inferPrivateLifetimeContracts() -> void {
         for (auto *candidate : selected->second)
           candidate->lifetimeContract = updated.lifetimeContract;
       publishFunctionBorrowSummary(updated, candidateIndex);
+      ++requestSession.lifetimeContractRevision;
       changed = true;
     }
   }

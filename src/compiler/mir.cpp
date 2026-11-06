@@ -10259,7 +10259,7 @@ bool validCallInputType(const SemanticType &source,
   if (kind != HirCallInputKind::Value) {
     return false;
   }
-  if (parameter == SemanticType::CString) {
+  if (parameter.kind == SemanticType::CString) {
     return source.kind == SemanticType::StringView ||
            source == SemanticType::NullPtr;
   }

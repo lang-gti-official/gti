@@ -1503,6 +1503,7 @@ private:
     bool complete = false;
   };
   struct CompleteReturnQueryState {
+    std::uint64_t lifetimeContractRevision = 0;
     std::unordered_map<InstanceAnalysisKey,
                        std::shared_ptr<CompleteReturnQuery>,
                        InstanceAnalysisKeyHash>
@@ -2435,7 +2436,8 @@ private:
                            std::span<const Parameter> parameters,
                            ReceiverMutability receiverMutability,
                            const SemanticBorrowDependencySet &complete,
-                           std::vector<LifetimeBound> *requiredLifetimes = nullptr);
+                           std::vector<LifetimeBound> *requiredLifetimes = nullptr,
+                           std::span<const LambdaCaptureInfo> captures = {});
   void recordCompleteConstructorBorrow(const ConstructorDecl &constructor);
   std::optional<FunctionBorrowDependencySummary>
   completeConstructorBorrow(const ResolvedConstructionInfo &construction,
@@ -3115,7 +3117,9 @@ private:
       bool borrowedReceiver = false) const;
   [[nodiscard]] Lifetime implicitSyntaxLifetime(const Token &site,
                                                std::size_t slot,
-                                               std::string_view name) const;
+                                               std::string_view name,
+                                               std::size_t identity =
+                                                   std::numeric_limits<std::size_t>::max()) const;
   [[nodiscard]] bool normalizeCallableLifetimeType(SemanticType &type,
                                                  const Token &site) const;
   [[nodiscard]] std::optional<SemanticType> constrainLifetimeType(
@@ -3166,7 +3170,8 @@ private:
                                                 bool diagnose = true);
   void recordReferenceLifetimeBinding(const SemanticType &reference,
                                       const ExprPtr &initializer);
-  void refreshDeclaredLifetimeBorrowSummary(FunctionInfo &function) const;
+  void refreshDeclaredLifetimeBorrowSummary(FunctionInfo &function,
+                                            bool includeInferred = false) const;
   [[nodiscard]] Lifetime implicitFunctionLifetime(const FunctionDecl &function,
                                                  std::size_t slot,
                                                  std::string_view name);
@@ -3701,6 +3706,7 @@ private:
     std::size_t parameter = 0;
     AccessMode access = AccessMode::ReadOnly;
     std::vector<SemanticType> parameterTypes;
+    std::vector<LambdaCaptureInfo> captures;
     LifetimeSignatureContract lifetimeContract;
     std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
     bool deferred = false;
@@ -7475,6 +7481,7 @@ private:
   struct RequestSessionContext {
     bool collectingPrivateLifetimeContracts = false;
     const Lambda *collectingLambdaLifetimeContract = nullptr;
+    std::uint64_t lifetimeContractRevision = 0;
     struct ExecutableLifetimeKey {
       InstanceAnalysisKey runtime;
       // Alpha-normalized bound uses preserve HRTB equality and scope. All

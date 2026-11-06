@@ -725,6 +725,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
     MirLambdaInstance lowered{
         .id = instance.id,
         .declaration = instance.declaration,
+        .environmentLifetimes = instance.environmentLifetimes,
         .type = instance.type,
         .returnType = instance.returnType,
         .parameterTypes = instance.parameterTypes,
