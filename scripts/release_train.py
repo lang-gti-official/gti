@@ -335,7 +335,10 @@ def amend_status(status: dict[str, Any], action: str, target: str, reason: str,
                  moment: datetime) -> dict[str, Any]:
     """The status after one action; idempotent for an action already recorded."""
     result = json.loads(json.dumps(validate_status(status)))
-    if action == "stable":
+    if action == "initialize":
+        if target or reason:
+            raise TrainError("release-status initialization takes no target or reason")
+    elif action == "stable":
         version_tuple(target)
         if target not in result["stable"]:
             result["stable"] = sorted(result["stable"] + [target], key=version_tuple)
@@ -379,21 +382,22 @@ def publish_status(action: str, target: str, reason: str, moment: datetime,
 
     A concurrent writer makes the push fail; the change is then re-applied on
     the newer status. The branch history is the audit log of every change."""
+    operation = f"{action} {target}".rstrip()
     for _ in range(attempts):
         status, tip = read_status()
         updated = amend_status(status, action, target, reason, moment)
         if updated == status and tip:
-            print(f"Release status already records {action} {target}")
+            print(f"Release status already records {operation}")
             return updated
         blob = run_git("hash-object", "-w", "--stdin", stdin=render_status(updated)).stdout.strip()
         tree = run_git("mktree", stdin=f"100644 blob {blob}\t{STATUS_FILE}\n").stdout.strip()
-        message = f"Record {action} {target}" + (f"\n\n{reason}\n" if reason else "\n")
+        message = f"Record {operation}" + (f"\n\n{reason}\n" if reason else "\n")
         command = ["commit-tree", tree, "-m", message] + (["-p", tip] if tip else [])
         commit = run_git(*command, env=bot_identity()).stdout.strip()
         pushed = run_git("push", "--porcelain", "origin",
                          f"{commit}:refs/heads/{STATUS_BRANCH}", check=False)
         if pushed.returncode == 0:
-            print(f"Release status records {action} {target} at {commit}")
+            print(f"Release status records {operation} at {commit}")
             return updated
     raise TrainError(f"could not update {STATUS_BRANCH} after {attempts} attempts")
 
@@ -1498,6 +1502,7 @@ def main(argv: list[str] | None = None) -> int:
     command("same-bytes", "beta", "stable", "version")
     command("stable-notes", "sha", "version", "tag", "soak", "soaked", "override", "beta", "notes")
     command("record-stable", "version")
+    command("initialize-status")
     command("rollback", "repository", "action", "target", "reason", "notes", "output")
     command("require-success", "results")
     command("sanitizer-source", "repository", "event", "ref", "commit", "output")
@@ -1577,6 +1582,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         elif name == "record-stable":
             publish_status("stable", arguments.version, "", now_utc())
+            return 0
+        elif name == "initialize-status":
+            publish_status("initialize", "", "", now_utc())
             return 0
         elif name == "rollback":
             check_repository(arguments.repository)

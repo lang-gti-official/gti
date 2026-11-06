@@ -642,6 +642,16 @@ branch, not a release asset, because GitHub release immutability locks a
 published release's assets. The installer reads it from
 `https://raw.githubusercontent.com/lang-gti-official/gti/release-status/release-status.json`.
 
+Beta publication first initializes this document with empty lists when the
+branch does not yet exist, so the first beta is installable before any stable
+promotion or rollback. The dedicated `beta.yml` status job runs current `main`
+orchestration after successful selection, including a no-build selection, and
+must succeed before packaging or publication. Initialization validates and
+preserves existing records; a concurrent writer is retried without force or
+history replacement. A malformed existing document fails rather than being
+reset. To recover a missing registry for an already published beta, dispatch
+`beta.yml` from `main`; no release or archive needs to be changed.
+
 `rollback.yml` is dispatch-only and runs behind the `stable` environment.
 `withdraw-beta` records the beta as withdrawn, so promotion never selects it,
 and edits its prerelease's title and notes. The prerelease stays as evidence:

@@ -537,7 +537,7 @@ def train_contract(root):
     # suite re-run (the cut's full-CI-verified parent, or the backport's own
     # suite, is the evidence).
     beta = jobs(beta_text)
-    assert list(beta) == ["select", "package", "publish"], list(beta)
+    assert list(beta) == ["select", "status", "package", "publish"], list(beta)
     assert "merge-shards" not in beta_text and "validation_checks.py shard" not in beta_text
     assert "check_ci_sanitizers" not in beta_text and "actions/cache/save@" not in beta_text
     header = beta_text.split("\njobs:\n", 1)[0]
@@ -547,10 +547,20 @@ def train_contract(root):
     assert set(re.findall(r"secrets\.([A-Za-z0-9_]+)", beta_text)) == set()
     for job, body in beta.items():
         writes = re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE)
-        assert writes == (["contents", "id-token", "attestations"] if job == "publish" else []), (job, writes)
+        expected = {"publish": ["contents", "id-token", "attestations"], "status": ["contents"]}
+        assert writes == expected.get(job, []), (job, writes)
     assert "if: github.repository == 'lang-gti-official/gti'" in beta["select"]
     assert "python3 tests/release_train_test.py" in beta["select"] and "select-beta" in beta["select"]
+    registry = beta["status"]
+    assert "needs: select" in registry and "ref: main" in registry
+    assert "release_train.py initialize-status" in registry
+    assert "outputs.build" not in registry and "if:" not in registry, \
+        "a no-build rerun also repairs a missing registry for a published beta"
+    assert "persist-credentials: false" not in registry, "initialization needs its scoped write token"
+    assert "gh release" not in registry and "git push" not in registry, \
+        "status writes use the validated, idempotent helper without editing releases"
     package = beta["package"]
+    assert "needs: [select, status]" in package, "missing registry stops packaging/publication"
     assert re.findall(r"\{os: [^}]*platform: ([a-z0-9-]+)", package) == ["linux-x64", "darwin-arm64"]
     assert "ubuntu-24.04-arm" not in beta_text and "linux-arm64}" not in beta_text
     assert package.count(CONFIGURE_RELEASE) == 1 and "bash scripts/configure_ci_toolchain.sh" in package
@@ -572,7 +582,7 @@ def train_contract(root):
     ordered(package, ["name: Build\n", "name: Test installed toolchain", "-DGTI_CHANNEL=stable"],
             "the archive comes from the validated stage")
     publish = beta["publish"]
-    assert "needs: [select, package]" in publish
+    assert "needs: [select, status, package]" in publish
     assert "group: gti-beta-publication\n      cancel-in-progress: false" in publish
     ordered(publish, ["release_train.py verify-assets", "release_train.py admit-beta",
                       "attest-build-provenance", "refs/tags/${GTI_BETA_TAG}", "release_train.py beta-notes",

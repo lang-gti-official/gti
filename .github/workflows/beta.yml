@@ -66,9 +66,26 @@ jobs:
           --repository "${GTI_REPOSITORY}" --ref "${GTI_REF}"
           --output "${GITHUB_OUTPUT}"
 
+  status:
+    name: Initialize the installer release registry
+    needs: select
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      # Use current orchestration even when packaging an older release cut.
+      # Run after successful selection even when no build is needed: a main
+      # dispatch can repair a missing registry for an already published beta.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Create missing release status without changing existing records
+        run: python3 scripts/release_train.py initialize-status
+
   package:
     name: Package ${{ matrix.platform }}
-    needs: select
+    needs: [select, status]
     if: needs.select.outputs.build == 'true'
     strategy:
       fail-fast: false
@@ -191,7 +208,7 @@ jobs:
 
   publish:
     name: Publish the beta prerelease
-    needs: [select, package]
+    needs: [select, status, package]
     if: needs.select.outputs.build == 'true'
     runs-on: ubuntu-24.04
     concurrency:
