@@ -354,6 +354,8 @@ area = "semantics-shared"
 risk = "shared"
 paths = [
   "include/gti/lifetime*.h",
+  "include/gti/callable_lifetimes.h",
+  "include/gti/nominal_variance.h",
   "include/gti/semantic*",
   "src/compiler/semantic_analyzer_impl.h",
   "src/compiler/semantic_model.cpp",
@@ -379,6 +381,7 @@ owners = [
   "lifetime_ir_metadata",
   "lifetime_hir_signatures",
   "lifetime_mir_contracts",
+  "lifetime_payload_conversions",
   "lifetime_native",
   "complete_borrow_summaries",
   "cleanup_bound_borrow",

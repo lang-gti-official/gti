@@ -356,6 +356,35 @@ int main() {
   }
   expect(retainedSelection.canGenerateCode(),
          "a stored reference must retain every supplier of an intermediate selected reference");
+  bool checkedSelectedStorage = false;
+  for (const auto &function : retainedSelection.mir.functionInstances())
+    for (const auto &loan : function.body.loans)
+      if (loan.kind == MirLoanKind::Stored && !loan.entry &&
+          loan.additionalDependencies.size() == 1) {
+        expect(loan.designatedFields.size() == 1 &&
+                   loan.additionalDependencies.front().designatedFields == loan.designatedFields,
+               "both selected origins must be published at the constructor's exact field");
+        checkedSelectedStorage = true;
+      }
+  expect(checkedSelectedStorage, "selected reference fixture must publish a composed stored loan");
+  for (const bool removeSupplier : {false, true}) {
+    auto brokenSelection = retainedSelection.mir;
+    bool changed = false;
+    for (const auto &immutable : brokenSelection.functionInstances()) {
+      auto &function = const_cast<MirFunctionInstance &>(immutable);
+      for (auto &loan : function.body.loans)
+        if (loan.kind == MirLoanKind::Stored && !loan.entry &&
+            loan.additionalDependencies.size() == 1) {
+          if (removeSupplier)
+            loan.additionalDependencies.clear();
+          else
+            loan.designatedFields.clear();
+          changed = true;
+        }
+    }
+    expect(changed && !verifyMirProgram(brokenSelection).valid(),
+           "a stored selection cannot lose its field mapping or one permitted supplier");
+  }
   auto wrongCopiedCarrier = copiedCarrier.mir;
   bool changedCopySource = false;
   for (const auto &immutable : wrongCopiedCarrier.functionInstances()) {

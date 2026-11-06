@@ -8,6 +8,7 @@ namespace lang {
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.collectingPrivateLifetimeContracts = false;
   requestSession.privateLifetimeDependencies.reset();
+  requestSession.privateConstexprPrerequisites.reset();
   requestSession.collectingLambdaLifetimeContract = nullptr;
   requestSession.lifetimeContractRevision = 0;
   requestSession.completeReturnQueries.reset();
@@ -326,7 +327,7 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
   for (const auto &owner : classes)
     for (const auto &[_, member] : owner.members)
       checkOverloads(member.symbol);
-  inferPrivateLifetimeContracts();
+  inferPrivateLifetimeContracts(declarations);
   resolveFunctionBorrowSummaries();
 }
 
@@ -14489,6 +14490,8 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
                             "Generated constant construction requires an "
                             "available verified MIR field schedule.");
   }
+  if (declaration && !constexprConstructorsAnalyzed.contains(declaration))
+    (void)ensurePrivateConstexprDefinition(declaration);
   if (declaration == nullptr || !declaration->isConstexpr() ||
       !constexprConstructorsAnalyzed.contains(declaration)) {
     return constexprFailure(
@@ -15518,6 +15521,8 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
             : "Call to non-constexpr function '" + declaration->name().lexeme +
                   "' cannot be evaluated during compilation.");
   }
+  if (!constexprDefinitionsAnalyzed.contains(declaration))
+    (void)ensurePrivateConstexprDefinition(declaration);
   if (!constexprDefinitionsAnalyzed.contains(declaration) ||
       !declaredBeforeCurrent(declaration)) {
     return constexprFailure(

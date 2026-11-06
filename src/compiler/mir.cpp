@@ -1,4 +1,5 @@
 #include "gti/mir.h"
+#include "gti/lifetime_types.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
@@ -10274,7 +10275,9 @@ bool constantMatchesType(const ConstantValue &constant,
 
 bool validCallInputType(const SemanticType &source,
                         const SemanticType &parameter, HirCallInputKind kind) {
-  if (source == parameter) {
+  if (source == parameter || sameLifetimeConversionShape(source, parameter)) {
+    // Body-local shape only. Program verification reconstructs the original
+    // source and proves every region conversion, even for an orphan stage.
     return true;
   }
   if (kind != HirCallInputKind::Value) {
@@ -11797,7 +11800,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                                  drop.binding == place->binding &&
                                  drop.place == place->id &&
                                  drop.initiallyActive &&
-                                 drop.dropType.type == input.info.type;
+                                 drop.dropType.type == place->type;
                         }) == 1;
       const bool exactSource =
           validOwnedValueInputType(input.info) && input.info.traits.copyable &&
@@ -11805,7 +11808,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
            input.info.type.kind == SemanticType::Class ||
            input.info.type.kind == SemanticType::Enum) &&
           operand.kind == MirOperandKind::Copy && place != nullptr &&
-          place->type == input.info.type &&
+          sameLifetimeConversionShape(place->type, input.info.type) &&
           (place->sourceValue == input.hirValue || entryPackElement) &&
           place->traits.copyable &&
           sameCallInputTraits(place->traits, input.info.traits);

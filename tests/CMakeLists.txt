@@ -1610,6 +1610,10 @@ add_test(NAME lifetime_hir_signatures COMMAND gti_lifetime_hir_signatures_tests)
 add_executable(gti_lifetime_mir_contracts_tests lifetime_mir_contracts_tests.cpp)
 target_link_libraries(gti_lifetime_mir_contracts_tests PRIVATE gti_compiler)
 add_test(NAME lifetime_mir_contracts COMMAND gti_lifetime_mir_contracts_tests)
+add_executable(gti_lifetime_payload_conversion_tests lifetime_payload_conversion_tests.cpp)
+target_link_libraries(gti_lifetime_payload_conversion_tests PRIVATE gti_compiler)
+add_test(NAME lifetime_payload_conversions COMMAND gti_lifetime_payload_conversion_tests
+  "${CMAKE_BINARY_DIR}/Testing/lifetime-payload-evidence")
 add_test(NAME lifetime_native
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lifetime_native_test.py"
     "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"

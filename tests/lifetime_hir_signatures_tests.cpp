@@ -31,11 +31,11 @@ struct family::Exact<int> {
 };
 int build<lifetime a, T>(T&<a> input) { Token<T> token{}; return 1; }
 int first<lifetime a>(int&<a> input) {
-  auto invoke = []() { return 1; };
+  auto invoke = []() -> int { return 1; };
   return invoke();
 }
 int second<lifetime b>(int&<b> input) {
-  auto invoke = []() { return 1; };
+  auto invoke = []() -> int { return 1; };
   return invoke();
 }
 int main() {

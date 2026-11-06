@@ -1261,22 +1261,22 @@ private:
                          .requiresActiveCleanup = true};
     }
     if (type.kind == SemanticType::Enum) {
-      const auto enumeration = std::find_if(
-          program.enumDeclarations().begin(), program.enumDeclarations().end(),
-          [&](const auto &candidate) { return candidate.type == type; });
-      if (enumeration == program.enumDeclarations().end() ||
-          !enumeration->payload)
+      const auto view = hirLifetimeInstanceView(program.enumDeclarations(), type);
+      const auto *enumeration = view ? view->instance : nullptr;
+      if (!enumeration || !enumeration->payload)
         return std::nullopt;
       MirDropType result{.type = type,
                          .requiresActiveCleanup =
                              enumeration->requiresActiveCleanup};
       for (const auto &variant : enumeration->enumerators) {
+        if (variant.payloadRequiresActiveCleanup.size() != variant.payloadTypes.size())
+          return std::nullopt;
         for (std::size_t index = variant.payloadTypes.size(); index != 0;
              --index) {
           if (!variant.payloadRequiresActiveCleanup[index - 1])
             continue;
-          auto child =
-              uniqueCleanupType(variant.payloadTypes[index - 1], visiting);
+          const auto actual = substituteTypeLifetimes(variant.payloadTypes[index - 1], view->bindings);
+          auto child = actual ? uniqueCleanupType(*actual, visiting) : std::nullopt;
           if (!child)
             return std::nullopt;
           child->payloadVariant = variant.variantIndex;
@@ -1317,12 +1317,10 @@ private:
           value.kind == SemanticType::NullPtr ||
           value.kind == SemanticType::CString ||
           value.kind == SemanticType::StringView ||
-          (value.kind == SemanticType::Enum &&
-           std::none_of(program.enumDeclarations().begin(),
-                        program.enumDeclarations().end(),
-                        [&](const auto &item) {
-                          return item.type == value && item.payload;
-                        }))) {
+          (value.kind == SemanticType::Enum && [&] {
+            const auto view = hirLifetimeInstanceView(program.enumDeclarations(), value);
+            return view && !view->instance->payload;
+          }())) {
         return MirDropType{.type = type, .requiresActiveCleanup = true};
       }
       if (value.kind != SemanticType::Class)
@@ -1407,13 +1405,10 @@ private:
                                  return instance.type == value &&
                                         !instance.requiresActiveCleanup;
                                });
-          if (value.kind == SemanticType::Enum)
-            return std::any_of(program.enumDeclarations().begin(),
-                               program.enumDeclarations().end(),
-                               [&](const auto &enumeration) {
-                                 return enumeration.type == value &&
-                                        !enumeration.requiresActiveCleanup;
-                               });
+          if (value.kind == SemanticType::Enum) {
+            const auto view = hirLifetimeInstanceView(program.enumDeclarations(), value);
+            return view && !view->instance->requiresActiveCleanup;
+          }
           if (value.kind == SemanticType::Lambda)
             return std::any_of(
                 program.lambdaInstances().begin(),
@@ -1677,11 +1672,9 @@ private:
   [[nodiscard]] SemanticTypeTraits
   resolvedTraits(const SemanticType &type) const {
     if (type.kind == SemanticType::Enum) {
-      const auto enumeration = std::find_if(
-          program.enumDeclarations().begin(), program.enumDeclarations().end(),
-          [&](const HirEnum &candidate) { return candidate.type == type; });
-      if (enumeration != program.enumDeclarations().end())
-        return enumeration->traits;
+      const auto view = hirLifetimeInstanceView(program.enumDeclarations(), type);
+      if (view)
+        return view->instance->traits;
     }
     if (type.kind == SemanticType::Lambda) {
       const auto lambda = std::find_if(
@@ -1732,11 +1725,8 @@ private:
                                 [](bool active) { return active; })});
     }
     if (type.kind == SemanticType::Enum) {
-      const auto enumeration = std::find_if(
-          program.enumDeclarations().begin(), program.enumDeclarations().end(),
-          [&](const HirEnum &candidate) { return candidate.type == type; });
-      if (enumeration == program.enumDeclarations().end() ||
-          !enumeration->requiresActiveCleanup) {
+      const auto view = hirLifetimeInstanceView(program.enumDeclarations(), type);
+      if (!view || !view->instance->requiresActiveCleanup) {
         return std::nullopt;
       }
       return lowerDropType({.type = type, .requiresActiveCleanup = true});
@@ -5638,8 +5628,7 @@ private:
   // argument is. A store through a selected accessor has no destination left
   // to read once its loan ends.
   [[nodiscard]] MirOperand
-  assignmentResultCopyOperand(const HirValue &value,
-                              const SemanticType &parameter) {
+  assignmentResultCopyOperand(const HirValue &value) {
     if (emittedValues.contains(value.id)) {
       reject(value.id, "assignment result was requested after its commit");
       return {};
@@ -5657,7 +5646,9 @@ private:
       reject(value.id, "assignment result has no destination to copy");
       return {};
     }
-    return {.kind = MirOperandKind::Copy, .place = place, .type = parameter};
+    const auto *source = output.findPlace(place);
+    return {.kind = MirOperandKind::Copy, .place = place,
+            .type = source ? source->type : SemanticType::Unknown};
   }
 
   // A projected array used as another index's base must finish its checked
@@ -6126,14 +6117,13 @@ private:
       const MirPlace *resolved = output.findPlace(runtimePlace);
       // A reference of a base or interface type to a borrowed carrier
       // designates the same carrier object.
+      const bool sameCarrierShape = parameter.arguments.size() == 1 && resolved &&
+          sameLifetimeConversionShape(resolved->type, parameter.arguments.front());
       const bool upcastCarrier =
           parameter.arguments.size() == 1 && resolved != nullptr &&
-          resolved->type != parameter.arguments.front() &&
-          resolved->traits.containsBorrowedState &&
+          !sameCarrierShape && resolved->traits.containsBorrowedState &&
           hasBase(resolved->type, parameter.arguments.front());
-      if (!upcastCarrier &&
-          (parameter.arguments.size() != 1 || resolved == nullptr ||
-           resolved->type != parameter.arguments.front())) {
+      if (!upcastCarrier && !sameCarrierShape) {
         runtimePlace = 0;
       }
       if (const MirLoan *loan = output.findLoan(existing);
@@ -6165,7 +6155,7 @@ private:
                                                const SemanticType &parameter) {
     if (const HirValue *assignment = findValue(id);
         assignment != nullptr && isAssignmentExpression(assignment->kind))
-      return assignmentResultCopyOperand(*assignment, parameter);
+      return assignmentResultCopyOperand(*assignment);
     emitPlaceDependencies(id, true);
     if (terminated()) {
       return {};
@@ -6183,7 +6173,11 @@ private:
     if (place == 0) {
       valid = false;
     }
-    return {.kind = MirOperandKind::Copy, .place = place, .type = parameter};
+    // Keep the physical source's type. The prepared input owns the converted
+    // parameter type; independent program verification proves the relation.
+    const auto *source = output.findPlace(place);
+    return {.kind = MirOperandKind::Copy, .place = place,
+            .type = source ? source->type : SemanticType::Unknown};
   }
 
   [[nodiscard]] std::vector<HirValueId>
@@ -15618,12 +15612,10 @@ private:
           sourceValue != nullptr &&
           sourceValue->info.category == ValueCategory::Place &&
           sourceValue->info.type.kind == SemanticType::Enum &&
-          std::any_of(program.enumDeclarations().begin(),
-                      program.enumDeclarations().end(),
-                      [&](const HirEnum &enumeration) {
-                        return enumeration.payload &&
-                               enumeration.type == sourceValue->info.type;
-                      });
+          [&] {
+            const auto view = hirLifetimeInstanceView(program.enumDeclarations(), sourceValue->info.type);
+            return view && view->instance->payload;
+          }();
       // A subject's place exists only once its producer has run: a reference
       // result is addressed through that call's loan, never a placeholder
       // created before the call. The read-borrow transports only the

@@ -1,0 +1,298 @@
+#include "../src/compiler/mir_lifetimes.h"
+#include "gti/frontend.h"
+#include "gti/mir_printer.h"
+#include "gti/mir_verifier.h"
+
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <string_view>
+
+using namespace lang;
+
+namespace {
+int failures = 0;
+std::filesystem::path evidenceDirectory;
+
+void expect(bool condition, std::string_view message) {
+  if (!condition) {
+    ++failures;
+    std::cerr << message << '\n';
+  }
+}
+
+void retain(std::string_view name, const FrontendResult &result) {
+  if (evidenceDirectory.empty())
+    return;
+  std::filesystem::create_directories(evidenceDirectory);
+  const auto path = evidenceDirectory / (std::string(name) + ".mir.txt");
+  std::ofstream output(path);
+  MirPrinter{}.print(result.mir, output);
+  for (const auto &function : result.hir.functionInstances()) {
+    output << "HIR function=" << function.id << " declaration=" << function.declaration << '\n';
+    for (const auto &loan : function.body.loans)
+      output << "HIR loan=" << loan.semanticLoan << " parent=" << loan.parent
+             << " stored=" << loan.storedDependency << " entry=" << loan.entry
+             << " fields=" << loan.designatedFields.size()
+             << " suppliers=" << loan.additionalDependencies.size() << '\n';
+  }
+  std::cerr << "  evidence: " << path << '\n';
+}
+
+FrontendResult positive(std::string_view name, std::string_view source) {
+  auto result = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      std::string(name) + ".gti", std::string(source));
+  if (!result.canGenerateCode()) {
+    expect(false, std::string(name) + ": expected verified MIR");
+    std::size_t count = 0;
+    for (const auto &diagnostic : result.diagnostics) {
+      if (count++ == 16)
+        break;
+      std::cerr << "  " << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+    retain(name, result);
+  } else {
+    expect(verifyMirProgram(result.mir).valid(),
+           std::string(name) + ": independent verification must accept the source program");
+  }
+  return result;
+}
+
+void negative(std::string_view name, std::string_view source) {
+  const auto result = Frontend({.stopAfter = FrontendPhase::Semantics}).analyze(
+      std::string(name) + ".gti", std::string(source));
+  expect(result.syntaxValid && !result.semanticValid &&
+             std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                          [](const auto &diagnostic) { return diagnostic.code == "GTI-B0001"; }),
+         std::string(name) + ": expected a source semantic rejection");
+}
+
+MirInstruction *payloadConstruct(MirBody &body) {
+  for (auto &block : body.blocks)
+    for (auto &instruction : block.instructions)
+      if (!instruction.tombstone && instruction.kind == MirInstructionKind::Compute &&
+          instruction.operation == MirOperation::PayloadConstruct)
+        return &instruction;
+  return nullptr;
+}
+
+void checkMutations(const MirProgram &program) {
+  std::optional<MirBodyAddress> address;
+  for (const auto candidate : enumerateMirBodyAddresses(program)) {
+    const auto *body = findMirBody(program, candidate);
+    if (!body)
+      continue;
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Compute &&
+            instruction.operation == MirOperation::PayloadConstruct &&
+            instruction.info.type.arguments.size() == 1 &&
+            instruction.info.type.arguments.front().kind == SemanticType::Class)
+          address = candidate;
+  }
+  expect(address.has_value(), "generic payload fixture must retain a typed payload construction");
+  if (!address)
+    return;
+
+  auto missingEdges = program;
+  auto *body = findMirBody(missingEdges, *address);
+  expect(!body->lifetimeBody.obligations.empty(),
+         "the payload conversion must publish its source-to-stored-region obligation");
+  body->lifetimeBody.obligations.clear();
+  const auto missingProof = verifyMirLifetimeApplications(missingEdges, *body, address->owner);
+  expect(!missingProof.valid() &&
+             std::any_of(missingProof.errors.begin(), missingProof.errors.end(), [](const auto &error) {
+               return error.message.find("payload") != std::string::npos;
+             }),
+         "MIR must reconstruct a payload conversion after its recorded edges are removed");
+
+  auto strongerRegion = program;
+  body = findMirBody(strongerRegion, *address);
+  auto *construction = payloadConstruct(*body);
+  auto &stored = construction->info.type.arguments.front();
+  expect(stored.lifetimeArguments.size() == 1,
+         "generic payload fixture must preserve the stored carrier's region");
+  if (stored.lifetimeArguments.size() == 1) {
+    stored.lifetimeArguments.front() = Lifetime::staticLifetime();
+    expect(!verifyMirLifetimeApplications(strongerRegion, *body, address->owner).valid(),
+           "MIR must reject strengthening a stored carrier region to static");
+  }
+
+  auto orphan = program;
+  body = findMirBody(orphan, *address);
+  auto *removed = payloadConstruct(*body);
+  const auto stageValue = removed->operands.front().value;
+  removed->tombstone = true;
+  MirInstruction *stage = nullptr;
+  for (auto &block : body->blocks)
+    for (auto &candidate : block.instructions)
+      if (candidate.result == stageValue && candidate.kind == MirInstructionKind::CallInput)
+        stage = &candidate;
+  expect(stage != nullptr, "payload fixture must retain an explicit source input stage");
+  if (stage && stage->info.type.lifetimeArguments.size() == 1) {
+    expect(verifyMirLifetimeApplications(orphan, *body, address->owner).valid(),
+           "a proved orphan input stage keeps its independently checked conversion");
+    stage->info.type.lifetimeArguments.front() = Lifetime::staticLifetime();
+    // Matching operand and stage tags cannot replace the original source
+    // place's type. There is no consuming call left to perform this check.
+    stage->operands.front().type = stage->info.type;
+    const auto forged = verifyMirLifetimeApplications(orphan, *body, address->owner);
+    expect(!forged.valid() && std::any_of(forged.errors.begin(), forged.errors.end(),
+               [](const auto &error) { return error.message.find("call-input stage") != std::string::npos; }),
+           "an orphan stage cannot forge a stronger source region with matching type tags");
+  } else {
+    expect(false, "the copied carrier input stage must expose its stored region slot");
+  }
+
+  auto widenedConsumer = program;
+  body = findMirBody(widenedConsumer, *address);
+  auto *consumer = payloadConstruct(*body);
+  const auto consumerStageValue = consumer->operands.front().value;
+  const MirPlace *consumerOrigin = nullptr;
+  for (const auto &block : body->blocks)
+    for (const auto &candidate : block.instructions)
+      if (candidate.result == consumerStageValue && candidate.kind == MirInstructionKind::CallInput &&
+          candidate.operands.size() == 1)
+        consumerOrigin = body->findPlace(candidate.operands.front().place);
+  expect(consumerOrigin != nullptr, "consumer mutation requires the original copied place");
+  if (consumerOrigin) {
+    consumer->info.type.arguments.front() = consumerOrigin->type;
+    consumer->parameterTypes.front() = consumerOrigin->type;
+    consumer->operands.front().type = consumerOrigin->type;
+    const auto invalid = verifyMirLifetimeApplications(widenedConsumer, *body, address->owner);
+    expect(!invalid.valid() && std::any_of(invalid.errors.begin(), invalid.errors.end(),
+               [](const auto &error) { return error.message.find("payload value") != std::string::npos; }),
+           "a payload consumer cannot regain an older region through a verified input stage");
+  }
+
+  auto regained = program;
+  body = findMirBody(regained, *address);
+  auto *replacement = payloadConstruct(*body);
+  const auto firstValue = replacement->operands.front().value;
+  const MirInstruction *firstStage = nullptr;
+  for (const auto &block : body->blocks)
+    for (const auto &candidate : block.instructions)
+      if (candidate.result == firstValue && candidate.kind == MirInstructionKind::CallInput)
+        firstStage = &candidate;
+  const auto *original = firstStage && firstStage->operands.size() == 1
+      ? body->findPlace(firstStage->operands.front().place) : nullptr;
+  expect(original != nullptr, "copied payload stage must retain its original source place");
+  if (original) {
+    const auto id = replacement->id;
+    const auto result = replacement->result;
+    *replacement = *firstStage;
+    replacement->id = id;
+    replacement->result = result;
+    replacement->callInputKind = HirCallInputKind::Value;
+    replacement->info.type = original->type;
+    replacement->operands = {{.kind = MirOperandKind::Value, .value = firstValue,
+                              .type = firstStage->info.type}};
+    const auto invalid = verifyMirLifetimeApplications(regained, *body, address->owner);
+    expect(!invalid.valid() && std::any_of(invalid.errors.begin(), invalid.errors.end(),
+               [](const auto &error) { return error.message.find("call-input stage") != std::string::npos; }),
+           "a second stage cannot regain the original longer region after a checked shortening");
+  }
+
+  auto wrongType = program;
+  body = findMirBody(wrongType, *address);
+  payloadConstruct(*body)->info.type.arguments.front() = SemanticType::Int32;
+  expect(!verifyMirLifetimeApplications(wrongType, *body, address->owner).valid(),
+         "MIR must preserve ordinary generic payload type identity");
+
+  auto wrongVariant = program;
+  body = findMirBody(wrongVariant, *address);
+  payloadConstruct(*body)->enumVariant = 99;
+  expect(!verifyMirLifetimeApplications(wrongVariant, *body, address->owner).valid(),
+         "MIR must reject a variant outside the exact payload recipe");
+
+  auto wrongOwner = program;
+  body = findMirBody(wrongOwner, *address);
+  payloadConstruct(*body)->enumOwner.reset();
+  expect(!verifyMirLifetimeApplications(wrongOwner, *body, address->owner).valid(),
+         "MIR must reject a payload construction without its exact enum owner");
+}
+} // namespace
+
+int main(int argc, char **argv) {
+  if (argc > 1)
+    evidenceDirectory = argv[1];
+  const auto generic = positive("generic-payload-region-conversion", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+enum Box<T> { item(T value) };
+int wrap<lifetime a>(View<a> input) {
+  auto box = Box<View<_>>::item(input);
+  return 1;
+}
+int main() { int value = 7; View view{value}; return wrap(view) - 1; }
+)gti");
+  if (generic.canGenerateCode())
+    checkMutations(generic.mir);
+
+  (void)positive("direct-payload-region-conversion", R"gti(
+enum Borrow<lifetime a> { item(int&<a> value) };
+int wrap<lifetime a>(int&<a> input) {
+  auto box = Borrow<_>::item(input);
+  return 1;
+}
+int main() { int value = 7; return wrap(value) - 1; }
+)gti");
+
+  (void)positive("payload-common-input-region", R"gti(
+enum Pair<lifetime a> { item(int&<a> left, int&<a> right) };
+int wrap<lifetime a, lifetime b>(int&<a> left, int&<b> right) {
+  auto pair = Pair<_>::item(left, right);
+  return 1;
+}
+int main() { int left = 7; int right = 9; return wrap(left, right) - 1; }
+)gti");
+
+  (void)positive("payload-borrow-extract-and-copy", R"gti(
+enum Borrow<lifetime a> { item(int&<a> value) };
+int read<lifetime a>(Borrow<a>& input) {
+  switch (input) { case Borrow<a>::item(auto& value): return value; }
+}
+int main() {
+  int value = 7;
+  auto original = Borrow<_>::item(value);
+  auto copied = original;
+  return read(copied) - 7;
+}
+)gti");
+
+  negative("payload-carrier-cannot-extend-region", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+enum Box<T> { item(T value) };
+int wrap<lifetime a>(View<a> input) {
+  auto box = Box<View<static>>::item(input);
+  return 1;
+}
+int main() { int value = 7; View view{value}; return wrap(view) - 1; }
+)gti");
+
+  negative("payload-reference-cannot-extend-region", R"gti(
+enum Borrow<lifetime a> { item(int&<a> value) };
+int wrap<lifetime a>(int&<a> input) {
+  auto box = Borrow<static>::item(input);
+  return 1;
+}
+int main() { int value = 7; return wrap(value) - 1; }
+)gti");
+
+  negative("payload-reference-preserves-access", R"gti(
+enum Borrow<lifetime a> { item(mut int&<a> value) };
+int wrap<lifetime a>(int&<a> input) {
+  auto box = Borrow<_>::item(input);
+  return 1;
+}
+int main() { int value = 7; return wrap(value) - 1; }
+)gti");
+  return failures ? 1 : 0;
+}

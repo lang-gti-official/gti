@@ -1003,6 +1003,63 @@ bool satisfiesLifetimeRequirements(
   return proof.value_or(false);
 }
 
+bool provesNominalLifetimeFormation(
+    const MirProgram &program, const SemanticType &type,
+    const LifetimeSignatureContract &assumptions,
+    const LifetimeInferenceConstraints &graph, std::size_t depth = 0) {
+  if (depth >= 256 || type.kind == SemanticType::Unknown)
+    return false;
+  const LifetimeSignatureContract *contract = nullptr;
+  std::vector<LifetimeBinding> bindings;
+  if (type.kind == SemanticType::Class) {
+    const auto view = mirClassLifetimeView(program, type);
+    if (!view)
+      return false;
+    contract = &view->instance->lifetimeContract;
+    bindings = view->bindings;
+  } else if (type.kind == SemanticType::Enum) {
+    const auto view = mirEnumLifetimeView(program, type);
+    if (!view)
+      return false;
+    contract = view->payload ? &view->payload->lifetimeContract : &view->integral->lifetimeContract;
+    bindings = view->bindings;
+  }
+  if (contract && *contract != LifetimeSignatureContract{}) {
+    if (!contract->valid() || !scopedLifetimeContract(*contract) ||
+        !contract->requirements.resolved())
+      return false;
+    for (const auto parameter : contract->parameters)
+      if (std::none_of(bindings.begin(), bindings.end(),
+                       [&](const auto &binding) { return binding.first == parameter; }))
+        return false;
+    for (const auto bound : contract->bounds)
+      if (!graph.proves(applyLifetime(bound.longer, bindings),
+                        applyLifetime(bound.shorter, bindings)))
+        return false;
+    for (const auto &bound : contract->typeBounds) {
+      const auto actual = substituteTypeLifetimes(bound.type, bindings);
+      std::vector<SemanticType> pending;
+      if (!actual || !mirTypeOutlives(program, *actual,
+              applyLifetime(bound.region, bindings), assumptions, graph, pending))
+        return false;
+    }
+    if (!satisfiesLifetimeRequirements(program, *contract, bindings, assumptions, graph))
+      return false;
+  } else if (contract && containsLifetimeMetadata(type)) {
+    return false;
+  }
+  // Callable binders belong to their separately verified signature contract.
+  // Do not import their nominal premises into an enclosing value's body scope.
+  if (type.kind == SemanticType::FunctionSignature || type.kind == SemanticType::FunctionItem ||
+      type.kind == SemanticType::Lambda)
+    return true;
+  bool valid = true;
+  lifetime_detail::children(type, [&](const SemanticType &child) {
+    valid = provesNominalLifetimeFormation(program, child, assumptions, graph, depth + 1) && valid;
+  });
+  return valid;
+}
+
 LifetimeSignatureContract withLocalStorageLifetimeFacts(
     const MirBody &body, LifetimeSignatureContract assumptions) {
   const auto add = [&](const SemanticType &type, Lifetime region) {
@@ -1350,9 +1407,10 @@ public:
       const auto *stage = current->kind == MirOperandKind::Value
                               ? definition(current->value)
                               : nullptr;
-      if (!stage || stage->kind != MirInstructionKind::CallInput)
+      if (!stage || stage->kind != MirInstructionKind::CallInput ||
+          stage->info.type.kind == SemanticType::Reference)
         return current;
-      if (stage->operands.size() != 1)
+      if (stage->tombstone || stage->operands.size() != 1)
         return nullptr;
       source = stage->hirValue;
       current = &stage->operands.front();
@@ -1361,10 +1419,14 @@ public:
   }
 
   std::optional<SemanticType> actualType(const MirOperand &operand) const {
-    HirValueId ignored = 0;
-    const auto *source = sourceOperand(operand, ignored);
-    if (!source)
-      return std::nullopt;
+    // Every input stage is independently proved below. Its declared result
+    // is the next operation's type boundary, not a route back to an older
+    // source region. Other operands are reconstructed from physical facts.
+    if (operand.kind == MirOperandKind::Value)
+      if (const auto *stage = definition(operand.value);
+          stage && stage->kind == MirInstructionKind::CallInput)
+        return stage->tombstone ? std::nullopt : std::optional{stage->info.type};
+    const auto *source = &operand;
     if (source->place)
       if (const auto *place = body.findPlace(source->place))
         return place->type;
@@ -1386,6 +1448,12 @@ public:
     const auto *actual = sourceOperand(operand, source);
     if (!actual)
       return false;
+    if (actual->kind == MirOperandKind::Value)
+      if (const auto *stage = definition(actual->value);
+          stage && stage->kind == MirInstructionKind::CallInput &&
+          stage->info.type.kind == SemanticType::Reference)
+        return !stage->tombstone &&
+               graph.proves(stage->info.type.referenceLifetime, target);
     // A checked expression's own declared/instantiated reference region takes
     // precedence over older supplier places; a shortened alias cannot regain
     // a longer region merely because its physical owner survives longer.
@@ -1833,6 +1901,101 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
     for (const auto &instruction : block.instructions) {
       if (instruction.tombstone)
         continue;
+      if (instruction.kind == MirInstructionKind::CallInput) {
+        if (instruction.operands.size() != 1) {
+          reject("MIR lifetime input stage has no unique source", block.id, instruction.id);
+          continue;
+        }
+        const auto &input = instruction.operands.front();
+        const auto *previous = input.kind == MirOperandKind::Value
+            ? relations.definition(input.value) : nullptr;
+        const bool previousStage = previous && previous->kind == MirInstructionKind::CallInput;
+        // A prior stage is checked by this same exhaustive pass. Its converted
+        // result cannot regain an older region by looking through it again.
+        const auto actual = previousStage
+            ? (previous->tombstone ? std::nullopt : std::optional{previous->info.type})
+            : relations.actualType(input);
+        const auto &expected = instruction.info.type;
+        if (!actual) {
+          reject("MIR lifetime input stage has no original source type", block.id, instruction.id);
+          continue;
+        }
+        if (containsLifetimeMetadata(*actual) || containsLifetimeMetadata(expected)) {
+          bool proved = false;
+          if (expected.kind == SemanticType::Reference) {
+            const auto &referent = actual->kind == SemanticType::Reference && actual->arguments.size() == 1
+                ? actual->arguments.front() : *actual;
+            const bool regionProved = previousStage && actual->kind == SemanticType::Reference
+                ? graph.proves(actual->referenceLifetime, expected.referenceLifetime)
+                : relations.borrowedOperand(input, expected.referenceLifetime, instruction.hirValue);
+            proved = expected.arguments.size() == 1 && regionProved &&
+                relations.types(referent, expected.arguments.front(),
+                                expected.referenceAccess == AccessMode::Mutable ? 0 : 1);
+          } else if (expected.kind == SemanticType::CString &&
+                     actual->kind == SemanticType::NullPtr) {
+            // Null has no borrowed storage. The existing scalar conversion
+            // checks its exact source; static validity covers any stored slot.
+            proved = expected.lifetimeArguments.size() == 1 &&
+                graph.proves(Lifetime::staticLifetime(), expected.lifetimeArguments.front());
+          } else if (expected.kind == SemanticType::CString &&
+                     actual->kind == SemanticType::StringView) {
+            proved = actual->lifetimeArguments.size() == 1 && expected.lifetimeArguments.size() == 1 &&
+                graph.proves(actual->lifetimeArguments.front(), expected.lifetimeArguments.front());
+          } else {
+            auto source = *actual;
+            if (source.kind == SemanticType::RawPointer && expected.kind == SemanticType::RawPointer &&
+                source.pointerAccess == AccessMode::Mutable && expected.pointerAccess == AccessMode::ReadOnly)
+              source.pointerAccess = AccessMode::ReadOnly;
+            const int variance = instruction.callInputKind == HirCallInputKind::MutableBorrow ||
+                                 instruction.callInputKind == HirCallInputKind::MutableTemporaryBorrow ? 0 : 1;
+            proved = relations.types(source, expected, variance, 0, true);
+          }
+          if (!proved)
+            reject("MIR call-input stage does not prove its original source lifetime conversion",
+                   block.id, instruction.id);
+        }
+        continue;
+      }
+      if (instruction.kind == MirInstructionKind::Compute &&
+          instruction.operation == MirOperation::PayloadConstruct) {
+        const auto view = mirEnumLifetimeView(program, instruction.info.type);
+        const auto variant = view && instruction.enumVariant
+            ? view->instantiateVariant(*instruction.enumVariant) : std::nullopt;
+        if (!view || !view->payload || !variant ||
+            instruction.enumOwner != view->payload->declaration ||
+            variant->payloadTypes.size() != instruction.operands.size() ||
+            instruction.lifetimeApplication != MirLifetimeApplication{}) {
+          reject("MIR payload lifetime proof lacks its exact instantiated variant",
+                 block.id, instruction.id);
+          continue;
+        }
+        if (!provesNominalLifetimeFormation(program, instruction.info.type, localAssumptions, graph))
+          reject("MIR payload construction does not prove its nominal lifetime formation",
+                 block.id, instruction.id);
+        for (std::size_t index = 0; index < variant->payloadTypes.size(); ++index) {
+          const auto &expected = variant->payloadTypes[index];
+          const auto actual = relations.actualType(instruction.operands[index]);
+          if (!actual) {
+            reject("MIR payload lifetime argument has no exact source type", block.id, instruction.id);
+            continue;
+          }
+          if (expected.kind == SemanticType::Reference && expected.referenceLifetime.specified()) {
+            const auto &referent = actual->kind == SemanticType::Reference && actual->arguments.size() == 1
+                ? actual->arguments.front() : *actual;
+            if (expected.arguments.size() != 1 ||
+                !relations.borrowedOperand(instruction.operands[index], expected.referenceLifetime) ||
+                !relations.types(referent, expected.arguments.front(),
+                    expected.referenceAccess == AccessMode::Mutable ? 0 : 1))
+              reject("MIR reference payload argument does not prove its stored region",
+                     block.id, instruction.id);
+          } else if ((containsLifetimeMetadata(*actual) || containsLifetimeMetadata(expected)) &&
+                     !relations.types(*actual, expected)) {
+            reject("MIR payload value does not prove its stored lifetime conversion",
+                   block.id, instruction.id);
+          }
+        }
+        continue;
+      }
       if (instruction.kind == MirInstructionKind::Call ||
           instruction.kind == MirInstructionKind::Construct ||
           instruction.kind == MirInstructionKind::InitializeBase) {

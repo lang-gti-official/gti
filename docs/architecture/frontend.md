@@ -437,6 +437,14 @@ bypassed, and cached outcomes keep their existing admission rules.
 Staged constant and procedural-expansion keys retain complete generic lifetime
 substitutions and the inferred-contract generation, so a changed declaration
 contract cannot reuse a previously checked execution closure or expansion.
+An early private probe can demand an earlier constexpr definition before the
+primary lexical body pass reaches it. A bounded prerequisite query checks that
+definition strictly in its own source context, with lifetime collection off;
+only a successful checked definition becomes available in the isolated probe.
+Its selected constexpr closure still executes through the existing staged
+HIR/MIR service. Prerequisite proofs retain dependency reads and the exact
+contract generation, preserve source declaration order, and cannot publish a
+provisional recursive proof or complete the primary program's body pass.
 
 Nominal variance is derived from verified fields and bases by a finite fixed
 point over the variance lattice. Shared references and owned storage preserve

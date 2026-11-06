@@ -3106,9 +3106,10 @@ private:
   void prepareInferredLifetimeResult(SemanticType &type,
                                     const std::function<Lifetime()> &fresh) const;
   void validateLambdaLifetimeReturn(const ExprPtr &value);
-  void inferPrivateLifetimeContracts();
+  void inferPrivateLifetimeContracts(const StmtList &declarations);
   void notePrivateLifetimeDependency(FunctionId function) const;
   void notePrivateLifetimeOpaqueDependency() const;
+  [[nodiscard]] bool ensurePrivateConstexprDefinition(const Stmt *declaration);
   [[nodiscard]] std::optional<LifetimeSignatureContract> projectInferredLifetimeContract(
       const LifetimeSignatureContract &declaration,
       const SemanticLifetimeBody &body) const;
@@ -7509,6 +7510,24 @@ private:
       bool opaqueCachedProof = false;
     };
     std::shared_ptr<PrivateLifetimeDependencyTrace> privateLifetimeDependencies;
+    // Ordinary, strict source checks demanded by an early private-contract
+    // probe. The proofs belong to this exact catalog revision; they never
+    // publish completion of the primary program's body pass.
+    struct PrivateConstexprPrerequisites {
+      struct Proof {
+        bool valid = false;
+        std::unordered_set<FunctionId> dependencies;
+        bool opaqueCachedProof = false;
+        std::vector<const Stmt *> callees;
+      };
+      std::uint64_t revision = 0;
+      std::size_t work = 0;
+      std::unordered_map<const Stmt *, std::size_t> sourceOrder;
+      std::unordered_set<const Stmt *> active;
+      std::vector<const Stmt *> stack;
+      std::unordered_map<const Stmt *, Proof> proofs;
+    };
+    std::shared_ptr<PrivateConstexprPrerequisites> privateConstexprPrerequisites;
     const Lambda *collectingLambdaLifetimeContract = nullptr;
     std::uint64_t lifetimeContractRevision = 0;
     struct ExecutableLifetimeKey {

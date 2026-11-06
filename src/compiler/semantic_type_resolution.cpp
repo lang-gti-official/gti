@@ -1544,7 +1544,12 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
                                   ".view()' to borrow the value instead when "
                                   "the callee accepts its view type.");
   };
-  if (isMoveOnlyOwnerType(parameter) && parameter == argument) {
+  const auto lifetimeAdjusted = function
+      ? callLifetimeArgumentType(*function, argument, parameter)
+      : std::optional<SemanticType>{};
+  const bool sameArgumentType = parameter == argument ||
+      (lifetimeAdjusted && parameter == *lifetimeAdjusted);
+  if (isMoveOnlyOwnerType(parameter) && sameArgumentType) {
     const ClassInfo *owner = classInfo(parameter);
     if (owner != nullptr && owner->copyConstructor &&
         owner->copyConstructor->declaration != nullptr &&
@@ -3260,7 +3265,10 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     storedParameters.clear();
   }
   std::vector<BorrowedFieldOrigin> storedFields;
-  if (!storedParameters.empty() && selected.constructor != nullptr)
+  // Even one destination reference can retain several possible origins. Its
+  // constructor publishes a field mapping, not an alias of the input scalar.
+  if (!storedPaths.empty() && !conditionalFields &&
+      selected.kind == ConstructorKind::Ordinary && selected.constructor != nullptr)
     for (const auto &binding : storedCarrierConstructorBindings(
              constructedType, selected.constructor->declaration,
              selected.parameterTypes))
@@ -3308,9 +3316,16 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
             resolved.lifetimeArguments.push_back(binding.second);
             break;
           }
-  if (conditionalFields && selected.kind == ConstructorKind::Ordinary &&
+  if ((conditionalFields || !resolved.borrowFields.empty()) &&
+      selected.kind == ConstructorKind::Ordinary &&
       !containsOpenTypeParameter(constructedType)) {
-    const auto summary = completeConstructorBorrow(resolved, tokenSpan(paren));
+    // Conditional initialization needs its checked body summary. Ordinary
+    // reference fields already have exact constructor-initializer bindings;
+    // instantiate the same complete supplier machinery for those mappings.
+    const auto summary = conditionalFields
+        ? completeConstructorBorrow(resolved, tokenSpan(paren))
+        : std::optional<FunctionBorrowDependencySummary>(
+              FunctionBorrowDependencySummary{.dependencies = resolved.borrowFields});
     ResolvedCallInfo publication;
     publication.returnType = constructedType;
     publication.parameterTypes = selected.parameterTypes;

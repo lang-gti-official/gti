@@ -859,12 +859,15 @@ int main() { return 0; }
          "a strengthened private precondition rejects a caller without the required relationship");
 
   const std::string cached = R"(
-static constexpr bool enabled() { return true; }
+static constexpr bool leaf() { return true; }
+static constexpr bool enabled() { return leaf(); }
 static int& choose(int& selected, int& ignored) {
   if constexpr (enabled()) {
     if constexpr (enabled()) { return selected; }
+    else { return ignored; }
+  } else {
+    return ignored;
   }
-  return ignored;
 }
 int&<a> invoke<lifetime a, lifetime b>(int&<a> selected, int&<b> ignored) {
   return choose(selected, ignored);
@@ -887,6 +890,82 @@ int main() { return 0; }
       expect(metrics.semanticPrivateLifetimeOpaqueProbes != 0,
              "an unjournaled cached branch proof retains conservative contract dependencies");
   }
+
+  const auto construction = analyze(R"(
+struct Choice {
+  bool value;
+  constexpr Choice(bool selected) : value(selected) {}
+  constexpr bool enabled() { return this.value; }
+};
+static constexpr bool enabled() { Choice choice{true}; return choice.enabled(); }
+static int& choose(int& selected, int& ignored) {
+  if constexpr (enabled()) { return selected; }
+  else { return ignored; }
+}
+int&<a> invoke<lifetime a, lifetime b>(int&<a> selected, int&<b> ignored) {
+  return choose(selected, ignored);
+}
+int main() { return 0; }
+)");
+  expectValid(construction,
+              "private inference can demand checked constexpr constructor and method prerequisites");
+
+  const auto dependent = analyze(R"(
+static constexpr bool leaf() { return true; }
+static constexpr bool enabled<uint64_t N>() {
+  if constexpr (N == 0) { return leaf(); }
+  else { return false; }
+}
+static int& choose(int& selected, int& ignored) {
+  if constexpr (enabled<0>()) { return selected; }
+  else { return ignored; }
+}
+int&<a> invoke<lifetime a, lifetime b>(int&<a> selected, int&<b> ignored) {
+  return choose(selected, ignored);
+}
+int main() { return 0; }
+)");
+  expectValid(dependent,
+              "a constexpr callee discovered by concrete dependent-branch staging is checked in source order");
+  const auto *dependentChoice = function(dependent, "choose");
+  expect(dependentChoice && dependentChoice->completeReturnBorrow &&
+             dependentChoice->completeReturnBorrow->dependencies.size() == 1 &&
+             dependentChoice->completeReturnBorrow->dependencies.front().parameter == 0,
+         "dependent staging preserves the inferred private supplier");
+
+  const auto later = analyze(R"(
+static int& choose(int& selected, int& ignored) {
+  if constexpr (enabled()) { return selected; }
+  else { return ignored; }
+}
+static constexpr bool enabled() { return true; }
+int main() { return 0; }
+)");
+  expect(!later.semanticValid,
+         "early private inference does not make a later constexpr definition source-visible");
+  const auto invalid = analyze(R"(
+static constexpr bool enabled() { return 1; }
+static int& choose(int& selected, int& ignored) {
+  if constexpr (enabled()) { return selected; }
+  else { return ignored; }
+}
+int main() { return 0; }
+)");
+  expect(!invalid.semanticValid,
+         "a failed constexpr prerequisite cannot authorize an inferred branch contract");
+  const auto cycle = analyze(R"(
+static constexpr bool enabled() {
+  if constexpr (enabled()) { return true; }
+  else { return false; }
+}
+static int& choose(int& selected, int& ignored) {
+  if constexpr (enabled()) { return selected; }
+  else { return ignored; }
+}
+int main() { return 0; }
+)");
+  expect(!cycle.semanticValid,
+         "a recursive constant prerequisite remains unavailable instead of publishing a provisional proof");
 }
 
 void testProjectedPatternLifetimes() {

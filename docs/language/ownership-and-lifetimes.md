@@ -466,6 +466,13 @@ Explicit named regions, ordinary type and value arguments, and reference access
 must still match. The pattern binds payloads from that checked enum instance;
 it does not create a new borrow or convert the enum to another type.
 
+Payload construction applies the same checked lifetime conversions as ordinary
+initialization. A reference or borrowed value may use a shorter stored region
+when its source covers that region and its type permits the conversion. An
+inferred payload region can cover the common usable part of several inputs;
+all of their storage dependencies remain live. Conversion preserves the exact
+variant, ordinary type and value arguments, reference access, and cleanup.
+
 A stored reference with omitted region receives an anonymous declaration slot.
 Distinct fields have distinct slots; constructor binding determines their actual
 origins. Recursive declarations whose omitted slots would expand indefinitely
@@ -1228,9 +1235,11 @@ raw or opaque origins or unproved dynamic-index identity. Named lifetime
 parameters describe these checked relationships; they do not supply missing
 storage or access evidence for an escaping child reference.
 
-An ordinary borrowed class may declare a destructor. A borrowed class whose
-source destructor or nested borrowed field/base can use or release a dependency
-retains that dependency until cleanup finishes, not just its last explicit read. Moving
+An ordinary borrowed class may declare a destructor. A source destructor makes
+that class noncopyable; use explicit movement to transfer its cleanup obligation.
+A borrowed class whose source destructor or nested borrowed field/base can use
+or release a dependency retains that dependency until cleanup finishes, not just
+its last explicit read. Moving
 it transfers the cleanup obligation and the same dependency protection. It may
 be passed by value or moved into another direct field under the existing
 constructor origin contract. Failed construction rolls back initialized fields

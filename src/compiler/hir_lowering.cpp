@@ -4971,7 +4971,7 @@ private:
         if (input == nullptr || parameter.kind != SemanticType::Reference ||
             parameter.referenceAccess != AccessMode::ReadOnly ||
             parameter.arguments.size() != 1 ||
-            parameter.arguments.front() != input->info.type ||
+            !sameLifetimeConversionShape(input->info.type, parameter.arguments.front()) ||
             !isTemporaryBorrowReferentType(input->info.type) ||
             input->info.category != ValueCategory::Value ||
             (input->info.traits.containsBorrowedState &&
@@ -4989,7 +4989,7 @@ private:
       } else if (orderedValueParameterType(parameter)) {
         kind = HirCallInputKind::Value;
       } else if (!orderedOwningParameterType(parameter) ||
-                 input->info.type != parameter ||
+                 !sameLifetimeConversionShape(input->info.type, parameter) ||
                  (input->info.traits.containsBorrowedState &&
                   parameter.kind != SemanticType::Class &&
                   parameter.kind != SemanticType::Enum &&

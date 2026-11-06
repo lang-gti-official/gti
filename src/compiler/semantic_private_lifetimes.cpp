@@ -190,7 +190,142 @@ auto SemanticVisitor::Impl::notePrivateLifetimeOpaqueDependency() const -> void 
     requestSession.privateLifetimeDependencies->opaqueCachedProof = true;
 }
 
-auto SemanticVisitor::Impl::inferPrivateLifetimeContracts() -> void {
+auto SemanticVisitor::Impl::ensurePrivateConstexprDefinition(
+    const Stmt *declaration) -> bool {
+  const auto state = requestSession.privateConstexprPrerequisites;
+  const auto dependencies = requestSession.privateLifetimeDependencies;
+  if (!state || !dependencies || !declaration)
+    return false;
+  const auto *function = stmtAs<FunctionDecl>(declaration);
+  const auto *constructor = stmtAs<ConstructorDecl>(declaration);
+  if ((!function || !function->isConstexpr()) &&
+      (!constructor || !constructor->isConstexpr()))
+    return false;
+  if (state->revision != requestSession.lifetimeContractRevision) {
+    state->revision = requestSession.lifetimeContractRevision;
+    state->proofs.clear();
+    state->active.clear();
+    state->stack.clear();
+  }
+  // Concrete-instance visibility is deliberately broader than source
+  // visibility. This early query proves a source definition, so use the
+  // original declaration's position rather than concreteReanalysis().
+  const Stmt *source = currentFunctionDeclaration;
+  if (!source && !state->stack.empty())
+    source = state->stack.back();
+  const auto position = state->sourceOrder.find(declaration);
+  const auto boundary = state->sourceOrder.find(source);
+  if (position == state->sourceOrder.end() ||
+      boundary == state->sourceOrder.end() || position->second >= boundary->second)
+    return false;
+  const auto publish = [&](const auto &proof) {
+    dependencies->functions.insert(proof.dependencies.begin(), proof.dependencies.end());
+    dependencies->opaqueCachedProof |= proof.opaqueCachedProof;
+    if (!proof.valid)
+      return false;
+    // These definitions passed ordinary source-body checking with collection
+    // disabled. Availability is private to this exact-generation probe; the
+    // primary program still performs its own lexical body pass.
+    const bool inserted = function
+        ? constexprDefinitionsAnalyzed.insert(function).second
+        : constexprConstructorsAnalyzed.insert(constructor).second;
+    if (inserted)
+      for (const auto *callee : proof.callees)
+        (void)ensurePrivateConstexprDefinition(callee);
+    return true;
+  };
+  if (const auto found = state->proofs.find(declaration); found != state->proofs.end()) {
+    const auto proof = found->second;
+    return publish(proof);
+  }
+  if (state->active.contains(declaration) || state->work >= 4096 ||
+      state->stack.size() >= std::min<std::size_t>(64, compileLimits.constexprDepth))
+    return false;
+  ++state->work;
+  state->active.insert(declaration);
+  state->stack.push_back(declaration);
+  struct Pop {
+    RequestSessionContext::PrivateConstexprPrerequisites &state;
+    const Stmt *declaration;
+    ~Pop() { state.stack.pop_back(); state.active.erase(declaration); }
+  } pop{*state, declaration};
+  auto worker = unevaluatedExpressionWorker();
+  worker->prepareInstanceAnalysis();
+  worker->requestSession.collectingPrivateLifetimeContracts = false;
+  worker->trustedBodies = TrustedBodyAnalysis::Complete;
+  worker->bodyPhaseActive = false;
+  auto reads = std::make_shared<RequestSessionContext::PrivateLifetimeDependencyTrace>();
+  worker->requestSession.privateLifetimeDependencies = reads;
+  worker->declarationOrders = state->sourceOrder;
+  worker->declarationOrderCounter = state->sourceOrder.size();
+  worker->visitedFunctionDeclarations.erase(function);
+  worker->analyzedBodies.erase(function);
+  ClassId owner = 0;
+  SourceUnitId unit = 0;
+  std::vector<std::string> nameSpace;
+  if (function) {
+    const auto *info = semanticModel.findFunction(*function);
+    if (!info)
+      return false;
+    reads->functions.insert(info->id);
+    owner = info->ownerClass;
+    unit = info->sourceUnit;
+    nameSpace = info->namespaceScope;
+  } else {
+    const auto *info = semanticModel.findConstructor(*constructor);
+    if (!info || !info->owner)
+      return false;
+    owner = info->owner;
+    unit = classInfo(owner).sourceUnit;
+    nameSpace = classInfo(owner).namespaceScope;
+  }
+  worker->beginScope();
+  worker->enterDeclarationContext(nameSpace, unit,
+                                  owner ? std::optional(owner) : std::nullopt);
+  if (function)
+    worker->visitFunctionDecl(*function);
+  else
+    worker->visitConstructorDecl(*constructor);
+  worker->exitDeclarationContext(owner ? std::optional(owner) : std::nullopt);
+  worker->endScope();
+  RequestSessionContext::PrivateConstexprPrerequisites::Proof proof;
+  proof.valid = !worker->hadError() &&
+      (function ? worker->constexprDefinitionsAnalyzed.contains(function)
+                : worker->constexprConstructorsAnalyzed.contains(constructor));
+  proof.dependencies = std::move(reads->functions);
+  proof.opaqueCachedProof = reads->opaqueCachedProof;
+  const auto addFunction = [&](FunctionId id) {
+    const auto *info = worker->semanticModel.findFunction(id);
+    const auto *callee = info ? info->bodyDeclaration() : nullptr;
+    if (callee && callee->isConstexpr() &&
+        std::find(proof.callees.begin(), proof.callees.end(), callee) == proof.callees.end())
+      proof.callees.push_back(callee);
+  };
+  for (const auto &[expression, call] : worker->semanticModel.calls) {
+    (void)expression;
+    addFunction(call.function);
+  }
+  for (const auto *calls : {&worker->semanticModel.operators,
+                            &worker->semanticModel.projectionOperators,
+                            &worker->semanticModel.contextualConversions})
+    for (const auto &[expression, call] : *calls) {
+      (void)expression;
+      addFunction(call.function);
+    }
+  for (const auto &[expression, call] : worker->semanticModel.constructions) {
+    (void)expression;
+    if (call.declaration && call.declaration->isConstexpr() &&
+        std::find(proof.callees.begin(), proof.callees.end(), call.declaration) == proof.callees.end())
+      proof.callees.push_back(call.declaration);
+  }
+  // Copy before recursively preparing the checked closure: inserting another
+  // proof may rehash the request-local table.
+  state->proofs.emplace(declaration, proof);
+  return publish(proof);
+}
+
+auto SemanticVisitor::Impl::inferPrivateLifetimeContracts(
+    const StmtList &declarations) -> void {
   struct Measure {
     FrontendWorkMetrics *metrics;
     std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
@@ -208,6 +343,23 @@ auto SemanticVisitor::Impl::inferPrivateLifetimeContracts() -> void {
       pending.push_back(entry->syntax);
   if (pending.empty())
     return;
+  auto prerequisites = std::make_shared<RequestSessionContext::PrivateConstexprPrerequisites>();
+  prerequisites->revision = requestSession.lifetimeContractRevision;
+  const auto indexSource = [&](const auto &self, const StmtList &statements) -> void {
+    for (const auto &statement : statements) {
+      if (!statement)
+        continue;
+      prerequisites->sourceOrder.emplace(statement.get(), prerequisites->sourceOrder.size() + 1);
+      if (const auto *space = stmtAs<NamespaceDecl>(statement.get()))
+        self(self, space->declarations());
+      else if (const auto *owner = stmtAs<ClassDecl>(statement.get()))
+        self(self, owner->members());
+      else if (const auto *conditional = stmtAs<ConditionalStmt>(statement.get()))
+        if (const auto *branch = conditional->activeBranch(target))
+          self(self, *branch);
+    }
+  };
+  indexSource(indexSource, declarations);
   if (workMetrics)
     workMetrics->semanticPrivateLifetimeCandidates += pending.size();
   const auto candidateIndex = functionCandidateBorrowSummaryIndex();
@@ -267,6 +419,9 @@ auto SemanticVisitor::Impl::inferPrivateLifetimeContracts() -> void {
       continue;
     const FunctionInfo function = *found;
     auto worker = unevaluatedExpressionWorker();
+    worker->requestSession.privateConstexprPrerequisites = prerequisites;
+    worker->declarationOrders = prerequisites->sourceOrder;
+    worker->declarationOrderCounter = prerequisites->sourceOrder.size();
     if (!worker->catalog.sealed) {
       worker->catalog.seal();
       // Inference runs during registration, before the caller's normal

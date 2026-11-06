@@ -46,7 +46,8 @@ exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
                                            const MirBody &body,
                                            const MirPlace *place,
                                            const SemanticType &pointee,
-                                           AccessMode access) {
+                                           AccessMode access,
+                                           bool stagedLifetimeProof = false) {
   if (!place)
     return false;
   const SemanticType *physical = &place->type;
@@ -65,7 +66,10 @@ exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
     physical = &element->arguments.front();
     physicalAccess = element->referenceAccess;
   }
+  // This checks physical shape/access only. Every CallInput also undergoes
+  // independent lifetime replay against the original place and body graph.
   return (*physical == pointee ||
+          (stagedLifetimeProof && sameLifetimeConversionShape(*physical, pointee)) ||
           (physical->kind == SemanticType::Class &&
            pointee.kind == SemanticType::Class &&
            mirPublicBaseConversion(program, *physical, pointee))) &&
@@ -2313,6 +2317,9 @@ uniqueMirClassInstanceForType(const MirProgram &program,
           materialization = findMirMovedTemporaryMaterialization(
               body, *argumentPlace, argumentInput->hirValue);
         }
+        const auto argumentEnum = argumentPlace && argumentPlace->type.kind == SemanticType::Enum
+            ? mirEnumLifetimeView(program, argumentPlace->type) : std::nullopt;
+        const bool integralArgument = argumentEnum && argumentEnum->integral;
         const MirInstruction *producer = materialization.producer;
         const MirLoan *loan =
             argumentInput->loan ? body.findLoan(*argumentInput->loan) : nullptr;
@@ -2380,8 +2387,7 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               argumentPlace != nullptr &&
               producer->info.type == argumentPlace->type &&
               (isPassiveScalarValueType(argumentPlace->type) ||
-               (argumentPlace->type.kind == SemanticType::Enum &&
-                program.findPayloadEnum(argumentPlace->type) == nullptr));
+               integralArgument);
           exactProducer =
               scalarResult ||
               (target != nullptr && argumentPlace != nullptr &&
@@ -2392,8 +2398,7 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                    producer->kind == MirInstructionKind::Compute &&
                    producer->info.type == argumentPlace->type &&
                    (isPassiveScalarValueType(argumentPlace->type) ||
-                    (argumentPlace->type.kind == SemanticType::Enum &&
-                     program.findPayloadEnum(argumentPlace->type) == nullptr) ||
+                    integralArgument ||
                     (argumentPlace->type.kind == SemanticType::StringView &&
                      producer->operation == MirOperation::Literal))) {
           exactProducer = true;
@@ -2402,8 +2407,7 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                    producer->operation == MirOperation::PayloadConstruct &&
                    producer->info.type == argumentPlace->type &&
                    argumentPlace->type.kind == SemanticType::Enum) {
-          const auto *enumeration =
-              program.findPayloadEnum(argumentPlace->type);
+          const auto *enumeration = argumentEnum ? argumentEnum->payload : nullptr;
           exactProducer = enumeration != nullptr &&
                           producer->enumOwner == argumentPlace->type.enumId &&
                           producer->enumVariant &&
@@ -2943,7 +2947,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
     const auto payloadFieldType =
         [&](const SemanticType &owner,
             SymbolId field) -> std::optional<SemanticType> {
-      const auto *enumeration = program.findPayloadEnum(owner);
+      const auto view = mirEnumLifetimeView(program, owner);
+      const auto *enumeration = view ? view->payload : nullptr;
       if (enumeration == nullptr)
         return std::nullopt;
       std::optional<SemanticType> result;
@@ -2953,7 +2958,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
           if (variant.payloadSymbols[index] == field) {
             if (result || index >= variant.payloadTypes.size())
               return std::nullopt;
-            result = variant.payloadTypes[index];
+            result = view->instantiate(variant.payloadTypes[index]);
           }
       return result;
     };
@@ -3287,7 +3292,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         if ((reference && type.arguments.size() != 1) ||
             !mirBorrowedPlaceMatches(program, body, place,
                                      reference ? type.arguments.front() : type,
-                                     access))
+                                     access, true))
           return verificationFailure(
               body, owner,
               "borrowed call input does not match its exact physical pointee "
@@ -5522,11 +5527,11 @@ storedCarrierReferentPlace(const MirProgram &program, const MirBody &body,
         ++usedConditions;
       }
     if (type.kind == SemanticType::Enum) {
-      const auto *enumeration = program.findPayloadEnum(type);
-      if (!guard || !enumeration ||
-          guard->variant >= enumeration->variants.size())
+      const auto view = mirEnumLifetimeView(program, type);
+      const auto actual = view && guard ? view->instantiateVariant(guard->variant) : std::nullopt;
+      if (!actual)
         return std::nullopt;
-      const auto &variant = enumeration->variants[guard->variant];
+      const auto &variant = *actual;
       if (variant.payloadTypes.size() != variant.payloadSymbols.size())
         return std::nullopt;
       for (std::size_t index = 0; index < variant.payloadSymbols.size();
@@ -8464,12 +8469,10 @@ verifyMirPayloadEnums(const MirProgram &program) {
   // even when it needs no cleanup: a switch observing a named place
   // read-borrows it, and every transfer moves.
   const auto copiesMoveOnlyEnum = [&](const MirOperand &operand) {
-    const MirPayloadEnum *copied =
-        operand.kind == MirOperandKind::Copy &&
-                operand.type.kind == SemanticType::Enum
-            ? program.findPayloadEnum(operand.type)
-            : nullptr;
-    return copied != nullptr && !copied->traits.copyable;
+    if (operand.kind != MirOperandKind::Copy || operand.type.kind != SemanticType::Enum)
+      return false;
+    const auto view = mirEnumLifetimeView(program, operand.type);
+    return !view || (view->payload && !view->payload->traits.copyable);
   };
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
     const MirBody *body = findMirBody(program, address);
@@ -8500,15 +8503,13 @@ verifyMirPayloadEnums(const MirProgram &program) {
             instruction.operation != MirOperation::PayloadExtract) {
           continue;
         }
-        const MirPayloadEnum *enumeration =
-            instruction.enumOwner
-                ? program.findPayloadEnum(mirInstructionEnumType(instruction))
-                : nullptr;
-        const MirPayloadEnumVariant *variant =
-            enumeration != nullptr && instruction.enumVariant &&
-                    *instruction.enumVariant < enumeration->variants.size()
-                ? &enumeration->variants[*instruction.enumVariant]
-                : nullptr;
+        const auto actualEnumType = mirInstructionEnumType(instruction);
+        const auto enumView = instruction.enumOwner
+            ? mirEnumLifetimeView(program, actualEnumType) : std::nullopt;
+        const MirPayloadEnum *enumeration = enumView ? enumView->payload : nullptr;
+        const auto actualVariant = enumView && instruction.enumVariant
+            ? enumView->instantiateVariant(*instruction.enumVariant) : std::nullopt;
+        const MirPayloadEnumVariant *variant = actualVariant ? &*actualVariant : nullptr;
         bool exact = enumeration != nullptr && variant != nullptr &&
                      enumeration->declaration == *instruction.enumOwner &&
                      variant->variantIndex == *instruction.enumVariant;
@@ -8525,7 +8526,7 @@ verifyMirPayloadEnums(const MirProgram &program) {
         if (instruction.operation == MirOperation::PayloadConstruct) {
           // A published text payload is staged like a borrowed field.
           const bool published = dependentTextPayloadPublication(
-              *body, instruction, *variant, enumeration->type);
+              *body, instruction, *variant, actualEnumType);
           exact = exact && (published || !instruction.dependentTextPublication);
           const bool borrowedFields =
               published ||
@@ -8545,7 +8546,7 @@ verifyMirPayloadEnums(const MirProgram &program) {
                                       ? body->findValue(*instruction.result)
                                       : nullptr;
           exact = exact && value != nullptr &&
-                  value->info.type == enumeration->type &&
+                  value->info.type == actualEnumType &&
                   value->info.traits ==
                       (published ? textDependentTraits(enumeration->traits)
                                  : enumeration->traits) &&
@@ -8655,7 +8656,7 @@ verifyMirPayloadEnums(const MirProgram &program) {
               exact = exact &&
                       (enumeration->requiresActiveCleanup || exactTemporary) &&
                       event.source == 0 && target != nullptr &&
-                      target->dropType.type == enumeration->type &&
+                      target->dropType.type == actualEnumType &&
                       target->dropType.requiresActiveCleanup ==
                           enumeration->requiresActiveCleanup &&
                       !event.conditional && !event.failureCleanup;
@@ -8681,7 +8682,7 @@ verifyMirPayloadEnums(const MirProgram &program) {
           exact = exact && instruction.payloadIndex && value != nullptr &&
                   *instruction.payloadIndex < variant->payloadTypes.size() &&
                   instruction.operands.size() == 1 &&
-                  instruction.operands.front().type == enumeration->type;
+                  instruction.operands.front().type == actualEnumType;
           const bool consuming = exact && instruction.operands.front().kind ==
                                               MirOperandKind::Move;
           bool storedReference = false;
@@ -8741,7 +8742,7 @@ verifyMirPayloadEnums(const MirProgram &program) {
                     subject != nullptr &&
                     subject->root == MirPlaceRootKind::Binding &&
                     subject->projections.empty() &&
-                    subject->type == enumeration->type;
+                    subject->type == actualEnumType;
             const auto consumingExtract = [&](const MirInstruction &candidate) {
               return !candidate.tombstone &&
                      candidate.kind == MirInstructionKind::Compute &&
@@ -13919,10 +13920,11 @@ projectCompleteBorrowPayloadSet(const MirProgram &program,
 [[nodiscard]] bool dependencyFreePayloadAlternative(const MirProgram &program,
                                                     const SemanticType &type,
                                                     std::size_t variant) {
-  const auto *enumeration = program.findPayloadEnum(type);
-  if (!enumeration || variant >= enumeration->variants.size())
+  const auto view = mirEnumLifetimeView(program, type);
+  const auto actual = view ? view->instantiateVariant(variant) : std::nullopt;
+  if (!actual)
     return false;
-  const auto &fields = enumeration->variants[variant].payloadTypes;
+  const auto &fields = actual->payloadTypes;
   return std::all_of(fields.begin(), fields.end(),
                      [&](const SemanticType &field) {
                        if (field.kind == SemanticType::Unknown ||
@@ -13941,11 +13943,11 @@ constructedCompleteBorrowFact(const MirProgram &program, const MirBody &body,
       instruction.operation != MirOperation::PayloadConstruct ||
       !instruction.enumVariant)
     return std::nullopt;
-  const auto *enumeration = program.findPayloadEnum(instruction.info.type);
-  if (!enumeration || instruction.enumOwner != enumeration->declaration ||
-      *instruction.enumVariant >= enumeration->variants.size())
+  const auto view = mirEnumLifetimeView(program, instruction.info.type);
+  const auto actual = view ? view->instantiateVariant(*instruction.enumVariant) : std::nullopt;
+  if (!view || !view->payload || !actual || instruction.enumOwner != view->payload->declaration)
     return std::nullopt;
-  const auto &variant = enumeration->variants[*instruction.enumVariant];
+  const auto &variant = *actual;
   if (variant.payloadTypes.size() != variant.payloadSymbols.size() ||
       instruction.operands.size() != variant.payloadTypes.size())
     return std::nullopt;
@@ -15434,7 +15436,8 @@ completeBorrowSourcePath(const MirProgram &program,
     for (const auto &operand : instruction.operands) {
       if (operand.kind != MirOperandKind::Move)
         continue;
-      const auto *enumeration = program.findPayloadEnum(operand.type);
+      const auto enumView = mirEnumLifetimeView(program, operand.type);
+      const auto *enumeration = enumView ? enumView->payload : nullptr;
       const bool fieldTransfer =
           instruction.kind == MirInstructionKind::Compute &&
           instruction.operation == MirOperation::PayloadExtract &&
@@ -17359,14 +17362,15 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
       return verificationFailure(
           body, owner,
           "complete borrow dependency set lacks its exact supported producer");
-    const auto *enumeration = program.findPayloadEnum(value.info.type);
-    if (enumeration == nullptr ||
-        producer->enumOwner != enumeration->declaration ||
-        *producer->enumVariant >= enumeration->variants.size())
+    const auto enumView = mirEnumLifetimeView(program, value.info.type);
+    const auto actualVariant = enumView ? enumView->instantiateVariant(*producer->enumVariant)
+                                        : std::nullopt;
+    if (!enumView || !enumView->payload || !actualVariant ||
+        producer->enumOwner != enumView->payload->declaration)
       return verificationFailure(
           body, owner,
           "complete borrow dependency set lacks its exact typed alternative");
-    const auto &variant = enumeration->variants[*producer->enumVariant];
+    const auto &variant = *actualVariant;
     const bool dependencyFree =
         std::all_of(variant.payloadTypes.begin(), variant.payloadTypes.end(),
                     [&](const SemanticType &field) {
@@ -21467,11 +21471,11 @@ verifyMirProgramContracts(const MirProgram &program) {
         return traits && !traits->containsBorrowedState;
       }
       case SemanticType::Enum: {
-        const auto *enumeration = program.findPayloadEnum(type);
-        return !enumeration ||
-               (!enumeration->traits.containsBorrowedState ||
-                instance.borrowOrigin == BorrowOriginKind::Argument ||
-                instance.completeBorrow.has_value());
+        const auto view = mirEnumLifetimeView(program, type);
+        return view && (!view->payload ||
+               !view->payload->traits.containsBorrowedState ||
+               instance.borrowOrigin == BorrowOriginKind::Argument ||
+               instance.completeBorrow.has_value());
       }
       case SemanticType::Class: {
         const auto traits = concreteMirTypeTraits(program, type);

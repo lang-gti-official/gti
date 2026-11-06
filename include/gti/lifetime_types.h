@@ -44,7 +44,11 @@ inline bool sameRegion(Lifetime left, Lifetime right,
 }
 
 inline bool equivalent(const SemanticType &left, const SemanticType &right,
-                       std::vector<LifetimeBinding> bindings) {
+                       std::vector<LifetimeBinding> bindings,
+                       bool allowFreeRegionVariation = false, std::size_t depth = 0) {
+  if (allowFreeRegionVariation && (depth >= 256 ||
+      left.kind == SemanticType::Unknown || right.kind == SemanticType::Unknown))
+    return false;
   if (left.quantifiedLifetimes.size() != right.quantifiedLifetimes.size())
     return false;
   for (std::size_t index = 0; index < left.quantifiedLifetimes.size(); ++index) {
@@ -57,12 +61,22 @@ inline bool equivalent(const SemanticType &left, const SemanticType &right,
       return false;
     bindings.emplace_back(source, target);
   }
-  if (!sameRegion(left.referenceLifetime, right.referenceLifetime, bindings) ||
+  const auto matchesRegion = [&](Lifetime source, Lifetime target) {
+    if (!allowFreeRegionVariation)
+      return sameRegion(source, target, bindings);
+    // Invocation binders must retain their exact scoped relationships. Only
+    // free, fully specified regions can vary at this structural boundary.
+    for (auto binding = bindings.rbegin(); binding != bindings.rend(); ++binding)
+      if (binding->first == source || binding->second == target)
+        return binding->first == source && binding->second == target;
+    return (source == Lifetime{} && target == Lifetime{}) ||
+           (source.specified() && target.specified());
+  };
+  if (!matchesRegion(left.referenceLifetime, right.referenceLifetime) ||
       left.lifetimeArguments.size() != right.lifetimeArguments.size())
     return false;
   for (std::size_t index = 0; index < left.lifetimeArguments.size(); ++index)
-    if (!sameRegion(left.lifetimeArguments[index], right.lifetimeArguments[index],
-                    bindings))
+    if (!matchesRegion(left.lifetimeArguments[index], right.lifetimeArguments[index]))
       return false;
 
   // Compare every non-region fact as well. Do not accidentally equate distinct
@@ -85,7 +99,7 @@ inline bool equivalent(const SemanticType &left, const SemanticType &right,
     if (a.size() != b.size())
       return false;
     for (std::size_t index = 0; index < a.size(); ++index)
-      if (!equivalent(a[index], b[index], bindings))
+      if (!equivalent(a[index], b[index], bindings, allowFreeRegionVariation, depth + 1))
         return false;
     return true;
   };
@@ -189,6 +203,15 @@ inline bool equivalentLifetimeTypes(
     bindings.push_back(binding);
   }
   return lifetime_detail::equivalent(left, right, std::move(bindings));
+}
+
+// Structural admission only: every non-region fact and bound invocation
+// relationship remains exact, while free region choices may differ. This is
+// never evidence of a valid conversion. The owning semantic/MIR proof must
+// independently establish variance and outlives from original source facts.
+inline bool sameLifetimeConversionShape(const SemanticType &left,
+                                        const SemanticType &right) {
+  return lifetime_detail::equivalent(left, right, {}, true);
 }
 
 namespace lifetime_detail {

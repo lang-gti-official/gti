@@ -457,6 +457,15 @@ destructor instances retain normalized contracts just as functions and
 constructors do. Authoritative nominal variance is preserved alongside the
 concrete field/base inventory; lowering never derives it from names.
 
+Payload operations instantiate the selected enum's sealed variant recipe with
+its exact actual region bindings. Construction reconstructs each source type
+and reference origin, proves its conversion to the stored payload type against
+the body graph, and enforces nominal formation requirements. Variant identity,
+source loans, access, guards and cleanup remain separate mandatory checks.
+Call-input shape checks may recognize free-region variation only; independent
+program verification proves every such stage from original source facts,
+including stages without a consuming call. Bound callable scopes remain exact.
+
 An exact local origin also proves that its value type is valid for that local
 borrow. This lets an owned generic value be borrowed without a public
 `T:static` promise. MIR derives that premise from the resolved place type;

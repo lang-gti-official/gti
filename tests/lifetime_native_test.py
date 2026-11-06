@@ -67,7 +67,7 @@ int main() {
   return cleanup_trace - 7;
 }
 """,
-    "borrowed_record_copy_cleanup": """
+    "borrowed_record_move_cleanup": """
 mut int cleanup_trace = 0;
 struct View<lifetime a> {
   int&<a> value;
@@ -77,14 +77,14 @@ struct View<lifetime a> {
 int read<lifetime a>(View<a> view) { return view.value; }
 int observe<lifetime a>(int&<a> input) {
   View<a> view{input};
-  int value = read(view);
+  int value = read(std::move(view));
   if (cleanup_trace != 7) { return 1; }
   return value - 7;
 }
 int main() {
   int number = 7;
   if (observe(number) != 0) { return 1; }
-  return cleanup_trace - 14;
+  return cleanup_trace - 7;
 }
 """,
     "lambda_suppliers": """
@@ -179,6 +179,35 @@ int main() {
   right = 9;
   return result;
 }
+""",
+    "retained_constructed_supplier": """
+int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; }
+  return right;
+}
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+int main() {
+  mut int left = 3; int right = 9;
+  View view{choose(left, right, false)};
+  left = 4;
+  return view.value - 9;
+}
+""",
+    "borrowed_destructor_copy": """
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  ~View() {}
+};
+int read<lifetime a>(View<a> view) { return view.value; }
+int copy<lifetime a>(int&<a> input) {
+  View<a> view{input};
+  return read(view);
+}
+int main() { int number = 7; return copy(number) - 7; }
 """,
     "local_record_escape": """
 struct View<lifetime region> {
@@ -288,6 +317,8 @@ def main():
         "mutation_before_destructor": {"GTI-S2017"},
         "unrelated_return": {"GTI-S2127"},
         "retained_other_supplier": {"GTI-S2017"},
+        "retained_constructed_supplier": {"GTI-S2017"},
+        "borrowed_destructor_copy": {"GTI-S2018"},
         "local_record_escape": {"GTI-S2045", "GTI-S2085", "GTI-S2127"},
     }
     if rejection_codes.keys() != REJECTIONS.keys():

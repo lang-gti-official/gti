@@ -108,6 +108,19 @@ struct MirEnumLifetimeView {
   [[nodiscard]] std::optional<SemanticType> instantiate(const SemanticType &type) const {
     return substituteTypeLifetimes(type, bindings);
   }
+  [[nodiscard]] std::optional<MirPayloadEnumVariant> instantiateVariant(std::size_t index) const {
+    if (!payload || index >= payload->variants.size() ||
+        payload->variants[index].variantIndex != index)
+      return std::nullopt;
+    auto variant = payload->variants[index];
+    for (auto &type : variant.payloadTypes) {
+      const auto actual = instantiate(type);
+      if (!actual)
+        return std::nullopt;
+      type = *actual;
+    }
+    return variant;
+  }
 };
 [[nodiscard]] std::optional<MirClassLifetimeView>
 mirClassLifetimeView(const MirProgram &, const SemanticType &);

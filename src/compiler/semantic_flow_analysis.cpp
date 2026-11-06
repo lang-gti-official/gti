@@ -670,6 +670,8 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
                 requestSession.executableLifetimes;
             worker->requestSession.privateLifetimeDependencies =
                 requestSession.privateLifetimeDependencies;
+            worker->requestSession.privateConstexprPrerequisites =
+                requestSession.privateConstexprPrerequisites;
             worker->requestSession.lifetimeContractRevision =
                 requestSession.lifetimeContractRevision;
             worker->reuseConstantEvaluations = reuseConstantEvaluations;
@@ -8351,9 +8353,24 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
         reportOwnerDependentTextStorage(call.arguments()[index],
                                         "stored in a payload-enum field");
     }
+    if (field.kind == SemanticType::Reference)
+      validateReferenceBinding(field, actual, call.arguments()[index]);
+    SemanticType matched = actual;
+    if (actual != SemanticType::Unknown) {
+      const auto &target = field.kind == SemanticType::Reference && field.arguments.size() == 1
+          ? field.arguments.front() : field;
+      std::vector<LifetimeBound> obligations;
+      const auto adjusted = constrainLifetimeType(actual, target,
+          field.kind == SemanticType::Reference && field.referenceAccess == AccessMode::Mutable ? 0 : 1,
+          obligations, field.kind == SemanticType::Reference);
+      // Initializer/reference validation owns these body facts. Type matching
+      // may consume only the conversion already proved there, while retaining
+      // the original expression's copy/move category and borrow authority.
+      if (adjusted && validateLifetimeConstraints({}, obligations))
+        matched = *adjusted;
+    }
     if (actual != SemanticType::Unknown &&
-        !callArgumentMatches(enumerator.payloadTypes[index], actual,
-                             call.arguments()[index])) {
+        !callArgumentMatches(field, matched, call.arguments()[index])) {
       report(expressionToken(call.arguments()[index]),
              "Payload argument " + std::to_string(index + 1) + " has type '" +
                  typeSpelling(actual) + "'; variant '" +
@@ -11650,6 +11667,7 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   worker->requestSession.stagedConstants = requestSession.stagedConstants;
   worker->requestSession.executableLifetimes = requestSession.executableLifetimes;
   worker->requestSession.privateLifetimeDependencies = requestSession.privateLifetimeDependencies;
+  worker->requestSession.privateConstexprPrerequisites = requestSession.privateConstexprPrerequisites;
   worker->requestSession.lifetimeContractRevision = requestSession.lifetimeContractRevision;
   worker->reuseConstantEvaluations = reuseConstantEvaluations;
   worker->requestSession.rawResultQueries = state;

@@ -19,6 +19,45 @@ lang::SemanticType reference(lang::Lifetime region,
   return type;
 }
 
+void testLifetimeConversionShapes() {
+  using namespace lang;
+  const auto a = Lifetime::parameter(301);
+  const auto b = Lifetime::parameter(302);
+  const auto x = Lifetime::parameter(401);
+  const auto y = Lifetime::parameter(402);
+  expect(sameLifetimeConversionShape(reference(a), reference(Lifetime::local(9))) &&
+             !equivalentLifetimeTypes(reference(a), reference(Lifetime::local(9))),
+         "free region shape admission is not a semantic conversion proof");
+  expect(!sameLifetimeConversionShape(reference(a), reference(a, AccessMode::Mutable)) &&
+             !sameLifetimeConversionShape(reference(a), reference({})) &&
+             !sameLifetimeConversionShape(SemanticType::Unknown, SemanticType::Unknown),
+         "conversion shape preserves access, region-slot presence, and known types");
+  auto first = SemanticType::functionSignature(reference(a), {reference(a), reference(b)});
+  first.quantifiedLifetimes = {a.id};
+  auto second = SemanticType::functionSignature(reference(x), {reference(x), reference(y)});
+  second.quantifiedLifetimes = {x.id};
+  expect(sameLifetimeConversionShape(first, second),
+         "bound callable scopes compare by alpha identity while free regions may differ");
+  auto captured = second;
+  captured.arguments.back() = reference(x);
+  expect(!sameLifetimeConversionShape(first, captured),
+         "a free environment region cannot become an invocation binder");
+  auto unrelated = second;
+  unrelated.quantifiedLifetimes.push_back(y.id);
+  expect(!sameLifetimeConversionShape(first, unrelated),
+         "conversion shape preserves callable quantifier count");
+  auto altered = SemanticType::functionSignature(reference(y), {reference(x), reference(b)});
+  altered.quantifiedLifetimes = {x.id, y.id};
+  auto correlated = SemanticType::functionSignature(reference(a), {reference(a), reference(b)});
+  correlated.quantifiedLifetimes = {a.id, b.id};
+  expect(!sameLifetimeConversionShape(correlated, altered),
+         "conversion shape cannot weaken a quantified input/result correlation");
+  auto nominal = SemanticType::classType(71, {reference(a)});
+  auto changed = SemanticType::classType(72, {reference(x)});
+  expect(!sameLifetimeConversionShape(nominal, changed),
+         "region shape admission never substitutes a different nominal declaration");
+}
+
 void testScopedCallableFormation() {
   using namespace lang;
   using Node = LifetimeRequirementNode;
@@ -153,6 +192,7 @@ void testContextualLifetimeInference() {
 }
 
 int main() {
+  testLifetimeConversionShapes();
   using namespace lang;
   testScopedCallableFormation();
   testContextualLifetimeInference();

@@ -868,6 +868,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   worker.impl->requestSession.stagedConstants = requestSession.stagedConstants;
   worker.impl->requestSession.executableLifetimes = requestSession.executableLifetimes;
   worker.impl->requestSession.privateLifetimeDependencies = requestSession.privateLifetimeDependencies;
+  worker.impl->requestSession.privateConstexprPrerequisites = requestSession.privateConstexprPrerequisites;
   // Concrete constant bodies also demand source access summaries. Share
   // their request-local cycle/depth accounting, not mutable body state.
   worker.impl->requestSession.rawResultQueries =
@@ -1014,6 +1015,11 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   const auto *construction = std::get_if<ResolvedConstructionInfo>(&selected);
   const auto *info =
       function && *function ? stagingModel.findFunction(**function) : nullptr;
+  if (function && *function && !constexprDefinitionsAnalyzed.contains(*function))
+    (void)ensurePrivateConstexprDefinition(*function);
+  if (construction && construction->declaration &&
+      !constexprConstructorsAnalyzed.contains(construction->declaration))
+    (void)ensurePrivateConstexprDefinition(construction->declaration);
   if ((function &&
        (info == nullptr || !constexprDefinitionsAnalyzed.contains(*function) ||
         !declaredBeforeCurrent(*function))) ||
