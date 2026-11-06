@@ -32,9 +32,9 @@ std::string diagnostic() {
   uint64_t saved = value;
   for (mut uint32_t stage = uint32_t(0); stage < uint32_t(2); ++stage) {
     if (stage == uint32_t(0)) {
-      std::assert(saved != uint64_t(0), "{}", diagnostic());
+      std::assert!(saved != uint64_t(0), "{}", diagnostic());
     } else {
-      std::debug_assert(saved != uint64_t(0), "{}", diagnostic());
+      std::debug_assert!(saved != uint64_t(0), "{}", diagnostic());
     }
   }
 }
@@ -50,7 +50,7 @@ std::string diagnostic() {
 }
 #macro uint64_t invoke<F>(F action) { return action(); }
 #macro F retain<F>(F action) { return action; }
-#macro F relay_callable<F>(F action) { return retain(action); }
+#macro F relay_callable<F>(F action) { return retain!(action); }
 
 struct StateValue {
   uint64_t value;
@@ -75,12 +75,12 @@ int main(int argc, std::vector<std::string> argv) {
     auto callback = [state]() -> uint64_t { return state; };
     state = callback();
 #else
-    state = advance(state);
-    state = read_state(rewrap(state));
-    state = invoke([state]() -> uint64_t { return state; });
-    auto callback = relay_callable([state]() -> uint64_t { return state; });
+    state = advance!(state);
+    state = read_state(rewrap!(state));
+    state = invoke!([state]() -> uint64_t { return state; });
+    auto callback = relay_callable!([state]() -> uint64_t { return state; });
     state = callback();
-    std::string_view written = std::expression_text(++state);
+    std::string_view written = std::expression_text!(++state);
     if (written != "++state") { return 3; }
 #endif
 #ifdef COST_MANUAL
@@ -95,7 +95,7 @@ int main(int argc, std::vector<std::string> argv) {
       }
     }
 #else
-    validate_once(state);
+    validate_once!(state);
 #endif
   }
   unsafe {

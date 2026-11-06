@@ -21,6 +21,6 @@ int main() {
   if (increment(41) != 42) { return 3; }
   // A named int would need an explicit conversion to uint16_t here.
   // window.contains(-1, 0) and Window{65536, 1} are rejected as out of range.
-  if (border_width(33) != 33) { return 4; }
+  if (border_width!(33) != 33) { return 4; }
   return 0;
 }

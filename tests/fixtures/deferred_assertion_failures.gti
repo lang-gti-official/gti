@@ -18,7 +18,7 @@ struct Guard {
 };
 
 struct CleanupPanic {
-  ~CleanupPanic() { std::assert(false, "cleanup assertion"); } // secondary
+  ~CleanupPanic() { std::assert!(false, "cleanup assertion"); } // secondary
 public:
   CleanupPanic() = default;
 };
@@ -30,16 +30,16 @@ struct MacroOwner {
 };
 
 [[track_caller]] void tracked_wrapper() {
-  std::assert(false, "through tracked wrapper");
+  std::assert!(false, "through tracked wrapper");
 }
 
 namespace application {
   [[track_caller]] #macro default_condition(int value) {
-    std::assert(value > 0);
+    std::assert!(value > 0);
   }
 
   [[track_caller]] #macro default_debug_condition(int value) {
-    std::debug_assert(value > 0);
+    std::debug_assert!(value > 0);
   }
 
   #macro require(bool condition, std::string_view reason) {
@@ -86,38 +86,38 @@ int ordered_argument(int number) {
 int main(int argc, std::vector<std::string> argv) {
   Guard outer{1};
   if (argc == 1) {
-    std::assert(true, "never evaluated {}", fail_message());
+    std::assert!(true, "never evaluated {}", fail_message());
     return 0;
   }
   Guard inner{2};
   if (argc == 2) {
-    std::assert(false); // plain
+    std::assert!(false); // plain
   }
   if (argc == 3) {
     std::string message{"owned payload"};
-    std::assert(false, "failure: {}", message.view()); // formatted
+    std::assert!(false, "failure: {}", message.view()); // formatted
   }
   if (argc == 4) {
-    std::debug_assert(false, "debug failure"); // debug
+    std::debug_assert!(false, "debug failure"); // debug
     return 0;
   }
   if (argc == 5) {
     tracked_wrapper(); // tracked-caller
   }
   if (argc == 6) {
-    application::require(false, "application failure"); // application
+    application::require!(false, "application failure"); // application
   }
   if (argc == 7) {
-    std::assert(false, "{}", fail_message());
+    std::assert!(false, "{}", fail_message());
   }
   if (argc == 8) {
     CleanupPanic cleanup{};
-    std::assert(false, "primary assertion"); // primary
+    std::assert!(false, "primary assertion"); // primary
   }
   if (argc == 9 || argc == 10) {
     auto started = std::thread::start([]() -> void {
       Guard worker{2};
-      std::assert(false, "worker assertion"); // worker
+      std::assert!(false, "worker assertion"); // worker
     });
     if (!started) { return 99; }
     mut std::thread worker = std::move(started).value();
@@ -127,25 +127,25 @@ int main(int argc, std::vector<std::string> argv) {
     }
   }
   if (argc == 11) {
-    std::assert(ordered_condition(), ordered_pattern(), ordered_argument(1), ordered_argument(2)); // ordered
+    std::assert!(ordered_condition(), ordered_pattern(), ordered_argument(1), ordered_argument(2)); // ordered
   }
   if (argc == 12) {
-    application::local_failure(true, std::string("macro\n")); // macro-local-panic
+    application::local_failure!(true, std::string("macro\n")); // macro-local-panic
   }
   if (argc == 13) {
-    application::local_failure(false, std::string("macro\n"));
+    application::local_failure!(false, std::string("macro\n"));
   }
   if (argc == 14) {
-    application::local_loop(true, 6); // macro-loop-panic
+    application::local_loop!(true, 6); // macro-loop-panic
   }
   if (argc == 15) {
-    application::local_loop(false, 6);
+    application::local_loop!(false, 6);
   }
   if (argc == 16) {
-    application::default_condition(0); // synthesized-default
+    application::default_condition!(0); // synthesized-default
   }
   if (argc == 17) {
-    application::default_debug_condition(0); // synthesized-debug-default
+    application::default_debug_condition!(0); // synthesized-debug-default
   }
   return 0;
 }

@@ -73,10 +73,10 @@ int main() {
         {});
 
   check("namespace app{[[track_caller]]#macro CHECK(bool condition,int value){"
-        "if(!condition){report(value);}}void use(){CHECK(true,compute());}}",
+        "if(!condition){report(value);}}void use(){CHECK!(true,compute());}}",
         "namespace app {\n  [[track_caller]] #macro CHECK(bool condition, int "
         "value) {\n    if (!condition) {\n      report(value);\n    }\n  }\n"
-        "  void use() {\n    CHECK(true, compute());\n  }\n}\n",
+        "  void use() {\n    CHECK!(true, compute());\n  }\n}\n",
         {});
   check("#macro log_if<First,Args...>(bool condition,std::string_view "
         "pattern,First first,Args... args)requires std::formattable<First>{"

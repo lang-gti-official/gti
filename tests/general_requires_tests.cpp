@@ -162,7 +162,7 @@ public:
 #macro inspect<T>(T value) requires std::equality_comparable<T> {
   if (value == value) {}
 }
-int main() { Key key{}; inspect(key); return 0; }
+int main() { Key key{}; inspect!(key); return 0; }
 )GTI"),
            "macro probes retain computed reflection declaration identities");
 
@@ -1652,21 +1652,21 @@ mut int observed = 0;
 }
 #macro nested(bool query) {
   bool subject = false;
-  inspect(query);
+  inspect!(query);
 }
 int main() {
   int subject = 7;
-  inspect(requires { { subject + subject } -> int; });
-  inspect(requires(int& subject) { { subject + subject } -> int; });
-  nested(requires { { subject + subject } -> int; });
-  nested(requires(int& subject) { { subject + subject } -> int; });
-  inspect(requires(int& value) {
+  inspect!(requires { { subject + subject } -> int; });
+  inspect!(requires(int& subject) { { subject + subject } -> int; });
+  nested!(requires { { subject + subject } -> int; });
+  nested!(requires(int& subject) { { subject + subject } -> int; });
+  inspect!(requires(int& value) {
     { (requires { { value + value } -> int; }) } -> bool;
   });
-  inspect(requires {
+  inspect!(requires {
     { ([]() -> int { int subject = 2; return subject; })() } -> int;
   });
-  inspect(requires(int& value) {
+  inspect!(requires(int& value) {
     { ([&value]() -> int { return value; })() } -> int;
   });
   return 0;
@@ -1679,7 +1679,7 @@ int main() {
 #macro inspect(bool value) {
   if (requires(int& value) { { value + value } -> int; }) {}
 }
-int main() { inspect(true); return 0; }
+int main() { inspect!(true); return 0; }
 )"),
       "typed macro definitions retain their documented query-body boundary",
       "GTI-S2099");

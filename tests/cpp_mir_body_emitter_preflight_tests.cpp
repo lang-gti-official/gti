@@ -4247,9 +4247,9 @@ struct Pair {
   if (left > 0) { return left + right; }
   return 0;
 }
-int global = initial_value(4);
-class Registry { public: static int value = initial_value(6);  public: Registry() = default; };
-struct Record { int field = initial_value(8);  public: Record() = default; };
+int global = initial_value!(4);
+class Registry { public: static int value = initial_value!(6);  public: Registry() = default; };
+struct Record { int field = initial_value!(8);  public: Record() = default; };
 int main() {
   Record record{};
   return global + Registry::value + record.field + cleaned - 30;
@@ -4389,7 +4389,7 @@ struct Record {
 }
 int later() { later_calls += 1; return 0; }
 int consume(Record record, int ignored) { return record.value; }
-int sample(int mode) { return consume(select_record(mode, 41), later()); }
+int sample(int mode) { return consume(select_record!(mode, 41), later()); }
 int main() {
   int sum = sample(-1) + sample(0) + sample(1);
   if (sum != 126 || later_calls != 3) { return 1; }
@@ -4507,8 +4507,8 @@ public:
   return Flag();
 }
 int probe(int mode) {
-  int converted = select_flag(mode);
-  if (!select_flag(mode)) { return 0; }
+  int converted = select_flag!(mode);
+  if (!select_flag!(mode)) { return 0; }
   return converted;
 }
 int main() {

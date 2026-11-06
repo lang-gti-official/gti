@@ -37,6 +37,7 @@ module.exports = grammar({
     [$.concept_application, $.type_argument_clause],
     [$.user_type, $.primary_expression],
     [$.expression, $.argument_list],
+    [$.expression, $.macro_argument_list],
     [$.constraint_predicate, $.expression],
     [$.direct_initializer, $.expression],
     [$.constructor_initializer_argument_list, $.expression],
@@ -1326,9 +1327,16 @@ module.exports = grammar({
         ")",
       ),
 
-    procedural_macro_invocation: ($) => prec(PREC.postfix, seq(
-      field("name", $._qualified_identifier), "!", "(",
-      field("input", $.syntax_group), ")")),
+    macro_invocation: ($) => prec(PREC.postfix, seq(
+      field("name", choice($._qualified_identifier, $.generic_function)), "!",
+      field("arguments", $.macro_argument_list))),
+    // Braced macro input is structurally opaque until declaration resolution.
+    // Other typed arguments retain normal expression nodes for editor queries.
+    macro_argument_list: ($) => seq("(", optional(choice(
+      $.pack_expansion,
+      seq(commaSep1(choice($.syntax_group, $._expression_not_comma,
+                           $.payload_reference_pattern)),
+          optional(seq(",", $.pack_expansion))))), ")"),
     // Lexical nesting only; the macro library owns its input grammar.
     syntax_group: ($) => seq("{", repeat($._syntax_item), "}"),
     _syntax_item: ($) => choice(
@@ -1390,7 +1398,7 @@ module.exports = grammar({
 
     _postfix_expression: ($) =>
       choice(
-        $.procedural_macro_invocation,
+        $.macro_invocation,
         $.call_expression,
         $.member_expression,
         $.index_expression,
@@ -1614,7 +1622,7 @@ function nonAssignmentExpression($) {
     $.binary_expression,
     $.unary_expression,
     $.call_expression,
-    $.procedural_macro_invocation,
+    $.macro_invocation,
     $.member_expression,
     $.index_expression,
     $.update_expression,

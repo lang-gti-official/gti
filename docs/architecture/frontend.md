@@ -4,13 +4,14 @@ Status: Current implementation.
 
 The procedural macro frontend recognizes `#macro(proc)` and the explicit
 `name!({...})` invocation. This spelling was selected by the owner during RFC
-0001 implementation; ordinary calls and typed macros keep their grammar.
+0001 implementation. All macro invocations now require the marker; typed generic
+calls spell `name<T>!(...)`, while ordinary functions keep `name(...)`.
 `SyntaxCapture` retains immutable tokens, exact input text, source spans and
 text-relative token ranges. Brackets, braces and parentheses balance using GTI
 lexical rules; embedded-language structure is not a frontend grammar.
 
 Before directive processing or processed-unit replay, the source loader rejects
-directives/imports inside an explicit procedural invocation (`GTI-I0015`). A
+directives/imports inside any explicit macro invocation (`GTI-I0015`). A
 rejected unit publishes no directive effects or dependency edges. Ordinary
 braced calls and ordinary configuration directives keep their existing behavior.
 The parser retains capture ownership in `Call`, and AST cloning remaps token
@@ -32,7 +33,14 @@ implicit void or explicit typed result and a retained macro declaration identity
 text replacement directives consumed by `SourceLoader`. Names, generic
 parameters, exact typed value parameters, defaults, constraints, attributes and
 braced bodies use the ordinary parsed syntax; semantics owns eligibility and
-expansion. Ordinary call syntax carries no separate macro invocation sigil.
+expansion. A marked `Call` retains the `!` token and both raw capture and parsed
+expression arguments. The parser attempts the typed argument grammar under its
+existing nesting budget, retaining any errors on that alternative. Semantic name
+resolution selects typed arguments or opaque procedural input before argument
+analysis; raw input never executes parser or loader directives. This keeps typed
+macro substitution structural even when macros invoke other macros, without
+requiring parser knowledge of imported declaration kinds. An unmarked call to a
+resolved macro is rejected with a targeted marker-insertion fix.
 
 Expression parsing also retains a half-open byte extent for each complete
 written assignment-expression and full comma-expression. This syntax-owned

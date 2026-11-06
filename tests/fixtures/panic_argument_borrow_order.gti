@@ -13,7 +13,7 @@ struct Position {
   Position(uint8_t row, uint8_t col,
            std::source_location loc = std::source_location::current())
       : row(row), col(col) {
-    CHECK_RANGE(row, col, loc); // panic-site
+    CHECK_RANGE!(row, col, loc); // panic-site
   }
 };
 

@@ -64,28 +64,28 @@ void consume(Resource resource, int later) {
 int main(int argc, std::vector<std::string> argv) {
   OuterGuard outer{};
   if (argc == 1) {
-    Resource result = produce(false, false, false);
+    Resource result = produce!(false, false, false);
     trace("received\n");
     return result.read() == 7 ? 0 : 99;
   }
   if (argc == 2) {
-    Resource result = produce(true, false, false);
+    Resource result = produce!(true, false, false);
     trace("unreachable\n");
   }
   if (argc == 3) {
-    Resource result = produce(false, true, false);
+    Resource result = produce!(false, true, false);
     trace("unreachable\n");
   }
   if (argc == 4) {
-    consume(produce(false, false, false), later_argument());
+    consume(produce!(false, false, false), later_argument());
     trace("unreachable\n");
   }
   if (argc == 5) {
-    Resource result = produce(false, true, true);
+    Resource result = produce!(false, true, true);
     trace("unreachable\n");
   }
   if (argc == 6) {
-    Resource result = produce(false, false, true);
+    Resource result = produce!(false, false, true);
     trace("received\n");
     return 0;
   }

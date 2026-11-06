@@ -3494,7 +3494,8 @@
       "required_instantiations": [
         "boolean-only and formatted assertions",
         "disabled NDEBUG argument moves and messages",
-        "unrelated application statement helpers and owning Record"
+        "unrelated application statement helpers and owning Record",
+        "explicit ! invocation syntax and missing-marker insertion diagnostics"
       ],
       "evidence": [
         "tests/deferred_assertion_tests.cpp",

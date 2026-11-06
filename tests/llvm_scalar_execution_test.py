@@ -150,7 +150,7 @@ int main() { return fail(int8_t(127)); }
 #macro require(bool condition) {
   if (!condition) { std::panic("assertion failed"); }
 }
-int main() { require(false); return 0; }
+int main() { require!(false); return 0; }
 ''', 'GTI-R0017')
     cases['initializer'] = ('int fail(int value) { return 2147483647 + value; }\n'
                             'int global = fail(1);\nint main() { return 0; }\n', 'GTI-R0001')
