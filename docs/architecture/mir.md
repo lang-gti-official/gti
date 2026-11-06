@@ -4476,7 +4476,10 @@ through a known-disjoint projection. An ordinary reference without a stored
 carrier dependency may also lend and read shared access while all overlapping
 child accesses are read-only. Local and call-result shared children use the
 same rule in either creation order; any overlapping mutable dependency still
-excludes that access. A read-only child of a parent that
+excludes that access. A checked read-only call input retains this permission
+both when prepared and when consumed by its invocation; the call need not
+return a borrow. Its staged loan, when present, must still be active, and
+call-input alias and stored-dependency checks remain required. A read-only child of a parent that
 grants no mutation over the child's place shares access with every
 overlapping read-only sibling, whatever the parent's loan kind; reborrowing a
 payload of one read-only matched-enum binding therefore coexists with the
@@ -4486,6 +4489,14 @@ read-only-to-mutable transition, or
 inconsistent active/suspended state at a CFG join. The precise place model for
 this slice is limited to stable roots with named-field and checked-dereference
 projections; it does not claim indexed, raw, or opaque provenance.
+
+Scalar-initialization dataflow covers integral, boolean, character,
+floating-point, raw-pointer and null-pointer local storage. A checked local
+`Borrow`, load, move or call input requires definite initialization, even when
+later reads use a reference projection. Full-expression value temporaries keep
+their separate exact lifecycle producer protocol. Debug queries retain their
+existing integral-or-lifecycle coverage, and recoverable source-value event
+publication retains its narrower integral type profile.
 
 When lowering re-roots a projected place at a loan whose source is a
 reference carrier itself — a reference parameter's entry loan rather than a

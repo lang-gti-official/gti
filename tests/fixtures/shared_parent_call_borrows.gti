@@ -1,0 +1,52 @@
+int read(int& value) { return value; }
+int sum(int& left, int& right) { return left + right; }
+void keep(int& value) {}
+void write(mut int& value) { value += 1; }
+
+struct Counter {
+  mut int value = 3;
+  Counter() = default;
+  int get() { return this.value; }
+};
+struct Snapshot {
+  int value;
+  Snapshot(int& source) : value(source) {}
+};
+
+int incoming(mut int& parent) {
+  int& child = parent;
+  int& alias = child;
+  int observed = read(parent);
+  return observed + sum(parent, child) + alias;
+}
+
+int main() {
+  mut int owner = 1;
+  mut int& parent = owner;
+  int& child = parent;
+  keep(parent);
+  Snapshot snapshot{parent};
+  if (sum(parent, child) != 2 || snapshot.value != 1) return 1;
+  write(parent);
+  if (incoming(parent) != 8) return 2;
+
+  mut Counter counter{};
+  mut Counter& counter_parent = counter;
+  Counter& counter_child = counter_parent;
+  int first = counter_parent.get();
+  if (first + counter_child.get() != 6) return 3;
+
+  mut float floating = 1.5;
+  float& floating_read = floating;
+  if (floating_read != 1.5) return 4;
+  mut double wide = double(2.5);
+  mut double& wide_write = wide;
+  wide_write = double(3.5);
+  if (wide != double(3.5)) return 5;
+  mut int* pointer = nullptr;
+  int*& pointer_read = pointer;
+  if (pointer_read != nullptr) return 6;
+  mut int*& pointer_write = pointer;
+  pointer_write = nullptr;
+  return pointer == nullptr ? 0 : 7;
+}

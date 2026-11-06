@@ -227,6 +227,117 @@ void verifierProofs() {
   }
 }
 
+void primitiveBorrowInitialization() {
+  struct Case {
+    std::string type;
+    std::string value;
+    std::string read;
+    lang::SemanticType::Kind kind;
+  };
+  for (const auto &item : std::vector<Case>{
+           {"int", "1", "alias - 1", lang::SemanticType::Int32},
+           {"bool", "true", "alias ? 0 : 1", lang::SemanticType::Bool},
+           {"char", "'a'", "alias == 'a' ? 0 : 1", lang::SemanticType::Char},
+           {"float", "1.0", "int(alias) - 1", lang::SemanticType::Float},
+           {"double", "double(1.0)", "int(alias) - 1",
+            lang::SemanticType::Double},
+           {"int*", "nullptr", "alias == nullptr ? 0 : 1",
+            lang::SemanticType::RawPointer},
+           {"nullptr_t", "nullptr", "alias == nullptr ? 0 : 1",
+            lang::SemanticType::NullPtr}}) {
+    for (const std::string access : {"", "mut ", "copy"}) {
+      const std::string alias = access == "copy"
+                                    ? item.type + " alias"
+                                    : access + item.type + "& alias";
+      auto result =
+          analyze("int main() { mut " + item.type + " value = " + item.value +
+                  "; " + alias + " = value; return " + item.read + "; }");
+      const std::string label =
+          access + item.type + " initialized local borrow";
+      expect(result.canGenerateCode(), label);
+      if (!result.canGenerateCode()) {
+        for (const auto &diagnostic : result.diagnostics)
+          std::cerr << label << ": " << diagnostic.message << '\n';
+        continue;
+      }
+      bool erased = false;
+      for (auto &function :
+           const_cast<std::vector<lang::MirFunctionInstance> &>(
+               result.mir.functionInstances())) {
+        const auto *info = result.semantics.findFunction(function.declaration);
+        if (!info || !info->declaration ||
+            info->declaration->name().lexeme != "main")
+          continue;
+        for (auto &block : function.body.blocks) {
+          const auto initializer = std::find_if(
+              block.instructions.begin(), block.instructions.end(),
+              [&](const auto &instruction) {
+                const auto *place =
+                    instruction.destination
+                        ? function.body.findPlace(*instruction.destination)
+                        : nullptr;
+                return instruction.kind ==
+                           lang::MirInstructionKind::Initialize &&
+                       place && place->type.kind == item.kind &&
+                       place->root == lang::MirPlaceRootKind::Binding &&
+                       place->projections.empty();
+              });
+          if (initializer != block.instructions.end()) {
+            block.instructions.erase(initializer);
+            erased = true;
+            break;
+          }
+        }
+        (void)lang::rebuildMirValueUses(function.body);
+      }
+      const auto proof = lang::verifyMirProgram(result.mir);
+      expect(
+          erased && !proof.valid() &&
+              std::any_of(proof.errors.begin(), proof.errors.end(),
+                          [](const auto &error) {
+                            return error.message.find(
+                                       "definitely initialized scalar place") !=
+                                   std::string::npos;
+                          }),
+          label + " rejects removed initialization for the intended reason");
+    }
+  }
+}
+
+void sharedParentCallArguments() {
+  const std::string declarations =
+      "int read(int& value) { return value; } "
+      "void keep(int& value) {} void write(mut int& value) { value += 1; } ";
+  accepted(declarations +
+               "int main() { mut int owner = 1; mut int& parent = owner; "
+               "int& child = parent; keep(parent); keep(child); return 0; }",
+           "shared parent call beside a live read-only child (#286)");
+  accepted(declarations +
+               "int main() { mut int owner = 1; mut int& parent = owner; "
+               "int& child = parent; int answer = read(parent); return answer "
+               "+ child - 2; }",
+           "shared parent call returns a scalar beside a live child");
+  accepted(declarations +
+               "int via(mut int& parent) { int& child = parent; "
+               "int answer = read(parent); return answer + child; } "
+               "int main() { mut int value = 1; return via(value) - 2; }",
+           "shared call through an incoming mutable reference");
+  accepted(declarations +
+               "int main() { mut int owner = 1; mut int& parent = owner; "
+               "mut int& child = parent; keep(child); write(parent); return "
+               "owner - 2; }",
+           "mutable parent call after child endpoint");
+  rejected(declarations +
+               "int main() { mut int owner = 1; mut int& parent = owner; "
+               "int& child = parent; write(parent); keep(child); return 0; }",
+           "parent write remains forbidden beside a shared child");
+  rejected(
+      declarations +
+          "int main() { mut int owner = 1; mut int& parent = owner; "
+          "mut int& child = parent; keep(parent); write(child); return 0; }",
+      "parent read remains forbidden beside an exclusive child");
+}
+
 void mixedArgumentLoanOrder() {
   const std::string declarations = R"gti(
 struct Holder {
@@ -346,6 +457,8 @@ int main() {
   carrierBoundaries();
   libraryClients();
   verifierProofs();
+  primitiveBorrowInitialization();
+  sharedParentCallArguments();
   mixedArgumentLoanOrder();
   localScalarBorrowInitialization();
   return failures ? 1 : 0;
