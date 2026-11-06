@@ -87,6 +87,43 @@ int main() {
   return cleanup_trace - 7;
 }
 """,
+    "borrowed_temporary_cleanup": """
+mut int cleanup_trace = 0;
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  ~View() { cleanup_trace += this.value; }
+};
+View<a> make<lifetime a>(int&<a> input) { return View<a>{input}; }
+int read<lifetime a>(View<a> view) { return view.value; }
+int observe<lifetime a>(int&<a> input) {
+  int value = read(View<a>{input}) + read(make(input));
+  return value - 14;
+}
+int main() {
+  int number = 7;
+  if (observe(number) != 0) { return 1; }
+  return cleanup_trace - 14;
+}
+""",
+    "borrowed_enum_move_cleanup": """
+mut int cleanup_trace = 0;
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  ~View() { cleanup_trace += this.value; }
+};
+enum Box<T> { item(T value) };
+void observe<lifetime a>(int&<a> input) {
+  View<a> view{input};
+  auto box = Box<View<_>>::item(std::move(view));
+}
+int main() {
+  int number = 7;
+  observe(number);
+  return cleanup_trace - 7;
+}
+""",
     "lambda_suppliers": """
 int main() {
   auto choose = [](int& left, int& right, bool first) -> int& {

@@ -369,17 +369,23 @@ freshObjectStorage(const MirProgram &program, MirBodyAddress address,
             : nullptr;
     if (!place || place->root != MirPlaceRootKind::Temporary ||
         !place->projections.empty() || place->capture ||
-        place->foreignStorage || place->type != producer.info.type || !input ||
-        input->callInputKind != HirCallInputKind::MoveValue ||
+        place->foreignStorage || !input ||
+        place->type != input->info.type ||
+        !sameLifetimeConversionShape(producer.info.type, input->info.type) ||
+        (input->callInputKind != HirCallInputKind::MoveValue &&
+         input->callInputKind != HirCallInputKind::MoveBorrowedTemporary) ||
         input->callInputRole != MirCallInputRole::Argument ||
         input->operands.size() != 1 ||
         input->operands.front().kind != MirOperandKind::Value ||
-        input->operands.front().value != value || !prepared ||
+        input->operands.front().value != value ||
+        input->operands.front().type != producer.info.type || !prepared ||
         prepared->kind != MirDropObligationKind::PreparedParameter ||
         prepared->place != place->id)
       return {};
-    // The prepared obligation is armed fresh, or reparented from the exact
-    // success-result obligation of the producer's own value place.
+    // The source-free program verifier already proved the prepared stage's
+    // region conversion. Placement retains the original producer identity and
+    // accepts only its unchanged storage shape. The prepared obligation is
+    // armed fresh, or reparented from the exact success-result obligation.
     const MirDropObligation *produced = nullptr;
     if (whole)
       for (const auto &obligation : body.dropObligations)

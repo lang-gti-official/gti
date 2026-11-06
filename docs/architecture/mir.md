@@ -465,6 +465,10 @@ source loans, access, guards and cleanup remain separate mandatory checks.
 Call-input shape checks may recognize free-region variation only; independent
 program verification proves every such stage from original source facts,
 including stages without a consuming call. Bound callable scopes remain exact.
+Native C call witnesses compare staged values with the declaration's exact
+instantiated lifetime signature. Missing substitutions or mismatched input
+regions reject before emission. The native ABI still derives from the sealed
+declaration's runtime types; lifetime substitution adds no ABI argument.
 
 An exact local origin also proves that its value type is valid for that local
 borrow. This lets an owned generic value be borrowed without a public
@@ -4187,6 +4191,18 @@ exactly one `TransferOut` of that obligation, as a converting initialization
 does. The destination keeps its own obligation, which now owns the converted
 value, and no later Drop names the transferred source. A same-typed `Replace`
 across the conversion fails verification.
+A prepared owning `CallInput` may shorten free regions while retaining one
+object and its cleanup identity. Lowering keeps the original source type and
+reparents its exact active obligation into the separately typed prepared slot.
+Body verification admits this only for `MoveValue` or `MoveBorrowedTemporary`,
+with identical non-region storage shape, destructor identities, field/base/
+payload/capture selectors, array extents and cleanup effects. Independent
+program verification reconstructs the original source and proves the lifetime
+conversion even if no call consumes the stage. A later consumer sees the
+stage's declared result type and cannot recover an earlier longer region.
+Distinct wrapper conversions retain their separate transfer/initialization
+rule; matching cleanup shape alone never proves a region relation.
+
 Full-expression cleanup is LIFO, lexical cleanup is reverse construction order,
 and a temporary created
 only by a logical or conditional branch retains a path-conditional obligation

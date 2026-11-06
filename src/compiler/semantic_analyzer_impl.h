@@ -3110,6 +3110,7 @@ private:
   void notePrivateLifetimeDependency(FunctionId function) const;
   void notePrivateLifetimeOpaqueDependency() const;
   [[nodiscard]] bool ensurePrivateConstexprDefinition(const Stmt *declaration);
+  [[nodiscard]] const Stmt *privateConstexprSourceBoundary() const;
   [[nodiscard]] std::optional<LifetimeSignatureContract> projectInferredLifetimeContract(
       const LifetimeSignatureContract &declaration,
       const SemanticLifetimeBody &body) const;
@@ -7528,6 +7529,9 @@ private:
       std::unordered_map<const Stmt *, Proof> proofs;
     };
     std::shared_ptr<PrivateConstexprPrerequisites> privateConstexprPrerequisites;
+    // A staged concrete callee retains the original required-constant source
+    // boundary; its own instance reanalysis must not widen early visibility.
+    const Stmt *privateConstexprBoundary = nullptr;
     const Lambda *collectingLambdaLifetimeContract = nullptr;
     std::uint64_t lifetimeContractRevision = 0;
     struct ExecutableLifetimeKey {
@@ -8341,6 +8345,7 @@ private:
     bool reanalysis = false;
     std::uint64_t lifetimeContractRevision = 0;
     std::size_t declarationOrder = 0;
+    const Stmt *privateConstexprBoundary = nullptr;
     std::size_t definitions = 0;
     std::size_t constructors = 0;
   };

@@ -996,10 +996,29 @@ void emitSourcePreflight(Session &session,
             instruction.functionTarget
                 ? program.findFunctionInstance(*instruction.functionTarget)
                 : nullptr;
-        if (target && target->linkage == LanguageLinkage::C)
-          require(nativeCDirectCallContract(program, session.program().target(),
-                                            function.body, instruction),
-                  "source preflight needs every real C call's exact witness");
+        if (target && target->linkage == LanguageLinkage::C) {
+          if (!nativeCDirectCallContract(program, session.program().target(),
+                                          function.body, instruction))
+            throw std::runtime_error("source preflight lacks the exact native C witness for " +
+                                     target->externalSymbol + " at instruction " +
+                                     std::to_string(instruction.id));
+          if (!instruction.lifetimeApplication.bindings.empty()) {
+            auto missingRegion = instruction;
+            missingRegion.lifetimeApplication.bindings.pop_back();
+            require(!nativeCDirectCallContract(program, session.program().target(),
+                                               function.body, missingRegion),
+                    "native C witness cannot omit a selected lifetime binding");
+            for (std::size_t index = 0; index < instruction.parameterTypes.size(); ++index) {
+              if (instruction.parameterTypes[index].lifetimeArguments.empty())
+                continue;
+              auto wrongInput = instruction;
+              wrongInput.parameterTypes[index].lifetimeArguments.clear();
+              require(!nativeCDirectCallContract(program, session.program().target(),
+                                                 function.body, wrongInput),
+                      "native C witness cannot discard an instantiated input region");
+            }
+          }
+        }
       }
   }
   const auto admission = planLlvmAdmission(input, session.options());

@@ -15393,6 +15393,9 @@ completeBorrowSourcePath(const MirProgram &program,
                  instruction.operation == MirOperation::Assign) ||
                 (instruction.kind == MirInstructionKind::CallInput &&
                  (instruction.info.type == instruction.operands.front().type ||
+                  mirLifetimeValueConversion(program, body, owner,
+                                             instruction.operands.front().type,
+                                             instruction.info.type) ||
                   (instruction.info.type.kind == SemanticType::Reference &&
                    instruction.info.type.arguments.size() == 1 &&
                    instruction.info.type.arguments.front() ==
@@ -22712,33 +22715,48 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       return false;
     activeLayouts.push_back(type);
     bool finite = true;
-    if (const auto *enumeration = program.findPayloadEnum(type)) {
-      for (const auto &variant : enumeration->variants)
-        for (const auto &field : variant.payloadTypes)
-          finite = finite && self(self, field);
+    if (type.kind == SemanticType::Enum) {
+      const auto view = mirEnumLifetimeView(program, type);
+      if (!view) {
+        finite = false;
+      } else if (view->payload) {
+        for (const auto &variant : view->payload->variants)
+          for (const auto &field : variant.payloadTypes) {
+            const auto actual = view->instantiate(field);
+            finite = finite && actual && self(self, *actual);
+          }
+      }
     } else if (type.kind == SemanticType::Array) {
       for (const auto &part : type.arguments)
         finite = finite && self(self, part);
     } else if (type.kind == SemanticType::Class) {
-      const auto owner = std::find_if(
-          program.classInstances().begin(), program.classInstances().end(),
-          [&](const auto &candidate) { return candidate.type == type; });
-      if (owner == program.classInstances().end()) {
+      const auto view = mirClassLifetimeView(program, type);
+      if (!view) {
         finite = false;
       } else {
-        for (const auto &base : owner->structuralBases)
-          if (!base.interface)
-            finite = finite && self(self, base.type);
-        for (const auto &field : owner->declaredFields)
-          finite = finite && self(self, field.type);
-        if (owner->compilerCapability ==
+        const auto &owner = *view->instance;
+        for (const auto &base : owner.structuralBases)
+          if (!base.interface) {
+            const auto actual = view->instantiate(base.type);
+            finite = finite && actual && self(self, *actual);
+          }
+        for (const auto &field : owner.declaredFields) {
+          const auto actual = view->instantiate(field.type);
+          finite = finite && actual && self(self, *actual);
+        }
+        if (owner.compilerCapability ==
             CompilerCapabilityTypeKind::OptionalStorage)
           for (const auto &part : type.arguments)
             finite = finite && self(self, part);
       }
-    } else if (type.kind == SemanticType::Lambda && type.hasLambdaShape()) {
-      for (const auto &capture : type.lambdaCaptureTypes())
-        finite = finite && self(self, capture);
+    } else if (type.kind == SemanticType::Lambda) {
+      const auto captures = mirLambdaCaptureTypes(program, type);
+      if (!captures) {
+        finite = false;
+      } else {
+        for (const auto &capture : *captures)
+          finite = finite && self(self, capture);
+      }
     }
     activeLayouts.pop_back();
     if (finite)

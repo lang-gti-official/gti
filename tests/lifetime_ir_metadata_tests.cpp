@@ -1,4 +1,5 @@
 #include "../src/compiler/mir_lifetimes.h"
+#include "../src/compiler/mir_verification_support.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_effects.h"
 #include "gti/callable_lifetimes.h"
@@ -122,6 +123,42 @@ void cleanupLifetimeRecipes() {
   expect(!mirUniqueCleanupType(program, actualLeaf),
          "ambiguous physical instances cannot select a cleanup target by erased type equality");
 }
+void owningCleanupShape() {
+  auto type = SemanticType::classType(110);
+  type.lifetimeArguments = {Lifetime::parameter(1101)};
+  auto shortened = type;
+  shortened.lifetimeArguments = {Lifetime::inference(1102)};
+  MirDropType source{
+      .type = SemanticType::arrayOf(type, std::size_t{2}),
+      .fixedArray = MirFixedArrayDropSchedule{{2}, type, 1},
+      .aggregate = {{.type = type, .classInstance = 1, .destructor = 2,
+                     .uniqueOwnerField = 7, .requiresActiveCleanup = true}},
+      .requiresActiveCleanup = true};
+  auto target = source;
+  target.type = SemanticType::arrayOf(shortened, std::size_t{2});
+  target.fixedArray->leafType = shortened;
+  target.aggregate.front().type = shortened;
+  expect(mir_detail::sameLifetimeDropShape(source, target),
+         "owning region conversion retains exact cleanup shape");
+  for (int mutation = 0; mutation != 8; ++mutation) {
+    auto broken = target;
+    switch (mutation) {
+    case 0: broken.aggregate.front().destructor = 3; break;
+    case 1: broken.aggregate.front().uniqueOwnerField = 8; break;
+    case 2: broken.aggregate.front().recursiveCleanup = true; break;
+    case 3: broken.fixedArray->extents = {3}; break;
+    case 4: broken.fixedArray->leafClassInstance = 2; break;
+    case 5: broken.aggregate.front().payloadVariant = 1; break;
+    case 6: broken.aggregate.clear(); break;
+    case 7: broken.aggregate.front().requiresActiveCleanup = false; break;
+    }
+    expect(!mir_detail::sameLifetimeDropShape(source, broken),
+           "region conversion cannot change cleanup identity, selectors or effects");
+  }
+  target.aggregate.front().type.lifetimeArguments = {Lifetime::staticLifetime()};
+  expect(mir_detail::sameLifetimeDropShape(source, target),
+         "cleanup shape is not an outlives proof; the mandatory stage gate rejects strengthening");
+}
 void quantifiedNominalLiftInventory() {
   auto signature = SemanticType::functionSignature(reference(1001), {reference(1001)});
   signature.quantifiedLifetimes = {1001};
@@ -155,6 +192,7 @@ void quantifiedNominalLiftInventory() {
 } // namespace
 int main() {
   cleanupLifetimeRecipes();
+  owningCleanupShape();
   quantifiedNominalLiftInventory();
   const auto fixedEnvironment = Lifetime::parameter(701);
   const std::array closureParameters{reference(702)};

@@ -442,7 +442,11 @@ primary lexical body pass reaches it. A bounded prerequisite query checks that
 definition strictly in its own source context, with lifetime collection off;
 only a successful checked definition becomes available in the isolated probe.
 Its selected constexpr closure still executes through the existing staged
-HIR/MIR service. Prerequisite proofs retain dependency reads and the exact
+HIR/MIR service. Staging-only source-availability callbacks authorize fresh
+concrete semantic models, including for nongeneric callees; HIR never reads
+missing body facts from the primary registration model. Lazy discoveries use
+the original required-constant source boundary, which also participates in
+the staging result and worker identities. Prerequisite proofs retain dependency reads and the exact
 contract generation, preserve source declaration order, and cannot publish a
 provisional recursive proof or complete the primary program's body pass.
 

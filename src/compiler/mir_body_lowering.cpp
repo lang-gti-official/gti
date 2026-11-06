@@ -1246,11 +1246,10 @@ private:
         leaf = SemanticType(leaf.arguments.front());
       }
       schedule.leafType = leaf;
-      const auto owner = std::find_if(
-          program.classInstances().begin(), program.classInstances().end(),
-          [&](const auto &candidate) { return candidate.type == leaf; });
+      const auto view = hirLifetimeInstanceView(program.classInstances(), leaf);
+      const auto *owner = view ? view->instance : nullptr;
       std::optional<HirDestructorInstanceId> destructor;
-      if (owner != program.classInstances().end()) {
+      if (owner != nullptr) {
         schedule.leafClassInstance = owner->id;
         destructor = owner->destructor;
       }
@@ -1287,10 +1286,9 @@ private:
       return result;
     }
     if (type.kind == SemanticType::Lambda) {
-      const auto lambda = std::find_if(
-          program.lambdaInstances().begin(), program.lambdaInstances().end(),
-          [&](const HirLambda &candidate) { return candidate.type == type; });
-      if (lambda == program.lambdaInstances().end() ||
+      const auto view = hirLifetimeInstanceView(program.lambdaInstances(), type);
+      const auto *lambda = view ? view->instance : nullptr;
+      if (lambda == nullptr ||
           lambda->captures.size() !=
               lambda->captureRequiresActiveCleanup.size())
         return std::nullopt;
@@ -1298,8 +1296,9 @@ private:
       for (std::size_t index = lambda->captures.size(); index != 0; --index) {
         if (!lambda->captureRequiresActiveCleanup[index - 1])
           continue;
-        auto child =
-            uniqueCleanupType(lambda->captures[index - 1].type, visiting);
+        const auto actual = substituteTypeLifetimes(
+            lambda->captures[index - 1].type, view->bindings);
+        auto child = actual ? uniqueCleanupType(*actual, visiting) : std::nullopt;
         if (!child)
           return std::nullopt;
         child->captureIndex = index - 1;
@@ -1325,17 +1324,14 @@ private:
       }
       if (value.kind != SemanticType::Class)
         return std::nullopt;
-      const auto pointee = std::find_if(
-          program.classInstances().begin(), program.classInstances().end(),
-          [&](const HirClassInstance &candidate) {
-            return candidate.type == type.arguments.front();
-          });
-      if (pointee != program.classInstances().end() && pointee->polymorphic)
+      const auto view = hirLifetimeInstanceView(program.classInstances(), value);
+      const auto *pointee = view ? view->instance : nullptr;
+      if (pointee != nullptr && pointee->polymorphic)
         return MirDropType{.type = type,
                            .uniquePointeeClass = pointee->id,
                            .polymorphicCleanup = true,
                            .requiresActiveCleanup = true};
-      if (pointee != program.classInstances().end() && pointee->destructor &&
+      if (pointee != nullptr && pointee->destructor &&
           pointee->requiresActiveDropState && pointee->bases.empty() &&
           std::none_of(pointee->fields.begin(), pointee->fields.end(),
                        [](const HirClassField &field) {
@@ -1346,13 +1342,13 @@ private:
                            .uniquePointeeClass = pointee->id,
                            .requiresActiveCleanup = true};
       }
-      if (pointee == program.classInstances().end())
+      if (pointee == nullptr)
         return std::nullopt;
       if (!pointee->requiresActiveCleanup)
         return MirDropType{.type = type,
                            .uniquePointeeClass = pointee->id,
                            .requiresActiveCleanup = true};
-      auto child = uniqueCleanupType(pointee->type, visiting);
+      auto child = uniqueCleanupType(value, visiting);
       if (!child)
         return std::nullopt;
       return MirDropType{.type = type,
@@ -1362,12 +1358,9 @@ private:
     }
     if (type.kind != SemanticType::Class)
       return std::nullopt;
-    const auto owner = std::find_if(program.classInstances().begin(),
-                                    program.classInstances().end(),
-                                    [&](const HirClassInstance &candidate) {
-                                      return candidate.type == type;
-                                    });
-    if (owner != program.classInstances().end() &&
+    const auto view = hirLifetimeInstanceView(program.classInstances(), type);
+    const auto *owner = view ? view->instance : nullptr;
+    if (owner != nullptr &&
         owner->compilerCapability == CompilerCapabilityTypeKind::SharedOwner) {
       if (type.arguments.size() != 1)
         return std::nullopt;
@@ -1380,7 +1373,7 @@ private:
                          .aggregate = {*pointee},
                          .requiresActiveCleanup = true};
     }
-    if (owner != program.classInstances().end() &&
+    if (owner != nullptr &&
         (owner->compilerCapability ==
              CompilerCapabilityTypeKind::MutexStorage ||
          owner->compilerCapability ==
@@ -1398,27 +1391,21 @@ private:
           if (value.kind == SemanticType::Array)
             return value.arguments.size() == 1 &&
                    self(self, value.arguments.front());
-          if (value.kind == SemanticType::Class)
-            return std::any_of(program.classInstances().begin(),
-                               program.classInstances().end(),
-                               [&](const auto &instance) {
-                                 return instance.type == value &&
-                                        !instance.requiresActiveCleanup;
-                               });
+          if (value.kind == SemanticType::Class) {
+            const auto actual = hirLifetimeInstanceView(program.classInstances(), value);
+            return actual && !actual->instance->requiresActiveCleanup;
+          }
           if (value.kind == SemanticType::Enum) {
             const auto view = hirLifetimeInstanceView(program.enumDeclarations(), value);
             return view && !view->instance->requiresActiveCleanup;
           }
-          if (value.kind == SemanticType::Lambda)
-            return std::any_of(
-                program.lambdaInstances().begin(),
-                program.lambdaInstances().end(), [&](const auto &lambda) {
-                  return lambda.type == value &&
-                         std::none_of(
-                             lambda.captureRequiresActiveCleanup.begin(),
-                             lambda.captureRequiresActiveCleanup.end(),
-                             [](bool active) { return active; });
-                });
+          if (value.kind == SemanticType::Lambda) {
+            const auto actual = hirLifetimeInstanceView(program.lambdaInstances(), value);
+            return actual && std::none_of(
+                actual->instance->captureRequiresActiveCleanup.begin(),
+                actual->instance->captureRequiresActiveCleanup.end(),
+                [](bool active) { return active; });
+          }
           return value.kind != SemanticType::UniqueOwner &&
                  value.kind != SemanticType::SharedPointer &&
                  value != SemanticType::Unknown;
@@ -1433,7 +1420,7 @@ private:
                                           : std::vector<MirDropType>{},
                          .requiresActiveCleanup = true};
     }
-    if (owner != program.classInstances().end() && owner->destructor &&
+    if (owner != nullptr && owner->destructor &&
         owner->requiresActiveDropState && owner->bases.empty() &&
         std::none_of(owner->fields.begin(), owner->fields.end(),
                      [](const HirClassField &field) {
@@ -1444,7 +1431,7 @@ private:
                          .destructor = owner->destructor,
                          .requiresActiveCleanup = true};
     }
-    if (owner == program.classInstances().end() || owner->unionLayout ||
+    if (owner == nullptr || owner->unionLayout ||
         (owner->destructor
              ? (!owner->requiresActiveDropState ||
                 owner->destructorStatus != SpecialMemberStatus::Declared)
@@ -1466,7 +1453,8 @@ private:
       const auto &field = *cursor;
       if (!field.requiresActiveCleanup)
         continue;
-      auto child = uniqueCleanupType(field.info.type, visiting);
+      const auto actual = substituteTypeLifetimes(field.info.type, view->bindings);
+      auto child = actual ? uniqueCleanupType(*actual, visiting) : std::nullopt;
       if (child) {
         child->uniqueOwnerField = field.info.symbol;
         selected.aggregate.push_back(*child);
@@ -1475,18 +1463,18 @@ private:
       }
     }
     for (const auto &baseInfo : owner->bases) {
-      const auto base = std::find_if(program.classInstances().begin(),
-                                     program.classInstances().end(),
-                                     [&](const HirClassInstance &candidate) {
-                                       return candidate.id == baseInfo.instance;
-                                     });
-      if (base == program.classInstances().end()) {
+      const auto actual = substituteTypeLifetimes(baseInfo.type, view->bindings);
+      const auto baseView = actual
+          ? hirLifetimeInstanceView(program.classInstances(), *actual)
+          : std::nullopt;
+      const auto *base = baseView ? baseView->instance : nullptr;
+      if (base == nullptr || base->id != baseInfo.instance) {
         complete = false;
         continue;
       }
       if (!base->requiresActiveCleanup)
         continue;
-      auto child = uniqueCleanupType(base->type, visiting);
+      auto child = uniqueCleanupType(*actual, visiting);
       if (child) {
         child->uniqueOwnerBase = base->id;
         selected.aggregate.push_back(*child);
@@ -1526,30 +1514,10 @@ private:
     }
     schedule.leafType = leaf;
     if (leaf.kind == SemanticType::Class) {
-      const HirClassInstance *selected = nullptr;
-      const HirClassInstance *exactSpecialization = nullptr;
-      for (const HirClassInstance &candidate : program.classInstances()) {
-        if (candidate.type == leaf) {
-          selected = &candidate;
-          break;
-        }
-        // Exact class specializations have their own stable ClassId and no
-        // remaining generic arguments. Array element types can retain the
-        // source arguments alongside that specialization identity, so match
-        // the unique concrete instance by the stronger declaration identity.
-        if (candidate.type.classId == leaf.classId &&
-            candidate.type.arguments.empty() &&
-            candidate.type.valueArguments.empty()) {
-          if (exactSpecialization != nullptr) {
-            return result;
-          }
-          exactSpecialization = &candidate;
-        }
-      }
-      selected = selected == nullptr ? exactSpecialization : selected;
-      if (selected != nullptr) {
-        schedule.leafClassInstance = selected->id;
-        result.destructor = selected->destructor;
+      const auto view = hirLifetimeInstanceView(program.classInstances(), leaf);
+      if (view) {
+        schedule.leafClassInstance = view->instance->id;
+        result.destructor = view->instance->destructor;
       }
     }
     result.fixedArray = std::move(schedule);
@@ -1993,7 +1961,16 @@ private:
       valid = false;
       return;
     }
-    if (sourceDrop->dropType.type == targetDrop->dropType.type) {
+    const bool lifetimeInput =
+        instruction.kind == MirInstructionKind::CallInput &&
+        (instruction.callInputKind == HirCallInputKind::MoveValue ||
+         instruction.callInputKind == HirCallInputKind::MoveBorrowedTemporary) &&
+        instruction.callInputRole == MirCallInputRole::Argument &&
+        instruction.preparedParameterDrop == target &&
+        targetDrop->kind == MirDropObligationKind::PreparedParameter &&
+        mir_detail::sameLifetimeDropShape(sourceDrop->dropType,
+                                         targetDrop->dropType);
+    if (sourceDrop->dropType.type == targetDrop->dropType.type || lifetimeInput) {
       appendLifecycle(instruction, {.kind = MirLifecycleEventKind::Reparent,
                                     .source = source,
                                     .target = target});

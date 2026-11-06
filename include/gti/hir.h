@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1250,6 +1251,14 @@ struct HirLoweringScope {
   std::vector<std::string> trustedSources;
 };
 
+// A staged query may prove a source body before the primary lexical body pass
+// reaches it. Such a proof only authorizes concrete reanalysis in this closure;
+// it does not mark the immutable primary model's body as analyzed.
+struct HirConstantSourceAuthority {
+  std::function<bool(const FunctionDecl &)> function;
+  std::function<bool(const ConstructorDecl &)> constructor;
+};
+
 class HirLowerer {
 public:
   explicit HirLowerer(TargetInfo target = TargetInfo::host(),
@@ -1279,14 +1288,16 @@ public:
       SemanticInstanceProvider &instanceProvider, FunctionId root,
       const std::vector<FunctionId> &completedFunctions,
       const GenericSubstitution &substitution = {},
-      const std::vector<ConstructorId> &completedConstructors = {});
+      const std::vector<ConstructorId> &completedConstructors = {},
+      HirConstantSourceAuthority sourceAuthority = {});
 
   [[nodiscard]] HirLoweringResult lowerConstantConstructor(
       const SemanticModel &semantics,
       SemanticInstanceProvider &instanceProvider,
       const ResolvedConstructionInfo &root,
       const std::vector<FunctionId> &completedFunctions,
-      const std::vector<ConstructorId> &completedConstructors);
+      const std::vector<ConstructorId> &completedConstructors,
+      HirConstantSourceAuthority sourceAuthority = {});
 
 private:
   class Impl;

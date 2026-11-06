@@ -9,6 +9,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.collectingPrivateLifetimeContracts = false;
   requestSession.privateLifetimeDependencies.reset();
   requestSession.privateConstexprPrerequisites.reset();
+  requestSession.privateConstexprBoundary = nullptr;
   requestSession.collectingLambdaLifetimeContract = nullptr;
   requestSession.lifetimeContractRevision = 0;
   requestSession.completeReturnQueries.reset();

@@ -1,4 +1,5 @@
 #include "native_c_abi.h"
+#include "../mir_lifetimes.h"
 #include "debug_info.h"
 #include "failure.h"
 #include "native_c_contract.h"
@@ -405,8 +406,9 @@ bool nativeCFunctionBorrowInputContract(const MirProgram &program,
           callee->definitionKind != MirDefinitionKind::Source ||
           index >= callee->parameterTypes.size() ||
           index >= stage.operands.size() ||
-          stage.parameterTypes != callee->parameterTypes ||
-          callee->parameterTypes[index] != type)
+          !mirLifetimeCallSignatureMatches(stage, *callee) ||
+          index >= stage.parameterTypes.size() ||
+          stage.parameterTypes[index] != type)
         continue;
       const auto &argument = stage.operands[index];
       consumed |= argument.kind == MirOperandKind::Value &&
@@ -495,9 +497,8 @@ bool nativeCDirectCallContract(const MirProgram &program,
        instruction.unsafeOperation != UnsafeOperationKind::None) ||
       !instruction.definedFailure.empty() ||
       !instruction.localFailureSites.empty() ||
-      instruction.parameterTypes != function->parameterTypes ||
-      instruction.info.type != function->returnType ||
-      instruction.operands.size() != function->parameterTypes.size())
+      !mirLifetimeCallSignatureMatches(instruction, *function) ||
+      instruction.operands.size() != instruction.parameterTypes.size())
     return false;
   bool selected = false;
   for (const auto &block : body.blocks)
@@ -513,7 +514,9 @@ bool nativeCDirectCallContract(const MirProgram &program,
     const auto *value = operand.kind == MirOperandKind::Value
                             ? body.findValue(operand.value)
                             : nullptr;
-    const auto &type = function->parameterTypes[index];
+    // The declaration owns the native ABI; this call owns its exact checked
+    // lifetime substitution. Runtime representation is unchanged by regions.
+    const auto &type = instruction.parameterTypes[index];
     if (!value || operand.type != type || value->info.type != type)
       return false;
     bool staged = false;

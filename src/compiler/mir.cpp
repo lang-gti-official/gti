@@ -10316,6 +10316,42 @@ bool validCallInputType(const SemanticType &source,
          source.pointerAccess == AccessMode::Mutable;
 }
 
+bool sameLifetimeDropShape(const MirDropType &source,
+                           const MirDropType &target) {
+  std::vector<std::pair<const MirDropType *, const MirDropType *>> pending{
+      {&source, &target}};
+  while (!pending.empty()) {
+    const auto [left, right] = pending.back();
+    pending.pop_back();
+    if (!sameLifetimeConversionShape(left->type, right->type) ||
+        left->classInstance != right->classInstance ||
+        left->lambdaInstance != right->lambdaInstance ||
+        left->destructor != right->destructor ||
+        left->uniquePointeeClass != right->uniquePointeeClass ||
+        left->polymorphicCleanup != right->polymorphicCleanup ||
+        left->uniqueOwnerField != right->uniqueOwnerField ||
+        left->uniqueOwnerBase != right->uniqueOwnerBase ||
+        left->captureIndex != right->captureIndex ||
+        left->payloadVariant != right->payloadVariant ||
+        left->payloadField != right->payloadField ||
+        left->recursiveCleanup != right->recursiveCleanup ||
+        left->requiresActiveCleanup != right->requiresActiveCleanup ||
+        left->fixedArray.has_value() != right->fixedArray.has_value() ||
+        left->aggregate.size() != right->aggregate.size())
+      return false;
+    if (left->fixedArray &&
+        (left->fixedArray->extents != right->fixedArray->extents ||
+         left->fixedArray->leafClassInstance !=
+             right->fixedArray->leafClassInstance ||
+         !sameLifetimeConversionShape(left->fixedArray->leafType,
+                                      right->fixedArray->leafType)))
+      return false;
+    for (std::size_t index = 0; index < left->aggregate.size(); ++index)
+      pending.emplace_back(&left->aggregate[index], &right->aggregate[index]);
+  }
+  return true;
+}
+
 const MirInstruction *linearDefinition(const MirBody &body, MirValueId value) {
   return linearValueDefinition(body, value);
 }
@@ -11858,7 +11894,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                             : linearValueDefinition(body, operand.value);
       if (source == nullptr || definition == nullptr ||
           source->sourceValue != input.hirValue ||
-          source->info.type != input.info.type ||
+          !sameLifetimeConversionShape(source->info.type, input.info.type) ||
           source->info.category != ValueCategory::Value ||
           definition->hirValue != input.hirValue ||
           definition->kind == MirInstructionKind::Load ||
@@ -11892,7 +11928,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       }
       std::vector<MirDropObligationId> obligations;
       for (const auto *obligation : dropsForValue(source->sourceValue)) {
-        if (obligation->dropType.type == input.info.type) {
+        if (obligation->dropType.type == source->info.type) {
           obligations.push_back(obligation->id);
         }
       }
@@ -11991,7 +12027,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                                 : linearValueDefinition(body, operand.value);
           if (source == nullptr || producer == nullptr ||
               source->sourceValue != input.hirValue ||
-              source->info.type != input.info.type ||
+              !sameLifetimeConversionShape(source->info.type, input.info.type) ||
               source->info.category != ValueCategory::Value ||
               !source->info.traits.containsBorrowedState ||
               !sameCallInputTraits(source->info.traits, input.info.traits) ||
@@ -12022,7 +12058,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           for (const MirDropObligation &candidate : body.dropObligations) {
             if (candidate.kind != MirDropObligationKind::Value ||
                 candidate.value != source->sourceValue ||
-                candidate.dropType.type != input.info.type) {
+                candidate.dropType.type != source->info.type) {
               continue;
             }
             if (drop != nullptr) {
@@ -12040,7 +12076,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               prepared->kind == MirDropObligationKind::PreparedParameter &&
               !prepared->initiallyActive &&
               input.destination == prepared->place &&
-              prepared->dropType == drop->dropType &&
+              prepared->dropType.type == input.info.type &&
+              mir_detail::sameLifetimeDropShape(drop->dropType,
+                                                prepared->dropType) &&
               input.lifecycle.size() == 1 &&
               input.lifecycle.front().kind == MirLifecycleEventKind::Reparent &&
               input.lifecycle.front().target == prepared->id;
@@ -12069,7 +12107,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           return drop != nullptr && slot != nullptr && activated &&
                  slot->root == MirPlaceRootKind::Value &&
                  slot->value == source->id && slot->projections.empty() &&
-                 slot->type == input.info.type &&
+                 slot->type == source->info.type &&
                  slot->traits.containsBorrowedState &&
                  (preparedTransfer || directTransfer) &&
                  input.lifecycle.front().source == drop->id &&
@@ -14271,9 +14309,27 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             hasTarget ? body.findDropObligation(event.target) : nullptr;
         if (source != nullptr && target != nullptr &&
             source->dropType.type != target->dropType.type) {
-          return failure(body, owner,
-                         "lifecycle source and target types do not match",
-                         block.id, instruction.id);
+          // Prepared owning inputs may shorten free regions without changing
+          // the object or its cleanup recipe. The independent program stage
+          // gate reconstructs the source and proves this conversion even if
+          // the stage has no consumer. Other lifecycle operations stay exact.
+          const bool preparedInput =
+              instruction.kind == MirInstructionKind::CallInput &&
+              (instruction.callInputKind == HirCallInputKind::MoveValue ||
+               instruction.callInputKind ==
+                   HirCallInputKind::MoveBorrowedTemporary) &&
+              instruction.callInputRole == MirCallInputRole::Argument &&
+              instruction.preparedParameterDrop == target->id &&
+              target->kind == MirDropObligationKind::PreparedParameter &&
+              instruction.info.type == target->dropType.type &&
+              (event.kind == MirLifecycleEventKind::Move ||
+               event.kind == MirLifecycleEventKind::Reparent) &&
+              mir_detail::sameLifetimeDropShape(source->dropType,
+                                                target->dropType);
+          if (!preparedInput)
+            return failure(body, owner,
+                           "lifecycle source and target types do not match",
+                           block.id, instruction.id);
         }
         bool boundToInstruction = true;
         switch (event.kind) {

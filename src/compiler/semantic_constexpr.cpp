@@ -109,8 +109,25 @@ public:
   SemanticTypeTraits traitsFor(const SemanticType &type) const override {
     return facts.traitsFor(type);
   }
+  NominalVariance nominalVariance(const SemanticType &type) const override {
+    return facts.nominalVariance(type);
+  }
+  std::vector<NominalVarianceRecipe> nominalVarianceRecipes() const override {
+    return facts.nominalVarianceRecipes();
+  }
+  LifetimeSignatureContract
+  nominalLifetimeContract(const SemanticType &type) const override {
+    return facts.nominalLifetimeContract(type);
+  }
+  std::optional<SemanticExecutableInstantiation>
+  canonicalizeExecutableInstance(const InstanceAnalysisKey &key) override {
+    return acquire().canonicalizeExecutableInstance(key);
+  }
   bool requiresActiveCleanupFor(const SemanticType &type) const override {
     return facts.requiresActiveCleanupFor(type);
+  }
+  bool lifecycleBoundBorrowCarrierFor(const SemanticType &type) const override {
+    return facts.lifecycleBoundBorrowCarrierFor(type);
   }
   std::optional<EnumTypeInfo>
   enumTypeFor(const SemanticType &type) const override {
@@ -755,7 +772,10 @@ auto SemanticVisitor::Impl::stagedConstantKey(
   // worker copies (those declared before this point) and those HIR lowers.
   std::vector<std::uintptr_t> identity{
       concreteReanalysis() ? 1U : 0U,
-      static_cast<std::uintptr_t>(requestSession.lifetimeContractRevision)};
+      static_cast<std::uintptr_t>(requestSession.lifetimeContractRevision),
+      reinterpret_cast<std::uintptr_t>(requestSession.privateConstexprPrerequisites
+                                          ? privateConstexprSourceBoundary()
+                                          : nullptr)};
   const auto append = [&](std::vector<std::uintptr_t> values) {
     std::sort(values.begin(), values.end());
     identity.push_back(values.size());
@@ -822,9 +842,13 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   for (const auto *definition : constexprConstructorsAnalyzed)
     constructors += declaredBeforeCurrent(definition) ? 1 : 0;
   const bool reanalysis = concreteReanalysis();
+  const Stmt *const sourceBoundary = requestSession.privateConstexprPrerequisites
+                                        ? privateConstexprSourceBoundary()
+                                        : nullptr;
   StagedWorker &worker = stagedWorker;
   if (worker.impl == nullptr || worker.reanalysis != reanalysis ||
       worker.lifetimeContractRevision != requestSession.lifetimeContractRevision ||
+      worker.privateConstexprBoundary != sourceBoundary ||
       worker.declarationOrder != currentDeclarationOrder ||
       worker.definitions != definitions ||
       worker.constructors != constructors) {
@@ -845,6 +869,8 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.impl->semanticModel.setCallJournal(nullptr);
     worker.impl->valueFlow = valueFlow;
     worker.impl->valueFlow.rebindCallables(worker.impl->catalog);
+    worker.impl->declarationOrders = declarationOrders;
+    worker.impl->declarationOrderCounter = declarationOrderCounter;
     for (const FunctionDecl *definition : constexprDefinitionsAnalyzed) {
       if (declaredBeforeCurrent(definition))
         worker.impl->constexprDefinitionsAnalyzed.insert(definition);
@@ -858,6 +884,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.impl->defaultArgumentDependencies = defaultArgumentDependencies;
     worker.reanalysis = reanalysis;
     worker.lifetimeContractRevision = requestSession.lifetimeContractRevision;
+    worker.privateConstexprBoundary = sourceBoundary;
     worker.declarationOrder = currentDeclarationOrder;
     worker.definitions = definitions;
     worker.constructors = constructors;
@@ -869,6 +896,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   worker.impl->requestSession.executableLifetimes = requestSession.executableLifetimes;
   worker.impl->requestSession.privateLifetimeDependencies = requestSession.privateLifetimeDependencies;
   worker.impl->requestSession.privateConstexprPrerequisites = requestSession.privateConstexprPrerequisites;
+  worker.impl->requestSession.privateConstexprBoundary = sourceBoundary;
   // Concrete constant bodies also demand source access summaries. Share
   // their request-local cycle/depth accounting, not mutable body state.
   worker.impl->requestSession.rawResultQueries =
@@ -1154,10 +1182,22 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     // semantic provider and exact declaration identities without lending it
     // mutable caller state. It lives until HIR has consumed every concrete
     // instance delta; the lowered HIR retains the synthetic syntax it uses.
+    // Pin this closure's worker. Lazy source discovery may grow the checked
+    // availability sets while HIR retains deltas based on that worker; a
+    // subsequent acquire must update its availability, never replace its base.
+    Impl *closureWorker = nullptr;
     StagedInstanceProvider provider(
         *this,
         [&]() -> SemanticInstanceProvider & {
-          return stagedWorkerFor(stagingModel, context.work);
+          if (!closureWorker)
+            closureWorker = &stagedWorkerFor(stagingModel, context.work);
+          for (const auto *definition : constexprDefinitionsAnalyzed)
+            if (declaredBeforeCurrent(definition))
+              closureWorker->constexprDefinitionsAnalyzed.insert(definition);
+          for (const auto *definition : constexprConstructorsAnalyzed)
+            if (declaredBeforeCurrent(definition))
+              closureWorker->constexprConstructorsAnalyzed.insert(definition);
+          return *closureWorker;
         },
         [&](const StagedInstanceKeyView &request,
             SemanticInstanceAnalysis &analysis) {
@@ -1181,15 +1221,24 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
               analysis);
         });
     HirLowerer lowerer(target);
+    HirConstantSourceAuthority sourceAuthority;
+    if (requestSession.privateConstexprPrerequisites) {
+      sourceAuthority.function = [&](const FunctionDecl &declaration) {
+        return ensurePrivateConstexprDefinition(&declaration);
+      };
+      sourceAuthority.constructor = [&](const ConstructorDecl &declaration) {
+        return ensurePrivateConstexprDefinition(&declaration);
+      };
+    }
     auto hir = [&] {
       const PhaseTimeScope lowerScope("constexpr-staged-hir");
       return construction
                  ? lowerer.lowerConstantConstructor(stagingModel, provider,
                                                     *construction, completed,
-                                                    constructors)
+                                                    constructors, sourceAuthority)
                  : lowerer.lowerConstantFunction(stagingModel, provider,
                                                  info->id, completed,
-                                                 substitution, constructors);
+                                                 substitution, constructors, sourceAuthority);
     }();
     if (!hir.valid()) {
       if (hasErrorDiagnostics(hir.diagnostics)) {

@@ -16,7 +16,9 @@ struct SemanticLifetimeTestAccess {
     bool repeatedHit = false;
     bool distinctLifetimeMiss = false;
     bool distinctGenerationMiss = false;
+    bool distinctBoundaryMiss = false;
     bool workerRefreshed = false;
+    bool boundaryWorkerRefreshed = false;
   };
   static CacheChecks stagedLifetimeKeys() {
     SemanticVisitor analyzer;
@@ -46,6 +48,16 @@ struct SemanticLifetimeTestAccess {
     ++impl.requestSession.lifetimeContractRevision;
     const auto revised = key();
     checks.distinctGenerationMiss = revised && !cache->find(*revised);
+    EmptyStmt earlier(Token{}), later(Token{});
+    impl.requestSession.privateConstexprPrerequisites =
+        std::make_shared<SemanticVisitor::Impl::RequestSessionContext::PrivateConstexprPrerequisites>();
+    impl.requestSession.privateConstexprBoundary = &earlier;
+    const auto earlierKey = key();
+    if (earlierKey)
+      cache->record({.key = *earlierKey, .value = ConstantValue{true}});
+    impl.requestSession.privateConstexprBoundary = &later;
+    const auto laterKey = key();
+    checks.distinctBoundaryMiss = earlierKey && laterKey && !cache->find(*laterKey);
     impl.catalog.seal();
     auto work = std::make_shared<SemanticVisitor::Impl::ConstexprWorkBudget>();
     (void)impl.stagedWorkerFor(impl.semanticModel, work);
@@ -54,6 +66,11 @@ struct SemanticLifetimeTestAccess {
     auto &worker = impl.stagedWorkerFor(impl.semanticModel, work);
     checks.workerRefreshed = worker.macroLookupBase == &impl &&
         worker.requestSession.lifetimeContractRevision == impl.requestSession.lifetimeContractRevision;
+    impl.requestSession.privateConstexprBoundary = &earlier;
+    auto &earlierWorker = impl.stagedWorkerFor(impl.semanticModel, work);
+    checks.boundaryWorkerRefreshed =
+        earlierWorker.requestSession.privateConstexprBoundary == &earlier &&
+        impl.stagedWorker.privateConstexprBoundary == &earlier;
     return checks;
   }
 };
@@ -782,8 +799,12 @@ void testPrivateLifetimeWorklist() {
          "staged results distinguish explicit lifetime substitutions");
   expect(cacheKeys.distinctGenerationMiss,
          "an inferred contract revision invalidates the previous staging environment");
+  expect(cacheKeys.distinctBoundaryMiss,
+         "early staged results preserve the original required-constant source boundary");
   expect(cacheKeys.workerRefreshed,
          "a changed lifetime generation rebuilds the staged worker's semantic snapshot");
+  expect(cacheKeys.boundaryWorkerRefreshed,
+         "a staged query worker retains the exact source availability boundary");
   constexpr std::size_t chainLength = 16;
   constexpr std::size_t independentCount = 16;
   const auto checkOrder = [&](bool leafFirst) {

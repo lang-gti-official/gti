@@ -222,6 +222,15 @@ auto SemanticVisitor::Impl::notePrivateLifetimeOpaqueDependency() const -> void 
     requestSession.privateLifetimeDependencies->opaqueCachedProof = true;
 }
 
+auto SemanticVisitor::Impl::privateConstexprSourceBoundary() const -> const Stmt * {
+  if (requestSession.privateConstexprBoundary)
+    return requestSession.privateConstexprBoundary;
+  if (currentFunctionDeclaration)
+    return currentFunctionDeclaration;
+  const auto &state = requestSession.privateConstexprPrerequisites;
+  return state && !state->stack.empty() ? state->stack.back() : nullptr;
+}
+
 auto SemanticVisitor::Impl::ensurePrivateConstexprDefinition(
     const Stmt *declaration) -> bool {
   const auto state = requestSession.privateConstexprPrerequisites;
@@ -244,9 +253,7 @@ auto SemanticVisitor::Impl::ensurePrivateConstexprDefinition(
   // Concrete-instance visibility is deliberately broader than source
   // visibility. This early query proves a source definition, so use the
   // original declaration's position rather than concreteReanalysis().
-  const Stmt *source = currentFunctionDeclaration;
-  if (!source && !state->stack.empty())
-    source = state->stack.back();
+  const Stmt *source = privateConstexprSourceBoundary();
   const auto position = state->sourceOrder.find(declaration);
   const auto boundary = state->sourceOrder.find(source);
   if (trace)
@@ -294,6 +301,7 @@ auto SemanticVisitor::Impl::ensurePrivateConstexprDefinition(
   auto worker = unevaluatedExpressionWorker();
   worker->prepareInstanceAnalysis();
   worker->requestSession.collectingPrivateLifetimeContracts = false;
+  worker->requestSession.privateConstexprBoundary = declaration;
   worker->trustedBodies = TrustedBodyAnalysis::Complete;
   worker->bodyPhaseActive = false;
   auto reads = std::make_shared<RequestSessionContext::PrivateLifetimeDependencyTrace>();

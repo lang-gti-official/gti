@@ -78,6 +78,84 @@ MirInstruction *payloadConstruct(MirBody &body) {
   return nullptr;
 }
 
+void checkOwningTransferMutations(const MirProgram &program) {
+  struct Stage { MirBodyAddress body; MirInstructionId instruction; };
+  std::vector<Stage> stages;
+  bool valueMove = false;
+  bool borrowedMove = false;
+  for (const auto address : enumerateMirBodyAddresses(program)) {
+    const auto *body = findMirBody(program, address);
+    if (!body)
+      continue;
+    for (const auto &block : body->blocks)
+      for (const auto &input : block.instructions) {
+        if (input.kind != MirInstructionKind::CallInput ||
+            (input.callInputKind != HirCallInputKind::MoveValue &&
+             input.callInputKind != HirCallInputKind::MoveBorrowedTemporary) ||
+            !input.preparedParameterDrop || input.operands.size() != 1 ||
+            input.operands.front().type == input.info.type ||
+            !input.info.traits.containsBorrowedState)
+          continue;
+        expect(input.lifecycle.size() == 1 &&
+                   input.lifecycle.front().kind == MirLifecycleEventKind::Reparent,
+               "owning lifetime conversion reparents the exact object into prepared storage");
+        if (input.lifecycle.size() != 1)
+          continue;
+        valueMove |= input.callInputKind == HirCallInputKind::MoveValue;
+        borrowedMove |= input.callInputKind == HirCallInputKind::MoveBorrowedTemporary;
+        stages.push_back({address, input.id});
+      }
+  }
+  expect(valueMove && borrowedMove,
+         "owning fixture must exercise fresh construction and named borrowed-result transfers");
+  for (const auto selected : stages)
+    for (int mutation = 0; mutation != 8; ++mutation) {
+      auto broken = program;
+      auto *body = findMirBody(broken, selected.body);
+      MirInstruction *input = nullptr;
+      for (auto &block : body->blocks)
+        for (auto &candidate : block.instructions)
+          if (candidate.id == selected.instruction)
+            input = &candidate;
+      MirDropObligation *source = nullptr;
+      MirDropObligation *target = nullptr;
+      for (auto &drop : body->dropObligations) {
+        if (drop.id == input->lifecycle.front().source)
+          source = &drop;
+        if (drop.id == *input->preparedParameterDrop)
+          target = &drop;
+      }
+      expect(source && target, "owning input names both exact cleanup obligations");
+      if (!source || !target)
+        continue;
+      switch (mutation) {
+      case 0: input->lifecycle.clear(); break;
+      case 1: input->lifecycle.push_back(input->lifecycle.front()); break;
+      case 2: input->lifecycle.front().source = target->id; break;
+      case 3: input->lifecycle.front().target = source->id; break;
+      case 4: target->dropType.destructor.reset(); break;
+      case 5: source->initiallyActive = true; break;
+      case 6: source->place = target->place; break;
+      case 7: {
+        input->info.type.lifetimeArguments = {Lifetime::staticLifetime()};
+        input->operands.front().type = input->info.type;
+        for (auto &value : body->values)
+          if (value.id == *input->result)
+            value.info.type = input->info.type;
+        target->dropType.type = input->info.type;
+        for (auto &place : body->places)
+          if (place.id == target->place)
+            place.type = input->info.type;
+        expect(!verifyMirLifetimeApplications(broken, *body, selected.body.owner).valid(),
+               "owning stage cannot strengthen the original source behind matching type tags");
+        break;
+      }
+      }
+      expect(!verifyMirProgram(broken).valid(),
+             "owning conversion cannot forge transfer, source activation, storage or cleanup");
+    }
+}
+
 void checkMutations(const MirProgram &program) {
   std::optional<MirBodyAddress> address;
   for (const auto candidate : enumerateMirBodyAddresses(program)) {
@@ -262,6 +340,34 @@ int main() {
   auto copied = original;
   return read(copied) - 7;
 }
+)gti");
+
+  const auto owning = positive("owning-region-transfer", R"gti(
+mut int destroyed = 0;
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  ~View() { destroyed += this.value; }
+};
+View<a> make<lifetime a>(int&<a> input) { return View<a>{input}; }
+int read<lifetime a>(View<a> view) { return view.value; }
+int forward<lifetime a>(int&<a> input) {
+  return read(View<a>{input}) + read(make(input));
+}
+int main() { int value = 7; return forward(value) - 14; }
+)gti");
+  if (owning.canGenerateCode())
+    checkOwningTransferMutations(owning.mir);
+
+  negative("owning-carrier-cannot-extend-region", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  ~View() {}
+};
+int read(View<static> view) { return view.value; }
+int forward<lifetime a>(int&<a> input) { return read(View<a>{input}); }
+int main() { int value = 7; return forward(value); }
 )gti");
 
   negative("payload-carrier-cannot-extend-region", R"gti(

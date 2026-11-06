@@ -5153,6 +5153,7 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   worker->requestSession.executableLifetimes = requestSession.executableLifetimes;
   worker->requestSession.privateLifetimeDependencies = requestSession.privateLifetimeDependencies;
   worker->requestSession.privateConstexprPrerequisites = requestSession.privateConstexprPrerequisites;
+  worker->requestSession.privateConstexprBoundary = requestSession.privateConstexprBoundary;
   worker->requestSession.rawResultQueries = requestSession.rawResultQueries;
   worker->requestSession.completeReturnQueries = state;
   worker->requestSession.lifetimeContractRevision =

@@ -1682,8 +1682,9 @@ private:
     const auto &type = stage.info.type;
     const auto *to = body.findPlace(*stage.destination);
     const auto *from = operand.place ? body.findPlace(operand.place) : nullptr;
-    if (operand.kind != MirOperandKind::Copy || operand.type != type || !to ||
-        !from || to->type != type || from->type != type ||
+    if (operand.kind != MirOperandKind::Copy || !to || !from ||
+        operand.type != from->type || to->type != type ||
+        !natives.representations().sameType(from->type, type) ||
         to->root != MirPlaceRootKind::Temporary || !to->projections.empty() ||
         to->foreignStorage || from->foreignStorage || !copyableHierarchy(type))
       return false;

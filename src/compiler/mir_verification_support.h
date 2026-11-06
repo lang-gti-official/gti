@@ -78,6 +78,12 @@ terminatorSuccessors(const MirTerminator &terminator);
                                       const SemanticType &parameter,
                                       HirCallInputKind kind);
 
+// Shape admission for a prepared owning input only: all cleanup identities,
+// selectors and effects stay exact while free region slots may differ. The
+// mandatory program lifetime verifier proves the source-to-input conversion.
+[[nodiscard]] bool sameLifetimeDropShape(const MirDropType &source,
+                                          const MirDropType &target);
+
 [[nodiscard]] const MirInstruction *linearDefinition(const MirBody &body,
                                                      MirValueId value);
 [[nodiscard]] bool receiverIsConsumed(const MirBody &body,

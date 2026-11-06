@@ -672,6 +672,8 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
                 requestSession.privateLifetimeDependencies;
             worker->requestSession.privateConstexprPrerequisites =
                 requestSession.privateConstexprPrerequisites;
+            worker->requestSession.privateConstexprBoundary =
+                requestSession.privateConstexprBoundary;
             worker->requestSession.lifetimeContractRevision =
                 requestSession.lifetimeContractRevision;
             worker->reuseConstantEvaluations = reuseConstantEvaluations;
@@ -11668,6 +11670,7 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   worker->requestSession.executableLifetimes = requestSession.executableLifetimes;
   worker->requestSession.privateLifetimeDependencies = requestSession.privateLifetimeDependencies;
   worker->requestSession.privateConstexprPrerequisites = requestSession.privateConstexprPrerequisites;
+  worker->requestSession.privateConstexprBoundary = requestSession.privateConstexprBoundary;
   worker->requestSession.lifetimeContractRevision = requestSession.lifetimeContractRevision;
   worker->reuseConstantEvaluations = reuseConstantEvaluations;
   worker->requestSession.rawResultQueries = state;

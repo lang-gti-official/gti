@@ -27,9 +27,10 @@ public:
       const SemanticModel &semantics, SemanticInstanceProvider &provider,
       FunctionId root, const std::vector<FunctionId> &completedFunctions,
       const GenericSubstitution &substitution,
-      const std::vector<ConstructorId> &completedConstructors) {
+      const std::vector<ConstructorId> &completedConstructors,
+      HirConstantSourceAuthority sourceAuthority) {
     initializeConstant(semantics, provider, completedFunctions,
-                       completedConstructors);
+                       completedConstructors, std::move(sourceAuthority));
     const FunctionInfo *function = semantics.findFunction(root);
     // Only callees stage lazily: the requested root must itself be a
     // completed constexpr definition.
@@ -106,9 +107,10 @@ public:
       const SemanticModel &semantics, SemanticInstanceProvider &provider,
       const ResolvedConstructionInfo &root,
       const std::vector<FunctionId> &completedFunctions,
-      const std::vector<ConstructorId> &completedConstructors) {
+      const std::vector<ConstructorId> &completedConstructors,
+      HirConstantSourceAuthority sourceAuthority) {
     initializeConstant(semantics, provider, completedFunctions,
-                       completedConstructors);
+                       completedConstructors, std::move(sourceAuthority));
     if (enqueueConstructor(root) == 0) {
       output.program.valid_ = false;
       return std::move(output);
@@ -201,10 +203,12 @@ private:
   initializeConstant(const SemanticModel &semantics,
                      SemanticInstanceProvider &provider,
                      const std::vector<FunctionId> &completedFunctions,
-                     const std::vector<ConstructorId> &completedConstructors) {
+                     const std::vector<ConstructorId> &completedConstructors,
+                     HirConstantSourceAuthority sourceAuthority) {
     initialize(semantics, provider);
     constantFunctions = completedFunctions;
     constantConstructors = completedConstructors;
+    constantSourceAuthority = std::move(sourceAuthority);
     constantClosure = true;
     // Preserve source and declaration-proof identity without claiming completed
     // whole-program semantic analysis. The absent active-statement inventory
@@ -240,6 +244,8 @@ private:
     constantFunctions.clear();
     constantConstructors.clear();
     constantUnavailableFunctions.clear();
+    constantSourceAuthority = {};
+    queriedConstantFunctions.clear();
     instanceIndex = HirInstanceIndex();
     nextValueId = 1;
     nextBindingId = 1;
@@ -692,6 +698,31 @@ private:
     return id;
   }
 
+  bool constantFunctionAvailable(const FunctionInfo &function) {
+    if (std::find(constantFunctions.begin(), constantFunctions.end(), function.id) !=
+        constantFunctions.end())
+      return true;
+    const auto *body = function.bodyDeclaration();
+    if (!body || !body->isConstexpr() || !constantSourceAuthority.function ||
+        !constantSourceAuthority.function(*body))
+      return false;
+    constantFunctions.push_back(function.id);
+    queriedConstantFunctions.insert(function.id);
+    return true;
+  }
+
+  bool constantConstructorAvailable(const ConstructorInfo &constructor) {
+    if (std::find(constantConstructors.begin(), constantConstructors.end(), constructor.id) !=
+        constantConstructors.end())
+      return true;
+    if (!constructor.declaration || !constructor.constexprConstructor ||
+        !constantSourceAuthority.constructor ||
+        !constantSourceAuthority.constructor(*constructor.declaration))
+      return false;
+    constantConstructors.push_back(constructor.id);
+    return true;
+  }
+
   [[nodiscard]] HirFunctionInstanceId
   enqueueFunction(const FunctionInfo &declaration,
                   std::vector<SemanticType> classTypeArguments,
@@ -726,8 +757,7 @@ private:
         (declaration.declaration == nullptr ||
          (!declaration.declaration->isConstexpr() &&
           !declaration.declaration->isProceduralMacro()) ||
-         std::find(constantFunctions.begin(), constantFunctions.end(),
-                   declaration.id) == constantFunctions.end());
+         !constantFunctionAvailable(declaration));
     const ClassTypeInfo *genericOwner =
         declaration.ownerClass == 0
             ? nullptr
@@ -996,9 +1026,7 @@ private:
       construction.typeArguments = canonical->types;
     }
     if (constantClosure && !construction.generatedDefault &&
-        (!constant ||
-         std::find(constantConstructors.begin(), constantConstructors.end(),
-                   construction.constructor) == constantConstructors.end())) {
+        (!constant || !constantConstructorAvailable(*declaration))) {
       lifecycleValid = false;
       return 0;
     }
@@ -2442,6 +2470,7 @@ private:
             ? nullptr
             : baseModel->findClassType(declaration->ownerClass);
     const bool concreteInstance =
+        queriedConstantFunctions.contains(declaration->id) ||
         !declaration->genericParameters.empty() ||
         (genericOwner != nullptr && !genericOwner->genericParameters.empty()) ||
         !classArguments.empty() || !classValueArguments.empty() ||
@@ -2580,6 +2609,16 @@ private:
     if (body == nullptr || body->body() == nullptr ||
         baseModel->hasAnalyzedFunctionBody(*body))
       return true;
+    // Early constant queries have checked source authority without mutating
+    // the primary model. Every such body, even a nongeneric one, is lowered
+    // from a fresh exact instance model rather than absent primary facts.
+    if (constantClosure &&
+        (queriedConstantFunctions.contains(function.id) ||
+         (constantSourceAuthority.function &&
+          constantSourceAuthority.function(*body)))) {
+      queriedConstantFunctions.insert(function.id);
+      return true;
+    }
     if (instanceProvider->analyzeDemandedPrimaryBody(*body) &&
         baseModel->hasAnalyzedFunctionBody(*body))
       return true;
@@ -2686,6 +2725,7 @@ private:
             ? nullptr
             : baseModel->findClassType(declaration->ownerClass);
     const bool concreteInstance =
+        queriedConstantFunctions.contains(declaration->id) ||
         !declaration->genericParameters.empty() ||
         (genericOwner != nullptr && !genericOwner->genericParameters.empty()) ||
         !classArguments.empty() || !classValueArguments.empty() ||
@@ -8142,6 +8182,8 @@ private:
   std::vector<InstanceDiscovery> destructorDiscoveryDepths;
   std::vector<FunctionId> constantFunctions;
   std::vector<ConstructorId> constantConstructors;
+  HirConstantSourceAuthority constantSourceAuthority;
+  std::unordered_set<FunctionId> queriedConstantFunctions;
   // Signature-only instances of callees outside the completed constant
   // closure; see enqueueFunction.
   std::vector<HirFunctionInstanceId> constantUnavailableFunctions;
@@ -8188,20 +8230,22 @@ HirLoweringResult HirLowerer::lowerConstantFunction(
     const SemanticModel &semantics, SemanticInstanceProvider &instanceProvider,
     FunctionId root, const std::vector<FunctionId> &completedFunctions,
     const GenericSubstitution &substitution,
-    const std::vector<ConstructorId> &completedConstructors) {
+    const std::vector<ConstructorId> &completedConstructors,
+    HirConstantSourceAuthority sourceAuthority) {
   return impl->lowerConstantFunction(semantics, instanceProvider, root,
                                      completedFunctions, substitution,
-                                     completedConstructors);
+                                     completedConstructors, std::move(sourceAuthority));
 }
 
 HirLoweringResult HirLowerer::lowerConstantConstructor(
     const SemanticModel &semantics, SemanticInstanceProvider &instanceProvider,
     const ResolvedConstructionInfo &root,
     const std::vector<FunctionId> &completedFunctions,
-    const std::vector<ConstructorId> &completedConstructors) {
+    const std::vector<ConstructorId> &completedConstructors,
+    HirConstantSourceAuthority sourceAuthority) {
   return impl->lowerConstantConstructor(semantics, instanceProvider, root,
                                         completedFunctions,
-                                        completedConstructors);
+                                        completedConstructors, std::move(sourceAuthority));
 }
 
 } // namespace lang
