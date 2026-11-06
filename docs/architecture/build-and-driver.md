@@ -599,8 +599,11 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    `X.Y.Z` is stable. The complete suite then runs on the release configuration
    in cost-balanced shards, and `Backport gate` requires both. The main
    ruleset and merge queue do not cover `beta/*`; the proposed `beta` ruleset
-   requires a PR merged by rebase (picks keep their `-x` lines), linear
-   history, an up-to-date branch, `CI gate` and `Backport gate`.
+   requires a PR merged by rebase (picks keep their `-x` lines), an up-to-date
+   branch, `CI gate` and `Backport gate`. It does not require linear history:
+   a line starts at a release cut on main's merge-queue history, which that
+   rule rejects when the branch is created, and rebase-only merges already
+   keep the line free of new merge commits.
 4. **Promotion** (`train.yml`, job `promote`). Candidates are versions with a
    beta newer than every stable tag; a version a higher patch beta on its line
    supersedes is skipped. From the highest down, the version's newest beta
