@@ -223,7 +223,8 @@ mirFieldProjectionType(const MirProgram &program, const SemanticType &receiver,
 
 [[nodiscard]] std::optional<BorrowedFieldOrigin> constructorFieldOrigin(
     const MirProgram &program, const MirConstructorInstance &instance,
-    const MirStoredCarrierReference &path, std::size_t depth = 0);
+    const MirStoredCarrierReference &path, std::size_t depth = 0,
+    const MirLifetimeApplication *application = nullptr);
 
 // A construction that publishes one dynamic text argument into a direct text
 // field (L-OWN-02). Its borrow facts describe this call: the target
@@ -5098,7 +5099,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                 block.id, instruction.id);
           std::vector<MirLoanDependency> mapped;
           for (const auto &path : resultPaths) {
-            const auto origin = constructorFieldOrigin(program, *callee, path);
+            const auto origin = constructorFieldOrigin(program, *callee, path, 0,
+                                                       &instruction.lifetimeApplication);
             if (!origin || origin->parameter >= instruction.operands.size())
               return verificationFailure(
                   body, owner,
@@ -6585,9 +6587,28 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
 // an actual Construct SSA result and exact enclosing formal operand.
 [[nodiscard]] std::optional<BorrowedFieldOrigin> constructorFieldOrigin(
     const MirProgram &program, const MirConstructorInstance &instance,
-    const MirStoredCarrierReference &path, std::size_t depth) {
-  if (path.fields.empty() || depth > program.constructorInstances().size())
+    const MirStoredCarrierReference &requestedPath, std::size_t depth,
+    const MirLifetimeApplication *application) {
+  if (requestedPath.fields.empty() || depth > program.constructorInstances().size())
     return std::nullopt;
+  const auto ownerType = checkedMirCallableOwnerType(
+      program, instance.owner, instance.ownerType, instance.lifetimeContract);
+  const auto paths = ownerType ? findStoredCarrierReferenceInventory(program, *ownerType)
+                               : std::nullopt;
+  if (!paths)
+    return std::nullopt;
+  const auto selectedPath = std::find_if(paths->begin(), paths->end(), [&](const auto &candidate) {
+    return candidate.fields == requestedPath.fields && candidate.conditions.empty() &&
+           requestedPath.conditions.empty();
+  });
+  if (selectedPath == paths->end())
+    return std::nullopt;
+  const auto expectedReference = application
+      ? substituteTypeLifetimes(selectedPath->reference, application->bindings)
+      : std::optional{selectedPath->reference};
+  if (!expectedReference || *expectedReference != requestedPath.reference)
+    return std::nullopt;
+  const auto &path = *selectedPath;
   const auto &body = instance.body;
   const auto initializer =
       std::find_if(instance.initializers.begin(), instance.initializers.end(),
@@ -6626,7 +6647,8 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
     const auto parameter = formal(published->source);
     if (!parameter || path.fields.size() != 1 ||
         *parameter >= instance.parameterTypes.size() ||
-        instance.parameterTypes[*parameter] != initializer->targetType)
+        !mirLifetimeReferenceConversion(program, body, instance.id,
+            instance.parameterTypes[*parameter], initializer->targetType))
       return std::nullopt;
     result.parameter = *parameter;
     return result;
@@ -6676,7 +6698,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
     return std::nullopt;
   const auto child = constructorFieldOrigin(
       program, *callee, {.fields = suffix, .reference = path.reference},
-      depth + 1);
+      depth + 1, &producer->lifetimeApplication);
   if (!child || child->parameter >= producer->operands.size() ||
       child->parameter >= producer->parameterTypes.size())
     return std::nullopt;
@@ -6696,7 +6718,8 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
     const auto paths = findStoredCarrierReferences(program, parameterType);
     const bool exactPath =
         parameterType.kind == SemanticType::Reference
-            ? fields.empty() && parameterType == path.reference
+            ? fields.empty() && mirLifetimeReferenceConversion(program, body, instance.id,
+                                                                parameterType, path.reference)
             : std::any_of(paths.begin(), paths.end(),
                           [&](const auto &candidate) {
                             return candidate.fields == fields &&
@@ -6733,13 +6756,16 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
         program.findConstructorInstance(*definition->constructorTarget);
     const auto *targetClass =
         target ? program.findClassInstance(target->owner) : nullptr;
+    const auto actualOwner = mirClassLifetimeView(program, parameterType);
+    const auto signature = instantiateMirLifetimeTarget(program, *definition);
     if (!retained || retained->kind != MirLoanKind::Stored || retained->entry ||
         retained->escapes || retained->producedBy != definition->hirValue ||
-        !targetClass || targetClass->type != parameterType)
+        !targetClass || !actualOwner || actualOwner->instance != targetClass ||
+        !signature || signature->returnType != parameterType)
       return std::nullopt;
     const auto mapping = constructorFieldOrigin(
         program, *target, {.fields = fields, .reference = path.reference},
-        depth + 1);
+        depth + 1, &definition->lifetimeApplication);
     if (!mapping || mapping->parameter >= definition->operands.size() ||
         mapping->parameter >= definition->parameterTypes.size())
       return std::nullopt;
@@ -7893,7 +7919,8 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
     }
     dependencyParameters.insert(parameterIndex);
     if (initializer.storesReference &&
-        instance.parameterTypes[parameterIndex] != initializer.targetType &&
+        !mirLifetimeReferenceConversion(program, body, instance.id,
+            instance.parameterTypes[parameterIndex], initializer.targetType) &&
         !referenceInitializerCall(program, instance, initializer))
       return invalidSummary(
           "stored-reference initializer does not bind its exact reference "
@@ -13563,9 +13590,11 @@ using CompleteBorrowCallSummaryLookup =
 constructorPublication(const MirProgram &program,
                        const MirConstructorInstance &constructor) {
   MirFunctionInstance result;
-  const auto *owner = program.findClassInstance(constructor.owner);
-  result.returnType = owner ? owner->type : SemanticType::Unknown;
+  const auto owner = checkedMirCallableOwnerType(
+      program, constructor.owner, constructor.ownerType, constructor.lifetimeContract);
+  result.returnType = owner.value_or(SemanticType::Unknown);
   result.parameterTypes = constructor.parameterTypes;
+  result.lifetimeContract = constructor.lifetimeContract;
   result.parameterBindings = constructor.parameterBindings;
   // Construction publishes a fresh object; it cannot borrow its own receiver.
   result.staticMember = true;
@@ -14582,11 +14611,44 @@ completeBorrowSourcePath(const MirProgram &program,
   };
   const auto callResult =
       [&](const State &state, const MirInstruction &instruction,
-          const MirFunctionInstance &target,
-          const FunctionBorrowDependencySummary &summary,
+          const MirFunctionInstance &universalTarget,
+          const FunctionBorrowDependencySummary &universalSummary,
           BorrowResultDomainStatus *domainStatus = nullptr) -> Fact {
     if (domainStatus)
       *domainStatus = BorrowResultDomainStatus::Unknown;
+    const auto signature = instantiateMirLifetimeTarget(program, instruction);
+    if (!signature)
+      return std::nullopt;
+    auto target = universalTarget;
+    target.returnType = signature->returnType;
+    target.parameterTypes = signature->parameterTypes;
+    if (target.owner) {
+      const auto owner = checkedMirCallableOwnerType(program, target.owner,
+          target.ownerType, target.lifetimeContract);
+      const auto actual = owner ? substituteTypeLifetimes(*owner, instruction.lifetimeApplication.bindings)
+                                : std::nullopt;
+      if (!actual)
+        return std::nullopt;
+      target.ownerType = *actual;
+    }
+    auto summary = universalSummary;
+    const auto instantiateConditions = [&](auto &conditions) {
+      for (auto &condition : conditions) {
+        const auto actual = substituteTypeLifetimes(condition.enumeration,
+                                                    instruction.lifetimeApplication.bindings);
+        if (!actual)
+          return false;
+        condition.enumeration = *actual;
+      }
+      return true;
+    };
+    for (auto &mapping : summary.dependencies)
+      if (!instantiateConditions(mapping.sourceConditions) ||
+          !instantiateConditions(mapping.resultConditions))
+        return std::nullopt;
+    for (auto &alternative : summary.possibleAlternatives)
+      if (!instantiateConditions(alternative.conditions))
+        return std::nullopt;
     using Availability = BorrowSupplierAvailability;
     std::vector<Availability> availability(summary.dependencies.size(),
                                            Availability::Unknown);
@@ -14904,7 +14966,8 @@ completeBorrowSourcePath(const MirProgram &program,
               target->lifetimeContract, instruction.lifetimeApplication) &&
           instruction.operands.size() == instruction.parameterTypes.size()) {
         const auto publication = constructorPublication(program, *target);
-        if (publication.returnType == instruction.info.type)
+        const auto signature = instantiateMirLifetimeTarget(program, instruction);
+        if (signature && signature->returnType == instruction.info.type)
           result = callResult(state, instruction, publication, *summary);
       }
     } else if (instruction.kind == MirInstructionKind::Construct &&
@@ -14916,9 +14979,12 @@ completeBorrowSourcePath(const MirProgram &program,
       const auto paths =
           findStoredCarrierReferenceInventory(program, instruction.info.type);
       const auto *published = body.findLoan(*instruction.loan);
+      const auto actualOwner = mirClassLifetimeView(program, instruction.info.type);
+      const auto signature = instantiateMirLifetimeTarget(program, instruction);
       bool exact =
           constructor && ownerClass && paths && !paths->empty() &&
-          ownerClass->type == instruction.info.type &&
+          actualOwner && actualOwner->instance == ownerClass && signature &&
+          signature->returnType == instruction.info.type &&
           mirLifetimeParameterTypesMatch(
               instruction.parameterTypes, constructor->parameterTypes,
               constructor->lifetimeContract, instruction.lifetimeApplication) &&
@@ -14930,7 +14996,8 @@ completeBorrowSourcePath(const MirProgram &program,
       if (exact) {
         for (const auto &path : *paths) {
           const auto mapping =
-              constructorFieldOrigin(program, *constructor, path);
+              constructorFieldOrigin(program, *constructor, path, 0,
+                                     &instruction.lifetimeApplication);
           if (!mapping || mapping->origin != BorrowOriginKind::Argument ||
               mapping->parameter >= instruction.operands.size() ||
               !path.conditions.empty()) {
@@ -15401,7 +15468,10 @@ completeBorrowSourcePath(const MirProgram &program,
         function.owner ? program.findClassInstance(*function.owner) : nullptr;
     if (!owner || function.staticMember || mapping.parameter != 0)
       return std::nullopt;
-    type = owner->type;
+    type = function.ownerType == SemanticType::Unknown ? owner->type : function.ownerType;
+    const auto view = mirClassLifetimeView(program, type);
+    if (!view || view->instance != owner)
+      return std::nullopt;
     physicalCallerStorage =
         function.receiverMutability != ReceiverMutability::Consuming;
     source.access = receiverAllowsMutation(function.receiverMutability)
@@ -15444,7 +15514,8 @@ completeBorrowSourcePath(const MirProgram &program,
     if (!symbol)
       return std::nullopt;
     SemanticType field = SemanticType::Unknown;
-    if (const auto *enumeration = program.findPayloadEnum(type)) {
+    if (const auto view = mirEnumLifetimeView(program, type); view && view->payload) {
+      const auto *enumeration = view->payload;
       for (std::size_t alternative = 0;
            alternative < enumeration->variants.size(); ++alternative) {
         const auto &variant = enumeration->variants[alternative];
@@ -15455,19 +15526,24 @@ completeBorrowSourcePath(const MirProgram &program,
           if (variant.payloadSymbols[index] == symbol) {
             if (field != SemanticType::Unknown)
               return std::nullopt;
-            field = variant.payloadTypes[index];
+            const auto actual = view->instantiate(variant.payloadTypes[index]);
+            if (!actual)
+              return std::nullopt;
+            field = *actual;
             source.conditions.push_back({.subobject = prefix,
                                          .enumeration = type,
                                          .variant = alternative});
           }
       }
-    } else if (const auto *owner =
-                   uniqueMirClassInstanceForType(program, type)) {
-      for (const auto &candidate : owner->declaredFields)
+    } else if (const auto view = mirClassLifetimeView(program, type)) {
+      for (const auto &candidate : view->instance->declaredFields)
         if (candidate.symbol == symbol) {
           if (field != SemanticType::Unknown)
             return std::nullopt;
-          field = candidate.type;
+          const auto actual = view->instantiate(candidate.type);
+          if (!actual)
+            return std::nullopt;
+          field = *actual;
         }
     }
     if (field == SemanticType::Unknown)

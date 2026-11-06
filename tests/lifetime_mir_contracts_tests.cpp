@@ -91,8 +91,8 @@ int main() {
   const auto standardLibrary =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto pointer = Frontend({.stopAfter = FrontendPhase::Mir})
-                           .analyze("lifetime-pointer-contracts.gti", R"gti(
-import "std/detail/function_pointer.gti";
+                           .analyze(standardLibrary.parent_path() / "tests/lifetime-pointer-contracts.gti", R"gti(
+import "../stdlib/std/detail/function_pointer.gti";
 using Selection = for<lifetime region> int&<region>(int&<region>, int&<region>, bool);
 int&<a> select<lifetime a>(int&<a> left, int&<a> right, bool first) {
   if (first) { return left; }

@@ -3785,7 +3785,7 @@ auto SemanticVisitor::Impl::containsDisallowedCallableCaptureState(
       // The unsafe assertion reviews this representation, not its erased
       // generic payloads. Those must independently own their lifetime, even
       // when this class itself is nested inside another reviewed wrapper.
-      const auto &arguments = owner.exactSpecializationPrimary != 0
+      const auto &arguments = owner.exactSpecializationPrimary != 0 && type.arguments.empty()
                                   ? owner.exactTypeArguments
                                   : type.arguments;
       for (const SemanticType &argument : arguments) {

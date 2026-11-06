@@ -207,15 +207,12 @@ private:
     }
     std::string result = info->qualifiedName;
     const std::vector<SemanticType> &typeArguments =
-        info->exactSpecializationPrimary == 0 ? type.arguments
+        info->exactSpecializationPrimary == 0 || !type.arguments.empty() ? type.arguments
                                               : info->exactTypeArguments;
     const std::vector<CompileTimeValue> &valueArguments =
-        info->exactSpecializationPrimary == 0 ? type.valueArguments
+        info->exactSpecializationPrimary == 0 || !type.valueArguments.empty() ? type.valueArguments
                                               : info->exactValueArguments;
-    const ClassTypeInfo *declaration =
-        info->exactSpecializationPrimary == 0
-            ? info
-            : semantics.findClassType(info->exactSpecializationPrimary);
+    const ClassTypeInfo *declaration = semantics.findPublicClassType(type.classId);
     return nominalType(std::move(result), typeArguments, valueArguments,
                        type.lifetimeArguments,
                        declaration == nullptr ? info->genericParameters

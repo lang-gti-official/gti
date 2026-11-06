@@ -53,7 +53,7 @@ int&<a> wrong<lifetime a, lifetime b>(int&<a> left, int&<b> right) { return righ
 int main() { int left = 3; int right = 8; return wrong(left, right); }
 )gti", false);
   check("subobject-preserves-owner-region", R"gti(
-struct Number { int value = 7; };
+struct Number { int value = 7; Number() = default; };
 int&<a> field<lifetime a>(Number&<a> number) { return number.value; }
 int main() { Number number{}; return field(number) - 7; }
 )gti", true);

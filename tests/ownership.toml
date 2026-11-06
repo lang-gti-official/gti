@@ -353,6 +353,7 @@ consumers = [
 area = "semantics-shared"
 risk = "shared"
 paths = [
+  "include/gti/lifetime*.h",
   "include/gti/semantic*",
   "src/compiler/semantic_analyzer_impl.h",
   "src/compiler/semantic_model.cpp",
@@ -369,6 +370,7 @@ owners = [
   "semantic_header_self_containment",
   "lifetime_regions",
   "lifetime_types",
+  "lifetime_requirements",
   "lifetime_resolution",
   "persistent_lifetime_contracts",
   "lifetime_semantics",

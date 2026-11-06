@@ -1504,6 +1504,14 @@ SemanticModel::findClassType(ClassId id) const {
   return base == nullptr ? nullptr : base->findClassType(id);
 }
 
+[[nodiscard]] const ClassTypeInfo *
+SemanticModel::findPublicClassType(ClassId id) const {
+  const auto *record = findClassType(id);
+  while (record != nullptr && record->exactSpecializationPrimary != 0)
+    record = findClassType(record->exactSpecializationPrimary);
+  return record;
+}
+
 [[nodiscard]] SemanticType
 SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
   for (SemanticType &argument : type.arguments) {
@@ -1560,8 +1568,10 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
       return value;
     }
     SemanticType primary = SemanticType::classType(
-        info->exactSpecializationPrimary, info->exactTypeArguments,
-        info->exactValueArguments, value.lifetimeArguments);
+        info->exactSpecializationPrimary,
+        value.arguments.empty() ? info->exactTypeArguments : value.arguments,
+        value.valueArguments.empty() ? info->exactValueArguments : value.valueArguments,
+        value.lifetimeArguments);
     return self(self, std::move(primary));
   };
   const SemanticType key = canonicalize(canonicalize, type);
@@ -1588,8 +1598,16 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
                : found->specialization;
   };
   const ClassId specialization = find(find, this);
-  return specialization == 0 ? type : SemanticType::classType(
-      specialization, {}, {}, std::move(type.lifetimeArguments));
+  if (specialization != 0) {
+    type.classId = specialization;
+    // Already selected legacy declaration types may not yet have their
+    // public arguments. New selections always retain the actual arguments.
+    if (type.arguments.empty())
+      type.arguments = key.arguments;
+    if (type.valueArguments.empty())
+      type.valueArguments = key.valueArguments;
+  }
+  return type;
 }
 
 [[nodiscard]] const TypeAliasInfo *

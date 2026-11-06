@@ -21,13 +21,50 @@ inline TypeVariance composeTypeVariance(TypeVariance outer, TypeVariance inner) 
   return outer == inner ? TypeVariance::Covariant : TypeVariance::Contravariant;
 }
 
+// Exact specializations retain their primary's public type/value arguments.
+// Their source binders still own the selected lifetime slots; neither slot
+// inventory may disappear when the specialization has no lexical type binder.
+inline std::optional<std::vector<NominalVarianceParameter>> nominalVarianceParameters(
+    const NominalVarianceRecipe &recipe,
+    std::span<const NominalVarianceRecipe> recipes) {
+  if (!recipe.exactSpecializationPrimary)
+    return recipe.parameters;
+  const NominalVarianceRecipe *primary = nullptr;
+  for (const auto &candidate : recipes)
+    if (candidate.kind == recipe.kind &&
+        candidate.declaration == recipe.exactSpecializationPrimary) {
+      if (primary || candidate.exactSpecializationPrimary)
+        return std::nullopt;
+      primary = &candidate;
+    }
+  if (!primary)
+    return std::nullopt;
+  std::vector<NominalVarianceParameter> lifetimes;
+  for (const auto &parameter : recipe.parameters) {
+    if (!parameter.lifetime)
+      return std::nullopt;
+    lifetimes.push_back(parameter);
+  }
+  auto result = primary->parameters;
+  std::size_t regions = 0;
+  for (auto &parameter : result)
+    if (parameter.lifetime) {
+      if (regions == lifetimes.size())
+        return std::nullopt;
+      parameter = lifetimes[regions++];
+    }
+  return regions == lifetimes.size() ? std::optional{std::move(result)} : std::nullopt;
+}
+
 inline NominalVariance expandNominalVarianceRecipe(
     const SemanticType &type, const NominalVarianceRecipe &recipe,
-    const NominalVariance &declaration) {
-  if (!declaration.complete)
+    const NominalVariance &declaration,
+    std::span<const NominalVarianceRecipe> recipes = {}) {
+  const auto parameters = nominalVarianceParameters(recipe, recipes);
+  if (!declaration.complete || !parameters)
     return {};
   NominalVariance result = declaration;
-  const bool pack = std::any_of(recipe.parameters.begin(), recipe.parameters.end(),
+  const bool pack = std::any_of(parameters->begin(), parameters->end(),
                                 [](const auto &parameter) { return parameter.pack; });
   if (pack && !result.types.empty() && type.arguments.size() + 1 >= result.types.size()) {
     const auto tail = result.types.back();
@@ -45,6 +82,8 @@ inline NominalVariance expandNominalVarianceRecipe(
 inline std::optional<std::vector<NominalVariance>> inferNominalVarianceRecipes(
     std::span<const NominalVarianceRecipe> recipes) {
   std::vector<NominalVariance> result(recipes.size());
+  std::vector<std::vector<NominalVarianceParameter>> parameters;
+  parameters.reserve(recipes.size());
   for (std::size_t index = 0; index < recipes.size(); ++index) {
     const auto &recipe = recipes[index];
     if (!recipe.complete || !recipe.declaration ||
@@ -54,8 +93,12 @@ inline std::optional<std::vector<NominalVariance>> inferNominalVarianceRecipes(
       if (recipes[earlier].kind == recipe.kind &&
           recipes[earlier].declaration == recipe.declaration)
         return std::nullopt;
+    const auto publicParameters = nominalVarianceParameters(recipe, recipes);
+    if (!publicParameters)
+      return std::nullopt;
+    parameters.push_back(*publicParameters);
     std::vector<GenericParameterId> ids;
-    for (const auto &parameter : recipe.parameters) {
+    for (const auto &parameter : parameters.back()) {
       if (!parameter.id || std::find(ids.begin(), ids.end(), parameter.id) != ids.end() ||
           (parameter.value && parameter.lifetime) ||
           (parameter.implicit && !parameter.lifetime) ||
@@ -65,7 +108,9 @@ inline std::optional<std::vector<NominalVariance>> inferNominalVarianceRecipes(
       if (parameter.lifetime)
         result[index].lifetimes.push_back(TypeVariance::Bivariant);
       else if (!parameter.value)
-        result[index].types.push_back(TypeVariance::Bivariant);
+        result[index].types.push_back(recipe.exactSpecializationPrimary
+                                          ? TypeVariance::Invariant
+                                          : TypeVariance::Bivariant);
     }
     result[index].complete = true;
   }
@@ -79,7 +124,7 @@ inline std::optional<std::vector<NominalVariance>> inferNominalVarianceRecipes(
   const auto nominal = [&](const SemanticType &type) {
     const auto index = declarationIndex(type.kind,
         type.kind == SemanticType::Class ? type.classId : type.enumId);
-    return index ? expandNominalVarianceRecipe(type, recipes[*index], result[*index])
+    return index ? expandNominalVarianceRecipe(type, recipes[*index], result[*index], recipes)
                  : NominalVariance{};
   };
   bool changed = true;
@@ -90,7 +135,7 @@ inline std::optional<std::vector<NominalVariance>> inferNominalVarianceRecipes(
       auto next = result[index];
       std::unordered_map<GenericParameterId, TypeVariance *> slots;
       std::size_t types = 0, lifetimes = 0;
-      for (const auto &parameter : recipe.parameters)
+      for (const auto &parameter : parameters[index])
         if (parameter.lifetime)
           slots.emplace(parameter.id, &next.lifetimes[lifetimes++]);
         else if (!parameter.value)

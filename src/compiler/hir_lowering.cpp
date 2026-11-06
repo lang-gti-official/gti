@@ -46,7 +46,7 @@ public:
     std::vector<SemanticType> ownerTypes;
     std::vector<CompileTimeValue> ownerValues;
     if (function->ownerClass != 0) {
-      const auto *owner = semantics.findClassType(function->ownerClass);
+      const auto *owner = semantics.findPublicClassType(function->ownerClass);
       if (owner == nullptr) {
         output.program.valid_ = false;
         return std::move(output);
@@ -458,7 +458,10 @@ private:
   classSubstitution(const ClassTypeInfo &declaration,
                     const std::vector<SemanticType> &typeArguments,
                     const std::vector<CompileTimeValue> &valueArguments) const {
-    return instanceSubstitution(declaration.genericParameters, typeArguments,
+    const auto *publicDeclaration = baseModel
+        ? baseModel->findPublicClassType(declaration.id) : nullptr;
+    return instanceSubstitution(publicDeclaration ? publicDeclaration->genericParameters
+                                                 : declaration.genericParameters, typeArguments,
                                 valueArguments);
   }
 
@@ -562,7 +565,8 @@ private:
         CompilerCapabilityTypeKind::NativeCScalar) {
       return std::nullopt;
     }
-    const bool generic = !declaration->genericParameters.empty();
+    const bool generic = !declaration->genericParameters.empty() ||
+                         declaration->exactSpecializationPrimary != 0;
     if (!admitInstance(declaration->declaration->name(), site, generic)) {
       return std::nullopt;
     }
@@ -803,7 +807,8 @@ private:
                     : std::optional<SourceSpan>{tokenSpan(declarationToken)});
     const bool generic =
         !declaration.genericParameters.empty() ||
-        (genericOwner != nullptr && !genericOwner->genericParameters.empty());
+        (genericOwner != nullptr &&
+         (!genericOwner->genericParameters.empty() || genericOwner->exactSpecializationPrimary));
     if (!admitInstance(declarationToken, site, generic)) {
       return 0;
     }
@@ -1070,7 +1075,7 @@ private:
                                         ? ownerType->declaration->name()
                                         : construction.declaration->name();
     const bool generic =
-        !ownerType->genericParameters.empty() ||
+        !ownerType->genericParameters.empty() || ownerType->exactSpecializationPrimary ||
         (declaration != nullptr && !declaration->genericParameters.empty());
     // A generated default is the already-admitted owner's field schedule,
     // not another source instantiation edge. Retain that owner's depth while
@@ -1148,7 +1153,8 @@ private:
       return *existing;
     }
     const HirDestructorInstanceId id = output.program.destructors.size() + 1;
-    const bool generic = !classType->genericParameters.empty();
+    const bool generic = !classType->genericParameters.empty() ||
+                         classType->exactSpecializationPrimary != 0;
     if (!admitInstance(lifecycle->declaredDestructor->declaration->name(),
                        classInstance.instantiationSite, generic)) {
       return std::nullopt;
@@ -1510,7 +1516,8 @@ private:
           seedConcreteDeclarationType(field.type);
         }
       }
-      if (classInfo != nullptr && classInfo->genericParameters.empty()) {
+      if (classInfo != nullptr && classInfo->genericParameters.empty() &&
+          !classInfo->exactSpecializationPrimary) {
         (void)enqueueClass(SemanticType::classType(classInfo->id));
       }
       seedDeclarations(classDeclaration->members(),
@@ -1541,7 +1548,8 @@ private:
       std::vector<SemanticType> classArguments;
       if (info->ownerClass != 0) {
         const ClassTypeInfo *owner = baseModel->findClassType(info->ownerClass);
-        if (owner == nullptr || !owner->genericParameters.empty()) {
+        if (owner == nullptr || !owner->genericParameters.empty() ||
+            owner->exactSpecializationPrimary) {
           return;
         }
       }

@@ -3286,7 +3286,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                  classDecl->name().lexeme == "text_view") {
         compilerCapability = CompilerCapabilityTypeKind::TextView;
       } else if (trustedPreludeCapabilityScope &&
-                 classDecl->genericParameters().empty() &&
+                 generics.size() == 1 && generics.front().lifetimeKeyword &&
                  classDecl->name().lexeme == "c_string") {
         compilerCapability = CompilerCapabilityTypeKind::CString;
       } else if (trustedPreludeCapabilityScope &&
@@ -3485,8 +3485,10 @@ auto SemanticVisitor::Impl::canonicalExactSpecializationType(
     return type;
   }
   return canonicalExactSpecializationType(SemanticType::classType(
-      owner.exactSpecializationPrimary, owner.exactTypeArguments,
-      owner.exactValueArguments, type.lifetimeArguments));
+      owner.exactSpecializationPrimary,
+      type.arguments.empty() ? owner.exactTypeArguments : type.arguments,
+      type.valueArguments.empty() ? owner.exactValueArguments : type.valueArguments,
+      type.lifetimeArguments));
 }
 
 auto SemanticVisitor::Impl::selectClassDefinition(
@@ -4725,10 +4727,9 @@ auto SemanticVisitor::Impl::selectExactClassSpecialization(
                           }) &&
                candidate.valueArguments == key.valueArguments;
       });
-  return found == exactClassSpecializations.end()
-             ? type
-             : SemanticType::classType(found->specialization, {}, {},
-                                        std::move(type.lifetimeArguments));
+  if (found != exactClassSpecializations.end())
+    type.classId = found->specialization;
+  return type;
 }
 
 auto SemanticVisitor::Impl::isConcreteExactSpecializationType(

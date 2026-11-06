@@ -233,7 +233,7 @@ auto SemanticVisitor::Impl::nominalVariance(const SemanticType &type) const
   const std::vector<GenericParameterInfo> *parameters = nullptr;
   if (type.kind == SemanticType::Class && type.classId && type.classId <= classes.size()) {
     descriptor = &classInfo(type.classId).variance;
-    parameters = &classInfo(type.classId).genericParameters;
+    parameters = &publicClassInfo(type.classId).genericParameters;
   } else if (type.kind == SemanticType::Enum && type.enumId && type.enumId <= enums.size()) {
     descriptor = &enums[type.enumId - 1].variance;
     parameters = &enums[type.enumId - 1].genericParameters;
@@ -269,6 +269,9 @@ auto SemanticVisitor::Impl::nominalLifetimeContract(const SemanticType &type) co
   substitution.lifetimes.clear();
   for (auto &bound : result.typeBounds)
     bound.type = substituteType(bound.type, substitution);
+  for (auto &node : result.requirements.nodes)
+    if (node.kind == LifetimeRequirementNode::Kind::Type)
+      node.type = substituteType(node.type, substitution);
   return result;
 }
 
@@ -391,17 +394,17 @@ auto SemanticVisitor::Impl::inferNominalVariances() -> void {
     GenericSubstitution substitution = nominalSubstitution(
         primary.genericParameters,
         {.types = owner.exactTypeArguments, .values = owner.exactValueArguments});
-    auto inherited = primary.lifetimeContract;
-    for (auto &bound : inherited.typeBounds)
+    auto selectedPrimary = primary.lifetimeContract;
+    for (auto &bound : selectedPrimary.typeBounds)
       bound.type = substituteType(bound.type, substitution);
     std::vector<AppliedConceptRequirement> assumptions;
-    for (const auto bound : inherited.bounds)
+    for (const auto bound : selectedPrimary.bounds)
       assumptions.push_back({.lifetimeBound = bound});
-    for (const auto &bound : inherited.typeBounds)
+    for (const auto &bound : selectedPrimary.typeBounds)
       assumptions.push_back({.lifetimeBound = LifetimeBound{{}, bound.region},
                              .outlivesType = bound.type});
     requirementScopes.push_back(std::move(assumptions));
-    bool compatible = inherited.valid();
+    bool compatible = selectedPrimary.valid();
     for (const auto bound : owner.lifetimeContract.bounds)
       compatible = !lifetimeRequirementFailure({.lifetimeBound = bound}) && compatible;
     for (const auto &bound : owner.lifetimeContract.typeBounds)
@@ -415,14 +418,11 @@ auto SemanticVisitor::Impl::inferNominalVariances() -> void {
              "GTI-S2127");
       continue;
     }
-    for (const auto bound : inherited.bounds)
-      if (std::find(owner.lifetimeContract.bounds.begin(), owner.lifetimeContract.bounds.end(), bound) ==
-          owner.lifetimeContract.bounds.end())
-        owner.lifetimeContract.bounds.push_back(bound);
-    for (const auto &bound : inherited.typeBounds)
-      if (std::find(owner.lifetimeContract.typeBounds.begin(), owner.lifetimeContract.typeBounds.end(), bound) ==
-          owner.lifetimeContract.typeBounds.end())
-        owner.lifetimeContract.typeBounds.push_back(bound);
+    // Formation is a property of the public primary arguments, including
+    // regions nested inside those arguments. The selector's region spelling
+    // is never an application argument or a replacement for this contract.
+    // Storage obligations above are already entailed by the primary contract.
+    owner.lifetimeContract = primary.lifetimeContract;
   }
   for (const auto &owner : enums)
     if (const auto *record = semanticModel.findEnumType(owner.id)) {

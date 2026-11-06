@@ -7959,7 +7959,7 @@ auto SemanticVisitor::Impl::classSubstitution(
       objectType.classId > classes.size()) {
     return result;
   }
-  const ClassInfo &owner = classInfo(objectType.classId);
+  const ClassInfo &owner = publicClassInfo(objectType.classId);
   std::size_t typeIndex = 0;
   std::size_t valueIndex = 0;
   std::size_t lifetimeIndex = 0;
@@ -8238,7 +8238,8 @@ auto SemanticVisitor::Impl::instantiatedAliasType(
 
 auto SemanticVisitor::Impl::openClassType(ClassId id) const -> SemanticType {
   const ClassInfo &owner = classInfo(id);
-  if (!owner.declaration->genericArgumentPatterns().empty()) {
+  if (!owner.exactSpecializationPrimary &&
+      !owner.declaration->genericArgumentPatterns().empty()) {
     std::vector<SemanticType> patterns;
     const GenericSubstitution substitution{.types = instanceTypeSubstitution,
                                            .values = instanceValueSubstitution,
@@ -8252,10 +8253,16 @@ auto SemanticVisitor::Impl::openClassType(ClassId id) const -> SemanticType {
   std::vector<SemanticType> arguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<Lifetime> lifetimeArguments;
-  arguments.reserve(genericTypeParameterCount(owner.genericParameters));
-  valueArguments.reserve(genericValueParameterCount(owner.genericParameters));
-  lifetimeArguments.reserve(genericLifetimeParameterCount(owner.genericParameters));
-  for (const GenericParameterInfo &parameter : owner.genericParameters) {
+  const auto &parameters = publicClassInfo(id).genericParameters;
+  const auto exact = owner.exactSpecializationPrimary
+      ? nominalSubstitution(parameters,
+                            {.types = owner.exactTypeArguments,
+                             .values = owner.exactValueArguments})
+      : GenericSubstitution{};
+  arguments.reserve(genericTypeParameterCount(parameters));
+  valueArguments.reserve(genericValueParameterCount(parameters));
+  lifetimeArguments.reserve(genericLifetimeParameterCount(parameters));
+  for (const GenericParameterInfo &parameter : parameters) {
     if (parameter.lifetime) {
       const auto concrete = instanceLifetimeSubstitution.find(parameter.id);
       lifetimeArguments.push_back(
@@ -8265,18 +8272,23 @@ auto SemanticVisitor::Impl::openClassType(ClassId id) const -> SemanticType {
     }
     if (parameter.value) {
       const auto concrete = instanceValueSubstitution.find(parameter.id);
+      const auto selected = exact.values.find(parameter.id);
       valueArguments.emplace_back(
           concrete == instanceValueSubstitution.end()
-              ? CompileTimeValue::parameter(parameter.id)
+              ? selected == exact.values.end()
+                    ? CompileTimeValue::parameter(parameter.id) : selected->second
               : concrete->second);
       continue;
     }
     const auto concrete = instanceTypeSubstitution.find(parameter.id);
+    const auto selected = exact.types.find(parameter.id);
     SemanticType::appendExpandedArgument(
         arguments,
         concrete == instanceTypeSubstitution.end()
-            ? (parameter.pack ? SemanticType::typePack(parameter.id)
-                              : SemanticType::typeParameter(parameter.id))
+            ? selected == exact.types.end()
+                  ? (parameter.pack ? SemanticType::typePack(parameter.id)
+                                    : SemanticType::typeParameter(parameter.id))
+                  : selected->second
             : concrete->second);
   }
   return selectExactClassSpecialization(SemanticType::classType(
@@ -8783,12 +8795,14 @@ auto SemanticVisitor::Impl::prepareClassInstanceContext(
     return false;
   }
   const ClassInfo &owner = classInfo(classId);
-  const bool pack = std::any_of(owner.genericParameters.begin(),
-                                owner.genericParameters.end(),
+  const auto &parameters = publicClassInfo(classId).genericParameters;
+  const bool pack = std::any_of(parameters.begin(),
+                                parameters.end(),
                                 [](const auto &parameter) { return parameter.pack; });
   const std::size_t fixed =
-      genericTypeParameterCount(owner.genericParameters) - (pack ? 1 : 0);
-  if (!owner.declaration->genericArgumentPatterns().empty()) {
+      genericTypeParameterCount(parameters) - (pack ? 1 : 0);
+  if (!owner.exactSpecializationPrimary &&
+      !owner.declaration->genericArgumentPatterns().empty()) {
     if (!valueArguments.empty() ||
         !classArgumentPatternsMatch(owner, typeArguments)) {
       report(owner.name,
@@ -8800,7 +8814,7 @@ auto SemanticVisitor::Impl::prepareClassInstanceContext(
   } else if (typeArguments.size() < fixed ||
              (!pack && typeArguments.size() != fixed) ||
              valueArguments.size() !=
-                 genericValueParameterCount(owner.genericParameters)) {
+                 genericValueParameterCount(parameters)) {
     return false;
   }
   const GenericSubstitution substitution = classSubstitution(

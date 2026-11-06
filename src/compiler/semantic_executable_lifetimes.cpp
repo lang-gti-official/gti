@@ -61,6 +61,19 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
       destructor = &*owner.destructor;
   }
 
+  if (ownerId && classInfo(ownerId).exactSpecializationPrimary) {
+    const auto &owner = classInfo(ownerId);
+    const auto actual = canonicalExactSpecializationType(SemanticType::classType(
+        owner.exactSpecializationPrimary, key.classTypes, key.classValues));
+    const auto expected = canonicalExactSpecializationType(SemanticType::classType(
+        owner.exactSpecializationPrimary, owner.exactTypeArguments,
+        owner.exactValueArguments));
+    // Exact selection is checked before lifting. Region spelling cannot
+    // select a declaration, but the complete runtime argument shape must.
+    if (eraseTypeLifetimes(actual) != eraseTypeLifetimes(expected))
+      return std::nullopt;
+  }
+
   RequestSessionContext::ExecutableLifetimeKey identity{.runtime = key};
   const auto shape = [&](auto &&self, const SemanticType &type,
                          std::vector<GenericParameterId> bound) -> void {
@@ -163,12 +176,11 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
 
   GenericSubstitution substitution;
   if (ownerId) {
-    substitution = nominalSubstitution(classInfo(ownerId).genericParameters,
-        {.types = result.classTypes, .values = key.classValues});
     result.ownerType = SemanticType::classType(ownerId, result.classTypes, key.classValues);
     for (const auto &parameter : classInfo(ownerId).genericParameters)
       if (parameter.lifetime)
         result.ownerType.lifetimeArguments.push_back(Lifetime::parameter(parameter.id));
+    substitution = classSubstitution(result.ownerType);
   } else if (enumId)
     substitution = nominalSubstitution(enums[enumId - 1].genericParameters,
         {.types = result.classTypes, .values = key.classValues});

@@ -6686,6 +6686,8 @@ private:
 
   [[nodiscard]] const ClassInfo &classInfo(ClassId id) const;
 
+  [[nodiscard]] const ClassInfo &publicClassInfo(ClassId id) const;
+
   // The contextual use of `expression`'s result, when its enclosing
   // expression or statement supplied one.
   [[nodiscard]] std::optional<ResultUse>

@@ -174,11 +174,46 @@ int main() { return 0; }
     const auto *selected = result.semantics.findClassType(type.classId);
     expect(selected && selected->exactSpecializationPrimary != 0 &&
                selected->lifetimeContract.valid() &&
+               type.arguments == std::vector{lang::SemanticType(lang::SemanticType::Int32)} &&
                type.lifetimeArguments == std::vector{
                    lang::Lifetime::parameter(inspect->genericParameters.front().id)},
            "selected specialization metadata preserves the actual region argument");
   } else {
     expect(false, "specialized lifetime-bearing parameter metadata is available");
+  }
+
+  const auto nested = analyze(R"(
+struct Token<lifetime storage> {};
+namespace family {
+  struct Holder<T, lifetime owner> { T&<owner> value; Holder(T&<owner> source) : value(source) {} };
+}
+struct family::Holder<Token<_>> {};
+void inspectNested<lifetime nested, lifetime selected>(
+    family::Holder<Token<nested>, selected> value) requires outlives<nested, selected>;
+int main() { return 0; }
+)");
+  expectValid(nested, "exact specialization preserves lifetimes nested in public type arguments");
+  const auto *inspectNested = function(nested, "inspectNested");
+  if (inspectNested && inspectNested->parameterTypes.size() == 1 &&
+      inspectNested->genericParameters.size() == 2) {
+    const auto &type = inspectNested->parameterTypes.front();
+    const auto *selected = nested.semantics.findClassType(type.classId);
+    const auto *primary = nested.semantics.findPublicClassType(type.classId);
+    const auto expected = lang::Lifetime::parameter(inspectNested->genericParameters[0].id);
+    expect(selected && primary && selected->id != primary->id &&
+               type.arguments.size() == 1 &&
+               type.arguments.front().lifetimeArguments == std::vector{expected} &&
+               nested.semantics.resolveExactClassSpecialization(type) == type,
+           "selected identity and primary argument projection retain the actual nested region");
+    expect(primary && selected && !primary->genericParameters.empty() &&
+               std::any_of(selected->lifetimeContract.typeBounds.begin(),
+                           selected->lifetimeContract.typeBounds.end(), [&](const auto &bound) {
+                 return bound.type.kind == lang::SemanticType::TypeParameter &&
+                        bound.type.genericParameterId == primary->genericParameters.front().id;
+               }),
+           "specialized formation retains the public type obligation until application");
+  } else {
+    expect(false, "nested specialization lifetime metadata is available");
   }
   for (const std::string &definition : {
            std::string("struct family::View<int> { int&<a> value; int& extra; View(int&<a> first, int& second) : value(first), extra(second) {} };"),
@@ -496,14 +531,22 @@ int main() { return 0; }
 
 void testCStringRegions() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto prelude = std::filesystem::weakly_canonical(root / "prelude.gti");
+  // This owning capability test isolates the trusted declaration mechanism.
+  // The complete standard library has separate source/runtime acceptance.
+  const std::string capabilityPrelude = R"(
+namespace gti_internal { class c_string<lifetime storage> {}; }
+using c_string<lifetime storage> = gti_internal::c_string<storage>;
+)";
   const auto analyzeCString = [&](std::string source) {
     return lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
-        "cstring-lifetimes.gti", std::move(source), {root / "prelude.gti"}, {}, {root});
+        "cstring-lifetimes.gti", std::move(source), {prelude},
+        {{prelude.string(), capabilityPrelude}}, {root});
   };
   const auto result = analyzeCString(R"(
 c_string<region> relayCString<lifetime region>(c_string<region> value) { return value; }
 void inspectCString<lifetime named>(c_string<named> explicitValue, c_string elidedValue);
-c_string<static> staticCString() { return nullptr; }
+c_string<static> staticCString();
 int main() { return 0; }
 )");
   expectValid(result, "C-string borrowed storage has named, elided, and static lifetime slots");
@@ -518,6 +561,10 @@ int main() { return 0; }
              inspect->parameterTypes[1].lifetimeArguments.size() == 1 &&
              inspect->parameterTypes[0].lifetimeArguments != inspect->parameterTypes[1].lifetimeArguments,
          "unrelated omitted C-string input regions normalize independently");
+  const auto *staticResult = function(result, "staticCString");
+  expect(staticResult && staticResult->returnType.lifetimeArguments ==
+                            std::vector{lang::Lifetime::staticLifetime()},
+         "C-string declarations retain an explicit static storage contract");
   const auto invalid = analyzeCString("void invalid(c_string<int> text); int main() { return 0; }");
   expect(!invalid.semanticValid && std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
              [](const auto &diagnostic) { return diagnostic.code == "GTI-S2126"; }),

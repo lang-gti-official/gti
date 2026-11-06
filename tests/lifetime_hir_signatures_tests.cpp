@@ -22,9 +22,9 @@ int&<a_first> first<lifetime a_first>(int&<a_first> value) {
 int&<a_second> second<lifetime a_second>(int&<a_second> value) {
   return identity<a_second, int>(value);
 }
-struct Box<lifetime owner, T> { T value; };
+struct Box<lifetime owner, T> { T value; Box(T initial) : value(initial) {} };
 int main() {
-  Box<static, int> box{};
+  Box<static, int> box{0};
   int value = 17;
   return first(value) + second(value) - 34;
 }

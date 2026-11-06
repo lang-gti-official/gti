@@ -9492,6 +9492,13 @@ auto SemanticVisitor::Impl::classInfo(ClassId id) const -> const ClassInfo & {
   return classes.at(id - 1);
 }
 
+auto SemanticVisitor::Impl::publicClassInfo(ClassId id) const -> const ClassInfo & {
+  const ClassInfo *owner = &classInfo(id);
+  while (owner->exactSpecializationPrimary)
+    owner = &classInfo(owner->exactSpecializationPrimary);
+  return *owner;
+}
+
 auto SemanticVisitor::Impl::findMember(const SemanticType &objectType,
                                        const Token &name) const
     -> const MemberInfo * {

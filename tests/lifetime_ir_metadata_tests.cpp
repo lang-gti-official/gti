@@ -100,10 +100,20 @@ int main() {
          "shared symbolic recipes distinguish mutable referents from covariant borrow regions");
   auto specialization = exclusive;
   specialization.exactSpecializationPrimary = 1;
+  specialization.parameters.erase(specialization.parameters.begin());
+  specialization.exactTypeArguments = {SemanticType::Int32};
   specialization.stored[0].type = SemanticType::rawPointerTo(reference(502));
   const auto family = inferNominalVarianceRecipes(std::array{shared, specialization});
-  expect(family && (*family)[0].lifetimes == std::vector{TypeVariance::Invariant},
-         "an exact specialization constrains the complete family's lifetime variance");
+  expect(family && (*family)[0].lifetimes == std::vector{TypeVariance::Invariant} &&
+             (*family)[1].types == std::vector{TypeVariance::Invariant},
+         "an exact specialization retains public type slots and constrains family lifetime variance");
+  auto specializedType = SemanticType::classType(2, {reference(701)});
+  specializedType.lifetimeArguments = {Lifetime::parameter(702)};
+  const auto expandedSpec = expandNominalVarianceRecipe(specializedType, specialization,
+      (*family)[1], std::array{shared, specialization});
+  expect(expandedSpec.complete && expandedSpec.types.size() == 1 &&
+             expandedSpec.lifetimes.size() == 1,
+         "specialized public arguments remain visible to nested-region variance proof");
   specialization.parameters.push_back(specialization.parameters.front());
   expect(!inferNominalVarianceRecipes(std::array{shared, specialization}),
          "duplicate symbolic parameter identities cannot enter variance proof");
@@ -456,6 +466,26 @@ int main() {
                    .key = *owned.key,
                    .source = 7}},
       .complete = true};
+  auto staticReference = alias.type;
+  staticReference.referenceLifetime = Lifetime::staticLifetime();
+  expect(mirLifetimeReferenceConversion(emptyProgram, initializing, 0,
+                                         staticReference, alias.type),
+         "reference conversion may shorten a proven static region");
+  auto wrongReferent = alias.type;
+  wrongReferent.arguments.front() = SemanticType::Int64;
+  expect(!mirLifetimeReferenceConversion(emptyProgram, initializing, 0,
+                                          staticReference, wrongReferent),
+         "lifetime shortening never substitutes a different referent type");
+  auto mutableReference = alias.type;
+  mutableReference.referenceAccess = AccessMode::Mutable;
+  expect(!mirLifetimeReferenceConversion(emptyProgram, initializing, 0,
+                                          staticReference, mutableReference),
+         "lifetime shortening cannot invent mutable permission");
+  auto unknownReference = alias.type;
+  unknownReference.referenceLifetime = Lifetime::parameter(999);
+  expect(!mirLifetimeReferenceConversion(emptyProgram, initializing, 0,
+                                          staticReference, unknownReference),
+         "reference shortening cannot invent an undeclared region");
   MirInstruction initialize;
   initialize.id = 1;
   initialize.kind = MirInstructionKind::Initialize;

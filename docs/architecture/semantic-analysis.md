@@ -1993,6 +1993,15 @@ universal contract. Region-bearing instance-cache keys are not reused across
 editor snapshots until that cache can independently remap these identities.
 Native representation erasure remains downstream of lifetime verification.
 
+An exact class specialization retains the primary's public type and value
+arguments in its selected semantic type. Its declaration identity selects
+storage and member definitions; public parameter projection supplies argument
+arity, substitution, and inherited formation obligations. This preserves
+regions nested inside generic type arguments without introducing a second
+hidden type tree. Selection compares runtime type/value structure independently
+of regions, while each application still proves the primary's complete lifetime
+contract. Primary type names do not enter the specialization's lexical scope.
+
 `HirLowerer` receives the immutable base `SemanticModel` and a narrow
 `SemanticInstanceProvider`; it cannot start a fresh semantic request or mutate
 the visitor facade. The provider adapts the existing request-local

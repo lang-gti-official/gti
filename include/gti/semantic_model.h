@@ -2942,6 +2942,10 @@ public:
 
   [[nodiscard]] const ClassTypeInfo *findClassType(ClassId id) const;
 
+  // A full specialization keeps its primary's public argument shape. Its
+  // source declaration and storage inventory still belong to findClassType.
+  [[nodiscard]] const ClassTypeInfo *findPublicClassType(ClassId id) const;
+
   // Selects a registered full class specialization after recursively
   // resolving concrete nested class arguments. Symbolic generic types retain
   // their primary identity until instance substitution makes them exact.

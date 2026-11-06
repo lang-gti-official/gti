@@ -51,6 +51,12 @@ verifyMirLifetimeBodyFacts(const MirProgram &, const MirBody &,
 verifyMirLifetimeApplications(const MirProgram &, const MirBody &,
                               std::size_t owner = 0);
 
+// Checks a reference conversion using the exact body contract/constraint
+// graph, retaining referent identity, access and every nested region relation.
+[[nodiscard]] bool mirLifetimeReferenceConversion(
+    const MirProgram &, const MirBody &, std::size_t owner,
+    const SemanticType &actual, const SemanticType &expected);
+
 // Exact shape consumers may use these only alongside program lifetime proof.
 [[nodiscard]] bool
 mirLifetimeParameterTypesMatch(std::span<const SemanticType> selected,

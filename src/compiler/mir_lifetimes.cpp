@@ -89,6 +89,46 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
         return index;
     return std::nullopt;
   };
+  const auto selectorType = [&](auto &&self, SemanticType type, std::size_t depth)
+      -> std::optional<SemanticType> {
+    if (depth >= 256)
+      return std::nullopt;
+    if (type.kind == SemanticType::Class)
+      if (const auto index = findRecipe(type.kind, type.classId);
+          index && recipes[*index].exactSpecializationPrimary) {
+        const auto &selected = recipes[*index];
+        type.classId = selected.exactSpecializationPrimary;
+        if (type.arguments.empty() && type.valueArguments.empty()) {
+          type.arguments = selected.exactTypeArguments;
+          type.valueArguments = selected.exactValueArguments;
+        }
+      }
+    bool valid = true;
+    lifetime_detail::children(type, [&](SemanticType &child) {
+      const auto canonical = self(self, child, depth + 1);
+      if (!canonical)
+        valid = false;
+      else
+        child = *canonical;
+    });
+    // Exact declaration selection is region-independent. This erased copy is
+    // only a selector key; the selected instance/storage proof retains and
+    // verifies the original type's complete regions and obligations.
+    return valid ? std::optional{eraseTypeLifetimes(std::move(type))} : std::nullopt;
+  };
+  const auto selectorMatches = [&](const NominalVarianceRecipe &recipe,
+                                    const SemanticType &type) {
+    if (recipe.exactTypeArguments.size() != type.arguments.size() ||
+        recipe.exactValueArguments != type.valueArguments)
+      return false;
+    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+      const auto pattern = selectorType(selectorType, recipe.exactTypeArguments[index], 0);
+      const auto actual = selectorType(selectorType, type.arguments[index], 0);
+      if (!pattern || !actual || *pattern != *actual)
+        return false;
+    }
+    return true;
+  };
   const auto selectedType = [&](auto &&self, SemanticType type) -> std::optional<SemanticType> {
     bool valid = true;
     lifetime_detail::children(type, [&](SemanticType &child) {
@@ -105,8 +145,7 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
     const NominalVarianceRecipe *selected = nullptr;
     for (const auto &recipe : recipes)
       if (recipe.exactSpecializationPrimary == type.classId &&
-          recipe.exactTypeArguments == type.arguments &&
-          recipe.exactValueArguments == type.valueArguments) {
+          selectorMatches(recipe, type)) {
         if (selected)
           return std::nullopt;
         selected = &recipe;
@@ -120,7 +159,10 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
     GenericSubstitution values;
     std::size_t types = 0, constants = 0, regions = 0;
     bool projected = false;
-    for (const auto &parameter : recipe.parameters) {
+    const auto parameters = nominalVarianceParameters(recipe, recipes);
+    if (!parameters)
+      return std::nullopt;
+    for (const auto &parameter : *parameters) {
       if (parameter.lifetime) {
         if (regions >= type.lifetimeArguments.size())
           return std::nullopt;
@@ -149,12 +191,10 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
       }
     }
     if (regions != type.lifetimeArguments.size() ||
-        (!recipe.exactSpecializationPrimary &&
-         (constants != type.valueArguments.size() ||
-          (!projected && types != type.arguments.size()))))
+        constants != type.valueArguments.size() ||
+        (!projected && types != type.arguments.size()))
       return std::nullopt;
-    if (recipe.exactSpecializationPrimary &&
-        (recipe.exactTypeArguments != type.arguments || recipe.exactValueArguments != type.valueArguments))
+    if (recipe.exactSpecializationPrimary && !selectorMatches(recipe, type))
       return std::nullopt;
     return values;
   };
@@ -202,7 +242,7 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
                  instance.compilerCapability == recipe.compilerCapability &&
                  instance.kind == recipe.classKind && instance.cOpaqueHandle == recipe.cOpaqueHandle &&
                  instance.polymorphic == recipe.polymorphic && !recipe.forward && !recipe.invalidLifetime &&
-                 instance.variance == expandNominalVarianceRecipe(instance.type, recipe, (*inferred)[*index]) &&
+                 instance.variance == expandNominalVarianceRecipe(instance.type, recipe, (*inferred)[*index], recipes) &&
                  liftsValid(instance.liftedLifetimes, instance.lifetimeContract, recipe);
     std::size_t fields = 0, bases = 0;
     for (const auto &stored : recipe.stored) {
@@ -237,7 +277,7 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
     const auto &recipe = recipes[*index];
     const auto values = substitution(recipe, instance.type);
     bool valid = values.has_value() && !recipe.invalidLifetime &&
-                 instance.variance == expandNominalVarianceRecipe(instance.type, recipe, (*inferred)[*index]) &&
+                 instance.variance == expandNominalVarianceRecipe(instance.type, recipe, (*inferred)[*index], recipes) &&
                  liftsValid(instance.liftedLifetimes, instance.lifetimeContract, recipe);
     std::size_t count = 0;
     if constexpr (std::is_same_v<std::remove_cvref_t<decltype(instance)>, MirPayloadEnum>) {
@@ -1144,7 +1184,8 @@ public:
   }
 
   bool types(const SemanticType &actual, const SemanticType &expected,
-             int variance = 1, std::size_t depth = 0) const {
+             int variance = 1, std::size_t depth = 0,
+             bool exactShape = false) const {
     if (depth >= 256)
       return false;
     if (actual == expected)
@@ -1153,7 +1194,7 @@ public:
         !expected.quantifiedLifetimes.empty())
       return equivalentLifetimeTypes(actual, expected);
     if (actual.kind != expected.kind)
-      return freeTypeLifetimes(actual).empty() &&
+      return !exactShape && freeTypeLifetimes(actual).empty() &&
              freeTypeLifetimes(expected).empty();
     if (actual.kind == SemanticType::Class &&
         actual.classId != expected.classId) {
@@ -1176,8 +1217,29 @@ public:
       };
       project(project, actual);
       return matches.size() == 1 &&
-             types(matches.front(), expected, variance, depth + 1);
+             types(matches.front(), expected, variance, depth + 1, exactShape);
     }
+    // Lifetime covariance never changes nominal/value identity, array
+    // extent, dispatch or access authority. Compare the non-region shell at
+    // every level before checking its independently proved child relations.
+    auto sourceShell = actual;
+    auto targetShell = expected;
+    const auto shell = [](SemanticType &type) {
+      type.arguments.clear();
+      type.lambdaEnclosingClassTypes.clear();
+      type.lambdaEnclosingFunctionTypes.clear();
+      type.referenceLifetime = {};
+      type.lifetimeArguments.clear();
+      type.quantifiedLifetimes.clear();
+    };
+    shell(sourceShell);
+    shell(targetShell);
+    if (variance > 0 && actual.kind == SemanticType::Reference &&
+        actual.referenceAccess == AccessMode::Mutable &&
+        expected.referenceAccess == AccessMode::ReadOnly)
+      sourceShell.referenceAccess = AccessMode::ReadOnly;
+    if (sourceShell != targetShell)
+      return false;
     const auto region = [&](Lifetime source, Lifetime target, int mode) {
       if (source == Lifetime{} && target == Lifetime{})
         return true;
@@ -1234,10 +1296,19 @@ public:
         direction = TypeVariance::Contravariant;
       if (direction != TypeVariance::Bivariant &&
           !types(actual.arguments[index], expected.arguments[index],
-                 mode(direction), depth + 1))
+                 mode(direction), depth + 1, exactShape))
         return false;
     }
-    return true;
+    const auto enclosing = [&](const auto &source, const auto &target) {
+      if (source.size() != target.size())
+        return false;
+      for (std::size_t index = 0; index < source.size(); ++index)
+        if (!types(source[index], target[index], 0, depth + 1, true))
+          return false;
+      return true;
+    };
+    return enclosing(actual.lambdaEnclosingClassTypes, expected.lambdaEnclosingClassTypes) &&
+           enclosing(actual.lambdaEnclosingFunctionTypes, expected.lambdaEnclosingFunctionTypes);
   }
 
 private:
@@ -1383,6 +1454,41 @@ private:
   const LifetimeInferenceConstraints &graph;
 };
 } // namespace
+
+bool mirLifetimeReferenceConversion(
+    const MirProgram &program, const MirBody &body, std::size_t owner,
+    const SemanticType &actual, const SemanticType &expected) {
+  if (actual.kind != SemanticType::Reference || expected.kind != SemanticType::Reference ||
+      actual.arguments.size() != 1 || expected.arguments.size() != 1)
+    return false;
+  const auto &declared = bodyLifetimeContract(program, body, owner);
+  if (!verifyMirLifetimeBodyFacts(program, body, declared, owner).valid())
+    return false;
+  const auto expanded = expandedLifetimeAssumptions(program, declared);
+  if (!expanded)
+    return false;
+  const auto known = [&](Lifetime region) {
+    return region == Lifetime::staticLifetime() ||
+           std::find(expanded->parameters.begin(), expanded->parameters.end(), region) != expanded->parameters.end() ||
+           std::find(body.lifetimeBody.variables.begin(), body.lifetimeBody.variables.end(), region) != body.lifetimeBody.variables.end() ||
+           std::any_of(body.lifetimeBody.origins.begin(), body.lifetimeBody.origins.end(),
+                       [&](const auto &origin) { return origin.region == region; });
+  };
+  for (const auto &type : {actual, expected})
+    for (const auto region : freeTypeLifetimes(type))
+      if (!known(region))
+        return false;
+  LifetimeBounds assumptions;
+  for (const auto bound : expanded->bounds)
+    if (!assumptions.assume(bound.longer, bound.shorter))
+      return false;
+  LifetimeInferenceConstraints graph(assumptions);
+  for (const auto bound : body.lifetimeBody.obligations)
+    if (!graph.require(bound.longer, bound.shorter))
+      return false;
+  return !graph.failure() && MirLifetimeRelations(program, body, *expanded, graph)
+                              .types(actual, expected, 1, 0, true);
+}
 
 MirVerificationResult verifyMirLifetimeApplications(const MirProgram &program,
                                                     const MirBody &body,
