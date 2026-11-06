@@ -129,3 +129,5 @@ No successful finite campaign proves unbounded soundness or general compiler
 correspondence. Passing lab self-tests also does not mean every compiler
 verification gate passed. Timing observations are developmental measurements,
 not an approved CI budget.
+See [measurements.json](measurements.json) for the retained developmental runs,
+including exact tool hashes, bounds, classifications and local raw-log paths.
