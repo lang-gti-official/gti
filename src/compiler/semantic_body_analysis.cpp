@@ -4,6 +4,37 @@
 
 namespace lang {
 
+void SemanticVisitor::Impl::validateCodegenAttributes(
+    const std::vector<FunctionAttribute> &attributes, bool sourceBody,
+    bool lifecycle) {
+  std::unordered_set<std::string> names;
+  const bool hasInline = std::any_of(
+      attributes.begin(), attributes.end(),
+      [](const auto &attribute) { return attribute.name.lexeme == "inline"; });
+  for (const auto &attribute : attributes) {
+    const auto &name = attribute.name.lexeme;
+    const auto invalid = [&](std::string message) {
+      diagnostics.push_back(
+          makeDiagnostic(DiagnosticId::InvalidFunctionContract, attribute.name,
+                         {std::move(message)}));
+    };
+    if (name != "inline" && name != "noinline" && name != "cold") {
+      if (lifecycle)
+        invalid("Only [[inline]], [[noinline]] and [[cold]] apply to a "
+                "constructor or destructor.");
+      continue;
+    }
+    if (!names.insert(name).second)
+      invalid("Duplicate function attribute '" + name + "'.");
+    else if (name == "noinline" && hasInline)
+      invalid("[[inline]] and [[noinline]] cannot be combined on the same "
+              "function.");
+    else if (attribute.argument || !sourceBody)
+      invalid("Code-generation attributes require a source-defined GTI "
+              "function, method, constructor or destructor.");
+  }
+}
+
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   reflectedMethodTargets.clear();
   macroLookup.clear();
@@ -2140,6 +2171,8 @@ auto SemanticVisitor::Impl::visitStaticAssertDecl(const StaticAssertDecl &stmt)
 auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     -> void {
   const DeclarationOrderScope declarationOrder{*this, stmt};
+  validateCodegenAttributes(stmt.functionAttributes(), stmt.body() != nullptr,
+                            true);
   const std::size_t constructorDiagnosticStart = diagnostics.size();
   if (!currentClass) {
     report(stmt.name(),
@@ -2688,6 +2721,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
 auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
     -> void {
   const DeclarationOrderScope declarationOrder{*this, stmt};
+  validateCodegenAttributes(stmt.functionAttributes(), stmt.body() != nullptr,
+                            true);
   if (!currentClass) {
     report(stmt.tilde(),
            "Destructors can only be declared in a class or struct.",
@@ -3458,6 +3493,12 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                                          where, {std::move(message)}));
   };
   std::unordered_set<std::string> functionAttributeNames;
+  validateCodegenAttributes(
+      stmt.functionAttributes(),
+      functionInfo != nullptr && !stmt.hasCLinkage() &&
+          !stmt.runtimeBinding() && !stmt.isMacro() && !stmt.isPure() &&
+          functionInfo->bodyDeclaration() != nullptr &&
+          functionInfo->bodyDeclaration()->body() != nullptr);
   if (stmt.isMacro()) {
     const Token &keyword = *stmt.macroKeyword();
     if (functionInfo == nullptr || functionInfo->ownerClass != 0 ||
@@ -3529,22 +3570,6 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     }
     if (attribute.lexeme == "inline" || attribute.lexeme == "noinline" ||
         attribute.lexeme == "cold") {
-      if (!functionAttributeNames.insert(attribute.lexeme).second) {
-        reportContract(attribute, "Duplicate function attribute '" +
-                                      attribute.lexeme + "'.");
-      } else if (stmt.hasFunctionAttribute("inline") &&
-                 stmt.hasFunctionAttribute("noinline") &&
-                 attribute.lexeme == "noinline") {
-        reportContract(attribute, "[[inline]] and [[noinline]] cannot be "
-                                  "combined on the same function.");
-      } else if (contract.argument || functionInfo == nullptr ||
-                 stmt.hasCLinkage() || stmt.runtimeBinding() ||
-                 stmt.isMacro() || stmt.isPure() ||
-                 functionInfo->bodyDeclaration() == nullptr ||
-                 functionInfo->bodyDeclaration()->body() == nullptr) {
-        reportContract(attribute, "Code-generation attributes require a "
-                                  "source-defined GTI function or method.");
-      }
       continue;
     }
     if (attribute.lexeme == "test") {

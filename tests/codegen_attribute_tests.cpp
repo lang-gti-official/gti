@@ -18,6 +18,10 @@ struct MirProgramTestAccess {
   static std::vector<MirFunctionInstance> &functions(MirProgram &program) {
     return program.functions;
   }
+  static auto &constructors(MirProgram &program) {
+    return program.constructors;
+  }
+  static auto &destructors(MirProgram &program) { return program.destructors; }
 };
 } // namespace lang
 
@@ -210,6 +214,172 @@ int main() { terminal_hint(); }
   expect(found == 1, "terminal inline wrapper is represented");
   session.verify();
 }
+void testLifecyclePolicy() {
+  const std::string source = R"(
+mut int destroyed = 0;
+struct Box<T> {
+  T value;
+  [[inline]] Box(T value) : value(value) {}
+  [[cold, noinline]] ~Box() { destroyed += 1; }
+};
+struct Converted {
+  int value;
+  [[noinline]] implicit Converted(int value) : value(value) {}
+};
+struct Constant {
+  int value;
+  [[inline]] constexpr Constant(int value) : value(value) {}
+};
+struct Plain {
+  [[cold]] Plain() {}
+  [[inline]] ~Plain() {}
+};
+static_assert(Constant(3).value == 3);
+int main() {
+  { Box<int> box{7}; if (box.value != 7) { return 1; } }
+  Converted converted = 2;
+  Constant constant{3};
+  Plain plain{};
+  return destroyed + converted.value + constant.value - 6;
+}
+)";
+  const auto frontend = Frontend().analyze("lifecycle-attributes.gti", source);
+  expect(frontend.canGenerateCode(),
+         "source lifecycle attributes are accepted");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  const auto formatted = Formatter().format(source);
+  expect(Frontend()
+                 .analyze("lifecycle-formatted.gti", formatted)
+                 .canGenerateCode() &&
+             Formatter().format(formatted) == formatted,
+         "lifecycle attribute formatting preserves valid, stable syntax");
+  std::vector<LoweredProgramIssue> issues;
+  const auto verified = verifiedLoweredProgram(
+      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir), issues);
+  expect(verified.has_value(), "lifecycle policy seals successfully");
+  if (!verified)
+    return;
+  const auto compatibility =
+      OptimizationPipeline().run(frontend.hir, OptimizationLevel::O3);
+  const auto optimized =
+      OptimizationPipeline().run({.hir = frontend.hir,
+                                  .mir = frontend.mir,
+                                  .level = OptimizationLevel::O3,
+                                  .compatibility = &compatibility});
+  expect(optimized.valid(), "optimization preserves lifecycle policies");
+  if (optimized.valid()) {
+    expect(verifyLoweredProgram(
+               gti_test::lowerProgram(frontend, optimized.sourceMir,
+                                      optimized.mir, TargetInfo::host(),
+                                      optimized.report.transformations))
+               .empty(),
+           "optimized lifecycle policies agree with sealed declarations");
+  }
+  native_llvm::Session session(*verified, {});
+  const auto admission = planLlvmAdmission(*verified, session.options());
+  expect(admission.admitted(), "annotated lifecycle bodies are admitted");
+  if (!admission.admitted())
+    return;
+  native_llvm::lowerScalarProgram(session, admission);
+  unsigned constructors = 0, destructors = 0;
+  const auto check = [&](const auto &instance, MirBodyKind kind) {
+    const auto policy = instance.codegenAttributes;
+    auto *function = session.module().getFunction(
+        "__gti_native_v1_body_" + std::to_string(static_cast<unsigned>(kind)) +
+        "_" + std::to_string(instance.id));
+    expect(function != nullptr, "source lifecycle has a native body");
+    if (!function)
+      return;
+    expect(function->hasFnAttribute(llvm::Attribute::Cold) == policy.cold &&
+               function->hasFnAttribute(llvm::Attribute::InlineHint) ==
+                   (policy.inlining == FunctionInlining::Hint) &&
+               function->hasFnAttribute(llvm::Attribute::NoInline) ==
+                   (policy.inlining == FunctionInlining::Never) &&
+               !function->hasFnAttribute(llvm::Attribute::AlwaysInline),
+           "lifecycle LLVM attributes match verified policy without forced "
+           "inlining");
+  };
+  for (const auto &instance : frontend.mir.constructorInstances()) {
+    if (instance.codegenAttributes == FunctionCodegenAttributes{})
+      continue;
+    ++constructors;
+    check(instance, MirBodyKind::Constructor);
+    auto lost = frontend.mir;
+    auto &changed = MirProgramTestAccess::constructors(lost)[instance.id - 1];
+    changed.codegenAttributes = {};
+    expect(!LoweredProgramBuilder()
+                .build(frontend.program, frontend.semantics, frontend.hir,
+                       frontend.mir, lost, {}, TargetInfo::host())
+                .valid(),
+           "constructor policy cannot disappear between HIR and MIR");
+    changed.codegenAttributes.inlining = static_cast<FunctionInlining>(99);
+    expect(!verifyMirProgram(lost).valid(),
+           "invalid constructor policy is rejected");
+    auto sealed = verified->program();
+    const auto &hir = frontend.hir.constructorInstances()[instance.id - 1];
+    auto *declaration = const_cast<LoweredConstructorDeclaration *>(
+        sealed.findConstructorDeclaration(hir.declaration));
+    expect(declaration != nullptr, "constructor has a sealed declaration");
+    if (declaration) {
+      declaration->codegenAttributes = {};
+      expect(!verifyLoweredProgram(sealed).empty(),
+             "sealed constructor policy cannot be erased");
+    }
+    const auto *info = frontend.semantics.findConstructor(*hir.source);
+    const auto *owner =
+        info ? frontend.semantics.findClassType(info->owner) : nullptr;
+    expect(info && owner &&
+               SignaturePrinter(frontend.semantics)
+                   .constructor(*owner, *info)
+                   .starts_with("[["),
+           "constructor signatures include optimization policy");
+  }
+  for (const auto &instance : frontend.mir.destructorInstances()) {
+    if (instance.codegenAttributes == FunctionCodegenAttributes{})
+      continue;
+    ++destructors;
+    check(instance, MirBodyKind::Destructor);
+    auto lost = frontend.mir;
+    auto &changed = MirProgramTestAccess::destructors(lost)[instance.id - 1];
+    changed.codegenAttributes = {};
+    expect(!LoweredProgramBuilder()
+                .build(frontend.program, frontend.semantics, frontend.hir,
+                       frontend.mir, lost, {}, TargetInfo::host())
+                .valid(),
+           "destructor policy cannot disappear between HIR and MIR");
+    changed.codegenAttributes.inlining = static_cast<FunctionInlining>(99);
+    expect(!verifyMirProgram(lost).valid(),
+           "invalid destructor policy is rejected");
+    auto sealed = verified->program();
+    bool erased = false;
+    for (const auto &entry : sealed.declarations()) {
+      if (const auto *declaration =
+              std::get_if<LoweredDestructorDeclaration>(&entry.payload);
+          declaration &&
+          declaration->codegenAttributes == instance.codegenAttributes) {
+        const_cast<LoweredDestructorDeclaration *>(declaration)
+            ->codegenAttributes = {};
+        erased = true;
+        break;
+      }
+    }
+    expect(erased && !verifyLoweredProgram(sealed).empty(),
+           "sealed destructor policy cannot be erased");
+    const auto &hir = frontend.hir.destructorInstances()[instance.id - 1];
+    const auto *info = frontend.semantics.findDestructor(*hir.source);
+    expect(info && SignaturePrinter(frontend.semantics)
+                       .destructor(*info)
+                       .starts_with("[["),
+           "destructor signatures include optimization policy");
+  }
+  expect(constructors == 4 && destructors == 2,
+         "generic and ordinary lifecycle policies survive lowering");
+  session.verify();
+}
 void testRejections() {
   for (const auto source : {
            "[[inline, noinline]] int f() { return 0; } int main() { return "
@@ -224,6 +394,12 @@ void testRejections() {
            "extern \"C\" { [[cold]] int foreign(); } int main() { return 0; }",
            "[[inline]] int missing(); int main() { return 0; }",
            "interface I { [[cold]] int read(); }; int main() { return 0; }",
+           "struct S { [[inline, noinline]] S() {} }; int main() { return 0; }",
+           "struct S { [[cold, cold]] ~S() {} }; int main() { return 0; }",
+           "struct S { [[inline]] S() = default; }; int main() { return 0; }",
+           "struct S { [[noinline]] S() = delete; }; int main() { return 0; }",
+           "struct S { [[cold]] ~S() = default; }; int main() { return 0; }",
+           "struct S { [[noreturn]] S() {} }; int main() { return 0; }",
        }) {
     const auto frontend = Frontend().analyze("invalid-codegen.gti", source);
     expect(!frontend.canGenerateCode() &&
@@ -243,8 +419,8 @@ void testRejections() {
            "int main() { [[cold]] int value = 0; return value; }",
            "int inline() { return 0; }",
            "[[cold]] #macro ignored(int value) {} int main() { return 0; }",
-           "struct S { [[inline]] S() {} }; int main() { return 0; }",
-           "struct S { [[cold]] ~S() {} }; int main() { return 0; }",
+           "struct S { [[inline(always)]] S() {} }; int main() { return 0; }",
+           "struct S { [[cold(1)]] ~S() {} }; int main() { return 0; }",
        }) {
     const auto frontend = Frontend().analyze("invalid-placement.gti", source);
     expect(!frontend.canGenerateCode(),
@@ -255,6 +431,7 @@ void testRejections() {
 int main() {
   testPropagation();
   testTerminalInlinePrecedence();
+  testLifecyclePolicy();
   testRejections();
   return failures == 0 ? 0 : 1;
 }

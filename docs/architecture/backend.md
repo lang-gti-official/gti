@@ -6541,6 +6541,15 @@ must preserve explicit policy and avoid conflicting LLVM attributes. This
 initial slice changes no calling convention or runtime representation and adds
 no C++ backend optimization implementation.
 
+Source constructors and destructors carry the same resolved policy through
+their semantic declarations, concrete HIR/MIR instances and sealed lifecycle
+declarations. Native lifecycle body declarations use the shared attribute
+application routine. HIR/semantic, HIR/MIR and sealed/MIR checks reject lost
+policy; MIR rejects invalid policy values and annotations on generated or
+non-source lifecycle bodies. Generated field/base cleanup retains its existing
+schedule, and no attribute changes the status ABI, rollback or active-drop
+obligations. Explicit default/delete declarations are rejected in semantics.
+
 ### LLVM Function Values And Closure Environments
 
 O-LLVM-09 lowers exact function items, invocation-pointer capabilities and

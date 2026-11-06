@@ -7,6 +7,9 @@
 
 namespace lang::native_llvm {
 
+void applyCodegenAttributes(llvm::Function &function,
+                            const FunctionCodegenAttributes &attributes);
+
 enum class AbiChannel {
   ResultDestination,
   FailureDestination,

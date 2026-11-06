@@ -380,10 +380,13 @@ semantics, not this syntax node.
 Function optimization annotations `[[inline]]`, `[[noinline]]` and `[[cold]]`
 reuse the function-attribute AST list. The parser accepts the otherwise reserved
 `inline` token only as an annotation name, and rejects attribute arguments.
-Semantics validates eligible source-defined function/method declarations,
+Constructors and destructors retain the same attribute list, including when a
+constructor also has an `implicit`, `unsafe` or constant-evaluation modifier.
+Semantics validates eligible source-defined function/method/lifecycle declarations,
 duplicates and conflicting requests, then publishes `FunctionCodegenAttributes`
 independently of return-flow, ownership and ABI contracts. Concrete HIR and MIR
 instances preserve that record; the LLVM backend consumes verified policy.
+Defaulted and deleted lifecycle declarations cannot carry optimization policy.
 
 Class-declaration attributes are retained as written syntax before the class
 kind. The bounded native-record form is `[[c_abi]] struct`; the parser records

@@ -1293,6 +1293,14 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           "HIR function unsafe contract differs from its semantic declaration");
     }
   }
+  for (const auto &instance : program.destructorInstances()) {
+    const auto *declaration =
+        instance.source ? semantics.findDestructor(*instance.source) : nullptr;
+    if (!declaration ||
+        instance.codegenAttributes != declaration->codegenAttributes)
+      result.errors.emplace_back(
+          "destructor code-generation attributes differ from semantics");
+  }
   for (const auto &instance : program.classInstances()) {
     const auto *lifecycle = instance.source != nullptr
                                 ? semantics.findClassLifecycle(*instance.source)
@@ -1309,6 +1317,11 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     const auto *declaration = instance.source != nullptr
                                   ? semantics.findConstructor(*instance.source)
                                   : nullptr;
+    if (instance.codegenAttributes != (declaration
+                                           ? declaration->codegenAttributes
+                                           : FunctionCodegenAttributes{}))
+      result.errors.emplace_back(
+          "constructor code-generation attributes differ from semantics");
     if (instance.requiresUnsafe !=
         (declaration != nullptr && declaration->requiresUnsafe))
       result.errors.emplace_back(

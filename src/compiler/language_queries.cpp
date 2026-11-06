@@ -21,6 +21,20 @@
 
 namespace lang {
 
+namespace {
+std::string
+codegenAttributePrefix(const FunctionCodegenAttributes &attributes) {
+  std::string result;
+  if (attributes.cold)
+    result += "[[cold]] ";
+  if (attributes.inlining == FunctionInlining::Hint)
+    result += "[[inline]] ";
+  else if (attributes.inlining == FunctionInlining::Never)
+    result += "[[noinline]] ";
+  return result;
+}
+} // namespace
+
 SignaturePrinter::SignaturePrinter(const SemanticModel &semantics)
     : semantics(semantics), types(semantics) {}
 
@@ -65,13 +79,7 @@ SignaturePrinter::function(const FunctionInfo &info,
       selected == nullptr ? info.returnType : selected->returnType;
   const std::vector<SemanticType> &parameterTypes =
       selected == nullptr ? info.parameterTypes : selected->parameterTypes;
-  std::string result;
-  if (info.codegenAttributes.cold)
-    result += "[[cold]] ";
-  if (info.codegenAttributes.inlining == FunctionInlining::Hint)
-    result += "[[inline]] ";
-  else if (info.codegenAttributes.inlining == FunctionInlining::Never)
-    result += "[[noinline]] ";
+  std::string result = codegenAttributePrefix(info.codegenAttributes);
   if (info.neverReturns) {
     result += "[[noreturn]] ";
   }
@@ -260,12 +268,18 @@ SignaturePrinter::conceptSignature(const SymbolRecord &symbol,
 [[nodiscard]] std::string
 SignaturePrinter::constructor(const ClassTypeInfo &owner,
                               const ResolvedConstructionInfo &selected) const {
+  const auto *declaration =
+      selected.declaration ? semantics.findConstructor(*selected.declaration)
+                           : nullptr;
+  const auto prefix =
+      declaration ? codegenAttributePrefix(declaration->codegenAttributes)
+                  : std::string{};
   const std::string constructedType =
       selected.constructedType.kind == SemanticType::Class
           ? types.print(selected.constructedType)
           : owner.qualifiedName;
   if (selected.kind != ConstructorKind::Ordinary) {
-    return constructedType + "(" + constructedType +
+    return prefix + constructedType + "(" + constructedType +
            (selected.kind == ConstructorKind::Move ? "&&)" : "&)");
   }
   std::string result =
@@ -300,7 +314,7 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
     appendRequirements(result, selected.declaration->requiresClause(),
                        selected.requirements);
   }
-  return result;
+  return prefix + result;
 }
 
 [[nodiscard]] std::string
@@ -311,6 +325,7 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
           ? owner.qualifiedName
           : types.print(SemanticType::classType(owner.id));
   const auto appendSpecifier = [&](std::string result) {
+    result = codegenAttributePrefix(info.codegenAttributes) + result;
     if (info.declaration != nullptr && info.declaration->specifier()) {
       result += info.declaration->specifier()->kind ==
                         SpecialMemberSpecifierKind::Defaulted
@@ -474,8 +489,9 @@ SignaturePrinter::destructor(const DestructorInfo &info) const {
       owner->exactSpecializationPrimary == 0
           ? owner->qualifiedName
           : types.print(SemanticType::classType(owner->id));
-  std::string result =
-      ownerName + "::~" + owner->declaration->name().lexeme + "()";
+  std::string result = codegenAttributePrefix(info.codegenAttributes) +
+                       ownerName + "::~" + owner->declaration->name().lexeme +
+                       "()";
   if (info.declaration != nullptr && info.declaration->specifier()) {
     result += info.declaration->specifier()->kind ==
                       SpecialMemberSpecifierKind::Defaulted

@@ -2110,6 +2110,16 @@
     "type": "constructor_declaration",
     "named": true,
     "fields": {
+      "attribute": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "function_contract_attribute",
+            "named": true
+          }
+        ]
+      },
       "body": {
         "multiple": false,
         "required": false,
@@ -2467,6 +2477,16 @@
     "type": "destructor_declaration",
     "named": true,
     "fields": {
+      "attribute": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "function_contract_attribute",
+            "named": true
+          }
+        ]
+      },
       "body": {
         "multiple": false,
         "required": false,
