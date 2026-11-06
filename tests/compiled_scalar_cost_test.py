@@ -48,7 +48,7 @@ def main():
         prefix[1] = '--consume'
         run(prefix, 'source-absent-consume')
         names = run(['nm', '-g', root / 'library.o'], 'symbols')
-        symbols = set(re.findall(r'__gtilib_callable_v3_[0-9a-f]{64}', names))
+        symbols = set(re.findall(r'__gtilib_callable_v4_[0-9a-f]{64}', names))
         if len(symbols) != 1:
             raise RuntimeError('unexpected exported scalar object symbols')
         symbol = symbols.pop()

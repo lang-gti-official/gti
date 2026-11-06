@@ -4,6 +4,10 @@ links `app` with each object's dependency closure exactly once. Repeating the
 build reuses libraries whose complete source, compiler configuration, and direct
 dependency digests still match. Editing `base.gti` rebuilds its dependents.
 
+`base_value` requests `[[inline]]` and `left_value` requests `[[cold, noinline]]`.
+Each compiled dependency preserves its own policy, including when one library
+imports another. Inline advice does not make imported bodies available for inlining.
+
 The `api/*.gti` paths are virtual declaration interfaces; no generated source
 files are written there. `gti check app --release` remains read-only and requires
 previously built dependency artifacts. Source target edges currently refer to
