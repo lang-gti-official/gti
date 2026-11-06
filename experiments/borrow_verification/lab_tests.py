@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from corpus import cases
 from generation import core_examples
@@ -95,6 +96,53 @@ class LabTests(unittest.TestCase):
         self.assertEqual('survived', gates['shared_aliases', 'missing_endpoint'])
         self.assertEqual('shape-only-or-unrelated-rejection', gates['shared_aliases', 'wrong_origin'])
         self.assertEqual('missing-witness', gates['shared_aliases', 'missing_initialization'])
+
+    def test_initialization_gate_requires_the_actual_availability_diagnostic(self):
+        records = [{'name': 'shared_aliases', 'probe': {'baseline_verified': True, 'mutations': [
+            {'mutation': 'missing_initialization', 'status': 'rejected',
+             'errors': ['place access requires a definitely initialized scalar place']},
+        ]}}]
+        gate = next(g for g in mutation_gate(records) if g['mutation'] == 'missing_initialization')
+        self.assertEqual('intended-kill', gate['status'])
+
+    def test_operation_accounting_includes_calls_branches_and_cleanup(self):
+        from campaign import operations
+        p = core_examples()['failure_cleanup']
+        self.assertEqual(['alloc', 'borrow', 'drop', 'end', 'fail', 'read', 'scope', 'write'], operations(p))
+        self.assertIn('return', operations(core_examples()['returned_reference']))
+
+    def test_seeded_disagreement_categories_are_distinct(self):
+        from campaign import compiler_comparison
+        args = argparse.Namespace(no_native=True)
+        examples = core_examples()
+        # Harness fault injection, not a claim of a real compiler defect.
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            with patch('campaign.analyze', return_value={'classification': 'accepted'}):
+                result = compiler_comparison(examples['overlapping_mutable'], args, out)
+                self.assertEqual('accepted-model-violation', result['classification'])
+            with patch('campaign.analyze', return_value={'classification': 'rejected'}):
+                result = compiler_comparison(examples['shared_read'], args, out)
+                self.assertEqual('conservative-rejection-or-model-error', result['classification'])
+            for classification in ('internal-error', 'lowering-rejection', 'timeout'):
+                with patch('campaign.analyze', return_value={'classification': classification}):
+                    self.assertEqual(classification, compiler_comparison(examples['shared_read'], args, out)['classification'])
+            with patch('campaign.analyze', return_value={'classification': 'syntax-error'}):
+                self.assertEqual('source-adapter-error', compiler_comparison(examples['shared_read'], args, out)['classification'])
+
+    def test_reduction_preserves_both_classification_and_violated_rule(self):
+        from campaign import compiler_comparison
+        original = core_examples()['overlapping_mutable']
+        rule = check(original).violation.split(':')[0]
+        args = argparse.Namespace(no_native=True)
+        with tempfile.TemporaryDirectory() as directory, patch('campaign.analyze', return_value={'classification': 'accepted'}):
+            def predicate(program):
+                return ((check(program).violation or '').split(':')[0] == rule
+                        and compiler_comparison(program, args, Path(directory))['classification'] == 'accepted-model-violation')
+            reduced, attempts = shrink(original, predicate, budget=30)
+            self.assertTrue(predicate(reduced))
+            self.assertLess(len(reduced['body']), len(original['body']))
+            self.assertLessEqual(attempts, 30)
 
 
 if __name__ == '__main__':

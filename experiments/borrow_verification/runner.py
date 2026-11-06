@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import resource
 import signal
 import subprocess
 import time
@@ -21,7 +22,7 @@ MUTATION_WITNESSES = (
     ('shared_aliases', 'permission_upgrade', r'conflicts with active'),
     ('temporary_non_escape', 'temporary_escape', r'non-escaping temporary'),
     ('multiple_temporary_endpoints', 'failure_end_order', r'temporary argument loans.*reverse order'),
-    ('shared_aliases', 'missing_initialization', r'uninitialized|unavailable|before initialization'),
+    ('shared_aliases', 'missing_initialization', r'place access requires a definitely initialized scalar place'),
 )
 
 
@@ -53,6 +54,19 @@ def digest(path):
         for block in iter(lambda: stream.read(1024 * 1024), b''):
             h.update(block)
     return h.hexdigest()
+
+
+def resource_metrics(directory):
+    """High-water observations, not a sum of simultaneous process memory."""
+    own = resource.getrusage(resource.RUSAGE_SELF)
+    children = resource.getrusage(resource.RUSAGE_CHILDREN)
+    factor = 1 if platform.system() == 'Darwin' else 1024
+    return {'runner_peak_rss_bytes': own.ru_maxrss * factor,
+            'waited_children_peak_rss_bytes': children.ru_maxrss * factor,
+            'runner_cpu_seconds': own.ru_utime + own.ru_stime,
+            'waited_children_cpu_seconds': children.ru_utime + children.ru_stime,
+            'retained_artifact_bytes': sum(p.stat().st_size for p in directory.rglob('*') if p.is_file()),
+            'scope': 'getrusage high-water marks; child maximum is not concurrent total RSS; artifacts exclude final report'}
 
 
 def command(argv, directory, name, timeout=30):
@@ -232,7 +246,7 @@ def shrink(program, predicate, budget=100):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('phase', choices=('phase1', 'phase2'))
+    p.add_argument('phase', choices=('phase1', 'phase2', 'core'))
     p.add_argument('--build', type=lambda x: Path(x).resolve())
     p.add_argument('--probe', type=lambda x: Path(x).resolve())
     p.add_argument('--out', type=lambda x: Path(x).resolve(), required=True)
@@ -248,8 +262,10 @@ def main():
     args = p.parse_args()
     if args.timeout <= 0 or args.count < 0 or args.compiler_samples < 0 or not 0 <= args.reduce_compiler <= 100:
         p.error('Bounds must be nonnegative and timeout positive')
-    if args.phase == 'phase1' and (not args.build or not args.probe):
-        p.error('phase1 requires --build and --probe')
+    if args.phase in ('phase1', 'core') and (not args.build or not args.probe):
+        p.error('phase1/core requires --build and --probe')
+    if args.phase == 'core' and args.no_native:
+        p.error('The mandatory core comparison requires native execution')
     if bool(args.build) != bool(args.probe):
         p.error('--build and --probe must be supplied together')
     if (args.out / 'report.json').exists():
@@ -259,10 +275,14 @@ def main():
     report = {'identity': provenance(args), 'phase': args.phase, 'arguments': vars(args).copy()}
     if args.phase == 'phase1':
         report['results'] = phase1(args)
-    else:
+    elif args.phase == 'phase2':
         from campaign import phase2
         report['results'] = phase2(args)
+    else:
+        from core_campaign import core_campaign
+        report['results'] = core_campaign(args)
     report['seconds'] = time.perf_counter() - start
+    report['resources'] = resource_metrics(args.out)
     (args.out / 'report.json').write_text(json.dumps(report, indent=2, default=str) + '\n')
     print('Evidence: ' + str(args.out / 'report.json'), flush=True)
     if report['results'].get('failures', 0) or report['results'].get('passed') != report['results'].get('total'):

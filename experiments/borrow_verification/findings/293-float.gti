@@ -1,0 +1,8 @@
+// https://github.com/lang-gti-official/gti/issues/293
+// Valid source; the lab probe's missing_initialization MIR mutant survives.
+// The independent numeric core explicitly reports float artifacts unsupported.
+int main() {
+  mut float x = 1.0;
+  float& a = x;
+  return int(a) - 1;
+}

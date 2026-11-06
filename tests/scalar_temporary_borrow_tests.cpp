@@ -1,4 +1,5 @@
 #include "compiler_test_fixture.h"
+#include "gti/mir_editor.h"
 
 namespace {
 lang::FrontendResult analyze(std::string source) {
@@ -283,6 +284,60 @@ int main() { Holder h{2}; Use result{h}; return result.result - 24; }
            "constructor initializer interleaves multiple temporary and "
            "reference arguments");
 }
+void localScalarBorrowInitialization() {
+  for (const bool mutableBorrow : {false, true}) {
+    auto result = analyze("int main() { mut int x = 1; " +
+                          std::string(mutableBorrow ? "mut " : "") +
+                          "int& borrowed = x; return borrowed - 1; }");
+    expect(result.canGenerateCode(),
+           "initialized scalar admits a local shared or mutable reference");
+    if (!result.canGenerateCode())
+      continue;
+    bool erased = false;
+    for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+             result.mir.functionInstances())) {
+      const auto *info = result.semantics.findFunction(function.declaration);
+      if (!info || !info->declaration ||
+          info->declaration->name().lexeme != "main")
+        continue;
+      for (auto &block : function.body.blocks) {
+        const auto initializer = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &instruction) {
+              if (instruction.kind != lang::MirInstructionKind::Initialize ||
+                  !instruction.destination)
+                return false;
+              const auto *place =
+                  function.body.findPlace(*instruction.destination);
+              return place && place->type == lang::SemanticType::Int32 &&
+                     place->root == lang::MirPlaceRootKind::Binding &&
+                     place->projections.empty();
+            });
+        if (initializer != block.instructions.end()) {
+          block.instructions.erase(initializer);
+          erased = true;
+          break;
+        }
+      }
+      // Keep operand indexes coherent: a structural index failure would not
+      // establish that the initialization rule catches this malformed body.
+      (void)lang::rebuildMirValueUses(function.body);
+    }
+    const auto proof = lang::verifyMirProgram(result.mir);
+    expect(
+        erased && !proof.valid() &&
+            std::any_of(proof.errors.begin(), proof.errors.end(),
+                        [](const auto &error) {
+                          return error.message.find(
+                                     "definitely initialized scalar place") !=
+                                 std::string::npos;
+                        }),
+        "local checked references independently require initialized storage");
+  }
+  accepted("int read(int& value) { int& alias = value; return alias; } "
+           "int main() { int value = 42; return read(value) - 42; }",
+           "initially available reference parameter remains borrowable");
+}
 } // namespace
 int main() {
   scalarValues();
@@ -292,5 +347,6 @@ int main() {
   libraryClients();
   verifierProofs();
   mixedArgumentLoanOrder();
+  localScalarBorrowInitialization();
   return failures ? 1 : 0;
 }

@@ -244,3 +244,36 @@ def enumerate_structured(max_body_length=1):
     for body in bodies:
         yield program(copy.deepcopy(prefix + [{'op': 'loop', 'condition': 'count',
                                                'body': body}] + suffix))
+
+
+def compiler_core_examples():
+    """Deterministic end-to-end witnesses, independent of compiler outcomes.
+
+    Each has a source-model program and structural adapter options. A caller
+    must independently check/execute the model and require both MIR stages and
+    native execution; mere membership does not establish coverage.
+    """
+    examples=core_examples()
+    witnesses={}
+    coverage={
+        'shared_read':['shared-borrow'],
+        'mutable_write':['mutable-borrow'],
+        'disjoint_fields':['record','named-field','disjoint-field-borrow'],
+        'reborrow_restore':['reborrow','parent-restoration'],
+        'move_then_read':['move'],
+        'whole_move_reinitialize':['whole-reinitialize'],
+        'partial_move_reinitialize':['partial-move','field-reinitialize'],
+        'branch_reinitialize':['conditional'],
+        'loop_borrow_end':['loop'],
+        'returned_reference':['direct-call','reference-result'],
+        'returned_mutable_reference':['mutable-reference-result'],
+        'return_through_cleanup':['return-reborrow','return-cleanup'],
+        'temporary_call':['temporary-read-argument','temporary-cleanup'],
+        'normal_cleanup':['normal-cleanup','owned-allocation','free'],
+        'failure_cleanup':['defined-failure','failure-cleanup','owned-allocation','free'],
+        'allocation_reuse':['allocation-generation','free','reallocate'],
+    }
+    for name,features in coverage.items():
+        witnesses[name]={'program':examples[name], 'features':features,
+            'heap_owners':['o'] if name in ('normal_cleanup','failure_cleanup','allocation_reuse') else []}
+    return witnesses

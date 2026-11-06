@@ -11846,6 +11846,22 @@ exercise the same contract. A change that touches those areas should be
 watched through CI after push; an asynchronous CI failure there is a Linux
 finding requiring follow-up, rather than evidence of a successful Linux check.
 
+## Opt-In Borrow Verification Laboratory
+
+[`experiments/borrow_verification/`](../../experiments/borrow_verification/README.md)
+contains the manually run phase-one and phase-two tools from
+[RFC 0002](https://github.com/lang-gti-official/rfcs/pull/2): rule inventory,
+source/MIR/compiler mutations, CLI/LSP comparisons, independent static and
+concrete models, bounded generation, reduction, and source/MIR/native core
+comparisons. It has no CMake/CTest registration or CI workflow integration.
+Retained measurements inform a later owner decision about automation budgets.
+
+The lab distinguishes rule enforcement, model behavior and compiler
+correspondence; unsupported cases are not verified. Its numeric, allocation,
+cleanup and call profiles are explicit, and findings remain linked even when
+outside the current independent core. A small Lean feasibility prototype does
+not establish the phase-three soundness theorem or prove the production compiler.
+
 ## Optional Local Language Audit
 
 `scripts/local_language_audit.py` is a deliberately non-gating bug finder. The

@@ -1,16 +1,31 @@
 """Independent-model campaign, source comparisons, and retained counterexamples."""
 from __future__ import annotations
 from collections import Counter
+from itertools import combinations
 import json
 import time
 
 from generation import EXPECTED, alpha_rename, core_examples, enumerate_programs, enumerate_structured, seeded_programs, structured_count
 from model import check, execute
-from runner import analyze, native, shrink
+from runner import ROOT, analyze, native, shrink
 from source_bridge import Unsupported, render
 
 INPUTS = ({'choice': False, 'count': 0}, {'choice': True, 'count': 0},
           {'choice': False, 'count': 2}, {'choice': True, 'count': 2})
+
+
+def operations(program):
+    """Syntactic presence only; never described as executed branch coverage."""
+    found = set()
+    def walk(nodes):
+        for node in nodes:
+            found.add(node['op'])
+            for key in ('body', 'then', 'else', 'cleanup'):
+                walk(node.get(key, []))
+    walk(program['body'])
+    for declaration in program.get('functions', {}).values():
+        walk(declaration.get('body', []))
+    return sorted(found)
 
 
 def model_comparison(program):
@@ -65,6 +80,7 @@ def phase2(args):
     if args.max_length < 0 or args.max_length > 4 or args.count > 100000:
         raise ValueError('Campaign bounds: max-length 0..4, seeded count <=100000')
     counts, compiler_counts = Counter(), Counter()
+    operation_counts, interaction_counts, execution_counts = Counter(), Counter(), Counter()
     records, compiler_records = [], []
     failures, sampled, eligible, generated = 0, 0, 0, 0
     named = core_examples()
@@ -78,6 +94,10 @@ def phase2(args):
             generated += 1
             static, concrete, failure = model_comparison(program)
             counts[static.status] += 1
+            vocabulary = operations(program)
+            operation_counts.update(vocabulary)
+            interaction_counts.update('+'.join(pair) for pair in combinations(vocabulary, 2))
+            execution_counts.update(r.status for r in concrete)
             if expected is not None and expected != static.status:
                 failure = 'hand-derived-expectation-mismatch'
             record = {'name': name, 'program': program, 'static': static.to_dict(),
@@ -113,7 +133,10 @@ def phase2(args):
                 directory = args.out / name
                 directory.mkdir(parents=True, exist_ok=True)
                 (directory / 'model.json').write_text(json.dumps(program, indent=2) + '\n')
-                (directory / 'finding.json').write_text(json.dumps(result, indent=2) + '\n')
+                result['replay'] = ['python3', str(ROOT / 'experiments/borrow_verification/replay.py'),
+                                    '--program', str(directory / 'model.json'),
+                                    '--build', str(args.build), '--probe', str(args.probe),
+                                    '--out', str(directory / 'replayed')]
                 if args.reduce_compiler and result['classification'] in ('accepted-model-violation', 'internal-error', 'conservative-rejection-or-model-error'):
                     original_class = result['classification']
                     original_violation = (check(program).violation or '').split(':')[0]
@@ -127,16 +150,25 @@ def phase2(args):
                     reduced, attempts_count = shrink(program, preserves, budget=args.reduce_compiler)
                     (directory / 'reduced-model.json').write_text(json.dumps(reduced, indent=2) + '\n')
                     result['reduction_attempts'] = attempts_count
+                    result['reduced_replay'] = [str(directory / 'reduced-model.json') if a == str(directory / 'model.json')
+                                                else str(directory / 'reduced-replayed') if a == str(directory / 'replayed') else a
+                                                for a in result['replay']]
+                (directory / 'finding.json').write_text(json.dumps(result, indent=2) + '\n')
                 print('Candidate finding ' + name + ': ' + result['classification'], flush=True)
             compiler_records.append(result)
     return {'processed': generated, 'expectation_matches': generated - sum(bool(r['failure']) for r in records),
             'model_safety_checked': sum(r['static']['status'] == 'accepted' and all(x['status'] == 'accepted' for x in r['concrete']) for r in records),
             'failures': failures, 'model_counts': dict(counts), 'model_seconds': model_seconds,
+            'concrete_execution_counts': dict(execution_counts),
+            'syntactic_operation_program_counts': dict(operation_counts),
+            'syntactic_cooccurrence_program_counts': dict(interaction_counts),
+            'named_case_operations': {name: operations(p) for name, p in named.items()},
             'linear_grammar_alphabet': 10, 'linear_max_length': args.max_length,
             'linear_exact_count': sum(10 ** n for n in range(args.max_length + 1)),
             'structured_max_body_length': args.structured_length, 'structured_exact_count': structured_count(args.structured_length),
             'structured_seed': args.seed, 'structured_count': args.count,
             'concrete_inputs': INPUTS, 'compiler_requested': bool(args.build),
+            'native_sampled_inputs': [INPUTS[-1]] if args.build and not args.no_native else [],
             'compiler_samples': sampled, 'generated_source_unsupported_before_samples': eligible,
             'compiler_counts': dict(compiler_counts), 'compiler_records': compiler_records,
             'assurance': 'experimental bounded evidence; not a proof or complete RFC phase acceptance'}

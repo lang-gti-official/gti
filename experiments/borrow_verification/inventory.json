@@ -4,25 +4,177 @@
   "source_baseline": "6eb44d2ef1fcabf31a488a3bd2177c9bdadcfd6d",
   "ci_registered": false,
   "rules": [
-    {"id":"overlap", "contract":"docs/language/ownership-and-lifetimes.md#references", "owner":"src/compiler/semantic_ownership_analysis.cpp", "positive":"shared_aliases", "negative":"mutable_alias_conflict", "interactions":["shared_write_conflict","disjoint_fields","whole_owner_conflict"], "mutation":"disable-reportBorrowConflict / permission_upgrade"},
-    {"id":"reborrow", "contract":"docs/language/ownership-and-lifetimes.md#references", "owner":"src/compiler/semantic_ownership_analysis.cpp", "positive":"child_then_parent", "negative":"parent_while_child_live", "mutation":"model cleanup / missing_endpoint"},
-    {"id":"escape", "contract":"docs/language/ownership-and-lifetimes.md#references", "owner":"src/compiler/semantic_ownership_analysis.cpp", "positive":"returned_reference", "negative":"returned_local", "mutation":"model escape / wrong_origin"},
-    {"id":"temporary", "contract":"docs/language/ownership-and-lifetimes.md#references", "owner":"src/compiler/mir_body_lowering.cpp", "positive":"temporary_non_escape", "negative":"temporary_escape", "interactions":["temporary_mutable","temporary_reference_failure_order"], "mutation":"temporary_escape"},
-    {"id":"move", "contract":"docs/language/ownership-and-lifetimes.md#ownership-transfer", "owner":"src/compiler/semantic_ownership_analysis.cpp", "positive":"move_after_last_use", "negative":"move_while_borrowed", "mutation":"disable-reportBorrowConflict / model owner_liveness"},
-    {"id":"initialization", "contract":"docs/language/ownership-and-lifetimes.md#ownership-transfer", "owner":"src/compiler/mir.cpp", "positive":"reinitialize_moved", "negative":"moved_read", "mutation":"missing_initialization / model init"},
-    {"id":"control_flow", "contract":"docs/plans/place-and-ownership-state.md", "owner":"src/compiler/semantic_ownership_analysis.cpp", "positive":"branch_join_valid", "negative":"branch_move_join", "interactions":["loop_reborrow","loop_move"], "mutation":"model init"},
-    {"id":"call_contract", "contract":"docs/language/ownership-and-lifetimes.md#references", "owner":"src/compiler/mir_verification_queries.cpp", "positive":"call_exclusive", "negative":"call_overlap", "interactions":["returned_mutable_conflict"], "mutation":"wrong_origin"},
-    {"id":"carrier", "contract":"docs/language/ownership-and-lifetimes.md#owner-tracked-view-fields", "owner":"src/compiler/mir_text_contracts.cpp", "positive":"view_retains_owner", "negative":"view_owner_move", "interactions":["user_view_retains_owner","user_view_local_escape"], "mutation":"existing view_fields forgeries; lab model excludes arbitrary carriers"},
-    {"id":"generic", "contract":"docs/language/ownership-and-lifetimes.md", "owner":"src/compiler/semantic_ownership_analysis.cpp", "positive":"generic_reference", "negative":"generic_temporary_escape", "mutation":"temporary_escape where instantiated"},
-    {"id":"closure", "contract":"docs/language/ownership-and-lifetimes.md#borrowing-captures-and-callable-views", "owner":"src/compiler/semantic_callable_erasure.cpp", "positive":"closure_local_capture", "negative":"closure_borrow_conflict", "mutation":"unsupported by model; source interaction only"},
-    {"id":"cleanup", "contract":"docs/architecture/mir.md", "owner":"src/compiler/mir_body_lowering.cpp", "positive":"normal_cleanup", "negative":null, "negative_reason":"Cleanup order is an internal IR invariant; source failure is defined behavior, not an invalid source program. MIR endpoint mutations and independent model wrong-order cleanup provide negative checks.", "interactions":["failure_cleanup","partial_constructor_cleanup","multiple_temporary_endpoints"], "mutation":"failure_end_order / missing_endpoint / model cleanup"},
-    {"id":"owner_liveness", "contract":"docs/language/ownership-and-lifetimes.md#destruction", "owner":"src/compiler/mir.cpp", "positive":"owner_drop_after_use", "negative":"owner_drop_while_borrowed", "mutation":"model owner_liveness / disable-reportBorrowConflict"}
+    {
+      "id": "overlap",
+      "contract": "docs/language/ownership-and-lifetimes.md#references",
+      "owner": "src/compiler/semantic_ownership_analysis.cpp",
+      "positive": "shared_aliases",
+      "negative": "mutable_alias_conflict",
+      "interactions": [
+        "shared_write_conflict",
+        "disjoint_fields",
+        "whole_owner_conflict"
+      ],
+      "mutation": "disable-reportBorrowConflict / permission_upgrade"
+    },
+    {
+      "id": "reborrow",
+      "contract": "docs/language/ownership-and-lifetimes.md#references",
+      "owner": "src/compiler/semantic_ownership_analysis.cpp",
+      "positive": "child_then_parent",
+      "negative": "parent_while_child_live",
+      "mutation": "model cleanup / missing_endpoint"
+    },
+    {
+      "id": "escape",
+      "contract": "docs/language/ownership-and-lifetimes.md#references",
+      "owner": "src/compiler/semantic_ownership_analysis.cpp",
+      "positive": "returned_reference",
+      "negative": "returned_local",
+      "mutation": "model escape / wrong_origin"
+    },
+    {
+      "id": "temporary",
+      "contract": "docs/language/ownership-and-lifetimes.md#references",
+      "owner": "src/compiler/mir_body_lowering.cpp",
+      "positive": "temporary_non_escape",
+      "negative": "temporary_escape",
+      "interactions": [
+        "temporary_mutable",
+        "temporary_reference_failure_order"
+      ],
+      "mutation": "temporary_escape"
+    },
+    {
+      "id": "move",
+      "contract": "docs/language/ownership-and-lifetimes.md#ownership-transfer",
+      "owner": "src/compiler/semantic_ownership_analysis.cpp",
+      "positive": "move_after_last_use",
+      "negative": "move_while_borrowed",
+      "mutation": "disable-reportBorrowConflict / model owner_liveness"
+    },
+    {
+      "id": "initialization",
+      "contract": "docs/language/ownership-and-lifetimes.md#ownership-transfer",
+      "owner": "src/compiler/mir.cpp",
+      "positive": "reinitialize_moved",
+      "negative": "moved_read",
+      "mutation": "missing_initialization / model init"
+    },
+    {
+      "id": "control_flow",
+      "contract": "docs/plans/place-and-ownership-state.md",
+      "owner": "src/compiler/semantic_ownership_analysis.cpp",
+      "positive": "branch_join_valid",
+      "negative": "branch_move_join",
+      "interactions": [
+        "loop_reborrow",
+        "loop_move"
+      ],
+      "mutation": "model init"
+    },
+    {
+      "id": "call_contract",
+      "contract": "docs/language/ownership-and-lifetimes.md#references",
+      "owner": "src/compiler/mir_verification_queries.cpp",
+      "positive": "call_exclusive",
+      "negative": "call_overlap",
+      "interactions": [
+        "returned_mutable_conflict"
+      ],
+      "mutation": "wrong_origin"
+    },
+    {
+      "id": "carrier",
+      "contract": "docs/language/ownership-and-lifetimes.md#owner-tracked-view-fields",
+      "owner": "src/compiler/mir_text_contracts.cpp",
+      "positive": "view_retains_owner",
+      "negative": "view_owner_move",
+      "interactions": [
+        "user_view_retains_owner",
+        "user_view_local_escape",
+        "replace_after_last_use",
+        "replace_while_borrowed"
+      ],
+      "mutation": "existing view_fields forgeries; lab model excludes arbitrary carriers"
+    },
+    {
+      "id": "generic",
+      "contract": "docs/language/ownership-and-lifetimes.md",
+      "owner": "src/compiler/semantic_ownership_analysis.cpp",
+      "positive": "generic_reference",
+      "negative": "generic_temporary_escape",
+      "mutation": "temporary_escape where instantiated"
+    },
+    {
+      "id": "closure",
+      "contract": "docs/language/ownership-and-lifetimes.md#borrowing-captures-and-callable-views",
+      "owner": "src/compiler/semantic_callable_erasure.cpp",
+      "positive": "closure_local_capture",
+      "negative": "closure_borrow_conflict",
+      "mutation": "unsupported by model; source interaction only"
+    },
+    {
+      "id": "cleanup",
+      "contract": "docs/architecture/mir.md",
+      "owner": "src/compiler/mir_body_lowering.cpp",
+      "positive": "normal_cleanup",
+      "negative": null,
+      "negative_reason": "Cleanup order is an internal IR invariant; source failure is defined behavior, not an invalid source program. MIR endpoint mutations and independent model wrong-order cleanup provide negative checks.",
+      "interactions": [
+        "failure_cleanup",
+        "partial_constructor_cleanup",
+        "multiple_temporary_endpoints",
+        "temporary_reference_defined_failure"
+      ],
+      "mutation": "failure_end_order / missing_endpoint / model cleanup"
+    },
+    {
+      "id": "owner_liveness",
+      "contract": "docs/language/ownership-and-lifetimes.md#destruction",
+      "owner": "src/compiler/mir.cpp",
+      "positive": "owner_drop_after_use",
+      "negative": "owner_drop_while_borrowed",
+      "mutation": "model owner_liveness / disable-reportBorrowConflict"
+    }
   ],
   "gaps": [
-    {"family":"arbitrary carriers, retained-owner graphs, recursive calls and erased callbacks", "status":"production source examples and existing tests; outside independent core profile", "prerequisite":"explicit graph/summary model and source/MIR mapping"},
-    {"family":"dynamic indexing, unsafe pointer arithmetic and FFI", "status":"unsupported by model", "prerequisite":"alias/provenance memory rules with trusted boundary contracts"},
-    {"family":"concurrency, atomics and interior mutation", "status":"unsupported by model", "prerequisite":"GTI concurrency memory-model extension and scheduler"},
-    {"family":"LSP snapshot behavior", "status":"existing scalar_temporary_borrow_lsp check is reused manually; no new exhaustive LSP corpus", "prerequisite":"independent source facts across incremental snapshots"},
-    {"family":"general pre/post MIR correspondence", "status":"strict scalar parameterless entry adapter only; unknown operations reported unsupported", "prerequisite":"extend operation coverage and test every new adapter obligation"}
-  ]
+    {
+      "family": "arbitrary carriers, retained-owner graphs, recursive calls and erased callbacks",
+      "status": "production source examples and existing tests; outside independent core profile",
+      "prerequisite": "explicit graph/summary model and source/MIR mapping"
+    },
+    {
+      "family": "dynamic indexing, unsafe pointer arithmetic and FFI",
+      "status": "unsupported by model",
+      "prerequisite": "alias/provenance memory rules with trusted boundary contracts"
+    },
+    {
+      "family": "concurrency, atomics and interior mutation",
+      "status": "unsupported by model",
+      "prerequisite": "GTI concurrency memory-model extension and scheduler"
+    },
+    {
+      "family": "LSP snapshot behavior",
+      "status": "seven manually run CLI/probe/LSP rejection-span comparisons and 15 versioned valid/invalid/recovery snapshots; broader exhaustive incremental corpus remains extension",
+      "prerequisite": "independent source facts across incremental snapshots"
+    },
+    {
+      "family": "general pre/post MIR correspondence",
+      "status": "mandatory sequential core witnesses have direct-call/record/heap/failure concrete adapter; arbitrary MIR remains explicitly unsupported",
+      "prerequisite": "extend operation coverage and test every new adapter obligation"
+    },
+    {
+      "family": "nonintegral scalar MIR initialization",
+      "status": "confirmed verifier gap #293 for float and pointer locals; independent numeric core reports these types unsupported",
+      "prerequisite": "extend independent storage availability with focused debug/source-value consumer review",
+      "issue": "https://github.com/lang-gti-official/gti/issues/293"
+    }
+  ],
+  "phase1_manual_checks": {
+    "source_and_MIR": "runner.py phase1",
+    "semantic_mutation": "compiler_mutation.py",
+    "CLI_LSP_snapshots": "lsp_probe.py",
+    "model_rule_mutations": "model_tests.py (phase-two tooling self-check; not a substitute for compiler mutations)"
+  }
 }

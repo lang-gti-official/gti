@@ -213,6 +213,7 @@ def tiny_dump():
              '  p2 root=0 binding=2 type=type(21;access=0;) projections=[] access=0 initially-available=0',
              '  p3 root=0 binding=2 type=type(4;) projections=[projection(2;field=0;index=0;constant=-;selection=0)] access=0 initially-available=0',
              '  loan1 kind=0 source=p1 parent=loan0 access=0 additional-dependencies=[] conditions=[] two-phase=0 escapes=0',
+             '  %1 info(type(4;))', '  %2 info(type(4;))', '  %3 info(type(4;))',
              '  bb1 parameters=[]', instruction(1, 'compute', result=1, operation='literal', literal='u64:9'),
              instruction(2, 'initialize', destination=1, operands='['+operand(0,v=1)+']'),
              instruction(3, 'borrow', loan=1, operands='['+operand(5,p=1)+']'),
@@ -322,6 +323,158 @@ class MirAdapterTests(unittest.TestCase):
                        tiny_dump().replace('steps=0', 'steps=1')):
             self.assertEqual('unsupported', verify_mir_dump(broken).status)
         self.assertEqual('timeout', verify_mir_dump(tiny_dump(), max_steps=1).status)
+
+
+
+def tiny_heap_dump(fail=False):
+    """Synthetic core fixture with a real allocation primitive and explicit free."""
+    text=tiny_dump()
+    lines=text.splitlines()
+    compute=next(l for l in lines if l.startswith('    i1 '))
+    allocation=compute.replace('i1 compute ','i9 call ').replace('result=1 ','result=4 ')
+    allocation=allocation.replace('intrinsic=none ','intrinsic=allocate-unique-owner ')
+    allocation=allocation.replace('operands=[]','operands=[operand(0;value=1;place=0;loan=0;literal=-;type=type(4;))]')
+    place='  p4 root=4 binding=0 value=4 type=type(22;) projections=[] access=1 initially-available=0'
+    lines.insert(next(i for i,l in enumerate(lines) if l.startswith('  bb1 ')),place)
+    lines.insert(next(i for i,l in enumerate(lines) if l.startswith('  bb1 ')),'  %4 info(type(22;))')
+    lines.insert(next(i for i,l in enumerate(lines) if l.startswith('    i2 ')),allocation)
+    ending=next(l for l in lines if l.startswith('    i7 '))
+    for block,iid in [('bb2',10),('bb3',11)]:
+        start=next(i for i,l in enumerate(lines) if l.startswith('  '+block+' '))
+        index=next(i for i in range(start+1,len(lines)) if lines[i].startswith('    term '))
+        drop=ending.replace('i7 end-borrow ',f'i{iid} drop ').replace('destination=- ','destination=4 ').replace('loan=1 ','loan=- ')
+        lines.insert(index,drop)
+    text='\n'.join(lines)
+    if fail:text=text.replace('literal=u64:9','literal=u64:0').replace('operation=add','operation=divide')
+    return text
+
+
+class CoreMirAdapterTests(unittest.TestCase):
+    def test_core_scalar_and_missing_initialization(self):
+        from mir_adapter import verify_core_mir_dump
+        good=verify_core_mir_dump(tiny_dump())
+        self.assertEqual('accepted',good.status,good.to_dict())
+        self.assertEqual([18],good.observations)
+        broken='\n'.join(l for l in tiny_dump().splitlines() if not l.startswith('    i2 '))
+        result=verify_core_mir_dump(broken)
+        self.assertEqual('rejected',result.status)
+        self.assertIn('initialization',result.violation)
+
+    def test_owned_primitive_cleanup_and_missing_free(self):
+        from mir_adapter import verify_core_mir_dump
+        good=verify_core_mir_dump(tiny_heap_dump())
+        self.assertEqual('accepted',good.status,good.to_dict())
+        self.assertIn('owned-allocation-free',good.core_evidence['features'])
+        self.assertEqual(1,sum(c[0]=='free' for c in good.core_evidence['cleanup']))
+        broken='\n'.join(l for l in tiny_heap_dump().splitlines() if not l.startswith('    i10 '))
+        result=verify_core_mir_dump(broken)
+        self.assertEqual('rejected',result.status)
+        self.assertIn('allocation leaked',result.violation)
+
+    def test_owned_failure_cleanup_and_missing_free(self):
+        from mir_adapter import verify_core_mir_dump
+        good=verify_core_mir_dump(tiny_heap_dump(fail=True))
+        self.assertEqual('accepted',good.status,good.to_dict())
+        self.assertEqual('defined-failure',good.violation)
+        self.assertEqual('division_by_zero',good.core_evidence['failure_cause'])
+        self.assertEqual([],good.observations)
+        broken='\n'.join(l for l in tiny_heap_dump(fail=True).splitlines() if not l.startswith('    i11 '))
+        result=verify_core_mir_dump(broken)
+        self.assertEqual('rejected',result.status)
+        self.assertIn('allocation leaked',result.violation)
+
+    def machine(self):
+        from mir_adapter import CoreMachine,CoreProgram
+        return CoreMachine(CoreProgram(tiny_dump()),1000)
+
+    def test_concrete_allocation_epoch_cannot_revive_reference(self):
+        from mir_adapter import CoreOwner,CoreReference
+        from model import Fault
+        m=self.machine();first=m.allocate(7,heap=True)
+        reference=m.borrow(CoreReference(first,1),0)
+        with self.assertRaisesRegex(Fault,'overlapping access'):
+            m.destroy(CoreOwner(first))
+        m.end(reference.token);m.destroy(CoreOwner(first))
+        second=m.allocate(9,heap=True)
+        self.assertEqual(first.allocation,second.allocation)
+        self.assertGreater(second.generation,first.generation)
+        with self.assertRaisesRegex(Fault,'stale allocation generation'):
+            m.access(reference)
+
+    def test_concrete_record_access_is_field_sensitive(self):
+        from mir_adapter import CoreRecord,CoreAddress,CoreReference
+        from model import Fault
+        m=self.machine();address=m.allocate(CoreRecord(1,{1:5,2:6}))
+        left=CoreReference(CoreAddress(address.allocation,address.generation,(1,)),1)
+        right=CoreReference(CoreAddress(address.allocation,address.generation,(2,)),1)
+        child=m.borrow(left,1)
+        self.assertEqual(6,m.access(right,write=True))
+        with self.assertRaisesRegex(Fault,'overlapping access'):
+            m.access(left)
+        m.end(child.token)
+        self.assertEqual(5,m.access(left))
+
+    def test_whole_record_requires_every_field_initialized(self):
+        from mir_adapter import CoreRecord,_UNINITIALIZED
+        from model import Fault
+        m=self.machine();address=m.allocate(CoreRecord(1,{1:5,2:_UNINITIALIZED}))
+        with self.assertRaisesRegex(Fault,'uninitialized read'):
+            m.get(address)
+        self.assertIsInstance(m.get(address,initialized=False),CoreRecord)
+
+    def test_call_arguments_cannot_alias_mutably_without_entry_rows(self):
+        from mir_adapter import CoreBody,CoreReference
+        from model import Fault
+        m=self.machine();address=m.allocate(3)
+        body=CoreBody('function @9 parameter-bindings=[b1,b2] definition=source',
+            'body entry=bb1\n'
+            '  p1 root=0 binding=1 type=type(21;access=1;) projections=[] access=1 initially-available=1\n'
+            '  p2 root=0 binding=2 type=type(21;access=1;) projections=[] access=1 initially-available=1\n'
+            '  bb1 parameters=[]\n    term 5 value=-')
+        with self.assertRaisesRegex(Fault,'overlapping access'):
+            m.run(body,[CoreReference(address,1),CoreReference(address,1)])
+
+    def test_unknown_types_and_calls_are_not_assumed_safe(self):
+        from mir_adapter import verify_core_mir_dump
+        unknown=tiny_dump().replace('type=type(4;) projections=[]','type=type(17;) projections=[]')
+        self.assertEqual('unsupported',verify_core_mir_dump(unknown).status)
+        unknown=tiny_heap_dump().replace('intrinsic=allocate-unique-owner','intrinsic=not-a-known-primitive')
+        self.assertEqual('unsupported',verify_core_mir_dump(unknown).status)
+
+    def test_numeric_profile_and_signed_remainder_boundary(self):
+        from mir_adapter import verify_core_mir_dump
+        # GTI defines INT_MIN % -1 as zero, but INT_MIN / -1 overflows.
+        text=tiny_dump().replace('literal=u64:9','literal=i64:-2147483648')
+        text=text.replace('operation=add','operation=remainder')
+        text=text.replace('operand(0;value=1;place=0;loan=0;literal=-;type=type(4;))]',
+            'operand(1;value=0;place=0;loan=0;literal=i64:-1;type=type(4;))]')
+        # The replacement also reaches initialization; restore that first input.
+        lines=text.splitlines()
+        original=next(l for l in tiny_dump().splitlines() if l.startswith('    i2 '))
+        lines=[original if l.startswith('    i2 ') else l for l in lines]
+        text='\n'.join(lines)
+        result=verify_core_mir_dump(text)
+        self.assertEqual('accepted',result.status,result.to_dict())
+        self.assertEqual([0],result.observations)
+        result=verify_core_mir_dump(text.replace('operation=remainder','operation=divide'))
+        self.assertEqual('accepted',result.status,result.to_dict())
+        self.assertEqual('integer_overflow',result.core_evidence['failure_cause'])
+        outside=tiny_dump().replace('  %1 info(type(4;))','  %1 info(type(5;))')
+        self.assertEqual('unsupported',verify_core_mir_dump(outside).status)
+        outside=tiny_dump().replace('literal=u64:9','literal=u64:4294967295')
+        self.assertEqual('unsupported',verify_core_mir_dump(outside).status)
+
+    def test_core_witness_inventory_independent_model_and_rendering(self):
+        from generation import compiler_core_examples
+        from source_bridge import render_core
+        for name,case in compiler_core_examples().items():
+            with self.subTest(name=name):
+                static=check(case['program']);concrete=execute(case['program'],inputs={'choice':True,'count':2})
+                self.assertEqual('accepted',static.status)
+                self.assertEqual('accepted',concrete.status)
+                source=render_core(case['program'],concrete.observations,{'choice':True,'count':2},case['heap_owners'])
+                self.assertNotIn('std::println',source)
+                self.assertEqual(source.count('{'),source.count('}'))
 
 
 if __name__ == '__main__':
