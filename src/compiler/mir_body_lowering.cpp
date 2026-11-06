@@ -1677,44 +1677,31 @@ private:
         return view->instance->traits;
     }
     if (type.kind == SemanticType::Lambda) {
-      const auto lambda = std::find_if(
-          program.lambdaInstances().begin(), program.lambdaInstances().end(),
-          [&](const HirLambda &candidate) { return candidate.type == type; });
-      if (lambda != program.lambdaInstances().end())
-        return lambda->traits;
+      const auto view = hirLifetimeInstanceView(program.lambdaInstances(), type);
+      if (view)
+        return view->instance->traits;
     }
     if (type.kind == SemanticType::Class) {
-      const auto instance = std::find_if(
-          program.classInstances().begin(), program.classInstances().end(),
-          [&](const HirClassInstance &candidate) {
-            return candidate.type == type;
-          });
-      if (instance != program.classInstances().end()) {
-        return instance->traits;
-      }
+      const auto view = hirLifetimeInstanceView(program.classInstances(), type);
+      if (view)
+        return view->instance->traits;
     }
     return semanticTraits(type);
   }
 
   [[nodiscard]] bool
   isLifecycleBoundBorrowCarrier(const SemanticType &type) const {
-    return type.kind == SemanticType::Class &&
-           std::any_of(program.classInstances().begin(),
-                       program.classInstances().end(),
-                       [&](const HirClassInstance &candidate) {
-                         return candidate.type == type &&
-                                candidate.lifecycleBoundBorrowCarrier;
-                       });
+    const auto view = type.kind == SemanticType::Class
+        ? hirLifetimeInstanceView(program.classInstances(), type) : std::nullopt;
+    return view && view->instance->lifecycleBoundBorrowCarrier;
   }
 
   [[nodiscard]] std::optional<MirDropType>
   preparedParameterDropType(const SemanticType &type) const {
     if (type.kind == SemanticType::Lambda) {
-      const auto lambda = std::find_if(
-          program.lambdaInstances().begin(), program.lambdaInstances().end(),
-          [&](const HirLambda &candidate) { return candidate.type == type; });
-      if (lambda == program.lambdaInstances().end() ||
-          lambda->captures.size() !=
+      const auto view = hirLifetimeInstanceView(program.lambdaInstances(), type);
+      const auto *lambda = view ? view->instance : nullptr;
+      if (!lambda || lambda->captures.size() !=
               lambda->captureRequiresActiveCleanup.size())
         return std::nullopt;
       return lowerDropType({.type = type,
@@ -1734,14 +1721,10 @@ private:
     if (type.kind != SemanticType::Class) {
       return std::nullopt;
     }
-    const auto instance = std::find_if(program.classInstances().begin(),
-                                       program.classInstances().end(),
-                                       [&](const HirClassInstance &candidate) {
-                                         return candidate.type == type;
-                                       });
-    if (instance == program.classInstances().end()) {
+    const auto view = hirLifetimeInstanceView(program.classInstances(), type);
+    const auto *instance = view ? view->instance : nullptr;
+    if (!instance)
       return std::nullopt;
-    }
     return lowerDropType(
         {.type = type,
          .classInstance = instance->id,

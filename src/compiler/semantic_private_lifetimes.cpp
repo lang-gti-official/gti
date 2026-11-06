@@ -3,10 +3,42 @@
 #include "gti/frontend_work.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <deque>
+#include <iostream>
 #include <set>
 
 namespace lang {
+namespace {
+// Temporary, opt-in investigation support for the three failing owning test
+// fixtures. Remove this trace once their missing prerequisite/body fact is
+// identified; it never changes admission or the inferred contract.
+bool tracePrivateFixture(const SourceGraph *graph, SourceUnitId source) {
+  if (!std::getenv("GTI_TRACE_PRIVATE_LIFETIME") || !graph)
+    return false;
+  const auto *unit = graph->findUnit(source);
+  if (!unit)
+    return false;
+  const auto name = unit->path.filename().string();
+  return name == "private-lifetime-cache.gti" ||
+         name == "private-lifetime-constructor.gti" ||
+         name == "private-lifetime-dependent.gti";
+}
+
+void privateTrace(std::string message) {
+  static thread_local std::size_t lines = 0;
+  if (lines < 96)
+    std::cerr << "[private-lifetime] " << message << '\n';
+  else if (lines == 96)
+    std::cerr << "[private-lifetime] further diagnostic trace omitted\n";
+  ++lines;
+}
+
+std::string traceRegion(Lifetime region) {
+  return std::to_string(static_cast<unsigned>(region.kind)) + ":" +
+         std::to_string(region.id);
+}
+} // namespace
 
 auto SemanticVisitor::Impl::hasExplicitLifetimeContract(const TypeRef &type) const
     -> bool {
@@ -201,6 +233,8 @@ auto SemanticVisitor::Impl::ensurePrivateConstexprDefinition(
   if ((!function || !function->isConstexpr()) &&
       (!constructor || !constructor->isConstexpr()))
     return false;
+  const bool trace = tracePrivateFixture(sourceGraph,
+      sourceUnitFor(function ? function->name() : constructor->name()));
   if (state->revision != requestSession.lifetimeContractRevision) {
     state->revision = requestSession.lifetimeContractRevision;
     state->proofs.clear();
@@ -215,6 +249,12 @@ auto SemanticVisitor::Impl::ensurePrivateConstexprDefinition(
     source = state->stack.back();
   const auto position = state->sourceOrder.find(declaration);
   const auto boundary = state->sourceOrder.find(source);
+  if (trace)
+    privateTrace("prerequisite " + (function ? function->name().lexeme : constructor->name().lexeme) +
+                 " revision=" + std::to_string(state->revision) +
+                 " source=" + std::to_string(position == state->sourceOrder.end() ? 0 : position->second) +
+                 " boundary=" + std::to_string(boundary == state->sourceOrder.end() ? 0 : boundary->second) +
+                 " active=" + std::to_string(state->active.contains(declaration)));
   if (position == state->sourceOrder.end() ||
       boundary == state->sourceOrder.end() || position->second >= boundary->second)
     return false;
@@ -236,6 +276,8 @@ auto SemanticVisitor::Impl::ensurePrivateConstexprDefinition(
   };
   if (const auto found = state->proofs.find(declaration); found != state->proofs.end()) {
     const auto proof = found->second;
+    if (trace)
+      privateTrace("prerequisite cache valid=" + std::to_string(proof.valid));
     return publish(proof);
   }
   if (state->active.contains(declaration) || state->work >= 4096 ||
@@ -294,6 +336,15 @@ auto SemanticVisitor::Impl::ensurePrivateConstexprDefinition(
                 : worker->constexprConstructorsAnalyzed.contains(constructor));
   proof.dependencies = std::move(reads->functions);
   proof.opaqueCachedProof = reads->opaqueCachedProof;
+  if (trace) {
+    privateTrace("prerequisite checked valid=" + std::to_string(proof.valid) +
+                 " errors=" + std::to_string(worker->hadError()) +
+                 " definitions=" + std::to_string(worker->constexprDefinitionsAnalyzed.size()) +
+                 " constructors=" + std::to_string(worker->constexprConstructorsAnalyzed.size()));
+    for (std::size_t index = 0; index < std::min<std::size_t>(3, worker->diagnostics.size()); ++index)
+      privateTrace("  " + worker->diagnostics[index].code + " " +
+                   worker->diagnostics[index].message.substr(0, 160));
+  }
   const auto addFunction = [&](FunctionId id) {
     const auto *info = worker->semanticModel.findFunction(id);
     const auto *callee = info ? info->bodyDeclaration() : nullptr;
@@ -418,6 +469,7 @@ auto SemanticVisitor::Impl::inferPrivateLifetimeContracts(
     if (!found || !found->lifetimeContract.valid())
       continue;
     const FunctionInfo function = *found;
+    const bool trace = tracePrivateFixture(sourceGraph, function.sourceUnit);
     auto worker = unevaluatedExpressionWorker();
     worker->requestSession.privateConstexprPrerequisites = prerequisites;
     worker->declarationOrders = prerequisites->sourceOrder;
@@ -477,6 +529,23 @@ auto SemanticVisitor::Impl::inferPrivateLifetimeContracts(
         if (callers[selected->second].insert(index).second && workMetrics)
           ++workMetrics->semanticPrivateLifetimeDependencyEdges;
     const auto *body = analysis.model.findLifetimeBody(*syntax->body());
+    if (trace) {
+      privateTrace("probe " + syntax->name().lexeme +
+                   " revision=" + std::to_string(requestSession.lifetimeContractRevision) +
+                   " collecting=" + std::to_string(worker->requestSession.collectingPrivateLifetimeContracts) +
+                   " valid=" + std::to_string(analysis.valid()) +
+                   " body=" + std::to_string(body != nullptr) +
+                   " complete=" + std::to_string(body && body->complete) +
+                   " bounds=" + std::to_string(function.lifetimeContract.bounds.size()) +
+                   " opaque=" + std::to_string(dependencies->opaqueCachedProof));
+      for (std::size_t item = 0; item < std::min<std::size_t>(3, analysis.diagnostics.size()); ++item)
+        privateTrace("  " + analysis.diagnostics[item].code + " " +
+                     analysis.diagnostics[item].message.substr(0, 160));
+      if (body)
+        for (std::size_t edge = 0; edge < std::min<std::size_t>(8, body->obligations.size()); ++edge)
+          privateTrace("  edge " + traceRegion(body->obligations[edge].longer) +
+                       " -> " + traceRegion(body->obligations[edge].shorter));
+    }
     if (!body)
       continue;
     auto inferred = projectInferredLifetimeContract(function.lifetimeContract, *body);

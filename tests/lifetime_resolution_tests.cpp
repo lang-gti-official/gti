@@ -891,7 +891,7 @@ int main() { return 0; }
              "an unjournaled cached branch proof retains conservative contract dependencies");
   }
 
-  const auto construction = analyze(R"(
+  const auto construction = lang::Frontend().analyze("private-lifetime-constructor.gti", R"(
 struct Choice {
   bool value;
   constexpr Choice(bool selected) : value(selected) {}
@@ -910,7 +910,7 @@ int main() { return 0; }
   expectValid(construction,
               "private inference can demand checked constexpr constructor and method prerequisites");
 
-  const auto dependent = analyze(R"(
+  const auto dependent = lang::Frontend().analyze("private-lifetime-dependent.gti", R"(
 static constexpr bool leaf() { return true; }
 static constexpr bool enabled<uint64_t N>() {
   if constexpr (N == 0) { return leaf(); }

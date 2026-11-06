@@ -8249,8 +8249,20 @@ validFailureInstructionShape(const MirInstruction &instruction) {
     const bool panic = instruction.intrinsic == IntrinsicKind::Panic;
     const auto terminal =
         intrinsicTerminalFailureOutcome(instruction.intrinsic);
+    // Panic consumes its message for this invocation only. Preserve the
+    // source's specified text-storage region while checking every other fact
+    // against the intrinsic's canonical counted-text shape. The operand and
+    // selected parameter must still agree exactly; the ordinary operand/input
+    // stage verifiers prove the original source and any region conversion.
+    SemanticType messageType = SemanticType::StringView;
+    if (panic && instruction.operands.size() == 1) {
+      const auto &message = instruction.operands.front().type;
+      if (message.lifetimeArguments.size() == 1 &&
+          message.lifetimeArguments.front().specified())
+        messageType.lifetimeArguments = message.lifetimeArguments;
+    }
     const std::vector<SemanticType> parameters =
-        panic      ? std::vector<SemanticType>{SemanticType::StringView}
+        panic      ? std::vector<SemanticType>{messageType}
         : terminal ? std::vector<SemanticType>{}
                    : std::vector<SemanticType>{SemanticType::Bool};
     const DefinedFailureOutcome expected =

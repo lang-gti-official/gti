@@ -1630,6 +1630,9 @@ target_include_directories(gti_lifetime_resolution_tests PRIVATE
   "${PROJECT_BINARY_DIR}/generated")
 add_dependencies(gti_lifetime_resolution_tests gti_diagnostic_registry)
 add_test(NAME lifetime_resolution COMMAND gti_lifetime_resolution_tests)
+# Temporary bounded trace for the private constexpr prerequisite investigation.
+set_tests_properties(lifetime_resolution PROPERTIES
+  ENVIRONMENT "GTI_TRACE_PRIVATE_LIFETIME=1")
 
 add_executable(gti_lambda_reference_tests lambda_reference_tests.cpp)
 target_link_libraries(gti_lambda_reference_tests PRIVATE gti_compiler)
@@ -2044,7 +2047,8 @@ target_link_libraries(gti_view_field_tests PRIVATE gti_compiler)
 add_test(NAME view_fields COMMAND gti_view_field_tests)
 add_executable(gti_reference_payload_semantic_tests reference_payload_semantic_tests.cpp)
 target_link_libraries(gti_reference_payload_semantic_tests PRIVATE gti_compiler)
-add_test(NAME reference_payload_semantics COMMAND gti_reference_payload_semantic_tests)
+add_test(NAME reference_payload_semantics COMMAND gti_reference_payload_semantic_tests
+  "${CMAKE_BINARY_DIR}/Testing/reference-payload-evidence")
 add_test(NAME constructor_null_native_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constructor_null_native_runtime_test.py" $<TARGET_FILE:gti>)
 add_test(NAME payload_fresh_class_operands_runtime

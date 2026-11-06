@@ -896,6 +896,11 @@ temporary borrowed by a receiver stage or a call result keeps the drop-only
 rule. A copied carrier argument relays the binding's retained `Stored` group as
 the parent of a scalar reference result, and lowering maps a `Parameter` entry
 loan's complete dependency to the key-matched place under its referent.
+A constructor producer records the original external dependencies, including
+all permitted suppliers of one stored field. Its newly published `Stored`
+group is checked against those sources and is not itself an origin of the
+producer. Later uses of the bound carrier retain that exact group after
+matching the full source, field, permission, and guard inventory.
 Borrowed-result operators keep their ordinary value receiver stage. When their
 result protects the receiver's own storage, lowering and independent verification
 select the exact producer-owned temporary and its full-expression drop, retaining

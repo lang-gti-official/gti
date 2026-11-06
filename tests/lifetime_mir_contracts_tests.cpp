@@ -367,6 +367,27 @@ int main() {
         checkedSelectedStorage = true;
       }
   expect(checkedSelectedStorage, "selected reference fixture must publish a composed stored loan");
+  auto selfOrigin = retainedSelection.mir;
+  bool changedProducerParent = false;
+  for (const auto &immutable : selfOrigin.functionInstances()) {
+    auto &function = const_cast<MirFunctionInstance &>(immutable);
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Construct &&
+            instruction.loan && instruction.result) {
+          auto *value = const_cast<MirValue *>(function.body.findValue(*instruction.result));
+          if (!value || !value->borrowDependencies || value->borrowDependencies->dependencies.empty())
+            continue;
+          expect(std::none_of(value->borrowDependencies->dependencies.begin(),
+                              value->borrowDependencies->dependencies.end(),
+                              [&](const auto &dependency) { return dependency.parent == *instruction.loan; }),
+                 "a constructor's source dependency set cannot name its newly published group as an origin");
+          value->borrowDependencies->dependencies.front().parent = *instruction.loan;
+          changedProducerParent = true;
+        }
+  }
+  expect(changedProducerParent && !verifyMirProgram(selfOrigin).valid(),
+         "the constructor producer cannot replace an external source parent with its own stored group");
   for (const bool removeSupplier : {false, true}) {
     auto brokenSelection = retainedSelection.mir;
     bool changed = false;
@@ -582,6 +603,47 @@ int main() { State<int> state = State<int>::value(7); return get(state) - 7; }
   }
   const auto standardLibrary =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto panic = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      standardLibrary.parent_path() / "tests/lifetime-panic-contract.gti", R"gti(
+void report_failure(std::string_view message) { gti_internal::panic(message); }
+int main() { return 0; }
+)gti", {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  if (!panic.canGenerateCode()) {
+    for (const auto &diagnostic : panic.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  }
+  expect(panic.canGenerateCode(),
+         "terminal failure must preserve the message storage lifetime");
+  std::optional<MirBodyAddress> panicBody;
+  MirInstructionId panicCall = 0;
+  for (const auto address : enumerateMirBodyAddresses(panic.mir))
+    if (const auto *body = findMirBody(panic.mir, address))
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.intrinsic == IntrinsicKind::Panic &&
+              instruction.parameterTypes.size() == 1 &&
+              instruction.parameterTypes.front().lifetimeArguments.size() == 1 &&
+              instruction.parameterTypes.front().lifetimeArguments.front().specified()) {
+            panicBody = address;
+            panicCall = instruction.id;
+          }
+  expect(panicBody.has_value(), "panic regression must exercise a region-bearing message");
+  for (int mutation = 0; mutation != 2; ++mutation) {
+    auto broken = panic.mir;
+    auto *body = findMirBody(broken, *panicBody);
+    for (auto &block : body->blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == panicCall) {
+          if (mutation == 0)
+            instruction.parameterTypes.front().lifetimeArguments.clear();
+          else {
+            instruction.parameterTypes.front().arguments.push_back(SemanticType::Int32);
+            instruction.operands.front().type = instruction.parameterTypes.front();
+          }
+        }
+    expect(!verifyMirProgram(broken).valid(),
+           "panic cannot discard a message region or forge non-region type facts");
+  }
   const PackageSourceRoot pointerModules{
       .identity = "toolchain:std", .name = "std",
       .packageRoot = standardLibrary, .sourceRoot = standardLibrary,

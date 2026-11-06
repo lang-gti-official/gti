@@ -1739,7 +1739,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                selected->id == source->id;
       };
       if (!lambda || !sameLambda(lambda->source) ||
-          lambda->type != value.info.type) {
+          !matchUniversalTypeLifetimes(lambda->type, value.info.type, lambda->environmentLifetimes)) {
         result.errors.emplace_back(
             "construction context has no exact lambda creator");
         continue;

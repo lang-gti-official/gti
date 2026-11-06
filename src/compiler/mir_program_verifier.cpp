@@ -15318,10 +15318,10 @@ completeBorrowSourcePath(const MirProgram &program,
               dependency.parent = 0;
           }
         if (claims == reconstructed.dependencies) {
-          // Copies of the constructed carrier retain its proven group, not
-          // a fresh claim about the original parameter's storage.
-          for (auto &dependency : reconstructed.dependencies)
-            dependency.parent = published->id;
+          // The producer publishes its complete external origins. Its own
+          // newly created Stored group is not an origin of that value. A
+          // later use of the bound carrier reborrows that exact group through
+          // retainedCarrierInput, after matching all sources and paths.
           result = std::move(reconstructed);
         }
       }
@@ -22807,13 +22807,13 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
   };
   const auto validEnumIdentity = [&](const auto &self,
                                      const SemanticType &type) -> bool {
-    if (type.kind == SemanticType::Enum &&
-        program.findPayloadEnum(type) == nullptr &&
-        program.findIntegralEnum(type) == nullptr)
+    if (type.kind == SemanticType::Enum && !mirEnumLifetimeView(program, type))
       return false;
-    return std::all_of(
-        type.arguments.begin(), type.arguments.end(),
-        [&](const SemanticType &argument) { return self(self, argument); });
+    bool valid = true;
+    lifetime_detail::children(type, [&](const SemanticType &argument) {
+      valid = self(self, argument) && valid;
+    });
+    return valid;
   };
   const auto checkProgramType = [&](const SemanticType &type) {
     if (!validEnumIdentity(validEnumIdentity, type))

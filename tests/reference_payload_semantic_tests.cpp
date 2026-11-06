@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <source_location>
 #include <iostream>
 
 namespace lang {
@@ -12,7 +14,7 @@ struct MirProgramTestAccess {
 };
 } // namespace lang
 
-int main() {
+int main(int argc, char **argv) {
   int failures = 0;
   const auto expect = [&](bool condition, const char *message) {
     if (!condition) {
@@ -26,10 +28,43 @@ int main() {
         .analyze(root / "tests" / "reference-payload-semantic.gti", source,
                  {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
   };
-  const auto acceptedSemantics = [&](const lang::FrontendResult &result) {
-    for (const auto &diagnostic : result.diagnostics) {
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  const auto evidence = argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
+  std::size_t reportedFailures = 0;
+  const auto report = [&](const lang::FrontendResult &result,
+                          std::source_location caller = std::source_location::current()) {
+    const auto *unit = result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+    const auto label = "reference-payload-L" + std::to_string(caller.line()) + "-" +
+        std::to_string(unit ? unit->sourceDigest : 0);
+    if (!evidence.empty()) {
+      std::filesystem::create_directories(evidence);
+      if (unit)
+        if (const auto *source = result.sources.find(unit->path.string()))
+          std::ofstream(evidence / (label + ".gti")) << *source;
+      std::ofstream full(evidence / (label + ".diagnostics.txt"));
+      full << caller.file_name() << ':' << caller.line() << '\n';
+      if (unit)
+        full << unit->path << " digest=" << unit->sourceDigest << '\n';
+      for (const auto &diagnostic : result.diagnostics)
+        full << diagnostic.code << ": " << diagnostic.message << '\n';
     }
+    if (reportedFailures++ >= 16) {
+      if (reportedFailures == 17)
+        std::cerr << "additional reference-payload failures retained under " << evidence << '\n';
+      return;
+    }
+    std::cerr << label << " diagnostics=" << result.diagnostics.size();
+    if (!evidence.empty())
+      std::cerr << " source=" << evidence / (label + ".gti");
+    std::cerr << '\n';
+    for (std::size_t index = 0; index < std::min<std::size_t>(6, result.diagnostics.size()); ++index) {
+      const auto &diagnostic = result.diagnostics[index];
+      std::cerr << "  " << diagnostic.code << ": " << diagnostic.message.substr(0, 512) << '\n';
+    }
+  };
+  const auto acceptedSemantics = [&](const lang::FrontendResult &result,
+                                     std::source_location caller = std::source_location::current()) {
+    if (!result.syntaxValid || !result.semanticValid)
+      report(result, caller);
     expect(result.syntaxValid && result.semanticValid,
            "reference payload positive passes semantic analysis");
   };
@@ -150,8 +185,7 @@ int main() { return 0; }
       }
     }
     if (!found)
-      for (const auto &diagnostic : result.diagnostics)
-        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      report(result);
     expect(found,
            "checked entry must produce an exact selected reference loan");
   }
@@ -483,8 +517,7 @@ int main() {
     expect(observed.canGenerateCode(),
            "owned payload storage is independent of external reference owners");
     if (!observed.canGenerateCode())
-      for (const auto &diagnostic : observed.diagnostics)
-        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      report(observed);
     if (!observed.canGenerateCode())
       continue;
     auto forged = observed.mir;
@@ -650,8 +683,7 @@ int main() { return 0; }
   expect(referenceEntry.canGenerateCode(),
          "enum reference formal has a checked abstract external entry");
   if (!referenceEntry.canGenerateCode())
-    for (const auto &diagnostic : referenceEntry.diagnostics)
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    report(referenceEntry);
   if (referenceEntry.canGenerateCode()) {
     for (int mutation = 0; mutation != 5; ++mutation) {
       auto malformed = referenceEntry.mir;
@@ -707,8 +739,7 @@ int main() {
 )gti",
       {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
   if (!classCarrier.canGenerateCode())
-    for (const auto &diagnostic : classCarrier.diagnostics)
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    report(classCarrier);
   expect(
       classCarrier.canGenerateCode(),
       "passive borrowed class payload preserves origin and prepared lifetime");
@@ -805,8 +836,7 @@ int main() { return 0; }
 )gti",
       {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
   if (!constructed.canGenerateCode())
-    for (const auto &diagnostic : constructed.diagnostics)
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    report(constructed);
   expect(constructed.canGenerateCode(),
          "reference constructor reaches independently verified MIR");
   if (constructed.canGenerateCode()) {
@@ -905,8 +935,7 @@ int main() { return 0; }
 )gti",
         {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
     if (!nested.canGenerateCode())
-      for (const auto &diagnostic : nested.diagnostics)
-        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      report(nested);
     expect(nested.canGenerateCode(),
            "nested constructor retains the exact staged producer ancestry");
     if (nested.canGenerateCode()) {
@@ -1040,8 +1069,7 @@ int main() { return 0; }
         root / "tests" / "reference-payload-factory.gti", source,
         {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
     if (!result.canGenerateCode())
-      for (const auto &diagnostic : result.diagnostics)
-        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      report(result);
     expect(
         result.canGenerateCode(),
         "factory calls and empty/borrowed return paths verify independently");
