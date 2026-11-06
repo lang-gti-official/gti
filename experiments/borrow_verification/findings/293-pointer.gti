@@ -1,0 +1,8 @@
+// https://github.com/lang-gti-official/gti/issues/293
+// Valid source; the lab probe's missing_initialization MIR mutant survives.
+// Raw-pointer storage is outside the independent numeric core's profile.
+int main() {
+  mut int* x = nullptr;
+  int*& a = x;
+  return a == nullptr ? 0 : 1;
+}

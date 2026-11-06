@@ -1782,6 +1782,15 @@ The registered `compiled_scalar_library` example exercises separate processes,
 consumer-only edits, visibility and rejection at O0/O1/O3. This advances the
 user-visible workflow beyond codecs without marking general F1 or F2 complete.
 
+F2 runtime-closure progress: publication, import and reuse now admit runtime C
+services actually defined by the independently selected, digest-pinned runtime
+archive. Target checks cover its object members; thin archives and unresolved
+native dependencies remain rejected. The primitive-library example uses private
+allocation and destructor printing with producer sources absent, preserving
+normal and failure cleanup across the boundary. This advances selected runtime
+closure only: per-library globals/TLS initialization and retirement, exported
+custom ownership contracts and generic body recipes remain separate milestones.
+
 Project workflow progress: `gti-library` targets now select root-module exports
 through the compiler and publish `.gtilib`; executable targets resolve one
 `compiled-library` or several independent `compiled-libraries` artifacts and
@@ -1857,6 +1866,18 @@ library with a different valid revision, deletes producer sources and artifacts,
 and executes both the old and newly selected snapshots at O0/O3. Malformed,
 incompatible, conflicting and oversized selections reject. Whole-source/toolchain
 snapshot consistency and zero-source-read freshness remain separate prerequisites.
+
+Passive storage progress (F2): compiled producers now admit the existing verified
+MIR `DataOnly` namespace-global/static-field stages: implicit zero and `constexpr`
+constants without active cleanup/native retirement. Their internal LLVM globals
+are linked once per library, including source-absent dependency diamonds. The
+`compiled_scalar_library` regression covers mutable namespace storage, addressed
+namespace/class static constant data, fresh process state, and fail-closed plan mutations;
+`compiled_dependency_project` covers shared counters through both diamond paths.
+No new startup execution or retirement scheduling is claimed. Executable explicit
+initializers (including plain literal initializers), TLS, function-local lazy
+storage and active destruction still require composable per-library lifetime
+plans. This slice does not complete F2.
 
 Next coherent outcomes: general ownership and lifecycle metadata, generic/staged
 constexpr recipes, complete multi-module ownership/re-export contracts, composable exactly-once

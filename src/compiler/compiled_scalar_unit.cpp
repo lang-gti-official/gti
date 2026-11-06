@@ -124,6 +124,12 @@ std::string callableSource(const CompiledScalarSignature &signature,
                    isCompiledScalarValueType))
     throw std::invalid_argument("unsupported compiled callable interface");
   validateCompiledBorrowContract(result, key.parameters, signature.borrow);
+  if (signature.codegenAttributes.inlining != FunctionInlining::Default &&
+      signature.codegenAttributes.inlining != FunctionInlining::Hint &&
+      signature.codegenAttributes.inlining != FunctionInlining::Never)
+    throw std::invalid_argument("invalid compiled inlining policy");
+  // Optimization requests are carried by the authenticated binding, not by
+  // bodyless source syntax. Ordinary declarations cannot forge source policy.
   std::string out = "export ";
   if (signature.borrow.origin != BorrowOriginKind::None)
     out += "[[borrowed_from(arg" + std::to_string(signature.borrow.parameter) +
@@ -186,7 +192,7 @@ compiledInterfaceSource(std::span<const CompiledScalarSignature> signatures) {
 }
 std::string compiledScalarSymbol(const CompiledScalarSignature &signature) {
   (void)compiledInterfaceCallableSource(signature);
-  std::string contract = "gti.callable.3:";
+  std::string contract = "gti.callable.4:";
   appendContract(contract, signature.key);
   appendContract(contract, resultRecipe(signature));
   appendContract(contract, signature.typeMetadata);
@@ -195,10 +201,13 @@ std::string compiledScalarSymbol(const CompiledScalarSignature &signature) {
   appendContract(contract, std::to_string(signature.borrow.parameter));
   appendContract(
       contract, std::to_string(static_cast<unsigned>(signature.borrow.access)));
+  appendContract(contract, std::to_string(static_cast<unsigned>(
+                               signature.codegenAttributes.inlining)));
+  appendContract(contract, signature.codegenAttributes.cold ? "1" : "0");
   auto digest = llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
       reinterpret_cast<const uint8_t *>(contract.data()), contract.size()));
   constexpr char hex[] = "0123456789abcdef";
-  std::string result = "__gtilib_callable_v3_";
+  std::string result = "__gtilib_callable_v4_";
   for (auto b : digest) {
     result += hex[b >> 4];
     result += hex[b & 15];
@@ -321,10 +330,10 @@ std::vector<CompiledScalarSignature> CompiledScalarUnitBuilder::selectExports(
     PersistentFunctionKey key{.owner = owner,
                               .qualifiedName = declaration->qualifiedName,
                               .parameters = function->parameterTypes};
-    signatures.push_back({writePersistentFunctionKey(key, registry),
-                          function->returnType, metadata,
-                          writePersistentType(function->returnType, registry),
-                          borrowContract(*function)});
+    signatures.push_back(
+        {writePersistentFunctionKey(key, registry), function->returnType,
+         metadata, writePersistentType(function->returnType, registry),
+         borrowContract(*function), function->codegenAttributes});
   }
   std::sort(signatures.begin(), signatures.end(),
             [](const auto &a, const auto &b) { return a.key < b.key; });
@@ -346,12 +355,29 @@ verifyCompiledScalarUnit(const LoweredProgram &program) {
   }
   if (program.compiledScalarBindings().size() > 256 || program.embeddingPlan())
     errors.push_back("invalid compiled scalar unit profile");
+  // Object data has no startup/retirement ordering to compose. Admit only the
+  // already verified passive MIR storage stages; executable initialization,
+  // lazy local storage and cleanup still need a per-library lifetime plan.
+  const auto &storage = program.mir().programInitializationPlan().steps;
+  const bool passiveStorage =
+      std::all_of(storage.begin(), storage.end(), [](const auto &step) {
+        return step.role == ProgramInitializationStepRole::DataOnly &&
+               (step.storageKind == ProgramStorageKind::NamespaceGlobal ||
+                step.storageKind == ProgramStorageKind::StaticField) &&
+               !step.requiresActiveCleanup && !step.nativeRetirement &&
+               ((step.dataInitialization ==
+                     MirProgramDataInitializationKind::ImplicitZero &&
+                 !step.dataConstant) ||
+                (step.dataInitialization ==
+                     MirProgramDataInitializationKind::Constant &&
+                 step.dataConstant));
+      });
   if (program.compiledScalarProducer() &&
-      (program.mir().hostedStartupPlan() ||
-       !program.mir().programInitializationPlan().steps.empty() ||
+      (program.mir().hostedStartupPlan() || !passiveStorage ||
        !program.mir().threadLocalStorage().empty()))
     errors.push_back(
-        "compiled scalar library requires no entry point or program storage");
+        "compiled library requires passive program storage without entry, "
+        "thread-local initialization or cleanup");
   if (program.compiledScalarProducer() &&
       std::none_of(program.compiledScalarBindings().begin(),
                    program.compiledScalarBindings().end(),
@@ -390,11 +416,13 @@ verifyCompiledScalarUnit(const LoweredProgram &program) {
           decoded.parameters != f->parameterTypes ||
           binding.result != f->returnType || decodedResult != f->returnType ||
           binding.borrow != borrowContract(*f) || !binding.sourceUnit ||
+          (!binding.imported &&
+           binding.codegenAttributes != f->codegenAttributes) ||
           binding.sourceUnit != d->sourceUnit ||
           binding.symbol !=
               compiledScalarSymbol({binding.key, binding.result,
                                     binding.typeMetadata, binding.resultRecipe,
-                                    binding.borrow}))
+                                    binding.borrow, binding.codegenAttributes}))
         errors.push_back("compiled scalar binding identity mismatch");
     } catch (const std::exception &) {
       errors.push_back("invalid compiled scalar declaration key");
@@ -469,7 +497,8 @@ LoweredProgram CompiledScalarUnitBuilder::bindScoped(
     program.compiledScalarBindings_.push_back(
         {selected->id, signature.key, compiledScalarSymbol(signature), imported,
          result, input.sourceUnit, signature.typeMetadata,
-         signature.resultRecipe, signature.borrow});
+         signature.resultRecipe, signature.borrow,
+         signature.codegenAttributes});
   };
   for (const auto &input : exports)
     bindOne(input, false);

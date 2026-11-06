@@ -153,8 +153,7 @@ One-time owner setup, in this order:
 
    It prints a JSON list: `release-tags` (`refs/tags/v*`: no update, force
    update or deletion; creation stays open so the train can tag), `beta`
-   (`refs/heads/beta/*`: pull requests merged by rebase, linear history, an
-   up-to-date branch with `CI gate` and `Backport gate`, no force or
+   (`refs/heads/beta/*`: pull requests merged by rebase, an up-to-date branch with `CI gate` and `Backport gate`, no force or
    deletion), and `release-status` (no force or deletion). Apply each with:
 
    ```sh

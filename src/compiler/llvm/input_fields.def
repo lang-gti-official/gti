@@ -63,5 +63,5 @@ LLVM_INPUT_FIELDS(LoweredSymbol, id, kind, name, qualifiedName, sourceUnit, name
 LLVM_INPUT_FIELDS(SemanticType, kind, nativeCScalar, arguments, valueArguments, classId, enumId, genericParameterId, functionId, lambdaId, lambdaParameterCount, lambdaCaptureCount, lambdaEnclosingClassTypes, lambdaEnclosingFunctionTypes, lambdaEnclosingClassValues, lambdaEnclosingFunctionValues, arrayLength, arrayLengthParameterId, referenceAccess, pointerAccess, signatureReceiver, concretePack, projectionConcept, projectionMember)
 LLVM_INPUT_FIELDS(SemanticTypeTraits, ownership, drop, copyable, movable, copyAssignable, moveAssignable, containsBorrowedState, transferCapable, shareCapable, relocation)
 LLVM_INPUT_FIELDS(CompiledBorrowContract, origin, parameter, access)
-LLVM_INPUT_FIELDS(CompiledScalarBinding, function, key, symbol, imported, result, sourceUnit, typeMetadata, resultRecipe, borrow)
+LLVM_INPUT_FIELDS(CompiledScalarBinding, function, key, symbol, imported, result, sourceUnit, typeMetadata, resultRecipe, borrow, codegenAttributes)
 LLVM_INPUT_FIELDS(FunctionCodegenAttributes, inlining, cold)

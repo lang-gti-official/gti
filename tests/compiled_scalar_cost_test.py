@@ -20,11 +20,15 @@ def main():
     parser.add_argument('examples', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--measure', action='store_true')
+    parser.add_argument('--passive-storage', action='store_true',
+                        help='compare a private persistent scalar load/store with the same native operation')
     args = parser.parse_args()
     report = {'contract': 'int32 selector; conservative GTI status/result/failure-pointer ABI; external call without LTO',
               'comparison_limit': 'same ABI baseline, not whole-program inlining parity',
               'allocation_scope': 'fixture has no heap operations; object has no undefined native dependencies; host/loader allocations excluded',
               'steps': [], 'timing_acceptance': args.measure}
+    if args.passive_storage:
+        report['contract'] = 'private zero-initialized int32 exchange; conservative GTI status/result/failure-pointer ABI; external call without LTO'
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='gti-scalar-cost-') as temporary:
         root = Path(temporary).resolve()
@@ -42,17 +46,35 @@ def main():
         shutil.copytree(args.examples, root / 'producer')
         (root / 'consumer').mkdir()
         shutil.copyfile(args.examples / 'consumer.gti', root / 'consumer/main.gti')
+        if args.passive_storage:
+            (root / 'producer/library.gti').write_text('''export module numbers;
+mut int state;
+export int choose(int x) {
+  int previous = state;
+  state = x;
+  return previous;
+}
+''')
+            (root / 'consumer/main.gti').write_text('''import "api.gti";
+int main() {
+  if (choose(7) != 0) { return 1; }
+  if (choose(3) != 7) { return 2; }
+  return choose(0) - 3;
+}
+''')
         prefix = [args.tool.resolve(), '--produce', args.runtime.resolve(), root, '3', 'child']
         run(prefix, 'produce')
         shutil.rmtree(root / 'producer')
         prefix[1] = '--consume'
         run(prefix, 'source-absent-consume')
         names = run(['nm', '-g', root / 'library.o'], 'symbols')
-        symbols = set(re.findall(r'__gtilib_callable_v3_[0-9a-f]{64}', names))
+        symbols = set(re.findall(r'__gtilib_callable_v4_[0-9a-f]{64}', names))
         if len(symbols) != 1:
             raise RuntimeError('unexpected exported scalar object symbols')
         symbol = symbols.pop()
-        (root / 'baseline.cpp').write_text('extern "C" bool ' + symbol + '(int* result, void*, int x) { *result = x == 7 ? 42 : 0; return true; }\n')
+        operation = ('static int state; *result = state; state = x;' if args.passive_storage
+                     else '*result = x == 7 ? 42 : 0;')
+        (root / 'baseline.cpp').write_text('extern "C" bool ' + symbol + '(int* result, void*, int x) { ' + operation + ' return true; }\n')
         (root / 'host.cpp').write_text('''#include <chrono>
 #include <cstdio>
 extern "C" bool SYMBOL(int*, void*, int);
@@ -64,10 +86,10 @@ int main() {
     if (!SYMBOL(&result, nullptr, int(i & 15))) return 2;
     sum += unsigned(result);
   }
-  if (sum != 131250000) return 3;
+  if (sum != EXPECTED) return 3;
   std::printf("%.9f\\n", std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count());
 }
-'''.replace('SYMBOL', symbol))
+'''.replace('SYMBOL', symbol).replace('EXPECTED', '374999985' if args.passive_storage else '131250000'))
         run(['c++', '-O3', '-std=c++20', '-c', root / 'host.cpp', '-o', root / 'host.o'], 'host-build')
         run(['c++', '-O3', '-c', root / 'baseline.cpp', '-o', root / 'baseline.o'], 'baseline-build')
         for name, obj in [('native', 'library.o'), ('baseline', 'baseline.o')]:

@@ -438,13 +438,16 @@ profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
 The combined deterministic serialization is currently `mir-v120`/`mir-body-v93`,
-with `lowered-program-v32` declaration metadata. Function instances and sealed
+with `lowered-program-v34` declaration metadata. Function instances and sealed
 declarations retain the resolved cold hint and default/hint/never inlining policy;
 verification rejects a mismatching or non-source policy. These distinct combined
 identities retain both macro result-region/local-initializer authority and
 thread-local initialization, cleanup and reference-pack proof facts.
 Compiled scalar linkage records also seal each callable's result type and
 compilation-local source unit alongside its persistent declaration key. Imports
+also retain validated interface optimization policy in their compiled bindings;
+source-body HIR/MIR policy remains distinct from an imported declaration's policy.
+Export bindings must agree with their source function's policy. Imports
 bind against their exact virtual facade unit; exported overloads bind against
 the selected root module. Scalar wrappers retain the GTI failure channel and
 forward a fallible implementation's original result, status and failure record.
@@ -3132,6 +3135,14 @@ A `MirBody` owns:
 IDs are body-local and start at one.
 
 ## Lowering And Verification
+
+Scalar-initialization dataflow checks a local checked `Borrow` at reference
+formation, as well as staged and direct call inputs. Its referent must be
+definitely initialized on every reachable predecessor. Later reads through a
+reference's projected place cannot substitute for checking the scalar source:
+removing its `Initialize` must fail even when operand-use indexes remain valid.
+Initially available parameters retain their existing entry-state contract;
+full-expression temporaries retain the lifecycle verifier's producer protocol.
 
 Read-only body verification uses a scoped index of HIR source values and MIR
 instruction definitions. Call-input validation also groups value drop obligations

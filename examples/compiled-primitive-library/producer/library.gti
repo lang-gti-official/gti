@@ -1,12 +1,13 @@
 export module primitives;
+import std.vector;
 
 // A selected name exports every explicitly exported overload.
 export bool identity(bool value) { return value; }
 export char identity(char value) { return value; }
 export int8_t identity(int8_t value) { return value; }
 export int16_t identity(int16_t value) { return value; }
-export int32_t identity(int32_t value) { return value; }
-export int64_t identity(int64_t value) { return value; }
+export [[inline]] int32_t identity(int32_t value) { return value; }
+export [[noinline]] int64_t identity(int64_t value) { return value; }
 export uint8_t identity(uint8_t value) { return value; }
 export uint16_t identity(uint16_t value) { return value; }
 export uint32_t identity(uint32_t value) { return value; }
@@ -17,9 +18,24 @@ export double identity(double value) { return value; }
 // This private overload is deliberately absent from the exported family.
 int identity(int first, int second) { return first; }
 
-export void touch() {}
+// Implementation-only allocation and cleanup stay in the producer object.
+// The consumer needs neither this class nor the vector implementation source.
+class ProducerMarker {
+public:
+    ProducerMarker() {}
+    ~ProducerMarker() { std::println("producer cleanup"); }
+};
+export void touch() {
+    mut std::vector<int> values = {7, 11, 24};
+    values.push_back(42);
+    std::println(values[3]);
+}
 export bool positive(int64_t value) { return value > 0; }
-export int divide(int value, int divisor) { return value / divisor; }
+// An infrequent operation: preserve its policy even without producer sources.
+export [[cold, noinline]] int divide(int value, int divisor) {
+    ProducerMarker marker{};
+    return value / divisor;
+}
 export void divide_and_discard(int value, int divisor) {
     int result = value / divisor;
 }
