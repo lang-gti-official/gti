@@ -467,10 +467,18 @@ for<T> concept P<Wrap<T>> {
       std::cerr << error.message << '\n';
   expect(!lexer.hadError() && !parser.hadError(),
          "protocol operations may declare lifetime-only local binders");
-  const lang::ConformanceDecl *block = nullptr;
-  for (const auto &declaration : program.declarations())
-    if (const auto *candidate = lang::stmtAs<lang::ConformanceDecl>(declaration.get()))
-      block = candidate;
+  const auto findBlock = [](auto &&self, const lang::StmtList &declarations)
+      -> const lang::ConformanceDecl * {
+    for (const auto &declaration : declarations) {
+      if (const auto *block = lang::stmtAs<lang::ConformanceDecl>(declaration.get()))
+        return block;
+      if (const auto *scope = lang::stmtAs<lang::NamespaceDecl>(declaration.get()))
+        if (const auto *block = self(self, scope->declarations()))
+          return block;
+    }
+    return nullptr;
+  };
+  const lang::ConformanceDecl *block = findBlock(findBlock, program.declarations());
   expect(block && block->members().size() == 2,
          "conformance lifetime operation remains a source member");
   if (!block || block->members().empty())
