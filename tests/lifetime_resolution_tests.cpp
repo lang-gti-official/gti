@@ -120,10 +120,10 @@ int main() { return 0; }
 
 void testAssociatedLifetimeFamily() {
   const auto result = analyze(R"(
-concept BorrowType<T, lifetime owner> { using Borrow<lifetime a>; };
+concept BorrowType<T, lifetime owner> { typename Borrow<lifetime a>; };
 for<lifetime owner> concept BorrowType<int, owner> {
   using Borrow<lifetime a> = int&<a>;
-}
+};
 using Result<lifetime a> = BorrowType<int, a>::Borrow<a>;
 int main() { return 0; }
 )");
@@ -141,6 +141,7 @@ void testBinderDiagnostics() {
            "void invalid(int&<missing> value); int main() { return 0; }",
            "void invalid(int&<this> value); int main() { return 0; }",
            "void invalid<lifetime a, lifetime a>(); int main() { return 0; }",
+           "struct Owner<T> { using a = int; }; struct Tag<lifetime a> {}; void invalid<lifetime a>(Tag<Owner<int>::a> value); int main() { return 0; }",
            "struct Pair<T, lifetime a> {}; using Bad = Pair<static, int>; int main() { return 0; }"}) {
     const auto result = analyze(source);
     expect(!result.semanticValid &&
@@ -153,6 +154,24 @@ void testBinderDiagnostics() {
            "binder diagnostics preserve following declaration analysis");
   }
 }
+
+void testProtocolOperationBinders() {
+  const auto result = analyze(R"(
+concept Shared<T> { T&<a> borrow<lifetime a>(T&<a> value); };
+for concept Shared<int> {
+  int&<b> borrow<lifetime b>(int&<b> value) { return value; }
+};
+T&<a> forward<T, lifetime a>(T&<a> value) requires Shared<T> {
+  return Shared<T>::borrow(value);
+}
+int main() {
+  int value = 7;
+  int& selected = Shared<int>::borrow(value);
+  return forward(selected) - 7;
+}
+)");
+  expectValid(result, "protocol operation lifetime binders instantiate per call");
+}
 } // namespace
 
 int main() {
@@ -161,5 +180,6 @@ int main() {
   testHigherRankedAlias();
   testAssociatedLifetimeFamily();
   testBinderDiagnostics();
+  testProtocolOperationBinders();
   return failures == 0 ? 0 : 1;
 }

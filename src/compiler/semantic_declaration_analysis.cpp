@@ -1387,7 +1387,7 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
                             argument.arguments.empty() &&
                             argument.pointers.empty() && !argument.reference &&
                             argument.arrayExtents.empty() &&
-                            !argument.genericValueExpression;
+                            !argument.genericValueExpression && !argument.qualifiedOwner;
           const Lifetime lifetime = bare ? resolveLifetimeArgument(argumentToken)
                                          : Lifetime{};
           if (!bare)

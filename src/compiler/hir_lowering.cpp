@@ -50,6 +50,8 @@ public:
         return std::move(output);
       }
       for (const auto &parameter : owner->genericParameters) {
+        if (parameter.lifetime)
+          continue;
         if (parameter.value ? !substitution.values.contains(parameter.id)
                             : !substitution.types.contains(parameter.id)) {
           output.program.valid_ = false;
@@ -72,6 +74,8 @@ public:
       }
     }
     for (const auto &parameter : function->genericParameters) {
+      if (parameter.lifetime)
+        continue;
       if (parameter.value ? !substitution.values.contains(parameter.id)
                           : !substitution.types.contains(parameter.id)) {
         output.program.valid_ = false;
@@ -361,15 +365,19 @@ private:
     return result;
   }
 
-  [[nodiscard]] GenericSubstitution
-  classSubstitution(const ClassTypeInfo &declaration,
-                    const std::vector<SemanticType> &typeArguments,
-                    const std::vector<CompileTimeValue> &valueArguments) const {
+  [[nodiscard]] GenericSubstitution instanceSubstitution(
+      std::span<const GenericParameterInfo> parameters,
+      const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &valueArguments) const {
     GenericSubstitution result;
     std::size_t typeIndex = 0;
     std::size_t valueIndex = 0;
-    for (const GenericParameterInfo &parameter :
-         declaration.genericParameters) {
+    for (const GenericParameterInfo &parameter : parameters) {
+      if (parameter.lifetime) {
+        // Universals belong to the executable declaration. Actual regions
+        // remain in the selected call's application proof, never this cache.
+        continue;
+      }
       if (!parameter.typeArgumentPath.empty()) {
         if (auto type = projectGenericTypeArgument(
                 typeArguments, parameter.typeArgumentPath, parameter.id,
@@ -392,6 +400,23 @@ private:
         result.types.emplace(parameter.id, typeArguments[typeIndex++]);
       }
     }
+    return result;
+  }
+
+  [[nodiscard]] GenericSubstitution
+  classSubstitution(const ClassTypeInfo &declaration,
+                    const std::vector<SemanticType> &typeArguments,
+                    const std::vector<CompileTimeValue> &valueArguments) const {
+    return instanceSubstitution(declaration.genericParameters, typeArguments,
+                                valueArguments);
+  }
+
+  [[nodiscard]] LifetimeSignatureContract
+  instantiateLifetimeContract(const LifetimeSignatureContract &declaration,
+                              const GenericSubstitution &substitution) const {
+    auto result = declaration;
+    for (auto &bound : result.typeBounds)
+      bound.type = substitute(bound.type, substitution);
     return result;
   }
 
@@ -610,6 +635,29 @@ private:
           !declaration.declaration->isProceduralMacro()) ||
          std::find(constantFunctions.begin(), constantFunctions.end(),
                    declaration.id) == constantFunctions.end());
+    const ClassTypeInfo *genericOwner =
+        declaration.ownerClass == 0
+            ? nullptr
+            : baseModel->findClassType(declaration.ownerClass);
+    GenericSubstitution instance =
+        genericOwner == nullptr
+            ? GenericSubstitution{}
+            : classSubstitution(*genericOwner, classTypeArguments,
+                                classValueArguments);
+    auto functionSubstitution =
+        instanceSubstitution(declaration.genericParameters,
+                             functionTypeArguments, functionValueArguments);
+    instance.types.insert(functionSubstitution.types.begin(),
+                          functionSubstitution.types.end());
+    instance.values.insert(functionSubstitution.values.begin(),
+                           functionSubstitution.values.end());
+    returnType = substitute(declaration.returnType, instance);
+    parameterTypes.clear();
+    parameterTypes.reserve(declaration.parameterTypes.size());
+    for (const auto &parameter : declaration.parameterTypes)
+      parameterTypes.push_back(substitute(parameter, instance));
+    const auto lifetimeContract =
+        instantiateLifetimeContract(declaration.lifetimeContract, instance);
     // Calls can discover an instance through individual arguments or through
     // one forwarded pack. Virtual members are also seeded from declarations.
     // These paths must publish the same concrete signature; source pack
@@ -643,10 +691,6 @@ private:
              : (declarationToken.lexeme.empty()
                     ? std::optional<SourceSpan>{}
                     : std::optional<SourceSpan>{tokenSpan(declarationToken)});
-    const ClassTypeInfo *genericOwner =
-        declaration.ownerClass == 0
-            ? nullptr
-            : baseModel->findClassType(declaration.ownerClass);
     const bool generic =
         !declaration.genericParameters.empty() ||
         (genericOwner != nullptr && !genericOwner->genericParameters.empty());
@@ -693,7 +737,7 @@ private:
          .valueArguments = std::move(functionValueArguments),
          .returnType = std::move(returnType),
          .parameterTypes = std::move(parameterTypes),
-         .lifetimeContract = declaration.lifetimeContract,
+         .lifetimeContract = lifetimeContract,
          .ownerlessTextParameters = declaration.ownerlessTextParameters,
          .ownerlessTextFields = declaration.ownerlessTextFields,
          .publishedTextFields = declaration.publishedTextFields,
@@ -833,6 +877,32 @@ private:
                             construction.constructor == 0))) {
       return 0;
     }
+    GenericSubstitution instance =
+        ownerType == nullptr
+            ? GenericSubstitution{}
+            : classSubstitution(*ownerType,
+                                construction.constructedType.arguments,
+                                construction.constructedType.valueArguments);
+    if (declaration != nullptr) {
+      auto constructorSubstitution = instanceSubstitution(
+          declaration->genericParameters, construction.typeArguments,
+          construction.valueArguments);
+      instance.types.insert(constructorSubstitution.types.begin(),
+                            constructorSubstitution.types.end());
+      instance.values.insert(constructorSubstitution.values.begin(),
+                             constructorSubstitution.values.end());
+    }
+    std::vector<SemanticType> universalParameters;
+    if (declaration != nullptr)
+      for (const auto &parameter : declaration->parameterTypes)
+        SemanticType::appendExpandedArgument(universalParameters,
+                                             substitute(parameter, instance));
+    else
+      universalParameters = construction.parameterTypes;
+    const auto lifetimeContract =
+        declaration != nullptr ? instantiateLifetimeContract(
+                                     declaration->lifetimeContract, instance)
+                               : LifetimeSignatureContract{};
     const ConstructorId identity = generatedBody ? 0 : construction.constructor;
     // A dependent text publication is a call-site fact; it never forms the
     // constructor's own borrow summary.
@@ -888,10 +958,8 @@ private:
          .owner = *owner,
          .typeArguments = construction.typeArguments,
          .valueArguments = construction.valueArguments,
-         .parameterTypes = construction.parameterTypes,
-         .lifetimeContract = declaration != nullptr
-                                 ? declaration->lifetimeContract
-                                 : LifetimeSignatureContract{},
+         .parameterTypes = std::move(universalParameters),
+         .lifetimeContract = lifetimeContract,
          .borrowOrigin =
              summary ? construction.borrowOrigin : BorrowOriginKind::None,
          .borrowParameter = summary ? construction.borrowArgument : 0,

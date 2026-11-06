@@ -1453,11 +1453,19 @@ private:
       genericParameters = genericParameterList();
     }
     if (blockParameters) {
-      if (!genericParameters.empty()) {
+      if (std::any_of(genericParameters.begin(), genericParameters.end(),
+                      [](const GenericParameter &parameter) {
+                        return !parameter.lifetimeKeyword;
+                      })) {
         (void)error(name, "A conformance block operation takes the block's "
-                          "generic parameters and cannot declare its own.");
+                          "type parameters and can declare only additional "
+                          "lifetime parameters of its own.");
       }
-      genericParameters = std::move(*blockParameters);
+      auto parameters = std::move(*blockParameters);
+      parameters.insert(parameters.end(),
+                        std::make_move_iterator(genericParameters.begin()),
+                        std::make_move_iterator(genericParameters.end()));
+      genericParameters = std::move(parameters);
     }
 
     if (match({TokenKind::LEFT_PAREN})) {
@@ -1645,15 +1653,33 @@ private:
       Token keyword = previous();
       requiresClause =
           RequiresClause{std::move(keyword), constraintExpression()};
-      if (blockRequirement) {
-        (void)error(requiresClause->keyword,
-                    "A conformance block operation cannot declare a "
-                    "requires clause; the block's concept application "
-                    "applies to it.");
-      }
     }
     if (blockRequirement) {
-      requiresClause = std::move(blockRequirement);
+      if (!requiresClause) {
+        requiresClause = std::move(blockRequirement);
+      } else {
+        auto combined = std::move(blockRequirement->expression);
+        auto &extra = requiresClause->expression;
+        const std::size_t applicationOffset = combined.applications.size();
+        const std::size_t nodeOffset = combined.nodes.size();
+        combined.applications.insert(combined.applications.end(),
+                                     extra.applications.begin(), extra.applications.end());
+        for (auto node : extra.nodes) {
+          if (node.kind == ConstraintExpressionKind::Application)
+            node.application += applicationOffset;
+          else {
+            node.left += nodeOffset;
+            node.right += nodeOffset;
+          }
+          combined.nodes.push_back(std::move(node));
+        }
+        combined.nodes.push_back({.kind = ConstraintExpressionKind::Conjunction,
+                                  .left = combined.root,
+                                  .right = extra.root + nodeOffset,
+                                  .operation = requiresClause->keyword});
+        combined.root = combined.nodes.size() - 1;
+        requiresClause->expression = std::move(combined);
+      }
     }
 
     std::optional<Token> overrideKeyword;

@@ -1937,6 +1937,8 @@ private:
       SemanticType returnType = SemanticType::Unknown;
       std::vector<SemanticType> parameterTypes;
       LifetimeSignatureContract lifetimeContract;
+      std::vector<GenericParameterInfo> genericParameters;
+      std::vector<AppliedConceptRequirement> requirements;
       // A declaration-relative result origin. The contract is inert for
       // concrete owned results and binds checked borrowed results.
       std::optional<std::size_t> returnBorrowParameter;
@@ -1975,6 +1977,9 @@ private:
     std::vector<SemanticType> associatedTypes;
     std::vector<std::vector<GenericParameterInfo>> associatedTypeParameters;
     std::vector<Symbol> operations;
+    // Interface-local universals map to the implementation's normalized
+    // binders, including slots introduced by elision.
+    std::vector<std::vector<LifetimeBinding>> operationLifetimeMappings;
     bool operationsBound = false;
   };
 
@@ -2006,6 +2011,10 @@ private:
     Symbol symbol;
     std::vector<SemanticType> typeArguments;
     std::vector<Lifetime> lifetimeArguments;
+    std::vector<GenericParameterInfo> operationLifetimeParameters;
+    std::vector<LifetimeBinding> operationLifetimeMapping;
+    LifetimeSignatureContract interfaceLifetimeContract;
+    GenericSubstitution interfaceSubstitution;
   };
 
   struct FlowSummary {
@@ -5168,6 +5177,8 @@ private:
   void reportConformanceError(const Token &site, std::string message,
                               const Token *related = nullptr,
                               std::string relatedMessage = {});
+  [[nodiscard]] bool
+  lifetimeOnlyRequirement(const AppliedConceptRequirement &requirement) const;
   void registerClassSpecializations(const StmtList &statements,
                                     std::vector<std::string> scope);
 

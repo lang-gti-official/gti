@@ -450,6 +450,46 @@ void testMalformedLifetimeRecovery() {
   }
 }
 
+void testProtocolOperationBinders() {
+  const std::string source = R"(
+concept P<T> { T&<a> borrow<lifetime a>(T&<a> value); };
+for<T> concept P<Wrap<T>> {
+  Wrap<T>&<a> borrow<lifetime a>(Wrap<T>&<a> value) { return value; }
+  Wrap<T>&<b> shorten<lifetime a, lifetime b>(Wrap<T>&<a> value)
+      requires outlives<a, b> { return value; }
+};
+)";
+  lang::Lexer lexer;
+  lang::Parser parser(lexer.scan(source, "lifetime-operation.gti"));
+  const auto program = parser.parse();
+  if (parser.hadError())
+    for (const auto &error : parser.errors())
+      std::cerr << error.message << '\n';
+  expect(!lexer.hadError() && !parser.hadError(),
+         "protocol operations may declare lifetime-only local binders");
+  const lang::ConformanceDecl *block = nullptr;
+  for (const auto &declaration : program.declarations())
+    if (const auto *candidate = lang::stmtAs<lang::ConformanceDecl>(declaration.get()))
+      block = candidate;
+  expect(block && block->members().size() == 2,
+         "conformance lifetime operation remains a source member");
+  if (!block || block->members().empty())
+    return;
+  const auto *operation = lang::stmtAs<lang::FunctionDecl>(block->members()[0].get());
+  expect(operation && operation->genericParameters().size() == 2 &&
+             operation->genericParameters()[0].name.lexeme == "T" &&
+             !operation->genericParameters()[0].lifetimeKeyword &&
+             operation->genericParameters()[1].lifetimeKeyword &&
+             operation->genericParameters()[1].name.lexeme == "a",
+         "the operation keeps block parameters before its local lifetime binders");
+  const auto *shorten = block->members().size() == 2
+      ? lang::stmtAs<lang::FunctionDecl>(block->members()[1].get()) : nullptr;
+  expect(shorten && shorten->requiresClause() &&
+             shorten->requiresClause()->requirements().size() == 2 &&
+             !shorten->requiresClause()->keyword.generated,
+         "a local lifetime requirement conjoins with the block's inherited application");
+}
+
 } // namespace
 
 int main() {
@@ -459,4 +499,5 @@ int main() {
   testQuantifiedAndReceiverSyntax();
   testCompletionMarkers();
   testMalformedLifetimeRecovery();
+  testProtocolOperationBinders();
 }

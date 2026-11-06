@@ -1298,7 +1298,7 @@ concept generic_operation<T> {
 };
 int main() { return 0; }
 )gti",
-           "GTI-S2123", "cannot declare generic parameters");
+           "GTI-S2123", "only lifetime generic parameters");
   rejected(R"gti(
 concept defaults<T> {
   int pick(T& value, int fallback = 1);
@@ -1421,7 +1421,7 @@ for concept measurable<Rope> {
 };
 int main() { return 0; }
 )gti",
-           "GTI-P0001", "cannot declare a requires clause");
+           "GTI-S2123", "requires clause may constrain only lifetimes");
   rejected(measurable + R"gti(
 for concept measurable<Rope> {
   using unit_type = Meters;
@@ -1430,7 +1430,7 @@ for concept measurable<Rope> {
 };
 int main() { return 0; }
 )gti",
-           "GTI-P0001", "cannot declare its own");
+           "GTI-P0001", "additional lifetime parameters");
   rejected(measurable + R"gti(
 class Holder {
   for concept measurable<Rope> {

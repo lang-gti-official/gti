@@ -203,11 +203,14 @@ concept-explanation    = "[[" "unsatisfied" "(" STRING_LITERAL ")" "]]" ;
 concept-body           = "{" { concept-member } "}" ;
 concept-member         = "typename" IDENTIFIER [ generic-parameter-clause ] ";"
                        | function-declaration ;
-(* A concept with a body takes one or more type parameters. A member
-   type family has its own ordinary type parameters and unary constraints.
-   Its implementation matches arity and constraint identities positionally.
-   A member function is a prototype ending in ';' with no generic parameters, requires
-   clause, defaults, modifiers, attributes or receiver qualifier. *)
+(* A concept with a body takes one or more type parameters and may also bind
+   lifetimes. A member type family has type or lifetime parameters and unary
+   type constraints. Its implementation matches argument kinds, arity and
+   constraint identities positionally. A member function is a prototype ending
+   in ';'. It may declare lifetime parameters and lifetime requirements, but
+   takes no additional type/value parameters, defaults, modifiers or receiver
+   qualifier. Its borrowed_from attribute remains a compatibility spelling for
+   the normalized region relationship. *)
 
 conformance-declaration
                        = "for" [ generic-parameter-clause ] "concept"
@@ -222,8 +225,9 @@ conformance-member     = type-alias-declaration
    parameter binds one type. It defines each associated type with a type
    alias and each
    operation with a function body; the block's parameters and concept
-   application apply to every function, which therefore declares no generic
-   parameters, requires clause or default argument of its own. A projection
+   application apply to every function. An operation may additionally bind
+   local lifetime parameters and declare lifetime requirements, but cannot add
+   runtime type/value parameters or default arguments. A projection
    `Concept<Type>::name` is a qualified type, and `Concept<Type>::operation`
    is a call target. *)
 

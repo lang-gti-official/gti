@@ -79,6 +79,22 @@ auto SemanticVisitor::Impl::reportConformanceError(const Token &site,
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
+auto SemanticVisitor::Impl::lifetimeOnlyRequirement(
+    const AppliedConceptRequirement &requirement) const -> bool {
+  const auto lifetimeConcept = [&](auto &&self, ConceptId id) -> bool {
+    if (id == 0 || id > concepts.size())
+      return false;
+    const auto &requirements = concepts[id - 1].definitionRequirements;
+    return !requirements.empty() &&
+           std::all_of(requirements.begin(), requirements.end(),
+                       [&](const auto &nested) {
+      return nested.lifetimeBound || self(self, nested.conceptId);
+    });
+  };
+  return requirement.lifetimeBound ||
+         lifetimeConcept(lifetimeConcept, requirement.conceptId);
+}
+
 auto SemanticVisitor::Impl::makeAssociatedTypeParameters(
     const std::vector<GenericParameter> &parameters, const Token &name,
     const std::vector<std::string> &fromScope,
@@ -239,13 +255,17 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
       reject(operation->name(), "cannot be an operator");
       continue;
     }
-    if (!operation->genericParameters().empty()) {
-      reject(operation->name(), "cannot declare generic parameters");
-    }
-    if (operation->requiresClause()) {
-      reject(operation->requiresClause()->keyword,
-             "cannot declare a requires clause");
-    }
+    if (std::any_of(operation->genericParameters().begin(),
+                    operation->genericParameters().end(),
+                    [](const GenericParameter &parameter) {
+                      return !parameter.lifetimeKeyword;
+                    }))
+      reject(operation->name(), "can declare only lifetime generic parameters");
+    auto operationParameters = makeGenericParameters(
+        operation->genericParameters(), operation->name(),
+        conceptInfo.namespaceScope, false);
+    LifetimeBinderScope operationScope(lifetimeParameterScopes,
+                                       operationParameters);
     if (operation->isStatic() || operation->isVirtual() ||
         operation->isConstexpr() || operation->unsafeKeyword() ||
         operation->receiverMutability() != ReceiverMutability::ReadOnly ||
@@ -254,13 +274,25 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
              "is a free function signature and takes no modifiers, "
              "runtime binding or receiver qualifier");
     }
-    validateType(operation->returnType());
     RegisteredConcept::ProtocolOperation resolved{
         .name = operation->name().lexeme,
         .declaration = operation,
         .returnType =
             typeOf(operation->returnType(), operation->returnMutability(),
                    conceptInfo.namespaceScope)};
+    resolved.genericParameters = std::move(operationParameters);
+    if (operation->requiresClause()) {
+      resolved.requirements = resolveRequirements(&*operation->requiresClause(),
+                                                  conceptInfo.namespaceScope);
+      if (std::any_of(resolved.requirements.begin(), resolved.requirements.end(),
+                      [&](const auto &requirement) {
+            return !lifetimeOnlyRequirement(requirement);
+          }))
+        reject(operation->requiresClause()->keyword,
+               "cannot declare a requires clause containing non-lifetime capabilities");
+    }
+    requirementScopes.push_back(resolved.requirements);
+    validateType(operation->returnType());
     for (const Parameter &formal : operation->parameters()) {
       if (formal.pack || formal.hasDefault()) {
         reject(formal.name, "cannot declare a parameter pack or default");
@@ -302,15 +334,20 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
         .sourceUnit = conceptInfo.sourceUnit,
         .syntax = operation,
         .genericParameters = conceptInfo.genericParameters};
+    declarationRecord.genericParameters.insert(
+        declarationRecord.genericParameters.end(), resolved.genericParameters.begin(),
+        resolved.genericParameters.end());
     CallableCandidate candidate{.declarationRecord = &declarationRecord,
                                 .declaration = operation,
                                 .returnType = resolved.returnType,
-                                .parameterTypes = resolved.parameterTypes};
+                                .parameterTypes = resolved.parameterTypes,
+                                .requirements = resolved.requirements};
     normalizeFunctionLifetimeContract(candidate);
     resolved.returnType = std::move(candidate.returnType);
     resolved.parameterTypes = std::move(candidate.parameterTypes);
     resolved.lifetimeContract = std::move(candidate.lifetimeContract);
     valid = valid && resolved.lifetimeContract.complete;
+    requirementScopes.pop_back();
     conceptInfo.operations.push_back(std::move(resolved));
   }
 }
@@ -444,7 +481,7 @@ auto SemanticVisitor::Impl::registerConformances(const StmtList &statements,
                           argument.arguments.empty() &&
                           argument.pointers.empty() && !argument.reference &&
                           argument.arrayExtents.empty() &&
-                          !argument.genericValueExpression;
+                          !argument.genericValueExpression && !argument.qualifiedOwner;
         const Lifetime lifetime = bare ? resolveLifetimeArgument(argument.name.last())
                                        : Lifetime{};
         if (!bare)
@@ -681,6 +718,7 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
     conformance.operationsBound = true;
     const RegisteredConcept &conceptInfo = concepts[conformance.conceptId - 1];
     conformance.operations.assign(conceptInfo.operations.size(), Symbol{});
+    conformance.operationLifetimeMappings.assign(conceptInfo.operations.size(), {});
     const ConformanceDecl &declaration = *conformance.declaration;
     const Token &site = declaration.target().name.last();
     currentSourceUnit = conformance.sourceUnit;
@@ -794,13 +832,29 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
         continue;
       }
       const CallableCandidate &candidate = found->second.overloads.front();
+      for (const auto &requirement : candidate.requirements) {
+        if (requirement.syntax &&
+            requirement.syntax->name.last().source == function->name().source &&
+            requirement.syntax->name.last().position >= function->name().position &&
+            !lifetimeOnlyRequirement(requirement))
+          reportConformanceError(requirement.syntax->name.last(),
+                                 "A conformance operation requires clause may "
+                                 "constrain only lifetimes.");
+      }
       const std::vector<GenericParameterInfo> &functionParameters =
           candidate.record().genericParameters;
-      if (functionParameters.size() != conformance.genericParameters.size()) {
+      const RegisteredConcept::ProtocolOperation &operation =
+          conceptInfo.operations[*index];
+      if (functionParameters.size() < conformance.genericParameters.size() ||
+          std::any_of(functionParameters.begin() + conformance.genericParameters.size(),
+                      functionParameters.end(),
+                      [](const auto &parameter) { return !parameter.lifetime; })) {
+        reportConformanceError(function->name(),
+                               "A conformance operation may add only lifetime binders.");
         continue;
       }
       GenericSubstitution toBlockParameters;
-      for (std::size_t parameter = 0; parameter < functionParameters.size();
+      for (std::size_t parameter = 0; parameter < conformance.genericParameters.size();
            ++parameter) {
         if (functionParameters[parameter].lifetime)
           toBlockParameters.lifetimes.emplace(
@@ -812,8 +866,6 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
               SemanticType::typeParameter(
                   conformance.genericParameters[parameter].id));
       }
-      const RegisteredConcept::ProtocolOperation &operation =
-          conceptInfo.operations[*index];
       if (std::find(conformance.associatedTypes.begin(),
                     conformance.associatedTypes.end(), SemanticType::Unknown) !=
           conformance.associatedTypes.end()) {
@@ -847,19 +899,37 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
       const auto quantifyImplicit = [](SemanticType &signature,
                                        const LifetimeSignatureContract &contract,
                                        const std::vector<GenericParameterInfo> &parameters) {
+        std::vector<GenericParameterId> local;
         for (Lifetime lifetime : contract.parameters)
           if (lifetime.kind == Lifetime::Kind::Parameter &&
               std::none_of(parameters.begin(), parameters.end(),
                            [&](const auto &parameter) {
                 return parameter.lifetime && parameter.id == lifetime.id;
               }))
+            local.push_back(lifetime.id);
+        for (Lifetime lifetime : freeTypeLifetimes(signature))
+          if (lifetime.kind == Lifetime::Kind::Parameter &&
+              std::find(local.begin(), local.end(), lifetime.id) != local.end())
             signature.quantifiedLifetimes.push_back(lifetime.id);
+        for (const auto id : local)
+          if (std::find(signature.quantifiedLifetimes.begin(),
+                        signature.quantifiedLifetimes.end(), id) ==
+              signature.quantifiedLifetimes.end())
+            signature.quantifiedLifetimes.push_back(id);
       };
       quantifyImplicit(expectedCallable, operation.lifetimeContract,
                        conceptInfo.genericParameters);
+      const std::vector<GenericParameterInfo> enclosingParameters(
+          functionParameters.begin(),
+          functionParameters.begin() + conformance.genericParameters.size());
       quantifyImplicit(actualCallable, candidate.lifetimeContract,
-                       candidate.record().genericParameters);
+                       enclosingParameters);
       bool exact = equivalentLifetimeTypes(actualCallable, expectedCallable);
+      if (exact)
+        for (std::size_t binder = 0; binder < expectedCallable.quantifiedLifetimes.size(); ++binder)
+          conformance.operationLifetimeMappings[*index].emplace_back(
+              Lifetime::parameter(expectedCallable.quantifiedLifetimes[binder]),
+              Lifetime::parameter(actualCallable.quantifiedLifetimes[binder]));
       // A protocol's result-origin contract is part of its signature. A
       // concrete owned result makes it inert; a borrowed result must publish
       // the same parameter index, independently of parameter spelling. Defer
@@ -1578,10 +1648,10 @@ auto SemanticVisitor::Impl::protocolBorrowContractFailure(
     const auto &candidate = conformance.operations[index].overloads.front();
     const auto &parameters = candidate.record().genericParameters;
     if (genericTypeParameterCount(parameters) != binding.size() ||
-        parameters.size() != conformance.genericParameters.size())
+        parameters.size() < conformance.genericParameters.size())
       return index;
     GenericSubstitution substitution = nominalSubstitution(parameters, {.types = binding});
-    for (std::size_t parameter = 0; parameter < parameters.size(); ++parameter)
+    for (std::size_t parameter = 0; parameter < conformance.genericParameters.size(); ++parameter)
       if (parameters[parameter].lifetime) {
         const auto found = lifetimes.find(conformance.genericParameters[parameter].id);
         if (found != lifetimes.end())
@@ -1729,7 +1799,15 @@ auto SemanticVisitor::Impl::protocolOperationTarget(const QualifiedName &callee)
   }
   return ProtocolOperationTarget{.symbol = conformance.operations[*operation],
                                  .typeArguments = match->binding,
-                                 .lifetimeArguments = std::move(lifetimeArguments)};
+                                 .lifetimeArguments = std::move(lifetimeArguments),
+                                 .operationLifetimeParameters =
+                                     concepts[*id - 1].operations[*operation].genericParameters,
+                                 .operationLifetimeMapping =
+                                     conformance.operationLifetimeMappings[*operation],
+                                 .interfaceLifetimeContract =
+                                     concepts[*id - 1].operations[*operation].lifetimeContract,
+                                 .interfaceSubstitution = nominalSubstitution(
+                                     concepts[*id - 1].genericParameters, *resolved)};
 }
 
 // Returns true when the call is fully analyzed here: an error, or a call
@@ -1752,11 +1830,6 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
       owner.arguments, owner.name.last(), "GTI-S2123");
   if (!resolved.valid)
     return fail();
-  if (!expr.typeArguments().empty()) {
-    reportConformanceError(
-        site, "A concept operation takes no explicit generic arguments.");
-    return fail();
-  }
   const std::optional<std::size_t> index =
       operationIndex(conceptInfo.operations, site.lexeme);
   if (!index) {
@@ -1764,6 +1837,34 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
                                      "' has no operation '" + site.lexeme +
                                      "'.");
     return fail();
+  }
+  const RegisteredConcept::ProtocolOperation &operation =
+      conceptInfo.operations[*index];
+  if (expr.typeArguments().size() > operation.genericParameters.size()) {
+    reportConformanceError(site, operation.genericParameters.empty()
+        ? "A concept operation takes no explicit generic arguments."
+        : "A concept operation takes at most " +
+              std::to_string(operation.genericParameters.size()) +
+              " explicit lifetime arguments.");
+    return fail();
+  }
+  GenericSubstitution operationSubstitution;
+  for (std::size_t argumentIndex = 0;
+       argumentIndex < expr.typeArguments().size(); ++argumentIndex) {
+    const auto &argument = expr.typeArguments()[argumentIndex];
+    if (argument.name.segments.size() != 1 || argument.qualifiedOwner ||
+        !argument.arguments.empty() || !argument.pointers.empty() ||
+        argument.reference || !argument.arrayExtents.empty() ||
+        argument.genericValueExpression) {
+      reportConformanceError(argument.name.last(),
+                             "A concept operation generic argument must name a lifetime.");
+      return fail();
+    }
+    const Lifetime region = resolveLifetimeArgument(argument.name.last());
+    if (!region.specified())
+      return fail();
+    operationSubstitution.lifetimes.emplace(
+        operation.genericParameters[argumentIndex].id, region);
   }
   std::vector<SemanticType> arguments;
   const GenericSubstitution instance{.types = instanceTypeSubstitution,
@@ -1825,15 +1926,17 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
 
   // Through the requirement: check the arguments against the declared
   // signature. Each concrete instance resolves the block function itself.
-  const RegisteredConcept::ProtocolOperation &operation =
-      conceptInfo.operations[*index];
   std::vector<SemanticType> parameterTypes;
   parameterTypes.reserve(operation.parameterTypes.size());
   for (const SemanticType &parameter : operation.parameterTypes) {
-    parameterTypes.push_back(protocolOperationType(id, parameter, arguments, resolved.lifetimes));
+    parameterTypes.push_back(substituteType(
+        protocolOperationType(id, parameter, arguments, resolved.lifetimes),
+        operationSubstitution));
   }
   const SemanticType returnType =
-      protocolOperationType(id, operation.returnType, arguments, resolved.lifetimes);
+      substituteType(protocolOperationType(id, operation.returnType, arguments,
+                                           resolved.lifetimes),
+                     operationSubstitution);
   if (expr.arguments().size() != parameterTypes.size()) {
     report(expr.paren(),
            "Function expects " + std::to_string(parameterTypes.size()) +

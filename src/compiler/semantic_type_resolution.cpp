@@ -1722,7 +1722,8 @@ auto SemanticVisitor::Impl::resolveNominalArguments(
         if (argument.name.segments.size() != 1 ||
             !argument.arguments.empty() || !argument.pointers.empty() ||
             !argument.arrayExtents.empty() || argument.reference ||
-            argument.packExpansion || argument.genericValueExpression) {
+            argument.packExpansion || argument.genericValueExpression ||
+            argument.qualifiedOwner) {
           report(argument.name.last(), "Generic lifetime parameter '" +
                      parameter.name.lexeme + "' requires a lifetime argument.",
                  "GTI-S2126");
@@ -1803,7 +1804,7 @@ auto SemanticVisitor::Impl::resolveNominalArguments(
       if (argument.name.segments.size() != 1 || !argument.arguments.empty() ||
           !argument.pointers.empty() || !argument.arrayExtents.empty() ||
           argument.reference || argument.packExpansion ||
-          argument.genericValueExpression) {
+          argument.genericValueExpression || argument.qualifiedOwner) {
         report(argument.name.last(), "Generic lifetime parameter '" +
                    parameter.name.lexeme + "' requires a lifetime argument.",
                "GTI-S2126");
@@ -7827,7 +7828,7 @@ auto SemanticVisitor::Impl::nominalArguments(
       if (argument.name.segments.size() != 1 || !argument.arguments.empty() ||
           !argument.pointers.empty() || !argument.arrayExtents.empty() ||
           argument.reference || argument.packExpansion ||
-          argument.genericValueExpression)
+          argument.genericValueExpression || argument.qualifiedOwner)
         return std::nullopt;
       const Lifetime lifetime = lifetimeOf(argument.name.last());
       if (!lifetime.specified())
@@ -8214,7 +8215,7 @@ auto SemanticVisitor::Impl::resolveRequirements(
                           argument.arguments.empty() &&
                           argument.pointers.empty() && !argument.reference &&
                           argument.arrayExtents.empty() &&
-                          !argument.genericValueExpression;
+                          !argument.genericValueExpression && !argument.qualifiedOwner;
         const Lifetime lifetime =
             bare ? (restated ? lifetimeOf(argument.name.last())
                              : resolveLifetimeArgument(argument.name.last()))
