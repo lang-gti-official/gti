@@ -18,6 +18,36 @@ namespace lang {
 
 namespace {
 
+template <typename Instance> struct HirLifetimeInstanceView {
+  const Instance *instance = nullptr;
+  std::vector<LifetimeBinding> bindings;
+};
+
+// Body places retain the caller's regions while HIR instances use their own
+// universal slots. Select a unique exact structural instance and instantiate
+// its field recipes; representation erasure is never a lookup proof.
+template <typename Instance>
+[[nodiscard]] std::optional<HirLifetimeInstanceView<Instance>>
+hirLifetimeInstanceView(const std::vector<Instance> &instances,
+                        const SemanticType &type) {
+  std::optional<HirLifetimeInstanceView<Instance>> result;
+  for (const auto &instance : instances) {
+    const auto &parameters = [&]() -> const std::vector<Lifetime> & {
+      if constexpr (std::is_same_v<Instance, HirLambda>)
+        return instance.environmentLifetimes;
+      else
+        return instance.lifetimeContract.parameters;
+    }();
+    const auto bindings = matchUniversalTypeLifetimes(instance.type, type, parameters);
+    if (!bindings)
+      continue;
+    if (result)
+      return std::nullopt;
+    result = HirLifetimeInstanceView<Instance>{&instance, *bindings};
+  }
+  return result;
+}
+
 // The first-use outcomes a thread-local access raises through its
 // EnsureThreadLocal guard rather than through the accessing instruction.
 [[nodiscard]] bool threadLocalGuardOutcome(DefinedFailureOutcome outcome) {
@@ -6813,35 +6843,36 @@ private:
     if (type.kind == SemanticType::Enum) {
       // An abstract entry path describes a possible active alternative, not
       // permission to search every alternative for a convenient field.
-      if (!variant)
+      const auto view = hirLifetimeInstanceView(program.enumDeclarations(), type);
+      if (!variant || !view || !view->instance->payload)
         return std::nullopt;
-      for (const auto &owner : program.enumDeclarations())
-        if (owner.type == type && owner.payload)
-          for (const auto &alternative : owner.enumerators)
-            if (alternative.variantIndex == *variant &&
-                alternative.payloadTypes.size() ==
-                    alternative.payloadSymbols.size())
-              for (std::size_t index = 0;
-                   index < alternative.payloadSymbols.size(); ++index)
-                if (alternative.payloadSymbols[index] == field)
-                  return alternative.payloadTypes[index];
+      for (const auto &alternative : view->instance->enumerators)
+        if (alternative.variantIndex == *variant &&
+            alternative.payloadTypes.size() == alternative.payloadSymbols.size())
+          for (std::size_t index = 0; index < alternative.payloadSymbols.size(); ++index)
+            if (alternative.payloadSymbols[index] == field)
+              return substituteTypeLifetimes(alternative.payloadTypes[index], view->bindings);
       return std::nullopt;
     }
     if (variant)
       return std::nullopt;
     if (type.kind == SemanticType::Lambda) {
-      for (const auto &owner : program.lambdaInstances())
-        if (owner.type == type)
-          for (const auto &capture : owner.captures)
-            if (capture.bindingSymbol == field)
-              return capture.type;
+      const auto view = hirLifetimeInstanceView(program.lambdaInstances(), type);
+      if (!view)
+        return std::nullopt;
+      for (const auto &capture : view->instance->captures)
+        if (capture.bindingSymbol == field)
+          return substituteTypeLifetimes(capture.type, view->bindings);
       return std::nullopt;
     }
-    for (const auto &owner : program.classInstances())
-      if (owner.type == type)
-        for (const auto &member : owner.fields)
-          if (member.info.symbol == field)
-            return member.info.type;
+    if (type.kind != SemanticType::Class)
+      return std::nullopt;
+    const auto view = hirLifetimeInstanceView(program.classInstances(), type);
+    if (!view)
+      return std::nullopt;
+    for (const auto &member : view->instance->fields)
+      if (member.info.symbol == field)
+        return substituteTypeLifetimes(member.info.type, view->bindings);
     return std::nullopt;
   }
 
@@ -6951,19 +6982,19 @@ private:
         exact = false;
         return;
       }
-      const auto instance = std::find_if(
-          program.classInstances().begin(), program.classInstances().end(),
-          [&](const HirClassInstance &candidate) {
-            return candidate.type == current;
-          });
-      if (instance == program.classInstances().end() ||
-          !instance->bases.empty()) {
+      const auto view = hirLifetimeInstanceView(program.classInstances(), current);
+      if (!view || !view->instance->bases.empty()) {
         exact = false;
         return;
       }
       visiting.push_back(current);
-      for (const auto &field : instance->fields) {
-        const SemanticType &fieldType = field.info.type;
+      for (const auto &field : view->instance->fields) {
+        const auto instantiated = substituteTypeLifetimes(field.info.type, view->bindings);
+        if (!instantiated) {
+          exact = false;
+          break;
+        }
+        const SemanticType &fieldType = *instantiated;
         prefix.push_back(field.info.symbol);
         if (fieldType.kind == SemanticType::Reference &&
             fieldType.arguments.size() == 1)

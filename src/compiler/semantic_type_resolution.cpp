@@ -4366,7 +4366,10 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
       }
       const bool enclosingAllowPack = allowPackTypeReference;
       allowPackTypeReference = component.packExpansion && index + 1 == count;
-      validateType(component);
+      // The complete callable owns these formation premises, including
+      // higher-ranked names. Components cannot require an enclosing body to
+      // prove the inner invocation's assumptions.
+      validateType(component, false, true);
       allowPackTypeReference = enclosingAllowPack;
       const SemanticType resolved = typeOf(component);
       if (component.packExpansion && resolved.kind == SemanticType::TypePack) {
@@ -4397,11 +4400,15 @@ auto SemanticVisitor::Impl::validateType(const TypeRef &type,
                                    "function signature component", false, true);
       }
     }
-    if (diagnostics.size() == diagnosticStart &&
-        typeOf(type) == SemanticType::Unknown)
-      report(type.name.last(),
-             "A callable result lifetime requires one input lifetime or an explicit annotation.",
-             "GTI-S2127");
+    if (diagnostics.size() == diagnosticStart) {
+      const auto signature = typeOf(type);
+      if (signature == SemanticType::Unknown)
+        report(type.name.last(),
+               "A callable result lifetime requires one input lifetime or an explicit annotation.",
+               "GTI-S2127");
+      else
+        validateNominalFormation(signature, type.name.last());
+    }
     return;
   }
   if (type.isNativeFunction()) {

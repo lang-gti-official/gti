@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
       if (mir && internal && argc > 2 &&
           (name == "stored-external-reference-keeps-its-declared-region" ||
            name == "borrowed-value-parameter-publishes-stored-suppliers")) {
-        const std::size_t owner = name == "stored-external-reference-keeps-its-declared-region" ? 2 : 1;
+        const std::size_t owner = 2;
         const auto directory = std::filesystem::path(argv[2]);
         std::filesystem::create_directories(directory);
         const auto path = directory / (std::string(name) + ".mir.txt");

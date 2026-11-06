@@ -304,6 +304,46 @@ int main() { return 0; }
   }
 }
 
+void testScopedNominalCallableFormation() {
+  const std::string declarations = R"(
+struct Holder<T, lifetime a> {
+  T&<a> value;
+  Holder(T&<a> initial) : value(initial) {}
+};
+struct Carrier<F> {};
+using Scoped<T, lifetime outer> = for<lifetime inner> void(Holder<T, inner>, int&<outer>);
+void preserve<T, lifetime outer>(Carrier<Scoped<T, outer>> callback) {}
+)";
+  const auto result = analyze(declarations + "int main() { return 0; }");
+  expectValid(result, "higher-ranked nominal premises remain inside the callable's invocation");
+  const auto *preserve = function(result, "preserve");
+  expect(preserve && preserve->lifetimeContract.valid() &&
+             preserve->lifetimeContract.parameters.size() == 1 &&
+             preserve->lifetimeContract.bounds.empty() &&
+             preserve->lifetimeContract.typeBounds.empty() &&
+             preserve->lifetimeContract.requirements.nodes.empty(),
+         "receiving a phantom callable carrier cannot assume its nested invocation premises");
+  const auto escaping = analyze(declarations + R"(
+int&<static> escape<lifetime outer>(Carrier<Scoped<int, outer>> callback, int&<outer> value) {
+  return value;
+}
+int main() { return 0; }
+)");
+  expect(!escaping.semanticValid && std::any_of(escaping.diagnostics.begin(), escaping.diagnostics.end(),
+         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
+         "a nested callable's lifetime premises cannot justify an outer reference escape");
+  const auto fixedPattern = analyze(R"(
+struct Fixed<T> {};
+struct Fixed<int&<static>> {};
+using Invalid = for<lifetime a> void(Fixed<int&<a>>);
+int main() { return 0; }
+)");
+  expect(!fixedPattern.semanticValid &&
+             std::any_of(fixedPattern.diagnostics.begin(), fixedPattern.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
+         "an inner invocation must satisfy fixed nominal specialization regions exactly");
+}
+
 void testAssociatedLifetimeFamily() {
   const auto result = analyze(R"(
 concept BorrowType<T, lifetime owner> { typename Borrow<lifetime a>; };
@@ -883,6 +923,7 @@ int main() {
   testNominalArguments();
   testTransparentAliases();
   testHigherRankedAlias();
+  testScopedNominalCallableFormation();
   testAssociatedLifetimeFamily();
   testBinderDiagnostics();
   testProtocolOperationBinders();

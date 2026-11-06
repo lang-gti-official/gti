@@ -313,7 +313,7 @@ public:
   [[nodiscard]] LifetimeSignatureContract
   nominalLifetimeContract(const SemanticType &type) const override;
   [[nodiscard]] std::optional<LifetimeRequirementFormula>
-  nominalFormationRequirements(const SemanticType &type) const;
+  nominalFormationRequirements(const SemanticType &type, bool includeChildren = true) const;
   [[nodiscard]] bool collectNominalFormationAssumptions(
       const SemanticType &type, LifetimeSignatureContract &contract) const;
   void validateNominalFormation(const SemanticType &type, const Token &site);

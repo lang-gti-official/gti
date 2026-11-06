@@ -1,11 +1,20 @@
 #include "../src/compiler/mir_lifetimes.h"
 #include "gti/mir_printer.h"
+#include "gti/mir_effects.h"
 #include "gti/callable_lifetimes.h"
 #include "gti/nominal_variance.h"
 
 #include <cstdlib>
 #include <iostream>
 
+namespace lang {
+struct MirProgramTestAccess {
+  static auto &classes(MirProgram &program) { return program.classes; }
+  static auto &payloads(MirProgram &program) { return program.payloadEnums_; }
+  static auto &integrals(MirProgram &program) { return program.integralEnums_; }
+  static auto &lambdas(MirProgram &program) { return program.lambdas; }
+};
+} // namespace lang
 using namespace lang;
 namespace {
 void expect(bool condition, const char *message) {
@@ -19,8 +28,102 @@ SemanticType reference(GenericParameterId id) {
   type.referenceLifetime = Lifetime::parameter(id);
   return type;
 }
+void cleanupLifetimeRecipes() {
+  const auto region = Lifetime::parameter(801);
+  const auto actualRegion = Lifetime::local(901);
+  const auto instantiate = [&](const SemanticType &type) {
+    return *substituteTypeLifetimes(type, std::array{LifetimeBinding{region, actualRegion}});
+  };
+  MirProgram program;
+  MirClassInstance leaf;
+  leaf.id = 1;
+  leaf.declaration = 11;
+  leaf.type = SemanticType::classType(11);
+  leaf.type.lifetimeArguments = {region};
+  leaf.lifetimeContract = {.parameters = {region}, .complete = true};
+  leaf.destructor = 1;
+  leaf.destructorStatus = SpecialMemberStatus::Declared;
+  leaf.requiresActiveDropState = true;
+  leaf.requiresActiveCleanup = true;
+  leaf.declaredFields = {{.symbol = 101, .type = reference(801)}};
+  MirClassInstance outer;
+  outer.id = 2;
+  outer.declaration = 12;
+  outer.type = SemanticType::classType(12);
+  outer.type.lifetimeArguments = {region};
+  outer.lifetimeContract = leaf.lifetimeContract;
+  outer.requiresActiveCleanup = true;
+  outer.declaredFields = {{.symbol = 102,
+      .type = SemanticType::uniqueOwnerOf(leaf.type), .requiresActiveCleanup = true}};
+  outer.bases = {{.instance = leaf.id, .type = leaf.type}};
+  MirProgramTestAccess::classes(program) = {leaf, outer};
+  const auto actualLeaf = instantiate(leaf.type);
+  const auto actualOuter = instantiate(outer.type);
+  const auto record = mirUniqueCleanupType(program, actualOuter);
+  expect(record && record->type == actualOuter && record->classInstance == 2 &&
+             record->aggregate.size() == 2 &&
+             record->aggregate[0].type == SemanticType::uniqueOwnerOf(actualLeaf) &&
+             record->aggregate[0].uniqueOwnerField == 102 &&
+             record->aggregate[0].uniquePointeeClass == 1 &&
+             record->aggregate[1].type == actualLeaf &&
+             record->aggregate[1].uniqueOwnerBase == 1,
+         "cleanup substitutes exact field and base regions while retaining physical declaration IDs");
+  const auto arrayType = SemanticType::arrayOf(actualOuter, std::size_t{2});
+  const auto array = mirUniqueCleanupType(program, arrayType);
+  expect(array && array->fixedArray && array->fixedArray->leafType == actualOuter &&
+             array->aggregate.size() == 1 && array->aggregate.front() == *record,
+         "array cleanup retains its actual leaf recipe and exact child lifetime types");
+  MirPayloadEnum payload;
+  payload.declaration = 21;
+  payload.type = SemanticType::enumType(21);
+  payload.type.lifetimeArguments = {region};
+  payload.lifetimeContract = leaf.lifetimeContract;
+  payload.requiresActiveCleanup = true;
+  payload.variants = {{.variantIndex = 0, .payloadTypes = {outer.type},
+                       .payloadSymbols = {103}, .payloadRequiresActiveCleanup = {true}}};
+  MirProgramTestAccess::payloads(program) = {payload};
+  const auto actualPayload = instantiate(payload.type);
+  const auto enumeration = mirUniqueCleanupType(program, actualPayload);
+  expect(enumeration && enumeration->type == actualPayload &&
+             enumeration->aggregate.size() == 1 &&
+             enumeration->aggregate.front().type == actualOuter &&
+             enumeration->aggregate.front().payloadField == 0,
+         "enum cleanup instantiates the actual payload recipe");
+  expect(!mirUniqueCleanupType(program, SemanticType::uniqueOwnerOf(actualPayload)) &&
+             !mirUniqueCleanupType(program, SemanticType::uniqueOwnerOf(SemanticType::enumType(99))),
+         "a failed payload view must never be treated as an integral enum cleanup");
+  MirIntegralEnum integral;
+  integral.declaration = 22;
+  integral.type = SemanticType::enumType(22);
+  integral.underlyingType = SemanticType::Int32;
+  MirProgramTestAccess::integrals(program) = {integral};
+  expect(mirUniqueCleanupType(program, SemanticType::uniqueOwnerOf(integral.type)).has_value(),
+         "a known integral enum retains its supported owner cleanup");
+  MirLambdaInstance closure;
+  closure.id = 1;
+  closure.declaration = 31;
+  closure.environmentLifetimes = {region};
+  closure.type = SemanticType::lambdaType(31, SemanticType::Int32, {}, std::array{outer.type});
+  closure.type.lifetimeArguments = {region};
+  closure.returnType = SemanticType::Int32;
+  closure.lifetimeContract = leaf.lifetimeContract;
+  closure.captureTypes = {outer.type};
+  closure.captureRequiresActiveCleanup = {true};
+  MirProgramTestAccess::lambdas(program) = {closure};
+  const auto actualClosure = instantiate(closure.type);
+  const auto capture = mirUniqueCleanupType(program, actualClosure);
+  expect(capture && capture->type == actualClosure && capture->lambdaInstance == 1 &&
+             capture->aggregate.size() == 1 &&
+             capture->aggregate.front().type == actualOuter &&
+             capture->aggregate.front().captureIndex == 0,
+         "closure cleanup substitutes its fixed environment without changing invocation binders");
+  MirProgramTestAccess::classes(program).push_back(leaf);
+  expect(!mirUniqueCleanupType(program, actualLeaf),
+         "ambiguous physical instances cannot select a cleanup target by erased type equality");
+}
 } // namespace
 int main() {
+  cleanupLifetimeRecipes();
   const auto fixedEnvironment = Lifetime::parameter(701);
   const std::array closureParameters{reference(702)};
   const std::array closureCaptures{reference(701)};

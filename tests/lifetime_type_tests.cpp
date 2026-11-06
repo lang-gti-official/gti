@@ -1,4 +1,5 @@
 #include "gti/lifetime_types.h"
+#include "gti/callable_lifetimes.h"
 
 #include <array>
 #include <cstdlib>
@@ -17,10 +18,95 @@ lang::SemanticType reference(lang::Lifetime region,
   type.referenceLifetime = region;
   return type;
 }
+
+void testScopedCallableFormation() {
+  using namespace lang;
+  using Node = LifetimeRequirementNode;
+  const auto invocation = Lifetime::parameter(201);
+  const auto environment = Lifetime::parameter(202);
+  const auto foreign = Lifetime::parameter(203);
+  auto holder = SemanticType::classType(41, {SemanticType::typeParameter(301)});
+  holder.lifetimeArguments = {invocation};
+  const CallableNominalFormation formation = [](const SemanticType &type)
+      -> std::optional<LifetimeRequirementFormula> {
+    if (type.classId == 42)
+      return LifetimeRequirementFormula{}; // A phantom type argument has no stored premise.
+    if (type.classId != 41 || type.arguments.size() != 1 || type.lifetimeArguments.size() != 1)
+      return std::nullopt;
+    return LifetimeRequirementFormula{
+        .nodes = {{.kind = Node::Kind::Type, .bound = {{}, type.lifetimeArguments.front()},
+                   .type = type.arguments.front()}}, .root = 0};
+  };
+  auto signature = SemanticType::functionSignature(reference(environment), {holder});
+  signature.quantifiedLifetimes = {invocation.id};
+  const auto contract = callableLifetimeContract(signature, formation);
+  expect(contract && contract->parameters == std::vector{invocation, environment} &&
+             contract->requirements.nodes.size() == 1 &&
+             contract->requirements.nodes.front().bound.shorter == invocation,
+         "a callable owns exact nominal formation premises in its invocation scope");
+  expect(!callableLifetimeContract(signature),
+         "nominal callable formation requires authoritative declaration lookup");
+  auto carrier = SemanticType::classType(42, {signature});
+  const auto outer = SemanticType::functionSignature(SemanticType::Void, {carrier});
+  const auto outerContract = callableLifetimeContract(outer, formation);
+  expect(outerContract && outerContract->parameters == std::vector{environment} &&
+             outerContract->typeBounds.empty() && outerContract->requirements.nodes.empty(),
+         "nested invocation premises and quantifiers do not leak through a phantom carrier");
+  expect(!callableLifetimeContract(outer, [](const SemanticType &type)
+             -> std::optional<LifetimeRequirementFormula> {
+               return type.classId == 42 ? std::optional{LifetimeRequirementFormula{}} : std::nullopt;
+             }),
+         "an unresolved nominal recipe inside a nested invocation is rejected");
+  expect(!callableLifetimeContract(signature, [&](const SemanticType &)
+             -> std::optional<LifetimeRequirementFormula> {
+               return LifetimeRequirementFormula{
+                   .nodes = {{.kind = Node::Kind::Type, .bound = {{}, invocation},
+                              .type = reference(foreign)}}, .root = 0};
+             }),
+         "a nominal formation recipe cannot introduce a foreign region into a scoped contract");
+  const LifetimeRequirementFormula either{
+      .nodes = {{.kind = Node::Kind::Region, .bound = {invocation, environment}},
+                 {.kind = Node::Kind::Region, .bound = {environment, invocation}},
+                 {.kind = Node::Kind::Any, .left = 0, .right = 1}}, .root = 2};
+  const auto disjunctive = callableLifetimeContract(signature,
+      [&](const SemanticType &) -> std::optional<LifetimeRequirementFormula> { return either; });
+  expect(disjunctive && disjunctive->bounds.empty() && disjunctive->requirements == either,
+         "explicit nominal relations survive even when no stored field independently implies them");
+  CallableLifetimeSignature proof{.signature = signature, .contract = *contract,
+                                  .signatureBindings = {{environment, Lifetime::local(88)}}};
+  const auto actual = substituteTypeLifetimes(signature, proof.signatureBindings);
+  expect(actual && callableLifetimeCarrierMatches(proof, *actual, formation),
+         "fixed local environment choices preserve the scoped nominal contract");
+  proof.contract.requirements = {};
+  expect(!callableLifetimeCarrierMatches(proof, *actual, formation),
+         "removing a nominal formation premise invalidates callable metadata");
+  GenericParameterId fresh = 1001;
+  const auto canonical = makeCallableLifetimeSignature(*actual, formation,
+      [&] { return Lifetime::parameter(fresh++); });
+  expect(canonical && canonical->signature.quantifiedLifetimes == signature.quantifiedLifetimes &&
+             canonical->signatureBindings.size() == 1 &&
+             canonical->signatureBindings.front().second == Lifetime::local(88),
+         "fixed carrier choices are universalized separately from invocation quantifiers");
+  const auto staticSignature = SemanticType::functionSignature(
+      reference(Lifetime::staticLifetime()), {reference(Lifetime::staticLifetime())});
+  const auto staticProof = makeCallableLifetimeSignature(staticSignature, {},
+      [&] { return Lifetime::parameter(fresh++); });
+  expect(staticProof && staticProof->signature == staticSignature &&
+             staticProof->signatureBindings.empty() && fresh == 1002 &&
+             callableLifetimeCarrierMatches(*staticProof, staticSignature),
+         "static is a fixed constant rather than a supplied carrier parameter");
+  auto malformed = either;
+  malformed.nodes.push_back({.kind = Node::Kind::Region, .bound = {invocation, environment}});
+  malformed.root = malformed.nodes.size() - 1;
+  LifetimeRequirementFormula destination = either;
+  expect(!appendLifetimeRequirementFormula(destination, malformed) && destination == either,
+         "formula composition rejects dangling nodes without changing checked facts");
+}
 } // namespace
 
 int main() {
   using namespace lang;
+  testScopedCallableFormation();
   const auto a = Lifetime::parameter(1);
   const auto b = Lifetime::parameter(2);
   const auto x = Lifetime::parameter(31);

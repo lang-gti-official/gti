@@ -14790,7 +14790,15 @@ completeBorrowSourcePath(const MirProgram &program,
     // The stored capability is authority only for this complete executable
     // value. Never choose a matching primary origin while losing another
     // path, permission or guard. The ordinary loan verifier checks activity.
-    if (retained != fact->dependencies) {
+    auto contents = fact->dependencies;
+    // A constructor or earlier checked publication can already have retained
+    // this exact group. Its source/path/permission/guards must still match the
+    // complete group; only that proven group's own parent spelling differs.
+    if (retained.size() == contents.size())
+      for (std::size_t index = 0; index < contents.size(); ++index)
+        if (contents[index].parent == group->id)
+          contents[index].parent = retained[index].parent;
+    if (retained != contents) {
       if (replayFailure)
         *replayFailure = "stored group " + std::to_string(group->id) +
             " differs from its reconstructed contents: retained " +
@@ -15242,6 +15250,42 @@ completeBorrowSourcePath(const MirProgram &program,
             claims.front().designatedFields.empty())
           claims.front().designatedFields =
               reconstructed.dependencies.front().designatedFields;
+        // Shared reference formals are caller-owned roots. An executable
+        // argument can pass through their entry loan while a fresh Stored
+        // publication names the formal directly. Establish that equivalence
+        // from the exact formal and its entry loan; never discard a local or
+        // exclusive reborrow's parent merely because its source overlaps.
+        if (claims.size() == reconstructed.dependencies.size())
+          for (std::size_t index = 0; index < claims.size(); ++index) {
+            auto &dependency = reconstructed.dependencies[index];
+            const auto &claim = claims[index];
+            if (claim.parent || !dependency.parent ||
+                claim.access != AccessMode::ReadOnly ||
+                dependency.access != AccessMode::ReadOnly ||
+                claim.source != dependency.source)
+              continue;
+            const auto *entry = body.findLoan(dependency.parent);
+            const auto *source = body.findPlace(dependency.source);
+            if (!entry || !entry->entry || entry->kind != MirLoanKind::Parameter ||
+                entry->parent || entry->access != AccessMode::ReadOnly ||
+                entry->source != dependency.source ||
+                !entry->designatedFields.empty() || !entry->conditions.empty() ||
+                !entry->additionalDependencies.empty() || !source ||
+                source->root != MirPlaceRootKind::Binding ||
+                !source->projections.empty() || !source->initiallyAvailable ||
+                source->foreignStorage || !parameters || !parameterTypes ||
+                parameters->size() != parameterTypes->size() ||
+                std::count(parameters->begin(), parameters->end(), source->binding) != 1)
+              continue;
+            const auto formalIndex =
+                std::find(parameters->begin(), parameters->end(), source->binding) -
+                parameters->begin();
+            const auto &formal = (*parameterTypes)[formalIndex];
+            if (formal.kind == SemanticType::Reference &&
+                formal.arguments.size() == 1 &&
+                formal.referenceAccess == AccessMode::ReadOnly && source->type == formal)
+              dependency.parent = 0;
+          }
         if (claims == reconstructed.dependencies) {
           // Copies of the constructed carrier retain its proven group, not
           // a fresh claim about the original parameter's storage.

@@ -71,6 +71,22 @@ T&<region> get<T, lifetime region>(State<T>&<region> state) {
 }
 int main() { State<int> state = State<int>::value(7); return get(state) - 7; }
 """,
+    "higher_ranked_pointer_core": """
+import std.detail.function_pointer;
+using Selection = for<lifetime region> int&<region>(int&<region>, int&<region>, bool);
+int&<shorter> select<lifetime longer, lifetime shorter>(
+    int&<longer> left, int&<shorter> right, bool first)
+    requires outlives<longer, shorter> {
+  if (first) { return left; }
+  return right;
+}
+int main() {
+  auto pointer = gti_internal::function_pointer_from_item<Selection>(select);
+  int left = 3; int right = 8;
+  if (gti_internal::function_pointer_invoke(pointer, left, right, true) != 3) { return 1; }
+  return gti_internal::function_pointer_invoke(pointer, left, right, false) - 8;
+}
+""",
     "higher_ranked_pointer": """
 import std.functional;
 using Selection = for<lifetime region> int&<region>(int&<region>, int&<region>, bool);
@@ -196,7 +212,7 @@ def main():
 
     # Compare the same identity operation with an explicit and an elided
     # contract. Object symbols prove generated allocation dependencies only.
-    for label in ("explicit_identity", "elided_identity", "borrowed_record", "higher_ranked_pointer"):
+    for label in ("explicit_identity", "elided_identity", "borrowed_record", "higher_ranked_pointer_core", "higher_ranked_pointer"):
         obj, ir = output / (label + ".o"), output / (label + ".ll")
         run([emitter, output / (label + ".gti"), obj, ir, 3, "--source-preflight"], label + "-object")
         symbols = run(["nm", "-u", obj], label + "-undefined-symbols").stdout

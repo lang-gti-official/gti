@@ -393,6 +393,11 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
   return result;
 }
 
+namespace {
+std::optional<LifetimeRequirementFormula>
+mirNominalFormationRequirements(const MirProgram &program, const SemanticType &type);
+} // namespace
+
 const CallableLifetimeSignature *checkedMirCallableLifetimeSignature(
     const MirProgram &program, const MirInstruction &instruction) {
   const bool forming = instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem;
@@ -414,7 +419,10 @@ const CallableLifetimeSignature *checkedMirCallableLifetimeSignature(
   const auto owner = mirClassLifetimeView(program, *carrier);
   const auto &callable = *instruction.lifetimeApplication.callableSignature;
   if (!owner || owner->instance->compilerCapability != CompilerCapabilityTypeKind::FunctionPointer ||
-      !callableLifetimeCarrierMatches(callable, carrier->arguments.front()))
+      !callableLifetimeCarrierMatches(callable, carrier->arguments.front(),
+          [&](const SemanticType &type) {
+            return mirNominalFormationRequirements(program, type);
+          }))
     return nullptr;
   if (!forming) {
     const auto &bindings = instruction.lifetimeApplication.bindings;
@@ -585,6 +593,38 @@ bool scopedLifetimeContract(const LifetimeSignatureContract &contract) {
         !scopedDeclarationType(node.type, contract.parameters))
       return false;
   return true;
+}
+
+std::optional<LifetimeRequirementFormula>
+mirNominalFormationRequirements(const MirProgram &program, const SemanticType &type) {
+  const LifetimeSignatureContract *declared = nullptr;
+  std::vector<LifetimeBinding> bindings;
+  if (type.kind == SemanticType::Class) {
+    const auto view = mirClassLifetimeView(program, type);
+    if (!view)
+      return std::nullopt;
+    declared = &view->instance->lifetimeContract;
+    bindings = view->bindings;
+  } else if (type.kind == SemanticType::Enum) {
+    const auto view = mirEnumLifetimeView(program, type);
+    if (!view)
+      return std::nullopt;
+    declared = view->payload ? &view->payload->lifetimeContract : &view->integral->lifetimeContract;
+    bindings = view->bindings;
+  } else {
+    return std::nullopt;
+  }
+  // Explicit nominal requirements are sealed declaration authority, preserved
+  // from HIR. The exact view instantiates that contract; a storage walk alone
+  // cannot recover explicit requirements on phantom parameters. The caller
+  // separately proves every resulting obligation under its scoped signature.
+  if (!declared->valid() || !scopedLifetimeContract(*declared) ||
+      !declared->requirements.resolved())
+    return std::nullopt;
+  const auto actual = substituteLifetimeContract(*declared, bindings);
+  if (!actual || !actual->valid() || !scopedLifetimeContract(*actual))
+    return std::nullopt;
+  return lifetimeContractRequirements(*actual);
 }
 
 template <typename Verify>

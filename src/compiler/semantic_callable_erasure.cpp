@@ -243,28 +243,21 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
   }
   if (forming)
     pointer.arguments.front() = signature;
-  CallableLifetimeSignature callable;
-  std::vector<LifetimeBinding> lift;
   std::size_t slot = 0;
-  for (const auto region : freeTypeLifetimes(signature)) {
-    ++slot;
-    const auto universal = implicitSyntaxLifetime(expr.paren(), 4096 + slot,
-                                                  "_carrier" + std::to_string(slot));
-    lift.emplace_back(region, universal);
-    callable.signatureBindings.emplace_back(universal, region);
-  }
-  const auto universalSignature = substituteTypeLifetimes(signature, lift);
-  const auto contract = universalSignature
-                            ? callableLifetimeContract(*universalSignature)
-                            : std::nullopt;
-  if (!contract) {
+  const auto formed = makeCallableLifetimeSignature(signature,
+      [&](const SemanticType &nominal) { return nominalFormationRequirements(nominal, false); },
+      [&] {
+        ++slot;
+        return implicitSyntaxLifetime(expr.paren(), 4096 + slot,
+                                       "_carrier" + std::to_string(slot));
+      });
+  if (!formed) {
     report(expr.paren(), "The callable lifetime signature is not fully normalized.",
            "GTI-S2127");
     currentType = SemanticType::Unknown;
     return;
   }
-  callable.signature = *universalSignature;
-  callable.contract = *contract;
+  auto callable = *formed;
   auto result = signature.arguments.front();
   if (!containsOpenTypeParameter(result) &&
       result.kind != SemanticType::Reference &&

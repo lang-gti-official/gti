@@ -242,9 +242,37 @@ int main() {
   return probe(first, second);
 }
 )gti");
-  if (!copiedCarrier.canGenerateCode())
+  if (!copiedCarrier.canGenerateCode()) {
     for (const auto &diagnostic : copiedCarrier.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    if (const auto *probe = copiedCarrier.hir.findFunctionInstance(2)) {
+      for (const auto &loan : probe->body.loans)
+        std::cerr << "probe HIR loan=" << loan.semanticLoan << " entry=" << loan.entry
+                  << " parent=" << loan.parent << " fields=" << loan.designatedFields.size()
+                  << " suppliers=" << loan.additionalDependencies.size() << '\n';
+      for (const auto &value : probe->body.values)
+        if (value.functionTarget)
+          std::cerr << "probe HIR call=" << value.id << " target=" << *value.functionTarget
+                    << " origin=" << static_cast<int>(value.borrowOrigin)
+                    << " fields=" << value.borrowFields.size()
+                    << " complete=" << value.borrowDependencies.has_value()
+                    << " dependencies=" << (value.borrowDependencies ? value.borrowDependencies->dependencies.size() : 0)
+                    << '\n';
+    }
+    if (const auto *probe = copiedCarrier.mir.findFunctionInstance(2)) {
+      for (const auto &loan : probe->body.loans)
+        std::cerr << "probe MIR loan=" << loan.id << " kind=" << static_cast<int>(loan.kind)
+                  << " entry=" << loan.entry << " source=" << loan.source
+                  << " parent=" << loan.parent << " fields=" << loan.designatedFields.size() << '\n';
+      for (const auto &block : probe->body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.functionTarget)
+            std::cerr << "probe MIR call=" << instruction.id << " target=" << *instruction.functionTarget
+                      << " loan=" << instruction.loan.value_or(0)
+                      << " origin=" << static_cast<int>(instruction.borrowOrigin)
+                      << " fields=" << instruction.borrowFields.size() << '\n';
+    }
+  }
   expect(copiedCarrier.canGenerateCode(),
          "a copied readonly carrier must retain its exact stored parent authority");
   auto wrongCopiedCarrier = copiedCarrier.mir;
@@ -299,6 +327,109 @@ int main() {
         }
   expect(removedStoredAddress && !verifyMirProgram(missingStoredAddress).valid(),
          "stored-reference publication must preserve the exact evaluated field address");
+  const auto laterStoredField = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "later-stored-field-return.gti", R"gti(
+struct Pair<lifetime a> {
+  int&<a> left;
+  int&<a> right;
+  Pair(int&<a> first, int&<a> second) : left(first), right(second) {}
+};
+int&<a> choose<lifetime a>(Pair<a> pair, bool left) {
+  if (left) { return pair.left; }
+  return pair.right;
+}
+int main() { int left = 3; int right = 7; Pair pair{left, right}; return choose(pair, false) - 7; }
+)gti");
+  if (!laterStoredField.canGenerateCode())
+    for (const auto &diagnostic : laterStoredField.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(laterStoredField.canGenerateCode(),
+         "later abstract entry fields must publish their exact returned address");
+  auto missingLaterField = laterStoredField.mir;
+  bool removedLaterField = false;
+  for (const auto address : enumerateMirBodyAddresses(missingLaterField))
+    if (auto *body = findMirBody(missingLaterField, address))
+      for (auto &loan : body->loans)
+        if (loan.entry && loan.kind == MirLoanKind::Stored &&
+            !loan.additionalDependencies.empty()) {
+          loan.additionalDependencies.front().designatedFields.clear();
+          removedLaterField = true;
+        }
+  expect(removedLaterField && !verifyMirProgram(missingLaterField).valid(),
+         "later field publication cannot invent an absent abstract entry path");
+  const auto constructedCarrier = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "constructed-stored-reference-publication.gti", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+};
+int&<a> use<lifetime a>(int&<a> input, int&<a> other, bool choose) {
+  View<a> view{input};
+  if (choose) { return other; }
+  return view.get();
+}
+int main() { int first = 7; int second = 9; return use(first, second, false) - 7; }
+)gti");
+  if (!constructedCarrier.canGenerateCode())
+    for (const auto &diagnostic : constructedCarrier.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(constructedCarrier.canGenerateCode(),
+         "a locally constructed carrier must preserve its shared formal's complete authority");
+  std::optional<MirBodyAddress> constructionBody;
+  MirLoanId constructionLoan = 0;
+  MirLoanId incomingLoan = 0;
+  MirPlaceId otherFormal = 0;
+  for (const auto &function : constructedCarrier.mir.functionInstances()) {
+    if (function.parameterBindings.size() != 3 ||
+        function.parameterTypes[0].kind != SemanticType::Reference ||
+        function.parameterTypes[0] != function.parameterTypes[1])
+      continue;
+    const auto other = std::find_if(function.body.places.begin(), function.body.places.end(),
+        [&](const auto &place) {
+          return place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
+                 place.binding == function.parameterBindings[1] &&
+                 place.type == function.parameterTypes[1];
+        });
+    if (other == function.body.places.end())
+      continue;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Construct || !instruction.loan)
+          continue;
+        const auto *stored = function.body.findLoan(*instruction.loan);
+        if (!stored || stored->kind != MirLoanKind::Stored || stored->entry || stored->parent)
+          continue;
+        const auto entry = std::find_if(function.body.loans.begin(), function.body.loans.end(),
+            [&](const auto &loan) {
+              return loan.entry && loan.kind == MirLoanKind::Parameter &&
+                     loan.source == stored->source && loan.access == AccessMode::ReadOnly;
+            });
+        if (entry == function.body.loans.end())
+          continue;
+        constructionBody = MirBodyAddress{MirBodyKind::Function, function.id};
+        constructionLoan = stored->id;
+        incomingLoan = entry->id;
+        otherFormal = other->id;
+      }
+  }
+  expect(constructionBody && constructionLoan && incomingLoan && otherFormal,
+         "fixture must exercise a fresh Stored group from a shared reference entry");
+  for (int mutation = 0; mutation != 3; ++mutation) {
+    auto invalid = constructedCarrier.mir;
+    auto *body = findMirBody(invalid, *constructionBody);
+    auto &stored = body->loans[constructionLoan - 1];
+    auto &entry = body->loans[incomingLoan - 1];
+    if (mutation == 0)
+      stored.source = otherFormal;
+    else if (mutation == 1)
+      entry.entry = false;
+    else
+      entry.access = AccessMode::Mutable;
+    const auto rejected = verifyMirProgram(invalid);
+    expect(!rejected.valid(),
+           "constructor publication cannot forge its source or erase a local/exclusive parent");
+  }
   const auto physical = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "physical-payload-contract.gti", R"gti(
 enum State<T> { value(T item) };
@@ -395,6 +526,55 @@ int main() {
         instruction.lifetimeApplication.callableSignature->contract.typeBounds.clear();
   expect(!verifyMirProgram(corruptPointer).valid(),
          "MIR must derive callable obligations independently from the trusted carrier");
+  const auto nominalPointer = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      standardLibrary.parent_path() / "tests/lifetime-pointer-nominal.gti", R"gti(
+import std.detail_function_pointer_impl;
+struct Holder<T, lifetime a> {
+  T&<a> value;
+  Holder(T&<a> input) : value(input) {}
+};
+using Read = for<lifetime a> int(Holder<int, a>&<a>);
+int read<lifetime a>(Holder<int, a>&<a> holder) { return holder.value; }
+int main() {
+  auto pointer = gti_internal::function_pointer_from_item<Read>(read);
+  int number = 7;
+  Holder<int, _> holder{number};
+  return gti_internal::function_pointer_invoke(pointer, holder) - 7;
+}
+)gti", {standardLibrary / "prelude.gti"}, {}, {standardLibrary}, {pointerModules});
+  if (!nominalPointer.canGenerateCode())
+    for (const auto &diagnostic : nominalPointer.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(nominalPointer.canGenerateCode(),
+         "higher-ranked nominal input formation must reach independently verified MIR");
+  auto omittedNominalRequirement = nominalPointer.mir;
+  bool rejectedNominalRequirement = false;
+  for (const auto address : enumerateMirBodyAddresses(omittedNominalRequirement))
+    if (auto *body = findMirBody(omittedNominalRequirement, address))
+      for (auto &block : body->blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke &&
+              instruction.lifetimeApplication.callableSignature) {
+            auto &contract = instruction.lifetimeApplication.callableSignature->contract;
+            expect(!contract.requirements.nodes.empty(),
+                   "nominal callable formation must retain its exact input requirement formula");
+            contract.requirements = {};
+            rejectedNominalRequirement =
+                checkedMirCallableLifetimeSignature(omittedNominalRequirement, instruction) == nullptr;
+          }
+  expect(rejectedNominalRequirement && !verifyMirProgram(omittedNominalRequirement).valid(),
+         "dynamic callable metadata cannot omit its nominal formation obligations");
+  auto foreignNominalRegion = nominalPointer.mir;
+  bool changedNominalRegion = false;
+  for (const auto &immutable : foreignNominalRegion.classInstances())
+    if (!immutable.lifetimeContract.typeBounds.empty()) {
+      auto &instance = const_cast<MirClassInstance &>(immutable);
+      instance.lifetimeContract.typeBounds.front().region = Lifetime::parameter(UINT64_MAX);
+      changedNominalRegion = true;
+      break;
+    }
+  expect(changedNominalRegion && !verifyMirProgram(foreignNominalRegion).valid(),
+         "a nominal formation contract cannot supply a foreign scoped region");
   const auto rejectedPath = standardLibrary.parent_path() / "tests/lifetime-pointer-requires.gti";
   const std::string rejectedSource = R"gti(
 import std.detail_function_pointer_impl;

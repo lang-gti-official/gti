@@ -509,7 +509,12 @@ bool storedReferenceReturnPublication(const MirBody &body,
   if (!matches(entry->designatedFields, entry->conditions, entry->access) &&
       std::none_of(entry->additionalDependencies.begin(), entry->additionalDependencies.end(),
                    [&](const auto &dependency) {
-                     return dependency.source == entry->source &&
+                     // Entry groups describe later stored fields by an
+                     // abstract path with no concrete source. The exact
+                     // runtime field address and callable inventory prove
+                     // that path; no local or parented dependency may use it.
+                     return (dependency.source == entry->source ||
+                             (dependency.source == 0 && dependency.parent == 0)) &&
                             matches(dependency.designatedFields, dependency.conditions, dependency.access);
                    }))
     return false;

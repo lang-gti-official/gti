@@ -409,6 +409,16 @@ declarations that would expand anonymous arity require explicit lifetime
 parameters and arguments. Callable type elision has its own higher-ranked
 scope and does not add parameters to the containing record.
 
+The shared callable contract derivation obtains each nominal application's
+formation formula from the owning phase. Semantics supplies the instantiated
+declaration contract; MIR supplies its verified nominal view. Inputs and
+results retain the complete Boolean formula, including requirements not
+implied by stored fields. A nested callable validates its own invocation
+scope without adding those premises to its enclosing signature. Fixed carrier
+regions are separate from invocation quantifiers, and `static` remains a
+constant. Missing nominal metadata, foreign region identities and malformed
+formula nodes make derivation fail rather than weaken the contract.
+
 Nominal variance is derived from verified fields and bases by a finite fixed
 point over the variance lattice. Shared references and owned storage preserve
 variance; mutable reference referents and unproven raw storage are invariant.
