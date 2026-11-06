@@ -1039,14 +1039,15 @@ enum Message { Value(Resource value) };
 void discard<Args...>(Args... args) {}
 int main() { discard(Message::Value(Resource(1))); return 0; }
 )");
-  expect(!owningPack.canGenerateCode() &&
-             std::any_of(
-                 owningPack.diagnostics.begin(), owningPack.diagnostics.end(),
-                 [](const auto &item) { return item.code == "GTI-S2067"; }) &&
+  // Owning payload enums pass through ordinary variadic functions: each pack
+  // element is a by-value owning parameter (see enum_pack_runtime).
+  expect(owningPack.canGenerateCode() &&
              std::none_of(
                  owningPack.diagnostics.begin(), owningPack.diagnostics.end(),
-                 [](const auto &item) { return item.code == "GTI-B0001"; }),
-         "unsupported owning-enum packs retain their source diagnostic");
+                 [](const auto &item) {
+                   return item.code == "GTI-S2067" || item.code == "GTI-B0001";
+                 }),
+         "an owning-enum pack argument is admitted without an ICE");
   const auto directReferenceEntry = lang::Frontend().analyze(
       "enum-reference-entry.gti", R"gti(
 enum Reading { empty, value(int& owner) };
