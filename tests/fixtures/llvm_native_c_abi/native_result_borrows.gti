@@ -18,7 +18,7 @@ int main() {
     Unary operation = native_unary();
     if (observe(operation(31)) != 42) return 1;
     if (observe(native_unary()(31)) != 42) return 2;
-    if (observe(native_zero()) != 0 || consume(native_zero()) != 0) return 3;
+    if (observe(native_zero()) != 0 || consume(operation(31)) != 42) return 3;
     {
       Observed constructed{operation(31)};
       if (constructed.value != 42 || destroyed != 0) return 4;
