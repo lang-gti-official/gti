@@ -1731,7 +1731,10 @@ captures. A capturing lambda may also accept and return an owning enum by value.
 Capture bindings remain immutable under the general lambda rules: moving a
 value out of a capture is not added by this support. Capturing an owning enum
 whose type also carries conditional borrowed payloads remains a separate
-unsupported dependency-transport family.
+unsupported dependency-transport family. Arrays and other structural aggregates
+containing owning enums are not admitted as captures by this support. Stored
+callbacks may own an enum in their environment; owning enums in erased callable
+parameter/result signatures retain the separate polymorphic-dispatch boundary.
 
 An ordinary non-polymorphic class or struct, including a concrete generic
 instance, may contain an owning payload enum as a direct field. The field may
@@ -1781,8 +1784,7 @@ Polymorphic dispatch, native/runtime declarations and operators retain
 `GTI-S2067` at their declaration boundary. Unsupported containment retains `GTI-S2067` at the field or
 aggregate boundary, before HIR/MIR/backend emission. A direct checked
 reference or raw pointer does not itself contain the referent's ownership
-state. Fixed arrays of direct owning enum elements remain outside this
-transport slice.
+state.
 
 Payload alternatives use exact construction. A unit alternative is written
 `Result::empty`; a payload alternative is written `Result::value(arguments)`.
