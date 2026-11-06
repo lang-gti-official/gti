@@ -1,4 +1,5 @@
 export module primitives;
+import std.vector;
 
 // A selected name exports every explicitly exported overload.
 export bool identity(bool value) { return value; }
@@ -17,10 +18,24 @@ export double identity(double value) { return value; }
 // This private overload is deliberately absent from the exported family.
 int identity(int first, int second) { return first; }
 
-export void touch() {}
+// Implementation-only allocation and cleanup stay in the producer object.
+// The consumer needs neither this class nor the vector implementation source.
+class ProducerMarker {
+public:
+    ProducerMarker() {}
+    ~ProducerMarker() { std::println("producer cleanup"); }
+};
+export void touch() {
+    mut std::vector<int> values = {7, 11, 24};
+    values.push_back(42);
+    std::println(values[3]);
+}
 export bool positive(int64_t value) { return value > 0; }
 // An infrequent operation: preserve its policy even without producer sources.
-export [[cold, noinline]] int divide(int value, int divisor) { return value / divisor; }
+export [[cold, noinline]] int divide(int value, int divisor) {
+    ProducerMarker marker{};
+    return value / divisor;
+}
 export void divide_and_discard(int value, int divisor) {
     int result = value / divisor;
 }

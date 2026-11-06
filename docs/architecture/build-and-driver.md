@@ -3122,17 +3122,68 @@ code. These symbols do not promise cross-version ABI stability.
 
 Each bundle contains one `unit.o` and exact direct-dependency digest receipts.
 Object validation checks relocatable format, target/layout, exact exported
-symbols and unresolved symbols limited to declared imported GTI callables.
+symbols and unresolved symbols limited to declared imported GTI callables and
+the selected runtime's C ABI services. The driver reads the independently
+resolved runtime archive, verifies its bytes against the compatibility digest,
+and obtains the canonical service inventory from its target-matching relocatable
+members. A `gti_rt_` spelling is admitted only when that exact global definition
+exists in the selected archive; arbitrary native and C++ implementation symbols
+remain rejected. Thin archives are rejected before any external member is read.
+The same check applies to publication, artifact import and automatic reuse.
+The object's undefined-symbol table is the selected runtime dependency closure;
+it adds no bundle-controlled allowlist or semantic capabilities. Existing
+compiler/runtime identities pin this contract without a second metadata schema.
+LLVM's target-library information additionally selects the bounded hosted
+memory-helper family (`memcpy`, `memmove`, `memset`, `bzero`) used when lowering
+memory intrinsics and aggregate copies. The ordinary final native link supplies
+those C ABI helpers. This does not permit arbitrary additional native libraries.
 Transitive imports contribute their objects without requiring a source facade.
-Program initialization, TLS and hosted producer entry remain unsupported;
-producer cleanup needing external runtime services still requires a broader
-runtime-closure contract. Consumer cleanup and checked failure propagation retain
-their normal behavior. The driver owns bounded reads, native staging and atomic
+Private namespace globals and class static fields are admitted when their verified
+MIR initialization stages are `DataOnly` (implicit zero or `constexpr` constant),
+with no active cleanup or native retirement. LLVM emits these as internal object
+data. Linking each library object once gives all dependency paths the same storage;
+each executable process receives fresh initialized data. No initialization thunk
+or new serialized interface field is required, and storage identities do not
+become exported APIs. Ordinary explicit initializers, even literal `= 0`, remain
+executable initialization under the current semantic classification.
+Class static fields require explicit initializers, so this currently admits
+their `constexpr` constants; mutable counters use namespace globals without an
+explicit initializer.
+Executable program initialization, function-local lazy storage, TLS and hosted
+producer entry remain unsupported.
+Library-private allocation, printing and destructor cleanup can use the selected
+runtime closure, including cleanup while a checked failure propagates to the consumer.
+The final executable owns runtime initialization and links one matching archive;
+libraries do not create an additional runtime instance. Exported ownership/type
+restrictions are unchanged. The LLVM dependency walk treats selected library
+exports as explicit entry roots, preserving their transitive calls and cleanup
+without requiring unrelated imported bodies. Unmodeled indirect dependencies
+and genuinely rootless units retain conservative admission. Imports that add
+program initialization still require the separate initialization milestone.
+Consumer cleanup and checked failure propagation
+retain their normal behavior. The driver owns bounded reads, native staging and atomic
 publication. Unsupported producer shapes use existing backend-limit diagnostics;
 malformed artifacts use existing driver validation diagnostics.
 
 Compatibility binds compiler executable, runtime archive, LLVM/backend ABI,
 target/layout/CPU/features, optimization, execution profile and configuration.
+One project build retains an immutable snapshot of each selected `.gtilib`.
+Successful producer builds return their exact published bytes; cache hits return
+the bytes whose compatibility, source fingerprint and object were validated.
+The driver-owned `CompiledLibrarySnapshots` collection shares these selections
+through dependency chains and diamonds. External artifact inputs are read once
+on first selection. Later replacement or deletion of an artifact path cannot
+silently change an already selected dependency; a later build selects afresh.
+Selections are bounded to 64 paths and 256 MiB of aggregate bundle bytes, and
+conflicting selections for the same normalized absolute path reject.
+
+`CompiledLibraryImport::snapshot` supplies owned bytes rather than a filesystem
+read; it is not an admission receipt. The normal decoder, compiler/runtime and
+target compatibility, package identity, object validation and exact dependency
+receipts are checked for every consumer. Source-target freshness still reads the
+producer's source graph. This is an artifact-selection snapshot, not an atomic
+snapshot of every source file, toolchain file or independently built target.
+
 Logical package/target labels identify a library independently of interface edits.
 Checksums establish integrity, not producer authentication. Explicit artifacts
 need no producer sources; automatic source-target builds additionally compare a

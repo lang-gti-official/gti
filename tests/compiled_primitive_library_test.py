@@ -38,7 +38,8 @@ def main():
             report["steps"].append({"name": name, "exit": done.returncode,
                                     "seconds": time.monotonic() - started, "log": str(log)})
             (output / "evidence.json").write_text(json.dumps(report, indent=2) + "\n")
-            assert done.returncode == code, f"{name}: exit {done.returncode}; {log}"
+            assert done.returncode == code, (f"{name}: exit {done.returncode}; {log}\n"
+                                            + (done.stdout + done.stderr)[-8000:])
             if contains:
                 assert contains in done.stdout + done.stderr, f"{name}: missing {contains!r}; {log}"
             return done
@@ -54,6 +55,9 @@ def main():
             run(producer, ["check", "primitives", "--release"], prefix + "producer-check")
             run(producer, ["build", "primitives", "--release"], prefix + "producer-build")
             bundle = next((producer / "build").rglob("primitives.gtilib"))
+            published = (bundle.stat().st_mtime_ns, bundle.read_bytes())
+            run(producer, ["build", "primitives", "--release"], prefix + "producer-reuse")
+            assert (bundle.stat().st_mtime_ns, bundle.read_bytes()) == published
             library_source = producer / "library.gti"
             original_source = library_source.read_text()
             primary_line = next(i for i, line in enumerate(original_source.splitlines(), 1)
@@ -64,26 +68,11 @@ def main():
             dependencies.mkdir()
             shutil.copyfile(bundle, dependencies / "primitives.gtilib")
             original = (dependencies / "primitives.gtilib").read_bytes()
-            # A producer that observes failure cleanup must retain its runtime
-            # context checks and remains outside the self-contained profile.
-            library_source.write_text(original_source.replace(
-                "export [[cold, noinline]] int divide(int value, int divisor) { return value / divisor; }",
-                '''class ProducerMarker {
-public:
-    ProducerMarker() {}
-    ~ProducerMarker() { std::println("producer cleanup"); }
-};
-export [[cold, noinline]] int divide(int value, int divisor) {
-    ProducerMarker marker{};
-    return value / divisor;
-}'''))
-            run(producer, ["build", "primitives", "--release"],
-                prefix + "observable-producer-cleanup-rejected", 65,
-                "unresolved native dependency")
-            assert bundle.read_bytes() == original, "rejected producer replaced artifact"
             shutil.rmtree(producer)
             run(consumer, ["check", "app", "--release"], prefix + "consumer-check")
-            run(consumer, ["run", "app", "--release"], prefix + "all-primitive-results")
+            done = run(consumer, ["run", "app", "--release"], prefix + "all-primitive-results")
+            assert done.stdout.count("producer cleanup") == 1, done.stdout
+            assert done.stdout.splitlines() == ["42", "producer cleanup"], done.stdout
             source = consumer / "main.gti"
             valid_source = source.read_text()
             source.write_text('import "api.gti"; int main() { return identity(1, 2); }\n')
@@ -109,6 +98,10 @@ int main() {
                 done = run(consumer, ["run", "app", "--release"], name, 70,
                            "runtime error[GTI-R0002]: division_by_zero in integer_division")
                 assert done.stdout.count("consumer cleanup") == 1, f"{name}: cleanup count; {done.stdout}"
+                producer_cleanups = 0 if "divide_and_discard" in operation else 1
+                assert done.stdout.count("producer cleanup") == producer_cleanups, done.stdout
+                if producer_cleanups:
+                    assert done.stdout.index("producer cleanup") < done.stdout.index("consumer cleanup")
                 assert "library.gti:" in done.stderr, f"{name}: lost producer provenance"
             source.write_text('''import "api.gti";
 class Marker {

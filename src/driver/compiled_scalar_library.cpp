@@ -36,6 +36,58 @@ std::string readCompiledLibraryFileBounded(const std::filesystem::path &path,
 std::string readCompiledLibraryFile(const std::filesystem::path &path) {
   return readCompiledLibraryFileBounded(path, libraryBundleByteLimit);
 }
+void CompiledLibrarySnapshots::retain(const std::filesystem::path &path,
+                                      CompiledLibrarySnapshot snapshot) {
+  if (path.empty() || !snapshot || snapshot->size() > libraryBundleByteLimit)
+    throw std::invalid_argument("invalid compiled library snapshot");
+  const auto key = std::filesystem::absolute(path).lexically_normal();
+  if (const auto found = artifacts.find(key); found != artifacts.end()) {
+    if (found->second != snapshot && *found->second != *snapshot)
+      throw std::invalid_argument(
+          "compiled library selection changed within one build");
+    return;
+  }
+  if (artifacts.size() >= 64 ||
+      snapshot->size() > libraryBundleByteLimit - bytes)
+    throw std::invalid_argument(
+        "compiled library snapshots exceed build limits");
+  bytes += snapshot->size();
+  artifacts.emplace(key, std::move(snapshot));
+}
+std::vector<CompiledLibraryImport> CompiledLibrarySnapshots::select(
+    std::span<const CompiledLibraryImport> inputs) {
+  if (inputs.size() > 64)
+    throw std::invalid_argument(
+        "at most 64 compiled libraries may be imported");
+  std::vector<CompiledLibraryImport> selected(inputs.begin(), inputs.end());
+  for (auto &input : selected) {
+    if (input.artifact.empty())
+      throw std::invalid_argument(
+          "compiled library snapshot needs an artifact path");
+    const auto key =
+        std::filesystem::absolute(input.artifact).lexically_normal();
+    if (input.snapshot) {
+      retain(key, input.snapshot);
+    } else if (!artifacts.contains(key)) {
+      if (artifacts.size() >= 64)
+        throw std::invalid_argument(
+            "compiled library snapshots exceed build limits");
+      std::error_code error;
+      const auto size = std::filesystem::file_size(input.artifact, error);
+      if (error)
+        throw std::invalid_argument("compiled dependency artifact is missing; "
+                                    "build its library target first");
+      if (size > libraryBundleByteLimit - bytes)
+        throw std::invalid_argument(
+            "combined compiled libraries exceed the bundle size limit");
+      retain(key,
+             std::make_shared<const std::string>(readCompiledLibraryFileBounded(
+                 input.artifact, libraryBundleByteLimit - bytes)));
+    }
+    input.snapshot = artifacts.at(key);
+  }
+  return selected;
+}
 std::optional<std::string>
 compiledScalarProducerInputDiagnostic(const NativeInputs &n) {
   if (!n.cSources.empty() || !n.cppSources.empty() || !n.libraryFiles.empty() ||
@@ -73,6 +125,15 @@ std::string hashFile(const std::filesystem::path &path) {
   if (!file.eof())
     throw std::invalid_argument("cannot hash compatibility input");
   return h.finishHex();
+}
+std::vector<std::string> runtimeImports(const std::filesystem::path &path,
+                                        const TargetInfo &target,
+                                        const std::string &expectedDigest) {
+  const auto bytes = readCompiledLibraryFile(path);
+  if (hash(bytes) != expectedDigest)
+    throw std::invalid_argument(
+        "compiled library runtime changed during admission");
+  return compiledLibrarySupportSymbols(bytes, target);
 }
 void field(std::string &out, std::string_view bytes) {
   out += std::to_string(bytes.size());
@@ -397,6 +458,7 @@ CompiledScalarLibraryResult buildScalarLibrary(
     (void)libraryIdentity(signatures);
   }
   auto id = environment(request, runtime);
+  auto allowedImports = runtimeImports(runtime, request.target(), id.runtime);
   auto prepared = imports.empty()
                       ? ScalarConsumerInputs{loadCompilationInputs(request)}
                       : prepareScalarConsumer(request, imports, runtime);
@@ -416,8 +478,13 @@ CompiledScalarLibraryResult buildScalarLibrary(
     std::vector<std::string> symbols;
     for (const auto &key : backend.selectedSignatures())
       symbols.push_back(compiledScalarSymbol(key));
+    allowedImports.insert(allowedImports.end(), prepared.symbols.begin(),
+                          prepared.symbols.end());
     verifyCompiledScalarObject(result.compilation.artifact->contents,
-                               request.target(), symbols, prepared.symbols);
+                               request.target(), symbols, allowedImports);
+    if (hashFile(runtime) != id.runtime)
+      throw std::invalid_argument(
+          "compiled library runtime changed during compilation");
     // Publication must still describe the input snapshot that produced code.
     auto current = imports.empty()
                        ? ScalarConsumerInputs{loadCompilationInputs(request)}
@@ -506,6 +573,8 @@ prepareScalarConsumer(const CompilationRequest &request,
   if (bundles.empty() || bundles.size() > 64)
     throw std::invalid_argument("compiled consumer requires 1 to 64 libraries");
   const auto environmentIdentity = environment(request, runtime);
+  const auto runtimeSymbols =
+      runtimeImports(runtime, request.target(), environmentIdentity.runtime);
   std::unordered_map<std::string, std::string> overlays;
   struct Admission {
     std::vector<CompiledScalarSignature> signatures;
@@ -593,7 +662,7 @@ prepareScalarConsumer(const CompilationRequest &request,
     auto &bundle = input.bundle;
     auto &metadata = admitted[index];
     std::vector<LibraryBundleDependency> expectedDependencies;
-    std::vector<std::string> allowedSymbols;
+    auto allowedSymbols = runtimeSymbols;
     for (const auto &dependency : bundle.dependencies) {
       const auto selected = libraries.at(dependency.library);
       expectedDependencies.push_back(
@@ -667,16 +736,21 @@ prepareScalarConsumer(const CompilationRequest &request,
   std::size_t total = 0;
   std::vector<ScalarBundleInput> bundles;
   for (const auto &selected : imports) {
-    std::error_code error;
-    const auto size = std::filesystem::file_size(selected.artifact, error);
-    if (error)
-      throw std::invalid_argument("compiled dependency artifact is missing; "
-                                  "build its library target first");
-    if (size > libraryBundleByteLimit - total)
-      throw std::invalid_argument(
-          "combined compiled libraries exceed the bundle size limit");
-    const auto bytes = readCompiledLibraryFileBounded(
-        selected.artifact, libraryBundleByteLimit - total);
+    auto snapshot = selected.snapshot;
+    if (!snapshot) {
+      std::error_code error;
+      const auto size = std::filesystem::file_size(selected.artifact, error);
+      if (error)
+        throw std::invalid_argument("compiled dependency artifact is missing; "
+                                    "build its library target first");
+      if (size > libraryBundleByteLimit - total)
+        throw std::invalid_argument(
+            "combined compiled libraries exceed the bundle size limit");
+      snapshot =
+          std::make_shared<const std::string>(readCompiledLibraryFileBounded(
+              selected.artifact, libraryBundleByteLimit - total));
+    }
+    const auto &bytes = *snapshot;
     // Recheck against the actual read: another process may replace the file
     // between the first stat and the bounded reader's own stat.
     if (bytes.size() > libraryBundleByteLimit - total)
@@ -759,37 +833,52 @@ compileCompiledScalarConsumer(const CompilationRequest &request,
   return result;
 }
 
-bool reusableCompiledScalarLibraryTarget(
+CompiledLibrarySnapshot reusableCompiledScalarLibrarySnapshot(
     const CompilationRequest &request, const CompiledLibraryTarget &target,
     std::span<const CompiledLibraryImport> imports,
     const std::filesystem::path &runtime,
     const std::filesystem::path &artifact) {
   try {
-    auto bundle = decodeLibraryBundle(readCompiledLibraryFile(artifact));
+    auto bytes =
+        std::make_shared<const std::string>(readCompiledLibraryFile(artifact));
+    auto bundle = decodeLibraryBundle(*bytes);
     auto signatures = readInterface(bundle.interfaceMetadata);
     const auto owner = decodedKey(signatures.front()).owner;
     if (owner.package != target.package || owner.target != target.target)
-      return false;
+      return {};
     auto prepared = imports.empty()
                         ? ScalarConsumerInputs{loadCompilationInputs(request)}
                         : prepareScalarConsumer(request, imports, runtime);
     if (!prepared.compilation.succeeded())
-      return false;
+      return {};
     auto expected = environment(request, runtime);
+    auto allowedImports =
+        runtimeImports(runtime, request.target(), expected.runtime);
+    allowedImports.insert(allowedImports.end(), prepared.symbols.begin(),
+                          prepared.symbols.end());
     expected.library = libraryIdentity(signatures);
     expected.sources = producerSources(prepared.compilation, &target);
     requireLibraryBundleCompatibility(bundle, expected, prepared.dependencies);
     if (bundle.objects.size() != 1 || bundle.objects.front().name != "unit.o")
-      return false;
+      return {};
     std::vector<std::string> symbols;
     for (const auto &signature : signatures)
       symbols.push_back(compiledScalarSymbol(signature));
     verifyCompiledScalarObject(bundle.objects.front().bytes, request.target(),
-                               symbols, prepared.symbols);
-    return true;
+                               symbols, allowedImports);
+    return bytes;
   } catch (const std::exception &) {
-    return false;
+    return {};
   }
+}
+
+bool reusableCompiledScalarLibraryTarget(
+    const CompilationRequest &request, const CompiledLibraryTarget &target,
+    std::span<const CompiledLibraryImport> imports,
+    const std::filesystem::path &runtime,
+    const std::filesystem::path &artifact) {
+  return bool(reusableCompiledScalarLibrarySnapshot(request, target, imports,
+                                                    runtime, artifact));
 }
 
 CheckResult checkCompiledScalarProject(const ProjectBuildPlan &plan,
