@@ -3098,6 +3098,9 @@ each executable process receives fresh initialized data. No initialization thunk
 or new serialized interface field is required, and storage identities do not
 become exported APIs. Ordinary explicit initializers, even literal `= 0`, remain
 executable initialization under the current semantic classification.
+Class static fields require explicit initializers, so this currently admits
+their `constexpr` constants; mutable counters use namespace globals without an
+explicit initializer.
 Executable program initialization, function-local lazy storage, TLS and hosted
 producer entry remain unsupported;
 producer cleanup needing external runtime services still requires a broader

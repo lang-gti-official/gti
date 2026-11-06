@@ -894,8 +894,8 @@ parameters and borrowed results through library metadata, with normal caller
 loan checking. `compiled_borrow_library` owns its positive and negative matrix.
 
 [`compiled-dependencies/`](compiled-dependencies/README.md) demonstrates automatic
-library builds through a diamond dependency graph, shared private passive globals
-and class static counters, exact dependency receipts and reuse of unchanged libraries.
+library builds through a diamond dependency graph, a shared private counter and
+class static constant, exact dependency receipts and reuse of unchanged libraries.
 `compiled_dependency_project` owns its execution,
 failure, freshness and source-free distribution checks.
 

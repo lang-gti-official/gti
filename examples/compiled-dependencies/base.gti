@@ -4,16 +4,14 @@ export module base;
 mut int calls;
 class Counters {
 public:
-    static mut int total;
+    static constexpr int increment = 1;
 };
-constexpr int increment = 1;
 
 export int base_value() {
     return 7;
 }
 
 export int base_tick() {
-    calls += increment;
-    Counters::total += increment;
-    return calls + Counters::total;
+    calls += Counters::increment;
+    return calls * 2;
 }

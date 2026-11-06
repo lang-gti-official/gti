@@ -130,16 +130,17 @@ void passiveStorageTests(const std::filesystem::path &root,
   constexpr std::string_view library = R"(
 export module numbers;
 mut int total;
+mut int calls;
 constexpr int bias = 7;
 class Counts {
 public:
-  static mut int calls;
+  static constexpr int weight = 2;
 };
 int read(int& value) { return value; }
 export int choose(int x) {
   total += x;
-  Counts::calls += 1;
-  return total + Counts::calls + read(bias);
+  calls += 1;
+  return total + calls + read(bias) + read(Counts::weight);
 }
 )";
   for (auto level : {OptimizationLevel::O0, OptimizationLevel::O3}) {
@@ -157,12 +158,12 @@ export int choose(int x) {
              "valid passive library failed verification");
       const auto &steps = bound.mir().programInitializationPlan().steps;
       expect(
-          steps.size() == 3 &&
+          steps.size() == 4 &&
               std::count_if(steps.begin(), steps.end(),
                             [](const auto &step) {
                               return step.dataInitialization ==
                                      MirProgramDataInitializationKind::Constant;
-                            }) == 1,
+                            }) == 2,
           "fixture must exercise both zero and constant object storage");
       for (int mutation = 0; mutation < 7; ++mutation) {
         auto changed = bound;
@@ -182,7 +183,7 @@ export int choose(int x) {
         if (mutation == 5)
           step.dataInitialization = MirProgramDataInitializationKind::Constant;
         if (mutation == 6)
-          step.dataConstant = steps[1].dataConstant;
+          step.dataConstant = steps[2].dataConstant;
         expect(!verifyCompiledScalarUnit(changed).empty() &&
                    !verifyLoweredProgram(changed).empty(),
                "forged passive storage plan accepted");
@@ -192,9 +193,9 @@ export int choose(int x) {
     write(root / "consumer/main.gti", R"(
 import "api.gti";
 int main() {
-  if (choose(2) != 10) { return 1; }
-  if (choose(3) != 14) { return 2; }
-  if (choose(0) != 15) { return 3; }
+  if (choose(2) != 12) { return 1; }
+  if (choose(3) != 16) { return 2; }
+  if (choose(0) != 17) { return 3; }
   return 0;
 }
 )");
@@ -210,7 +211,9 @@ int main() {
   }
   for (std::string_view storage :
        {"int initial() { return 1; } mut int total = initial();",
-        "thread_local mut int total;"}) {
+        "thread_local mut int total;",
+        "class Guard { public: Guard() = default; ~Guard() {} }; "
+        "Guard guard; mut int total;"}) {
     write(source, "export module numbers; " + std::string(storage) +
                       " export int choose(int x) { return total + x; }");
     const auto rejected = buildCompiledScalarLibrary(
@@ -218,7 +221,10 @@ int main() {
     expect(!rejected.compilation.succeeded() && rejected.bundle.empty() &&
                rejected.compilation.backendFailureDetails.value_or("").find(
                    "requires passive program storage") != std::string::npos,
-           "dynamic/TLS storage must fail compiled-unit admission");
+           "dynamic/TLS/cleanup storage must fail compiled-unit admission: " +
+               std::string(storage) + ": " +
+               rejected.compilation.backendFailureDetails.value_or(
+                   "no backend failure"));
   }
   std::cout << "passive namespace/static/constant storage and source-absent "
                "execution passed at O0/O3\n";

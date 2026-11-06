@@ -4,10 +4,10 @@ links `app` with each object's dependency closure exactly once. Repeating the
 build reuses libraries whose complete source, compiler configuration, and direct
 dependency digests still match. Editing `base.gti` rebuilds its dependents.
 
-`left_tick()` and `right_tick()` access the same private namespace counter and
-class static counter in `base`. Alternating calls check that linking the diamond
-does not duplicate or reset either counter. Each executable process starts with
-fresh zeroed counters. The private `constexpr` increment is passive constant data.
+`left_tick()` and `right_tick()` access the same private namespace counter in
+`base`. Alternating calls check that linking the diamond does not duplicate or
+reset the counter. Each executable process starts with a fresh zeroed counter.
+The class static `constexpr` increment is passive constant data.
 This storage requires no startup code or cleanup. Ordinary explicit initializers
 (including `mut int calls = 0;`), thread-local storage and storage requiring
 destruction still need the future per-library initialization/retirement contract.

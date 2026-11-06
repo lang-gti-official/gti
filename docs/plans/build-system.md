@@ -1850,8 +1850,8 @@ Passive storage progress (F2): compiled producers now admit the existing verifie
 MIR `DataOnly` namespace-global/static-field stages: implicit zero and `constexpr`
 constants without active cleanup/native retirement. Their internal LLVM globals
 are linked once per library, including source-absent dependency diamonds. The
-`compiled_scalar_library` regression covers mutable namespace/static storage,
-addressed constant data, fresh process state, and fail-closed plan mutations;
+`compiled_scalar_library` regression covers mutable namespace storage, addressed
+namespace/class static constant data, fresh process state, and fail-closed plan mutations;
 `compiled_dependency_project` covers shared counters through both diamond paths.
 No new startup execution or retirement scheduling is claimed. Executable explicit
 initializers (including plain literal initializers), TLS, function-local lazy
