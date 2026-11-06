@@ -1653,9 +1653,26 @@ suggest a checked reference. Direct enum captures, fixed arrays, restricted
 field owners, and direct result-carrier alternatives name their exact storage
 boundary before MIR. Expected combinators apply that same containment check to
 their inferred result, anchoring a rejected mapped alternative at the mapper
-expression. No fix-it is offered
-when choosing a payload type, binding, transport, or missing-arm behavior
-requires program intent.
+expression. An unresolved switch-pattern owner first receives the ordinary
+declaration-visibility diagnostic (`GTI-S2024`) when its declaration is known
+but not visible, including its declaration note and direct-import or export
+guidance. A visible wrong variant retains `GTI-S2067`.
+
+A non-exhaustive payload-enum switch offers `Insert missing switch cases` as
+a nonpreferred, `RequiresReview` repair. It inserts tag-only arms in declaration
+order, each containing a TODO comment and `break`; choosing payload bindings
+and meaningful behavior remains the author's task. This explicitly requested
+scaffolding does not assert that ignoring an alternative is correct, or that
+the surrounding function's return-flow requirements are satisfied. The parser
+retains the closing-brace token for exact insertion; semantics supplies coverage
+and concrete enum names. Existing arms and comments are preserved, including
+CRLF layout. No scaffold is offered for an invisible enum, invalid patterns,
+an existing default, an exhaustive switch, or generated expansion source.
+Concrete generic enum owners are supported when their printed source names
+resolve to the exact subject type in the current scope. Shadowed or unnameable
+owners are withheld. Diagnostics discovered only while instantiating a generic
+body do not edit its shared definition with instance-specific cases.
+No fix-it chooses a payload type, binding, or transport policy.
 
 The LSP publishes diagnostics from the same versioned `FrontendResult` used by
 semantic queries. It always preserves the stable code, severity, source, and

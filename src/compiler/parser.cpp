@@ -3443,9 +3443,11 @@ private:
       }
     }
 
-    consume(TokenKind::RIGHT_BRACE, "Expect '}' after switch arms.");
+    Token closingBrace =
+        consume(TokenKind::RIGHT_BRACE, "Expect '}' after switch arms.");
     return std::make_shared<SwitchStmt>(std::move(keyword), std::move(value),
-                                        std::move(arms));
+                                        std::move(arms),
+                                        std::move(closingBrace));
   }
 
   StmtPtr returnStatement() {

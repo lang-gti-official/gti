@@ -103,6 +103,66 @@ def run(executable, root):
                                             "codeActionLiteralSupport": {
                                                 "codeActionKind": {"valueSet": ["quickfix"]}}}}}})
         notify("initialized", {})
+        # Missing enum alternatives are explicit-review scaffolds. Keep
+        # payload extraction out of the edit, preserve existing arms/comments,
+        # and use the parser's closing token even around nested braces.
+        for newline in ("\n", "\r\n"):
+            source = (
+                "enum Choice<T> { empty, item(T value), pair(T left, T right) };\n"
+                "void inspect(Choice<int>& value) {\n"
+                "  switch (value) {\n"
+                "  case Choice<int>::empty: { /* 😀 } */ break; }\n"
+                "  // Keep this comment.\n"
+                "  }\n"
+                "}\n").replace("\n", newline)
+            added = (
+                "  case Choice<int32_t>::item:\n"
+                "    // TODO: Handle this case.\n"
+                "    break;\n"
+                "  case Choice<int32_t>::pair:\n"
+                "    // TODO: Handle this case.\n"
+                "    break;\n").replace("\n", newline)
+            repair(source, "GTI-S2067", source.replace("  }" + newline,
+                                                      added + "  }" + newline))
+        # Empty one-line switches, including a non-BMP character before the
+        # insertion offset, exercise byte-to-UTF-16 conversion on that line.
+        source = ("enum State { idle, ready(int value) };\n"
+                  "void inspect(State& value) { /*😀*/ switch (value) {} }\n")
+        repair(source, "GTI-S2067", source.replace("{}", (
+            "{\ncase State::idle:\n  // TODO: Handle this case.\n  break;\n"
+            "case State::ready:\n  // TODO: Handle this case.\n  break;\n}")))
+        for body in ("case State::idle: break; case State::ready: break;",
+                     "default: break;"):
+            diagnostics = change("enum State { idle, ready(int value) };\n"
+                                 "void inspect(State& value) { switch (value) {"
+                                 + body + "} }\n")
+            assert not [d for d in diagnostics if d.get("severity") == 1], diagnostics
+            assert not [d for d in diagnostics if d.get("data", {}).get("fixes")]
+        invalid = ("enum State { idle, ready(int value) };\n"
+                   "void inspect(State& value) { switch (value) {"
+                   "case State::typo: break; } }\n")
+        diagnostics = change(invalid, expected_code="GTI-S2067")
+        assert all(actions(d) == [] for d in diagnostics), diagnostics
+        (root / "values.gti").write_text(
+            "export module values;\nexport namespace sample {\n"
+            "enum Value { none, item(int value) };\n}\n")
+        (root / "access.gti").write_text(
+            'export module access;\nimport "values.gti";\n'
+            'export sample::Value get() { return sample::Value::item(7); }\n')
+        source = ('import "access.gti";\nint main() { auto value = get();\n'
+                  'switch (value) {\n'
+                  'case sample::Value::item(auto& number): return number;\n'
+                  'case sample::Value::none: return 0;\n}\n}\n')
+        diagnostics = change(source, expected_code="GTI-S2024")
+        hidden = [d for d in diagnostics if d["code"] == "GTI-S2024"]
+        assert hidden and all("not visible" in d["message"] for d in hidden), diagnostics
+        assert all(any("import" in hint for hint in d["data"]["hints"])
+                   for d in hidden), hidden
+        assert not any("Switch case must name a variant" in d["message"]
+                       for d in diagnostics), diagnostics
+        corrected = 'import "values.gti";\n' + source
+        assert not [d for d in change(corrected) if d.get("severity") == 1]
+        assert all(actions(d) == [] for d in hidden), "stale visibility diagnostic"
         for newline in ("\n", "\r\n"):
             source = ("int inner() { return 1; }\nint outer(int v) { return v; }\n"
                       "int main() { /*\U0001f600 before*/ outer(\n"
@@ -173,7 +233,7 @@ def run(executable, root):
             assert actions(diagnostic, automatic=True) == []
     finally:
         session.close()
-    print("discard/include repair round trips, alternatives, Unicode/CRLF and stale identity passed")
+    print("switch/discard/import repair round trips, alternatives, Unicode/CRLF and stale identity passed")
 
 
 if __name__ == "__main__":
