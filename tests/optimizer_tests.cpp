@@ -4980,7 +4980,7 @@ int main() {
   reject(
       [](auto &, auto &loan) {
         loan.designatedFields.front() =
-            std::numeric_limits<lang::SymbolId>::max();
+            lang::fieldProjection(std::numeric_limits<lang::SymbolId>::max());
       },
       "copied carriers retain exact declared reference-field paths",
       "exact reference-field path");
@@ -5063,7 +5063,7 @@ int main() {
   auto forgedField = frontend.mir;
   auto *forgedFunction = const_cast<lang::MirFunctionInstance *>(
       forgedField.findFunctionInstance(instance->id));
-  ++forgedFunction->body.loans[entry->id - 1].designatedFields.front();
+  ++forgedFunction->body.loans[entry->id - 1].designatedFields.front().field;
   // Body-local flow legitimately permits a disjoint owning field. The
   // independent program verifier owns the class layout and must reject a
   // forged designated field before that disjointness can grant authority.
@@ -5084,7 +5084,7 @@ int main() {
                for (auto &place : body.places)
                  if (place.root == lang::MirPlaceRootKind::This &&
                      place.projections.size() == 2 &&
-                     place.projections.front().field ==
+                     lang::fieldProjection(place.projections.front().field) ==
                          loan.designatedFields.front())
                    place.projections.back() = {
                        .kind = lang::MirProjectionKind::Field, .field = 999};
@@ -5432,7 +5432,7 @@ void testCarrierShellDependencyMirFlow() {
   receiverEntry.places[0].binding = 0;
   receiverEntry.places[0].type = carrierType;
   receiverEntry.loans[0].carriers.clear();
-  receiverEntry.loans[0].designatedFields = {1};
+  receiverEntry.loans[0].designatedFields = {lang::fieldProjection(1)};
   receiverEntry.blocks[0].instructions = {end(1, 1)};
   expect(lang::verifyMirBody(receiverEntry).valid(),
          "an exact receiver can have a separate no-carrier Stored entry for "
