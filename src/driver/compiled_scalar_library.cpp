@@ -79,7 +79,7 @@ std::vector<CompiledLibraryImport> CompiledLibrarySnapshots::select(
                                     "build its library target first");
       if (size > libraryBundleByteLimit - bytes)
         throw std::invalid_argument(
-            "compiled library snapshots exceed build limits");
+            "combined compiled libraries exceed the bundle size limit");
       retain(key,
              std::make_shared<const std::string>(readCompiledLibraryFileBounded(
                  input.artifact, libraryBundleByteLimit - bytes)));
