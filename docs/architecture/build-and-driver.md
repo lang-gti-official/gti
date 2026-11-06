@@ -393,6 +393,10 @@ retains complete toolchain packages with exact compiler-origin provenance.
 packages whose source reached main. It verifies both platform archives and their
 exact source/run/attempt, extracts the already-tested LSP, embeds component
 identity, checksums and attests the archives. No rebuild occurs in publication.
+Its plan, downloaded packages and component output live in runner temporary
+storage, separate from the checkout's `packages/` source tree. The downloaded
+directory must contain only the exact admitted archive, checksum and provenance
+files; unrelated files still fail artifact validation.
 Tags are `lsp-<compatibility>-<run-id>`; serialized publication rejects divergent
 or older compatible sources. Uploads remain hidden in a draft until every
 asset is present with the expected digest; retries resume matching assets
