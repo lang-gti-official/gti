@@ -1764,9 +1764,10 @@ contract to each expanded formal, including owning payload enums mixed with
 ordinary values. Forwarding copies copyable elements and transfers move-only
 elements under the existing pack rules. A pack is not an aggregate containment
 boundary; each element retains its own cleanup and callable eligibility.
-Unsupported elements are diagnosed using their concrete type. A type argument mentioning the enum does not by
-itself create an ownership edge; concrete fields and declaration-bound storage
-capabilities determine containment and cleanup. This permits ordinary owning
+Unsupported elements are diagnosed using their concrete type. A type argument
+mentioning the enum does not by itself create an ownership edge; concrete fields
+and declaration-bound storage capabilities determine containment and cleanup.
+This permits ordinary owning
 collections and inline optional storage of the enum without public-library
 name recognition. Consuming methods may return an enum field while retaining
 the containing receiver through the caller's full expression.

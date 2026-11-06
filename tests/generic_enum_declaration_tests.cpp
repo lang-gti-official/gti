@@ -666,8 +666,8 @@ int main() {
              }),
          "unsupported concrete pack element is named instead of Args...");
 
-  const auto forwardedTwice = analyzeWithPrelude("forwarded-twice-enum-pack.gti",
-      declarations + R"(
+  const auto forwardedTwice =
+      analyzeWithPrelude("forwarded-twice-enum-pack.gti", declarations + R"(
 void sink<Args...>(Args... args) {}
 void relay<Args...>(Args... args) { sink(args...); sink(args...); }
 int main() { relay(Event::Owned(Token())); return 0; }

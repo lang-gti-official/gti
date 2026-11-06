@@ -755,8 +755,9 @@ checks the pack root, element index, type, access and availability; program
 verification checks enum traits against the exact integral or payload enum row.
 Payload enum relocation and lifecycle facts must not fall back to the generic
 scalar-enum defaults. This also applies to enum pack places synthesized while
-lowering constructor arguments or loans. The existing semantic boundary for
-owning payload enums inside by-value packs remains unchanged.
+lowering constructor arguments or loans. Owning payload enum elements in
+by-value packs use the same semantic transport eligibility and individual
+ownership obligations as ordinary by-value parameters.
 
 The combined serialization is `mir-v113`/`lowered-program-v22`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
