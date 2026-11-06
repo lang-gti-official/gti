@@ -804,16 +804,24 @@ void emitCountedTextProbes(Session &session) {
           "counted C oracle must include unrelated and actual runtime clients");
 }
 
-void checkNativeResultInputs(Session &session) {
+void checkNativeResultInputs(Session &session, bool expectBorrows) {
   const auto &program = session.program().mir();
   const auto &target = session.program().target();
-  unsigned inputs = 0;
+  unsigned inputs = 0, borrowed = 0;
   for (const auto &function : program.functionInstances())
     for (const auto &block : function.body.blocks)
       for (const auto &stage : block.instructions) {
         if (!nativeCResultInputContract(program, target, function.body, stage))
           continue;
         ++inputs;
+        const bool temporaryBorrow =
+            stage.callInputKind == HirCallInputKind::ReadTemporaryBorrow;
+        borrowed += temporaryBorrow;
+        const auto producerValue = [](const auto &body, const auto &input) {
+          const auto &operand = input.operands.front();
+          const auto *place = body.findPlace(operand.place);
+          return place ? place->value : operand.value;
+        };
         const auto malformed = [&](const auto &mutate) {
           auto body = function.body;
           MirInstruction *selected = nullptr;
@@ -836,29 +844,41 @@ void checkNativeResultInputs(Session &session) {
         malformed([](auto &, auto &value) {
           value.callInputKind = HirCallInputKind::MutableBorrow;
         });
-        malformed(
-            [](auto &, auto &value) { value.operands.front().value = 0; });
-        malformed([](auto &body, auto &value) {
+        malformed([&](auto &, auto &value) {
+          if (temporaryBorrow)
+            value.operands.front().place = 0;
+          else
+            value.operands.front().value = 0;
+        });
+        malformed([](auto &, auto &value) {
+          value.operands.front().type = SemanticType::Bool;
+        });
+        malformed([&](auto &body, auto &value) {
+          const auto produced = producerValue(body, value);
           for (auto &block : body.blocks)
             for (auto &producer : block.instructions)
-              if (producer.result == value.operands.front().value)
+              if (producer.result == produced)
                 producer.hirValue = 0;
         });
-        malformed([](auto &body, auto &value) {
+        malformed([&](auto &body, auto &value) {
+          const auto produced = producerValue(body, value);
           for (auto &block : body.blocks)
             for (auto &producer : block.instructions)
-              if (producer.result == value.operands.front().value)
+              if (producer.result == produced)
                 producer.nativeCalleeType.reset();
         });
         malformed([](auto &body, auto &value) {
           for (auto &block : body.blocks)
             for (auto &call : block.instructions)
-              if (call.kind == MirInstructionKind::Call &&
+              if ((call.kind == MirInstructionKind::Call ||
+                   call.kind == MirInstructionKind::Construct) &&
                   call.callSite == value.callSite)
                 call.operands[value.callInputIndex].value = 0;
         });
       }
   require(inputs != 0, "native result fixture needs exact staged C results");
+  require(expectBorrows ? borrowed == inputs : borrowed == 0,
+          "native result fixture must exercise its declared input family");
 }
 
 void checkFunctionBorrows(Session &session) {
@@ -1535,6 +1555,8 @@ int main(int argc, char **argv) {
         argc == 6 && std::string(argv[5]) == "--borrow-contracts";
     const bool resultContracts =
         argc == 6 && std::string(argv[5]) == "--result-contracts";
+    const bool resultBorrowContracts =
+        argc == 6 && std::string(argv[5]) == "--result-borrow-contracts";
     const bool storage = argc == 6 && std::string(argv[5]) == "--storage";
     const bool text = argc == 6 && std::string(argv[5]) == "--text-contracts";
     const bool aggregates =
@@ -1552,7 +1574,8 @@ int main(int argc, char **argv) {
                  (std::string(argv[5]) == "--callbacks" || concurrent ||
                   contracts || preflight || storage || text || aggregates ||
                   reachability || nativeReachability || conservative ||
-                  storageContracts || borrowContracts || resultContracts)),
+                  storageContracts || borrowContracts || resultContracts ||
+                  resultBorrowContracts)),
             "usage: test fixture.gti output.o output.ll O[0-3] "
             "[--callbacks|--thread-callbacks]");
     const auto input = fixture(argv[1], concurrent, argc == 6);
@@ -1572,11 +1595,11 @@ int main(int argc, char **argv) {
       std::cout << "PASS: exact native call dependency roots\n";
       return 0;
     }
-    if (borrowContracts || resultContracts) {
+    if (borrowContracts || resultContracts || resultBorrowContracts) {
       if (borrowContracts)
         checkFunctionBorrows(session);
       else
-        checkNativeResultInputs(session);
+        checkNativeResultInputs(session, resultBorrowContracts);
       const auto admission = planLlvmAdmission(input, session.options());
       require(!admission.firstUnsupported(),
               "native borrows need public admission");

@@ -66,7 +66,6 @@ ALLOWED_SPELLINGS = {
     "llvm_native_c_callback_execution_test.py": "LLVM native-C harness; C++ entries are a differential oracle",
     "llvm_native_c_confined_execution_test.py": "LLVM native-C harness; C++ entries are a differential oracle",
     "llvm_native_c_contract_oracle_test.py": "LLVM native-C harness; C++ entries are a differential oracle",
-    "llvm_native_c_indirect_oracle_test.py": "LLVM native-C harness; C++ entries are a differential oracle",
     "llvm_native_c_outbound_boundary_test.py": "LLVM native-C harness; C++ entries are a differential oracle",
     "llvm_native_c_storage_oracle_test.py": "LLVM native-C harness; C++ entries are a differential oracle",
     "llvm_raw_pointer_array_test.py": "LLVM-backend harness; C++ entries are a differential oracle",
