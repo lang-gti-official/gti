@@ -10151,7 +10151,9 @@ auto SemanticVisitor::Impl::mergedProjectedValueStates(const Symbol &left,
 
 auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
                                              const ScopeStack &left,
-                                             const ScopeStack &right) -> void {
+                                             const ScopeStack &right,
+                                             bool leftCanFallThrough,
+                                             bool rightCanFallThrough) -> void {
   const std::size_t depth =
       std::min({scopes.size(), base.size(), left.size(), right.size()});
   for (std::size_t scopeIndex = 0; scopeIndex < depth; ++scopeIndex) {
@@ -10196,13 +10198,23 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
             leftSymbol->second.retainedLoan == rightSymbol->second.retainedLoan
                 ? leftSymbol->second.retainedLoan
                 : baseSymbol.retainedLoan;
-        target->second.completeBorrowSet = joinedBorrowDependencySets(
+        // Complete transport facts describe values reaching this join. A
+        // terminating arm is absent, not an unknown supplier to join with the
+        // continuing arm. Keep the conservative loan union above separate.
+        const auto leftSet =
             leftSymbol->second.valueState == ValueState::Available
                 ? leftSymbol->second.completeBorrowSet
-                : std::nullopt,
+                : std::nullopt;
+        const auto rightSet =
             rightSymbol->second.valueState == ValueState::Available
                 ? rightSymbol->second.completeBorrowSet
-                : std::nullopt);
+                : std::nullopt;
+        target->second.completeBorrowSet =
+            leftCanFallThrough && rightCanFallThrough
+                ? joinedBorrowDependencySets(leftSet, rightSet)
+            : leftCanFallThrough  ? leftSet
+            : rightCanFallThrough ? rightSet
+                                  : std::nullopt;
       }
     }
   }

@@ -149,6 +149,71 @@ int main() {
     expect(result.canGenerateCode(), "result-summary fixture must lower");
     return result;
   };
+  {
+    // Each continuation carries only alternatives from structurally reaching
+    // arms. The MIR verifier independently reconstructs those exact facts.
+    const std::string prefix = R"gti(
+import std.memory;
+import std.panic;
+enum State { empty, number(int64_t value) };
+void consume(State value) {}
+int choose(bool condition) {
+  mut State value = State::empty;
+)gti";
+    for (const auto *branches :
+         {"if (condition) { value = State::number(200); } "
+          "else { std::panic(\"missing\"); }",
+          "if (condition) { return 1; } "
+          "else { value = State::number(200); }",
+          "if (true) { value = State::number(200); }",
+          "if (condition) { if (true) { std::panic(\"missing\"); } } "
+          "else { value = State::number(200); }",
+          "while (condition) { "
+          "if (condition) { value = State::number(200); } else { break; } "
+          "consume(std::move(value)); return 0; } return 0;",
+          "while (condition) { "
+          "if (condition) { continue; } "
+          "else { value = State::number(200); } "
+          "consume(std::move(value)); return 0; } return 0;"}) {
+      analyze(prefix + branches +
+              " consume(std::move(value)); return 0; } int main() { "
+              "return choose(true); }");
+    }
+    const std::string borrowed = R"gti(
+import std.panic;
+enum View { empty, ready(int& owner) };
+int choose(bool condition) {
+  mut int owner = 42;
+  mut View view = View::ready(owner);
+  if (condition) {}
+  else { auto consumed = std::move(view); return 0; }
+)gti";
+    const std::string observe = R"gti(
+  switch (view) {
+  case View::empty: return 0;
+  case View::ready(auto& value): return value;
+  }
+}
+int main() { return choose(true); }
+)gti";
+    analyze(borrowed + observe);
+    const auto rejected = lang::Frontend().analyze(
+        root / "tests/terminating-arm-owner-write.gti",
+        borrowed + "owner = 7;" + observe, {root / "stdlib/prelude.gti"}, {},
+        {root / "stdlib"});
+    expect(!rejected.canGenerateCode() &&
+               std::any_of(rejected.diagnostics.begin(),
+                           rejected.diagnostics.end(),
+                           [](const auto &diagnostic) {
+                             return diagnostic.code == "GTI-S2017";
+                           }) &&
+               std::none_of(rejected.diagnostics.begin(),
+                            rejected.diagnostics.end(),
+                            [](const auto &diagnostic) {
+                              return diagnostic.code == "GTI-B0001";
+                            }),
+           "pruning a terminal arm retains the continuing owner's live loan");
+  }
   const auto functionId = [](const lang::FrontendResult &result,
                              const std::string &name) {
     for (const auto &function : result.hir.functionInstances())

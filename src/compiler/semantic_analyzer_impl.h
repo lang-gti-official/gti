@@ -6633,7 +6633,8 @@ private:
   mergedProjectedValueStates(const Symbol &left, const Symbol &right);
 
   void mergeValueStates(const ScopeStack &base, const ScopeStack &left,
-                        const ScopeStack &right);
+                        const ScopeStack &right, bool leftCanFallThrough = true,
+                        bool rightCanFallThrough = true);
 
   [[nodiscard]] ScopeStack
   mergedValueStates(const ScopeStack &base,
