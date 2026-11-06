@@ -195,7 +195,14 @@ enum, whose alternatives are not integer constants, and enumerator reflection
 on a non-enum type. `GTI-S2118` rejects `std::meta::construct<T>` for a type
 that is not eligible for designated construction. `GTI-S2119` rejects
 `field::default_value()` on a field whose declaration has no initializer
-(`has_default()` tells). Reflected field access
+(`has_default()` tells). `GTI-S2126` rejects a reflection query that still has
+unresolved generic arguments during instance analysis, before it can reach
+MIR or backend lowering. Reflection does not supply a method's own generic
+arguments; a concrete query must have enough information to produce a
+constant. The normal library-instance diagnostic mapping retains the user's
+request and the related library location. No automatic edit chooses a type or
+silently skips a method. Primary generic deferral and already-proven symbolic
+facts remain valid. Reflected field access
 reports an owner argument of another type as an ordinary argument mismatch
 (`GTI-S2003`), naming the described owner and the field's declaration. Diagnostics produced inside an expanded copy carry related
 information naming the element and are deduplicated across identical copies.
