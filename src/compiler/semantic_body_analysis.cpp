@@ -6416,38 +6416,25 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   semanticModel.recordFullExpression(stmt, initializer);
   if (catalog.sealed)
     validateOrdinaryClassLayout(declaredType);
-  if (declaredType.kind == SemanticType::Array &&
-      containsOwningPayloadEnum(declaredType)) {
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2067", DiagnosticPhase::Semantics, stmt.name(),
-        "Fixed array '" + stmt.name().lexeme + "' has type '" +
-            typeSpelling(declaredType) +
-            "', but owning payload-enum elements are not supported in this "
-            "bounded containment slice.");
-    diagnostic.hints.emplace_back(
-        "Keep each owning payload enum in its own local binding until "
-        "aggregate element lifecycle state is represented explicitly.");
-    diagnostics.emplace_back(std::move(diagnostic));
-  } else if (instanceField && declaredType.kind == SemanticType::Enum &&
-             containsOwningPayloadEnum(declaredType) &&
-             !(fieldOwner != nullptr &&
-               (fieldOwner->kind == ClassKind::Class ||
-                fieldOwner->kind == ClassKind::Struct) &&
-               !fieldOwner->polymorphic && !fieldOwner->cAbiRecord &&
-               !fieldOwner->cOpaqueHandle && !fieldOwner->storedReference &&
-               !fieldOwner->compilerPrivate &&
-               fieldOwner->compilerCapability ==
-                   CompilerCapabilityTypeKind::None)) {
+  if (instanceField && containsOwningPayloadEnum(declaredType) &&
+      !(fieldOwner != nullptr &&
+        (fieldOwner->kind == ClassKind::Class ||
+         fieldOwner->kind == ClassKind::Struct) &&
+        !fieldOwner->polymorphic && !fieldOwner->cAbiRecord &&
+        !fieldOwner->cOpaqueHandle && !fieldOwner->storedReference &&
+        !fieldOwner->compilerPrivate &&
+        fieldOwner->compilerCapability == CompilerCapabilityTypeKind::None)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2067", DiagnosticPhase::Semantics, stmt.name(),
         "Instance field '" + stmt.name().lexeme + "' has type '" +
             typeSpelling(declaredType) +
             "', which contains owning payload-enum state unsupported for "
-            "this owner in the bounded direct-field slice.");
+            "this owner in the owning-field slice.");
     diagnostic.hints.emplace_back(
-        "A direct owning payload-enum field is supported only in an ordinary "
-        "non-polymorphic GTI class or struct; keep "
-        "layout-constrained and compiler-owned shapes in separate bindings.");
+        "An owning payload-enum field, directly or in a fixed array, is "
+        "supported only in an ordinary non-polymorphic GTI class or struct; "
+        "keep layout-constrained and compiler-owned shapes in separate "
+        "bindings.");
     diagnostics.emplace_back(std::move(diagnostic));
   }
   const SemanticBindingKind bindingKind =

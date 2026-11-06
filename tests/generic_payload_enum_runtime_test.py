@@ -9,6 +9,7 @@ import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from native_fixture_build import build_fixture
+from owning_enum_array_runtime import run_enum_array_cases
 from backend_modes import cpp_only_case, is_cpp_mode, native_modes, optimization_level
 
 
@@ -439,6 +440,7 @@ int main() {
                                      f"stderr={executed.stderr!r}\n")
 
         run_cases(plan, compile_case, args.jobs, execute_case)
+        run_enum_array_cases(compiler, modes)
     print(f"Generic payload sums: {len(cases) * len(modes)} native outcomes passed")
     return 0
 
