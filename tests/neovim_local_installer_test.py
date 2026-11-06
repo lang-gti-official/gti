@@ -45,6 +45,174 @@ def real_toolchain_smoke(installer, toolchain):
         assert result.stdout.strip() == "local terminal activation works", result
 
 
+def fake_install(prefix, version="0.1.0"):
+    """What `cmake --install --component gti_toolchain` leaves in a prefix."""
+    for relative in ("share/gti/VERSION", "share/gti/parser/gti.so",
+                     "share/gti/stdlib/prelude.gti", "lib/libgti_runtime.a",
+                     "bin/gti", "bin/gti_lsp"):
+        path = prefix / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(version + "\n" if relative.endswith("VERSION") else "fixture")
+        if relative.startswith("bin/"):
+            path.chmod(0o755)
+
+
+def exits(operation, message):
+    with mock.patch.object(sys, "stderr", io.StringIO()) as stderr:
+        try:
+            operation()
+        except SystemExit as exit:
+            assert exit.code == 2, exit.code
+        else:
+            raise AssertionError(f"accepted; expected: {message}")
+    assert message in stderr.getvalue(), stderr.getvalue()
+
+
+def gtiup_link_contract(installer):
+    """--gtiup installs a fresh prefix, links it in gtiup and touches nothing else."""
+    for name in ("dev", "my.dev-2", "Local_Build"):
+        assert installer.check_link_name(name) == name
+    for name in ("", "nightly", "stable", "beta", "preview", "1dev", "a/b", "-x", "dev space"):
+        rejected(lambda: installer.check_link_name(name))
+    for output, expected in (("gtiup 0.5.1\n", (0, 5, 1)), ("gtiup 0.6.0-rc.1", (0, 6, 0))):
+        with mock.patch.object(installer, "run", return_value=mock.Mock(stdout=output)):
+            assert installer.gtiup_version("gtiup") == expected
+    with mock.patch.object(installer, "run", return_value=mock.Mock(stdout="gtiup")):
+        rejected(lambda: installer.gtiup_version("gtiup"))
+    from datetime import datetime, timezone
+    early = installer.link_label("0.1.0", "a" * 40, False, datetime(2026, 11, 6, 9, 5, tzinfo=timezone.utc))
+    late = installer.link_label("0.1.0", "b" * 40, True, datetime(2026, 11, 6, 10, 0, tzinfo=timezone.utc))
+    assert early == "20261106T090500Z-0.1.0-aaaaaaaaaaaa" and late.endswith("-bbbbbbbbbbbb-dirty")
+    assert sorted([late, early]) == [early, late], "labels must sort oldest to newest"
+
+    def tools(command, **kwargs):
+        if command[0] == "cmake" and command[1] == "--install":
+            fake_install(pathlib.Path(command[command.index("--prefix") + 1]))
+            return mock.Mock(stdout="")
+        assert command[1:] == ["--version"], command
+        return mock.Mock(stdout=f"{pathlib.Path(command[0]).name} 0.1.0\n")
+
+    with tempfile.TemporaryDirectory(prefix="gti-gtiup-link-test-") as directory:
+        base = pathlib.Path(directory) / "linked/dev"
+        with mock.patch.object(installer, "run", side_effect=tools):
+            prefix = installer.install_linked_prefix(pathlib.Path(directory) / "build", base, early,
+                                                     {"commit": "a" * 40}, build_id="c" * 40)
+            assert prefix == base / early and (prefix / installer.LINK_MARKER).is_file()
+            assert (prefix / "share/gti/BUILD_ID").read_text() == "c" * 40 + "\n"
+            assert not list(base.glob(".staging-*")), "staging must be renamed into place"
+            rejected(lambda: installer.install_linked_prefix(base.parent, base, early, {}))
+        # A failed install leaves no prefix and no staging behind.
+        def broken(command, **kwargs):
+            if command[1] == "--install":
+                fake_install(pathlib.Path(command[command.index("--prefix") + 1]))
+                raise subprocess.CalledProcessError(1, command)
+            raise AssertionError(command)
+        with mock.patch.object(installer, "run", side_effect=broken):
+            try:
+                installer.install_linked_prefix(base.parent, base, late, {})
+            except subprocess.CalledProcessError:
+                pass
+            else:
+                raise AssertionError("failed install was accepted")
+        assert not (base / late).exists() and not list(base.glob(".staging-*"))
+        # A prefix that fails validation is removed again.
+        with mock.patch.object(installer, "run", side_effect=lambda command, **kwargs:
+                               fake_install(pathlib.Path(command[command.index("--prefix") + 1]), "0.2.0")
+                               if command[1] == "--install" else mock.Mock(stdout="gti 0.1.0\n")):
+            rejected(lambda: installer.install_linked_prefix(base.parent, base, late, {}))
+        assert not (base / late).exists()
+
+        # Pruning keeps the newest marked prefixes, never the active one, never unmarked ones.
+        prune = pathlib.Path(directory) / "prune"
+        labels = [f"2026110{day}T000000Z-0.1.0-{'a' * 12}" for day in range(1, 6)]
+        for label in labels:
+            (prune / label).mkdir(parents=True)
+            (prune / label / installer.LINK_MARKER).write_text("{}")
+        (prune / "hand-made").mkdir()
+        (prune / ".staging-x").mkdir()
+        (prune / ".staging-x" / installer.LINK_MARKER).write_text("{}")
+        removed = installer.prune_linked_prefixes(prune, 3, prune / labels[-1])
+        assert sorted(path.name for path in removed) == labels[:2], removed
+        assert all((prune / label).is_dir() for label in labels[2:])
+        assert (prune / "hand-made").is_dir() and (prune / ".staging-x").is_dir()
+        assert installer.prune_linked_prefixes(prune, 1, prune / labels[2]) == [prune / labels[3]]
+        assert (prune / labels[2]).is_dir() and (prune / labels[4]).is_dir(), "active prefix survives"
+        assert installer.unused_label(prune, labels[4]) == labels[4] + ".2"
+        assert installer.unused_label(prune, "fresh") == "fresh"
+
+        # End to end: build, install, link and select, with no editor or terminal writes.
+        project = pathlib.Path(directory) / "project"
+        project.mkdir()
+        (project / "VERSION").write_text("0.1.0\n")
+        commands = []
+        def flow(command, **kwargs):
+            command = [str(part) for part in command]
+            commands.append(command)
+            if command[:2] == ["/opt/gtiup", "--version"]:
+                return mock.Mock(stdout="gtiup 0.5.1\n")
+            if command[0] == "git" and command[3] == "rev-parse":
+                return mock.Mock(stdout="d" * 40 + "\n")
+            if command[0] == "git" and command[3] == "status":
+                return mock.Mock(stdout=" M AGENTS.md\n")
+            if command[0] == "cmake" and "--install" in command:
+                return tools(command)
+            if command[0] == "cmake" or command[0] == "python3" or command[0] == "/opt/gtiup":
+                return mock.Mock(stdout="")
+            return tools(command)
+        link_root = pathlib.Path(directory) / "links"
+        home = pathlib.Path(directory) / "home"
+        argv = ["installer", "--local", "--gtiup", "--link-root", str(link_root),
+                "--build-dir", str(pathlib.Path(directory) / "flow-build")]
+        patches = (mock.patch.object(installer, "ROOT", project),
+                   mock.patch.object(installer.platform, "system", return_value="Darwin"),
+                   mock.patch.object(installer.shutil, "which",
+                                     side_effect=lambda name: "/opt/gtiup" if name == "gtiup" else "/usr/bin/" + name),
+                   mock.patch.object(installer, "run", side_effect=flow),
+                   mock.patch.object(installer, "discover_llvm", return_value=pathlib.Path("/opt/llvm/lib/cmake/llvm")),
+                   mock.patch.dict(installer.os.environ, {"LLVM_DIR": ""}),
+                   mock.patch.object(installer.pathlib.Path, "home", return_value=home))
+        for patch in patches:
+            patch.start()
+        try:
+            with mock.patch.object(sys, "argv", argv + ["--dry-run"]):
+                installer.main()
+            assert not link_root.exists(), "dry run must not install"
+            assert not any(command[:2] == ["/opt/gtiup", "link"] for command in commands)
+            with mock.patch.object(sys, "argv", argv):
+                installer.main()
+            linked = [command for command in commands if command[:2] == ["/opt/gtiup", "link"]]
+            assert len(linked) == 1 and linked[0][2] == "dev", linked
+            prefix = pathlib.Path(linked[0][3])
+            assert prefix.parent == link_root / "dev" and prefix.name.endswith("-dddddddddddd-dirty")
+            assert ["/opt/gtiup", "default", "dev"] in commands
+            assert not any(command[0] == "nvim" for command in commands), "gtiup mode must not run Neovim"
+            assert not home.exists(), "gtiup mode must not write terminal commands or editor config"
+            commands.clear()
+            with mock.patch.object(sys, "argv", argv + ["--no-default"]):
+                installer.main()
+            assert not any(command[:2] == ["/opt/gtiup", "default"] for command in commands)
+            assert len(list((link_root / "dev").iterdir())) == 2
+            # Refusals: old gtiup, reserved names, conflicting options, options without --gtiup.
+            with mock.patch.object(installer, "run", side_effect=lambda command, **kwargs:
+                                   mock.Mock(stdout="gtiup 0.4.0\n")), \
+                    mock.patch.object(sys, "argv", argv + ["--dry-run"]):
+                exits(installer.main, "gtiup self update")
+            for extra, message in ((["--gtiup", "nightly"], "invalid gtiup toolchain name"),
+                                   (["--activate-only"], "--activate-only"),
+                                   (["--no-terminal"], "writes no terminal commands"),
+                                   (["--keep", "0"], "--keep must be a positive integer")):
+                with mock.patch.object(sys, "argv", argv + extra + ["--dry-run"]):
+                    exits(installer.main, message)
+            with mock.patch.object(sys, "argv", ["installer", "--local", "--keep", "2", "--dry-run"]):
+                exits(installer.main, "need --gtiup")
+            with mock.patch.object(installer, "find_gtiup", return_value=None), \
+                    mock.patch.object(sys, "argv", argv + ["--dry-run"]):
+                exits(installer.main, "gtiup is not installed")
+        finally:
+            for patch in reversed(patches):
+                patch.stop()
+
+
 def main():
     spec = importlib.util.spec_from_file_location("installer", sys.argv[1])
     installer = importlib.util.module_from_spec(spec)
@@ -258,7 +426,8 @@ def main():
         assert all(call[0] in ("ls-remote", "rev-parse") for call in calls), calls
         with mock.patch.object(installer, "run", return_value=mock.Mock(stdout="")):
             rejected(lambda: installer.nightly_source(root))
-    print("Local terminal activation, Neovim configuration and build safety passed")
+    gtiup_link_contract(installer)
+    print("Local terminal activation, Neovim configuration, gtiup linking and build safety passed")
     if len(sys.argv) > 2:
         real_toolchain_smoke(installer, pathlib.Path(sys.argv[2]).resolve())
         print("Real portable CLI/LSP symlink activation and stdlib compilation passed")

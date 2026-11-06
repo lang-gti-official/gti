@@ -268,6 +268,16 @@ publication authority. Discovery accepts only LLVM 23, GTI's pinned major
 retained versions without assuming
 an Intel or Apple Silicon installation prefix. Existing build generators are
 preserved while configuration/install rules are refreshed.
+`--gtiup [NAME]` replaces the archive, Lazy spec and terminal-command
+activation with gtiup's linked toolchains (gtiup 0.5.0 or later, checked before
+any work). It installs `gti_toolchain` into a staging directory beside a new
+timestamped prefix under `~/.local/share/gti/linked/NAME`, renames it into place,
+validates the installed resources and executable versions, then runs
+`gtiup link NAME PREFIX` and, unless `--no-default`, `gtiup default NAME`. A new
+prefix per build keeps running language servers on their own files while gtiup
+switches in one state update. Only prefixes carrying the installer's
+`.gti-local-link.json` marker are pruned, newest `--keep` retained, never the
+linked one; a failed install or validation leaves no prefix behind.
 
 The default (also explicitly `--nightly`) selects the canonical GitHub `nightly`
 tag directly: the commit the published nightly toolchain was built from, the
