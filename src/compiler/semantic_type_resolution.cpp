@@ -7527,6 +7527,15 @@ auto SemanticVisitor::Impl::definitionOwnerParametersFor(
              : found->second;
 }
 
+auto SemanticVisitor::Impl::beginClassParameterScope(const ClassInfo &owner)
+    -> void {
+  auto parameters = owner.genericParameters;
+  parameters.insert(parameters.end(),
+                    owner.genericArgumentPatternLifetimes.begin(),
+                    owner.genericArgumentPatternLifetimes.end());
+  beginTypeParameterScope(parameters);
+}
+
 auto SemanticVisitor::Impl::beginTypeParameterScope(
     const std::vector<GenericParameterInfo> &parameters) -> void {
   auto &scope = typeParameterScopes.emplace_back();
@@ -8885,7 +8894,7 @@ auto SemanticVisitor::Impl::prepareClassInstanceContext(
   currentClass = classId;
   currentNamespace = owner.namespaceScope;
   currentSourceUnit = owner.sourceUnit;
-  beginTypeParameterScope(owner.genericParameters);
+  beginClassParameterScope(owner);
   beginScope();
   for (const auto &[name, member] : owner.members) {
     scopes.back().emplace(name, substituteSymbol(member.symbol, concreteClass));

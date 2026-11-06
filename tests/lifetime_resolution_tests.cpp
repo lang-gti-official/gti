@@ -333,9 +333,9 @@ int main() { return 0; }
          [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
          "a nested callable's lifetime premises cannot justify an outer reference escape");
   const auto exactSelector = analyze(R"(
-struct Fixed<T> {};
-struct Fixed<int&<static>> {};
-using Preserved = for<lifetime a> void(Fixed<int&<a>>);
+namespace exact { struct Fixed<T> {}; }
+struct exact::Fixed<int&<static>> {};
+using Preserved = for<lifetime a> void(exact::Fixed<int&<a>>);
 int main() { return 0; }
 )");
   expectValid(exactSelector, "exact specialization selection preserves a callable's actual region");
@@ -771,6 +771,48 @@ int main() { return 0; }
          "a structural profile match cannot replace a fixed static lifetime with a caller region");
 }
 
+void testNamedProjectedPatternLifetimes() {
+  const std::string declarations = R"(
+class Borrowed<T&<source>> {
+  T&<source> stored;
+public:
+  using Reference = T&<source>;
+  Borrowed(T&<source> value) : stored(value) {}
+  T&<source> get() { return this.stored; }
+};
+int&<a> extract<lifetime a>(Borrowed<int&<a>> value) { return value.get(); }
+)";
+  const auto result = analyze(declarations + R"(
+int main() { int value = 7; Borrowed<int&> view(value); return extract(view); }
+)");
+  expectValid(result, "a named projected region preserves the exact reference shell through fields and methods");
+  const auto *owner = record(result, "Borrowed");
+  expect(owner && owner->genericParameters.size() == 1 &&
+             !owner->genericParameters.front().lifetime &&
+             owner->genericArgumentPatternLifetimes.size() == 1 &&
+             owner->genericArgumentPatternLifetimes.front().lifetime &&
+             !owner->genericArgumentPatternLifetimes.front().implicit &&
+             owner->genericArgumentPatternLifetimes.front().name.lexeme == "source",
+         "named projected binders do not become separately supplied lifetime arguments");
+  if (owner && owner->genericArgumentPatternLifetimes.size() == 1)
+    expect(owner->fields.size() == 1 &&
+               owner->fields.front().type.referenceLifetime ==
+                   lang::Lifetime::parameter(owner->genericArgumentPatternLifetimes.front().id),
+           "an explicitly related stored reference uses the projected binder");
+  const auto escaping = analyze(declarations + R"(
+int&<static> invalid<lifetime a>(Borrowed<int&<a>> value) { return value.get(); }
+int main() { return 0; }
+)");
+  expect(!escaping.semanticValid && std::any_of(escaping.diagnostics.begin(), escaping.diagnostics.end(),
+             [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
+         "a named projected lifetime does not widen the selected external region");
+  const auto kindConflict = analyze("class Invalid<T&<T>> {}; int main() { return 0; }");
+  expect(!kindConflict.semanticValid &&
+             std::any_of(kindConflict.diagnostics.begin(), kindConflict.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2126"; }),
+         "a projected lifetime name cannot also bind a type");
+}
+
 void testNominalFormation() {
   const std::string declarations = R"(
 struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
@@ -947,6 +989,7 @@ int main() {
   testExecutableLifetimeIdentity();
   testInferredCarrierRegions();
   testProjectedPatternLifetimes();
+  testNamedProjectedPatternLifetimes();
   testNominalFormation();
   testCStringRegions();
   testPrivateLifetimeInference();

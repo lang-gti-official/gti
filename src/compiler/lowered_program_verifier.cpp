@@ -171,7 +171,7 @@ validClassPatternBindings(const LoweredClassDeclaration &declaration) {
   if (!validGenericParameters(declaration.genericArgumentPatternLifetimes))
     return false;
   for (const auto &parameter : declaration.genericArgumentPatternLifetimes) {
-    if (!parameter.lifetime || !parameter.implicit ||
+    if (!parameter.lifetime ||
         std::any_of(declaration.genericParameters.begin(), declaration.genericParameters.end(),
                     [&](const auto &declared) { return declared.id == parameter.id; }))
       return false;

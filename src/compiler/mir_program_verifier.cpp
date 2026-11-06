@@ -14920,7 +14920,8 @@ completeBorrowSourcePath(const MirProgram &program,
           argument->value <= definitions.size()) {
         const auto *stage = definitions[argument->value - 1];
         if (stage && stage->kind == MirInstructionKind::CallInput &&
-            stage->callInputKind == HirCallInputKind::CopyValue &&
+            (stage->callInputKind == HirCallInputKind::CopyValue ||
+             stage->callInputKind == HirCallInputKind::Value) &&
             stage->result == argument->value &&
             stage->callSite == instruction.callSite &&
             stage->operands.size() == 1) {
@@ -14930,14 +14931,25 @@ completeBorrowSourcePath(const MirProgram &program,
             const auto *load = definitions[copy->value - 1];
             if (load && load->kind == MirInstructionKind::Load &&
                 load->result == copy->value && load->operands.size() == 1 &&
-                load->info.type == stage->info.type &&
-                load->operands.front().type == stage->info.type)
+                load->info.type == copy->type &&
+                (load->operands.front().type == load->info.type ||
+                 mirLifetimeValueConversion(program, body, owner,
+                     load->operands.front().type, load->info.type)) &&
+                (load->info.type == stage->info.type ||
+                 mirLifetimeValueConversion(program, body, owner,
+                                             load->info.type, stage->info.type)))
               copy = &load->operands.front();
           }
           const auto *copied = copy->kind == MirOperandKind::Copy
               ? body.findPlace(copy->place) : nullptr;
           if (copied && copied->root == MirPlaceRootKind::Binding &&
-              copied->projections.empty() && copied->type == stage->info.type)
+              copied->projections.empty() &&
+              (copied->type == copy->type ||
+               mirLifetimeValueConversion(program, body, owner,
+                                           copied->type, copy->type)) &&
+              (copy->type == stage->info.type ||
+               mirLifetimeValueConversion(program, body, owner,
+                                           copy->type, stage->info.type)))
             if (const auto loans = bindingLoans.find(copied->binding);
                 loans != bindingLoans.end() && loans->second.size() == 1)
               if (const auto *group = body.findLoan(loans->second.front());

@@ -1862,7 +1862,7 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
   currentNamespace = alias.lookupScope;
   if (alias.ownerClass != 0) {
     currentClass = alias.ownerClass;
-    beginTypeParameterScope(classInfo(alias.ownerClass).genericParameters);
+    beginClassParameterScope(classInfo(alias.ownerClass));
   }
 
   const std::size_t diagnosticsBefore = diagnostics.size();
@@ -2937,17 +2937,49 @@ auto SemanticVisitor::Impl::registerClassAttributes(
 }
 
 auto SemanticVisitor::Impl::makeClassPatternParameters(
-    const ClassDecl &declaration, const std::vector<std::string> &scope)
+    const ClassDecl &declaration, const std::vector<std::string> &scope,
+    std::vector<GenericParameterInfo> &lifetimes)
     -> std::vector<GenericParameterInfo> {
   std::vector<GenericParameter> parameters;
-  const auto collect = [&](const auto &self, const TypeRef &type) -> void {
+  const auto add = [&](GenericParameter parameter) {
+    const auto found = std::find_if(
+        parameters.begin(), parameters.end(), [&](const auto &existing) {
+          return existing.name.lexeme == parameter.name.lexeme;
+        });
+    if (found == parameters.end()) {
+      parameters.push_back(std::move(parameter));
+    } else if (found->lifetimeKeyword.has_value() !=
+               parameter.lifetimeKeyword.has_value()) {
+      report(parameter.name,
+             "A class argument pattern name cannot bind both a type and a lifetime.",
+             "GTI-S2126");
+    } else if (found->pack.has_value() != parameter.pack.has_value()) {
+      report(parameter.name,
+             "A pattern parameter cannot be both a type and a type pack.",
+             "GTI-S2023");
+    }
+  };
+  const auto collect = [&](const auto &self, const TypeRef &type,
+                           std::unordered_set<std::string> bound) -> void {
+    if (type.lifetimeBinder)
+      for (const auto &parameter : type.lifetimeBinder->parameters)
+        bound.insert(parameter.name.lexeme);
+    if (type.referenceLifetime) {
+      const auto &name = type.referenceLifetime->name;
+      if (name.kind == TokenKind::IDENTIFIER && name.lexeme != "_" &&
+          !bound.contains(name.lexeme) && !lifetimeOf(name).specified()) {
+        // The reference annotation is the declaration site of a projected
+        // binder. It does not introduce a separately supplied generic slot.
+        add({.name = name, .lifetimeKeyword = name});
+      }
+    }
     if (type.qualifiedOwner) {
-      self(self, *type.qualifiedOwner);
+      self(self, *type.qualifiedOwner, bound);
     }
     if (type.isFunctionSignature()) {
-      self(self, type.arguments.back());
+      self(self, type.arguments.back(), bound);
       for (std::size_t index = 0; index + 1 < type.arguments.size(); ++index) {
-        self(self, type.arguments[index]);
+        self(self, type.arguments[index], bound);
       }
       return;
     }
@@ -2955,27 +2987,18 @@ auto SemanticVisitor::Impl::makeClassPatternParameters(
         type.name.last().kind == TokenKind::IDENTIFIER &&
         type.arguments.empty() &&
         type.genericArgumentSyntax != GenericArgumentSyntax::Value) {
-      const auto found = std::find_if(
-          parameters.begin(), parameters.end(), [&](const auto &parameter) {
-            return parameter.name.lexeme == type.name.last().lexeme;
-          });
-      if (found == parameters.end()) {
-        parameters.push_back(
-            {.name = type.name.last(), .pack = type.packExpansion});
-      } else if (found->pack.has_value() != type.packExpansion.has_value()) {
-        report(type.name.last(),
-               "A pattern parameter cannot be both a type and a type pack.",
-               "GTI-S2023");
-      }
+      add({.name = type.name.last(), .pack = type.packExpansion});
     }
     for (const TypeRef &argument : type.arguments) {
-      self(self, argument);
+      self(self, argument, bound);
     }
   };
   for (const TypeRef &pattern : declaration.genericArgumentPatterns()) {
-    collect(collect, pattern);
+    collect(collect, pattern, {});
   }
-  if (parameters.empty()) {
+  if (std::none_of(parameters.begin(), parameters.end(), [](const auto &parameter) {
+        return !parameter.lifetimeKeyword;
+      })) {
     report(declaration.name(),
            "A generic class argument pattern must declare a type parameter.",
            "GTI-S2023");
@@ -2984,7 +3007,12 @@ auto SemanticVisitor::Impl::makeClassPatternParameters(
   // generic model retains its one-final-pack invariant.
   std::stable_partition(parameters.begin(), parameters.end(),
                         [](const auto &parameter) { return !parameter.pack; });
-  return makeGenericParameters(parameters, declaration.name(), scope);
+  auto result = makeGenericParameters(parameters, declaration.name(), scope);
+  for (const auto &parameter : result)
+    if (parameter.lifetime)
+      lifetimes.push_back(parameter);
+  std::erase_if(result, [](const auto &parameter) { return parameter.lifetime; });
+  return result;
 }
 
 auto SemanticVisitor::Impl::resolveClassArgumentPatterns(ClassId id) -> void {
@@ -3005,7 +3033,7 @@ auto SemanticVisitor::Impl::resolveClassArgumentPatterns(ClassId id) -> void {
   currentNamespace = owner.namespaceScope;
   currentClass = id;
   currentSourceUnit = owner.sourceUnit;
-  beginTypeParameterScope(owner.genericParameters);
+  beginClassParameterScope(owner);
   for (const TypeRef &pattern : owner.declaration->genericArgumentPatterns()) {
     resolveTypeAliasDependencies(pattern, owner.namespaceScope);
     validateType(pattern);
@@ -3210,11 +3238,12 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
       }
 
       const ClassId id = classes.size() + 1;
+      std::vector<GenericParameterInfo> patternLifetimes;
       std::vector<GenericParameterInfo> genericParameters =
           classDecl->genericArgumentPatterns().empty()
               ? makeGenericParameters(classDecl->genericParameters(),
                                       classDecl->name(), scope, false)
-              : makeClassPatternParameters(*classDecl, scope);
+              : makeClassPatternParameters(*classDecl, scope, patternLifetimes);
       for (std::size_t index = 0; index < genericParameters.size(); ++index) {
         if (genericParameters[index].pack &&
             (index + 1 != genericParameters.size() ||
@@ -3367,6 +3396,7 @@ auto SemanticVisitor::Impl::registerClasses(const StmtList &statements,
                                                         : *enclosingAccess,
           .definitionFamilyPrimary = familyPrimary,
           .genericParameters = std::move(genericParameters),
+          .genericArgumentPatternLifetimes = std::move(patternLifetimes),
           .cAbiRecord = capabilityPolicies.cAbiRecord,
           .cAbiAttribute = capabilityPolicies.cAbiSource,
           .cOpaqueHandle = capabilityPolicies.cOpaqueHandle,
@@ -5059,7 +5089,7 @@ auto SemanticVisitor::Impl::resolveClassInheritance() -> void {
       continue;
     }
     currentSourceUnit = owner.sourceUnit;
-    beginTypeParameterScope(owner.genericParameters);
+    beginClassParameterScope(owner);
     if (owner.kind == ClassKind::Union) {
       if (!owner.declaration->bases().empty()) {
         report(owner.declaration->bases().front().type.name.last(),
@@ -5851,7 +5881,7 @@ auto SemanticVisitor::Impl::collectClassMembers(const StmtList &statements,
                                   : AccessModifier::Public;
       const std::optional<ClassId> enclosingClass = currentClass;
       currentClass = info.id;
-      beginTypeParameterScope(info.genericParameters);
+      beginClassParameterScope(info);
       collectMembers(classDecl->members(), info, access);
       for (const auto &[name, nested] : info.nestedTypes) {
         if (info.members.contains(name) || info.typeAliases.contains(name)) {

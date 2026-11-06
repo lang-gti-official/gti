@@ -286,6 +286,15 @@ and belong to the same logical module. Each has a distinct class identity and
 member scope. Importing the public family makes its selected implementation
 reachable; private components in registered implementation files do not publish
 additional names.
+A reference pattern can name its projected lifetime: `class Borrowed<T&<a>>`
+binds `T` and `a` from its one public type argument. The name `a` is available
+in fields, aliases, methods, and requirements, without adding a separately
+supplied lifetime argument. For example, a stored `T&<a>` and a result `T&<a>`
+refer to that exact borrowed shell. An unrelated omitted `T&` still introduces
+its own anonymous slot; referent spelling does not imply a lifetime relation.
+Repeated lifetime names require the same region. `static` remains a fixed
+region, `_` creates an anonymous projected binder, and names bound inside a
+`for<lifetime ...>` callable stay within that callable's invocation scope.
 The qualifier selects the definition before exact component matching, including
 after generic substitution. There is no ranking, fallback between qualifiers,
 or overlap with an ordinary `class Name<T>` primary. Exact qualified concrete

@@ -125,7 +125,7 @@ inline std::optional<std::vector<NominalVariance>> inferNominalVarianceRecipes(
       if (parameter.lifetime)
         scope.push_back(Lifetime::parameter(parameter.id));
     for (const auto &parameter : recipe.argumentPatternLifetimes) {
-      if (!parameter.id || !parameter.lifetime || !parameter.implicit || parameter.value ||
+      if (!parameter.id || !parameter.lifetime || parameter.value ||
           parameter.pack || !parameter.typeArgumentPath.empty() ||
           std::find(ids.begin(), ids.end(), parameter.id) != ids.end())
         return std::nullopt;

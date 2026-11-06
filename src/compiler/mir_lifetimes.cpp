@@ -1711,13 +1711,10 @@ private:
 };
 } // namespace
 
-static bool mirLifetimeReferenceConversionForCase(
+static bool mirLifetimeTypeConversionForCase(
     const MirProgram &program, const MirBody &body, std::size_t owner,
     const SemanticType &actual, const SemanticType &expected,
-    const LifetimeSignatureContract &declared) {
-  if (actual.kind != SemanticType::Reference || expected.kind != SemanticType::Reference ||
-      actual.arguments.size() != 1 || expected.arguments.size() != 1)
-    return false;
+    const LifetimeSignatureContract &declared, bool allowDerived) {
   if (!verifyMirLifetimeBodyFactsForCase(program, body, declared, owner).valid())
     return false;
   const auto expanded = expandedLifetimeAssumptions(program, declared);
@@ -1743,19 +1740,37 @@ static bool mirLifetimeReferenceConversionForCase(
     if (!graph.require(bound.longer, bound.shorter))
       return false;
   return !graph.failure() && MirLifetimeRelations(program, body, *expanded, graph)
-                              .types(actual, expected, 1, 0, true);
+                              .types(actual, expected, 1, 0, allowDerived);
 }
 
 bool mirLifetimeReferenceConversion(
     const MirProgram &program, const MirBody &body, std::size_t owner,
     const SemanticType &actual, const SemanticType &expected) {
+  if (actual.kind != SemanticType::Reference || expected.kind != SemanticType::Reference ||
+      actual.arguments.size() != 1 || expected.arguments.size() != 1)
+    return false;
   const auto &declared = bodyLifetimeContract(program, body, owner);
   return verifyLifetimeAssumptionCases(body, owner, declared, [&](const auto &branch) {
-    if (mirLifetimeReferenceConversionForCase(program, body, owner, actual, expected, branch))
+    if (mirLifetimeTypeConversionForCase(program, body, owner, actual, expected, branch, true))
       return MirVerificationResult{};
     return MirVerificationResult{{MirVerificationError{
         .bodyKind = body.kind, .owner = owner,
         .message = "MIR reference conversion is not proved in every lifetime assumption case"}}};
+  }).valid();
+}
+
+bool mirLifetimeValueConversion(
+    const MirProgram &program, const MirBody &body, std::size_t owner,
+    const SemanticType &actual, const SemanticType &expected) {
+  if (actual.kind == SemanticType::Reference || expected.kind == SemanticType::Reference)
+    return false;
+  const auto &declared = bodyLifetimeContract(program, body, owner);
+  return verifyLifetimeAssumptionCases(body, owner, declared, [&](const auto &branch) {
+    if (mirLifetimeTypeConversionForCase(program, body, owner, actual, expected, branch, false))
+      return MirVerificationResult{};
+    return MirVerificationResult{{MirVerificationError{
+        .bodyKind = body.kind, .owner = owner,
+        .message = "MIR value conversion is not proved in every lifetime assumption case"}}};
   }).valid();
 }
 

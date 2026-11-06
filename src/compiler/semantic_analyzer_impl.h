@@ -4778,6 +4778,7 @@ private:
 
   void
   beginTypeParameterScope(const std::vector<GenericParameterInfo> &parameters);
+  void beginClassParameterScope(const ClassInfo &owner);
 
   void endTypeParameterScope();
 
@@ -5212,7 +5213,8 @@ private:
 
   [[nodiscard]] std::vector<GenericParameterInfo>
   makeClassPatternParameters(const ClassDecl &declaration,
-                             const std::vector<std::string> &scope);
+                             const std::vector<std::string> &scope,
+                             std::vector<GenericParameterInfo> &lifetimes);
   void resolveClassArgumentPatterns(ClassId id);
   [[nodiscard]] bool
   classArgumentPatternsMatch(const ClassInfo &owner,

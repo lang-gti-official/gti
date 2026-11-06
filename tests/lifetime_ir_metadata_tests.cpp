@@ -257,6 +257,15 @@ int main() {
              std::vector{TypeVariance::Invariant} &&
              projectedVariance->front().lifetimes.empty(),
          "projected pattern regions do not add top-level arity or grant unchecked variance");
+  auto namedProjected = projected;
+  namedProjected.argumentPatternLifetimes.front().implicit = false;
+  const auto namedVariance = inferNominalVarianceRecipes(std::array{namedProjected});
+  expect(namedVariance && *namedVariance == *projectedVariance,
+         "named pattern binders retain the same exact scope and public arity as anonymous slots");
+  auto unboundNamedProjection = namedProjected;
+  unboundNamedProjection.argumentPatternLifetimes.front().id = 804;
+  expect(!inferNominalVarianceRecipes(std::array{unboundNamedProjection}),
+         "a named pattern binder must occur exactly in its declared recipe scope");
   const std::array projectedPatterns{reference(802), reference(802)};
   const std::array projectedActual{reference(901), reference(901)};
   const std::array projectedRegions{Lifetime::parameter(802)};

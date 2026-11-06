@@ -1130,7 +1130,7 @@ auto SemanticVisitor::Impl::beginClassBody(const ClassDecl &stmt,
                                   .traits = typeTraits(type),
                                   .classType = &stmt});
   currentNamespace = info.namespaceScope;
-  beginTypeParameterScope(info.genericParameters);
+  beginClassParameterScope(info);
   for (const BaseSpecifier &base : stmt.bases()) {
     validateType(base.type, false, true);
     validateReferencePlacement(base.type, false, "base type");
@@ -4371,7 +4371,7 @@ auto SemanticVisitor::Impl::enterDeclarationContext(
   currentClass = owner;
   if (owner) {
     const ClassInfo &info = classInfo(*owner);
-    beginTypeParameterScope(info.genericParameters);
+    beginClassParameterScope(info);
     beginScope();
     for (const auto &[name, member] : info.members) {
       scopes.back().emplace(name, member.symbol);
@@ -4727,7 +4727,7 @@ auto SemanticVisitor::Impl::rebuildLexicalEnvironment() -> void {
       const ClassInfo &info = classInfo(frame.ownerId);
       currentClass = frame.ownerId;
       currentNamespace = info.namespaceScope;
-      beginTypeParameterScope(info.genericParameters);
+      beginClassParameterScope(info);
       beginScope();
       for (const auto &[name, member] : info.members) {
         if (frame.ownerId != innermostClass && !member.symbol.staticMember)

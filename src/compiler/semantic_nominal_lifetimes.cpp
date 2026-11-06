@@ -99,8 +99,8 @@ auto SemanticVisitor::Impl::normalizeClassLifetimes(ClassId id) -> void {
        enclosing = classInfo(enclosing).enclosingClass)
     enclosingClasses.push_back(enclosing);
   for (auto enclosing = enclosingClasses.rbegin(); enclosing != enclosingClasses.rend(); ++enclosing)
-    beginTypeParameterScope(classInfo(*enclosing).genericParameters);
-  beginTypeParameterScope(owner.genericParameters);
+    beginClassParameterScope(classInfo(*enclosing));
+  beginClassParameterScope(owner);
   std::size_t inheritedAnonymous = 0;
   auto *inherited = owner.exactSpecializationPrimary ? &inheritedAnonymous : nullptr;
   if (owner.declaration) {

@@ -61,6 +61,13 @@ verifyMirLifetimeApplications(const MirProgram &, const MirBody &,
     const MirProgram &, const MirBody &, std::size_t owner,
     const SemanticType &actual, const SemanticType &expected);
 
+// A by-value type conversion under every feasible body contract case. This
+// proves the exact structural shape and nested regions, not copy permission,
+// source identity, initialization, movement or loan activity.
+[[nodiscard]] bool mirLifetimeValueConversion(
+    const MirProgram &, const MirBody &, std::size_t owner,
+    const SemanticType &actual, const SemanticType &expected);
+
 // Exact shape consumers may use these only alongside program lifetime proof.
 [[nodiscard]] bool
 mirLifetimeParameterTypesMatch(std::span<const SemanticType> selected,

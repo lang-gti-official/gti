@@ -265,16 +265,49 @@ int main() {
                   << " entry=" << loan.entry << " source=" << loan.source
                   << " parent=" << loan.parent << " fields=" << loan.designatedFields.size() << '\n';
       for (const auto &block : probe->body.blocks)
-        for (const auto &instruction : block.instructions)
+        for (const auto &instruction : block.instructions) {
+          std::cerr << "probe MIR instruction=" << instruction.id
+                    << " kind=" << static_cast<int>(instruction.kind)
+                    << " inputkind=" << static_cast<int>(instruction.callInputKind)
+                    << " result=" << instruction.result.value_or(0)
+                    << " site=" << instruction.callSite << '\n';
+          for (const auto &operand : instruction.operands)
+            std::cerr << "  operand kind=" << static_cast<int>(operand.kind)
+                      << " place=" << operand.place << " value=" << operand.value
+                      << " same_type=" << (operand.type == instruction.info.type) << '\n';
           if (instruction.functionTarget)
             std::cerr << "probe MIR call=" << instruction.id << " target=" << *instruction.functionTarget
                       << " loan=" << instruction.loan.value_or(0)
                       << " origin=" << static_cast<int>(instruction.borrowOrigin)
                       << " fields=" << instruction.borrowFields.size() << '\n';
+        }
     }
   }
   expect(copiedCarrier.canGenerateCode(),
          "a copied readonly carrier must retain its exact stored parent authority");
+  bool checkedCopiedValueRegion = false;
+  for (const auto &function : copiedCarrier.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::CallInput ||
+            instruction.info.type.kind != SemanticType::Class ||
+            instruction.info.type.lifetimeArguments.empty() ||
+            function.parameterTypes.empty() ||
+            function.parameterTypes.front().kind != SemanticType::Class)
+          continue;
+        const auto &actual = function.parameterTypes.front();
+        expect(mirLifetimeValueConversion(copiedCarrier.mir, function.body,
+                                          function.id, actual, instruction.info.type),
+               "a copied carrier's staged regions follow its checked body graph");
+        auto stronger = instruction.info.type;
+        stronger.lifetimeArguments.front() = Lifetime::staticLifetime();
+        expect(!mirLifetimeValueConversion(copiedCarrier.mir, function.body,
+                                           function.id, actual, stronger),
+               "value copying cannot manufacture a static stored reference");
+        checkedCopiedValueRegion = true;
+      }
+  expect(checkedCopiedValueRegion,
+         "copied carrier fixture must exercise an applied nominal value conversion");
   auto wrongCopiedCarrier = copiedCarrier.mir;
   bool changedCopySource = false;
   for (const auto &immutable : wrongCopiedCarrier.functionInstances()) {
