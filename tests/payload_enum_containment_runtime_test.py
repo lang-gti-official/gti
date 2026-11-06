@@ -130,11 +130,12 @@ public:
 };
 enum class holder { one(resource value), none };
 
-class generic_owner<T> { holder value; };
+class generic_owner<T> { holder value = holder::none; };
 
 class polymorphic_owner {
 private:
-  holder value;
+  holder value = holder::none;
+  holder values[2] = {holder::none, holder::none};
 public:
   virtual int32_t marker() { return 0; }
 };
@@ -252,12 +253,11 @@ def main() -> int:
         rejected_text = rejected.stdout + rejected.stderr
         if (
             rejected.returncode == 0
-            or "GTI-S2067" not in rejected_text
-            or "Fixed array 'values'" not in rejected_text
-            or rejected_text.count(
-                "direct owning payload-enum field is supported only"
-            )
-            != 1
+            or rejected_text.count("error[GTI-S2067]") != 2
+            or "Instance field 'value'" not in rejected_text
+            or "Instance field 'values'" not in rejected_text
+            or "Fixed array 'values'" in rejected_text
+            or rejected_text.count("directly or in a fixed array") != 2
             or "GTI-B0001" in rejected_text
         ):
             sys.stderr.write(

@@ -709,8 +709,12 @@ binding; it does not create a reusable moved-from source value.
 `085-payload-enum-fields.gti` places a cleanup-owning closed payload enum
 directly inside an ordinary class and struct. Moving the containing object,
 replacing its active field, and leaving scope each destroy exactly the active
-payload. Generic, polymorphic, recursive, array, and public native-layout
-owners remain outside this bounded slice.
+payload. Concrete generic and finite recursive ordinary owners are supported;
+polymorphic and public native-layout owners remain excluded.
+
+[`owning-enum-arrays`](owning-enum-arrays/README.md) stores owning payload
+enums directly in a fixed array, moves one element out, and replaces another.
+It demonstrates the same structural cleanup rules without a wrapper class.
 
 `086-owning-callbacks.gti` starts with an authentication callback setter that
 accepts a lambda directly and invokes it after registration has returned. It

@@ -1787,6 +1787,14 @@ Program v45 adds concrete fixed-array drop schedules: every array drop retains
 its ordered extents, exact leaf type, and leaf class instance when applicable.
 This lets verification and backends consume reverse element cleanup without
 recovering array lifecycle meaning from a source type or target spelling.
+Owning payload-enum array leaves use the existing aggregate element recipe
+with the enum's active-alternative children. The program verifier requires
+the exact array extents and leaf identity, and rejects a missing element
+cleanup recipe. Completed initializer elements transfer their temporary
+obligations into the array; failure before publication retains cleanup of the
+completed prefix. Element movement retires the source enum's active payload,
+so subsequent reverse array cleanup does not destroy it twice. This admission
+requires no new MIR operation or backend-specific ownership inference.
 Program v44/body v42 added exact proof-carrying safety discharges to instructions
 and transformation records. At that stage a discharge named bounds, storage-state, or
 arithmetic-overflow family plus the exact local defined-failure origin and
