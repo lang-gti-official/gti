@@ -529,6 +529,14 @@ int main() { return 0; }
          "explicit generic type choices retain their fixed lifetime obligations");
 }
 
+void testInstantiatedReferenceIdentity() {
+  const auto result = analyze(R"(
+int&<region> identity<lifetime region>(int&<region> value) { return value; }
+int main() { int value = 7; return identity(value) - 7; }
+)");
+  expectValid(result, "a generic lifetime instance rebuilds reference dependencies in its own body identity domain");
+}
+
 void testPrivateLifetimeInference() {
   const auto result = analyze(R"(
 static int& first(int& selected, int& ignored) { return selected; }
@@ -536,6 +544,7 @@ static int& recurse(bool done, int& selected, int& ignored) {
   if (done) { return selected; }
   return recurse(true, selected, ignored);
 }
+
 static int& both(bool chooseFirst, int& firstValue, int& secondValue) {
   if (chooseFirst) { return firstValue; }
   return secondValue;
@@ -830,6 +839,7 @@ int main() {
   testNominalFormation();
   testCStringRegions();
   testPrivateLifetimeInference();
+  testInstantiatedReferenceIdentity();
   testLambdaLifetimeInference();
   testLambdaLifetimeEnvironments();
   return failures == 0 ? 0 : 1;

@@ -1132,7 +1132,7 @@ auto SemanticVisitor::Impl::beginClassBody(const ClassDecl &stmt,
   currentNamespace = info.namespaceScope;
   beginTypeParameterScope(info.genericParameters);
   for (const BaseSpecifier &base : stmt.bases()) {
-    validateType(base.type);
+    validateType(base.type, false, true);
     validateReferencePlacement(base.type, false, "base type");
   }
   if (info.constructors.empty() && !info.designatedConstructor &&
@@ -2303,7 +2303,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   for (const Parameter &parameter : stmt.parameters()) {
     const bool previousAllowPack = allowPackTypeReference;
     allowPackTypeReference = true;
-    validateType(parameter.type);
+    validateType(parameter.type, false, true);
     allowPackTypeReference = previousAllowPack;
     const std::size_t parameterIndex = &parameter - stmt.parameters().data();
     const SemanticType declaredType =
@@ -3537,7 +3537,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   if (ownerScope.active)
     beginTypeParameterScope(ownerParameters->second);
   if (context.active)
-    validateType(*stmt.definitionOwner());
+    validateType(*stmt.definitionOwner(), false, true);
   const DeclarationOrderScope declarationOrder{*this, stmt};
   // A declaration analysed on demand (see ensureBodyAnalyzed) is complete;
   // the lexical pass must not process it a second time. Concrete-instance
@@ -3826,7 +3826,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   allowProceduralSyntaxType =
       stmt.isProceduralMacro() || stmt.isConstexpr() ||
       (functionInfo && syntaxIntrinsic(functionInfo->intrinsic));
-  validateType(stmt.returnType());
+  validateType(stmt.returnType(), false, true);
   allowProceduralSyntaxType = false;
   allowPackTypeReference = enclosingPackTypeReference;
   const bool methodDeclaration = currentClass && functionDepth == 0;
@@ -3937,7 +3937,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     allowProceduralSyntaxType =
         stmt.isProceduralMacro() || stmt.isConstexpr() ||
         (functionInfo && syntaxIntrinsic(functionInfo->intrinsic));
-    validateType(parameter.type);
+    validateType(parameter.type, false, true);
     allowProceduralSyntaxType = false;
     allowPackTypeReference = enclosingParameterPackTypeReference;
     if (!intrinsicDeclaration) {
@@ -4409,6 +4409,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
       .lifetimeParameterScopes = std::move(lifetimeParameterScopes),
       .lifetimeInferences = std::move(lifetimeInferences),
       .currentReceiverLifetime = currentReceiverLifetime,
+      .deferredNominalFormation = requestSession.deferredNominalFormation,
       .typePackScopes = std::move(typePackScopes),
       .requirementScopes = std::move(requirementScopes),
       .currentNamespace = std::move(currentNamespace),
@@ -4466,6 +4467,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
   lifetimeParameterScopes.clear();
   lifetimeInferences.clear();
   currentReceiverLifetime = {};
+  requestSession.deferredNominalFormation = 0;
   typePackScopes.clear();
   requirementScopes.clear();
   currentNamespace.clear();
@@ -4521,6 +4523,7 @@ auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
   lifetimeParameterScopes = std::move(state.lifetimeParameterScopes);
   lifetimeInferences = std::move(state.lifetimeInferences);
   currentReceiverLifetime = state.currentReceiverLifetime;
+  requestSession.deferredNominalFormation = state.deferredNominalFormation;
   typePackScopes = std::move(state.typePackScopes);
   requirementScopes = std::move(state.requirementScopes);
   currentNamespace = std::move(state.currentNamespace);
@@ -6582,7 +6585,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       recordThreadLocalDeclaration(stmt);
     return;
   }
-  validateType(stmt.type());
+  validateType(stmt.type(), false,
+               currentClass && functionDepth == 0 && !stmt.isStatic());
   const bool localReference = functionDepth > 0;
   const bool instanceField =
       currentClass && functionDepth == 0 && !stmt.isStatic();
@@ -10750,7 +10754,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
            "is not supported.",
            "GTI-S2027");
   } else {
-    validateType(expr.returnType());
+    validateType(expr.returnType(), false, true);
   }
   const bool directOwningPayloadTransport = expr.captures().empty();
   SemanticType returnType = typeOf(expr.returnType());
@@ -10776,7 +10780,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   for (const Parameter &parameter : expr.parameters()) {
     const bool previousAllowPack = allowPackTypeReference;
     allowPackTypeReference = parameter.pack.has_value();
-    validateType(parameter.type);
+    validateType(parameter.type, false, true);
     allowPackTypeReference = previousAllowPack;
     validateReferencePlacement(parameter.type, true, "lambda parameter");
     const SemanticType declaredType = parameterBindingType(parameter);

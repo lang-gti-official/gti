@@ -150,14 +150,17 @@ int main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     for (const auto &error : verifyMirProgram(lambda.mir).errors)
       std::cerr << error.message << '\n';
-    for (const auto &function : lambda.mir.functionInstances())
-      std::cerr << MirPrinter{}.print(function.body);
+    for (const auto &closure : lambda.mir.lambdaInstances())
+      std::cerr << MirPrinter{}.print(closure.body);
     expect(false, "a local lambda must preserve both inferred result suppliers in MIR");
   }
   expect(lambda.mir.lambdaInstances().size() == 1 &&
              lambda.mir.lambdaInstances().front().completeReturnBorrow &&
              lambda.mir.lambdaInstances().front().completeReturnBorrow->dependencies.size() == 2,
          "lambda result contract must contain both input suppliers");
+  for (const auto &loan : lambda.mir.lambdaInstances().front().body.loans)
+    expect(!(loan.entry && loan.kind == MirLoanKind::Return),
+           "returning either input must preserve the reference parameter's entry loan");
   auto missingLambdaSupplier = lambda.mir;
   auto &brokenLambda = const_cast<MirLambdaInstance &>(
       missingLambdaSupplier.lambdaInstances().front());

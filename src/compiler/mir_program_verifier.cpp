@@ -1,4 +1,5 @@
 #include "gti/mir.h"
+#include "gti/compiled_scalar_signature.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
@@ -16211,19 +16212,50 @@ public:
                                          alternative) !=
                                claim.possibleAlternatives.end();
                       });
-      if (wellFormed(*function, claim) && covers) {
+      const bool typedClaim = wellFormed(*function, claim);
+      if (typedClaim && covers) {
         // Keep the declaration contract stable across optimizer narrowing.
         // Its additional well-typed alternatives and dependency obligations
         // are conservative cases, not inferred from an attached claim or
         // unreachable returns. Explicit source restrictions still apply.
         lambdaSummaries[id - 1] = claim;
       } else {
+        std::string reason = !typedClaim ? "malformed typed lambda summary"
+                             : observed ? "observed lambda supplier is not permitted"
+                                        : "lambda source flow was not reconstructed";
+        const auto &flow = lambdaFlows[id - 1];
+        if (typedClaim && !observed && flow) {
+          if (!flow->verification.valid())
+            reason = "invalid lambda dependency flow";
+          else if (flow->normalReturns.empty())
+            reason = "lambda has no reachable normal return";
+          else for (const auto &returned : flow->normalReturns) {
+            const auto *block = function->body.findBlock(returned.block);
+            const SemanticType expected = function->returnType.kind == SemanticType::Reference &&
+                                                  function->returnType.arguments.size() == 1
+                                              ? function->returnType.arguments.front()
+                                              : function->returnType;
+            if (!block || !block->terminator.value || block->terminator.value->type != expected)
+              reason = "lambda return operand has a different declared type";
+            else if (!returned.dependencies)
+              reason = "lambda return has no independent dependency fact";
+            else if (!completeBorrowSetHasTypedShape(program, function->returnType,
+                                                     *returned.dependencies))
+              reason = "lambda return dependency fact has the wrong result domain";
+            else if (!normalizedCompleteReturnBorrow(program, *function, *returned.dependencies))
+              reason = "lambda return source has no valid declaration-relative mapping";
+            else
+              continue;
+            reason += " at block " + std::to_string(returned.block);
+            break;
+          }
+        }
         appendVerification(
             verification,
             verificationFailure(
                 function->body, id,
                 "complete result dependency summary lacks independent "
-                "evidence for every reachable normal return"));
+                "evidence for every reachable normal return: " + reason));
       }
     }
     lambdaStates[id - 1] = State::Complete;
@@ -16493,6 +16525,26 @@ private:
   std::optional<FunctionBorrowDependencySummary>
   reconstruct(const MirFunctionInstance &function,
               std::optional<CompleteBorrowFlow> &observations) {
+    if (function.definitionKind == MirDefinitionKind::Declaration &&
+        function.linkage == LanguageLinkage::Gti && !function.owner &&
+        function.typeArguments.empty() && function.valueArguments.empty() &&
+        function.liftedLifetimes.empty() && !function.constexprFunction &&
+        !function.requiresUnsafe && !function.neverReturns &&
+        function.returnType.kind == SemanticType::Reference &&
+        isCompiledScalarLifetimeProfile(
+            function.returnType, function.parameterTypes, function.lifetimeContract,
+            {function.returnBorrowOrigin, function.returnBorrowParameter,
+             function.returnBorrowAccess})) {
+      // A compiled interface has no source body to replay. Its existing
+      // bounded signature profile independently identifies one whole input
+      // reference; never use an attached field/result claim as that proof.
+      // Source admission and the native artifact binding remain separate
+      // checks, so this does not make an ordinary undefined function linkable.
+      return FunctionBorrowDependencySummary{
+          .dependencies = {{.origin = BorrowOriginKind::Argument,
+                            .parameter = function.returnBorrowParameter,
+                            .access = function.returnType.referenceAccess}}};
+    }
     if (function.definitionKind != MirDefinitionKind::Source ||
         function.neverReturns ||
         (function.returnType.kind != SemanticType::Enum &&

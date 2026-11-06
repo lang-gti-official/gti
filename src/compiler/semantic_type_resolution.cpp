@@ -4258,7 +4258,15 @@ auto SemanticVisitor::Impl::validateTypeAliasAccess(
 }
 
 auto SemanticVisitor::Impl::validateType(const TypeRef &type,
-                                         bool allowNativeFunctionType) -> void {
+                                         bool allowNativeFunctionType,
+                                         bool declarationType) -> void {
+  struct FormationScope {
+    std::size_t &depth;
+    bool active;
+    ~FormationScope() { if (active) --depth; }
+  } formationScope{requestSession.deferredNominalFormation, declarationType};
+  if (declarationType)
+    ++requestSession.deferredNominalFormation;
   const std::size_t diagnosticStart = diagnostics.size();
   std::optional<LifetimeBinderScope> lifetimeScope;
   if (type.lifetimeBinder) {
@@ -8736,6 +8744,7 @@ auto SemanticVisitor::Impl::prepareInstanceAnalysis() -> void {
   lifetimeParameterScopes.clear();
   lifetimeInferences.clear();
   currentReceiverLifetime = {};
+  requestSession.deferredNominalFormation = 0;
   typePackScopes.clear();
   requirementScopes.clear();
   currentNamespace.clear();

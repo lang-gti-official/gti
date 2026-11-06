@@ -4525,6 +4525,11 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   if (instanceAnalysisActive) {
     semanticModel.suppressInheritedOperator(expr);
   }
+  // Dependency sets contain body-local binding and loan identities. An
+  // instance/speculative delta may inherit untouched expressions, but a
+  // re-evaluated expression must publish this evaluation's owners or an
+  // explicit absence, never retain the primary body's old parameter roots.
+  semanticModel.clearBorrowDependencySet(expr);
   valueFlow.rawOperatorResults.erase(&expr);
   const std::size_t diagnosticsBefore = diagnostics.size();
   recordSourceDebugExpression(expr);
@@ -14923,8 +14928,13 @@ auto SemanticVisitor::Impl::baseTypeOf(
         for (const TypeRef &argument : type.arguments) {
           arguments.push_back(typeOf(argument, fromScope));
         }
-        return selectExactClassSpecialization(
+        auto selected = selectExactClassSpecialization(
             SemanticType::classType(*id, std::move(arguments)));
+        if (selected.kind == SemanticType::Class)
+          for (const auto &parameter : classInfo(selected.classId).genericParameters)
+            if (parameter.lifetime)
+              selected.lifetimeArguments.push_back(inferredLifetime(type.name.last(), parameter.id));
+        return selected;
       }
       const auto arguments = nominalArguments(owner.genericParameters,
                                               type.arguments, fromScope,

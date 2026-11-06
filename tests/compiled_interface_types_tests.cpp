@@ -3,6 +3,7 @@
 #include "gti/compiled_scalar_unit.h"
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
+#include "gti/mir_verifier.h"
 #include <iostream>
 #include <stdexcept>
 using namespace lang;
@@ -256,6 +257,33 @@ export [[borrowed_from(second)]] int& choose(int& first, int& second) {
   const auto facade = compiledInterfaceSource(signatures);
   expect(facade.find("[[borrowed_from(arg1)]]") != std::string::npos,
          "wire profile must reconstruct the exact selected input region");
+  const auto consumerSource = facade + R"(
+int main() { int left = 3; int right = 7; return choose(left, right) - 7; }
+)";
+  // Inspection may retain undefined declarations; actual executable source
+  // admission still requires a trusted compiled interface and native binding.
+  const auto consumer = Frontend().analyze("borrow-interface.gti", consumerSource);
+  if (!consumer.canGenerateCode())
+    for (const auto &diagnostic : consumer.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(consumer.canGenerateCode(),
+         "a bounded declaration must reconstruct its whole-argument supplier without a body");
+  const auto untrusted = Frontend({.requireFunctionDefinitions = true})
+                             .analyze("untrusted-borrow-interface.gti", consumerSource);
+  expect(!untrusted.semanticValid,
+         "structural MIR declaration evidence must not grant native import admission");
+  auto forgedConsumer = consumer.mir;
+  bool forged = false;
+  for (const auto &function : forgedConsumer.functionInstances())
+    if (function.definitionKind == MirDefinitionKind::Declaration &&
+        function.completeReturnBorrow) {
+      auto &claim = *const_cast<MirFunctionInstance &>(function).completeReturnBorrow;
+      claim.dependencies.front().sourceFields.push_back(999999);
+      forged = true;
+      break;
+    }
+  expect(forged && !verifyMirProgram(forgedConsumer).valid(),
+         "an imported field claim must not replace the independently reconstructed whole input");
   auto strengthened = program;
   for (const auto &function : strengthened.mir().functionInstances())
     if (const auto *declaration = strengthened.findFunctionDeclaration(function.declaration);

@@ -4595,7 +4595,8 @@ private:
 
   void validateArrayExtent(const ArrayExtentExprPtr &extent);
 
-  void validateType(const TypeRef &type, bool allowNativeFunctionType = false);
+  void validateType(const TypeRef &type, bool allowNativeFunctionType = false,
+                    bool declarationType = false);
   void validateTypeAliasTarget(const TypeRef &type,
                                bool allowNativeFunctionType = false);
 
@@ -7737,6 +7738,7 @@ private:
     bool allowPackTypeReference = false;
     bool resolvingGenericTypeDefault = false;
     bool deferringTypeAliasConstraints = false;
+    std::size_t deferredNominalFormation = 0;
     LoanFlowState loanFlow;
     bool instanceClassContextActive = false;
     bool instanceAnalysisActive = false;
@@ -8105,6 +8107,7 @@ private:
     decltype(RequestSessionState::lifetimeParameterScopes) lifetimeParameterScopes;
     decltype(RequestSessionState::lifetimeInferences) lifetimeInferences;
     Lifetime currentReceiverLifetime;
+    std::size_t deferredNominalFormation = 0;
     decltype(RequestSessionState::typePackScopes) typePackScopes;
     decltype(RequestSessionState::requirementScopes) requirementScopes;
     decltype(RequestSessionState::currentNamespace) currentNamespace;

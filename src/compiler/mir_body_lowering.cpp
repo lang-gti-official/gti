@@ -15957,6 +15957,41 @@ private:
               referenceParameterEntry = borrow.loan;
             }
           }
+          // Entry loans are immutable callable inputs, independently of
+          // which supplier the one-source compatibility summary names. A
+          // lifetime contract can permit several reference parameters; each
+          // returned input needs its own publication loan and runtime address.
+          if (referenceParameterEntry == 0 && borrow.loan <= output.loans.size()) {
+            const MirLoan &candidate = output.loans[borrow.loan - 1];
+            const MirPlace *source = output.findPlace(candidate.source);
+            const auto *types = function ? &function->parameterTypes
+                                : lambda ? &lambda->parameterTypes : nullptr;
+            const auto *bindings = function ? &function->parameterBindings
+                                   : lambda ? &lambda->parameterBindings : nullptr;
+            if (candidate.kind == MirLoanKind::Parameter && candidate.entry &&
+                source && source->root == MirPlaceRootKind::Binding &&
+                types && bindings) {
+              for (std::size_t index = 0; index < types->size(); ++index) {
+                const auto formal = mir_detail::returnOriginFormal(*types, *bindings, index);
+                if (!formal || (*types)[index].kind != SemanticType::Reference ||
+                    source->binding != formal->binding ||
+                    std::find(candidate.carriers.begin(), candidate.carriers.end(),
+                              formal->binding) == candidate.carriers.end())
+                  continue;
+                const bool exact = source->projections.empty()
+                    ? source->type == (*types)[index]
+                    : source->projections.size() == 1 &&
+                      source->projections.front().kind == MirProjectionKind::PackElement &&
+                      source->projections.front().constantIndex &&
+                      static_cast<std::size_t>(*source->projections.front().constantIndex) ==
+                          formal->elementWithinBinding && source->type == (*types)[index];
+                if (exact) {
+                  referenceParameterEntry = borrow.loan;
+                  break;
+                }
+              }
+            }
+          }
           if (storedCarrierEntry != 0) {
             const HirValue *value = findValue(*statement.value);
             const MirPlaceId runtimePlace = placeForValue(*statement.value);

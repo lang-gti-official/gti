@@ -27,6 +27,37 @@ int main(int argc, char **argv) {
                 << (code.empty() ? "" : std::string(" with ") + std::string(code)) << '\n';
       for (const auto &diagnostic : result.diagnostics)
         std::cerr << "  " << diagnostic.code << ": " << diagnostic.message << '\n';
+      if (mir && internal) {
+        const auto suppliers = [](std::string_view label, const auto &fields) {
+          std::cerr << "  " << label << " suppliers=" << fields.size();
+          for (const auto &field : fields) {
+            std::cerr << " [origin=" << static_cast<int>(field.origin)
+                      << " argument=" << field.parameter << " source=";
+            for (const auto part : field.sourceFields) std::cerr << part << '/';
+            std::cerr << " conditions=" << field.sourceConditions.size() << ']';
+          }
+          std::cerr << '\n';
+        };
+        for (const auto &function : result.mir.functionInstances())
+          for (const auto &block : function.body.blocks)
+            for (const auto &instruction : block.instructions)
+              if (instruction.functionTarget) {
+                const auto *target = result.mir.findFunctionInstance(*instruction.functionTarget);
+                if (target && instruction.borrowFields != target->returnBorrowFields) {
+                  std::cerr << "  supplier mismatch target=" << target->id << '\n';
+                  suppliers("call", instruction.borrowFields);
+                  suppliers("target", target->returnBorrowFields);
+                  if (const auto *declaration = result.semantics.findFunction(target->declaration)) {
+                    std::cerr << "  declaration lifetime-origin="
+                              << static_cast<int>(declaration->lifetimeContract.origin)
+                              << " valid=" << declaration->lifetimeContract.valid()
+                              << " explicit-origin=" << declaration->explicitReturnBorrowOrigin
+                              << " complete=" << declaration->completeReturnBorrow.has_value() << '\n';
+                    suppliers("declaration", declaration->returnBorrowFields);
+                  }
+                }
+              }
+      }
     }
   };
   check("explicit-identity", R"gti(
@@ -257,7 +288,7 @@ public:
   int&<a> get() { return this.value; }
 };
 int&<a> use<lifetime a>(int&<a> input) {
-  View<a> view(input);
+  View<a> view{input};
   return view.get();
 }
 int main() { int value = 7; return use(value) - 7; }
@@ -273,7 +304,7 @@ int&<a> choose<lifetime a>(View<a> view, bool first) {
 }
 int main() {
   int left = 3; int right = 7;
-  View view(left, right);
+  View view{left, right};
   return choose(view, false) - 7;
 }
 )gti", true);
@@ -285,7 +316,7 @@ struct View<lifetime a> {
 int&<a> first<lifetime a>(View<a> view) { return view.first; }
 int main() {
   int left = 3; mut int right = 7;
-  View view(left, right);
+  View view{left, right};
   int& result = first(view);
   right = 9;
   return result;

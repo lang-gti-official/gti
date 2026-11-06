@@ -403,6 +403,8 @@ auto SemanticVisitor::Impl::validateNominalFormation(
            "GTI-S2127");
     return;
   }
+  if (requestSession.deferredNominalFormation)
+    return; // The declaration's normalized contract retains these premises.
   SemanticLifetimeApplication application;
   if (!applyLifetimeRequirements(*formula, application, site, true))
     return;

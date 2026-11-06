@@ -4084,6 +4084,32 @@ auto SemanticVisitor::Impl::discoverOwnedCallableValueParameters() -> void {
         continue;
       const auto &parameter = function.bodyDeclaration()->parameters()[index];
       const auto &type = function.parameterTypes[index];
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
+          type.arguments.front().kind == SemanticType::TypeParameter &&
+          !parameter.pack && callableParameterContract(function.id, index) == nullptr &&
+          semanticModel.analyzedFunctionBodies.contains(function.bodyDeclaration()) &&
+          !bodiesInProgress.contains(function.bodyDeclaration())) {
+        // Absence of a use is evidence only for a completed body owned by
+        // this model. Inherited bodies may have uses in the base overlay.
+        const auto *binding = semanticModel.findBinding(parameter);
+        const bool unused = binding && binding->symbol &&
+            std::none_of(semanticModel.resolvedSymbols.begin(), semanticModel.resolvedSymbols.end(),
+                         [&](const auto &use) { return use.second == binding->symbol; }) &&
+            std::none_of(semanticModel.lambdas.begin(), semanticModel.lambdas.end(),
+                         [&](const auto &entry) {
+                           return std::any_of(entry.second.captures.begin(), entry.second.captures.end(),
+                               [&](const auto &capture) { return capture.sourceSymbol == binding->symbol; });
+                         });
+        if (unused)
+          semanticModel.recordCallableRequirement(
+              *function.declaration,
+              {.parameterIndex = index,
+               .genericParameter = type.arguments.front().genericParameterId,
+               .callableType = type.arguments.front(),
+               .access = type.referenceAccess,
+               .boundary = CallableBoundary::Confined});
+        continue;
+      }
       if ((type.kind != SemanticType::TypeParameter &&
            !(parameter.pack && type.kind == SemanticType::TypePack) &&
            !(type.kind == SemanticType::Class &&

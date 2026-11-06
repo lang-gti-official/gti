@@ -3055,6 +3055,11 @@ then reconstructs those same relationships through elision and `borrowed_from`.
 It does not erase a stronger bound, correlate independent inputs, or admit a
 named generic lifetime API; those require the general interface profile. Import
 binding repeats the profile check against the newly normalized source signature.
+For a bodyless declaration in this profile, MIR reconstructs the single
+whole-argument supplier from that checked signature instead of requesting source
+return-flow evidence. This structural proof does not grant import authority:
+executable source admission still requires a trusted compiled interface, and the
+native binding still checks the artifact's exported contract.
 
 Callable metadata profile `gti.callable-interface.4` contains key-sorted,
 length-framed records: persistent function key, result recipe, common nominal
