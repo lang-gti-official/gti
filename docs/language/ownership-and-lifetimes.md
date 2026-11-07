@@ -508,6 +508,14 @@ use the same `outlives<T, a>` form. `static` denotes independently proved static
 storage, not a request to extend a local or thread-local value's lifetime. Bounds
 are proof obligations; writing one cannot make an invalid escape safe.
 
+A raw pointer stores an address, so `outlives<T*, a>` does not require or imply
+`outlives<T, a>`, even when `T` contains checked references. The pointee's type
+and lifetime metadata still need valid scope and shape. This storage rule does
+not justify dereferencing the pointer, restoring a checked reference, or
+promoting a pointee reference to `static`; those retain their separate
+[raw-pointer and unsafe obligations](raw-pointers.md). Checked references and
+owned fields continue to carry their stored borrowing relationships.
+
 Callable signatures can quantify a fresh region for each invocation:
 
 ```gti

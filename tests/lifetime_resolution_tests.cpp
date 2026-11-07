@@ -12,6 +12,109 @@ namespace lang {
 // Exercise the real staging key and lookup without exposing cache internals as
 // a product API or relying on a timing-sensitive number of source evaluations.
 struct SemanticLifetimeTestAccess {
+  struct BorrowedFromPackChecks {
+    bool laterLane = false;
+    bool ambiguous = false;
+    bool empty = false;
+    bool nested = false;
+    bool atomicReference = false;
+    bool malformed = false;
+    bool fixedPrefix = false;
+  };
+
+  static BorrowedFromPackChecks borrowedFromPackWidthChecks(
+      const FunctionDecl &packSyntax, const FunctionDecl &fixedSyntax) {
+    SemanticVisitor analyzer;
+    auto &impl = *analyzer.impl;
+    const auto reference = SemanticType::referenceTo(
+        SemanticType::Int32, AccessMode::ReadOnly, Lifetime::staticLifetime());
+    const auto selected = [](const auto &contract, std::size_t index) {
+      return contract.origin == BorrowOriginKind::Argument &&
+             contract.parameter == index && !contract.ambiguous && !contract.missing;
+    };
+    const auto check = [&](std::vector<SemanticType> lanes, const auto &predicate) {
+      const std::vector<SemanticType> grouped{
+          SemanticType::Int32, SemanticType::concreteTypePack(401, lanes)};
+      std::vector<SemanticType> flat{SemanticType::Int32};
+      for (const auto &lane : lanes)
+        SemanticType::appendExpandedArgument(flat, lane);
+      return predicate(impl.genericReturnBorrowContract(
+                 packSyntax, reference, grouped, 0, false)) &&
+             predicate(impl.genericReturnBorrowContract(
+                 packSyntax, reference, flat, 0, false));
+    };
+    BorrowedFromPackChecks result;
+    // The old applied-flat count inspected only lane 1, losing the sole
+    // reference at lane 2; two reference lanes were incorrectly unambiguous.
+    result.laterLane = check({SemanticType::Bool, reference},
+                            [&](const auto &contract) { return selected(contract, 2); });
+    result.ambiguous = check({reference, reference}, [](const auto &contract) {
+      return contract.origin == BorrowOriginKind::None && contract.ambiguous;
+    });
+    result.empty = check({}, [](const auto &contract) {
+      return contract.origin == BorrowOriginKind::None && contract.missing &&
+             !contract.ambiguous;
+    });
+    result.nested = check({SemanticType::Bool, SemanticType::concreteTypePack(
+        402, {SemanticType::UInt8, reference})},
+        [&](const auto &contract) { return selected(contract, 3); });
+    const auto atomic = SemanticType::referenceTo(
+        SemanticType::concreteTypePack(403, {reference, reference}),
+        AccessMode::ReadOnly, Lifetime::staticLifetime());
+    result.atomicReference = check({atomic}, [&](const auto &contract) {
+      return selected(contract, 1);
+    });
+    result.malformed = check({SemanticType::Unknown, reference}, [](const auto &contract) {
+      return contract.origin == BorrowOriginKind::None && contract.missing;
+    });
+    const std::vector<SemanticType> grouped{
+        reference, SemanticType::concreteTypePack(404, {reference, reference})};
+    const std::vector<SemanticType> flat{reference, reference, reference};
+    result.fixedPrefix = selected(impl.genericReturnBorrowContract(
+        fixedSyntax, reference, grouped, 0, false), 0) &&
+        selected(impl.genericReturnBorrowContract(
+            fixedSyntax, reference, flat, 0, false), 0);
+    return result;
+  }
+
+  static bool groupedReturnOrdinalChecks() {
+    SemanticVisitor analyzer;
+    auto &impl = *analyzer.impl;
+    const auto firstRegion = Lifetime::parameter(201);
+    const auto secondRegion = Lifetime::parameter(202);
+    const auto first = SemanticType::referenceTo(
+        SemanticType::Int32, AccessMode::ReadOnly, firstRegion);
+    const auto second = SemanticType::referenceTo(
+        SemanticType::Int32, AccessMode::ReadOnly, secondRegion);
+    const std::vector<SemanticType> grouped{SemanticType::concreteTypePack(
+        203, {first, SemanticType::concreteTypePack(204, {second, SemanticType::Bool})})};
+    const auto original = grouped;
+    const LifetimeSignatureContract lifetime{
+        .parameters = {firstRegion, secondRegion}, .complete = true};
+    const auto summary = impl.functionReturnBorrowSummary(
+        second, grouped, 0, false, IntrinsicKind::None, std::nullopt, false,
+        &lifetime, ReceiverMutability::ReadOnly);
+    SemanticVisitor::Impl::ReturnBorrowContract contract{
+        .origin = BorrowOriginKind::Argument, .parameter = 1};
+    contract.setParameterTypes(grouped);
+    if (summary.origin != BorrowOriginKind::Argument || summary.parameter != 1 ||
+        !contract.originParameterType() || *contract.originParameterType() != second ||
+        grouped != original)
+      return false;
+    contract.parameter = 3;
+    if (contract.originParameterType())
+      return false;
+    const std::vector<SemanticType> atomic{SemanticType::referenceTo(
+        grouped.front(), AccessMode::ReadOnly, firstRegion)};
+    contract.parameter = 0;
+    contract.setParameterTypes(atomic);
+    if (contract.expandedParameterTypes || !contract.originParameterType() ||
+        *contract.originParameterType() != atomic.front())
+      return false;
+    contract.parameter = 1;
+    return !contract.originParameterType();
+  }
+
   static bool mutableReferenceReborrowChecks() {
     SemanticVisitor analyzer;
     auto &impl = *analyzer.impl;
@@ -1767,6 +1870,8 @@ int main() {
 void testForwardedPackBorrowPaths() {
   expect(lang::SemanticLifetimeTestAccess::packProjectionChecks(),
          "typed pack projection preserves repeated-element identity and rejects wrong or ancestor paths");
+  expect(lang::SemanticLifetimeTestAccess::groupedReturnOrdinalChecks(),
+         "return suppliers use flat leaf ordinals without flattening canonical identity or reference-to-pack shells");
   const std::string declarations = R"(
 struct View<lifetime owner> {
   int&<owner> value;
@@ -1843,6 +1948,34 @@ int main() { return 0; }
 )");
   expect(localShell.syntaxValid && !localShell.semanticValid,
          "a local carrier shell cannot escape with the static lifetime of its referent");
+  const std::string leadingCarrier = R"(
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+View<a>&<shell> fixedShell<lifetime a, lifetime shell, Args...>(View<a>&<shell> first, Args&... ignored) {
+  return first;
+}
+int&<a> fixedExternal<lifetime a, lifetime shell, Args...>(View<a>&<shell> first, Args&... ignored) {
+  return first.value;
+}
+)";
+  const auto leading = analyze(leadingCarrier + R"(
+int main() {
+  int value = 7; bool ignored = false; View view{value};
+  return fixedShell(view).value + fixedShell(view, ignored).value +
+         fixedExternal(view, ignored) - 21;
+}
+)");
+  expectValid(leading,
+              "known leading carrier references validate shell and external paths before concrete trailing-pack replay");
+  const auto leadingEscape = analyze(leadingCarrier + R"(
+int global = 7;
+View<static>&<static> invalid() {
+  View<static> local{global}; bool ignored = false;
+  return fixedShell(local, ignored);
+}
+int main() { return 0; }
+)");
+  expect(leadingEscape.syntaxValid && !leadingEscape.semanticValid,
+         "known leading carrier staging cannot turn a local physical shell into its static stored owner");
   const auto conditional = analyze(R"(
 enum Reading<lifetime owner> { present(int&<owner> value), missing(int code) };
 Reading<a> keep<lifetime a>(Reading<a> value) { return value; }
@@ -1878,6 +2011,85 @@ int main() { twice(Owned()); return 0; }
                            return diagnostic.message.find("already been moved") != std::string::npos;
                          }),
          "entry projection cannot revive a pack consumed by an earlier forwarding call");
+}
+
+void testBorrowedFromPackOrdinals() {
+  const auto syntax = lang::Frontend({.stopAfter = lang::FrontendPhase::Parsing}).analyze(
+      "borrowed-from-pack-width.gti", R"(
+[[borrowed_from(values)]] R packed<R, Args...>(int tag, Args... values);
+[[borrowed_from(first)]] R fixed<R, Args...>(int& first, Args... values);
+)");
+  expect(syntax.syntaxValid && syntax.program.declarations().size() == 2,
+         "borrowed_from ordinal fixture parses independently of body proof");
+  if (!syntax.syntaxValid || syntax.program.declarations().size() != 2)
+    return;
+  const auto *pack = lang::stmtAs<lang::FunctionDecl>(syntax.program.declarations()[0].get());
+  const auto *fixed = lang::stmtAs<lang::FunctionDecl>(syntax.program.declarations()[1].get());
+  if (!pack || !fixed) {
+    expect(false, "borrowed_from ordinal fixture retains both function declarations");
+    return;
+  }
+  const auto checks = lang::SemanticLifetimeTestAccess::borrowedFromPackWidthChecks(*pack, *fixed);
+  expect(checks.laterLane,
+         "borrowed_from reaches a later eligible pack lane in grouped and applied-flat signatures");
+  expect(checks.ambiguous,
+         "applied-flat borrowed_from packs cannot silently select the first of multiple suppliers");
+  expect(checks.empty, "empty borrowed_from packs have no supplier in either signature view");
+  expect(checks.nested, "nested concrete pack leaves retain their exact borrowed_from ordinal");
+  expect(checks.atomicReference, "borrowed_from keeps a reference to a pack as one physical lane");
+  expect(checks.malformed, "unknown pack lanes cannot prove a complete borrowed_from selection");
+  expect(checks.fixedPrefix, "a named fixed formal is unaffected by later eligible pack lanes");
+
+  const std::string declarations = R"(
+int global = 9;
+int&<a> select<lifetime a>(int ignored, int&<a> value) { return value; }
+int&<a> select<lifetime a>(int&<a> ignored, int&<a> value) { return value; }
+int&<static> select() { return global; }
+class Relay<R(Args...)> {
+public:
+  Relay() = default;
+  [[borrowed_from(values)]] R invoke(int tag, Args... values) { return select(values...); }
+};
+)";
+  const auto valid = analyze(declarations + R"(
+using Selected = for<lifetime a> int&<a>(int, int&<a>);
+int main() { int value = 7; Relay<Selected> relay{}; return relay.invoke(0, 4, value) - 7; }
+)");
+  expectValid(valid, "generic borrowed_from call metadata selects the sole later reference lane");
+  for (const std::string &source : {
+           "using Selected = for<lifetime a> int&<a>(int&<a>, int&<a>); int main() { int first = 3; int second = 7; Relay<Selected> relay{}; return relay.invoke(0, first, second); }",
+           "using Selected = int&<static>(); int main() { Relay<Selected> relay{}; return relay.invoke(0); }"}) {
+    const auto invalid = analyze(declarations + source);
+    expect(invalid.syntaxValid && !invalid.semanticValid &&
+               std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                           [](const auto &diagnostic) { return diagnostic.code == "GTI-S2017"; }),
+           "borrowed_from requires exactly one eligible supplier after concrete pack expansion");
+  }
+}
+
+void testScopedFunctionBorrowQuery() {
+  const std::string declarations = R"(
+struct Scoped<R&<environment>(Args...), lifetime environment> {
+  R&<environment> value;
+  Scoped(R&<environment> input) : value(input) {}
+  R&<environment> get() { return this.value; }
+};
+int&<a> read<lifetime a>(int&<a> input) {
+  Scoped<int&<a>(int&), a> owner{input};
+  return owner.get();
+}
+)";
+  const auto valid = analyze(declarations + R"(
+int main() { int input = 7; return read(input) - 7; }
+)");
+  expectValid(valid,
+              "function summary queries alpha-match scoped invocation binders while retaining fixed owner regions");
+  const auto invalid = analyze(declarations + R"(
+int&<b> invalid<lifetime a, lifetime b>(int&<a> input) { return read<a>(input); }
+int main() { return 0; }
+)");
+  expect(invalid.syntaxValid && !invalid.semanticValid,
+         "bound-scope equivalence cannot rename an independent free result region");
 }
 
 void testReferencePackReturnContracts() {
@@ -2380,6 +2592,8 @@ int main() { return 0; }
 
 int main() {
   testForwardedPackBorrowPaths();
+  testBorrowedFromPackOrdinals();
+  testScopedFunctionBorrowQuery();
   testReferencePackReturnContracts();
   testReferencePackReborrows();
   testConsumingExternalResults();

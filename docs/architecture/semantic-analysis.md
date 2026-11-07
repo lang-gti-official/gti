@@ -1516,7 +1516,17 @@ each visit, and does not authorize sibling returns or create a provisional place
 A known leading reference may be checked before an unresolved trailing pack by
 running the ordinary formal-input derivation and return normalizer on that exact
 leading slice. This validates only those known origins; it publishes no complete
-summary and leaves the body pending concrete replay. Mutable element reborrows
+summary and leaves the body pending concrete replay. This applies separately to
+a referenced carrier's physical shell and its stored external paths. Return
+supplier ordinals and completed-call comparisons expand concrete pack leaves,
+while body bindings, canonical instances and summary-query keys retain their
+grouped signature. Nested callable binders may compare under alpha-renaming at
+that invocation boundary; fixed and free regions must still match exactly.
+An explicit `borrowed_from` on the final pack selects from all remaining flat
+lanes after the written fixed formals, in both grouped and applied signatures.
+It still requires exactly one eligible supplier: an empty pack supplies none,
+and multiple eligible lanes remain ambiguous.
+Mutable element reborrows
 may shorten their outer region through a completed call application, while the
 referent's nested regions remain invariant.
 Constructor reference packs retain their non-borrowed-result boundary. Pack
@@ -1828,6 +1838,11 @@ saves and restores only source context, including early returns; it creates no
 lookup scope and changes no ownership or constant-evaluation rule. Ordinary
 locals remain in their function or lambda region. Each initializer region must
 resolve to the accepted declaration binding in its exact analysis snapshot.
+A selected source constructor reanalyzes its defaults in that constructor's
+instance and records initializer regions there. HIR checks those regions against
+the callable's exact owner substitution; a generated default or class layout
+initializer keeps its separate class-initializer context. Layout facts cannot
+stand in for a selected constructor's expression or source-region facts.
 
 
 `SemanticModel` is a set of snapshot-owned side tables keyed by AST identity or
@@ -2088,6 +2103,14 @@ the selected parameter types. `ResolvedCallInfo` and
 `ResolvedConstructionInfo` retain the separated type and value arguments plus
 the concrete fixed-array parameter types. Braces never acquire an independent
 semantic type.
+
+Constructor selection retains a failed lifetime proof for diagnostic purposes
+when the candidate's ordinary argument type, access and value-category checks
+match. If no candidate is viable, it reports `GTI-S2127` with the compatible
+constructor declarations instead of suggesting a type conversion. Free-region
+shape comparison only classifies that failure; it never admits the candidate.
+A different viable overload suppresses the speculative lifetime failure, and
+ordinary type/access mismatches retain their existing diagnostics.
 
 A written integer literal argument is analyzed at its default type and may
 match a candidate's integer parameter of another type as a

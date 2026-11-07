@@ -6305,12 +6305,23 @@ private:
         storedReference = false;
         continue;
       }
-      if (projection.kind != MirProjectionKind::Field)
+      PlaceProjection step;
+      if (projection.kind == MirProjectionKind::Field) {
+        step = fieldProjection(projection.field);
+      } else if (projection.kind == MirProjectionKind::Base &&
+                 projection.constantIndex && type.kind == SemanticType::Class) {
+        step = baseProjection(type.classId, *projection.constantIndex);
+      } else if ((projection.kind == MirProjectionKind::Index ||
+                  projection.kind == MirProjectionKind::PackElement) &&
+                 projection.constantIndex) {
+        step = constantIndexProjection(*projection.constantIndex);
+      } else {
         return std::nullopt;
-      const auto field = borrowedFieldType(type, projection.field);
-      if (!field)
+      }
+      const auto selected = borrowedProjectionType(type, step);
+      if (!selected || selected->projection != projection)
         return std::nullopt;
-      type = *field;
+      type = selected->type;
       storedReference = type.kind == SemanticType::Reference;
     }
     return crossed;
@@ -16290,6 +16301,7 @@ private:
                                              output.returnType.referenceAccess);
         if (borrow.loan != 0) {
           MirLoanId storedCarrierEntry = 0;
+          MirLoanId storedCarrierShell = 0;
           MirLoanId referenceParameterEntry = 0;
           if (const std::optional<HirBindingId> summarized =
                   returnBorrowParameterBinding();
@@ -16316,15 +16328,46 @@ private:
           if (storedCarrierEntry == 0 && completeCallableReturn &&
               borrow.loan <= output.loans.size()) {
             const auto &candidate = output.loans[borrow.loan - 1];
-            const auto *runtime = candidate.kind == MirLoanKind::Stored && candidate.entry
-                                      ? output.findPlace(placeForValue(*statement.value)) : nullptr;
-            if (runtime && (runtime->root == MirPlaceRootKind::This ||
-                            runtime->root == MirPlaceRootKind::Binding) &&
-                runtime->projections.size() >= 2 &&
-                runtime->projections.back().kind == MirProjectionKind::Dereference &&
-                std::all_of(runtime->projections.begin(), std::prev(runtime->projections.end()),
-                            [](const auto &part) { return part.kind == MirProjectionKind::Field; }))
-              storedCarrierEntry = borrow.loan;
+            const auto *entry = candidate.kind == MirLoanKind::Stored
+                ? &candidate : output.findLoan(candidate.storedDependency);
+            const bool throughShell = entry && entry->id != candidate.id;
+            const auto *runtime = entry && entry->kind == MirLoanKind::Stored && entry->entry
+                ? output.findPlace(placeForValue(*statement.value)) : nullptr;
+            const auto *root = entry ? output.findPlace(entry->source) : nullptr;
+            const auto access = runtime ? storedReferenceAccessFor(*runtime) : std::nullopt;
+            const auto matches = [&](const BorrowPath &path, const auto &conditions,
+                                     AccessMode permission) {
+              const auto prefix = runtime && conditions.empty() && !path.empty()
+                  ? mir_detail::borrowPathProjectionPrefix(runtime->projections, path, true)
+                  : std::nullopt;
+              return prefix && *prefix == runtime->projections.size() &&
+                  (output.returnType.referenceAccess == AccessMode::ReadOnly ||
+                   permission == AccessMode::Mutable);
+            };
+            const bool exactShell = !throughShell ||
+                (candidate.kind == MirLoanKind::Parameter && candidate.entry &&
+                 !candidate.parent && !candidate.escapes && !candidate.producedBy &&
+                 candidate.source == entry->source && root &&
+                 root->root == MirPlaceRootKind::Binding &&
+                 root->type.kind == SemanticType::Reference &&
+                 std::find(candidate.carriers.begin(), candidate.carriers.end(),
+                           root->binding) != candidate.carriers.end());
+            if (runtime && root && access && exactShell &&
+                (output.returnType.referenceAccess == AccessMode::ReadOnly ||
+                 *access == AccessMode::Mutable) &&
+                runtime->root == root->root && runtime->binding == root->binding &&
+                runtime->symbol == root->symbol && runtime->capture == root->capture &&
+                root->projections.empty() &&
+                (matches(entry->designatedFields, entry->conditions, entry->access) ||
+                 std::any_of(entry->additionalDependencies.begin(),
+                             entry->additionalDependencies.end(), [&](const auto &dependency) {
+                   return (dependency.source == entry->source ||
+                           (!dependency.source && !dependency.parent)) &&
+                       matches(dependency.designatedFields, dependency.conditions, dependency.access);
+                 }))) {
+              storedCarrierEntry = entry->id;
+              storedCarrierShell = throughShell ? candidate.id : 0;
+            }
           }
           // Entry loans are immutable callable inputs, independently of
           // which supplier the one-source compatibility summary names. A
@@ -16392,14 +16435,23 @@ private:
                    .hirValue = *statement.value,
                    .operands = {{.kind = MirOperandKind::Loan,
                                  .place = runtimePlace,
-                                 .loan = borrow.loan,
+                                 .loan = storedCarrierEntry,
                                  .type = value->info.type}},
                    .loan = published,
                    .info = value->info});
+              // A reference formal's shell retains this external entry group.
+              // Retire that shell first, then its group; neither is the
+              // caller-owned referent published by the new Return loan.
+              if (storedCarrierShell) {
+                (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                         .hirValue = *statement.value,
+                                         .loan = storedCarrierShell});
+                removeLoanFromState(storedCarrierShell, scopes, bindingLoans);
+              }
               (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
                                        .hirValue = *statement.value,
-                                       .loan = borrow.loan});
-              removeLoanFromState(borrow.loan, scopes, bindingLoans);
+                                       .loan = storedCarrierEntry});
+              removeLoanFromState(storedCarrierEntry, scopes, bindingLoans);
               output.loans[published - 1].escapes = true;
               borrow = {.kind = MirOperandKind::Loan,
                         .place = runtimePlace,

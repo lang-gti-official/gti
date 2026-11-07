@@ -30,6 +30,63 @@ SemanticType reference(GenericParameterId id) {
   type.referenceLifetime = Lifetime::parameter(id);
   return type;
 }
+void rawPointerStorageOutlives() {
+  MirProgram program;
+  const auto generic = SemanticType::typeParameter(810);
+  const auto pointer = SemanticType::rawPointerTo(generic);
+  const auto forever = Lifetime::staticLifetime();
+  const auto shorter = Lifetime::parameter(811);
+  LifetimeSignatureContract assumptions{.parameters = {shorter}, .complete = true};
+  MirBody body;
+  body.lifetimeBody = {.typeObligations = {{pointer, forever}}, .complete = true};
+  expect(verifyMirLifetimeBodyFacts(program, body, assumptions).valid(),
+         "raw pointer storage outlives any region without a pointee lifetime premise");
+  assumptions.typeBounds = {{pointer, forever}};
+  body.lifetimeBody.typeObligations = {{generic, forever}};
+  expect(!verifyMirLifetimeBodyFacts(program, body, assumptions).valid(),
+         "a pointer storage premise cannot establish its generic pointee as static");
+  body.lifetimeBody.typeObligations = {{
+      SemanticType::referenceTo(generic, AccessMode::ReadOnly, shorter), forever}};
+  expect(!verifyMirLifetimeBodyFacts(program, body, assumptions).valid(),
+         "a pointer premise cannot strengthen a checked reference to its pointee");
+  MirClassInstance borrowed;
+  borrowed.id = 1;
+  borrowed.declaration = 81;
+  borrowed.type = SemanticType::classType(81);
+  borrowed.type.lifetimeArguments = {shorter};
+  borrowed.lifetimeContract = assumptions;
+  borrowed.lifetimeContract.typeBounds.clear();
+  borrowed.declaredFields = {{.symbol = 812, .type = reference(811)}};
+  MirProgramTestAccess::classes(program) = {borrowed};
+  const auto nominalPointer = SemanticType::rawPointerTo(borrowed.type);
+  assumptions.typeBounds = {{nominalPointer, forever}};
+  body.lifetimeBody.typeObligations = {{nominalPointer, forever}};
+  expect(verifyMirLifetimeBodyFacts(program, body, assumptions).valid(),
+         "raw nominal pointers do not own their pointee's stored checked references");
+  body.lifetimeBody.typeObligations = {{borrowed.type, forever}};
+  expect(!verifyMirLifetimeBodyFacts(program, body, assumptions).valid(),
+         "pointer assumptions cannot expand into nominal pointee storage bounds");
+  body.lifetimeBody.typeObligations = {{reference(811), forever}};
+  expect(!verifyMirLifetimeBodyFacts(program, body, assumptions).valid() &&
+             !mirDeclaredLifetimeRelationship(program, assumptions, shorter, forever),
+         "pointer assumptions cannot make a nested checked region static");
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto malformed = pointer;
+    if (mutation == 0) malformed.arguments.clear();
+    if (mutation == 1) malformed.arguments.push_back(SemanticType::Int32);
+    if (mutation == 2) malformed.arguments.front() = SemanticType::Unknown;
+    if (mutation == 3) malformed.arguments.front() =
+        SemanticType::rawPointerTo(SemanticType::Unknown);
+    if (mutation == 4) malformed.arguments.front() = reference(999);
+    body.lifetimeBody.typeObligations = {{malformed, forever}};
+    assumptions.typeBounds.clear();
+    expect(!verifyMirLifetimeBodyFacts(program, body, assumptions).valid(),
+           "raw pointer outlives proof retains shape, known type and nested region scope checks");
+    assumptions.typeBounds = {{malformed, forever}};
+    expect(!verifyMirLifetimeBodyFacts(program, body, assumptions).valid(),
+           "a malformed pointer premise cannot bypass independent type validation");
+  }
+}
 void cleanupLifetimeRecipes() {
   const auto region = Lifetime::parameter(801);
   const auto actualRegion = Lifetime::local(901);
@@ -433,6 +490,7 @@ void quantifiedNominalLiftInventory() {
 }
 } // namespace
 int main() {
+  rawPointerStorageOutlives();
   cleanupLifetimeRecipes();
   owningCleanupShape();
   quantifiedNominalLiftInventory();

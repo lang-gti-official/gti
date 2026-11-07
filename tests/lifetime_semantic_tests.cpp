@@ -368,6 +368,50 @@ struct StaticView<R&<static>()> {
 int stored = 7;
 int main() { StaticView<int&<static>()> value{stored}; return value.value - 7; }
 )gti", true);
+  check("raw-pointer-storage-outlives-without-pointee-obligation", R"gti(
+void needs_static<T>(T* pointer) requires outlives<T*, static> {}
+void relay<T>(T* pointer) { needs_static(pointer); }
+struct Borrowed<lifetime a> { int&<a> value; };
+void exercise<lifetime a>(int&<a> value) {
+  Borrowed<a>* pointer = nullptr;
+  relay(pointer);
+}
+int main() { int value = 7; exercise(value); return 0; }
+)gti", true);
+  check("owned-raw-pointer-field-allows-generic-receiver-borrow", R"gti(
+struct Inner<T> { T* pointer = nullptr; int size() { return 0; } };
+struct Outer<T> { Inner<T> data; int size() { return this.data.size(); } };
+int main() { return 0; }
+)gti", true);
+  check("raw-pointer-premise-does-not-promote-pointee-to-static", R"gti(
+void needs_static<T>(T* pointer) requires outlives<T, static> {}
+void relay<T>(T* pointer) requires outlives<T*, static> { needs_static(pointer); }
+int main() { return 0; }
+)gti", false, "GTI-S2127");
+  check("checked-reference-storage-still-requires-its-region", R"gti(
+void needs_static<lifetime a>(int&<a> value) requires outlives<int&<a>, static> {}
+void relay<lifetime a>(int&<a> value) { needs_static(value); }
+int main() { return 0; }
+)gti", false, "GTI-S2127");
+  check("constructor-reports-unproved-lifetime-for-matching-type", R"gti(
+struct StaticInput { StaticInput(int&<static> input) {} };
+int main() { int value = 7; StaticInput invalid{value}; return 0; }
+)gti", false, "GTI-S2127");
+  check("constructor-runtime-type-mismatch-is-not-a-lifetime-error", R"gti(
+struct StaticInput { StaticInput(int&<static> input) {} };
+int main() { bool value = true; StaticInput invalid{value}; return 0; }
+)gti", false, "GTI-S2012");
+  check("constructor-access-mismatch-is-not-a-lifetime-error", R"gti(
+struct StaticInput { StaticInput(mut int&<static> input) {} };
+int main() { int value = 7; StaticInput invalid{value}; return 0; }
+)gti", false, "GTI-S2012");
+  check("constructor-discarded-lifetime-failure-keeps-valid-overload", R"gti(
+struct Input {
+  Input(int&<static> input) {}
+  Input(int input, bool ignored = true) {}
+};
+int main() { int value = 7; Input valid{value}; return 0; }
+)gti", true);
   check("patterned-primary-nominal-environment-cannot-invent-static", R"gti(
 struct Callback<R(Args...), lifetime environment> {
   int&<environment> value;

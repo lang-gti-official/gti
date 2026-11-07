@@ -875,6 +875,28 @@ instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
   return signature;
 }
 namespace {
+// An opaque address has no checked pointee storage dependency. Keep structural
+// and scoped type validation separate from that outlives fact: unknown types
+// and malformed pointer shells cannot acquire proof by avoiding recursion.
+bool rawPointerStorageShape(const SemanticType &type) {
+  if (type.kind != SemanticType::RawPointer)
+    return false;
+  const auto known = [&](auto &&self, const SemanticType &current,
+                         std::size_t depth) -> bool {
+    if (depth >= 256 || current.kind == SemanticType::Unknown)
+      return false;
+    if (current.kind == SemanticType::RawPointer &&
+        (current.arguments.size() != 1 || !current.lifetimeArguments.empty() ||
+         !current.quantifiedLifetimes.empty() || current.referenceLifetime != Lifetime{}))
+      return false;
+    bool valid = true;
+    lifetime_detail::children(current, [&](const SemanticType &child) {
+      valid = self(self, child, depth + 1) && valid;
+    });
+    return valid;
+  };
+  return known(known, type, 0);
+}
 std::optional<LifetimeSignatureContract>
 expandedLifetimeAssumptions(const MirProgram &program,
                             const LifetimeSignatureContract &source) {
@@ -904,6 +926,11 @@ expandedLifetimeAssumptions(const MirProgram &program,
     const auto &type = bound.type;
     if (type.kind == SemanticType::Unknown)
       return std::nullopt;
+    if (type.kind == SemanticType::RawPointer) {
+      if (!rawPointerStorageShape(type))
+        return std::nullopt;
+      continue; // T*:a is never a premise about T or its checked references.
+    }
     if (type.kind == SemanticType::TypeParameter ||
         (type.kind == SemanticType::TypePack && !type.concretePack))
       continue; // Opaque types retain an exact bound, never their arguments'.
@@ -969,6 +996,8 @@ bool mirTypeOutlives(const MirProgram &program, const SemanticType &type,
                      Lifetime region, const LifetimeSignatureContract &contract,
                      const LifetimeInferenceConstraints &graph,
                      std::vector<SemanticType> &pending) {
+  if (type.kind == SemanticType::RawPointer)
+    return rawPointerStorageShape(type);
   for (const auto &known : contract.typeBounds)
     if (equivalentLifetimeTypes(type, known.type) &&
         graph.proves(known.region, region))

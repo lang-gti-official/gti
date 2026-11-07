@@ -1709,7 +1709,8 @@ private:
     SourceScopeId scope = 0;
     std::size_t nextChild = 0;
 
-    SourceDebugRegionGuard(Impl &visitor, const VariableDecl &declaration);
+    SourceDebugRegionGuard(Impl &visitor, const VariableDecl &declaration,
+                          bool selectedConstructorDefault = false);
     ~SourceDebugRegionGuard();
   };
 
@@ -3849,9 +3850,23 @@ private:
     std::optional<BorrowOriginPlace> place;
     const std::vector<Parameter> *parameters = nullptr;
     const std::vector<SemanticType> *parameterTypes = nullptr;
+    // A transient ordinal view only; the function/body signature stays grouped.
+    std::optional<std::vector<SemanticType>> expandedParameterTypes;
     bool lambda = false;
     // A lambda over open parameter types decides its origin once concrete.
     bool deferred = false;
+    void setParameterTypes(const std::vector<SemanticType> &types) {
+      parameterTypes = &types;
+      expandedParameterTypes.reset();
+      if (origin != BorrowOriginKind::Argument ||
+          std::none_of(types.begin(), types.end(), [](const auto &type) {
+            return type.kind == SemanticType::TypePack && type.concretePack;
+          }))
+        return;
+      expandedParameterTypes.emplace();
+      for (const auto &type : types)
+        SemanticType::appendExpandedArgument(*expandedParameterTypes, type);
+    }
     // The origin is an expanded parameter index; a final pack covers every
     // index past the parameters written before it.
     [[nodiscard]] const Parameter *originParameter() const {
@@ -3868,10 +3883,12 @@ private:
       return nullptr;
     }
     [[nodiscard]] const SemanticType *originParameterType() const {
-      return parameterTypes != nullptr &&
+      const auto *types = expandedParameterTypes ? &*expandedParameterTypes
+                                                 : parameterTypes;
+      return types != nullptr &&
                      origin == BorrowOriginKind::Argument &&
-                     parameter < parameterTypes->size()
-                 ? &(*parameterTypes)[parameter]
+                     parameter < types->size()
+                 ? &(*types)[parameter]
                  : nullptr;
     }
   };

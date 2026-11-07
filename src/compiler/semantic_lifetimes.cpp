@@ -1438,6 +1438,12 @@ auto SemanticVisitor::Impl::proveLifetimeTypeOutlives(
     if (type.kind == SemanticType::Unknown || type.kind == SemanticType::TypeParameter ||
         (type.kind == SemanticType::TypePack && !type.concretePack))
       return false;
+    // A raw pointer stores an address, not a checked borrow of its pointee.
+    // This proves only the pointer value's storage lifetime; dereferencing or
+    // restoring a checked reference still requires its independent proof.
+    if (type.kind == SemanticType::RawPointer)
+      return type.arguments.size() == 1 &&
+             type.arguments.front().kind != SemanticType::Unknown;
     if (std::find(pending.begin(), pending.end(), type) != pending.end())
       return true;
     if (pending.size() >= 256)

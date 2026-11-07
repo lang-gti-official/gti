@@ -431,6 +431,91 @@ void concreteFormalPaths() {
   expect(!concreteFormalInputs(body, signature, bindings),
          "ambiguous grouped root identities fail closed instead of selecting the first alias");
 }
+void basePublicationProducerIdentity() {
+  MirBody body;
+  body.kind = MirBodyKind::Constructor;
+  body.places.push_back({.id = 1, .root = MirPlaceRootKind::This,
+      .projections = {{.kind = MirProjectionKind::Base, .constantIndex = 1,
+                       .selection = 2}},
+      .type = SemanticType::classType(11)});
+  body.loans.push_back({.id = 1, .kind = MirLoanKind::Stored,
+      .source = 1, .storedPath = {baseProjection(13, 1)}, .escapes = true});
+  MirBlock block;
+  block.id = 1;
+  block.instructions.push_back({.id = 1, .kind = MirInstructionKind::InitializeBase,
+      .constructorInitializer = 1, .destination = 1, .loan = 1,
+      .constructorTarget = 2});
+  block.instructions.push_back({.id = 2, .kind = MirInstructionKind::EndBorrow,
+      .loan = 1});
+  body.blocks.push_back(std::move(block));
+  expect(baseConstructorPublicationStage(body, body.loans.front()) ==
+             &body.blocks.front().instructions.front(),
+         "the checked Base initialization remains the sole producer across retirement");
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto forged = body;
+    auto &stage = forged.blocks.front().instructions.front();
+    if (mutation == 0) stage.tombstone = true;
+    if (mutation == 1) {
+      auto duplicate = stage; duplicate.id = 3;
+      forged.blocks.front().instructions.push_back(duplicate);
+    }
+    if (mutation == 2) stage.kind = MirInstructionKind::Borrow;
+    if (mutation == 3) forged.places.front().projections.front().constantIndex = 0;
+    if (mutation == 4) stage.constructorTarget.reset();
+    expect(!baseConstructorPublicationStage(forged, forged.loans.front()),
+           "Base publication requires one exact initialization producer and destination");
+  }
+}
+void referencedStoredReturnShape() {
+  MirBody body;
+  body.places.push_back({.id = 1, .root = MirPlaceRootKind::Binding,
+      .binding = 1, .symbol = 11,
+      .type = SemanticType::referenceTo(SemanticType::classType(13))});
+  body.places.push_back({.id = 2, .root = MirPlaceRootKind::Binding,
+      .binding = 1, .symbol = 11,
+      .projections = {{.kind = MirProjectionKind::Dereference},
+          {.kind = MirProjectionKind::Base, .constantIndex = 1, .selection = 2},
+          {.kind = MirProjectionKind::Field, .field = 31},
+          {.kind = MirProjectionKind::Dereference}}, .type = SemanticType::Int32});
+  body.loans.push_back({.id = 1, .kind = MirLoanKind::Stored, .source = 1,
+      .designatedFields = {baseProjection(13, 1), fieldProjection(31)}, .entry = true});
+  body.loans.push_back({.id = 2, .storedDependency = 1, .kind = MirLoanKind::Parameter,
+      .source = 1, .carriers = {1}, .entry = true});
+  body.loans.push_back({.id = 3, .kind = MirLoanKind::Return, .source = 2,
+      .producedBy = 8, .escapes = true});
+  MirBlock block;
+  block.id = 1;
+  block.instructions.push_back({.id = 1, .kind = MirInstructionKind::Borrow,
+      .hirValue = 8, .operands = {{.kind = MirOperandKind::Loan,
+          .place = 2, .loan = 1, .type = SemanticType::Int32}}, .loan = 3,
+      .info = {.type = SemanticType::Int32}});
+  block.instructions.push_back({.id = 2, .kind = MirInstructionKind::EndBorrow,
+      .hirValue = 8, .loan = 2});
+  block.instructions.push_back({.id = 3, .kind = MirInstructionKind::EndBorrow,
+      .hirValue = 8, .loan = 1});
+  body.blocks.push_back(std::move(block));
+  const auto accepted = [](const MirBody &candidate) {
+    return storedReferenceReturnPublication(candidate, candidate.blocks.front(),
+                                           candidate.blocks.front().instructions.front());
+  };
+  expect(accepted(body), "stored return shape distinguishes the reference shell from its exact external entry");
+  for (int mutation = 0; mutation != 10; ++mutation) {
+    auto forged = body;
+    auto &instructions = forged.blocks.front().instructions;
+    if (mutation == 0) forged.loans[1].storedDependency = 0;
+    if (mutation == 1) forged.loans[1].source = 2;
+    if (mutation == 2) forged.loans[1].parent = 1;
+    if (mutation == 3) forged.loans[1].carriers = {2};
+    if (mutation == 4) forged.loans[1].kind = MirLoanKind::Local;
+    if (mutation == 5) instructions.erase(instructions.begin() + 1);
+    if (mutation == 6) std::swap(instructions[1], instructions[2]);
+    if (mutation == 7) instructions.back().loan = 2;
+    if (mutation == 8) forged.places[1].projections[1].constantIndex = 0;
+    if (mutation == 9) forged.loans.front().conditions.push_back(
+        {.enumeration = SemanticType::enumType(7), .variant = 0});
+    expect(!accepted(forged), "stored return shape requires exact shell identity, full path and both ordered endpoints");
+  }
+}
 void serializedOwnerIdentity() {
   MirBody body;
   body.places.push_back({.id = 1, .root = MirPlaceRootKind::Symbol, .symbol = 1,
@@ -449,6 +534,8 @@ int main() {
   packAndCapturePaths();
   derivedGuardsAndInventoryBudget();
   serializedOwnerIdentity();
+  basePublicationProducerIdentity();
+  referencedStoredReturnShape();
   concreteFormalPaths();
   inlineBaseDisjointness();
 }

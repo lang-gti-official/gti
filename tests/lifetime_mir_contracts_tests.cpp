@@ -320,7 +320,8 @@ struct Derived<lifetime a> : public Marker, public Base<a> {
   Derived(int&<a> input, int divisor) : Base<a>(input), after(later(divisor)) {}
   int mark() override { return 0; }
 };
-int main() { int number = 7; Derived view{number, 1}; return 0; }
+int&<a> inherited<lifetime a>(Derived<a>& input) { return input.value; }
+int main() { int number = 7; Derived view{number, 1}; return inherited(view) - 7; }
 )gti");
   if (!source.semanticValid || !source.mir.valid()) {
     for (const auto &diagnostic : source.diagnostics)
@@ -383,6 +384,63 @@ int main() { int number = 7; Derived view{number, 1}; return 0; }
     expect(!verifyMirProgram(broken).valid(),
            "Base publication rejects missing retention, origin, complete evidence, rollback type and early release");
   }
+  bool inheritedReturn = false;
+  for (const auto &function : source.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (std::size_t index = 0; index + 2 < block.instructions.size(); ++index) {
+        const auto &publication = block.instructions[index];
+        const auto &retirement = block.instructions[index + 1];
+        if (publication.kind != MirInstructionKind::Borrow || !publication.loan ||
+            publication.operands.size() != 1 ||
+            retirement.kind != MirInstructionKind::EndBorrow || !retirement.loan)
+          continue;
+        const auto *shell = function.body.findLoan(*retirement.loan);
+        const auto *entry = function.body.findLoan(publication.operands.front().loan);
+        const auto *returned = function.body.findLoan(*publication.loan);
+        if (!shell || shell->kind != MirLoanKind::Parameter || !entry ||
+            entry->kind != MirLoanKind::Stored || !returned ||
+            returned->kind != MirLoanKind::Return)
+          continue;
+        expect(!inheritedReturn && shell->storedDependency == entry->id &&
+                   block.instructions[index + 2].kind == MirInstructionKind::EndBorrow &&
+                   block.instructions[index + 2].loan == entry->id,
+               "inherited external return retires its distinct reference shell and stored entry");
+        inheritedReturn = true;
+        for (int mutation = 0; mutation != 10; ++mutation) {
+          auto broken = source.mir;
+          auto *owner = const_cast<MirFunctionInstance *>(broken.findFunctionInstance(function.id));
+          auto &body = owner->body;
+          auto &changed = body.blocks[block.id - 1];
+          auto &sourceShell = body.loans[shell->id - 1];
+          auto &sourceEntry = body.loans[entry->id - 1];
+          auto &runtime = body.places[publication.operands.front().place - 1];
+          if (mutation == 0) sourceShell.storedDependency = 0;
+          if (mutation == 1) sourceShell.source = 0;
+          if (mutation == 2) sourceShell.parent = sourceEntry.id;
+          if (mutation == 3) sourceShell.access = AccessMode::Mutable;
+          if (mutation == 4) sourceEntry.access = AccessMode::Mutable;
+          if (mutation == 5) {
+            bool changedBase = false;
+            for (auto &step : runtime.projections)
+              if (step.kind == MirProjectionKind::Base) {
+                step.constantIndex = 0; changedBase = true; break;
+              }
+            expect(changedBase, "inherited return mutation uses an exact full-ordinal Base projection");
+          }
+          if (mutation == 6)
+            for (auto &step : runtime.projections)
+              if (step.kind == MirProjectionKind::Base) { step.selection += 1000; break; }
+          if (mutation == 7)
+            body.loans[returned->id - 1].source = sourceEntry.source;
+          if (mutation == 8)
+            changed.instructions.erase(changed.instructions.begin() + index + 1);
+          if (mutation == 9)
+            std::swap(changed.instructions[index + 1], changed.instructions[index + 2]);
+          expect(!verifyMirProgram(broken).valid(),
+                 "inherited return rejects foreign shell, entry, permission, typed path, address and retirement");
+        }
+      }
+  expect(inheritedReturn, "borrowed Base fixture exercises referenced-carrier external publication");
 }
 void checkReferenceErasureLifetimeAuthority() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";

@@ -14,6 +14,16 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "raw_pointer_storage_outlives": """
+void needs_static<T>(T* pointer) requires outlives<T*, static> {}
+void relay<T>(T* pointer) { needs_static(pointer); }
+struct Borrowed<lifetime a> { int&<a> value; };
+void exercise<lifetime a>(int&<a> value) {
+  Borrowed<a>* pointer = nullptr;
+  relay(pointer);
+}
+int main() { int value = 7; exercise(value); return 0; }
+""",
     "patterned_invocation_environment": """
 struct Environment<R&<environment>(Args...), lifetime environment> {
   R&<environment> value;
@@ -223,6 +233,46 @@ int main() {
   int first = 3; int second = 8; View view{second};
   if (scalar.invoke(first, second) != 8) { return 1; }
   return carrier.invoke(first, view) - 8;
+}
+""",
+    "grouped_reference_function_contracts": """
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+View<a>&<shell> fixedShell<lifetime a, lifetime shell, Args...>(View<a>&<shell> first, Args&... ignored) {
+  return first;
+}
+int&<a> fixedExternal<lifetime a, lifetime shell, Args...>(View<a>&<shell> first, Args&... ignored) {
+  return first.value;
+}
+struct Scoped<R&<environment>(Args...), lifetime environment> {
+  R&<environment> value;
+  Scoped(R&<environment> input) : value(input) {}
+  R&<environment> get() { return this.value; }
+};
+int&<a> read<lifetime a>(int&<a> input) {
+  Scoped<int&<a>(int&), a> owner{input};
+  return owner.get();
+}
+int main() {
+  int value = 7; bool ignored = false; View view{value};
+  return fixedShell(view).value + fixedShell(view, ignored).value +
+         fixedExternal(view, ignored) + read(value) - 28;
+}
+""",
+    "borrowed_from_pack_ordinals": """
+int&<a> select<lifetime a>(int ignored, int&<a> value) { return value; }
+class Relay<R(Args...)> {
+public:
+  Relay() = default;
+  [[borrowed_from(values)]] R invoke(int tag, Args... values) { return select(values...); }
+};
+using Selected = for<lifetime a> int&<a>(int, int&<a>);
+int main() {
+  int value = 7; Relay<Selected> relay{};
+  int& selected = relay.invoke(0, 4, value);
+  return selected - 7;
 }
 """,
     "reference_pack_results": """

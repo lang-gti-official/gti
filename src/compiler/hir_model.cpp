@@ -504,7 +504,8 @@ verifyHirSourceDebug(const SemanticModel &semantics,
   const auto checkInitializers = [&](const HirBody &body,
                                      const InitializerRoots &expected,
                                      const HirClassInstance *owner = nullptr,
-                                     bool sourceRegionBody = false) {
+                                     bool sourceRegionBody = false,
+                                     const SemanticSourceDebugInstance *selectedConstructor = nullptr) {
     const auto &record = body.sourceDebug;
     if (!isValidSourceDebugRecord(record)) {
       reject("HIR initializer source collection/table state is invalid");
@@ -544,7 +545,10 @@ verifyHirSourceDebug(const SemanticModel &semantics,
         reject("HIR initializer source region has foreign roots or provenance");
         continue;
       }
-      if (facts.instance.concrete) {
+      if (selectedConstructor) {
+        if (facts.instance != *selectedConstructor)
+          reject("HIR selected default has a foreign constructor substitution");
+      } else if (facts.instance.concrete) {
         const SemanticSourceDebugInstance instance{
             .concrete = true,
             .kind = static_cast<std::uint8_t>(
@@ -653,8 +657,11 @@ verifyHirSourceDebug(const SemanticModel &semantics,
                   .values = function.valueArguments};
       if (function.owner)
         if (const auto *owner = findClass(*function.owner)) {
-          instance.classTypes = owner->typeArguments;
-          instance.classValues = owner->valueArguments;
+          if (function.ownerType.kind != SemanticType::Class ||
+              function.ownerType.classId != owner->type.classId)
+            reject("HIR source function has a foreign callable owner");
+          instance.classTypes = function.ownerType.arguments;
+          instance.classValues = function.ownerType.valueArguments;
         }
     }
     check(function.body, SourceDebugBodyKind::Function, function.source,
@@ -671,7 +678,6 @@ verifyHirSourceDebug(const SemanticModel &semantics,
             if (field.info.symbol == initializer.field && field.declaration &&
                 field.initializer)
               roots.emplace_back(field.declaration, initializer.arguments);
-    checkInitializers(constructor.body, roots, owner);
     SemanticSourceDebugInstance instance;
     if (constructor.body.sourceDebug.tables &&
         constructor.body.sourceDebug.tables->sourceFacts().instance.concrete) {
@@ -682,10 +688,15 @@ verifyHirSourceDebug(const SemanticModel &semantics,
           .types = constructor.typeArguments,
           .values = constructor.valueArguments};
       if (const auto *owner = findClass(constructor.owner)) {
-        instance.classTypes = owner->typeArguments;
-        instance.classValues = owner->valueArguments;
+        if (constructor.ownerType.kind != SemanticType::Class ||
+            constructor.ownerType.classId != owner->type.classId)
+          reject("HIR source constructor has a foreign callable owner");
+        instance.classTypes = constructor.ownerType.arguments;
+        instance.classValues = constructor.ownerType.valueArguments;
       }
     }
+    checkInitializers(constructor.body, roots, owner, false,
+                      constructor.generatedDefault ? nullptr : &instance);
     check(constructor.body, SourceDebugBodyKind::Constructor,
           constructor.source,
           !constructor.generatedDefault && constructor.source &&
@@ -703,8 +714,11 @@ verifyHirSourceDebug(const SemanticModel &semantics,
           .kind = static_cast<std::uint8_t>(InstanceAnalysisKind::Destructor),
           .declaration = owner ? owner->declaration : 0};
       if (owner) {
-        instance.classTypes = owner->typeArguments;
-        instance.classValues = owner->valueArguments;
+        if (destructor.ownerType.kind != SemanticType::Class ||
+            destructor.ownerType.classId != owner->type.classId)
+          reject("HIR source destructor has a foreign callable owner");
+        instance.classTypes = destructor.ownerType.arguments;
+        instance.classValues = destructor.ownerType.valueArguments;
       }
     }
     check(destructor.body, SourceDebugBodyKind::Destructor, destructor.source,

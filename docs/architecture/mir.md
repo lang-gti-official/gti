@@ -443,7 +443,10 @@ contracts and exact call substitutions participate in structural serialization.
 Changing a region relation therefore changes the identity used by verification
 and caching even though it introduces no runtime operand or object field.
 Exact type-outlives bounds retain opaque types rather than reducing them to
-bounds on their spelling's type arguments.
+bounds on their spelling's type arguments. Raw pointers stop storage-outlives
+proof and assumption expansion: `T*:a` describes the pointer value, never `T:a`
+or any checked reference in the pointee. Type shape and nested region scope
+remain validated; dereference still requires its separate unsafe authority.
 
 Each application preserves its full universal substitution, explicit existential
 inventory, required region and exact-type obligations, and local origin
@@ -2232,8 +2235,13 @@ Returning the carrier or its exact stored referent publishes a fresh escaping
 `Return` loan through one `Borrow` operand that names that entry loan. A carrier
 return also names the exact SSA value loaded or moved from one of that loan's
 carrier bindings. A reference return carries a binding-rooted runtime place
-whose only projections are that designated field path and its dereference. The entry
-loan ends at that transfer. The verifier independently rejects a projected or
+whose projections replay the complete designated structural path, including exact
+Base ordinals, and its final reference dereference. For a referenced carrier,
+the physical `Parameter` shell and its distinct `Stored` external dependency
+end separately at that transfer. The publication operand names the external
+entry; its runtime address retains the full shell dereference and field path.
+Independent program replay checks the typed path, entry permissions, shell-to-entry
+identity and ordered endpoints. The verifier independently rejects a projected or
 wrong-field entry, a shell or unrelated same-typed carrier, an ordinary call-
 result place, a reused or multiply produced return loan, a wrong payload or
 referent type, or a terminator that does not carry the same loan and exact

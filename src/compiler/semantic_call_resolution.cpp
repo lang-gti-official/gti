@@ -205,21 +205,22 @@ auto SemanticVisitor::Impl::currentReturnBorrowContract() const
     -> std::optional<ReturnBorrowContract> {
   if (currentLambdaReturn) {
     const LambdaReturnContext &context = *currentLambdaReturn;
-    return ReturnBorrowContract{
+    ReturnBorrowContract contract{
         .origin = context.origin,
         .parameter = context.parameter,
         .access = context.access,
         .parameters =
             context.declaration ? &context.declaration->parameters() : nullptr,
-        .parameterTypes = &context.parameterTypes,
         .lambda = true,
         .deferred = context.deferred};
+    contract.setParameterTypes(context.parameterTypes);
+    return contract;
   }
   const FunctionInfo *function = currentFunctionInfo();
   if (function == nullptr) {
     return std::nullopt;
   }
-  return ReturnBorrowContract{
+  ReturnBorrowContract contract{
       .origin = function->returnBorrowOrigin,
       .parameter = function->returnBorrowParameter,
       .access = function->returnBorrowAccess,
@@ -228,8 +229,9 @@ auto SemanticVisitor::Impl::currentReturnBorrowContract() const
                             function->bodyDeclaration() != nullptr
                         ? &function->bodyDeclaration()->parameters()
                         : nullptr,
-      .parameterTypes = &function->parameterTypes,
       .lambda = false};
+  contract.setParameterTypes(function->parameterTypes);
+  return contract;
 }
 
 auto SemanticVisitor::Impl::callableParameterContract(
@@ -5301,17 +5303,19 @@ auto SemanticVisitor::Impl::analyzeRawReferenceReturn(const ExprPtr &expression)
   RawBorrowCallArgument witness;
   const AccessMode access = currentReturnType.referenceAccess;
   if (function->returnBorrowOrigin == BorrowOriginKind::Argument &&
-      function->declaration &&
-      function->returnBorrowParameter < function->parameterTypes.size()) {
+      function->bodyDeclaration()) {
     const auto index = function->returnBorrowParameter;
-    const auto *binding = semanticModel.findBinding(
-        function->bodyDeclaration()->parameters()[index]);
-    if (!binding ||
-        function->parameterTypes[index].kind != SemanticType::Reference)
+    const auto inputs = formalBorrowInputs(
+        function->bodyDeclaration()->parameters(), function->parameterTypes);
+    if (!inputs || index >= inputs->size())
       return false;
-    assertion.owner = {.root = binding->symbol};
+    const auto &input = (*inputs)[index];
+    if (input.argument != index || input.type.kind != SemanticType::Reference ||
+        input.type.arguments.size() != 1)
+      return false;
+    assertion.owner = {.root = input.binding, .projections = input.bindingPrefix};
     assertion.ownerReference = SemanticType::referenceTo(
-        function->parameterTypes[index].arguments.front(), access);
+        input.type.arguments.front(), access, input.type.referenceLifetime);
     witness.ownerParameter = index;
   } else if (function->returnBorrowOrigin == BorrowOriginKind::Receiver) {
     const Symbol *receiver = receiverStateSymbol();

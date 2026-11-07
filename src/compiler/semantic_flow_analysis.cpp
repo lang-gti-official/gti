@@ -10599,12 +10599,15 @@ auto SemanticVisitor::Impl::validateLoopBackedge(const ScopeStack &beforeLoop,
 }
 
 SemanticVisitor::Impl::SourceDebugRegionGuard::SourceDebugRegionGuard(
-    Impl &visitor, const VariableDecl &declaration)
+    Impl &visitor, const VariableDecl &declaration,
+    bool selectedConstructorDefault)
     : visitor(visitor) {
+  const bool constructorDefault = selectedConstructorDefault &&
+      visitor.constructorDepth != 0 && visitor.analyzingFieldInitializer;
   if (visitor.sourceDebugProfile != SourceDebugProfile::LexicalV1 ||
       visitor.scopes.empty() ||
-      (visitor.functionDepth != 0 && !declaration.isStatic() &&
-       !declaration.isThreadLocal()))
+      (visitor.functionDepth != 0 && !constructorDefault &&
+       !declaration.isStatic() && !declaration.isThreadLocal()))
     return;
   scopeIndex = visitor.scopes.size() - 1;
   const auto &frame = visitor.scopes[scopeIndex];

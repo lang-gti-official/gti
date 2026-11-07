@@ -5325,17 +5325,27 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
   key.types = canonical->types;
   const auto &bindings = function.lifetimeApplication.bindings;
   const auto actualResult = substituteTypeLifetimes(canonical->returnType, bindings);
-  if (!actualResult || *actualResult != function.returnType ||
-      canonical->parameterTypes.size() != function.parameterTypes.size())
+  if (!actualResult || !equivalentLifetimeTypes(*actualResult, function.returnType))
     return std::nullopt;
-  for (std::size_t index = 0; index < canonical->parameterTypes.size(); ++index) {
-    const auto actual = substituteTypeLifetimes(canonical->parameterTypes[index], bindings);
-    if (!actual || *actual != function.parameterTypes[index])
+  // Declaration/body identities retain grouped packs. Application parameters
+  // name executable leaf ordinals; compare only this invocation through the
+  // shared expansion rule, without changing the query's canonical signature.
+  std::vector<SemanticType> canonicalParameters;
+  std::vector<SemanticType> appliedParameters;
+  for (const auto &parameter : canonical->parameterTypes)
+    SemanticType::appendExpandedArgument(canonicalParameters, parameter);
+  for (const auto &parameter : function.parameterTypes)
+    SemanticType::appendExpandedArgument(appliedParameters, parameter);
+  if (canonicalParameters.size() != appliedParameters.size())
+    return std::nullopt;
+  for (std::size_t index = 0; index < canonicalParameters.size(); ++index) {
+    const auto actual = substituteTypeLifetimes(canonicalParameters[index], bindings);
+    if (!actual || !equivalentLifetimeTypes(*actual, appliedParameters[index]))
       return std::nullopt;
   }
   if (canonical->ownerType != SemanticType::Unknown) {
     const auto actual = substituteTypeLifetimes(canonical->ownerType, bindings);
-    if (!actual || *actual != function.dispatchOwner)
+    if (!actual || !equivalentLifetimeTypes(*actual, function.dispatchOwner))
       return std::nullopt;
   }
   const auto *declaration = semanticModel.findFunction(function.id);
@@ -5566,7 +5576,7 @@ auto SemanticVisitor::Impl::validateKnownLeadingReturnBorrow(
   };
   std::vector<SymbolId> leadingBindings;
   std::size_t parameterCount = 0;
-  bool unresolved = false;
+  SemanticType unresolvedBinding = SemanticType::Unknown;
   for (const auto &parameter : syntax->parameters()) {
     const auto *binding = semanticModel.findBinding(parameter);
     if (!binding)
@@ -5574,13 +5584,14 @@ auto SemanticVisitor::Impl::validateKnownLeadingReturnBorrow(
     if (unresolvedPack(unresolvedPack, binding->type)) {
       if (!parameter.pack)
         return false;
-      unresolved = true;
+      unresolvedBinding = binding->type;
       break;
     }
     leadingBindings.push_back(binding->symbol);
     ++parameterCount;
   }
-  if (!unresolved || leadingBindings.empty() ||
+  if (unresolvedBinding.kind == SemanticType::Unknown || leadingBindings.empty() ||
+      function.parameterTypes.size() != syntax->parameters().size() ||
       std::any_of(complete.dependencies.begin(), complete.dependencies.end(),
                   [&](const auto &dependency) {
                     return dependency.place.receiver ||
@@ -5588,14 +5599,24 @@ auto SemanticVisitor::Impl::validateKnownLeadingReturnBorrow(
                                      dependency.place.root) == leadingBindings.end();
                   }))
     return false;
-  const auto trailing = std::find_if(
-      function.parameterTypes.begin(), function.parameterTypes.end(),
-      [&](const auto &type) { return unresolvedPack(unresolvedPack, type); });
-  if (trailing == function.parameterTypes.end())
+  // A source reference-pack declaration retains Reference<TypePack> in its
+  // signature, while its body binding names the symbolic group. Match that
+  // exact declared pack before selecting the known prefix; never expand an
+  // ordinary Reference<TypePack> as if it were a value pack.
+  const auto &trailing = function.parameterTypes[parameterCount];
+  bool matches = trailing == unresolvedBinding;
+  if (trailing.kind == SemanticType::Reference && trailing.arguments.size() == 1) {
+    const auto &element = trailing.arguments.front();
+    matches = !unresolvedBinding.concretePack && !element.concretePack &&
+              (element.kind == SemanticType::TypePack ||
+               element.kind == SemanticType::TypeParameter) &&
+              element.genericParameterId == unresolvedBinding.genericParameterId;
+  }
+  if (!matches)
     return false;
   auto leading = function;
   leading.parameterTypes.erase(
-      leading.parameterTypes.begin() + (trailing - function.parameterTypes.begin()),
+      leading.parameterTypes.begin() + parameterCount,
       leading.parameterTypes.end());
   // Only the existing normalizer may validate the known roots, paths, access,
   // parents and regions. Its result is deliberately not published: the unknown
@@ -7859,7 +7880,7 @@ auto SemanticVisitor::Impl::isBorrowReturningType(
 
 auto SemanticVisitor::Impl::functionReturnBorrowSummary(
     const SemanticType &returnType,
-    const std::vector<SemanticType> &parameterTypes, ClassId ownerClass,
+    const std::vector<SemanticType> &groupedParameterTypes, ClassId ownerClass,
     bool staticMember, IntrinsicKind intrinsic,
     std::optional<std::size_t> exactReturnParameter,
     bool allowReadOnlyReferenceReborrow,
@@ -7870,6 +7891,23 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
   if (!isBorrowReturningType(returnType) || intrinsic != IntrinsicKind::None) {
     return summary;
   }
+
+  // Supplier ordinals belong to the executable signature, while body bindings
+  // and canonical instances keep their grouped TypePack identity. In particular
+  // a reference leaf contributes both its physical shell and its referent's
+  // stored external paths; treating the entire pack as one carrier loses that
+  // distinction. Reference<TypePack> stays one leaf under this expansion rule.
+  std::vector<SemanticType> expandedParameters;
+  const bool hasConcretePack = std::any_of(
+      groupedParameterTypes.begin(), groupedParameterTypes.end(),
+      [](const auto &type) {
+        return type.kind == SemanticType::TypePack && type.concretePack;
+      });
+  if (hasConcretePack)
+    for (const auto &type : groupedParameterTypes)
+      SemanticType::appendExpandedArgument(expandedParameters, type);
+  const auto &parameterTypes =
+      hasConcretePack ? expandedParameters : groupedParameterTypes;
 
   summary.access = borrowAccess(returnType);
   if (lifetimeContract && lifetimeContract->complete &&
@@ -8160,13 +8198,35 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
   for (const SemanticType &type : parameterTypes)
     SemanticType::appendExpandedArgument(expanded, type);
   const auto &parameters = syntax.parameters();
+  const auto pack = std::find_if(parameters.begin(), parameters.end(),
+                                 [](const auto &parameter) { return parameter.pack; });
+  const bool hasPack = pack != parameters.end();
+  const auto prefix = static_cast<std::size_t>(pack - parameters.begin());
+  // A written final pack names every remaining executable lane. The input may
+  // still contain its grouped TypePack or may already be an applied flat
+  // signature; its raw vector length does not determine the pack's width.
+  // Written non-pack parameters each retain one leading lane in either view.
+  if ((hasPack && pack + 1 != parameters.end()) ||
+      parameterTypes.size() < prefix || expanded.size() < prefix ||
+      (!hasPack && expanded.size() != prefix) ||
+      std::any_of(parameterTypes.begin(), parameterTypes.begin() + prefix,
+                  [](const auto &type) { return type.kind == SemanticType::TypePack; })) {
+    contract.missing = true;
+    return contract;
+  }
   std::size_t position = 0;
-  for (std::size_t index = 0;
-       index < parameters.size() && index < parameterTypes.size(); ++index) {
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
     const std::size_t width =
-        parameters[index].pack ? expanded.size() - (parameterTypes.size() - 1)
-                               : 1;
+        parameters[index].pack ? expanded.size() - position : 1;
     if (parameters[index].name.lexeme == attribute->argument->lexeme) {
+      if (std::any_of(expanded.begin() + position,
+                      expanded.begin() + position + width, [](const auto &type) {
+                        return type.kind == SemanticType::Unknown ||
+                               type.kind == SemanticType::TypePack;
+                      })) {
+        contract.missing = true;
+        return contract;
+      }
       std::optional<std::size_t> selected;
       for (std::size_t element = position;
            element < position + width && element < expanded.size(); ++element) {

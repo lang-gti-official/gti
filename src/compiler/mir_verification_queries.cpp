@@ -205,6 +205,10 @@ const MirInstruction *baseConstructorPublicationStage(const MirBody &body,
     for (const auto &instruction : block.instructions) {
       if (instruction.tombstone || instruction.loan != loan.id)
         continue;
+      // Retirement is an endpoint, not a second producer. The independent
+      // CFG/lifecycle proof still checks its reachability and exact ordering.
+      if (instruction.kind == MirInstructionKind::EndBorrow)
+        continue;
       const auto *destination = instruction.destination
           ? body.findPlace(*instruction.destination) : nullptr;
       if (result || instruction.kind != MirInstructionKind::InitializeBase ||
@@ -927,9 +931,7 @@ bool storedReferenceReturnPublication(const MirBody &body,
       (published->access == AccessMode::Mutable && runtime->access != AccessMode::Mutable) ||
       runtime->root != root->root || runtime->symbol != root->symbol ||
       runtime->binding != root->binding || runtime->capture != root->capture ||
-      (root->root != MirPlaceRootKind::This &&
-       (root->root != MirPlaceRootKind::Binding ||
-        std::find(entry->carriers.begin(), entry->carriers.end(), root->binding) == entry->carriers.end())) ||
+      (root->root != MirPlaceRootKind::This && root->root != MirPlaceRootKind::Binding) ||
       !root->projections.empty() || runtime->projections.size() < 2 ||
       runtime->projections.back().kind != MirProjectionKind::Dereference)
     return false;
@@ -958,10 +960,29 @@ bool storedReferenceReturnPublication(const MirBody &body,
     return false;
   const auto current = std::find_if(block.instructions.begin(), block.instructions.end(),
       [&](const auto &candidate) { return candidate.id == instruction.id; });
-  return current != block.instructions.end() && std::next(current) != block.instructions.end() &&
-         std::next(current)->kind == MirInstructionKind::EndBorrow &&
-         std::next(current)->loan == entry->id &&
-         std::next(current)->hirValue == instruction.hirValue;
+  if (current == block.instructions.end())
+    return false;
+  auto retire = std::next(current);
+  bool referenceShell = false;
+  if (retire != block.instructions.end() && retire->kind == MirInstructionKind::EndBorrow &&
+      retire->loan && retire->loan != entry->id) {
+    const auto *shell = body.findLoan(*retire->loan);
+    referenceShell = shell && shell->kind == MirLoanKind::Parameter && shell->entry &&
+        !shell->parent && !shell->escapes && !shell->producedBy &&
+        shell->source == entry->source && shell->storedDependency == entry->id &&
+        root->root == MirPlaceRootKind::Binding &&
+        root->type.kind == SemanticType::Reference && root->type.arguments.size() == 1 &&
+        std::find(shell->carriers.begin(), shell->carriers.end(), root->binding) != shell->carriers.end() &&
+        retire->hirValue == instruction.hirValue;
+    if (!referenceShell)
+      return false;
+    ++retire;
+  }
+  if (root->root == MirPlaceRootKind::Binding && !referenceShell &&
+      std::find(entry->carriers.begin(), entry->carriers.end(), root->binding) == entry->carriers.end())
+    return false;
+  return retire != block.instructions.end() && retire->kind == MirInstructionKind::EndBorrow &&
+         retire->loan == entry->id && retire->hirValue == instruction.hirValue;
 }
 
 bool referenceParameterReturnPublication(const MirBody &body,

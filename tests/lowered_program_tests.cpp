@@ -1165,14 +1165,20 @@ struct Generic<T> {
   int32_t value = seed();
 public:
   Generic() = default;
+  Generic(int32_t input) {}
 };
 struct EmptyPack<Ts...> { int32_t value = seed();  public: EmptyPack() = default; };
+void nested<lifetime a>(int32_t&<a> input) {
+  Generic<int32_t&<a>> selected{7};
+}
 int main() {
   Defaulted first{};
   Selected second{};
   Selected third{3};
   Generic<int32_t> fourth{};
   Generic<int64_t> fifth{};
+  Generic<int32_t> selectedGeneric{7};
+  nested(global);
   EmptyPack<> sixth{};
   thread_local int32_t local = seed();
   return global + per_thread + first.value + second.value + third.value;
@@ -1216,6 +1222,10 @@ int main() {
       continue;
     generated |= constructor.generatedDefault;
     selected |= !constructor.generatedDefault;
+    if (!constructor.generatedDefault)
+      expect(record.tables->initializers.front().sourceFacts().instance ==
+                 record.tables->sourceFacts().instance,
+             "selected defaults retain the exact constructor analysis instance");
     auto &body = const_cast<lang::HirBody &>(constructor.body);
     const auto saved = body.sourceDebug;
     body.sourceDebug.tables->initializers.front().roots = {0};
@@ -1228,6 +1238,23 @@ int main() {
         !lang::verifyHirSourceDebug(collected.model(), lowered.program).valid(),
         "source defaults cannot be stripped from generated constructors");
     body.sourceDebug = saved;
+    if (!constructor.generatedDefault) {
+      const auto &classes = lowered.program.classInstances();
+      const auto owner = std::find_if(classes.begin(), classes.end(),
+          [&](const auto &candidate) { return candidate.id == constructor.owner; });
+      expect(owner != classes.end() && owner->fieldInitializers.sourceDebug.tables &&
+                 !owner->fieldInitializers.sourceDebug.tables->initializers.empty(),
+             "the selected-default fixture also retains its distinct layout region");
+      auto &region = body.sourceDebug.tables->initializers.front();
+      const auto id = region.id;
+      const auto roots = region.roots;
+      region = owner->fieldInitializers.sourceDebug.tables->initializers.front();
+      region.id = id;
+      region.roots = roots;
+      expect(!lang::verifyHirSourceDebug(collected.model(), lowered.program).valid(),
+             "layout initializer facts cannot replace selected constructor facts");
+      body.sourceDebug = saved;
+    }
   }
   expect(generated && selected,
          "generated and source constructors retain selected field defaults");

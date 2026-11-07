@@ -2117,6 +2117,7 @@ auto SemanticVisitor::Impl::selectConstructorCandidate(
   std::vector<ConstructorSelection> viable;
   std::vector<const ConstructorInfo *> privateViable;
   std::vector<RejectedConstructorArgument> rejectedArguments;
+  std::vector<const ConstructorInfo *> rejectedLifetimes;
   std::vector<RejectedConstructorInference> rejectedInferences;
   std::optional<ConstraintFailure> rejectedConstraint;
   const auto lifetimeInputs = [&](const ConstructorInfo *constructor) {
@@ -2381,8 +2382,55 @@ auto SemanticVisitor::Impl::selectConstructorCandidate(
         });
     if (!deferredLifetimes) {
       const auto inputs = lifetimeInputs(&constructor);
-      if (!applyCallLifetimeContract(lifetimeCandidate, inputs, paren, nullptr, false))
+      if (!applyCallLifetimeContract(lifetimeCandidate, inputs, paren, nullptr, false)) {
+        // This is diagnostic classification only. The failed proof never makes
+        // a candidate viable. Preserve ordinary type/access/value-category
+        // checks while ignoring free region choices, so a bad lifetime does
+        // not become a misleading missing-constructor or conversion error.
+        const auto matchingShape = [&] {
+          if (parameterTypes.size() < arguments.size())
+            return false;
+          for (std::size_t index = 0; index < arguments.size(); ++index) {
+            const auto &argument = arguments[index];
+            auto parameter = parameterTypes[index];
+            if (parameter.kind == SemanticType::Reference &&
+                parameter.arguments.size() == 1) {
+              const auto &referent = argument.type.kind == SemanticType::Reference &&
+                      argument.type.arguments.size() == 1
+                  ? argument.type.arguments.front() : argument.type;
+              if (!sameLifetimeConversionShape(parameter.arguments.front(), referent))
+                return false;
+              parameter.arguments.front() = referent;
+              if (argument.type.kind == SemanticType::Reference)
+                parameter.referenceLifetime = argument.type.referenceLifetime;
+            } else {
+              if (!sameLifetimeConversionShape(parameter, argument.type))
+                return false;
+              parameter = argument.type;
+            }
+            const bool matches = checkedArgument &&
+                    parameter.kind == SemanticType::Reference &&
+                    parameter.referenceAccess == AccessMode::ReadOnly &&
+                    parameter.arguments.size() == 1 &&
+                    parameter.arguments.front() == argument.type
+                ? true
+                : requireExactNullParameter
+                    ? parameter == SemanticType::NullPtr && argument.type == SemanticType::NullPtr
+                : argument.forwardedPackElement || parameter.kind == SemanticType::TypePack
+                    ? forwardedPackArgumentMatches(parameter, argument.type)
+                    : argument.expression && contextualCallArgumentPotentiallyMatches(
+                          parameter, argument.type, *argument.expression, argument.deferred);
+            if (!matches)
+              return false;
+          }
+          return true;
+        };
+        if (candidateProbe == nullptr &&
+            (isCompilerTrustedRequester(paren) || !constructor.compilerPrivate) &&
+            canAccessMember(constructor.access, classId, constructedType) && matchingShape())
+          rejectedLifetimes.push_back(&constructor);
         continue;
+      }
       parameterTypes = lifetimeCandidate.parameterTypes;
       requirements = lifetimeCandidate.requirements;
     }
@@ -2690,6 +2738,20 @@ auto SemanticVisitor::Impl::selectConstructorCandidate(
             moving ? "Remove std::move only if the type remains copyable."
                    : "Transfer the value with std::move only if the type "
                      "remains movable.");
+        diagnostics.emplace_back(std::move(diagnostic));
+        currentType = constructedType;
+        return std::nullopt;
+      }
+      if (viable.empty() && !rejectedLifetimes.empty()) {
+        auto diagnostic = makeDiagnostic(
+            "GTI-S2127", DiagnosticPhase::Semantics, paren,
+            "No constructor with matching argument types has a lifetime contract "
+            "that this call can prove.");
+        for (const auto *candidate : rejectedLifetimes)
+          if (candidate->declaration)
+            diagnostic.related.push_back(
+                {tokenSpan(candidate->declaration->name()),
+                 "Type-compatible constructor: " + constructorSignatureSpelling(*candidate)});
         diagnostics.emplace_back(std::move(diagnostic));
         currentType = constructedType;
         return std::nullopt;
@@ -5911,9 +5973,14 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
                                          .protectsStorage = true};
       if (const auto source = retainedLoanSource(value))
         dependency.parent = source->loan;
-      validShell = normalizedCompleteReturnBorrow(
-                       *function, {.dependencies = {std::move(dependency)}})
-                       .has_value();
+      const SemanticBorrowDependencySet checked{
+          .dependencies = {std::move(dependency)}};
+      validShell = normalizedCompleteReturnBorrow(*function, checked).has_value();
+      if (!validShell && validateKnownLeadingReturnBorrow(*function, checked)) {
+        loanFlow.deferredGenericFlow = true;
+        requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
+        validShell = true;
+      }
     }
     if (!validShell) {
       Diagnostic diagnostic = makeDiagnostic(
@@ -6079,9 +6146,14 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
           .place = shell,
           .access = function->returnType.referenceAccess,
           .protectsStorage = true};
-      validShell = normalizedCompleteReturnBorrow(
-                       *function, {.dependencies = {std::move(dependency)}})
-                       .has_value();
+      const SemanticBorrowDependencySet checked{
+          .dependencies = {std::move(dependency)}};
+      validShell = normalizedCompleteReturnBorrow(*function, checked).has_value();
+      if (!validShell && validateKnownLeadingReturnBorrow(*function, checked)) {
+        loanFlow.deferredGenericFlow = true;
+        requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
+        validShell = true;
+      }
     }
     if (!validShell) {
       // A named carrier is stable within this scope, but its long-lived

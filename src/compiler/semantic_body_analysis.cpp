@@ -2483,6 +2483,10 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
               : declaration.initializer();
       if (!initializer)
         continue;
+      // The selected default is checked in this constructor instance, but
+      // remains its own source region. Preserve that exact instance/domain
+      // instead of borrowing the class layout's initializer tables.
+      SourceDebugRegionGuard sourceRegion(*this, declaration, true);
       semanticModel.recordFullExpression(declaration, initializer);
       analyzeInitializer(initializer, fieldType, false, true);
       if (collectingRawFields) {
