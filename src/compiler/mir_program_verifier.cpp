@@ -13838,6 +13838,34 @@ completeReferenceInitializer(const MirProgram &program,
   return CompleteReferenceInitializer{&initializer, published, borrow};
 }
 
+// The initializer captures its incoming capability before publication. A
+// verified mutable entry transfer retains that capability itself as the stored
+// group, rather than creating a child loan. Keep the captured identity intact
+// and compare its parentless publication view only after the exact formal,
+// addressed initializer expression, destination and transfer have been proved.
+[[nodiscard]] bool completeReferenceInitializerSnapshotMatches(
+    const CompleteReferenceInitializer &publication,
+    const CompleteBorrowFact &observed) {
+  const auto &captured = publication.initializer->completeBorrow;
+  if (!captured || !observed)
+    return false;
+  if (!publication.loan->entry)
+    return equalCompleteBorrowSets(captured, observed);
+  const auto &entry = *publication.loan;
+  if (captured->dependencies.size() != 1 ||
+      !captured->possibleAlternatives.empty())
+    return false;
+  const auto &incoming = captured->dependencies.front();
+  if (incoming.source != entry.source || incoming.parent != entry.id ||
+      incoming.access != AccessMode::Mutable ||
+      !incoming.designatedFields.empty() || !incoming.conditions.empty() ||
+      entry.parent || entry.access != AccessMode::Mutable)
+    return false;
+  auto published = *captured;
+  published.dependencies.front().parent = 0;
+  return equalCompleteBorrowSets(published, observed);
+}
+
 // A result-domain view deliberately contains no body-local place or loan IDs.
 // Local facts and declaration-relative summaries share this structural proof;
 // their independent origin/availability proofs remain with their consumers.
@@ -16994,7 +17022,7 @@ private:
         const auto exact = completeReferenceInitializer(program, constructor, index - 1);
         return exact && initializer->completeBorrow &&
                index <= flow.referenceInitializerFacts.size() &&
-               equalCompleteBorrowSets(initializer->completeBorrow, flow.referenceInitializerFacts[index - 1]) &&
+               completeReferenceInitializerSnapshotMatches(*exact, flow.referenceInitializerFacts[index - 1]) &&
                flow.referenceInitializerFacts[index - 1] &&
                completeBorrowSetHasTypedShape(program, fieldInfo.type, *flow.referenceInitializerFacts[index - 1]);
       }

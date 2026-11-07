@@ -1107,7 +1107,12 @@ auto SemanticVisitor::Impl::callLifetimeArgumentType(
                                expected.kind == SemanticType::Reference &&
                                expected.arguments.size() == 1
                            ? expected.arguments.front() : expected;
-  const int variance = expected.kind == SemanticType::Reference &&
+  // An existing reference may be reborrowed for a shorter call region. Its
+  // outer lifetime is covariant even for mutable access; constrainLifetimeType
+  // keeps the mutable referent invariant. A value argument has no reference
+  // shell here, so its whole type is the invariant mutable referent instead.
+  const int variance = actual.kind != SemanticType::Reference &&
+                               expected.kind == SemanticType::Reference &&
                                expected.referenceAccess == AccessMode::Mutable
                            ? 0 : 1;
   auto adjusted = constrainLifetimeType(actual, target, variance, obligations,

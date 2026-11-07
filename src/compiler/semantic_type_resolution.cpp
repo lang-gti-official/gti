@@ -5824,6 +5824,22 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
   if (reference.arguments.size() != 1) {
     return;
   }
+  if (valueType == SemanticType::Unknown) {
+    const Expr *result = value.get();
+    while (result) {
+      if (const auto *group = exprAs<Grouping>(result)) {
+        result = group->expression().get();
+      } else if (const auto *comma = exprAs<Binary>(result);
+                 comma && comma->oper().kind == TokenKind::COMMA) {
+        result = comma->right().get();
+      } else {
+        break;
+      }
+    }
+    if (const auto *call = exprAs<Call>(result);
+        call && loanFlow.deferredPackCalls.contains(call))
+      return; // No provisional place or supplier: the concrete call must prove both.
+  }
   const SemanticType &referent = reference.arguments[0];
   if (valueType != SemanticType::Unknown && valueType != referent &&
       !isPublicBaseConversion(valueType, referent)) {
@@ -6127,14 +6143,21 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
                     })) {
       for (auto &dependency : dependencies)
         dependency.access = function->returnType.referenceAccess;
+      const SemanticBorrowDependencySet checked{
+          .dependencies = std::move(dependencies)};
       std::vector<LifetimeBound> required;
       if (normalizedCompleteReturnBorrow(
-              *function, {.dependencies = std::move(dependencies)},
+              *function, checked,
               loanFlow.collectingLifetimeContract ? &required : nullptr)) {
         for (const auto edge : required)
           if (!requireLifetimeRelationship(edge.longer, edge.shorter,
                                             expressionToken(value)))
             return;
+        return;
+      }
+      if (validateKnownLeadingReturnBorrow(*function, checked)) {
+        loanFlow.deferredGenericFlow = true;
+        requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
         return;
       }
     }

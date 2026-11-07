@@ -1266,8 +1266,9 @@ named parameter pack or an explicit type-list expansion in
 a formal parameter's type metadata. A metadata-bound pack does not add runtime
 parameters and may also expand into returned nominal metadata. Bare pack types
 remain invalid as return values or object storage. A named value pack uses the
-same deduced list if both forms are present. Whole-pack forwarding remains available
-only as the final argument of another variadic call. The bounded comma-pack
+same deduced list if both forms are present. Whole-pack forwarding is available
+as the final argument of another call; concrete expansion determines its fixed
+or variadic target's argument count and exact reference bindings. The bounded comma-pack
 fold `(call(fixed, pack), ...)` additionally applies one call pattern to each
 concrete pack element. `Args... args` retains value transport; `Args&... args`
 borrows each argument read-only, and `mut Args&... args` borrows each argument

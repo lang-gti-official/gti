@@ -160,6 +160,25 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
       return std::nullopt;
   }
 
+  const ClassInfo *patternOwner = ownerId ? &publicClassInfo(ownerId) : nullptr;
+  const std::span<const SemanticType> ownerPatterns = patternOwner
+      ? std::span<const SemanticType>(patternOwner->genericArgumentPatterns)
+      : std::span<const SemanticType>{};
+  if (!ownerPatterns.empty() && !deriveGenericArgumentPatternSubstitution(
+          ownerPatterns, key.classTypes,
+          genericParameterIdentities(patternOwner->genericParameters),
+          genericParameterIdentities(patternOwner->genericArgumentPatternLifetimes),
+          {}, GenericPatternMatch::Structure))
+    return std::nullopt;
+  const auto fixedPatternRegion = [&](Lifetime region) {
+    return region.kind == Lifetime::Kind::Static ||
+        (patternOwner && region.kind == Lifetime::Kind::Parameter &&
+         std::any_of(patternOwner->genericParameters.begin(),
+                     patternOwner->genericParameters.end(), [&](const auto &parameter) {
+           return parameter.lifetime && parameter.id == region.id;
+         }));
+  };
+
   RequestSessionContext::ExecutableLifetimeKey identity{.runtime = key};
   for (auto &type : identity.runtime.classTypes) {
     appendExecutableRegionShape(type, identity.regionShape);
@@ -196,9 +215,16 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
 
   SemanticExecutableInstantiation result{.classTypes = key.classTypes,
                                          .types = key.types};
+  bool patternValid = true;
   const auto lift = [&](auto &&self, SemanticType &type,
                         std::vector<LifetimeBinding> bound,
-                        std::vector<GenericParameterId> &free) -> void {
+                        std::vector<GenericParameterId> &free,
+                        const SemanticType *pattern) -> void {
+    // A projected type is an opaque argument: equal actual regions inside it
+    // do not establish a declaration-level relationship with the owner.
+    if (pattern && (pattern->kind == SemanticType::TypeParameter ||
+                    pattern->kind == SemanticType::TypePack))
+      pattern = nullptr;
     if (type.hasLambdaShape()) {
       const auto *lambda = semanticModel.findLambda(type.lambdaId);
       if (!lambda && instanceBaseModel)
@@ -246,7 +272,32 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
       id = fresh();
       bound.emplace_back(source, Lifetime::parameter(id));
     }
-    const auto region = [&](Lifetime &value) {
+    const auto region = [&](Lifetime &value, Lifetime declared) {
+      if (fixedPatternRegion(declared)) {
+        // The pattern itself fixes this occurrence to a nominal parameter or
+        // static storage. Preserve that identity instead of lifting it into an
+        // independent executable slot. An invocation binder cannot supply it.
+        if (!value.specified() ||
+            std::any_of(bound.begin(), bound.end(), [&](const auto binding) {
+              return binding.first == value;
+            })) {
+          patternValid = false;
+          return;
+        }
+        if (declared.kind == Lifetime::Kind::Static) {
+          patternValid = patternValid && value == declared;
+        } else {
+          auto &bindings = result.lifetimeApplication.bindings;
+          const auto previous = std::find_if(bindings.begin(), bindings.end(),
+              [&](const auto binding) { return binding.first == declared; });
+          if (previous == bindings.end())
+            bindings.emplace_back(declared, value);
+          else if (previous->second != value)
+            patternValid = false;
+        }
+        value = declared;
+        return;
+      }
       if (!value.specified())
         return;
       const auto selected = std::find_if(bound.rbegin(), bound.rend(),
@@ -260,19 +311,32 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
       value = universal;
       free.push_back(universal.id);
     };
-    region(type.referenceLifetime);
-    for (auto &value : type.lifetimeArguments)
-      region(value);
-    lifetime_detail::children(type, [&](auto &child) { self(self, child, bound, free); });
+    region(type.referenceLifetime, pattern ? pattern->referenceLifetime : Lifetime{});
+    for (std::size_t index = 0; index < type.lifetimeArguments.size(); ++index)
+      region(type.lifetimeArguments[index],
+             pattern ? pattern->lifetimeArguments[index] : Lifetime{});
+    const auto children = [&](auto &values, const auto *patterns) {
+      for (std::size_t index = 0; index < values.size(); ++index)
+        self(self, values[index], bound, free,
+             patterns && index < patterns->size() ? &(*patterns)[index] : nullptr);
+    };
+    children(type.arguments, pattern ? &pattern->arguments : nullptr);
+    children(type.lambdaEnclosingClassTypes,
+             pattern ? &pattern->lambdaEnclosingClassTypes : nullptr);
+    children(type.lambdaEnclosingFunctionTypes,
+             pattern ? &pattern->lambdaEnclosingFunctionTypes : nullptr);
   };
-  for (auto &type : result.classTypes) {
+  for (std::size_t index = 0; index < result.classTypes.size(); ++index) {
     result.classLifetimeParameters.emplace_back();
-    lift(lift, type, {}, result.classLifetimeParameters.back());
+    lift(lift, result.classTypes[index], {}, result.classLifetimeParameters.back(),
+         ownerPatterns.empty() ? nullptr : &ownerPatterns[index]);
   }
   for (auto &type : result.types) {
     result.functionLifetimeParameters.emplace_back();
-    lift(lift, type, {}, result.functionLifetimeParameters.back());
+    lift(lift, type, {}, result.functionLifetimeParameters.back(), nullptr);
   }
+  if (!patternValid)
+    return std::nullopt;
   if (!valid || ordinal != descriptors.size()) {
     report(site, "Too many distinct executable lifetime parameters in this compilation.",
            "GTI-S2126");

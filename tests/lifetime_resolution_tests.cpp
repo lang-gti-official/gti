@@ -12,6 +12,44 @@ namespace lang {
 // Exercise the real staging key and lookup without exposing cache internals as
 // a product API or relying on a timing-sensitive number of source evaluations.
 struct SemanticLifetimeTestAccess {
+  static bool mutableReferenceReborrowChecks() {
+    SemanticVisitor analyzer;
+    auto &impl = *analyzer.impl;
+    const auto outer = Lifetime::parameter(101);
+    const auto input = Lifetime::parameter(102);
+    const auto shorter = Lifetime::parameter(103);
+    const auto call = Lifetime::inference(104);
+    impl.loanFlow.lifetimeContract = {
+        .parameters = {outer, input, shorter},
+        .bounds = {{input, shorter}}, .complete = true};
+    SemanticVisitor::Impl::CallableCandidate candidate;
+    candidate.lifetimeApplication.complete = true;
+    candidate.lifetimeApplication.obligations = {{outer, call}};
+    const auto mutableReference = [](SemanticType type, Lifetime region) {
+      return SemanticType::referenceTo(std::move(type), AccessMode::Mutable, region);
+    };
+    const auto source = mutableReference(SemanticType::Int32, outer);
+    const auto target = mutableReference(SemanticType::Int32, call);
+    const auto adjusted = impl.callLifetimeArgumentType(candidate, source, target);
+    if (!adjusted || *adjusted != target ||
+        impl.callLifetimeArgumentType(candidate, source,
+            mutableReference(SemanticType::Int32, Lifetime::staticLifetime())))
+      return false;
+    const auto nestedSource = mutableReference(SemanticType::referenceTo(
+        SemanticType::Int32, AccessMode::ReadOnly, input), outer);
+    const auto nestedTarget = mutableReference(SemanticType::referenceTo(
+        SemanticType::Int32, AccessMode::ReadOnly, shorter), call);
+    if (impl.callLifetimeArgumentType(candidate, nestedSource, nestedTarget))
+      return false;
+    impl.loanFlow.lifetimeContract.bounds.push_back({shorter, input});
+    const auto equivalent =
+        impl.callLifetimeArgumentType(candidate, nestedSource, nestedTarget);
+    if (!equivalent || *equivalent != nestedTarget)
+      return false;
+    candidate.lifetimeApplication.complete = false;
+    return !impl.callLifetimeArgumentType(candidate, source, target);
+  }
+
   static bool packProjectionChecks() {
     SemanticVisitor analyzer;
     auto &impl = *analyzer.impl;
@@ -1771,14 +1809,40 @@ int main() { return 0; }
 )");
   expect(!wrongOwner.semanticValid,
          "equal-typed pack elements cannot substitute the wrong lifetime supplier");
-  const auto shellEscape = analyze(declarations + R"(
-int&<shell> invalid<lifetime a, lifetime b, lifetime shell>(int&<a> first, View<b>&<shell> second) {
+  // Forming View<b>&<shell> already proves b outlives shell. Shortening the
+  // external int borrow is valid; extending the physical View shell is not.
+  const auto shellShortening = analyze(declarations + R"(
+int&<shell> shorten<lifetime a, lifetime b, lifetime shell>(int&<a> first, View<b>&<shell> second) {
   return carrierRelay(first, second);
 }
 int main() { return 0; }
 )");
-  expect(!shellEscape.semanticValid,
+  expectValid(shellShortening,
+              "a carrier's external supplier may be shortened to its checked shell lifetime");
+  const std::string shellDeclarations = R"(
+struct View<lifetime b> { int&<b> value; View(int&<b> input) : value(input) {} };
+View<b>&<shell> shellIdentity<lifetime b, lifetime shell>(View<b>&<shell> value) { return value; }
+View<b>&<shell> through<lifetime b, lifetime shell, Args...>(Args&<shell>... values) {
+  return shellIdentity<b, shell>(values...);
+}
+)";
+  const auto shellEscape = analyze(shellDeclarations + R"(
+View<b>&<b> invalid<lifetime b, lifetime shell>(View<b>&<shell> value) {
+  return through<b, shell>(value);
+}
+int main() { return 0; }
+)");
+  expect(shellEscape.syntaxValid && !shellEscape.semanticValid &&
+             std::any_of(shellEscape.diagnostics.begin(), shellEscape.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
          "a reference-to-carrier pack element never replaces its external owner with the carrier shell");
+  const auto localShell = analyze(shellDeclarations + R"(
+int global = 7;
+View<static>&<static> invalid() { View<static> local{global}; return through<static>(local); }
+int main() { return 0; }
+)");
+  expect(localShell.syntaxValid && !localShell.semanticValid,
+         "a local carrier shell cannot escape with the static lifetime of its referent");
   const auto conditional = analyze(R"(
 enum Reading<lifetime owner> { present(int&<owner> value), missing(int code) };
 Reading<a> keep<lifetime a>(Reading<a> value) { return value; }
@@ -1847,6 +1911,61 @@ int main() { int value = 1; invalid(value); return 0; }
 )");
   expect(localEscape.syntaxValid && !localEscape.semanticValid,
          "concrete reference-pack return proof cannot publish a local owner as static");
+  for (const std::string &returned : {"1", "missing()"}) {
+    const auto sibling = analyze(
+        "void consume<Args...>(Args&... values) {}\n"
+        "int&<a> invalid<lifetime a, Args...>(Args&<a>... values) { "
+        "consume(values...); return " + returned +
+        "; } int main() { return 0; }");
+    expect(sibling.syntaxValid && !sibling.semanticValid,
+           "one deferred pack call cannot authorize a sibling temporary or unknown return");
+  }
+  const auto concreteTemporary = analyze(R"(
+int&<a> choose<lifetime a>(int&<a> value) { return value; }
+int choose(bool& value) { return 1; }
+int&<a> relay<lifetime a, Args...>(Args&<a>... values) { return (choose(values...)); }
+int main() { int first = 1; bool second = false; relay(first); relay(second); return 0; }
+)");
+  expect(concreteTemporary.syntaxValid && !concreteTemporary.semanticValid &&
+             std::any_of(concreteTemporary.diagnostics.begin(),
+                         concreteTemporary.diagnostics.end(), [](const auto &diagnostic) {
+                           return diagnostic.message.find("addressable value") != std::string::npos;
+                         }),
+         "a deferred call is rechecked as an actual temporary in each concrete pack instance");
+  const auto trailingOrigin = analyze(R"(
+int&<a> identity<lifetime a>(int&<a> value) { return value; }
+int&<a> trailing<lifetime a, lifetime b, Args...>(int&<a> first, Args&<b>... values) {
+  return identity(values...);
+}
+int&<a> invalid<lifetime a, lifetime b>(int&<a> first, int&<b> other) {
+  return trailing<a, b>(first, other);
+}
+int main() { return 0; }
+)");
+  expect(trailingOrigin.syntaxValid && !trailingOrigin.semanticValid &&
+             std::any_of(trailingOrigin.diagnostics.begin(), trailingOrigin.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
+         "known leading formals cannot authorize an independent trailing pack supplier");
+}
+
+void testReferencePackReborrows() {
+  expect(lang::SemanticLifetimeTestAccess::mutableReferenceReborrowChecks(),
+         "a checked mutable reborrow shortens only the outer region and retains invariant referent proof");
+  const auto valid = analyze(R"(
+void bump<T>(mut T& value) { value++; }
+void update<Args...>(mut Args&... values) { (bump(values), ...); }
+int main() { mut int left = 3; mut int right = 4; update(left, right); return left + right - 9; }
+)");
+  expectValid(valid, "mutable reference pack elements reborrow into each exact call region");
+  const auto invariant = analyze(R"(
+struct Cell<lifetime a> { int&<a> value; Cell(int&<a> input) : value(input) {} };
+void use<lifetime b>(mut Cell<b>& value) {}
+void relay<lifetime b, Args...>(mut Args&... values) { use<b>(values...); }
+void invalid<lifetime a, lifetime b>(mut Cell<a>& value) requires outlives<a, b> { relay<b>(value); }
+int main() { return 0; }
+)");
+  expect(invariant.syntaxValid && !invariant.semanticValid,
+         "a shorter call reborrow cannot change the lifetime stored through a mutable referent");
 }
 
 void testConsumingExternalResults() {
@@ -2262,6 +2381,7 @@ int main() { return 0; }
 int main() {
   testForwardedPackBorrowPaths();
   testReferencePackReturnContracts();
+  testReferencePackReborrows();
   testConsumingExternalResults();
   testFixedArityPackCallSelection();
   testSelectedBaseConstructorInputs();

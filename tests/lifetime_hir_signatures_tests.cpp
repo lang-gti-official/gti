@@ -89,15 +89,39 @@ int main() { Flag flag{1}; return choose(flag) - 1 + unary(); }
   }
   bool checked = false;
   bool temporaryOrigin = false;
+  bool checkedProducer = false;
+  std::size_t contextualCalls = 0;
   for (const auto &function : result.hir.functionInstances())
     for (const auto &value : function.body.values) {
-      if (value.kind != HirValueKind::Call || !value.source ||
-          !result.semantics.findContextualConversion(*value.source))
+      if (value.kind != HirValueKind::Call || !value.source)
+        continue;
+      const auto *conversion = result.semantics.findContextualConversion(*value.source);
+      if (!conversion)
         continue;
       const auto *target = value.functionTarget
           ? result.hir.findFunctionInstance(*value.functionTarget) : nullptr;
-      expect(target && target->source && target->source->operatorName() &&
-                 target->source->operatorName()->kind == OverloadedOperator::ContextualBool,
+      expect(target != nullptr, "contextual source calls retain exact HIR targets");
+      if (target->declaration != conversion->function) {
+        // The ordinary makeFlag call evaluates the same source expression
+        // before its contextual conversion. It must be that exact receiver,
+        // not another call selected solely by shared syntax or result type.
+        const bool isReceiver = std::any_of(function.body.values.begin(),
+            function.body.values.end(), [&](const auto &consumer) {
+              const auto *selected = consumer.functionTarget
+                  ? result.hir.findFunctionInstance(*consumer.functionTarget) : nullptr;
+              return consumer.kind == HirValueKind::Call &&
+                     consumer.source == value.source && consumer.receiver == value.id &&
+                     selected && selected->declaration == conversion->function;
+            });
+        expect(isReceiver, "an ordinary contextual-source producer is the exact conversion receiver");
+        checkedProducer = true;
+        continue;
+      }
+      ++contextualCalls;
+      expect(target->source == conversion->declaration && target->source &&
+                 target->source->operatorName() &&
+                 target->source->operatorName()->kind == OverloadedOperator::ContextualBool &&
+                 conversion->kind == OverloadedOperator::ContextualBool,
              "operator bool retains its distinct checked conversion identity");
       expect(value.lifetimeApplication.complete &&
                  !value.lifetimeApplication.bindings.empty(),
@@ -148,6 +172,8 @@ int main() { Flag flag{1}; return choose(flag) - 1 + unary(); }
         expect(!verifyMirProgram(forged).valid(),
                "a contextual call cannot lose its receiver contract application");
     }
+  expect(contextualCalls == 2 && checkedProducer,
+         "both contextual calls and their shared-syntax ordinary producer are checked");
   expect(checked, "the contextual operator fixture must exercise a concrete checked call");
   expect(temporaryOrigin, "unary contextual conversion must retain a temporary receiver origin");
 }

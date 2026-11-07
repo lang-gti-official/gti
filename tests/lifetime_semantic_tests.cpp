@@ -322,6 +322,52 @@ int read<lifetime a>(int&<a> input) {
 }
 int main() { int value = 7; return read(value) - 7; }
 )gti", true);
+  check("patterned-primary-fixed-region-repeated-in-signature", R"gti(
+struct Callback<R&<environment>(R&<environment>), lifetime environment> {
+  R&<environment> value;
+  Callback(R&<environment> input) : value(input) {}
+};
+int read<lifetime a>(int&<a> input) {
+  Callback<int&<a>(int&<a>), a> value{input};
+  return value.value;
+}
+int main() { int value = 7; return read(value) - 7; }
+)gti", true);
+  check("patterned-primary-fixed-region-rejects-unrelated-signature-input", R"gti(
+struct Callback<R&<environment>(R&<environment>), lifetime environment> {
+  R&<environment> value;
+  Callback(R&<environment> input) : value(input) {}
+};
+void invalid<lifetime a, lifetime b>(Callback<int&<a>(int&<b>), a> input) {}
+int main() { return 0; }
+)gti", false, "GTI-S2127");
+  check("patterned-primary-fixed-environment-keeps-invocation-binder", R"gti(
+struct Callback<R&<environment>(Args...), lifetime environment> {
+  R&<environment> value;
+  Callback(R&<environment> input) : value(input) {}
+};
+int read<lifetime a>(int&<a> input) {
+  Callback<int&<a>(int&), a> value{input};
+  return value.value;
+}
+int main() { int value = 7; return read(value) - 7; }
+)gti", true);
+  check("patterned-primary-invocation-binder-cannot-supply-environment", R"gti(
+struct Callback<R&<environment>(Args...), lifetime environment> {
+  R&<environment> value;
+  Callback(R&<environment> input) : value(input) {}
+};
+void invalid<lifetime a>(Callback<int&(int&), a> input) {}
+int main() { return 0; }
+)gti", false, "GTI-S2127");
+  check("patterned-primary-fixed-static-region-is-not-projected", R"gti(
+struct StaticView<R&<static>()> {
+  R&<static> value;
+  StaticView(R&<static> input) : value(input) {}
+};
+int stored = 7;
+int main() { StaticView<int&<static>()> value{stored}; return value.value - 7; }
+)gti", true);
   check("patterned-primary-nominal-environment-cannot-invent-static", R"gti(
 struct Callback<R(Args...), lifetime environment> {
   int&<environment> value;

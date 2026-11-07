@@ -14,6 +14,47 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "patterned_invocation_environment": """
+struct Environment<R&<environment>(Args...), lifetime environment> {
+  R&<environment> value;
+  Environment(R&<environment> input) : value(input) {}
+};
+int read<lifetime a>(int&<a> input) {
+  Environment<int&<a>(int&), a> value{input};
+  return value.value;
+}
+int main() { int value = 7; return read(value) - 7; }
+""",
+    "patterned_fixed_environment": """
+struct Callback<R&<environment>(R&<environment>), lifetime environment> {
+  R&<environment> value;
+  Callback(R&<environment> input) : value(input) {}
+};
+struct StaticView<R&<static>()> {
+  R&<static> value;
+  StaticView(R&<static> input) : value(input) {}
+};
+int stored = 11;
+int read<lifetime a>(int&<a> input) {
+  Callback<int&<a>(int&<a>), a> value{input};
+  return value.value;
+}
+int main() {
+  int value = 7;
+  if (read(value) != 7) { return 1; }
+  StaticView<int&<static>()> global{stored};
+  return global.value - 11;
+}
+""",
+    "reference_pack_reborrow": """
+void bump<T>(mut T& value) { value++; }
+void update<Args...>(mut Args&... values) { (bump(values), ...); }
+int main() {
+  mut int left = 3; mut int right = 4;
+  update(left, right);
+  return left + right - 9;
+}
+""",
     "consuming_static_mapper_results": """
 int stored = 41;
 mut int calls = 0;
@@ -187,12 +228,14 @@ int main() {
     "reference_pack_results": """
 int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
 int&<a> relay<lifetime a, Args...>(Args&<a>... values) { return second(values...); }
+int&<a> fixed<lifetime a, Args...>(int&<a> first, Args&... ignored) { return first; }
 void increment<T>(mut T& value) { value++; }
 void update<Args...>(mut Args&... values) { (increment(values), ...); }
 int main() {
   mut int first = 3; mut int selected = 8;
   update(first, selected);
-  return relay(first, selected) - 9;
+  bool ignored = false;
+  return relay(first, selected) + fixed(first) + fixed(first, ignored) - 17;
 }
 """,
     "fixed_pack_call_defaults": """

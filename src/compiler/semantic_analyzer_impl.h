@@ -1430,6 +1430,9 @@ private:
     // Name/type checking continues, but this body's flow is not a proof until
     // concrete instance analysis selects every branch and reruns the checks.
     bool deferredGenericFlow = false;
+    // Only these exact calls lack a result category because their written
+    // argument pack is unresolved. Concrete reanalysis starts with fresh flow.
+    std::unordered_set<const Call *> deferredPackCalls;
     // A synthetic early return needs its own complete result evidence;
     // explicit ReturnStmt facts alone cannot describe the callable's result.
     bool unknownImplicitResultReturn = false;
@@ -2527,6 +2530,9 @@ private:
   [[nodiscard]] std::optional<std::vector<FormalBorrowInput>>
   formalBorrowInputs(std::span<const Parameter> parameters,
                     std::span<const SemanticType> signature) const;
+  [[nodiscard]] bool validateKnownLeadingReturnBorrow(
+      const FunctionInfo &function,
+      const SemanticBorrowDependencySet &complete) const;
   [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
   normalizedCompleteReturnBorrow(const FunctionInfo &function,
                                  const SemanticBorrowDependencySet &complete,

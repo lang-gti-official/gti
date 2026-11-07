@@ -142,6 +142,11 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
   // The prefix sealed its catalog; the rest of the program registers into it.
   catalog.sealed = false;
   catalog.sealedShape.clear();
+  // The prefix's nominal contracts remain valid, but newly registered types
+  // have not reached the formation fixed point yet. Match cold registration:
+  // collect preliminary signatures, then infer and refresh the whole catalog
+  // before exposing complete contracts to bodies or concrete instances.
+  catalog.nominalLifetimeContractsReady = false;
   // HIR asks for a primary body it does not find analysed; a held-back body
   // is analysed again only in the sense that reaching it reports it.
   for (const FunctionDecl *declaration : requestSession.preambleBodyOrder)

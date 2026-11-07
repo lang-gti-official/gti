@@ -7969,6 +7969,7 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
 
 auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   PackBorrowInvocationScope packInvocation(*this);
+  loanFlow.deferredPackCalls.erase(&expr);
   if (expr.capturedArguments() && analyzeCapturedCall(expr))
     return;
   if (analyzeMacroCall(expr, macroStatementCall == &expr ? macroStatementContext
@@ -8724,6 +8725,15 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     // A symbolic pack has no executable arity. Concrete instance reanalysis
     // owns its fixed or variadic target; never publish a provisional call.
     semanticModel.suppressInheritedCall(expr);
+    const auto unresolvedPack = [](auto &&self, const SemanticType &type) -> bool {
+      return type.kind == SemanticType::TypePack &&
+             (!type.concretePack ||
+              std::any_of(type.arguments.begin(), type.arguments.end(),
+                          [&](const auto &element) { return self(self, element); }));
+    };
+    if (std::any_of(argumentTypes.begin(), argumentTypes.end(),
+                    [&](const auto &type) { return unresolvedPack(unresolvedPack, type); }))
+      loanFlow.deferredPackCalls.insert(&expr);
     loanFlow.deferredGenericFlow = true;
     requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
     currentType = SemanticType::Unknown;

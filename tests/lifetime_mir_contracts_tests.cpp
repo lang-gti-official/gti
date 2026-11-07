@@ -219,11 +219,29 @@ int main() {
       exclusive = true;
       expect(publication->access == AccessMode::Mutable,
              "exclusive constructor reference transfers its unique incoming capability");
-      auto forged = checked.mir;
-      auto *owner = const_cast<MirConstructorInstance *>(forged.findConstructorInstance(constructor.id));
-      const_cast<MirLoan *>(owner->body.findLoan(publication->id))->entry = false;
-      expect(!verifyMirProgram(forged).valid(),
-             "an entry reference transfer cannot become an unproduced escaping loan");
+      expect(constructor.initializers.front().completeBorrow &&
+                 constructor.initializers.front().completeBorrow->dependencies.size() == 1 &&
+                 constructor.initializers.front().completeBorrow->dependencies.front().parent == publication->id,
+             "the initializer snapshot preserves the exact incoming exclusive capability");
+      for (int mutation = 0; mutation != 8; ++mutation) {
+        auto forged = checked.mir;
+        auto *owner = const_cast<MirConstructorInstance *>(forged.findConstructorInstance(constructor.id));
+        auto *entry = const_cast<MirLoan *>(owner->body.findLoan(publication->id));
+        auto &initializer = owner->initializers.front();
+        auto &captured = initializer.completeBorrow->dependencies.front();
+        if (mutation == 0) entry->entry = false;
+        if (mutation == 1) captured.parent = 0;
+        if (mutation == 2) captured.parent = entry->id + 1;
+        if (mutation == 3) captured.source = 0;
+        if (mutation == 4) captured.access = AccessMode::ReadOnly;
+        if (mutation == 5) entry->parent = entry->id;
+        if (mutation == 6) initializer.arguments.front() = 0;
+        if (mutation == 7)
+          for (auto &place : owner->body.places)
+            if (place.sourceValue == initializer.arguments.front()) place.sourceValue = 0;
+        expect(!verifyMirProgram(forged).valid(),
+               "entry transfer requires its incoming parent, exact source/access, addressed initializer and parentless publication");
+      }
     }
   }
   expect(selected && exclusive, "constructor fixture exercises both selected suppliers and entry transfer");

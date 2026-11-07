@@ -5380,12 +5380,14 @@ auto SemanticVisitor::Impl::completeConstructorBorrow(
   key.types = canonical->types;
   const auto &bindings = construction.lifetimeApplication.bindings;
   const auto actualOwner = substituteTypeLifetimes(canonical->ownerType, bindings);
-  if (!actualOwner || *actualOwner != construction.constructedType ||
+  // Instance lifting alpha-renames invocation binders. Only those bound
+  // identities may differ here; free/nominal regions and representation stay exact.
+  if (!actualOwner || !equivalentLifetimeTypes(*actualOwner, construction.constructedType) ||
       canonical->parameterTypes.size() != construction.parameterTypes.size())
     return std::nullopt;
   for (std::size_t index = 0; index < canonical->parameterTypes.size(); ++index) {
     const auto actual = substituteTypeLifetimes(canonical->parameterTypes[index], bindings);
-    if (!actual || *actual != construction.parameterTypes[index])
+    if (!actual || !equivalentLifetimeTypes(*actual, construction.parameterTypes[index]))
       return std::nullopt;
   }
   const auto summary = completeBorrowQuery(
@@ -5545,6 +5547,62 @@ auto SemanticVisitor::Impl::formalBorrowInputs(
                       .bindingPrefix = std::move(input.bindingPrefix),
                       .type = std::move(input.type)});
   return result;
+}
+
+auto SemanticVisitor::Impl::validateKnownLeadingReturnBorrow(
+    const FunctionInfo &function,
+    const SemanticBorrowDependencySet &complete) const -> bool {
+  const auto *syntax = function.bodyDeclaration();
+  if (instanceAnalysisActive || !syntax || !syntax->body() ||
+      currentFunctionDeclaration != syntax ||
+      function.returnType.kind != SemanticType::Reference ||
+      !function.lifetimeContract.valid() || complete.dependencies.empty())
+    return false;
+  const auto unresolvedPack = [](auto &&self, const SemanticType &type) -> bool {
+    return type.kind == SemanticType::TypePack &&
+           (!type.concretePack ||
+            std::any_of(type.arguments.begin(), type.arguments.end(),
+                        [&](const auto &element) { return self(self, element); }));
+  };
+  std::vector<SymbolId> leadingBindings;
+  std::size_t parameterCount = 0;
+  bool unresolved = false;
+  for (const auto &parameter : syntax->parameters()) {
+    const auto *binding = semanticModel.findBinding(parameter);
+    if (!binding)
+      return false;
+    if (unresolvedPack(unresolvedPack, binding->type)) {
+      if (!parameter.pack)
+        return false;
+      unresolved = true;
+      break;
+    }
+    leadingBindings.push_back(binding->symbol);
+    ++parameterCount;
+  }
+  if (!unresolved || leadingBindings.empty() ||
+      std::any_of(complete.dependencies.begin(), complete.dependencies.end(),
+                  [&](const auto &dependency) {
+                    return dependency.place.receiver ||
+                           std::find(leadingBindings.begin(), leadingBindings.end(),
+                                     dependency.place.root) == leadingBindings.end();
+                  }))
+    return false;
+  const auto trailing = std::find_if(
+      function.parameterTypes.begin(), function.parameterTypes.end(),
+      [&](const auto &type) { return unresolvedPack(unresolvedPack, type); });
+  if (trailing == function.parameterTypes.end())
+    return false;
+  auto leading = function;
+  leading.parameterTypes.erase(
+      leading.parameterTypes.begin() + (trailing - function.parameterTypes.begin()),
+      leading.parameterTypes.end());
+  // Only the existing normalizer may validate the known roots, paths, access,
+  // parents and regions. Its result is deliberately not published: the unknown
+  // suffix has no complete inventory until concrete instance reanalysis.
+  return normalizedCompleteBorrow(
+      leading, std::span(syntax->parameters()).first(parameterCount),
+      syntax->receiverMutability(), complete).has_value();
 }
 
 auto SemanticVisitor::Impl::normalizedCompleteReturnBorrow(

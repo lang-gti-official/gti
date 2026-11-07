@@ -1510,6 +1510,15 @@ conflicts use ordinary call checking. Function results use the same normalized
 lifetime contract and complete supplier proof as fixed reference inputs. An
 unresolved top-level pack defers supplier ordinals without publishing a summary;
 concrete instance analysis expands the signature and proves all returned owners.
+Only an exact call whose argument flattening encountered an unresolved pack may
+defer an unknown reference-result category. The body-local marker is cleared on
+each visit, and does not authorize sibling returns or create a provisional place.
+A known leading reference may be checked before an unresolved trailing pack by
+running the ordinary formal-input derivation and return normalizer on that exact
+leading slice. This validates only those known origins; it publishes no complete
+summary and leaves the body pending concrete replay. Mutable element reborrows
+may shorten their outer region through a completed call application, while the
+referent's nested regions remain invariant.
 Constructor reference packs retain their non-borrowed-result boundary. Pack
 folds instantiate and commit an ordinary lifetime application for every exact
 element. Their named pack operand is a syntax carrier, while loan access is
@@ -2029,8 +2038,13 @@ Region-bearing generic type arguments pass through the provider's
 `canonicalizeExecutableInstance` query before executable discovery or body
 reanalysis. Each free region occurrence receives an instance-owned universal
 parameter; coincident caller regions do not make independent occurrences equal
-inside the body. Higher-ranked binders preserve their scope and repeated uses
-under alpha-renaming. The canonical type arguments, normalized signature,
+inside the body. A patterned nominal declaration may explicitly fix an
+occurrence to one of its lifetime parameters or to `static`; those occurrences
+retain the declared relationship during lifting. Repeated fixed occurrences
+must have consistent actual bindings and cannot capture an invocation-local
+binder. This rule follows the declaration pattern, never coincident regions
+inside a projected type argument. Higher-ranked binders preserve their scope and
+repeated uses under alpha-renaming. The canonical type arguments, normalized signature,
 formation requirements and lifetime contract identify the reusable instance.
 Actual caller choices remain in `SemanticLifetimeApplication` bindings.
 Explicit and default type arguments fix those choices; deduced arguments may
@@ -2181,7 +2195,11 @@ and an analysis with the raw-pointer audit enabled never uses it.
   the preamble's session state (the compiler-generated copy of
   `RequestSessionState`, with the catalog deep-copied and request-local
   budgets replaced), reopen the catalog, and run the registration passes over
-  the declarations after the prefix only: the whole-catalog passes start at
+  the declarations after the prefix only. Reopening clears nominal-contract
+  readiness while preserving the prefix's completed contracts: new nominal
+  types first register their signatures, then the ordinary formation fixed
+  point and signature refresh establish readiness before body analysis.
+  The whole-catalog passes start at
   the adopted class, enum, alias, concept and function floors, and native
   record and union shape states persist in the session so later records can
   refer to earlier ones. The body phase then analyses only the remaining

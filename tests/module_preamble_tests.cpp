@@ -153,6 +153,101 @@ void testPreambleGlobalOwnerParity() {
   }
 }
 
+void testPreambleLifetimeConformanceParity() {
+  using namespace lang;
+  const auto root = std::filesystem::current_path() / "lifetime-preamble-fixture";
+  const auto prefix = root / "prefix.gti", api = root / "measure.gti";
+  const auto entry = root / "main.gti";
+  const std::unordered_map<std::string, std::string> sources{
+      {prefix.string(), "export module prefix; export struct Seed {};"},
+      {api.string(), R"GTI(export module measure;
+export concept measurable<T> {
+  int measure(T& item);
+  bool is_empty(T& item);
+};
+export concept selecting<T> {
+  T&<a> select<lifetime a, lifetime b>(T&<a> left, T&<b> right);
+};
+export concept inspecting<T> {
+  int inspect<lifetime a, lifetime b>(T&<a> left, T&<b> right);
+};
+)GTI"}};
+  const Probe probes[]{
+      {"elided-reference-operations", "", R"GTI(
+for concept measurable<Rope> {
+  int measure(Rope& item) { return 1; }
+  bool is_empty(Rope& item) { return false; }
+};
+)GTI", true},
+      {"alpha-renamed-operation", "", R"GTI(
+for concept selecting<Rope> {
+  Rope&<chosen> select<lifetime chosen, lifetime other>(
+      Rope&<chosen> left, Rope&<other> right) { return left; }
+};
+)GTI", true},
+      {"wrong-result-relationship", "", R"GTI(
+for concept selecting<Rope> {
+  Rope&<other> select<lifetime chosen, lifetime other>(
+      Rope&<chosen> left, Rope&<other> right) { return right; }
+};
+)GTI", false},
+      {"stronger-operation-requirement", "", R"GTI(
+for concept inspecting<Rope> {
+  int inspect<lifetime a, lifetime b>(Rope&<a> left, Rope&<b> right)
+      requires outlives<a, b> { return 0; }
+};
+)GTI", false},
+      {"static-input-strengthening", "", R"GTI(
+for concept measurable<Rope> {
+  int measure(Rope&<static> item) { return 1; }
+  bool is_empty(Rope& item) { return false; }
+};
+)GTI", false},
+  };
+  FrontendOptions cached;
+  cached.stopAfter = FrontendPhase::Semantics;
+  cached.suggestIncludes = false;
+  cached.cache = std::make_shared<FrontendCache>();
+  cached.preambleCache = std::make_shared<SemanticPreambleCache>();
+  bool builtPrefix = false;
+  for (const auto &probe : probes) {
+    const std::string source = "import \"measure.gti\"; struct Rope {}; " +
+                               std::string(probe.body);
+    std::vector<std::string> baseline;
+    for (int mode = 0; mode != 3; ++mode) {
+      FrontendOptions options = cached;
+      FrontendWorkMetrics work;
+      options.workMetrics = &work;
+      if (mode == 0)
+        options.preambleCache.reset();
+      const auto result = Frontend(options).analyze(entry, source, {prefix}, sources);
+      std::vector<std::string> diagnostics;
+      for (const auto &diagnostic : result.diagnostics)
+        diagnostics.push_back(diagnostic.code + ":" + diagnostic.message);
+      std::sort(diagnostics.begin(), diagnostics.end());
+      if (mode == 0)
+        baseline = diagnostics;
+      if (result.semanticValid != probe.valid || diagnostics != baseline)
+        std::cerr << "lifetime conformance parity: " << probe.name
+                  << " mode=" << mode << '\n';
+      expect(result.semanticValid == probe.valid && diagnostics == baseline,
+             "new nominal operation contracts agree under cold and resumed registration");
+      if (!probe.valid)
+        expect(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                           [](const auto &diagnostic) {
+                 return diagnostic.code == "GTI-S2123";
+               }),
+               "preamble reuse preserves incompatible lifetime operation rejection");
+      if (mode != 0) {
+        expect(work.semanticPreambleAdoptions == 1 &&
+                   work.semanticPreambleBuilds == (builtPrefix ? 0U : 1U),
+               "lifetime conformance checks exercise real immutable prefix reuse");
+        builtPrefix = true;
+      }
+    }
+  }
+}
+
 void testCancelledPreambleDoesNotPublish() {
   using namespace lang;
   const auto root =
@@ -224,6 +319,7 @@ int main() {
   testCancelledPreambleDoesNotPublish();
   testPreambleGlobalDeclarationParity();
   testPreambleGlobalOwnerParity();
+  testPreambleLifetimeConformanceParity();
   const auto stdlib =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto root = std::filesystem::current_path() / "module-preamble-fixture";

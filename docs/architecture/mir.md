@@ -818,7 +818,12 @@ Independent sibling enum domains remain present, including an empty alternative
 beside a nonempty field. Every normal exit must match the complete initialized
 publication; an omitted field or an unrelated later assignment cannot stand in
 for that proof. Direct reference fields retain their separate reference-binding
-authority rather than being treated as copied carrier values.
+authority rather than being treated as copied carrier values. A mutable
+reference initializer snapshots the exact incoming capability before that
+entry loan transfers into the field. Independent replay validates the formal,
+addressed expression and unique destination, then compares a transient
+parentless publication view. It does not mutate the snapshot or accept an
+unrelated parent with a matching source.
 
 A consuming receiver transfers its complete stored group through the ordinary
 ordered call-input stages. Reference and borrowed class/enum results may
