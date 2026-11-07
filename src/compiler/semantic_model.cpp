@@ -3076,7 +3076,9 @@ void SemanticModel::recordReferenceContentsLoan(const Expr &expression,
 }
 
 void SemanticModel::clearReferenceContentsLoan(const Expr &expression) {
-  referenceContentsLoans.insert_or_assign(&expression, std::nullopt);
+  // This index has no base fallback. Erasing also shadows a copied
+  // speculative entry without allocating tombstones for ordinary expressions.
+  referenceContentsLoans.erase(&expression);
 }
 
 void SemanticModel::recordLoan(SemanticLoanInfo info) {

@@ -1482,8 +1482,22 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
     -> void {
   // An expression alias denotes the operation already checked for its target.
   // Its source spelling must not publish a second invocation or unknown edge.
-  if (!currentProgramEffectOwner.valid() ||
+  if ((!currentProgramEffectOwner.valid() && loanFlow.referenceContentsOpenings.empty()) ||
       semanticModel.findExpressionAlias(expression) != nullptr)
+    return;
+  const bool invocation = exprAs<Call>(&expression) != nullptr ||
+      exprAs<PackFold>(&expression) != nullptr ||
+      exprAs<ArrayInitializer>(&expression) != nullptr ||
+      semanticModel.findConstruction(expression) != nullptr ||
+      semanticModel.findOperator(expression) != nullptr;
+  // Selected inputs and result suppliers already captured their snapshots.
+  // Until a complete no-write effect proof is available here, even a readonly
+  // receiver may call code that changes another aliased reference slot. End
+  // current-contents reuse without retiring any captured shared reference.
+  // This body-local barrier also applies to queries without a program owner.
+  if (invocation)
+    invalidateReferenceContents();
+  if (!currentProgramEffectOwner.valid())
     return;
   SymbolId threadStorage = semanticModel.findResolvedSymbol(expression);
   if (!isThreadLocalStorage(threadStorage)) {
@@ -1505,11 +1519,7 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
     publishProgramStorageBorrowCheck(std::move(initialization), owner, edges,
                                      unknown);
   }
-  if (exprAs<Call>(&expression) == nullptr &&
-      exprAs<PackFold>(&expression) == nullptr &&
-      exprAs<ArrayInitializer>(&expression) == nullptr &&
-      semanticModel.findConstruction(expression) == nullptr &&
-      semanticModel.findOperator(expression) == nullptr)
+  if (!invocation)
     return;
   auto check =
       captureProgramStorageBorrows(tokenSpan(expressionToken(expression)));
@@ -4569,6 +4579,9 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   // re-evaluated expression must publish this evaluation's owners or an
   // explicit absence, never retain the primary body's old parameter roots.
   semanticModel.clearBorrowDependencySet(expr);
+  // An opening belongs to one checked evaluation. Reanalysis may retain its
+  // copied shared snapshots, but cannot reuse its old current-contents index.
+  semanticModel.clearReferenceContentsLoan(expr);
   valueFlow.rawOperatorResults.erase(&expr);
   const std::size_t diagnosticsBefore = diagnostics.size();
   recordSourceDebugExpression(expr);

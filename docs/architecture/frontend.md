@@ -502,7 +502,13 @@ create authority. New openings currently require a complete unconditional
 shared inventory, retain tagged sources instead of lifetime-owner places, and
 keep formation reads separate from lasting external parents. Writes, joins and
 loops invalidate reuse of the current contents without revoking copied shared
-snapshots. Opening indices belong to the body's loan table: concrete instances
+snapshots. The common call-effect boundary also invalidates current contents
+after selected input and result facts have been captured, including mutable
+receivers and unknown, global or raw writes. This conservatively includes
+readonly calls until a complete no-write effect proof can preserve their
+snapshots. Expression reanalysis clears only the old opening index; already
+captured shared facts remain immutable, and expressions without openings add no
+index entries. Opening indices belong to the body's loan table: concrete instances
 start fresh, while speculative analyses copy both together. Production
 formation hooks remain disconnected and HIR/MIR reject
 opening records until independent instruction-level replay is implemented.

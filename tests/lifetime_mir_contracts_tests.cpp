@@ -48,7 +48,7 @@ View<a,b>&<shell> identity<lifetime a, lifetime b, lifetime shell>(
     View<a,b>&<shell> input) { return input; }
 int main() {
   int x = 2; int y = 5; View view{x,y};
-  auto& same = identity(view);
+  [[discard]] identity(view);
   return read(view) - 7;
 }
 )gti");
@@ -112,9 +112,9 @@ int main() {
       BorrowPath path;
       if (field) {
         const auto outer = mirClassLifetimeView(result.program, root->type.arguments.front());
-        expect(outer && outer->instance->fields.size() == 1,
+        expect(outer && outer->instance->declaredFields.size() == 1,
                "field opening has one independently instantiated reference field");
-        path.push_back(fieldProjection(outer->instance->fields.front().symbol));
+        path.push_back(fieldProjection(outer->instance->declaredFields.front().symbol));
       }
       const auto view = mir_detail::walkBorrowPath(result.program, root->type, root->access,
           path, {}, mir_detail::MirBorrowPathRoot::PhysicalReference);
@@ -237,6 +237,114 @@ int main() {
     if (mutation == 5) producer->hirValue = 0;
     expect(!shape(forged), "returned opening cannot fabricate its exact applied call/result identity");
   }
+}
+
+void checkReferenceReceiverProducer() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "reference-receiver-producer.gti", R"gti(
+struct View<lifetime storage> {
+  int&<storage> value;
+  View(int&<storage> input) : value(input) {}
+  int read() { return this.value; }
+};
+T&<a> forward_reference<T, lifetime a>(T&<a> input) requires outlives<T,a> { return input; }
+int relay<lifetime storage, lifetime shell>(View<storage>&<shell> left,
+                                           View<storage>&<shell> right) {
+  return forward_reference(left).read() + right.read();
+}
+int main() { int x=5; int y=6; View left{x}; View right{y}; return relay(left,right)-11; }
+)gti");
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(), "ordinary reference-result receivers retain their exact Call producer");
+  bool examined = false;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &call : block.instructions) {
+        if (call.kind != MirInstructionKind::Call || !call.loan || !call.result ||
+            call.info.category != ValueCategory::Place || call.parameterTypes.size() != 1 ||
+            call.parameterTypes.front().kind != SemanticType::Reference ||
+            call.info.type.kind != SemanticType::Class) continue;
+        const auto *published = function.body.findLoan(*call.loan);
+        const auto *parent = published ? function.body.findLoan(published->parent) : nullptr;
+        const auto *root = parent ? function.body.findPlace(parent->source) : nullptr;
+        if (!parent || !parent->entry || parent->kind != MirLoanKind::Parameter || !root) continue;
+        const MirLoan *other = nullptr;
+        const MirPlace *otherAddress = nullptr;
+        for (const auto &loan : function.body.loans) {
+          const auto *source = function.body.findPlace(loan.source);
+          if (!loan.entry || loan.kind != MirLoanKind::Parameter || loan.id == parent->id ||
+              !source || source->type != root->type || source->binding == root->binding) continue;
+          for (const auto &place : function.body.places)
+            if (place.id != source->id &&
+                mir_detail::wholeEntryPlaceMatches(function.body, *source, place)) {
+              other = &loan;
+              otherAddress = &place;
+            }
+        }
+        if (!other || !otherAddress) continue;
+        const auto *stage = call.operands.size() == 1 && call.operands.front().kind == MirOperandKind::Value
+            ? mir_detail::definitionFor(function.body, call.operands.front().value) : nullptr;
+        const auto *value = function.body.findValue(*call.result);
+        expect(stage && stage->kind == MirInstructionKind::CallInput && stage->operands.size() == 1 &&
+                   stage->operands.front().kind == MirOperandKind::Loan &&
+                   stage->operands.front().loan == parent->id &&
+                   stage->operands.front().place != root->id && published->source == root->id &&
+                   published->storedDependency == parent->storedDependency &&
+                   published->storedDependency && published->additionalDependencies.size() == 1 &&
+                   published->additionalDependencies.front().parent == published->storedDependency &&
+                   value && value->definitionBlock == block.id && value->definition == call.id,
+               "entry root and evaluated whole referent retain one call and both independent suppliers");
+        examined = true;
+        for (int mutation = 0; mutation != 7; ++mutation) {
+          auto forged = checked.mir;
+          auto &body = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id))->body;
+          auto &changed = *const_cast<MirLoan *>(body.findLoan(published->id));
+          auto &input = const_cast<MirInstruction *>(mir_detail::definitionFor(body, call.operands.front().value))->operands.front();
+          auto &facts = *const_cast<MirValue *>(body.findValue(*call.result))->borrowDependencies;
+          const auto replacePrimary = [&](MirPlaceId source, MirLoanId nextParent) {
+            for (auto &fact : facts.dependencies)
+              if (fact.source == published->source && fact.parent == published->parent) {
+                fact.source = source;
+                fact.parent = nextParent;
+              }
+            changed.source = source;
+            changed.parent = nextParent;
+          };
+          if (mutation == 0) input.loan = other->id;
+          if (mutation == 1) input.place = otherAddress->id;
+          if (mutation == 2) replacePrimary(published->source, other->id);
+          if (mutation == 3) replacePrimary(other->source, published->parent);
+          if (mutation == 4)
+            const_cast<MirPlace *>(body.findPlace(input.place))->projections.push_back(
+                {.kind = MirProjectionKind::Field, .field = UINT64_MAX});
+          if (mutation == 5) const_cast<MirLoan *>(body.findLoan(parent->id))->access = AccessMode::Mutable;
+          if (mutation == 6) {
+            auto &instructions = const_cast<MirBlock *>(body.findBlock(block.id))->instructions;
+            instructions.erase(std::find_if(instructions.begin(), instructions.end(),
+                [&](const auto &instruction) { return instruction.id == call.id; }));
+          }
+          expect(!verifyMirProgram(forged).valid(),
+                 "reference receiver cannot substitute another formal, ancestry, projection or producer");
+        }
+      }
+  expect(examined, "receiver producer control compares two independent, exactly same-typed formals");
+  const auto getter = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "reference-receiver-contents-staged.gti", R"gti(
+struct View<lifetime storage> {
+  int&<storage> value;
+  View(int&<storage> input) : value(input) {}
+  int&<storage> get() { return this.value; }
+};
+T&<a> forward_reference<T, lifetime a>(T&<a> input) requires outlives<T,a> { return input; }
+int main() { int x=7; View view{x}; return forward_reference(view).get()-7; }
+)gti");
+  expect(getter.semanticValid && getter.hirValid && !getter.canGenerateCode() &&
+             std::any_of(getter.diagnostics.begin(), getter.diagnostics.end(), [](const auto &diagnostic) {
+               return diagnostic.code == "GTI-B0001" &&
+                   diagnostic.message.find("complete") != std::string::npos;
+             }), "a scalar receiver read does not invent missing borrowed-result contents authority");
 }
 
 void checkScopedReceiverOwner() {
@@ -3617,6 +3725,7 @@ int main() {
              failure->fixes.empty(),
          "an invocation pointer cannot discard a target outlives requirement or invent a repair");
   checkReferenceContentsOpeningShape();
+  checkReferenceReceiverProducer();
   checkReferenceErasureLifetimeAuthority();
   checkReferenceErasureAddressIdentity();
   checkCarrierReferenceShellInputs();

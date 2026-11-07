@@ -2298,14 +2298,41 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
             !application.origins.empty();
         if (!requiresRegions)
           continue;
+        // In-place construction carries its destination before the selected
+        // constructor's arguments. It returns void; allocation returns an
+        // owner. Both still instantiate the same constructor object contract.
+        std::size_t argumentOffset = 0;
+        const SemanticType *constructedType = nullptr;
+        if (instruction.kind == MirInstructionKind::Call &&
+            instruction.constructorTarget) {
+          if (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+              instruction.intrinsic == IntrinsicKind::OptionalStorageConstruct) {
+            const auto storageKind = instruction.intrinsic == IntrinsicKind::ObjectConstruct
+                ? SemanticType::RawPointer : SemanticType::Class;
+            if (instruction.parameterTypes.empty() ||
+                instruction.parameterTypes.front().kind != storageKind ||
+                instruction.parameterTypes.front().arguments.size() != 1) {
+              reject("MIR in-place lifetime application lacks its exact destination type",
+                     block.id, instruction.id);
+              continue;
+            }
+            argumentOffset = 1;
+            constructedType = &instruction.parameterTypes.front().arguments.front();
+          } else if (instruction.objectAllocation != 0 &&
+                     instruction.intrinsic == IntrinsicKind::AllocateUniqueOwner &&
+                     instruction.info.type.kind == SemanticType::UniqueOwner &&
+                     instruction.info.type.arguments.size() == 1) {
+            constructedType = &instruction.info.type.arguments.front();
+          }
+        }
         std::vector<SemanticType> parameters;
         for (const auto &parameter : signature->parameterTypes)
           SemanticType::appendExpandedArgument(parameters, parameter);
         std::vector<SemanticType> selected;
-        for (const auto &parameter : instruction.parameterTypes)
+        for (const auto &parameter : std::span(instruction.parameterTypes).subspan(argumentOffset))
           SemanticType::appendExpandedArgument(selected, parameter);
         if (parameters != selected ||
-            selected.size() != instruction.operands.size()) {
+            selected.size() + argumentOffset != instruction.operands.size()) {
           reject("MIR lifetime-instantiated parameter types differ from the "
                  "exact call inputs",
                  block.id, instruction.id);
@@ -2318,7 +2345,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
           if (index == 0 && instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke)
             continue;
           const auto &expected = selected[index];
-          const auto actual = relations.actualType(instruction.operands[index]);
+          const auto actual = relations.actualType(instruction.operands[index + argumentOffset]);
           if (!actual) {
             reject("MIR call lifetime argument has no exact source type",
                    block.id, instruction.id);
@@ -2331,7 +2358,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
                                        ? actual->arguments.front()
                                        : *actual;
             if (expected.arguments.size() != 1 ||
-                !relations.borrowedOperand(instruction.operands[index],
+                !relations.borrowedOperand(instruction.operands[index + argumentOffset],
                                            expected.referenceLifetime) ||
                 !relations.types(
                     referent, expected.arguments.front(),
@@ -2379,7 +2406,11 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
           }
         }
         const auto &returned = signature->returnType;
-        if (instruction.kind != MirInstructionKind::InitializeBase &&
+        if (constructedType) {
+          if (!equivalentLifetimeTypes(*constructedType, returned))
+            reject("MIR construction destination differs from its lifetime-instantiated owner",
+                   block.id, instruction.id);
+        } else if (instruction.kind != MirInstructionKind::InitializeBase &&
             (returned.kind == SemanticType::Reference
                  ? returned.arguments.size() != 1 ||
                        !equivalentLifetimeTypes(instruction.info.type, returned.arguments.front()) ||

@@ -498,6 +498,98 @@ int main() {
   }
 }
 
+void inPlaceConstructorLifetimeApplication() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto entry = root.parent_path() / "tests/fixtures/llvm_memory_lifetimes.gti";
+  for (const bool borrowed : {false, true}) {
+    const std::string source = std::string(R"gti(import std.memory;
+class Ticket {
+public:
+  int value;
+  Ticket()gti") + (borrowed ? "int& value" : "int value") + R"gti() : value(value) {}
+};
+int main() {
+  int number = 7;
+  mut std::uninitialized<Ticket> storage{};
+  unsafe {
+    std::construct_at(storage.data(), number);
+    if ((*storage.data()).value != 7) { return 1; }
+    std::destroy_at(storage.data());
+  }
+  return 0;
+}
+)gti";
+    const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+        entry, source, {root / "prelude.gti"}, {}, {root});
+    if (!checked.canGenerateCode())
+      for (const auto &diagnostic : checked.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(checked.canGenerateCode(),
+           "in-place construction checks the selected value/reference constructor application");
+    const MirInstruction *construction = nullptr;
+    HirFunctionInstanceId bodyOwner = 0;
+    for (const auto &function : checked.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.intrinsic == IntrinsicKind::ObjectConstruct &&
+              instruction.constructorTarget) {
+            expect(!construction, "fixture has one selected in-place constructor");
+            construction = &instruction;
+            bodyOwner = function.id;
+          }
+    expect(construction && construction->lifetimeApplication.complete &&
+               mir_detail::objectConstruct(checked.mir, *construction),
+           "object construction preserves a checked selected-constructor application");
+    const auto signature = instantiateMirLifetimeTarget(checked.mir, *construction);
+    expect(signature && signature->parameterTypes.size() == 1 &&
+               (signature->parameterTypes.front().kind == SemanticType::Reference) == borrowed,
+           "reference-taking constructor has its own instantiated reference parameter");
+    for (unsigned mutation = 0; mutation != 7; ++mutation) {
+      auto changed = *construction;
+      if (mutation == 0)
+        changed.lifetimeApplication.bindings.push_back(
+            {Lifetime::parameter(999999), Lifetime::staticLifetime()});
+      if (mutation == 1)
+        changed.lifetimeApplication.callableSignature = CallableLifetimeSignature{};
+      if (mutation == 2) changed.constructorTarget = 999999;
+      if (mutation == 3) changed.constructorTarget.reset();
+      if (mutation == 4) {
+        changed.parameterTypes.front().arguments.front() = SemanticType::Int32;
+        changed.operands.front().type = changed.parameterTypes.front();
+      }
+      if (mutation == 5) {
+        changed.parameterTypes.back() = SemanticType::Bool;
+        changed.operands.back().type = changed.parameterTypes.back();
+      }
+      if (mutation == 6) {
+        changed.parameterTypes.front().pointerAccess = AccessMode::ReadOnly;
+        changed.operands.front().type = changed.parameterTypes.front();
+      }
+      expect(!mir_detail::objectConstruct(checked.mir, changed),
+             "in-place construction rejects foreign applications, targets, and parameter roles");
+      auto forged = checked.mir;
+      auto &body = MirProgramTestAccess::functions(forged)[bodyOwner - 1].body;
+      bool replaced = false;
+      for (auto &block : body.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.id == construction->id) {
+            instruction = changed;
+            replaced = true;
+          }
+      expect(replaced && !verifyMirProgram(forged).valid(),
+             "mandatory program verification rejects malformed in-place constructor applications");
+    }
+    if (borrowed) {
+      expect(!construction->lifetimeApplication.bindings.empty(),
+             "reference parameter requires a nontrivial lifetime application");
+      auto changed = *construction;
+      changed.lifetimeApplication = {};
+      expect(!mir_detail::objectConstruct(checked.mir, changed),
+             "in-place construction cannot drop a required reference application");
+    }
+  }
+}
+
 void closureEnvironmentReplay() {
   const auto first = Lifetime::parameter(841), second = Lifetime::parameter(842);
   const auto actualFirst = Lifetime::parameter(843), actualSecond = Lifetime::parameter(844);
@@ -1321,6 +1413,7 @@ int main() {
   stagedReferenceContentsTransport();
   nestedCarrierPublication();
   erasedCarrierReturnPublication();
+  inPlaceConstructorLifetimeApplication();
   closureEnvironmentReplay();
   rawPointerStorageOutlives();
   packEntrySourceIdentity();

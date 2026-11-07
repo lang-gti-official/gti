@@ -8,6 +8,14 @@ public:
   ~Ticket() { trace = trace * 10 + this.id; }
 };
 
+// A borrowed constructor input is used only during construction; the object
+// stores an owned scalar and remains usable after the input scope ends.
+class ReadTicket {
+public:
+  int id;
+  ReadTicket(int& source) : id(source) {}
+};
+
 int main() {
   mut std::uninitialized<Ticket> source{};
   mut std::uninitialized<Ticket> destination{};
@@ -21,5 +29,15 @@ int main() {
     std::construct_at(source.data(), 4);
     std::destroy_at(source.data());
   }
-  return trace == 3344 ? 0 : 4;
+  if (trace != 3344) { return 4; }
+  mut std::uninitialized<ReadTicket> borrowed_input{};
+  unsafe {
+    {
+      int number = 7;
+      std::construct_at(borrowed_input.data(), number);
+    }
+    if ((*borrowed_input.data()).id != 7) { return 5; }
+    std::destroy_at(borrowed_input.data());
+  }
+  return 0;
 }

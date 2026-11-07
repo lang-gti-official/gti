@@ -472,6 +472,13 @@ regions, binder counts and relationships remain exact; runtime representation
 erasure is not a type proof. Targetless generated defaults likewise select one
 exact nominal lifetime view and retain the generated/no-schedule policy check;
 that structural view does not authorize an unattached lifetime application.
+In-place construction retains the selected constructor's checked lifetime
+application. Its destination address or storage handle is not a constructor
+parameter: verification checks the instantiated parameter suffix and the exact
+constructed element type separately. Owned allocation checks that same object
+type inside its owner result. Reference arguments still require the ordinary
+body-wide origin and outlives proof; a matching signature alone is insufficient.
+Targetless generated operations cannot acquire an unattached application.
 Call supplier paths preserve the same target contract: typed enum guards are
 substituted through its independently checked invocation application before
 comparison. A sole global supplier retains its exact compact root and path,
@@ -839,6 +846,14 @@ storage; unique call production, staged inputs, access/liveness and independent
 complete-result replay still prove the exact set. A mapped primary source is
 selected from the complete contract using its exact staged input, typed path,
 access and parent permission; other suppliers retain their own proofs.
+A reference formal's entry root and evaluated whole referent can select the
+same physical supplier only through the exact staged Parameter capability and
+validated pack prefix plus physical dereference. The original supplier and
+parent remain unchanged. A nominal receiver stage does not relabel that
+reference call's complete address set as stored contents: the set remains
+checked on its exact call result and loan, and missing contents remain unknown.
+This distinction does not enable a borrowed-result getter through an unopened
+reference.
 The raw-reference primitives replay their explicit checked owner operand only
 after verifying the address type, unsafe operation, access and produced loan.
 Their scalar-reference result domain is distinct from the owner's stored-field

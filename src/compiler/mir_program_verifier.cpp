@@ -4474,6 +4474,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
               body, owner, "construction has a forged unsafe contract",
               block.id, instruction.id);
         }
+        const auto constructedSignature =
+            instantiateMirLifetimeTarget(program, instruction);
         if (inPlaceArgumentOffset) {
           const MirClassInstance *constructorOwner =
               program.findClassInstance(constructorTarget->owner);
@@ -4490,10 +4492,12 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                 instruction.parameterTypes.end());
           }
           if (!exactStorageSurface || constructorOwner == nullptr ||
-              constructorOwner->type !=
-                  instruction.parameterTypes.front().arguments.front() ||
+              !constructedSignature ||
+              !equivalentLifetimeTypes(
+                  constructedSignature->returnType,
+                  instruction.parameterTypes.front().arguments.front()) ||
               !exactInPlaceConstructionRoles(
-                  constructorArguments, constructorTarget->parameterTypes)) {
+                  constructorArguments, constructedSignature->parameterTypes)) {
             return verificationFailure(
                 body, owner,
                 "in-place storage construction does not match its "
@@ -4505,8 +4509,6 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             program.findClassInstance(constructorTarget->owner);
         const auto constructedOwner =
             mirClassLifetimeView(program, instruction.info.type);
-        const auto constructedSignature =
-            instantiateMirLifetimeTarget(program, instruction);
         if (instruction.kind == MirInstructionKind::Construct &&
             (constructorOwner == nullptr || !constructedOwner ||
              constructedOwner->instance != constructorOwner ||
@@ -4573,10 +4575,11 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             (instruction.operands.size() != instruction.parameterTypes.size() ||
              constructorTarget->parameterTypes.size() + storageArgumentCount !=
                  instruction.parameterTypes.size() ||
-             !std::equal(constructorTarget->parameterTypes.begin(),
-                         constructorTarget->parameterTypes.end(),
-                         instruction.parameterTypes.begin() +
-                             storageArgumentCount) ||
+             !mirLifetimeParameterTypesMatch(
+                 std::span(instruction.parameterTypes).subspan(storageArgumentCount),
+                 constructorTarget->parameterTypes,
+                 constructorTarget->lifetimeContract,
+                 instruction.lifetimeApplication) ||
              instruction.definedFailure.propagation != expectedPropagation)) {
           return verificationFailure(
               body, owner,

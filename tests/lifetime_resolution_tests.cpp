@@ -7,9 +7,16 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace lang {
 struct SemanticModelTestAccess {
+  static void aliasCheckedExpression(SemanticModel &model, const Expr &expression,
+                                     const Expr &target) {
+    model.recordExpressionAlias(expression,
+        std::shared_ptr<const Expr>(&target, [](const Expr *) {}));
+  }
+
   static bool contentsDeltaIsolation(const SemanticModel &base, const Expr &expression,
                                     SemanticLoanId opening) {
     if (!opening || base.findReferenceContentsLoan(expression) != opening || !base.findLoan(opening))
@@ -19,14 +26,19 @@ struct SemanticModelTestAccess {
     instance.recordLoan({.id = opening, .kind = SemanticLoanKind::Reference});
     if (!instance.findLoan(opening) || instance.findReferenceContentsLoan(expression))
       return false;
+    instance.clearReferenceContentsLoan(expression);
+    if (!instance.referenceContentsLoans.empty())
+      return false;
     SemanticModel speculative;
     speculative.beginSpeculativeDelta(base);
     if (speculative.findReferenceContentsLoan(expression) != opening ||
         !speculative.findLoan(opening) ||
         speculative.findLoan(opening)->contentsOpening != base.findLoan(opening)->contentsOpening)
       return false;
+    const auto count = speculative.referenceContentsLoans.size();
     speculative.clearReferenceContentsLoan(expression);
-    return !speculative.findReferenceContentsLoan(expression) &&
+    return count != 0 && speculative.referenceContentsLoans.size() + 1 == count &&
+           !speculative.findReferenceContentsLoan(expression) &&
            base.findReferenceContentsLoan(expression) == opening;
   }
 };
@@ -48,6 +60,10 @@ struct SemanticLifetimeTestAccess {
     std::size_t staleCallRejected = 0;
     std::size_t unsupportedRejected = 0;
     std::size_t deltaIsolated = 0;
+    std::size_t callInvalidated = 0;
+    std::size_t noncallPreserved = 0;
+    std::size_t aliasPreserved = 0;
+    std::size_t reevaluationReset = 0;
     bool entryReused = false;
   };
 
@@ -60,6 +76,28 @@ struct SemanticLifetimeTestAccess {
     auto &impl = *analyzer.impl;
     using Impl = SemanticVisitor::Impl;
     impl.nextSemanticLoanId = analyzer.model().loans().size() + 1;
+    std::vector<const Expr *> effects;
+    const Expr *aliasEffect = nullptr;
+    const auto resultExpression = [&](const auto &self, const Stmt *statement) -> const Expr * {
+      if (const auto *returned = stmtAs<ReturnStmt>(statement))
+        return returned->value().get();
+      if (const auto *block = stmtAs<BlockStmt>(statement))
+        for (const auto &child : block->statements())
+          if (const auto *result = self(self, child.get()))
+            return result;
+      return nullptr;
+    };
+    for (const auto &declaration : source.program.declarations())
+      if (const auto *function = stmtAs<FunctionDecl>(declaration.get());
+          function && function->body() && function->name().lexeme.starts_with("effect_")) {
+        const auto *effect = resultExpression(resultExpression, function->body().get());
+        if (function->name().lexeme == "effect_alias")
+          aliasEffect = effect;
+        else if (effect)
+          effects.push_back(effect);
+      }
+    if (aliasEffect && !effects.empty())
+      SemanticModelTestAccess::aliasCheckedExpression(impl.semanticModel, *aliasEffect, *effects.front());
     for (const auto &declaration : source.program.declarations()) {
       const auto *syntax = stmtAs<FunctionDecl>(declaration.get());
       if (!syntax || (syntax->name().lexeme != "direct" && syntax->name().lexeme != "forwarded" &&
@@ -198,6 +236,29 @@ struct SemanticLifetimeTestAccess {
         }
       }
       const auto saved = impl.checkedReferenceContentsOpening(id);
+      // The effect recorder must invalidate body-local contents even when an
+      // isolated semantic query has no program-effect owner. The source above
+      // has already checked each concrete call/operator/construction shape.
+      const auto effectOwner = std::exchange(impl.currentProgramEffectOwner, {});
+      for (const auto *effect : effects) {
+        impl.loanFlow.invalidatedReferenceContents.erase(id);
+        impl.recordProgramCallEffects(*effect);
+        checks.callInvalidated += effects.size() == 7 && saved &&
+            impl.loanFlow.invalidatedReferenceContents.contains(id) &&
+            impl.loanFlow.records.at(id).active &&
+            !impl.referenceContentsDependencySet(input->get()) &&
+            impl.checkedReferenceContentsOpening(id) == saved;
+      }
+      impl.loanFlow.invalidatedReferenceContents.erase(id);
+      impl.recordProgramCallEffects(**input);
+      checks.noncallPreserved += saved && !impl.loanFlow.invalidatedReferenceContents.contains(id) &&
+          impl.referenceContentsDependencySet(input->get()) == saved;
+      if (aliasEffect) {
+        impl.recordProgramCallEffects(*aliasEffect);
+        checks.aliasPreserved += saved && !impl.loanFlow.invalidatedReferenceContents.contains(id) &&
+            impl.checkedReferenceContentsOpening(id) == saved;
+      }
+      impl.currentProgramEffectOwner = effectOwner;
       impl.invalidateReferenceContents();
       checks.staleRejected += saved && !impl.recordReferenceContents(input->get()) &&
           impl.checkedReferenceContentsOpening(id) == saved;
@@ -212,6 +273,14 @@ struct SemanticLifetimeTestAccess {
             !analyzer.model().findReferenceContentsLoan(*member->object()) &&
             !entry->dependencies.front().referenceContents;
       }
+      // Rechecking the same AST starts another evaluation. It clears the
+      // lookup only; the previous copied snapshot still names its own loan.
+      (void)impl.analyze(**input);
+      const bool cleared = !analyzer.model().findReferenceContentsLoan(**input);
+      const auto refreshed = impl.recordReferenceContents(input->get());
+      const auto refreshedId = analyzer.model().findReferenceContentsLoan(**input);
+      checks.reevaluationReset += cleared && refreshed && refreshedId && refreshedId != id &&
+          impl.loanFlow.records.at(id).active && impl.checkedReferenceContentsOpening(id) == saved;
       impl.scopes.pop_back();
     }
     return checks;
@@ -3988,6 +4057,25 @@ struct Holder<lifetime a, lifetime owner> {
 void testStagedReferenceContentsAdapters() {
   const auto source = lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
       "staged-reference-contents-adapters.gti", R"gti(
+mut int effectCounter = 0;
+int writeGlobal() { effectCounter++; return effectCounter; }
+int writeRaw(mut int* target) { unsafe { *target = 1; } return 0; }
+struct Effect {
+  mut int value;
+  Effect(int input) : value(input) {}
+  int read() { return this.value; }
+  int update() mut { this.value++; return this.value; }
+  int operator+(int other) { return this.value + other; }
+};
+using NativeEffect = () -> int;
+int effect_mutable(mut Effect& target) { return target.update(); }
+int effect_global() { return writeGlobal(); }
+int effect_raw(mut int* target) { return writeRaw(target); }
+int effect_unknown(NativeEffect target) { unsafe { return target(); } }
+int effect_readonly(Effect& target) { return target.read(); }
+int effect_operator(mut Effect& target) { return target + 1; }
+Effect effect_construction() { return Effect(1); }
+int effect_alias() { return writeGlobal(); }
 struct Leaf<lifetime a> {
   int&<a> external;
   Leaf(int&<a> input) : external(input) {}
@@ -4026,13 +4114,17 @@ Choice<a>&<owner> conditional<lifetime a, lifetime owner, lifetime shell>(
   if (checks.formed != 3 || checks.normalized != 3 || checks.addressPreserved != 3 ||
       checks.staleRejected != 3 || checks.missingReadRejected != 3 || checks.cleanupReadRejected != 3 ||
       checks.staleCallRejected != 2 ||
-      checks.unsupportedRejected != 2 || checks.deltaIsolated != 3 || !checks.entryReused)
+      checks.unsupportedRejected != 2 || checks.deltaIsolated != 3 || !checks.entryReused ||
+      checks.callInvalidated != 21 || checks.noncallPreserved != 3 ||
+      checks.aliasPreserved != 3 || checks.reevaluationReset != 3)
     std::cerr << "staged contents adapters formed=" << checks.formed
               << " normalized=" << checks.normalized << " address=" << checks.addressPreserved
               << " stale=" << checks.staleRejected << " inactive=" << checks.missingReadRejected
               << " cleanup=" << checks.cleanupReadRejected << " staleCall=" << checks.staleCallRejected
               << " unsupported=" << checks.unsupportedRejected << " delta=" << checks.deltaIsolated
-              << " entry=" << checks.entryReused << '\n';
+              << " entry=" << checks.entryReused << " calls=" << checks.callInvalidated
+              << " noncall=" << checks.noncallPreserved << " alias=" << checks.aliasPreserved
+              << " reevaluation=" << checks.reevaluationReset << '\n';
   expect(checks.formed == 3 && checks.normalized == 3,
          "direct fields, method receivers and typed callback receivers share one exact opening and formal supplier normalization");
   expect(checks.addressPreserved == 3 && checks.entryReused,
@@ -4043,7 +4135,11 @@ Choice<a>&<owner> conditional<lifetime a, lifetime owner, lifetime shell>(
   expect(checks.unsupportedRejected == 2,
          "formation needs retained exclusive permission or evaluated conditional selection before opening those contents");
   expect(checks.deltaIsolated == 3,
-         "concrete instances cannot inherit another body's opening IDs while speculation preserves and shadows its own exact loan index");
+         "contents indices stay absent without openings, concrete instances isolate IDs and speculation erases only its copied index");
+  expect(checks.callInvalidated == 21 && checks.noncallPreserved == 3 && checks.aliasPreserved == 3,
+         "call effects invalidate current contents across mutable, global, raw and unknown targets without repeating aliases or retiring captured snapshots");
+  expect(checks.reevaluationReset == 3,
+         "re-evaluating an AST clears the old contents index and forms a new checked snapshot without changing the previous copy");
 }
 
 void testStagedReferenceContentsSources() {

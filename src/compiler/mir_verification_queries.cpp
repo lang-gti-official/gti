@@ -2139,27 +2139,27 @@ bool objectConstruct(const MirProgram &program,
       return false;
   const auto &element = pointer.arguments.front();
   if (element.kind == SemanticType::Class) {
-    for (const auto &owner : program.classInstances()) {
-      if (owner.type != element)
-        continue;
-      if (owner.traits.containsBorrowedState)
+    const auto view = mirClassLifetimeView(program, element);
+    if (!view)
+      return false;
+    const auto &owner = *view->instance;
+    if (owner.traits.containsBorrowedState)
+      return false;
+    if (!instruction.constructorTarget) {
+      const bool transfer =
+          instruction.parameterTypes.size() == 2 &&
+          instruction.parameterTypes[1] == element &&
+          ((instruction.constructorKind == ConstructorKind::Copy &&
+            owner.traits.copyable) ||
+           (instruction.constructorKind == ConstructorKind::Move &&
+            owner.traits.movable));
+      const bool defaultConstruction =
+          instruction.parameterTypes.size() == 1 &&
+          instruction.constructorKind == ConstructorKind::Ordinary &&
+          owner.defaultConstructor == SpecialMemberStatus::Generated &&
+          !owner.generatedDefaultRequiresSchedule;
+      if (!transfer && !defaultConstruction)
         return false;
-      if (!instruction.constructorTarget) {
-        const bool transfer =
-            instruction.parameterTypes.size() == 2 &&
-            instruction.parameterTypes[1] == element &&
-            ((instruction.constructorKind == ConstructorKind::Copy &&
-              owner.traits.copyable) ||
-             (instruction.constructorKind == ConstructorKind::Move &&
-              owner.traits.movable));
-        const bool defaultConstruction =
-            instruction.parameterTypes.size() == 1 &&
-            instruction.constructorKind == ConstructorKind::Ordinary &&
-            owner.defaultConstructor == SpecialMemberStatus::Generated &&
-            !owner.generatedDefaultRequiresSchedule;
-        if (!transfer && !defaultConstruction)
-          return false;
-      }
     }
   } else {
     const bool exactValue = instruction.parameterTypes.size() == 2 &&
@@ -2186,6 +2186,24 @@ bool objectConstruct(const MirProgram &program,
         (instruction.parameterTypes.size() == 2 && !exactValue))
       return false;
   }
+  // The destination pointer is an intrinsic input, not a constructor
+  // parameter. Preserve only an application checked against the selected
+  // constructor's own binders and its exact constructed object type. Body
+  // verification separately proves the actual argument regions and bounds.
+  if (instruction.constructorTarget) {
+    const auto *target =
+        program.findConstructorInstance(*instruction.constructorTarget);
+    const auto signature = instantiateMirLifetimeTarget(program, instruction);
+    if (!target || !signature || instruction.lifetimeApplication.callableSignature ||
+        !equivalentLifetimeTypes(signature->returnType, element) ||
+        !mirLifetimeParameterTypesMatch(
+            std::span(instruction.parameterTypes).subspan(1),
+            target->parameterTypes, target->lifetimeContract,
+            instruction.lifetimeApplication))
+      return false;
+  } else if (instruction.lifetimeApplication != MirLifetimeApplication{}) {
+    return false;
+  }
   const MirInstruction exact{.id = instruction.id,
                              .kind = MirInstructionKind::Call,
                              .hirValue = instruction.hirValue,
@@ -2195,6 +2213,7 @@ bool objectConstruct(const MirProgram &program,
                                  UnsafeOperationKind::ObjectLifetime,
                              .operands = instruction.operands,
                              .parameterTypes = instruction.parameterTypes,
+                             .lifetimeApplication = instruction.lifetimeApplication,
                              .intrinsic = IntrinsicKind::ObjectConstruct,
                              .definedFailure = instruction.definedFailure,
                              .constructorTarget = instruction.constructorTarget,

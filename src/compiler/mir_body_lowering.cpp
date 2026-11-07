@@ -8073,6 +8073,58 @@ private:
                          .result = result,
                          .operands = {std::move(operand)},
                          .info = info};
+    if (role == MirCallInputRole::Receiver && sourceValueInfo &&
+        sourceValueInfo->info.category == ValueCategory::Place &&
+        (inputKind == HirCallInputKind::ReadBorrow || inputKind == HirCallInputKind::MutableBorrow) &&
+        (input.operands.front().kind == MirOperandKind::BorrowRead ||
+         input.operands.front().kind == MirOperandKind::BorrowWrite)) {
+      // A nominal receiver read needs contents facts, not the scalar address
+      // set of the Reference that produced its pointer. Keep that exact set
+      // on the emitted call and its loan; an absent contents fact stays
+      // unknown until evaluated-reference opening is independently proved.
+      const auto *addressLoan = output.findLoan(loanForValue(sourceValue));
+      const auto place = valuePlaces.find(sourceValue);
+      const MirInstruction *producer = nullptr;
+      MirBlockId producerBlock = 0;
+      bool ambiguous = false;
+      if (addressLoan && addressLoan->kind == MirLoanKind::CallResult &&
+          place != valuePlaces.end() && place->second == input.operands.front().place)
+        for (const auto &block : output.blocks)
+          for (const auto &instruction : block.instructions)
+            if (instruction.kind == MirInstructionKind::Call && !instruction.tombstone &&
+                instruction.loan == addressLoan->id &&
+                instruction.hirValue == addressLoan->producedBy) {
+              ambiguous |= producer != nullptr;
+              producer = &instruction;
+              producerBlock = block.id;
+            }
+      const auto *target = producer && producer->functionTarget
+          ? program.findFunctionInstance(*producer->functionTarget) : nullptr;
+      const auto signature = target
+          ? substituteTypeLifetimes(target->returnType, producer->lifetimeApplication.bindings)
+          : std::nullopt;
+      const auto *original = producer && producer->result
+          ? output.findValue(*producer->result) : nullptr;
+      auto &annotation = output.values[result - 1].borrowDependencies;
+      if (!ambiguous && signature && signature->kind == SemanticType::Reference &&
+          signature->arguments.size() == 1 && original && producer->lifetimeApplication.complete &&
+          original->definition == producer->id && original->definitionBlock == producerBlock &&
+          original->sourceValue == producer->hirValue && original->info == producer->info &&
+          original->info.category == ValueCategory::Place &&
+          signature->referenceAccess == original->info.access &&
+          equivalentLifetimeTypes(signature->arguments.front(), original->info.type) &&
+          original->borrowDependencies && annotation &&
+          !annotation->dependencies.empty() && annotation->possibleAlternatives.empty() &&
+          original->borrowDependencies->possibleAlternatives.empty() &&
+          std::all_of(annotation->dependencies.begin(), annotation->dependencies.end(),
+              [](const auto &dependency) {
+                return dependency.designatedFields.empty() && dependency.conditions.empty();
+              }) &&
+          std::is_permutation(annotation->dependencies.begin(), annotation->dependencies.end(),
+              original->borrowDependencies->dependencies.begin(),
+              original->borrowDependencies->dependencies.end()))
+        annotation.reset();
+    }
     if (inputKind == HirCallInputKind::RetainedReceiver &&
         sourceValueInfo != nullptr && sourceValueInfo->retainedReceiverOwner) {
       const MirPlaceId anchor =
@@ -9306,6 +9358,7 @@ private:
       const MirLoanId loan = createLoan(kind, origin, value.borrowAccess,
                                         value.id, 0, {}, parent, twoPhase);
       MirPlaceId retainedShellInput = 0;
+      MirLoanId retainedShellRead = 0;
       if (shellContract != nullptr) {
         recordLoanIdentity(loan, *shellContract);
       } else if (textShellOwner != 0) {
@@ -9375,8 +9428,10 @@ private:
           if (!loanDependency || !placeDependency ||
               loanDependency == placeDependency) {
             retained = loanDependency ? loanDependency : placeDependency;
-            if (retained && retained == placeDependency)
+            if (retained && retained == placeDependency) {
               retainedShellInput = input->place;
+              retainedShellRead = actualLoan ? actualLoan->id : 0;
+            }
           }
         } else {
           retained = storedDependencyForPlace(origin);
@@ -9730,11 +9785,36 @@ private:
           // its stored external owners. Retain the exact shell supplier as
           // primary; the separate Stored group remains an independent
           // contents dependency. Reordering never changes any source fact.
+          const auto physicalInput = [&](const MirLoanDependency &candidate) {
+            if (!retainedShellInput)
+              return false;
+            if (candidate.source == retainedShellInput)
+              return true;
+            // A formal Reference is represented both by its entry root and
+            // by the evaluated whole referent. Keep the original supplier;
+            // only the exact staged Parameter capability proves these views
+            // designate the same input. No stored field or lifetime-owner
+            // source is an address recipe.
+            const auto *entry = output.findLoan(retainedShellRead);
+            const auto *root = entry ? output.findPlace(entry->source) : nullptr;
+            const auto *address = output.findPlace(retainedShellInput);
+            return entry && entry->entry && entry->kind == MirLoanKind::Parameter &&
+                   !entry->parent && !entry->escapes && !entry->lifecycleBound &&
+                   !entry->referenceSelection && !entry->referenceContents &&
+                   !entry->contentsOpening && entry->designatedFields.empty() &&
+                   entry->conditions.empty() && entry->additionalDependencies.empty() &&
+                   candidate.parent == entry->id && candidate.source == entry->source &&
+                   entry->storedDependency == published.storedDependency &&
+                   (candidate.access != AccessMode::Mutable || entry->access == AccessMode::Mutable) &&
+                   root && address && !root->foreignStorage && !address->foreignStorage &&
+                   root->type.kind == SemanticType::Reference &&
+                   mir_detail::wholeEntryPlaceMatches(output, *root, *address);
+          };
           auto physical = complete.end();
           bool ambiguous = false;
           for (auto candidate = complete.begin(); candidate != complete.end();
                ++candidate)
-            if (retainedShellInput && candidate->source == retainedShellInput &&
+            if (physicalInput(*candidate) &&
                 candidate->parent != published.storedDependency &&
                 candidate->access == value.borrowAccess &&
                 candidate->designatedFields.empty() &&
