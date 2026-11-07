@@ -10,6 +10,7 @@ it must not contain secrets. Heavy files are removed before a run is finished.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import base64
 import hashlib
 import io
@@ -206,21 +207,30 @@ def window_slots():
     return {"build": 1 if platform.system() == "Linux" else 2, "suite": 1}
 
 
-def llvm_directory():
+def load_llvm_pin(scripts):
+    """scripts/llvm_pin.py loaded from one directory, or None when absent."""
+    path = Path(scripts) / "llvm_pin.py"
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("gti_remote_llvm_pin", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def llvm_directory(source=None):
     """An installed LLVM of GTI's pinned major (scripts/llvm_pin.py).
 
-    A deployed worker carries only this file; without its sibling it falls
-    back to the host's default LLVM, and CMake still refuses another major."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    try:
-        import llvm_pin
-    except ImportError:
-        llvm_pin = None
-    finally:
-        sys.path.pop(0)
-    if llvm_pin is not None:
-        found = llvm_pin.discover()
-        return str(found) if found else None
+    A deployed worker carries only this file, so it reads the pin from the
+    snapshot it is about to build. Only without either does it fall back to
+    the host's default llvm-config, which on Ubuntu is often an older major
+    (CMake then refuses it)."""
+    for scripts, root in ((Path(__file__).resolve().parent, None),
+                          (Path(source) / "scripts" if source else None, source)):
+        pin = load_llvm_pin(scripts) if scripts else None
+        if pin is not None:
+            found = pin.discover() if root is None else pin.discover(Path(root))
+            return str(found) if found else None
     executable = shutil.which("llvm-config")
     if executable:
         result = subprocess.run([executable, "--cmakedir"], capture_output=True, text=True)
@@ -404,7 +414,7 @@ def validate_steps(steps):
     return steps
 
 
-def default_steps(request):
+def default_steps(request, source=None):
     # Named Ubuntu profiles cap workers for 13 GiB; legacy/default requests
     # retain the Mini's half-CPU build policy. Explicit counts still win.
     cpus = os.cpu_count() or 1
@@ -412,7 +422,7 @@ def default_steps(request):
     test_jobs = request.get("test_jobs") or cpus
     configure = ["cmake", "-S", "{source}", "-B", "{build}", "-G", "Ninja",
                  "-DCMAKE_BUILD_TYPE=" + request["build_type"], "-DBUILD_TESTING=ON"]
-    llvm = llvm_directory()
+    llvm = llvm_directory(source)
     if llvm:
         configure.append("-DLLVM_DIR=" + llvm)
     for language, key in (("C", "cc"), ("CXX", "cxx")):
@@ -583,7 +593,7 @@ def worker(root_value, run_id):
                     raise RunnerError("could not prepare snapshot repository; see prepare.log")
                 process = None
         extract(run / "input" / "source.tar", source, MAX_INPUT // 2)
-        steps = validate_steps(request["steps"] or default_steps(request))
+        steps = validate_steps(request["steps"] or default_steps(request, source))
         slots = window_slots()
         window = Window(root / "window", slots=slots, poll=1)
         prefix = "/opt/homebrew/bin:/usr/local/bin:" if platform.system() == "Darwin" else ""

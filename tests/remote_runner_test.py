@@ -601,6 +601,28 @@ class RunnerConnections(unittest.TestCase):
                                       return_value=subprocess.CompletedProcess([], 0, str(llvm) + "\n")) as run:
                 self.assertEqual(runner.llvm_directory(), expected, found)
                 self.assertEqual(run.call_args.args[0], [f"/usr/bin/llvm-config-{major}", "--cmakedir"])
+        # A deployed worker has no sibling llvm_pin.py: it uses the snapshot's
+        # own module with the snapshot as root, not the host's default
+        # llvm-config (an older Ubuntu major refused by CMake).
+        snapshot = self.local / "snapshot"
+        (snapshot / "scripts").mkdir(parents=True)
+        (snapshot / "scripts/llvm_pin.py").write_text(
+            "import pathlib\n"
+            "def discover(root=None):\n"
+            "    return pathlib.Path(root) / 'pinned-llvm' if root else None\n")
+        sibling = runner.load_llvm_pin
+        with mock.patch.object(runner, "load_llvm_pin",
+                               side_effect=lambda scripts: None if Path(scripts) == Path(runner.__file__).resolve().parent
+                               else sibling(scripts)), \
+                mock.patch.object(runner.shutil, "which", return_value=None):
+            self.assertEqual(runner.llvm_directory(str(snapshot)), str(snapshot / "pinned-llvm"))
+            self.assertIsNone(runner.llvm_directory(str(self.local / "no-snapshot")))
+            self.assertIsNone(runner.llvm_directory())
+            request = {"build_type": "Release", "cmake_args": [], "targets": ["gti"],
+                       "full_suite": True, "ctest_regex": None, "jobs": 3, "test_jobs": 6}
+            with mock.patch.object(runner.platform, "system", return_value="Linux"):
+                self.assertIn("-DLLVM_DIR=" + str(snapshot / "pinned-llvm"),
+                              runner.default_steps(request, str(snapshot))[0]["argv"])
         request = {"build_type": "Release", "cmake_args": [], "targets": ["gti"],
                    "full_suite": True, "ctest_regex": None, "jobs": 3, "test_jobs": 6}
         with mock.patch.object(runner.platform, "system", return_value="Linux"), \
