@@ -13,10 +13,14 @@ LLVM_INPUT_FIELDS(MirInstruction, id, kind, tombstone, hostedStartupOperation, t
 LLVM_INPUT_FIELDS(MirTerminator, kind, hostedStartupOperation, hirValue, hirStatement, value, returnLoan, invokeInstruction, failureRecord, target, elseTarget, targetArguments, elseArguments, switchTargets, successLifecycle, provenance)
 LLVM_INPUT_FIELDS(MirPlace, id, hostedStartupOperation, root, binding, symbol, capture, temporary, value, loan, projections, type, access, traits, sourceValue, key, foreignStorage, initiallyAvailable)
 LLVM_INPUT_FIELDS(MirOperand, kind, value, place, loan, literal, type)
-LLVM_INPUT_FIELDS(MirLoan, id, semanticLoan, parent, storedDependency, kind, source, additionalDependencies, referenceSelection, access, producedBy, carriers, storedPath, designatedFields, conditions, lifecycleBound, twoPhase, entry, escapes)
+LLVM_INPUT_FIELDS(MirLoan, id, semanticLoan, parent, storedDependency, kind, source, referenceContents, additionalDependencies, referenceSelection, contentsOpening, access, producedBy, carriers, storedPath, designatedFields, conditions, lifecycleBound, twoPhase, entry, escapes)
 LLVM_INPUT_FIELDS(MirBorrowDependencySet, dependencies, possibleAlternatives)
 LLVM_INPUT_FIELDS(MirReferenceSelection, kind, value, carrier, transferredFrom, fields, conditions, reference)
-LLVM_INPUT_FIELDS(MirLoanDependency, source, parent, designatedFields, access, conditions)
+LLVM_INPUT_FIELDS(MirLoanDependency, source, parent, referenceContents, designatedFields, access, conditions)
+// Staged provenance has no runtime representation. MIR admission currently
+// rejects populated contents until independent opening replay is implemented.
+LLVM_INPUT_FIELDS(MirReferenceContentsSource, openingLoan, fields)
+LLVM_INPUT_FIELDS(MirReferenceContentsOpening, reference, referenceType, readLoans)
 LLVM_INPUT_FIELDS(MirDropType, type, classInstance, lambdaInstance, destructor, fixedArray, uniquePointeeClass, polymorphicCleanup, uniqueOwnerField, uniqueOwnerBase, captureIndex, payloadVariant, payloadField, recursiveCleanup, aggregate, requiresActiveCleanup)
 LLVM_INPUT_FIELDS(MirDropObligation, id, hostedStartupOperation, hirObligation, constructionOrder, kind, place, binding, value, generatedValue, hirFullExpression, fullExpression, dropType, initiallyActive)
 LLVM_INPUT_FIELDS(MirLifecycleEvent, kind, source, target, conditional, failureCleanup)
