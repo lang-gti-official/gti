@@ -563,6 +563,7 @@ module.exports = grammar({
 
     constructor_declaration: ($) =>
       seq(
+        repeat(field("attribute", $.function_contract_attribute)),
         optional(field("implicit", "implicit")),
         optional(field("unsafe", "unsafe")),
         optional(choice("constexpr", "consteval")),
@@ -600,6 +601,7 @@ module.exports = grammar({
 
     destructor_declaration: ($) =>
       seq(
+        repeat(field("attribute", $.function_contract_attribute)),
         "~",
         field("name", $.identifier),
         "(",

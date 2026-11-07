@@ -1821,6 +1821,16 @@ loan or a second drop obligation. MIR retains the unsafe store and raw-memory
 effects; construction, old-value cleanup, publication and staged-value failure
 cleanup use the existing replacement schedule unchanged.
 
+Raw class-field addresses can also bind read-only or mutable reference
+arguments, including constructor arguments. Native admission proves the complete
+raw projection, final reference type, permitted access and exact consuming
+parameter. It does not copy the containing owner or relax lexical unsafe rules.
+A native C call result may bind an immutable temporary reference argument: the
+value-rooted temporary must identify that exact verified call result, and the
+consumer must use the matching reference type. The original call owns the
+foreign effect; staging the result does not execute another foreign access.
+Existing MIR temporary lifetime and cleanup obligations remain in force.
+
 A failure-free source call has no Invoke edge: MIR activates its result's
 value obligation with the call's own final `Initialize` event, after any
 by-value input it consumed has transferred out. Every result slot that a
@@ -6128,7 +6138,7 @@ cleanup ownership is independent of whether the representation needs a byte.
 MIR independently follows the destructor with that field known null and requires
 a terminating path containing only the field observation, inert scalar operations
 and empty lifecycle boundaries. Effects, calls, failure, uncertain branches and
-cycles invalidate the witness. The witness is serialized in `mir-v120`.
+cycles invalidate the witness. The witness is serialized in `mir-v121`.
 
 LLVM omits the separate byte for this witness, uses the pointer for cleanup
 observation, and nulls it after transferring all fields to a move destination.
@@ -6540,6 +6550,15 @@ failure, termination or ownership facts. Other lowering and optimization paths
 must preserve explicit policy and avoid conflicting LLVM attributes. This
 initial slice changes no calling convention or runtime representation and adds
 no C++ backend optimization implementation.
+
+Source constructors and destructors carry the same resolved policy through
+their semantic declarations, concrete HIR/MIR instances and sealed lifecycle
+declarations. Native lifecycle body declarations use the shared attribute
+application routine. HIR/semantic, HIR/MIR and sealed/MIR checks reject lost
+policy; MIR rejects invalid policy values and annotations on generated or
+non-source lifecycle bodies. Generated field/base cleanup retains its existing
+schedule, and no attribute changes the status ABI, rollback or active-drop
+obligations. Explicit default/delete declarations are rejected in semantics.
 
 ### LLVM Function Values And Closure Environments
 

@@ -344,8 +344,12 @@ Reachability reachableProgram(const LoweredProgram &program) {
         generated(dependency);
     }
   }
-  // Do not omit rootless library exports or dependency forms not yet modeled.
-  if (!mir.hostedStartupPlan() && !program.embeddingPlan())
+  // Compiled-library exports are explicit roots above, just like hosted and
+  // embedding entries. Unselected imported standard-library bodies must not
+  // turn an otherwise bounded producer into a whole-module conservative root.
+  // Truly rootless units and unmodeled dependencies still retain everything.
+  if (!mir.hostedStartupPlan() && !program.embeddingPlan() &&
+      !program.compiledScalarProducer())
     result.conservative = true;
   if (result.conservative) {
     for (const auto &row : program.bodies())

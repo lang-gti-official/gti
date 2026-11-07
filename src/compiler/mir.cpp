@@ -1941,15 +1941,8 @@ ownershipSuccessors(const MirBody &body, const MirTerminator &terminator) {
   return result;
 }
 
-[[nodiscard]] bool tracksScalarInitialization(const MirPlace &place) {
-  if ((place.root != MirPlaceRootKind::Binding &&
-       place.root != MirPlaceRootKind::Temporary) ||
-      !place.projections.empty() || place.traits.drop != DropKind::Trivial ||
-      place.traits.containsBorrowedState ||
-      (place.key && (place.key->receiver || !place.key->projections.empty()))) {
-    return false;
-  }
-  switch (place.type.kind) {
+[[nodiscard]] bool isIntegralInitializationType(const SemanticType &type) {
+  switch (type.kind) {
   case SemanticType::Int8:
   case SemanticType::Int16:
   case SemanticType::Int32:
@@ -1964,6 +1957,21 @@ ownershipSuccessors(const MirBody &body, const MirTerminator &terminator) {
   default:
     return false;
   }
+}
+
+[[nodiscard]] bool tracksScalarInitialization(const MirPlace &place) {
+  if ((place.root != MirPlaceRootKind::Binding &&
+       place.root != MirPlaceRootKind::Temporary) ||
+      !place.projections.empty() || place.traits.drop != DropKind::Trivial ||
+      place.traits.containsBorrowedState ||
+      (place.key && (place.key->receiver || !place.key->projections.empty()))) {
+    return false;
+  }
+  return isIntegralInitializationType(place.type) ||
+         place.type.kind == SemanticType::Float ||
+         place.type.kind == SemanticType::Double ||
+         place.type.kind == SemanticType::RawPointer ||
+         place.type.kind == SemanticType::NullPtr;
 }
 
 [[nodiscard]] bool sameScalarInitializationStorage(const MirPlace &left,
@@ -2054,9 +2062,11 @@ struct MirPlaceObservationSink {
         }
       lifetimeForPlace.emplace(request.place, std::move(obligations));
       coverage.try_emplace(
-          request.place, place &&
-                             (lifetime || tracksScalarInitialization(*place)) &&
-                             place->key && place->key->valid());
+          request.place,
+          place &&
+              (lifetime || (tracksScalarInitialization(*place) &&
+                            isIntegralInitializationType(place->type))) &&
+              place->key && place->key->valid());
     }
     // A dropped scalar needs a unique canonical lifetime, not just the
     // initialization pass's storage bit.
@@ -4982,12 +4992,25 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       const auto permitsSuspendedSharedOrigin = [&](const MirOperand &operand,
                                                     bool selectedOrigin) {
         const MirOperand &resolved = *callInputSource(operand);
-        const bool preparingRead =
-            instruction.kind == MirInstructionKind::CallInput &&
-            instruction.callInputKind == HirCallInputKind::ReadBorrow &&
-            instruction.info.type.kind == SemanticType::Reference &&
-            instruction.info.type.referenceAccess == AccessMode::ReadOnly;
-        if ((!preparingRead &&
+        const MirInstruction *readInput =
+            instruction.kind == MirInstructionKind::CallInput
+                ? &instruction
+                : (orderedInvocation(instruction) ? callInputDefinition(operand)
+                                                  : nullptr);
+        const bool sharedInput =
+            readInput != nullptr &&
+            readInput->callInputKind == HirCallInputKind::ReadBorrow &&
+            readInput->info.type.kind == SemanticType::Reference &&
+            readInput->info.type.referenceAccess == AccessMode::ReadOnly;
+        // Preparing and consuming the same checked read input have the same
+        // permission. A void/scalar-returning call need not publish a result
+        // loan to read beside another shared child. A staged loan, if present,
+        // must still be live when the invocation consumes it.
+        if (sharedInput && readInput != &instruction && readInput->loan &&
+            requireActive(*readInput->loan, "shared call input",
+                          instruction.id))
+          return false;
+        if ((!sharedInput &&
              (!selectedOrigin ||
               (instruction.kind != MirInstructionKind::Call &&
                instruction.kind != MirInstructionKind::Construct) ||
@@ -4999,13 +5022,13 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         const MirLoan *produced =
             instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
         const MirLoanId parent =
-            preparingRead ? resolved.loan
-                          : (produced == nullptr ? 0 : produced->parent);
+            sharedInput ? resolved.loan
+                        : (produced == nullptr ? 0 : produced->parent);
         if (parent == 0 ||
-            (!preparingRead && (produced == nullptr ||
-                                (produced->kind != MirLoanKind::CallResult &&
-                                 produced->kind != MirLoanKind::Stored) ||
-                                produced->access != AccessMode::ReadOnly)) ||
+            (!sharedInput && (produced == nullptr ||
+                              (produced->kind != MirLoanKind::CallResult &&
+                               produced->kind != MirLoanKind::Stored) ||
+                              produced->access != AccessMode::ReadOnly)) ||
             active[parent - 1] != MirLoanFlowState::Suspended ||
             requireStoredDependency(parent, "shared reborrow input",
                                     instruction.id)) {
@@ -6889,8 +6912,12 @@ mir_detail::deriveMirSourceValueEvents(const MirBody &body) {
       ++bindings[place.binding];
   for (const auto &local : body.sourceDebug.tables->locals) {
     const auto *place = body.findPlace(local.place);
+    // Scalar availability covers more types than the current recoverable
+    // debug-value profile. Do not widen value-event publication with it.
     if (local.policy == MirSourceLocalPolicy::ExistingPlace && place &&
-        tracksScalarInitialization(*place) && bindings[place->binding] == 1)
+        tracksScalarInitialization(*place) &&
+        isIntegralInitializationType(place->type) &&
+        bindings[place->binding] == 1)
       locals.emplace(place->id, local.declaration.id);
   }
   std::unordered_set<SourceLocalId> excluded;

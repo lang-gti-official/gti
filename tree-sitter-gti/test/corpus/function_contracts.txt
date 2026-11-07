@@ -130,3 +130,27 @@ Function optimization annotations
     (identifier)
     (parameter_clause)
     (block (return_statement (initializer_expression (call_expression (primary_expression (identifier)) (argument_list)))))))
+
+==================
+Lifecycle optimization annotations
+==================
+struct Item {
+  [[inline]] constexpr Item() {}
+  [[cold, noinline]] ~Item() {}
+};
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (class_body
+      (constructor_declaration
+        (function_contract_attribute)
+        (identifier)
+        (parameter_clause)
+        (block))
+      (destructor_declaration
+        (function_contract_attribute)
+        (identifier)
+        (block)))))

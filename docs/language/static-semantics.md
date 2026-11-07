@@ -1751,6 +1751,20 @@ authorize stored-reference classes,
 compiler-private capabilities, polymorphic bases, or native-layout
 declarations.
 
+Reference-free owning payload enums may also be elements of fixed arrays,
+including nested arrays, local bindings, thread-local bindings, and fields of
+the ordinary class/struct owners admitted above. Every element must be
+initialized under the ordinary exact-extent array rules. Array traits fold
+from the concrete element type: an array of move-only enums cannot be copied.
+A mutable constant-index element may be moved out, and moving it again is a
+use-after-move error. Replacement destroys the destination's previous active
+payload; scope exit destroys the remaining elements in reverse order. A
+failure during initialization destroys only completed elements, and failure
+after initialization destroys the complete remaining array. Ordinary local
+whole-array movement transfers those obligations. This admission does not
+extend cleanup-owning whole-array by-value function parameter/result transport,
+borrowed-state array storage, or namespace/global/static owning cleanup.
+
 A payload enum may contain `T&`, `mut T&`, and nested reference-bearing enum
 values. Construction retains the exact owner, access and field path for each
 active alternative, including nested guards. Earlier argument borrows remain
@@ -1773,9 +1787,15 @@ compiler error. Reference-field selection and borrowed-value extraction are
 distinct operations.
 
 Concrete generic free functions, methods, and constructors use that same
-ordered transport contract. A type argument mentioning the enum does not by
-itself create an ownership edge; concrete fields and declaration-bound storage
-capabilities determine containment and cleanup. This permits ordinary owning
+ordered transport contract. Concrete by-value parameter packs apply this
+contract to each expanded formal, including owning payload enums mixed with
+ordinary values. Forwarding copies copyable elements and transfers move-only
+elements under the existing pack rules. A pack is not an aggregate containment
+boundary; each element retains its own cleanup and callable eligibility.
+Unsupported elements are diagnosed using their concrete type. A type argument
+mentioning the enum does not by itself create an ownership edge; concrete fields
+and declaration-bound storage capabilities determine containment and cleanup.
+This permits ordinary owning
 collections and inline optional storage of the enum without public-library
 name recognition. Consuming methods may return an enum field while retaining
 the containing receiver through the caller's full expression.

@@ -63,8 +63,14 @@ struct LlvmBackendIdentity {
 queryLlvmBackendIdentity(const TargetInfo &target, LlvmBackendOptions options,
                          std::string &error);
 
-// Development scalar-library profile: a host relocatable object with exactly
-// the declared external definitions and only explicitly selected GTI imports.
+// Runtime C exports and LLVM's bounded target memory-helper family. The archive
+// must be independently selected and compatibility-pinned, not bundle supplied.
+[[nodiscard]] std::vector<std::string>
+compiledLibrarySupportSymbols(std::string_view archive,
+                              const TargetInfo &target);
+
+// A host relocatable object with exactly the declared external definitions and
+// explicitly selected GTI imports plus compiledLibrarySupportSymbols.
 void verifyCompiledScalarObject(std::string_view bytes,
                                 const TargetInfo &target,
                                 const std::vector<std::string> &symbols,

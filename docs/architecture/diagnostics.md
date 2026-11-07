@@ -649,8 +649,10 @@ The native, polymorphic, operator and bodyless restrictions apply to
 `[[noreturn]]`/`[[track_caller]]`, not to every function attribute.
 `[[discardable]]` may describe non-void native, polymorphic or operator results;
 `[[borrowed_from(...)]]` has its own checked GTI reference-return boundary.
-`[[inline]]`, `[[cold]]` and `[[noinline]]` require source-defined GTI functions
-or methods. Duplicate hints, contradictory `inline`/`noinline` and unsupported
+`[[inline]]`, `[[cold]]` and `[[noinline]]` require source-defined GTI functions,
+methods, constructors or destructors. Defaulted/deleted lifecycle declarations
+reject the annotations; other function contracts remain unsupported on lifecycle
+declarations. Duplicate hints, contradictory `inline`/`noinline` and unsupported
 declaration shapes use `GTI-S2099` at the annotation name, without an automatic
 fix that could discard the author's policy. Arguments and non-function syntax
 use `GTI-P0001`; `inline` is accepted contextually inside the attribute list.
@@ -1432,6 +1434,13 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   milestone and available body/block/instruction. Do not suggest filing a compiler bug. A generic text-vocabulary
   rejection or unclassified backend exception remains `GTI-B0001`; only an
   explicit bounded backend classification may use `GTI-B0003`.
+  C++ preflight also classifies a text-valued call with a retained `CallResult`
+  loan as unsupported: its reference/accessor loan representation cannot carry
+  that value dependency. The diagnostic names LLVM and retains the enclosing
+  body's source location. Ownerless text calls and ordinary reference-returning
+  calls retain their existing routes; generic spelling and macro expansion are
+  not the rejected property. This does not reclassify generic text-vocabulary
+  failures or bypass lowered-program verification.
   The C++ module preflight uses it when distinct nominal declarations,
   incompatible type or namespace aliases, or namespace-storage declarations
   share a qualified name that its retained representation cannot distinguish,

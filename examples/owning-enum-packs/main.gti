@@ -1,0 +1,34 @@
+import std.string;
+import std.json;
+import std.unordered_map;
+import std.memory;
+
+// Owning alternatives follow ordinary value rules through the map's
+// variadic storage constructors. No wrapper or indirect allocation is needed.
+enum Value {
+  None,
+  Number(int number),
+  Text(std::string text),
+  Object(std::json::object object),
+};
+int text_size(Value& value) {
+  switch (value) {
+    case Value::Text(auto& text): return int(text.size());
+    default: return -1;
+  }
+}
+int main() {
+  mut std::unordered_map<std::string, Value> values{};
+  auto source = std::string("world");
+  mut Value value = Value::Text(source.clone());
+  values.insert(std::string("hello"), std::move(value));
+  auto key = std::string("hello");
+  if (text_size(values.at(key)) != 5) return 1;
+  // A duplicate insert keeps the old value and destroys the unused argument.
+  values.insert(std::string("hello"), Value::Text(std::string("ignored")));
+  if (text_size(values.at(key)) != 5) return 2;
+  values.insert_or_assign(std::string("hello"), Value::Text(std::string("replacement")));
+  if (text_size(values.at(key)) != 11) return 3;
+  values.erase(key);
+  return values.empty() ? 0 : 4;
+}
