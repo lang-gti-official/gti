@@ -5693,8 +5693,21 @@ separate from a physical source place. Its `MirReferenceContentsOpening`
 records the actual evaluated operand, full reference type and formation read
 loans. Formation reads are not external reborrow parents, and opening IDs do
 not establish disjointness. MIR version 127 serializes these facts explicitly,
-including value dependencies and constructor initializer metadata. The MIR
-supplier selector query uses the shared bounded traversal with MIR's own exact
+including value dependencies and constructor initializer metadata. Staged body
+lowering anchors an opening after its exact HIR reference evaluation, preserves
+the evaluated referent place and full reference type, and maps its separate read
+capabilities and field selectors to body-local MIR identities. Copied value
+facts retain these tagged origins instead of substituting a physical shell.
+Malformed markers and duplicate field or read identities cannot publish a
+partial opening.
+The staged `referenceContentsOpeningShape` query independently reconstructs the
+full reference from its typed named/field address or exact applied CallResult
+producer, checks the complete direct shared field inventory and explicit source
+tags, and rejects cyclic read ancestry. Producer result, block and instruction
+identities remain exact. Shape success does not prove address authorization,
+active reads, dominance or contents flow.
+This transport creates no admission permission: the normal HIR and MIR guards
+below remain closed. The MIR supplier selector query uses the shared bounded traversal with MIR's own exact
 concrete field inventory; it does not extend that finite storage inventory
 across references. Unknown, cyclic and exhausted queries remain explicit.
 All body verification profiles and program verification currently reject populated

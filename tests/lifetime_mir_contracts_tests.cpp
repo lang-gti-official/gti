@@ -29,6 +29,216 @@ MirInstruction *firstLifetimeCall(MirBody &body) {
         return &instruction;
   return nullptr;
 }
+void checkReferenceContentsOpeningShape() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "reference-contents-shape.gti", R"gti(
+struct View<lifetime a, lifetime b> {
+  int&<a> first; int&<b> second;
+  View(int&<a> x, int&<b> y) : first(x), second(y) {}
+};
+struct Wrapper<lifetime a, lifetime b, lifetime shell> {
+  View<a,b>&<shell> nested;
+  Wrapper(View<a,b>&<shell> value) : nested(value) {}
+};
+int read<lifetime a, lifetime b>(View<a,b>& input) {
+  return input.first + input.second;
+}
+int holder(Wrapper<static,static,static>& input) { input; return 0; }
+View<a,b>&<shell> identity<lifetime a, lifetime b, lifetime shell>(
+    View<a,b>&<shell> input) { return input; }
+int main() {
+  int x = 2; int y = 5; View view{x,y};
+  auto& same = identity(view);
+  return read(view) - 7;
+}
+)gti");
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(), "opening-shape fixture starts from verified ordinary references");
+  const auto functionId = [&](std::string_view name) {
+    const auto found = std::find_if(checked.hir.functionInstances().begin(),
+        checked.hir.functionInstances().end(), [&](const auto &function) {
+          return function.source && function.source->name().lexeme == name;
+        });
+    expect(found != checked.hir.functionInstances().end(), "opening fixture retains its exact function");
+    return found->id;
+  };
+  struct StagedOpening {
+    MirProgram program;
+    HirFunctionInstanceId function = 0;
+    MirLoanId loan = 0;
+    MirPlaceId address = 0;
+    MirInstructionId anchor = 0;
+  };
+  const auto stage = [&](std::string_view name, bool field, bool returned) {
+    StagedOpening result{checked.mir, functionId(name)};
+    auto &function = *const_cast<MirFunctionInstance *>(result.program.findFunctionInstance(result.function));
+    auto &body = function.body;
+    SemanticType reference;
+    MirLoanId read = 0;
+    HirValueId source = 0;
+    MirPlace address;
+    for (const auto &place : body.places) address.id = std::max(address.id, place.id);
+    ++address.id;
+    if (returned) {
+      for (const auto &block : body.blocks)
+        for (const auto &call : block.instructions) {
+          if (call.kind != MirInstructionKind::Call || !call.loan) continue;
+          const auto signature = instantiateMirLifetimeTarget(result.program, call);
+          const auto *loan = body.findLoan(*call.loan);
+          if (!signature || signature->returnType.kind != SemanticType::Reference ||
+              !loan || loan->kind != MirLoanKind::CallResult) continue;
+          expect(!read, "returned opening has one exact reference-producing call");
+          reference = signature->returnType;
+          read = loan->id;
+          source = call.hirValue;
+          address.root = MirPlaceRootKind::Loan;
+          address.loan = read;
+          address.type = reference.arguments.front();
+          address.access = reference.referenceAccess;
+        }
+    } else {
+      expect(function.parameterBindings.size() == 1, "named opening has one exact formal binding");
+      const auto root = std::find_if(body.places.begin(), body.places.end(), [&](const auto &place) {
+        return place.root == MirPlaceRootKind::Binding &&
+               place.binding == function.parameterBindings.front() && place.projections.empty();
+      });
+      expect(root != body.places.end() && root->type.kind == SemanticType::Reference,
+             "named opening starts from its full physical reference");
+      const auto id = address.id;
+      address = *root;
+      address.id = id;
+      BorrowPath path;
+      if (field) {
+        const auto outer = mirClassLifetimeView(result.program, root->type.arguments.front());
+        expect(outer && outer->instance->fields.size() == 1,
+               "field opening has one independently instantiated reference field");
+        path.push_back(fieldProjection(outer->instance->fields.front().symbol));
+      }
+      const auto view = mir_detail::walkBorrowPath(result.program, root->type, root->access,
+          path, {}, mir_detail::MirBorrowPathRoot::PhysicalReference);
+      expect(view && !view->referenceCrossings.empty(), "opening address has an exact typed reference crossing");
+      reference = view->referenceCrossings.back().reference;
+      address.projections = view->projections;
+      address.type = view->type;
+      address.access = view->referenceAccessLimit;
+      if (address.key) address.key->projections.insert(address.key->projections.end(), path.begin(), path.end());
+      for (const auto &loan : body.loans)
+        if (loan.entry && loan.kind == MirLoanKind::Parameter && loan.source == root->id) {
+          expect(!read, "named opening has one exact physical entry loan");
+          read = loan.id;
+        }
+      const auto *hir = checked.hir.findFunctionInstance(result.function);
+      const auto binding = std::find_if(hir->body.bindings.begin(), hir->body.bindings.end(),
+          [&](const auto &candidate) { return candidate.id == function.parameterBindings.front(); });
+      expect(binding != hir->body.bindings.end(), "opening formal keeps its HIR binding identity");
+      for (const auto &value : hir->body.values)
+        if (!source && value.kind == HirValueKind::Variable && value.symbol == binding->info.symbol)
+          source = value.id;
+    }
+    expect(read && source && reference.kind == SemanticType::Reference,
+           "opening retains its evaluated address and separate read ancestry");
+    result.address = address.id;
+    body.places.push_back(address);
+    const auto inventory = mir_detail::referenceSupplierPaths(result.program, reference.arguments.front());
+    expect(inventory.status == ReferenceSupplierQueryStatus::Complete && inventory.paths.size() == 2 &&
+               std::all_of(inventory.paths.begin(), inventory.paths.end(), [](const auto &path) {
+                 return path.crossings.empty() && path.conditions.empty();
+               }), "opening has exactly two unconditional direct shared reference fields");
+    MirLoan opening;
+    for (const auto &loan : body.loans) opening.id = std::max(opening.id, loan.id);
+    ++opening.id;
+    opening.kind = MirLoanKind::Stored;
+    opening.producedBy = source;
+    opening.designatedFields = inventory.paths.front().fields;
+    opening.referenceContents = MirReferenceContentsSource{opening.id, opening.designatedFields};
+    opening.contentsOpening = MirReferenceContentsOpening{
+        {.kind = MirOperandKind::BorrowRead, .place = address.id, .type = address.type}, reference, {read}};
+    opening.additionalDependencies.push_back({
+        .referenceContents = MirReferenceContentsSource{opening.id, inventory.paths.back().fields},
+        .designatedFields = inventory.paths.back().fields});
+    result.loan = opening.id;
+    MirInstruction anchor;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions) anchor.id = std::max(anchor.id, instruction.id);
+    ++anchor.id;
+    anchor.kind = MirInstructionKind::Borrow;
+    anchor.hirValue = source;
+    anchor.loan = opening.id;
+    anchor.operands = {opening.contentsOpening->reference};
+    anchor.info.type = address.type;
+    anchor.info.category = ValueCategory::Place;
+    result.anchor = anchor.id;
+    body.loans.push_back(std::move(opening));
+    // Deliberately stage structure without claiming dominance, active loans or
+    // executable admission. The full verifier must still reject the marker.
+    body.blocks.front().instructions.push_back(std::move(anchor));
+    return result;
+  };
+  const auto shape = [](const StagedOpening &staged) {
+    const auto &body = staged.program.findFunctionInstance(staged.function)->body;
+    return mir_detail::referenceContentsOpeningShape(staged.program, body, *body.findLoan(staged.loan));
+  };
+  for (const auto &staged : {stage("read", false, false), stage("holder", true, false), stage("main", false, true)}) {
+    const auto inventory = shape(staged);
+    expect(inventory && inventory->fields.size() == 2,
+           "named, field and exact returned addresses preserve the direct contents shape");
+    expect(!verifyMirProgram(staged.program).valid(), "shape success never opens the staged contents admission gate");
+    for (int mutation = 0; mutation != 16; ++mutation) {
+      auto forged = staged;
+      auto &body = const_cast<MirFunctionInstance *>(forged.program.findFunctionInstance(forged.function))->body;
+      auto &loan = *const_cast<MirLoan *>(body.findLoan(forged.loan));
+      auto &opening = *loan.contentsOpening;
+      auto &anchor = *std::find_if(body.blocks.front().instructions.begin(), body.blocks.front().instructions.end(),
+          [&](const auto &instruction) { return instruction.id == forged.anchor; });
+      if (mutation == 0) loan.source = forged.address;
+      if (mutation == 1) loan.referenceContents.reset();
+      if (mutation == 2) loan.referenceContents->openingLoan = opening.readLoans.front();
+      if (mutation == 3) loan.additionalDependencies.front().referenceContents->fields = loan.designatedFields;
+      if (mutation == 4) loan.additionalDependencies.front() = {
+          .referenceContents = loan.referenceContents, .designatedFields = loan.designatedFields};
+      if (mutation == 5) loan.additionalDependencies.clear();
+      if (mutation == 6) opening.referenceType.referenceLifetime = Lifetime::parameter(UINT64_MAX);
+      if (mutation == 7) { opening.reference.type = SemanticType::Int32; anchor.operands.front() = opening.reference; }
+      if (mutation == 8) opening.readLoans = {forged.loan + 99};
+      if (mutation == 9) opening.readLoans.push_back(opening.readLoans.front());
+      if (mutation == 10) opening.readLoans = {forged.loan};
+      if (mutation == 11) {
+        auto &read = *const_cast<MirLoan *>(body.findLoan(opening.readLoans.front()));
+        read.parent = read.id;
+      }
+      if (mutation == 12) loan.additionalDependencies.front().access = AccessMode::Mutable;
+      if (mutation == 13) anchor.tombstone = true;
+      if (mutation == 14) body.blocks.front().instructions.push_back(anchor);
+      if (mutation == 15) {
+        auto &address = *const_cast<MirPlace *>(body.findPlace(forged.address));
+        address.projections.push_back({.kind = MirProjectionKind::Field, .field = UINT64_MAX});
+      }
+      expect(!shape(forged), "opening shape rejects coordinated field/type/origin/read/anchor forgery");
+    }
+  }
+  const auto returned = stage("main", false, true);
+  for (int mutation = 0; mutation != 6; ++mutation) {
+    auto forged = returned;
+    auto &body = const_cast<MirFunctionInstance *>(forged.program.findFunctionInstance(forged.function))->body;
+    const auto read = body.findLoan(forged.loan)->contentsOpening->readLoans.front();
+    MirInstruction *producer = nullptr;
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Call && instruction.loan == read) producer = &instruction;
+    expect(producer && producer->result, "returned opening retains an exact call producer");
+    auto &value = *const_cast<MirValue *>(body.findValue(*producer->result));
+    if (mutation == 0) value.definitionBlock = 0;
+    if (mutation == 1) value.definition = forged.anchor;
+    if (mutation == 2) body.values.push_back(value);
+    if (mutation == 3) body.blocks.front().instructions.push_back(*producer);
+    if (mutation == 4) producer->lifetimeApplication.bindings.clear();
+    if (mutation == 5) producer->hirValue = 0;
+    expect(!shape(forged), "returned opening cannot fabricate its exact applied call/result identity");
+  }
+}
+
 void checkScopedReceiverOwner() {
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "scoped-receiver-owner.gti", R"gti(
@@ -3406,6 +3616,7 @@ int main() {
              failure->primary.end == targetOffset + std::string("constrained").size() &&
              failure->fixes.empty(),
          "an invocation pointer cannot discard a target outlives requirement or invent a repair");
+  checkReferenceContentsOpeningShape();
   checkReferenceErasureLifetimeAuthority();
   checkReferenceErasureAddressIdentity();
   checkCarrierReferenceShellInputs();

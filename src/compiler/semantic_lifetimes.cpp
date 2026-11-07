@@ -1323,19 +1323,26 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
     }
   }
   if (function.lifetimeContract.receiver.specified()) {
-    // A checked fresh carrier has its own physical shell. Its stored external
-    // owner is a separate dependency, not the receiver's storage identity.
-    // Keep the exact evaluated expression as the HIR materialization witness;
-    // retained places and explicitly supplied receiver places keep their roots.
-    const bool freshReceiver = !receiverPlace && receiver &&
-                               semanticPlace(receiver).root == nullptr &&
-                               freshTemporaryBorrowValue(receiver).eligible;
-    const auto place = receiverPlace ? *receiverPlace
-                     : freshReceiver ? SemanticLoanPlace{}
-                     : receiver ? loanPlace(receiver)
-                                : SemanticLoanPlace{.receiver = true};
-    if (!require(actualRegion(place, receiver),
-                 substitute(function.lifetimeContract.receiver)))
+    // A checked reference receiver carries its own outer region, independently
+    // of the lifetime suppliers retained by its referent. Following loanPlace
+    // here would replace that shell with an external stored-reference owner.
+    auto receiverRegion = !receiverPlace && receiver
+                              ? borrowedExpressionLifetime(receiver) : Lifetime{};
+    if (!receiverRegion.specified()) {
+      // A checked fresh carrier has its own physical shell. Its stored external
+      // owner is a separate dependency, not the receiver's storage identity.
+      // Keep the exact evaluated expression as the HIR materialization witness;
+      // retained places and explicitly supplied receiver places keep their roots.
+      const bool freshReceiver = !receiverPlace && receiver &&
+                                 semanticPlace(receiver).root == nullptr &&
+                                 freshTemporaryBorrowValue(receiver).eligible;
+      const auto place = receiverPlace ? *receiverPlace
+                       : freshReceiver ? SemanticLoanPlace{}
+                       : receiver ? loanPlace(receiver)
+                                  : SemanticLoanPlace{.receiver = true};
+      receiverRegion = actualRegion(place, receiver);
+    }
+    if (!require(receiverRegion, substitute(function.lifetimeContract.receiver)))
       return reject("The method receiver has no checked lifetime origin.");
   }
   for (const auto &bound : function.lifetimeContract.typeBounds) {

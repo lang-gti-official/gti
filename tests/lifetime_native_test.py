@@ -327,6 +327,29 @@ int main() {
   return first + second + third + fourth - 28;
 }
 """,
+    "evaluated_reference_receiver_regions": """
+struct View<lifetime storage> {
+  int&<storage> value;
+  View(int&<storage> input) : value(input) {}
+  int read() { return this.value; }
+  int touch() mut { return this.value; }
+};
+T&<a> forward_reference<T, lifetime a>(T&<a> input) requires outlives<T, a> { return input; }
+int retained<lifetime storage, lifetime shell>(View<storage>&<shell> input) {
+  View<storage>&<shell> same = forward_reference(input);
+  return same.read();
+}
+int forwarded<lifetime storage, lifetime shell>(View<storage>&<shell> input) {
+  return forward_reference(input).read();
+}
+int grouped<lifetime storage, lifetime shell>(View<storage>&<shell> input) { return (input).read(); }
+int sequenced<lifetime storage, lifetime shell>(View<storage>&<shell> input) { return (0, input).read(); }
+int exclusive<lifetime storage, lifetime shell>(mut View<storage>&<shell> input) { return input.touch(); }
+int main() {
+  int input = 7; mut View value{input};
+  return retained(value) + forwarded(value) + grouped(value) + sequenced(value) + exclusive(value) - 35;
+}
+""",
     "complete_scalar_constructor_inputs": """
 int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
   if (first) { return left; }

@@ -487,6 +487,13 @@ and complete supplier identity remain consistent.
 An unavailable definition, differing global suppliers, or an unknown/cyclic
 summary cannot acquire origin authority merely from the `static` result type.
 
+A method call through a checked reference applies that reference's outer region
+to the receiver contract, including retained references and reference-returning
+expressions. External lifetime suppliers do not replace the receiver's shell.
+Fresh owned receivers retain a separate evaluated materialization witness, and
+synthetic calls with an explicit receiver place retain that exact place. This
+region application does not establish the referent's stored contents.
+
 Checked-reference contents remain staged. One explicit semantic adapter reuses
 an entry reference's separately proved Stored fact or records an evaluated
 reference, its full type and active formation read loans. Direct Get projection

@@ -5,6 +5,7 @@
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_editor.h"
+#include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
 #include "gti/callable_lifetimes.h"
 #include "gti/nominal_variance.h"
@@ -126,6 +127,160 @@ int main() { int value = 7; return external(value) - 7; }
     expect(serialized != original && serialized == MirPrinter().print(forged) &&
                serialized.starts_with("mir-v127 "),
            "contents proof identity survives deterministic versioned MIR serialization");
+  }
+}
+void stagedReferenceContentsTransport() {
+  for (const bool copyContents : {false, true}) {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "staged-reference-contents-transport.gti", R"gti(
+struct View<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  View(int&<a> x, int&<b> y) : first(x), second(y) {}
+};
+int read<lifetime a, lifetime b>(View<a, b>& input) {
+)gti" + std::string(copyContents
+          ? "View<a, b> copied = input; return copied.first + copied.second;"
+          : "return input.first + input.second;") + R"gti(
+}
+int main() { int x = 2; int y = 5; View view{x, y}; return read(view) - 7; }
+)gti");
+  // The copy variant has an existing MIR lowering prerequisite. It exercises
+  // transport from checked HIR only; neither variant claims opening admission.
+  expect(checked.hirValid && (copyContents || checked.canGenerateCode()),
+         "source/HIR are valid before staged transport; the direct-read control also verifies MIR");
+  const auto function = std::find_if(checked.hir.functionInstances().begin(),
+      checked.hir.functionInstances().end(), [](const auto &candidate) {
+        return candidate.source && candidate.source->name().lexeme == "read";
+      });
+  expect(function != checked.hir.functionInstances().end() &&
+             function->parameterBindings.size() == 1, "fixture has one exact reference formal");
+  const auto selectedBinding = std::find_if(function->body.bindings.begin(),
+      function->body.bindings.end(), [&](const auto &candidate) {
+        return candidate.id == function->parameterBindings.front();
+      });
+  const auto *binding = selectedBinding == function->body.bindings.end() ? nullptr : &*selectedBinding;
+  expect(binding && binding->info.type.kind == SemanticType::Reference,
+         "fixture formal retains its full checked reference type");
+  const auto value = std::find_if(function->body.values.begin(), function->body.values.end(),
+      [&](const auto &candidate) {
+        return candidate.kind == HirValueKind::Variable &&
+               candidate.symbol == binding->info.symbol;
+      });
+  const auto read = std::find_if(function->body.loans.begin(), function->body.loans.end(),
+      [&](const auto &loan) {
+        return loan.entry && loan.kind == SemanticLoanKind::Reference &&
+               loan.place.root == binding->info.symbol;
+      });
+  const auto stored = std::find_if(function->body.loans.begin(), function->body.loans.end(),
+      [&](const auto &loan) {
+        return loan.entry && loan.kind == SemanticLoanKind::StoredValue &&
+               loan.place.root == binding->info.symbol;
+      });
+  expect(value != function->body.values.end() && read != function->body.loans.end() &&
+             stored != function->body.loans.end() && stored->additionalDependencies.size() == 1,
+         "fixture has independent address and two-field contents authority");
+  SemanticLoanId openingId = 1;
+  for (const auto &loan : function->body.loans)
+    openingId = std::max(openingId, loan.semanticLoan + 1);
+  for (int mutation = 0; mutation != 8; ++mutation) {
+    auto staged = checked.hir;
+    auto &body = const_cast<HirFunctionInstance *>(staged.findFunctionInstance(function->id))->body;
+    HirLoan opening{.semanticLoan = openingId, .kind = SemanticLoanKind::StoredValue,
+                     .referenceContents = SemanticReferenceContentsSource{
+                         openingId, stored->designatedFields},
+                     .access = AccessMode::ReadOnly,
+                     .designatedFields = stored->designatedFields,
+                     .contentsOpening = HirReferenceContentsOpening{
+                         value->id, binding->info.type, {read->semanticLoan}}};
+    for (const auto &field : stored->additionalDependencies)
+      opening.additionalDependencies.push_back({
+          .referenceContents = SemanticReferenceContentsSource{openingId, field.designatedFields},
+          .designatedFields = field.designatedFields, .access = AccessMode::ReadOnly});
+    if (mutation == 1) opening.contentsOpening->reference = body.values.size() + 1;
+    if (mutation == 2) opening.contentsOpening->referenceType.arguments.front() = SemanticType::Int32;
+    if (mutation == 3) opening.contentsOpening->readLoans = {openingId + 10};
+    if (mutation == 4) opening.place = stored->place;
+    if (mutation == 5) opening.referenceContents->openingLoan = read->semanticLoan;
+    if (mutation == 6) opening.additionalDependencies.front() = {
+        .referenceContents = opening.referenceContents,
+        .designatedFields = opening.designatedFields, .access = AccessMode::ReadOnly};
+    if (mutation == 7) opening.contentsOpening->readLoans.push_back(read->semanticLoan);
+    body.loans.push_back(std::move(opening));
+    auto &evaluated = *const_cast<HirValue *>(body.findValue(value->id));
+    evaluated.referenceContentsLoan = openingId;
+    if (copyContents) {
+      SemanticBorrowDependencySet contents;
+      contents.dependencies.push_back({
+          .referenceContents = SemanticReferenceContentsSource{openingId, stored->designatedFields},
+          .designatedFields = stored->designatedFields, .access = AccessMode::ReadOnly,
+          .parent = openingId});
+      for (const auto &field : stored->additionalDependencies)
+        contents.dependencies.push_back({
+            .referenceContents = SemanticReferenceContentsSource{openingId, field.designatedFields},
+            .designatedFields = field.designatedFields, .access = AccessMode::ReadOnly,
+            .parent = openingId});
+      evaluated.borrowDependencies = std::move(contents);
+    }
+    const auto lowered = MirLowerer{}.lower(staged, checked.failureMetadata);
+    expect(!lowered.valid(), "staged contents lowering cannot bypass closed MIR replay gates");
+    const auto *instance = lowered.program.findFunctionInstance(function->id);
+    expect(instance != nullptr, "staged lowering retains the exact function body for diagnostics");
+    const auto found = std::find_if(instance->body.loans.begin(), instance->body.loans.end(),
+        [&](const auto &loan) { return loan.semanticLoan == openingId; });
+    if (mutation != 0) {
+      expect(found == instance->body.loans.end(),
+             "malformed staged contents cannot publish even a partial opening identity");
+      continue;
+    }
+    expect(found != instance->body.loans.end() && found->contentsOpening &&
+               found->kind == MirLoanKind::Stored && found->source == 0 && found->parent == 0 &&
+               !found->storedDependency && !found->lifecycleBound &&
+               found->producedBy == value->id && found->additionalDependencies.size() == 1 &&
+               found->referenceContents == MirReferenceContentsSource{found->id, stored->designatedFields} &&
+               found->contentsOpening->referenceType == binding->info.type,
+           "transport maps tagged field sources to one body-local opening without inventing physical origins");
+    const auto shape = mir_detail::referenceContentsOpeningShape(lowered.program, instance->body, *found);
+    expect(shape && shape->fields.size() == 2,
+           "independent typed shape replay recognizes the lowered exact evaluated-reference opening");
+    const auto &contents = *found->contentsOpening;
+    const auto *place = instance->body.findPlace(contents.reference.place);
+    const auto *authority = instance->body.findLoan(contents.readLoans.front());
+    expect(contents.reference.kind == MirOperandKind::BorrowRead &&
+               contents.reference.type == binding->info.type.arguments.front() &&
+               place && place->type == contents.reference.type &&
+               place->root == MirPlaceRootKind::Binding && place->binding == binding->id &&
+               place->projections.size() == 1 &&
+               place->projections.front().kind == MirProjectionKind::Dereference &&
+               contents.readLoans.size() == 1 && authority &&
+               authority->semanticLoan == read->semanticLoan,
+           "opening retains the evaluated referent address and exact independent read capability");
+    std::size_t definitions = 0;
+    for (const auto &block : instance->body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Borrow && instruction.loan == found->id) {
+          ++definitions;
+          expect(instruction.hirValue == value->id && instruction.operands.size() == 1 &&
+                     instruction.operands.front() == contents.reference,
+                 "opening is explicitly anchored to its evaluated source instruction");
+        }
+    expect(definitions == 1, "one evaluated expression creates exactly one staged opening");
+    if (copyContents)
+      expect(std::any_of(instance->body.values.begin(), instance->body.values.end(),
+          [&](const auto &copied) {
+            return copied.sourceValue == value->id && copied.borrowDependencies &&
+                copied.borrowDependencies->dependencies.size() == 2 &&
+                std::all_of(copied.borrowDependencies->dependencies.begin(),
+                    copied.borrowDependencies->dependencies.end(), [&](const auto &dependency) {
+                      return dependency.source == 0 && dependency.parent == found->id &&
+                          dependency.referenceContents &&
+                          dependency.referenceContents->openingLoan == found->id &&
+                          dependency.referenceContents->fields == dependency.designatedFields;
+                    });
+          }), "copied value facts transport every tagged field without substituting the shell or read loan");
+    expect(!verifyMirBody(instance->body, instance->id).valid(),
+           "transported contents remain closed to context-free body verification");
+  }
   }
 }
 void nestedCarrierPublication() {
@@ -1163,6 +1318,7 @@ void quantifiedNominalLiftInventory() {
 } // namespace
 int main() {
   stagedReferenceContentsMetadata();
+  stagedReferenceContentsTransport();
   nestedCarrierPublication();
   erasedCarrierReturnPublication();
   closureEnvironmentReplay();

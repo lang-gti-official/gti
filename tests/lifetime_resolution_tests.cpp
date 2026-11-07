@@ -3291,6 +3291,103 @@ int main() { return External<static>(global).requireStaticShell(); }
          "a static external referent does not make a fresh receiver's physical shell static");
 }
 
+void testEvaluatedReferenceReceiverRegions() {
+  const auto result = analyze(R"(
+struct View<lifetime storage> {
+  int&<storage> value;
+  View(int&<storage> input) : value(input) {}
+  int read() { return this.value; }
+  int touch() mut { return this.value; }
+};
+T&<a> forward_reference<T, lifetime a>(T&<a> input) requires outlives<T, a> {
+  return input;
+}
+int direct<lifetime storage, lifetime shell>(View<storage>&<shell> input) {
+  return input.read();
+}
+int retained<lifetime storage, lifetime shell>(View<storage>&<shell> input) {
+  View<storage>&<shell> same = forward_reference(input);
+  return same.read();
+}
+int forwarded<lifetime storage, lifetime shell>(View<storage>&<shell> input) {
+  return forward_reference(input).read();
+}
+int grouped<lifetime storage, lifetime shell>(View<storage>&<shell> input) {
+  return (input).read();
+}
+int sequenced<lifetime storage, lifetime shell>(View<storage>&<shell> input) {
+  return (0, input).read();
+}
+int exclusive<lifetime storage, lifetime shell>(mut View<storage>&<shell> input) {
+  return input.touch();
+}
+int main() {
+  int input = 7; mut View value{input};
+  return direct(value) + retained(value) + forwarded(value) + grouped(value) +
+         sequenced(value) + exclusive(value) - 42;
+}
+)");
+  expectValid(result, "a reference receiver applies its checked outer region independently of stored suppliers");
+  for (const auto name : {"direct", "retained", "forwarded", "grouped", "sequenced", "exclusive"}) {
+    const auto *info = function(result, name);
+    const auto *returned = info && info->declaration && info->declaration->body()
+        ? lang::stmtAs<lang::ReturnStmt>(info->declaration->body()->statements().back().get())
+        : nullptr;
+    const auto *call = returned ? lang::exprAs<lang::Call>(returned->value().get()) : nullptr;
+    const auto *member = call ? lang::exprAs<lang::Get>(call->callee().get()) : nullptr;
+    const auto *selected = call ? result.semantics.findCall(*call) : nullptr;
+    const auto *target = selected ? result.semantics.findFunction(selected->function) : nullptr;
+    auto outer = info && !info->parameterTypes.empty()
+                     ? info->parameterTypes.front().referenceLifetime : lang::Lifetime{};
+    if (const auto *forwarded = member ? lang::exprAs<lang::Call>(member->object().get()) : nullptr)
+      if (const auto *identity = result.semantics.findCall(*forwarded))
+        outer = identity->returnType.referenceLifetime;
+    lang::Lifetime appliedReceiver;
+    if (selected && target)
+      for (const auto &[parameter, actual] : selected->lifetimeApplication.bindings)
+        if (parameter == target->lifetimeContract.receiver)
+          appliedReceiver = actual;
+    const bool exactOuter = selected && outer.specified() && appliedReceiver.specified() &&
+        std::find(selected->lifetimeApplication.obligations.begin(),
+                  selected->lifetimeApplication.obligations.end(),
+                  lang::LifetimeBound{outer, appliedReceiver}) !=
+            selected->lifetimeApplication.obligations.end();
+    const bool inventedOrigin = selected && member &&
+        std::any_of(selected->lifetimeApplication.origins.begin(),
+                    selected->lifetimeApplication.origins.end(), [&](const auto &origin) {
+                      return origin.source == member->object().get();
+                    });
+    expect(selected && selected->lifetimeApplication.complete && exactOuter && !inventedOrigin,
+           "reference receiver application retains the evaluated outer region without inventing an owner place");
+  }
+  for (const auto source : {R"(
+struct View<lifetime storage> {
+  int&<storage> value;
+  int read() requires outlives<this, storage> { return this.value; }
+};
+T&<a> forward_reference<T, lifetime a>(T&<a> input) requires outlives<T, a> { return input; }
+int invalid<lifetime storage, lifetime shell>(View<storage>&<shell> input) {
+  View<storage>&<shell> same = forward_reference(input);
+  return same.read();
+}
+int main() { return 0; }
+)", R"(
+struct View<lifetime storage> {
+  int&<storage> value;
+  int read() requires outlives<this, static> { return this.value; }
+};
+T&<a> forward_reference<T, lifetime a>(T&<a> input) requires outlives<T, a> { return input; }
+int invalid<lifetime shell>(View<static>&<shell> input) { return forward_reference(input).read(); }
+int main() { return 0; }
+)"}) {
+    const auto invalid = analyze(source);
+    expect(invalid.syntaxValid && !invalid.semanticValid &&
+               std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                           [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
+           "a stored external region never extends a shorter checked receiver shell");
+  }
+}
+
 void testFixedArityPackCallSelection() {
   const auto result = analyze(R"(
 int choose(int first, int second = 5) { return first + second; }
@@ -4014,6 +4111,7 @@ int main() {
   testSymbolicCallablePackReturns();
   testConsumingExternalResults();
   testFreshReceiverStorageRegions();
+  testEvaluatedReferenceReceiverRegions();
   testFixedArityPackCallSelection();
   testSelectedBaseConstructorInputs();
   testCompleteOrdinaryConstructorInputs();

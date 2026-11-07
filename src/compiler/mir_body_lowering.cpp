@@ -3886,6 +3886,29 @@ private:
 
   [[nodiscard]] std::optional<MirLoanDependency>
   lowerCompleteBorrowDependency(const SemanticLoanDependency &dependency) {
+    if (dependency.referenceContents) {
+      // An evaluated-reference contents selector is a distinct origin, never
+      // a projection of its read capability's physical lifetime-owner place.
+      const auto &selected = *dependency.referenceContents;
+      const auto opening = semanticLoans.find(selected.openingLoan);
+      const auto parent = semanticLoans.find(dependency.parent);
+      if (dependency.place != SemanticLoanPlace{} || dependency.protectsStorage ||
+          dependency.access != AccessMode::ReadOnly ||
+          opening == semanticLoans.end() || parent == semanticLoans.end())
+        return std::nullopt;
+      const auto *group = output.findLoan(opening->second);
+      if (!group || !group->contentsOpening)
+        return std::nullopt;
+      const MirReferenceContentsSource source{opening->second, selected.fields};
+      const bool present = group->referenceContents == source || std::any_of(
+          group->additionalDependencies.begin(), group->additionalDependencies.end(),
+          [&](const auto &field) { return field.referenceContents == source; });
+      if (!present)
+        return std::nullopt;
+      return MirLoanDependency{.parent = parent->second, .referenceContents = source,
+                               .designatedFields = dependency.designatedFields,
+                               .access = dependency.access, .conditions = dependency.conditions};
+    }
     if (!dependency.place.valid())
       return std::nullopt;
     MirLoanId parent = 0;
@@ -5996,7 +6019,112 @@ private:
     checkedPlacePrefixes.insert(value.id);
   }
 
+  void emitReferenceContentsOpening(HirValueId id) {
+    const auto *value = findValue(id);
+    if (!value || !value->referenceContentsLoan || terminated())
+      return;
+    const auto *recorded = source.findLoan(value->referenceContentsLoan);
+    if (!recorded || recorded->semanticLoan != value->referenceContentsLoan ||
+        !recorded->contentsOpening || recorded->contentsOpening->reference != id ||
+        recorded->kind != SemanticLoanKind::StoredValue || recorded->entry ||
+        recorded->parent || recorded->storedDependency || recorded->lifecycleBound ||
+        recorded->place != SemanticLoanPlace{} || recorded->referenceSelection ||
+        !recorded->carriers.empty() || !recorded->conditions.empty() ||
+        recorded->access != AccessMode::ReadOnly) {
+      valid = false;
+      return;
+    }
+    const auto &opening = *recorded->contentsOpening;
+    if (opening.referenceType.kind != SemanticType::Reference ||
+        opening.referenceType.arguments.size() != 1 ||
+        opening.referenceType.arguments.front() != value->info.type ||
+        value->info.category != ValueCategory::Place || opening.readLoans.empty()) {
+      valid = false;
+      return;
+    }
+    if (const auto found = semanticLoans.find(recorded->semanticLoan);
+        found != semanticLoans.end()) {
+      const auto *existing = output.findLoan(found->second);
+      if (!existing || !existing->contentsOpening || existing->producedBy != id ||
+          existing->contentsOpening->referenceType != opening.referenceType)
+        valid = false;
+      return;
+    }
+    // The source evaluation has completed, including any selected call/index.
+    // Preserve its actual referent place. No origin loan is an address recipe.
+    const auto place = placeForValue(id);
+    const auto *referent = output.findPlace(place);
+    if (!referent || referent->type != opening.referenceType.arguments.front() ||
+        scopes.empty()) {
+      valid = false;
+      return;
+    }
+    MirReferenceContentsOpening loweredOpening{
+        .reference = {.kind = MirOperandKind::BorrowRead, .place = place,
+                      .type = referent->type},
+        .referenceType = opening.referenceType};
+    for (const auto read : opening.readLoans) {
+      const auto found = semanticLoans.find(read);
+      if (!read || found == semanticLoans.end() || !output.findLoan(found->second) ||
+          std::find(loweredOpening.readLoans.begin(), loweredOpening.readLoans.end(),
+                    found->second) != loweredOpening.readLoans.end()) {
+        valid = false;
+        return;
+      }
+      loweredOpening.readLoans.push_back(found->second);
+    }
+    const MirLoanId next = output.loans.size() + 1;
+    const auto lowerField = [&](const SemanticLoanDependency &field)
+        -> std::optional<MirLoanDependency> {
+      if (field.place != SemanticLoanPlace{} || field.parent || field.protectsStorage ||
+          !field.referenceContents ||
+          field.referenceContents->openingLoan != recorded->semanticLoan ||
+          field.referenceContents->fields != field.designatedFields ||
+          field.designatedFields.empty() || !isWellFormedBorrowPath(field.designatedFields) ||
+          !field.conditions.empty() || field.access != AccessMode::ReadOnly)
+        return std::nullopt;
+      return MirLoanDependency{
+          .referenceContents = MirReferenceContentsSource{next, field.designatedFields},
+          .designatedFields = field.designatedFields, .access = field.access};
+    };
+    const auto first = lowerField({.referenceContents = recorded->referenceContents,
+                                   .designatedFields = recorded->designatedFields,
+                                   .access = recorded->access});
+    if (!first) { valid = false; return; }
+    std::vector<MirLoanDependency> additional;
+    for (const auto &field : recorded->additionalDependencies) {
+      const auto lowered = lowerField(field);
+      if (!lowered || lowered->designatedFields == first->designatedFields ||
+          std::any_of(additional.begin(), additional.end(), [&](const auto &previous) {
+            return previous.designatedFields == lowered->designatedFields;
+          })) {
+        valid = false;
+        return;
+      }
+      additional.push_back(*lowered);
+    }
+    // Staged transport only. HIR and MIR still reject all opening metadata
+    // until independent instruction-level contents/permission replay exists.
+    const auto reference = loweredOpening.reference;
+    output.loans.push_back({.id = next, .semanticLoan = recorded->semanticLoan,
+                            .kind = MirLoanKind::Stored,
+                            .referenceContents = first->referenceContents,
+                            .additionalDependencies = std::move(additional),
+                            .contentsOpening = std::move(loweredOpening),
+                            .access = AccessMode::ReadOnly, .producedBy = id,
+                            .designatedFields = first->designatedFields});
+    semanticLoans.emplace(recorded->semanticLoan, next);
+    scopes.back().loans.push_back(next);
+    (void)appendInstruction({.kind = MirInstructionKind::Borrow, .hirValue = id,
+                             .operands = {reference}, .loan = next, .info = value->info});
+  }
+
   void emitPlaceDependencies(HirValueId id, bool checkedPrefix = false) {
+    emitPlaceDependenciesCore(id, checkedPrefix);
+    emitReferenceContentsOpening(id);
+  }
+
+  void emitPlaceDependenciesCore(HirValueId id, bool checkedPrefix) {
     const HirValue *value = findValue(id);
     if (value == nullptr) {
       valid = false;

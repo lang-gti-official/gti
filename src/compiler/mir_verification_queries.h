@@ -384,6 +384,14 @@ textAddressResultLoan(const MirBody &body, const MirInstruction &instruction,
 [[nodiscard]] ReferenceSupplierQuery referenceSupplierPaths(
     const MirProgram &program, const SemanticType &type);
 
+// Staged structural profile only: exact evaluated reference type/address
+// shape, complete direct unconditional shared fields, explicit source tags and
+// finite read ancestry. This does not prove that the reads authorize this
+// address, dominate formation or remain active; it grants no alias, lifetime,
+// contents-flow or execution permission. The admission guards remain closed.
+[[nodiscard]] std::optional<ReferenceContentsInventory>
+referenceContentsOpeningShape(const MirProgram &, const MirBody &, const MirLoan &);
+
 // Detect the staged checked-reference contents vocabulary before legacy
 // physical-place consumers can mistake an absent place for absent provenance.
 [[nodiscard]] bool hasReferenceContents(const MirBorrowDependencySet &dependencies);

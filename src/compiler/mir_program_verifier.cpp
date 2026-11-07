@@ -10040,6 +10040,265 @@ ReferenceSupplierQuery mir_detail::referenceSupplierPaths(
   });
 }
 
+std::optional<ReferenceContentsInventory>
+mir_detail::referenceContentsOpeningShape(const MirProgram &program,
+                                           const MirBody &body,
+                                           const MirLoan &loan) {
+  // This query deliberately does not consume flow state. Success describes
+  // typed structure only; formation must separately prove the evaluated read,
+  // its capabilities, dominance, lifetime obligations and current contents.
+  const auto uniqueLoan = [&](MirLoanId id) -> const MirLoan * {
+    const auto *found = body.findLoan(id);
+    return found && found->id == id &&
+                   std::count_if(body.loans.begin(), body.loans.end(),
+                       [&](const auto &item) { return item.id == id; }) == 1
+        ? found : nullptr;
+  };
+  const auto uniquePlace = [&](MirPlaceId id) -> const MirPlace * {
+    const auto *found = body.findPlace(id);
+    return found && found->id == id &&
+                   std::count_if(body.places.begin(), body.places.end(),
+                       [&](const auto &item) { return item.id == id; }) == 1
+        ? found : nullptr;
+  };
+  const auto fullReference = [](const SemanticType &type) {
+    return type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
+           type.referenceLifetime.specified() &&
+           (type.referenceAccess == AccessMode::ReadOnly ||
+            type.referenceAccess == AccessMode::Mutable) &&
+           type == SemanticType::referenceTo(type.arguments.front(),
+                                             type.referenceAccess, type.referenceLifetime);
+  };
+  if (uniqueLoan(loan.id) != &loan || !loan.contentsOpening ||
+      loan.kind != MirLoanKind::Stored || loan.entry || loan.escapes ||
+      loan.parent || loan.storedDependency || loan.twoPhase || loan.lifecycleBound ||
+      !loan.storedPath.empty() || loan.referenceSelection || !loan.carriers.empty() ||
+      loan.contentsOpening->readLoans.empty())
+    return std::nullopt;
+  const auto &opening = *loan.contentsOpening;
+  const auto &operand = opening.reference;
+  const auto *place = uniquePlace(operand.place);
+  if (!fullReference(opening.referenceType) || !place || place->foreignStorage ||
+      (operand.kind != MirOperandKind::BorrowRead && operand.kind != MirOperandKind::BorrowWrite) ||
+      operand.value || operand.loan || operand.literal ||
+      !equivalentLifetimeTypes(operand.type, place->type) ||
+      (operand.kind == MirOperandKind::BorrowWrite && place->access != AccessMode::Mutable))
+    return std::nullopt;
+  const MirInstruction *anchor = nullptr;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions) {
+      if (instruction.loan != loan.id || instruction.kind == MirInstructionKind::EndBorrow)
+        continue;
+      if (anchor || instruction.tombstone || instruction.kind != MirInstructionKind::Borrow ||
+          !loan.producedBy || instruction.hirValue != loan.producedBy ||
+          instruction.operands.size() != 1 || instruction.operands.front() != operand ||
+          instruction.result || instruction.destination || instruction.receiver ||
+          instruction.info.category != ValueCategory::Place ||
+          !equivalentLifetimeTypes(instruction.info.type, place->type))
+        return std::nullopt;
+      anchor = &instruction;
+    }
+  if (!anchor)
+    return std::nullopt;
+
+  std::optional<SemanticType> reference;
+  const auto projectedReference = [&](const SemanticType &root, AccessMode access,
+                                       MirBorrowPathRoot role)
+      -> std::optional<SemanticType> {
+    const auto path = borrowPathForProjections(program, root, access,
+        place->projections, {}, {}, role);
+    const auto view = path ? walkBorrowPath(program, root, access, *path, {}, role)
+                           : std::nullopt;
+    if (!path || !view || !view->payloadSelections.empty() ||
+        view->referenceCrossings.empty() ||
+        !equivalentLifetimeTypes(view->type, place->type))
+      return std::nullopt;
+    const auto &last = view->referenceCrossings.back();
+    if (last.projectionOffset + 1 != place->projections.size() ||
+        last.pathOffset != path->size() || !fullReference(last.reference))
+      return std::nullopt;
+    return last.reference;
+  };
+  if (place->root == MirPlaceRootKind::Binding || place->root == MirPlaceRootKind::This) {
+    if (place->value || place->loan || place->temporary ||
+        (place->root == MirPlaceRootKind::Binding && !place->binding))
+      return std::nullopt;
+    const MirPlace *root = nullptr;
+    for (const auto &candidate : body.places) {
+      if (candidate.root != place->root || candidate.binding != place->binding ||
+          candidate.symbol != place->symbol || candidate.capture != place->capture ||
+          !candidate.projections.empty())
+        continue;
+      if (candidate.foreignStorage || candidate.value || candidate.loan || candidate.temporary ||
+          (root && (root->type != candidate.type || root->access != candidate.access ||
+                    root->key != candidate.key)))
+        return std::nullopt;
+      root = &candidate;
+    }
+    if (!root || root->key.has_value() != place->key.has_value())
+      return std::nullopt;
+    const auto role = root->type.kind == SemanticType::Reference
+        ? MirBorrowPathRoot::PhysicalReference : MirBorrowPathRoot::Value;
+    if (role == MirBorrowPathRoot::PhysicalReference && !fullReference(root->type))
+      return std::nullopt;
+    reference = projectedReference(root->type, root->access, role);
+    if (root->key) {
+      const auto path = borrowPathForProjections(program, root->type, root->access,
+          place->projections, {}, {}, role);
+      if (!path) return std::nullopt;
+      auto key = *root->key;
+      key.projections.insert(key.projections.end(), path->begin(), path->end());
+      if (*place->key != key) return std::nullopt;
+    }
+  } else if (place->root == MirPlaceRootKind::Loan) {
+    if (place->binding || place->symbol || place->capture || place->temporary ||
+        place->value || place->key)
+      return std::nullopt;
+    const auto *address = uniqueLoan(place->loan);
+    if (!address || address->kind != MirLoanKind::CallResult)
+      return std::nullopt;
+    const MirInstruction *producer = nullptr;
+    const MirBlock *producerBlock = nullptr;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.loan != address->id || instruction.kind == MirInstructionKind::EndBorrow)
+          continue;
+        if (producer || instruction.tombstone || instruction.kind != MirInstructionKind::Call ||
+            instruction.hirValue != address->producedBy || !address->producedBy ||
+            !instruction.result || instruction.info.category != ValueCategory::Place)
+          return std::nullopt;
+        producer = &instruction;
+        producerBlock = &block;
+      }
+    const auto signature = producer ? instantiateMirLifetimeTarget(program, *producer) : std::nullopt;
+    const auto *value = producer ? body.findValue(*producer->result) : nullptr;
+    if (!signature || !fullReference(signature->returnType) || !value ||
+        value->id != *producer->result || value->definition != producer->id ||
+        value->definitionBlock != producerBlock->id || value->info != producer->info ||
+        value->sourceValue != producer->hirValue ||
+        !equivalentLifetimeTypes(producer->info.type, signature->returnType.arguments.front()) ||
+        address->access != signature->returnType.referenceAccess)
+      return std::nullopt;
+    std::size_t definitions = 0, results = 0;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions) {
+        definitions += instruction.id == producer->id;
+        results += instruction.result == producer->result;
+      }
+    if (definitions != 1 || results != 1 ||
+        std::count_if(body.blocks.begin(), body.blocks.end(),
+            [&](const auto &block) { return block.id == producerBlock->id; }) != 1 ||
+        std::count_if(body.values.begin(), body.values.end(),
+            [&](const auto &item) { return item.id == value->id; }) != 1)
+      return std::nullopt;
+    reference = place->projections.empty()
+        ? std::optional{signature->returnType}
+        : projectedReference(signature->returnType.arguments.front(),
+                             signature->returnType.referenceAccess, MirBorrowPathRoot::Value);
+  } else {
+    return std::nullopt;
+  }
+  if (!reference || !equivalentLifetimeTypes(*reference, opening.referenceType) ||
+      !equivalentLifetimeTypes(reference->arguments.front(), place->type) ||
+      (place->access == AccessMode::Mutable && reference->referenceAccess != AccessMode::Mutable))
+    return std::nullopt;
+
+  const auto direct = findStoredCarrierReferenceInventory(program, reference->arguments.front());
+  const auto alternatives = findStoredCarrierAlternativeInventory(program, reference->arguments.front());
+  if (!direct || direct->empty() || !alternatives || !alternatives->empty() ||
+      direct->size() != 1 + loan.additionalDependencies.size())
+    return std::nullopt;
+  BorrowInventoryBudget budget;
+  ReferenceContentsInventory inventory;
+  std::vector<const BorrowPath *> paths;
+  for (const auto &field : *direct) {
+    if (!budget.consume(1 + field.fields.size()) || field.fields.empty() ||
+        !isWellFormedBorrowPath(field.fields) || !fullReference(field.reference) ||
+        field.reference.referenceAccess != AccessMode::ReadOnly || !field.conditions.empty() ||
+        std::any_of(paths.begin(), paths.end(), [&](const auto *path) { return *path == field.fields; }))
+      return std::nullopt;
+    paths.push_back(&field.fields);
+    inventory.fields.push_back({.fields = field.fields, .reference = field.reference});
+  }
+  std::vector<bool> selected(direct->size());
+  const auto select = [&](MirPlaceId source, MirLoanId parent, AccessMode access,
+                           const std::optional<MirReferenceContentsSource> &contents,
+                           const BorrowPath &fields,
+                           const std::vector<BorrowDependencyCondition> &conditions) {
+    if (source || parent || access != AccessMode::ReadOnly || !contents ||
+        contents->openingLoan != loan.id || contents->fields != fields || !conditions.empty())
+      return false;
+    for (std::size_t index = 0; index < direct->size(); ++index)
+      if ((*direct)[index].fields == fields) {
+        if (selected[index]) return false;
+        selected[index] = true;
+        return true;
+      }
+    return false;
+  };
+  if (!select(loan.source, loan.parent, loan.access, loan.referenceContents,
+              loan.designatedFields, loan.conditions))
+    return std::nullopt;
+  for (const auto &dependency : loan.additionalDependencies)
+    if (!select(dependency.source, dependency.parent, dependency.access,
+                dependency.referenceContents, dependency.designatedFields, dependency.conditions))
+      return std::nullopt;
+
+  std::unordered_set<MirLoanId> roots, visiting, checked;
+  struct Read { MirLoanId id; std::size_t depth; bool leaving; };
+  std::vector<Read> pending;
+  for (const auto id : opening.readLoans) {
+    if (!id || !roots.insert(id).second) return std::nullopt;
+    pending.push_back({id, 0, false});
+  }
+  while (!pending.empty()) {
+    if (!budget.consume()) return std::nullopt;
+    const auto next = pending.back();
+    pending.pop_back();
+    if (!next.id || checked.contains(next.id)) continue;
+    if (next.leaving) {
+      visiting.erase(next.id);
+      checked.insert(next.id);
+      continue;
+    }
+    const auto *authority = uniqueLoan(next.id);
+    if (next.id == loan.id || next.depth >= borrowInventoryDepthLimit || !authority ||
+        !visiting.insert(next.id).second || (authority->lifecycleBound && !authority->entry))
+      return std::nullopt;
+    pending.push_back({next.id, next.depth, true});
+    const auto append = [&](MirLoanId id) { pending.push_back({id, next.depth + 1, false}); };
+    const auto origin = [&](MirPlaceId source,
+                             const std::optional<MirReferenceContentsSource> &contents,
+                             const BorrowPath &fields) {
+      if (contents) {
+        const auto *definition = uniqueLoan(contents->openingLoan);
+        if (source || !definition || !definition->contentsOpening || contents->fields.empty() ||
+            !isWellFormedBorrowPath(contents->fields))
+          return false;
+        if (contents->openingLoan != authority->id)
+          append(contents->openingLoan);
+        else if (!authority->contentsOpening)
+          return false;
+        return true;
+      }
+      return source ? uniquePlace(source) != nullptr
+                    : authority->entry && authority->kind == MirLoanKind::Stored && !fields.empty();
+    };
+    if (!origin(authority->source, authority->referenceContents, authority->designatedFields))
+      return std::nullopt;
+    append(authority->parent);
+    append(authority->storedDependency);
+    for (const auto &dependency : authority->additionalDependencies) {
+      if (!origin(dependency.source, dependency.referenceContents, dependency.designatedFields))
+        return std::nullopt;
+      append(dependency.parent);
+    }
+    if (authority->contentsOpening)
+      for (const auto id : authority->contentsOpening->readLoans) append(id);
+  }
+  return inventory;
+}
+
 mir_detail::MirDebugEntryPlaces
 mir_detail::debugEntryPlaces(const MirProgram &program,
                              MirBodyAddress address) {
