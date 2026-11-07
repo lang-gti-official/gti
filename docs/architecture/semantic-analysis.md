@@ -244,6 +244,17 @@ field dependencies do not replace that loan. Mapping the exact unprojected
 reference requires no enumeration of an opaque referent's contents. Mapping
 an external stored field still requires a complete typed path and guards.
 
+The staged reference-contents schema distinguishes a reference's address loan
+from an external reference read from its typed referent. An opening names the
+evaluated reference and its read capabilities; a contents source names that
+opening and an exact structural field path, with no lifetime-supplier place.
+The finite structural supplier query retains each crossed reference and enum
+guard. Unknown, cyclic and exhausted queries publish no partial path inventory.
+This groundwork does not yet enable source openings: HIR rejects populated
+contents facts until independent MIR formation, access, mutation and cleanup
+replay is implemented. Recursive supplier graphs and compact selectors remain
+required work; existing direct recursive storage queries are unchanged.
+
 Returning the address of a field is checked independently from copying its
 value. An ordinary owned field can have a known-empty stored-reference set
 while its address still borrows the containing object. Reference-return

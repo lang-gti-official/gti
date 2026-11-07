@@ -3227,7 +3227,7 @@ private:
           if (lowered.completeBorrow) {
             ensurePlaceDomain(body);
             for (auto &dependency : lowered.completeBorrow->dependencies)
-              dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+              qualifyLoanDependency(dependency, body.placeDomain);
           }
         }
         initializers.push_back(std::move(lowered));
@@ -3740,6 +3740,18 @@ private:
     return place;
   }
 
+  void qualifyLoanDependency(SemanticLoanDependency &dependency,
+                             PlaceDomain domain) {
+    if (dependency.referenceContents) {
+      // Contents are selected from the evaluated reference in an opening.
+      // Qualifying an empty owner place would invent a second source identity.
+      if (dependency.place != SemanticLoanPlace{})
+        lifecycleValid = false;
+      return;
+    }
+    dependency.place = qualifyPlace(dependency.place, domain);
+  }
+
   [[nodiscard]] static PlaceKey
   qualifyBorrowPlace(const BorrowOriginPlace &place, PlaceDomain domain) {
     return {
@@ -3766,6 +3778,12 @@ private:
     }
     std::unordered_set<SemanticLoanId> included;
     std::vector<SemanticLoanId> pending;
+    const auto requireDependency = [&](const SemanticLoanDependency &dependency) {
+      if (dependency.parent)
+        pending.push_back(dependency.parent);
+      if (dependency.referenceContents)
+        pending.push_back(dependency.referenceContents->openingLoan);
+    };
     for (const SemanticLoanInfo &loan : model.loans()) {
       if ((declaration != nullptr && loan.entryDeclaration == declaration) ||
           (loan.entry && std::any_of(captures.begin(), captures.end(),
@@ -3779,19 +3797,18 @@ private:
         pending.push_back(loan.id);
     }
     for (const auto &value : body.values) {
+      if (value.referenceContentsLoan)
+        pending.push_back(value.referenceContentsLoan);
       if (value.borrowDependencies)
         for (const auto &dependency : value.borrowDependencies->dependencies)
-          if (dependency.parent != 0)
-            pending.push_back(dependency.parent);
+          requireDependency(dependency);
       for (const auto &dependency : value.captureBorrowDependencies)
-        if (dependency.parent != 0)
-          pending.push_back(dependency.parent);
+        requireDependency(dependency);
     }
     for (const auto &initializer : initializers)
       if (initializer.completeBorrow)
         for (const auto &dependency : initializer.completeBorrow->dependencies)
-          if (dependency.parent)
-            pending.push_back(dependency.parent);
+          requireDependency(dependency);
     while (!pending.empty()) {
       const SemanticLoanId id = pending.back();
       pending.pop_back();
@@ -3802,9 +3819,13 @@ private:
         pending.push_back(loan->parent);
       if (loan->storedDependency != 0)
         pending.push_back(loan->storedDependency);
+      if (loan->referenceContents)
+        pending.push_back(loan->referenceContents->openingLoan);
+      if (loan->contentsOpening)
+        pending.insert(pending.end(), loan->contentsOpening->readLoans.begin(),
+                       loan->contentsOpening->readLoans.end());
       for (const auto &dependency : loan->additionalDependencies)
-        if (dependency.parent != 0)
-          pending.push_back(dependency.parent);
+        requireDependency(dependency);
     }
     for (const SemanticLoanInfo &loan : model.loans()) {
       if (!included.contains(loan.id))
@@ -3813,15 +3834,19 @@ private:
                       .kind = loan.kind,
                       .parent = loan.parent,
                       .storedDependency = loan.storedDependency,
-                      .place = qualifyPlace(loan.place, body.placeDomain),
+                      .place = loan.referenceContents ? SemanticLoanPlace{}
+                                  : qualifyPlace(loan.place, body.placeDomain),
+                      .referenceContents = loan.referenceContents,
                       .access = loan.access,
                       .designatedFields = loan.designatedFields,
                       .conditions = loan.conditions,
                       .additionalDependencies = loan.additionalDependencies,
                       .lifecycleBound = loan.lifecycleBound,
                       .entry = loan.entry};
+      if (loan.referenceContents && loan.place != SemanticLoanPlace{})
+        lifecycleValid = false;
       for (auto &dependency : lowered.additionalDependencies) {
-        dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+        qualifyLoanDependency(dependency, body.placeDomain);
       }
       if (loan.referenceSelection) {
         const auto &selection = *loan.referenceSelection;
@@ -3850,6 +3875,25 @@ private:
             selection.carrier == nullptr)
           lifecycleValid = false;
         lowered.referenceSelection = std::move(resolved);
+      }
+      if (loan.contentsOpening) {
+        const auto &opening = *loan.contentsOpening;
+        HirReferenceContentsOpening resolved{
+            .referenceType = opening.referenceType,
+            .readLoans = opening.readLoans};
+        std::size_t matches = 0;
+        for (const auto &value : body.values)
+          if (opening.reference && value.source == opening.reference) {
+            resolved.reference = value.id;
+            ++matches;
+          }
+        // An opening is tied to this body's exact evaluated reference. A
+        // same-typed owner or another concrete instance is not a substitute.
+        if (matches != 1 || loan.kind != SemanticLoanKind::StoredValue ||
+            opening.referenceType.kind != SemanticType::Reference ||
+            opening.referenceType.arguments.size() != 1)
+          lifecycleValid = false;
+        lowered.contentsOpening = std::move(resolved);
       }
       for (const SymbolId carrier : loan.carriers) {
         const auto found = bindings.find(carrier);
@@ -4413,6 +4457,7 @@ private:
                   .place = ownership.place,
                   .ownership = ownership};
     move.borrowDependencies = found->borrowDependencies;
+    move.referenceContentsLoan = model.findReferenceContentsLoan(*expression);
     const HirValueId moveId = move.id;
     body.values.push_back(std::move(move));
     output.program.sourceValueIds[expression.get()].push_back(moveId);
@@ -6070,7 +6115,7 @@ private:
       if (dependencies) {
         value.borrowDependencies = *dependencies;
         for (auto &dependency : value.borrowDependencies->dependencies)
-          dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+          qualifyLoanDependency(dependency, body.placeDomain);
       }
       const HirValueId id = value.id;
       body.values.push_back(std::move(value));
@@ -6152,8 +6197,9 @@ private:
       body.values.back().borrowDependencies = *outputDependencies;
       for (auto &dependency :
            body.values.back().borrowDependencies->dependencies)
-        dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+        qualifyLoanDependency(dependency, body.placeDomain);
     }
+    body.values.back().referenceContentsLoan = model.findReferenceContentsLoan(expression);
     output.program.sourceValueIds[&expression].push_back(id);
     return id;
   }
@@ -6298,7 +6344,7 @@ private:
     if (construction.contextualBorrowDependencies) {
       value.borrowDependencies = construction.contextualBorrowDependencies;
       for (auto &dependency : value.borrowDependencies->dependencies)
-        dependency.place = qualifyPlace(dependency.place, body.placeDomain);
+        qualifyLoanDependency(dependency, body.placeDomain);
     }
     if (emptyProof && emptyProof->unsafeConstruction())
       value.unsafeOperation = UnsafeOperationKind::DeclaredUnsafeConstruction;
@@ -7147,13 +7193,14 @@ private:
       value.borrowDependencies->dependencies.clear();
       for (const auto &dependency : complete->dependencies) {
         auto lowered = dependency;
-        lowered.place = qualifyPlace(dependency.place, body.placeDomain);
+        qualifyLoanDependency(lowered, body.placeDomain);
         value.borrowDependencies->dependencies.push_back(std::move(lowered));
       }
     }
+    value.referenceContentsLoan = model.findReferenceContentsLoan(*raw);
     for (const auto &dependency : model.findCaptureBorrowDependencies(*raw)) {
       auto lowered = dependency;
-      lowered.place = qualifyPlace(dependency.place, body.placeDomain);
+      qualifyLoanDependency(lowered, body.placeDomain);
       value.captureBorrowDependencies.push_back(std::move(lowered));
     }
     if (const auto *call = exprAs<Call>(raw);

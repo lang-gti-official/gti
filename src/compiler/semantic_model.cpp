@@ -2226,6 +2226,7 @@ void SemanticModel::clear() {
   payloadBindings.clear();
   retainedLoans.clear();
   expressionBorrowDependencies.clear();
+  referenceContentsLoans.clear();
   captureBorrowDependencies.clear();
   loanEnds.clear();
   conditionalLoanEnds.clear();
@@ -2699,25 +2700,38 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
   std::size_t borrowedDependencies = 0;
   for (const auto &loan : retainedLoans) {
     borrowedDependencies += loan.conditions.size();
+    if (loan.referenceContents)
+      borrowedDependencies += loan.referenceContents->fields.size();
+    if (loan.contentsOpening)
+      borrowedDependencies += loan.contentsOpening->readLoans.size();
     if (loan.referenceSelection)
       borrowedDependencies += loan.referenceSelection->fields.size() +
                               loan.referenceSelection->conditions.size();
-    for (const auto &dependency : loan.additionalDependencies)
+    for (const auto &dependency : loan.additionalDependencies) {
       borrowedDependencies += dependency.conditions.size();
+      if (dependency.referenceContents)
+        borrowedDependencies += dependency.referenceContents->fields.size();
+    }
   }
   for (const auto &[_, complete] : expressionBorrowDependencies) {
     if (!complete)
       continue;
     borrowedDependencies += complete->dependencies.size();
-    for (const auto &dependency : complete->dependencies)
+    for (const auto &dependency : complete->dependencies) {
       borrowedDependencies += dependency.conditions.size();
+      if (dependency.referenceContents)
+        borrowedDependencies += dependency.referenceContents->fields.size();
+    }
     for (const auto &alternative : complete->possibleAlternatives)
       borrowedDependencies += alternative.conditions.size();
   }
   for (const auto &[_, captures] : captureBorrowDependencies) {
     borrowedDependencies += captures.size();
-    for (const auto &dependency : captures)
+    for (const auto &dependency : captures) {
       borrowedDependencies += dependency.conditions.size();
+      if (dependency.referenceContents)
+        borrowedDependencies += dependency.referenceContents->fields.size();
+    }
   }
   std::size_t lifetimeFacts = 0;
   const auto countLifetimeBody = [&](const auto &bodies) {
@@ -2779,7 +2793,7 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
           fullExpressionOrder.size()) *
              96 +
          (retainedLoans.size() + borrowedDependencies) * 256 +
-         (expressionBorrowDependencies.size() +
+         (expressionBorrowDependencies.size() + referenceContentsLoans.size() +
           captureBorrowDependencies.size()) *
              96 +
          semanticDatabase.symbolRecords.size() * 384 + occurrences * 256 +
@@ -3005,6 +3019,14 @@ SemanticModel::findBorrowDependencySet(const Expr &expression) const {
   return base == nullptr ? nullptr : base->findBorrowDependencySet(expression);
 }
 
+SemanticLoanId
+SemanticModel::findReferenceContentsLoan(const Expr &expression) const {
+  if (const auto found = referenceContentsLoans.find(&expression);
+      found != referenceContentsLoans.end())
+    return found->second.value_or(0);
+  return base == nullptr ? 0 : base->findReferenceContentsLoan(expression);
+}
+
 std::span<const SemanticLoanDependency>
 SemanticModel::findBorrowDependencies(const Expr &expression) const {
   const auto *complete = findBorrowDependencySet(expression);
@@ -3042,6 +3064,16 @@ void SemanticModel::recordBorrowDependencySet(
 
 void SemanticModel::clearBorrowDependencySet(const Expr &expression) {
   expressionBorrowDependencies.insert_or_assign(&expression, std::nullopt);
+}
+
+void SemanticModel::recordReferenceContentsLoan(const Expr &expression,
+                                               SemanticLoanId loan) {
+  referenceContentsLoans.insert_or_assign(
+      &expression, loan ? std::optional{loan} : std::nullopt);
+}
+
+void SemanticModel::clearReferenceContentsLoan(const Expr &expression) {
+  referenceContentsLoans.insert_or_assign(&expression, std::nullopt);
 }
 
 void SemanticModel::recordLoan(SemanticLoanInfo info) {
@@ -3196,6 +3228,7 @@ void SemanticModel::removeLoanCarrier(SemanticLoanId id, SymbolId carrier) {
 void SemanticModel::clearLoans() {
   retainedLoans.clear();
   expressionBorrowDependencies.clear();
+  referenceContentsLoans.clear();
   captureBorrowDependencies.clear();
   loanEnds.clear();
   conditionalLoanEnds.clear();

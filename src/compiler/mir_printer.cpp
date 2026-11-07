@@ -284,7 +284,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v125 valid=" << program.valid() << '\n';
+    output << "mir-v126 valid=" << program.valid() << '\n';
     if (program.requiresNativeObjectLayout())
       output << "native-object-layout\n";
     for (const auto &recipe : program.nominalVarianceRecipes()) {
@@ -1541,10 +1541,9 @@ private:
   }
 
   void callableSignature(const MirCallableSignature &value) {
-    if (!value.lifetimeArguments.empty() ||
-        value.lifetimeApplication != MirLifetimeApplication{}) {
+    if (value.lifetimeApplication != MirLifetimeApplication{}) {
       output << "lifetime-application=";
-      lifetimeApplication(value.lifetimeArguments, value.lifetimeApplication);
+      lifetimeApplication({}, value.lifetimeApplication);
     }
     output << "signature(return=";
     type(value.returnType);

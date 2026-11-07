@@ -2,6 +2,7 @@
 #include "gti/borrow_conditions.h"
 #include "gti/callable_lifetimes.h"
 #include "gti/generic_type_patterns.h"
+#include "gti/reference_contents.h"
 
 #include <array>
 #include <cstdlib>
@@ -19,6 +20,135 @@ lang::SemanticType reference(lang::Lifetime region,
   auto type = lang::SemanticType::referenceTo(lang::SemanticType::Int32, access);
   type.referenceLifetime = region;
   return type;
+}
+
+void testReferenceSupplierQueries() {
+  using namespace lang;
+  const auto external = Lifetime::parameter(1);
+  const auto owner = Lifetime::parameter(2);
+  const auto view = SemanticType::classType(31);
+  const auto wrapper = SemanticType::classType(32);
+  const auto viewReference = [&] {
+    auto type = SemanticType::referenceTo(view);
+    type.referenceLifetime = owner;
+    return type;
+  }();
+  const auto externalReference = reference(external, AccessMode::Mutable);
+  const auto direct = [&](const SemanticType &type)
+      -> std::optional<ReferenceContentsInventory> {
+    if (type == wrapper)
+      return ReferenceContentsInventory{{{{fieldProjection(321)}, viewReference, {}}}};
+    if (type == view)
+      return ReferenceContentsInventory{{{{fieldProjection(311)}, externalReference, {}}}};
+    if (type == SemanticType::Int32)
+      return ReferenceContentsInventory{};
+    return std::nullopt;
+  };
+  const auto composed = collectReferenceSupplierPaths(wrapper, direct);
+  expect(composed.status == ReferenceSupplierQueryStatus::Complete &&
+             composed.paths.size() == 2 &&
+             composed.paths[0].fields == BorrowPath{fieldProjection(321)} &&
+             composed.paths[0].reference == viewReference &&
+             composed.paths[0].crossings.empty() &&
+             composed.paths[1].fields == BorrowPath{fieldProjection(321), fieldProjection(311)} &&
+             composed.paths[1].reference == externalReference &&
+             composed.paths[1].crossings.size() == 1 &&
+             composed.paths[1].crossings.front().fields == BorrowPath{fieldProjection(321)} &&
+             composed.paths[1].crossings.front().reference == viewReference,
+         "finite supplier composition preserves the outer shell and nested external reference separately");
+  expect(direct(wrapper)->fields.size() == 1,
+         "supplier traversal must not expand the direct value-storage inventory");
+  const auto scalar = collectReferenceSupplierPaths(SemanticType::Int32, direct);
+  expect(scalar.status == ReferenceSupplierQueryStatus::Complete && scalar.paths.empty(),
+         "only an authoritative known-empty direct inventory yields an empty complete supplier query");
+
+  const auto enumeration = SemanticType::enumType(40);
+  const BorrowPath prefix{baseProjection(32, 2), fieldProjection(322), constantIndexProjection(3)};
+  const BorrowDependencyCondition outer{.subobject = {baseProjection(32, 2)},
+                                        .enumeration = enumeration, .variant = 1};
+  const BorrowDependencyCondition inner{.subobject = {}, .enumeration = enumeration, .variant = 0};
+  const auto guarded = collectReferenceSupplierPaths(wrapper, [&](const SemanticType &type)
+      -> std::optional<ReferenceContentsInventory> {
+    if (type == wrapper) return ReferenceContentsInventory{{{prefix, viewReference, {outer}}}};
+    if (type == view)
+      return ReferenceContentsInventory{{{{fieldProjection(311)}, reference(external), {inner}}}};
+    return direct(type);
+  });
+  auto nestedCondition = inner;
+  nestedCondition.subobject = prefix;
+  expect(guarded.status == ReferenceSupplierQueryStatus::Complete && guarded.paths.size() == 2 &&
+             guarded.paths[1].conditions == std::vector<BorrowDependencyCondition>{outer, nestedCondition} &&
+             guarded.paths[1].fields == BorrowPath{baseProjection(32, 2), fieldProjection(322),
+                                                  constantIndexProjection(3), fieldProjection(311)},
+         "supplier composition retains exact base/index selectors and ancestor guard identities");
+
+  const auto unknown = collectReferenceSupplierPaths(wrapper, [&](const SemanticType &type)
+      -> std::optional<ReferenceContentsInventory> {
+    if (type == view) return std::nullopt;
+    return direct(type);
+  });
+  expect(unknown.status == ReferenceSupplierQueryStatus::Unknown && unknown.paths.empty(),
+         "unknown nested contents cannot publish a partially complete supplier prefix");
+  const auto cyclic = collectReferenceSupplierPaths(view, [&](const SemanticType &)
+      -> std::optional<ReferenceContentsInventory> {
+    return ReferenceContentsInventory{{{{fieldProjection(311)}, viewReference, {}}}};
+  });
+  expect(cyclic.status == ReferenceSupplierQueryStatus::Cyclic && cyclic.paths.empty(),
+         "recursive contents require a graph selector and cannot masquerade as empty or complete paths");
+  const auto mutual = collectReferenceSupplierPaths(wrapper, [&](const SemanticType &type)
+      -> std::optional<ReferenceContentsInventory> {
+    if (type == wrapper) return direct(type);
+    auto back = SemanticType::referenceTo(wrapper);
+    back.referenceLifetime = owner;
+    return ReferenceContentsInventory{{{{fieldProjection(311)}, back, {}}}};
+  });
+  expect(mutual.status == ReferenceSupplierQueryStatus::Cyclic && mutual.paths.empty(),
+         "mutually recursive contents cannot publish the preceding acyclic prefix");
+
+  const auto growing = collectReferenceSupplierPaths(SemanticType::classType(51, {SemanticType::Int32}),
+      [&](const SemanticType &type) -> std::optional<ReferenceContentsInventory> {
+        auto next = SemanticType::referenceTo(SemanticType::classType(51, {type}));
+        next.referenceLifetime = owner;
+        return ReferenceContentsInventory{{{{fieldProjection(511)}, next, {}}}};
+      });
+  expect(growing.status == ReferenceSupplierQueryStatus::Exhausted && growing.paths.empty(),
+         "nonregular generic recursion exhausts one finite budget without publishing truncated suppliers");
+  std::size_t branchingSteps = 0;
+  const auto branching = collectReferenceSupplierPaths(SemanticType::classType(52),
+      [&](const SemanticType &type) -> std::optional<ReferenceContentsInventory> {
+        ++branchingSteps;
+        auto next = SemanticType::referenceTo(SemanticType::classType(52, {type, type}));
+        next.referenceLifetime = owner;
+        return ReferenceContentsInventory{{{{fieldProjection(521)}, next, {}}}};
+      });
+  expect(branching.status == ReferenceSupplierQueryStatus::Exhausted && branching.paths.empty() &&
+             branchingSteps < 16,
+         "growing type arguments consume the same work budget before unbounded witness copying");
+  ReferenceContentsInventory wide;
+  for (std::size_t i = 0; i < borrowInventoryWorkLimit; ++i)
+    wide.fields.push_back({{constantIndexProjection(i)}, reference(external), {}});
+  const auto exhausted = collectReferenceSupplierPaths(wrapper, [&](const SemanticType &type)
+      -> std::optional<ReferenceContentsInventory> {
+    if (type == wrapper) return wide;
+    return direct(type);
+  });
+  expect(exhausted.status == ReferenceSupplierQueryStatus::Exhausted && exhausted.paths.empty(),
+         "sibling arms share one query work budget");
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto malformed = *direct(wrapper);
+    if (mutation == 0) malformed.fields.front().fields.clear();
+    if (mutation == 1) malformed.fields.front().fields.front() = fieldProjection(0);
+    if (mutation == 2) malformed.fields.front().reference.referenceLifetime = {};
+    if (mutation == 3) malformed.fields.front().reference = SemanticType::Int32;
+    if (mutation == 4) malformed.fields.front().conditions = {{.enumeration = view}};
+    const auto invalid = collectReferenceSupplierPaths(wrapper, [&](const SemanticType &type)
+        -> std::optional<ReferenceContentsInventory> {
+      if (type == wrapper) return malformed;
+      return direct(type);
+    });
+    expect(invalid.status == ReferenceSupplierQueryStatus::Unknown && invalid.paths.empty(),
+           "malformed reference paths, regions and guards fail the entire supplier query");
+  }
 }
 
 void testInlineBorrowPathDisjointness() {
@@ -681,6 +811,7 @@ void testReferenceErasureContracts() {
 }
 
 int main() {
+  testReferenceSupplierQueries();
   testLambdaEnvironmentContracts();
   testInlineBorrowPathDisjointness();
   testBorrowConditionTransport();

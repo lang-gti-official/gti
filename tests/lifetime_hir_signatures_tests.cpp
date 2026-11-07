@@ -15,6 +15,38 @@ void expect(bool condition, const char *message) {
     std::exit(1);
   }
 }
+void unprovedReferenceContents() {
+  const auto result = Frontend({.stopAfter = FrontendPhase::Hir}).analyze(
+      "unproved-reference-contents.gti", "int main() { return 0; }");
+  expect(result.semanticValid && result.hir.valid() &&
+             !result.hir.functionInstances().empty(),
+         "the reference contents mutation control must start from checked HIR");
+  const auto &function = result.hir.functionInstances().front();
+  expect(!function.body.values.empty(), "the contents control needs an evaluated value");
+  for (int mutation = 0; mutation != 6; ++mutation) {
+    auto forged = result.hir;
+    auto &body = const_cast<HirBody &>(forged.findFunctionInstance(function.id)->body);
+    auto &value = body.values.front();
+    const SemanticLoanDependency dependency{
+        .referenceContents = SemanticReferenceContentsSource{
+            .openingLoan = 991, .fields = {fieldProjection(992)}}};
+    if (mutation == 0) value.referenceContentsLoan = 991;
+    if (mutation == 1) value.borrowDependencies = SemanticBorrowDependencySet{{dependency}, {}};
+    if (mutation == 2) value.captureBorrowDependencies = {dependency};
+    if (mutation >= 3) {
+      HirLoan loan{.semanticLoan = 991, .kind = SemanticLoanKind::StoredValue};
+      if (mutation == 3) loan.referenceContents = dependency.referenceContents;
+      if (mutation == 4) loan.contentsOpening = HirReferenceContentsOpening{};
+      if (mutation == 5) loan.additionalDependencies = {dependency};
+      body.loans.push_back(std::move(loan));
+    }
+    const auto proof = verifyHirProgramPlans(result.semantics, forged);
+    expect(std::any_of(proof.errors.begin(), proof.errors.end(), [](const auto &error) {
+      return error == "HIR reference contents require checked opening replay before publication";
+    }), "unproved contents facts cannot disappear at the HIR-to-MIR boundary");
+  }
+}
+
 void preparedReceiverRegion() {
   const auto standardLibrary = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto result = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
@@ -558,6 +590,7 @@ int main() { Count callback = count; return invoke(callback, "text") - 7; }
 }
 } // namespace
 int main() {
+  unprovedReferenceContents();
   preparedReceiverRegion();
   contextualOperatorApplication();
   defaultFieldCallableUniverse();

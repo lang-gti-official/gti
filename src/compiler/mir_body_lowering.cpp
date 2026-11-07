@@ -6455,10 +6455,16 @@ private:
                 .place = runtimePlace,
                 .type = parameter};
       }
+      // The prepared CallInput owns the converted parameter type. Preserve
+      // the addressed referent's actual nested regions on its input, so body
+      // shape and program lifetime replay inspect the same original storage.
+      SemanticType inputType = parameter;
+      if (sameCarrierShape)
+        inputType.arguments.front() = resolved->type;
       return {.kind = MirOperandKind::Loan,
               .place = upcastCarrier ? 0 : runtimePlace,
               .loan = existing,
-              .type = parameter};
+              .type = std::move(inputType)};
     }
     const MirPlaceId place = placeForValue(id);
     return {.kind = parameter.referenceAccess == AccessMode::Mutable
@@ -9211,12 +9217,12 @@ private:
                 output.loans[loan - 1].storedDependency)
           output.loans[loan - 1].parent = 0;
       } else if (shellReference) {
+        // Restoration opens the requested inventory through the exact opaque
+        // input reference. That witness retains its earlier authority; a
+        // coincident underlying supplier cannot replace the input loan.
         output.loans[loan - 1].storedDependency =
-            storedDependencyForPlace(origin);
-        if (output.loans[loan - 1].storedDependency == 0 &&
-            value.restoresReferenceResult &&
-            !value.restoredBorrowFields.empty())
-          output.loans[loan - 1].storedDependency = originLoan;
+            value.restoresReferenceResult && !value.restoredBorrowFields.empty()
+                ? originLoan : storedDependencyForPlace(origin);
         // A text reference may select a literal-backed local. The program
         // verifier independently proves that case from its initialization;
         // every dynamic text source still requires its exact owner witness.
@@ -9541,6 +9547,15 @@ private:
         published.conditions = primary.conditions;
         published.additionalDependencies.assign(complete.begin() + 1,
                                                 complete.end());
+        // An opaque reference has no visible stored inventory. Its complete
+        // address suppliers remain intact; an authority already retained as
+        // the primary parent is not also an independent shell dependency.
+        const auto opaque = hirLifetimeInstanceView(program.classInstances(), value.info.type);
+        if (published.parent && published.storedDependency == published.parent &&
+            value.info.category == ValueCategory::Place && opaque &&
+            opaque->instance->compilerCapability ==
+                CompilerCapabilityTypeKind::ErasedObject)
+          published.storedDependency = 0;
         if (!call.result) {
           valid = false;
           return;
@@ -16332,6 +16347,80 @@ private:
                                             : lambda ? lambda->completeReturnBorrow.has_value() : false;
         MirOperand borrow = referenceOperand(*statement.value, 0,
                                              output.returnType.referenceAccess);
+        // A local carrier may store several independent references. Returning
+        // one field copies that field's shared reference, not the carrier's
+        // whole dependency group. Retain the evaluated field address and its
+        // selected external sources separately; the carrier keeps its group
+        // until ordinary cleanup has finished.
+        const auto *returned = findValue(*statement.value);
+        const auto *carrier = output.findLoan(borrow.loan);
+        if (completeCallableReturn && returned && carrier &&
+            output.returnType.referenceAccess == AccessMode::ReadOnly &&
+            returned->kind == HirValueKind::MemberAccess &&
+            returned->storedReferenceAccess && returned->borrowDependencies &&
+            !returned->borrowDependencies->dependencies.empty() &&
+            returned->borrowDependencies->possibleAlternatives.empty() &&
+            carrier->kind == MirLoanKind::Stored && !carrier->entry &&
+            !carrier->escapes && carrier->storedPath.empty()) {
+          const MirLoan retainedCarrier = *carrier;
+          const MirLoanId carrierId = retainedCarrier.id;
+          const auto &carriers = retainedCarrier.carriers;
+          const MirPlaceId runtime = placeForValue(*statement.value);
+          const auto *place = output.findPlace(runtime);
+          std::vector<MirLoanDependency> selected;
+          bool exact = place && place->root == MirPlaceRootKind::Binding &&
+              std::find(carriers.begin(), carriers.end(), place->binding) != carriers.end();
+          const auto sharedField = [&](const BorrowPath &fields) {
+            const auto prefix = place ? mir_detail::borrowPathProjectionPrefix(
+                place->projections, fields, true) : std::nullopt;
+            const auto *binding = place ? findBinding(place->binding) : nullptr;
+            if (!prefix || *prefix != place->projections.size() || !binding || fields.empty())
+              return false;
+            SemanticType type = binding->info.type;
+            for (const auto &field : fields) {
+              const auto projected = borrowedProjectionType(type, field);
+              if (!projected)
+                return false;
+              type = projected->type;
+            }
+            // Copying a shared reference does not transfer an exclusive
+            // stored reference's capability or lengthen a mutable reborrow.
+            return type.kind == SemanticType::Reference &&
+                   type.referenceAccess == AccessMode::ReadOnly;
+          };
+          exact &= sharedField(retainedCarrier.designatedFields) ||
+              std::any_of(retainedCarrier.additionalDependencies.begin(),
+                          retainedCarrier.additionalDependencies.end(),
+                          [&](const auto &dependency) {
+                            return sharedField(dependency.designatedFields);
+                          });
+          for (const auto &dependency : returned->borrowDependencies->dependencies) {
+            const auto lowered = lowerCompleteBorrowDependency(dependency);
+            if (!lowered || lowered->parent != carrierId ||
+                !lowered->designatedFields.empty() || !lowered->conditions.empty()) {
+              exact = false;
+              break;
+            }
+            auto copied = *lowered;
+            copied.parent = 0;
+            copied.access = AccessMode::ReadOnly;
+            selected.push_back(std::move(copied));
+          }
+          if (exact && !selected.empty()) {
+            const MirLoanId published = createLoan(MirLoanKind::Return,
+                selected.front().source, AccessMode::ReadOnly, *statement.value);
+            auto &loan = output.loans[published - 1];
+            loan.additionalDependencies.assign(std::next(selected.begin()), selected.end());
+            loan.escapes = true;
+            (void)appendInstruction({.kind = MirInstructionKind::Borrow,
+                .hirValue = *statement.value,
+                .operands = {{.kind = MirOperandKind::Loan, .place = runtime,
+                              .loan = carrierId, .type = returned->info.type}},
+                .loan = published, .info = returned->info});
+            borrow = {.kind = MirOperandKind::Loan, .place = runtime,
+                      .loan = published, .type = returned->info.type};
+          }
+        }
         if (borrow.loan != 0) {
           MirLoanId storedCarrierEntry = 0;
           MirLoanId storedCarrierShell = 0;

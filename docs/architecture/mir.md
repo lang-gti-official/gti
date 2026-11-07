@@ -982,7 +982,13 @@ outer region. The attached callable signature is a checked witness, not an
 independent source of bounds. Restoration is explicitly unsafe and additionally
 requires the concrete restored referent to outlive the result region in the
 caller's graph. An opaque input supplies no such validity premise; stored and
-nested callable regions remain scoped and independently checked. The GTI
+nested callable regions remain scoped and independently checked. Reference
+input stages retain the addressed source type before conversion. Complete
+address facts cross a stage only after its exact reference conversion is
+proved. Restoration retains the evaluated opaque input loan, not another loan
+with the same lifetime supplier; wrapper field recipes are instantiated through
+the selected lifetime application. Trusted intrinsic replay preserves the
+input's complete address suppliers without inventing referent contents. The GTI
 function-pointer operation records either one
 safe function instance or one stateless lambda instance, with its exact signature;
 invocation uses the same explicit failure and cleanup protocol as other GTI
@@ -5307,9 +5313,13 @@ may consume it only through the exact closure type and requested fixed-slot
 mapping; a fixed slot cannot become a fresh invocation binder. HIR, MIR and the
 lowered program preserve the same contract, while LLVM uses the instantiated
 capture types and layout. This metadata adds no runtime environment fields.
-Callable descriptors retain their complete lifetime application and compare it
-at every executable call edge; their result and parameter types are checked
-against that application's exact target substitution.
+Callable descriptors retain their complete lifetime application; their result
+and parameter types are checked against that application's exact target
+substitution. Source and HIR keep explicit lifetime argument spelling. MIR
+stores its meaning once in the descriptor's complete application, including
+all fixed choices, inferred bindings and obligations. Executable calls replay
+their own complete application even when optimization removes an invocation
+whose descriptor remains.
 
 An ordinary enum observer and the generated `has_value` observation for
 source-defined propagation use the same schedule. Their materialization may be the

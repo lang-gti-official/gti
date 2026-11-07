@@ -1464,7 +1464,9 @@ struct MirClassInstance {
 struct MirCallableSignature {
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
-  std::vector<Lifetime> lifetimeArguments;
+  // Complete applied semantics. Explicit argument spelling belongs to HIR;
+  // every selected region is already bound in this independently replayed
+  // application, including fixed choices and inferred invocation slots.
   MirLifetimeApplication lifetimeApplication;
   CallableInvocationCapability requiredCapability =
       CallableInvocationCapability::Read;

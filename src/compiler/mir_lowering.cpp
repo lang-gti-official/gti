@@ -439,7 +439,6 @@ MirLowerer::lowerProgram(const HirProgram &source,
         lowered.signatures.push_back(
             {.returnType = signature.returnType,
              .parameterTypes = signature.parameterTypes,
-             .lifetimeArguments = signature.lifetimeArguments,
              .lifetimeApplication =
                  lowerMirLifetimeApplication(signature.lifetimeApplication),
              .requiredCapability = signature.requiredCapability,

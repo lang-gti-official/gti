@@ -519,9 +519,10 @@ int main() { return observeFixed(fixed) + observePair(choose) - 10; }
           auto &descriptor = changed->callableParameters[parameter].signatures[index];
           if (mutation == 0) descriptor.lifetimeApplication.complete = false;
           if (mutation == 1) descriptor.parameterTypes.front().referenceLifetime = Lifetime::staticLifetime();
-          if (mutation == 2) descriptor.lifetimeArguments.push_back(Lifetime::staticLifetime());
+          if (mutation == 2) descriptor.lifetimeApplication.bindings.push_back(
+              {Lifetime::parameter(UINT64_MAX - 500), Lifetime::staticLifetime()});
           expect(!verifyMirProgram(broken).valid(),
-                 "callable descriptors independently reject missing application, retagged input and invented explicit region arguments");
+                 "callable descriptors independently reject missing application, retagged input and invented region bindings");
         }
       }
   expect(appliedDescriptor, "item fixture publishes a concrete callable invocation lifetime application");
@@ -951,6 +952,83 @@ int main() { int input = 7; Leaf value{input}; return read(value) + value.get() 
   expect(produced, "nested Base fixture has an independently replayed stored-reference return producer");
 }
 
+void checkLocalStoredReferencePublication() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "local-stored-reference-publication.gti", R"gti(
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Pair<lifetime a, lifetime b> : public Base<a> {
+  int&<b> other;
+  Pair(int&<a> first, int&<b> second) : Base<a>(first), other(second) {}
+};
+int&<a> external<lifetime a>(int&<a> input) {
+  int local = 9;
+  Pair pair{input, local};
+  return pair.value;
+}
+int main() { int value = 7; return external(value) - 7; }
+)gti");
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(),
+         "a local carrier publishes one caller-owned field without its unrelated local reference");
+  HirFunctionInstanceId owner = 0;
+  MirInstructionId publication = 0;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *result = instruction.loan
+            ? function.body.findLoan(*instruction.loan) : nullptr;
+        const auto *carrier = instruction.operands.size() == 1
+            ? function.body.findLoan(instruction.operands.front().loan) : nullptr;
+        if (instruction.kind == MirInstructionKind::Borrow && result && carrier &&
+            result->kind == MirLoanKind::Return && carrier->kind == MirLoanKind::Stored &&
+            !carrier->entry && instruction.operands.front().place) {
+          expect(owner == 0, "fixture needs one selected local-carrier reference publication");
+          owner = function.id;
+          publication = instruction.id;
+          expect(result->additionalDependencies.empty() && result->designatedFields.empty() &&
+                     carrier->additionalDependencies.size() == 1,
+                 "selected reference and containing dependency inventory remain distinct");
+        }
+      }
+  expect(owner && publication, "fixture must retain the exact field address independently of its owner");
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto broken = checked.mir;
+    auto *function = const_cast<MirFunctionInstance *>(broken.findFunctionInstance(owner));
+    MirInstruction *publish = nullptr;
+    for (auto &block : function->body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == publication) publish = &instruction;
+    expect(publish && publish->loan, "fixture must retain its exact publication");
+    auto &result = function->body.loans[*publish->loan - 1];
+    const auto &carrier = function->body.loans[publish->operands.front().loan - 1];
+    const auto &unrelated = carrier.additionalDependencies.front();
+    if (mutation == 0) result.source = unrelated.source;
+    if (mutation == 1) publish->operands.front().place = 0;
+    if (mutation == 2)
+      result.additionalDependencies.push_back({.source = unrelated.source,
+                                               .access = AccessMode::ReadOnly});
+    if (mutation == 3) result.access = AccessMode::Mutable;
+    if (mutation == 4) {
+      auto &runtime = function->body.places[publish->operands.front().place - 1];
+      expect(unrelated.designatedFields.size() == 1 &&
+                 unrelated.designatedFields.front().kind == PlaceProjectionKind::Field,
+             "fixture needs an independent direct field for the coordinated forgery");
+      runtime.projections = {
+          {.kind = MirProjectionKind::Field, .field = unrelated.designatedFields.front().field},
+          {.kind = MirProjectionKind::Dereference}};
+      runtime.key = function->body.findPlace(unrelated.source)->key;
+      result.source = unrelated.source;
+    }
+    expect(!verifyMirProgram(broken).valid(),
+           "selected reference rejects missing address, wrong or extra owners, access upgrades and coordinated local escape");
+  }
+}
+
 void checkFailedBasePublicationRelease() {
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "failed-base-publication-release.gti", R"gti(
@@ -1309,6 +1387,94 @@ int main() {
            "unsafe opaque restoration cannot manufacture static validity for a nested borrowed type");
   }
   expect(borrowedRestoration, "restoration fixture exercises a concrete borrowed type obligation");
+  bool opaqueWitness = false, convertedInput = false, repeatedReferent = false;
+  for (const auto address : enumerateMirBodyAddresses(checked.mir)) {
+    const auto *body = findMirBody(checked.mir, address);
+    if (!body) continue;
+    for (const auto &place : body->places)
+      for (const auto &other : body->places) {
+        if (place.id >= other.id || place.root != MirPlaceRootKind::Binding ||
+            place.projections.empty() || place.sourceValue || other.sourceValue ||
+            place.root != other.root || place.binding != other.binding ||
+            place.symbol != other.symbol || place.loan != other.loan ||
+            place.projections != other.projections || place.type != other.type ||
+            place.access != other.access || !place.initiallyAvailable || !other.initiallyAvailable)
+          continue;
+        const auto source = std::find_if(body->places.begin(), body->places.end(),
+            [](const auto &candidate) { return candidate.sourceValue != 0; });
+        if (source == body->places.end()) continue;
+        repeatedReferent = true;
+        auto forged = checked.mir;
+        auto *changedBody = findMirBody(forged, address);
+        changedBody->places[other.id - 1].sourceValue = source->sourceValue;
+        expect(!verifyMirProgram(forged).valid(),
+               "duplicate physical projections cannot claim conflicting evaluated source authority");
+      }
+    for (const auto &block : body->blocks)
+      for (const auto &call : block.instructions) {
+        if (!call.restoresReferenceResult || call.restoredBorrowFields.empty() ||
+            !call.loan || call.operands.size() != 1 ||
+            call.operands.front().kind != MirOperandKind::Value)
+          continue;
+        const auto *loan = body->findLoan(*call.loan);
+        const auto *stage = mir_detail::definitionFor(*body, call.operands.front().value);
+        if (!loan || !stage || stage->kind != MirInstructionKind::CallInput ||
+            stage->operands.size() != 1 || stage->operands.front().kind != MirOperandKind::Loan)
+          continue;
+        const auto *witness = body->findLoan(stage->operands.front().loan);
+        expect(witness && loan->storedDependency == witness->id &&
+                   mir_detail::restoredBorrowAuthority(*body, *loan) == &call,
+               "restored fields retain the exact evaluated opaque input capability");
+        opaqueWitness = true;
+        for (int mutation = 0; mutation != 5; ++mutation) {
+          auto forged = checked.mir;
+          auto *changedBody = findMirBody(forged, address);
+          auto *changedStage = instructionAt(*changedBody, stage->id);
+          auto &changedLoan = changedBody->loans[loan->id - 1];
+          if (mutation == 0) changedLoan.parent = 0;
+          if (mutation == 1) changedLoan.source = changedStage->operands.front().place;
+          if (mutation == 2) changedLoan.access = AccessMode::Mutable;
+          if (mutation == 3) {
+            auto other = *witness;
+            other.id = changedBody->loans.size() + 1;
+            changedBody->loans.push_back(other);
+            changedStage->operands.front().loan = other.id;
+          }
+          if (mutation == 4) {
+            changedStage->operands.front().place = loan->source;
+            expect(!verifyMirProgram(forged).valid(),
+                   "restoration input cannot replace its addressed opaque place with a lifetime supplier");
+            continue;
+          }
+          expect(!mir_detail::restoredBorrowAuthority(*changedBody, changedBody->loans[loan->id - 1]) &&
+                     !verifyMirProgram(forged).valid(),
+                 "restoration cannot substitute parent, source, access or another same-source input loan");
+        }
+      }
+    for (const auto &block : body->blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.kind != MirInstructionKind::CallInput || stage.operands.size() != 1 ||
+            stage.operands.front().kind != MirOperandKind::Loan ||
+            stage.info.type.kind != SemanticType::Reference || stage.info.type.arguments.size() != 1)
+          continue;
+        const auto &operand = stage.operands.front();
+        const auto *place = body->findPlace(operand.place);
+        if (!place || place->type.kind != SemanticType::Class ||
+            place->type == stage.info.type.arguments.front())
+          continue;
+        expect(operand.type.arguments.size() == 1 && operand.type.arguments.front() == place->type,
+               "a reference input retains original nested regions before the independently checked conversion stage");
+        convertedInput = true;
+        auto forged = checked.mir;
+        auto *changedBody = findMirBody(forged, address);
+        auto *changedStage = instructionAt(*changedBody, stage.id);
+        changedStage->operands.front().type = stage.info.type;
+        expect(!verifyMirProgram(forged).valid(),
+               "retagging the physical input cannot replace the checked lifetime conversion");
+      }
+  }
+  expect(opaqueWitness && convertedInput && repeatedReferent,
+         "erasure controls cover opaque identity, original conversion types and repeated exact referents");
 }
 
 bool checkRawOwnerLifetimeFacts() {
@@ -2754,6 +2920,7 @@ int main() {
   checkPatternedResultScope();
   checkProgramBasePathAuthority();
   checkNestedBaseLifetimeViews();
+  checkLocalStoredReferencePublication();
   checkFailedBasePublicationRelease();
   checkBorrowedBasePublication();
   std::cout << "lifetime MIR contracts passed\n";

@@ -5822,10 +5822,25 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   return true;
               }
             }
+            bool addressedLoan = false;
             if (resolved->kind == MirOperandKind::Loan) {
-              return resolved->loan == parent ||
-                     mappedAliasDependency(resolved->loan) ||
-                     sharedPublishedChild(resolved->loan);
+              if (resolved->loan == parent ||
+                  mappedAliasDependency(resolved->loan) ||
+                  sharedPublishedChild(resolved->loan))
+                return true;
+              // A Loan may also carry its real runtime address. Only that
+              // exact active loan can authorize the address; equal lifetime
+              // suppliers do not make another loan a physical alias.
+              const auto *addressLoan = body.findLoan(resolved->loan);
+              const auto address = canonicalPlace(body, resolved->place,
+                                                   bindingLoans, active);
+              addressedLoan = resolved->place && addressLoan &&
+                  address.throughLoan == resolved->loan &&
+                  active[addressLoan->id - 1] == MirLoanFlowState::Active &&
+                  (resolved->type.referenceAccess == AccessMode::ReadOnly ||
+                   addressLoan->access == AccessMode::Mutable);
+              if (!addressedLoan)
+                return false;
             }
             if (resolved->place == 0) {
               return false;
@@ -5939,9 +5954,11 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
               }
             }
             if ((resolved->kind == MirOperandKind::BorrowRead ||
-                 resolved->kind == MirOperandKind::BorrowWrite) &&
+                 resolved->kind == MirOperandKind::BorrowWrite || addressedLoan) &&
                 (inputAccess == AccessMode::ReadOnly ||
-                 resolved->kind == MirOperandKind::BorrowWrite) &&
+                 resolved->kind == MirOperandKind::BorrowWrite ||
+                 (addressedLoan &&
+                  body.loans[resolved->loan - 1].access == AccessMode::Mutable)) &&
                 abstractStoredEntry(body, dependency) &&
                 active[parent - 1] == MirLoanFlowState::Active &&
                 sameCanonicalPlace(selectedInput,
@@ -13466,7 +13483,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
     if (loan.parent != 0) {
       const MirLoan &parent = body.loans[loan.parent - 1];
       if (parent.storedDependency != 0 &&
-          loan.storedDependency != parent.storedDependency) {
+          loan.storedDependency != parent.storedDependency &&
+          !(loan.storedDependency == parent.id &&
+            mir_detail::restoredBorrowAuthority(body, loan))) {
         return failure(body, owner,
                        "child loan " + std::to_string(loan.id) +
                            " does not preserve its parent's stored dependency");

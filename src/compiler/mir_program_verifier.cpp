@@ -116,6 +116,32 @@ exactRestoredBorrowFields(const MirProgram &program, const SemanticType &type,
   return true;
 }
 
+// A wrapper's inventory is declared in its own universal region scope.
+// Replay the selected application before comparing the caller's actual field
+// recipes; raw canonical IDs are not the call's requested restored type.
+[[nodiscard]] bool
+appliedRestoredBorrowFields(const MirProgram &program,
+                           const MirInstruction &instruction,
+                           const MirFunctionInstance &target) {
+  if (!mirLifetimeCallSignatureMatches(instruction, target))
+    return false;
+  const auto applied = instantiateMirLifetimeTarget(program, instruction);
+  if (!applied || applied->returnType.kind != SemanticType::Reference ||
+      applied->returnType.arguments.size() != 1 ||
+      applied->returnType.arguments.front() != instruction.info.type ||
+      applied->parameterTypes != instruction.parameterTypes)
+    return false;
+  auto fields = target.restoredBorrowFields;
+  for (auto &field : fields) {
+    auto actual = substituteTypeLifetimes(
+        std::move(field.referenceType), instruction.lifetimeApplication.bindings);
+    if (!actual)
+      return false;
+    field.referenceType = std::move(*actual);
+  }
+  return instruction.restoredBorrowFields == fields;
+}
+
 // Follow only executable reference publications. A summary flag or matching
 // signature alone never establishes restoration authority, including through
 // recursive helpers: every finite proof must reach the checked intrinsic.
@@ -183,7 +209,8 @@ verifiedRestoreSummary(const MirProgram &program,
     if (producer->functionTarget) {
       const auto *target =
           program.findFunctionInstance(*producer->functionTarget);
-      if (!target || !verifiedRestoreSummary(program, *target, visiting))
+      if (!target || !appliedRestoredBorrowFields(program, *producer, *target) ||
+          !verifiedRestoreSummary(program, *target, visiting))
         return false;
     } else if ((producer->intrinsic != IntrinsicKind::RestoreReference &&
                 producer->intrinsic != IntrinsicKind::RestoreReferenceMut) ||
@@ -224,8 +251,7 @@ verifiedRestoreSummary(const MirProgram &program,
   const auto *target =
       program.findFunctionInstance(*instruction.functionTarget);
   std::unordered_set<HirFunctionInstanceId> visiting;
-  return target &&
-         instruction.restoredBorrowFields == target->restoredBorrowFields &&
+  return target && appliedRestoredBorrowFields(program, instruction, *target) &&
          instruction.borrowArgument == target->returnBorrowParameter &&
          verifiedRestoreSummary(program, *target, visiting);
 }
@@ -1734,7 +1760,6 @@ callableSignatureMatches(const MirCallableSignature &signature,
          instruction.callableInvocation == signature.selectedCapability &&
          callResultMatches(instruction.info, signature.returnType) &&
          signature.parameterTypes == instruction.parameterTypes &&
-         signature.lifetimeArguments == instruction.lifetimeArguments &&
          signature.lifetimeApplication == instruction.lifetimeApplication;
 }
 
@@ -3923,6 +3948,9 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         }
         const bool sameBorrowFields = appliedBorrowFields &&
             instruction.borrowFields == appliedBorrowFields->dependencies;
+        const bool sameRestoredFields = target->restoresReferenceResult
+            ? appliedRestoredBorrowFields(program, instruction, *target)
+            : instruction.restoredBorrowFields == target->restoredBorrowFields;
         if (!dependentTextCallPublication(instruction, *target) &&
             (instruction.borrowOrigin != target->returnBorrowOrigin ||
              instruction.borrowArgument != target->returnBorrowParameter ||
@@ -3932,7 +3960,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
              instruction.borrowPlace != target->returnBorrowPlace ||
              instruction.restoresReferenceResult !=
                  target->restoresReferenceResult ||
-             instruction.restoredBorrowFields != target->restoredBorrowFields ||
+             !sameRestoredFields ||
              (instruction.kind == MirInstructionKind::Call &&
               instruction.dependentTextPublication))) {
           return verificationFailure(
@@ -3954,7 +3982,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                   (instruction.borrowPlace != target->returnBorrowPlace
                        ? "; supplier place differs" : "") +
                   (instruction.restoresReferenceResult != target->restoresReferenceResult ||
-                           instruction.restoredBorrowFields != target->restoredBorrowFields
+                           !sameRestoredFields
                        ? "; restored result differs" : "") + ")",
               block.id, instruction.id);
         }
@@ -5595,9 +5623,21 @@ storedCarrierReferentPlace(const MirProgram &program, const MirBody &body,
         place.temporary == carrier.temporary &&
         place.projections == projections && place.type == view->type &&
         place.access == path.reference.referenceAccess && !place.foreignStorage) {
-      if (result)
-        return std::nullopt;
-      result = place.id;
+      if (result) {
+        const auto &canonical = *body.findPlace(*result);
+        // Repeated lowering can materialize the same full typed address for
+        // separate uses. The root (including its loan), full projections and
+        // access already match above. Preserve source-value, storage and
+        // availability authority too; equal types alone never select an
+        // unrelated place. Source occurrence keys do not grant aliasing.
+        if (canonical.sourceValue != place.sourceValue ||
+            canonical.hostedStartupOperation != place.hostedStartupOperation ||
+            canonical.initiallyAvailable != place.initiallyAvailable ||
+            canonical.traits != place.traits)
+          return std::nullopt;
+      } else {
+        result = place.id;
+      }
     }
   return result;
 }
@@ -14572,6 +14612,72 @@ completeBorrowSourcePath(const MirProgram &program,
     }
     return std::nullopt;
   };
+  const auto storedLocalReferent = [&](const State &state, const MirPlace &place,
+                                        const MirLoan *authority = nullptr) -> Fact {
+    if (place.foreignStorage || place.root != MirPlaceRootKind::Binding ||
+        place.projections.size() < 2 ||
+        place.projections.back().kind != MirProjectionKind::Dereference)
+      return std::nullopt;
+    const MirLoan *carrier = authority;
+    if (!carrier) {
+      const auto candidates = bindingLoans.find(place.binding);
+      if (candidates == bindingLoans.end())
+        return std::nullopt;
+      for (const auto id : candidates->second) {
+        const auto *candidate = body.findLoan(id);
+        if (!candidate || candidate->kind != MirLoanKind::Stored || candidate->entry)
+          continue;
+        if (carrier)
+          return std::nullopt;
+        carrier = candidate;
+      }
+    }
+    if (!carrier || carrier->kind != MirLoanKind::Stored || carrier->entry ||
+        carrier->escapes || !carrier->storedPath.empty() ||
+        std::find(carrier->carriers.begin(), carrier->carriers.end(), place.binding) ==
+            carrier->carriers.end())
+      return std::nullopt;
+    const MirPlace *root = nullptr;
+    for (const auto &candidate : body.places) {
+      if (candidate.root != place.root || candidate.binding != place.binding ||
+          candidate.symbol != place.symbol || candidate.capture != place.capture ||
+          !candidate.projections.empty() || candidate.foreignStorage)
+        continue;
+      if (root && (root->type != candidate.type || root->access != candidate.access ||
+                   root->key != candidate.key))
+        return std::nullopt;
+      root = &candidate;
+    }
+    if (!root || root->type.kind == SemanticType::Reference)
+      return std::nullopt;
+    const auto path = mir_detail::borrowPathForProjections(program, root->type,
+        root->access, place.projections, {}, {}, mir_detail::MirBorrowPathRoot::Value);
+    const auto view = path ? mir_detail::walkBorrowPath(program, root->type,
+        root->access, *path, {}, mir_detail::MirBorrowPathRoot::Value) : std::nullopt;
+    if (!path || path->empty() || !view || view->type != place.type ||
+        !view->payloadSelections.empty() || view->referenceCrossings.size() != 1 ||
+        view->referenceCrossings.front().reference.referenceAccess != AccessMode::ReadOnly ||
+        view->referenceCrossings.front().pathOffset != path->size() ||
+        view->referenceCrossings.front().projectionOffset + 1 != place.projections.size())
+      return std::nullopt;
+    const auto contents = fromPlace(state, root->id);
+    if (!contents || !completeBorrowSetHasTypedShape(program, root->type, *contents))
+      return std::nullopt;
+    MirBorrowDependencySet selected;
+    for (auto dependency : contents->dependencies) {
+      if (dependency.designatedFields != *path)
+        continue;
+      if (!dependency.conditions.empty())
+        return std::nullopt;
+      dependency.designatedFields.clear();
+      dependency.access = AccessMode::ReadOnly;
+      selected.dependencies.push_back(std::move(dependency));
+    }
+    const auto &reference = view->referenceCrossings.front().reference;
+    return !selected.dependencies.empty() &&
+                   completeBorrowSetHasTypedShape(program, reference, selected)
+        ? Fact{std::move(selected)} : std::nullopt;
+  };
   const auto fromSelectedLoan = [&](const State &state, MirLoanId id) -> Fact {
     const auto *loan = body.findLoan(id);
     if (!loan || !loan->referenceSelection)
@@ -14840,8 +14946,9 @@ completeBorrowSourcePath(const MirProgram &program,
       if (operand.kind == MirOperandKind::Loan && operand.loan != id) {
         const auto *retained = body.findLoan(operand.loan);
         const auto *runtime = body.findPlace(operand.place);
-        if (retained && retained->entry && retained->kind == MirLoanKind::Stored && runtime)
-          fact = storedFormalReferent(*runtime, retained);
+        if (retained && retained->kind == MirLoanKind::Stored && runtime)
+          fact = retained->entry ? storedFormalReferent(*runtime, retained)
+                                 : storedLocalReferent(state, *runtime, retained);
         else
           fact = self(self, state, operand.loan, depth + 1);
       } else if (operand.kind == MirOperandKind::BorrowRead ||
@@ -14966,6 +15073,8 @@ completeBorrowSourcePath(const MirProgram &program,
           ? fromReferenceLoan(state, loans->second.front()) : Fact{};
     }
     if (auto fact = storedFormalReferent(*place))
+      return fact;
+    if (auto fact = storedLocalReferent(state, *place))
       return fact;
     if (physicalBorrowedSubobject(*place))
       return MirBorrowDependencySet{
@@ -15882,6 +15991,24 @@ completeBorrowSourcePath(const MirProgram &program,
           dependency.access = instruction.info.access;
         }
     } else if (instruction.kind == MirInstructionKind::Call &&
+               mir_detail::erasedReferenceResultLoan(program, body, instruction)) {
+      // Erasure/restoration preserve the evaluated reference's address
+      // suppliers. The trusted intrinsic proof checks the exact opaque side,
+      // requested type, access and instantiated region contract independently;
+      // it does not manufacture the restored referent's stored contents.
+      result = fromOperand(state, instruction.operands.front());
+      if (result)
+        for (auto &dependency : result->dependencies) {
+          if (!dependency.designatedFields.empty() ||
+              !dependency.conditions.empty() ||
+              (instruction.info.access == AccessMode::Mutable &&
+               dependency.access != AccessMode::Mutable)) {
+            result.reset();
+            break;
+          }
+          dependency.access = instruction.info.access;
+        }
+    } else if (instruction.kind == MirInstructionKind::Call &&
                instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke &&
                mir_detail::functionPointerOperation(program, instruction)) {
       const auto *callable = checkedMirCallableLifetimeSignature(program, instruction);
@@ -15926,6 +16053,9 @@ completeBorrowSourcePath(const MirProgram &program,
                   mirLifetimeValueConversion(program, body, owner,
                                              instruction.operands.front().type,
                                              instruction.info.type) ||
+                  mirLifetimeReferenceConversion(program, body, owner,
+                                                 instruction.operands.front().type,
+                                                 instruction.info.type) ||
                   (instruction.info.type.kind == SemanticType::Reference &&
                    instruction.info.type.arguments.size() == 1 &&
                    instruction.info.type.arguments.front() ==
@@ -21912,7 +22042,6 @@ verifyMirProgramContracts(const MirProgram &program) {
         invocation.functionTarget = signature.functionTarget;
         invocation.lambdaTarget = signature.lambdaTarget;
         invocation.nativeCalleeType = signature.nativeCalleeType;
-        invocation.lifetimeArguments = signature.lifetimeArguments;
         invocation.lifetimeApplication = signature.lifetimeApplication;
         const auto applied = instantiateMirLifetimeTarget(program, invocation);
         if (!applied ||

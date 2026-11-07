@@ -179,17 +179,25 @@ struct HirReferenceSelection {
   SemanticType reference = SemanticType::Unknown;
 };
 
+struct HirReferenceContentsOpening {
+  HirValueId reference = 0;
+  SemanticType referenceType = SemanticType::Unknown;
+  std::vector<SemanticLoanId> readLoans;
+};
+
 struct HirLoan {
   SemanticLoanId semanticLoan = 0;
   SemanticLoanKind kind = SemanticLoanKind::Reference;
   SemanticLoanId parent = 0;
   SemanticLoanId storedDependency = 0;
   SemanticLoanPlace place;
+  std::optional<SemanticReferenceContentsSource> referenceContents;
   AccessMode access = AccessMode::ReadOnly;
   BorrowPath designatedFields;
   std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additionalDependencies;
   std::optional<HirReferenceSelection> referenceSelection;
+  std::optional<HirReferenceContentsOpening> contentsOpening;
   bool lifecycleBound = false;
   std::vector<HirBindingId> carriers;
   bool entry = false;
@@ -316,6 +324,9 @@ struct HirValue {
   // semantic evidence. Origin places are body-qualified; structural paths are
   // declaration identities and must not be retagged.
   std::optional<SemanticBorrowDependencySet> borrowDependencies;
+  // The exact checked StoredValue group for this reference's direct
+  // referent contents. Its address dependencies remain in borrowDependencies.
+  SemanticLoanId referenceContentsLoan = 0;
   // Exact closure-construction inputs, consumed by its existing checked loan
   // producer; not a complete result dependency set.
   std::vector<SemanticLoanDependency> captureBorrowDependencies;

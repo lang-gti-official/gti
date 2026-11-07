@@ -358,6 +358,7 @@ paths = [
   "include/gti/generic_type_patterns.h",
   "include/gti/borrow_conditions.h",
   "include/gti/concrete_formals.h",
+  "include/gti/reference_contents.h",
   "include/gti/nominal_variance.h",
   "include/gti/semantic*",
   "src/compiler/semantic_analyzer_impl.h",

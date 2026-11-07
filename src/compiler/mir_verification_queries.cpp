@@ -920,6 +920,61 @@ bool storedReferenceReturnPublication(const MirBody &body,
   const auto *entry = body.findLoan(operand.loan);
   const auto *runtime = body.findPlace(operand.place);
   const auto *root = entry ? body.findPlace(entry->source) : nullptr;
+  // A shared field of a local carrier publishes only the selected external
+  // dependency. The carrier's complete group remains live for its own drop;
+  // it is not retired or copied wholesale into the escaping scalar reference.
+  if (published && published->kind == MirLoanKind::Return && !published->entry &&
+      published->escapes && !published->parent &&
+      published->producedBy == instruction.hirValue &&
+      published->access == AccessMode::ReadOnly && !published->storedDependency &&
+      published->designatedFields.empty() && published->conditions.empty() &&
+      operand.kind == MirOperandKind::Loan && !operand.value && entry &&
+      entry->kind == MirLoanKind::Stored && !entry->entry && !entry->escapes &&
+      entry->storedPath.empty() && runtime && !runtime->foreignStorage &&
+      runtime->root == MirPlaceRootKind::Binding && runtime->projections.size() >= 2 &&
+      runtime->projections.back().kind == MirProjectionKind::Dereference &&
+      runtime->type == operand.type && operand.type == instruction.info.type &&
+      std::find(entry->carriers.begin(), entry->carriers.end(), runtime->binding) !=
+          entry->carriers.end()) {
+    std::vector<MirLoanDependency> selected;
+    const auto select = [&](const MirLoanDependency &dependency) {
+      if (dependency.designatedFields.empty() || !dependency.conditions.empty())
+        return;
+      const auto prefix = borrowPathProjectionPrefix(
+          runtime->projections, dependency.designatedFields, true);
+      if (!prefix || *prefix != runtime->projections.size())
+        return;
+      selected.push_back({.source = dependency.source, .access = AccessMode::ReadOnly});
+    };
+    select({.source = entry->source, .designatedFields = entry->designatedFields,
+            .access = entry->access, .conditions = entry->conditions});
+    for (const auto &dependency : entry->additionalDependencies)
+      select(dependency);
+    std::vector<MirLoanDependency> claimed{
+        {.source = published->source, .access = published->access}};
+    claimed.insert(claimed.end(), published->additionalDependencies.begin(),
+                   published->additionalDependencies.end());
+    if (selected.empty() || selected.size() != claimed.size())
+      return false;
+    std::vector<bool> matched(selected.size());
+    for (const auto &dependency : claimed) {
+      if (dependency.parent || !dependency.designatedFields.empty() ||
+          !dependency.conditions.empty() || dependency.access != AccessMode::ReadOnly)
+        return false;
+      bool found = false;
+      for (std::size_t index = 0; index != selected.size(); ++index)
+        if (!matched[index] && selected[index].source == dependency.source) {
+          matched[index] = true;
+          found = true;
+          break;
+        }
+      if (!found)
+        return false;
+    }
+    // This is a shape proof only. Program verification independently derives
+    // the selected sources from current storage flow and the exact typed path.
+    return true;
+  }
   if (!published || published->kind != MirLoanKind::Return || published->entry ||
       !published->escapes || published->parent || published->producedBy != instruction.hirValue ||
       operand.kind != MirOperandKind::Loan || operand.value || !entry || !entry->entry ||
@@ -2470,6 +2525,30 @@ const MirInstruction *restoredBorrowAuthority(const MirBody &body,
       (loan.access == AccessMode::Mutable &&
        witness->access != AccessMode::Mutable))
     return nullptr;
+  // Resolve only the actual reference capability passed to restoration.
+  // Staging preserves that identity; a different loan with the same lifetime
+  // supplier is not the opaque input witness.
+  const auto inputLoan = [&](const auto &self, const MirOperand &operand,
+                             std::size_t depth) -> MirLoanId {
+    if (depth > body.values.size())
+      return 0;
+    if (operand.kind == MirOperandKind::Loan)
+      return body.findLoan(operand.loan) ? operand.loan : 0;
+    if (operand.kind != MirOperandKind::Value)
+      return 0;
+    const auto *definition = definitionFor(body, operand.value);
+    if (!definition || definition->tombstone)
+      return 0;
+    if (definition->kind == MirInstructionKind::CallInput &&
+        definition->operands.size() == 1 &&
+        (definition->callInputKind == HirCallInputKind::ReadBorrow ||
+         definition->callInputKind == HirCallInputKind::MutableBorrow))
+      return self(self, definition->operands.front(), depth + 1);
+    if (definition->kind == MirInstructionKind::Call && definition->loan &&
+        definition->info.category == ValueCategory::Place)
+      return *definition->loan;
+    return 0;
+  };
   std::unordered_set<MirLoanId> visiting;
   const auto trace = [&](const auto &self,
                          const MirLoan &current) -> const MirInstruction * {
@@ -2497,9 +2576,8 @@ const MirInstruction *restoredBorrowAuthority(const MirBody &body,
         !current.escapes && current.parent == witness->id &&
         current.producedBy == producer->hirValue &&
         current.source == witness->source &&
-        borrowSourceForOperand(body,
-                               producer->operands[producer->borrowArgument]) ==
-            witness->source)
+        inputLoan(inputLoan, producer->operands[producer->borrowArgument], 0) ==
+            witness->id)
       return producer;
     if (producer && producer->kind == MirInstructionKind::Borrow &&
         producer->operands.size() == 1 &&

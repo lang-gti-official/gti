@@ -780,6 +780,31 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                           const std::vector<HirValueId>
                                               &initializerValues = {},
                                           const HirConstructorInstance *constructor = nullptr) {
+    const auto hasContentsSource = [](const auto &dependencies) {
+      return std::any_of(dependencies.begin(), dependencies.end(),
+                         [](const auto &dependency) {
+                           return dependency.referenceContents.has_value();
+                         });
+    };
+    // Staged schema only: no source producer publishes these facts yet. Keep
+    // them fail-closed until MIR has the checked opening/permission replay;
+    // silently dropping a contents source would turn it into an empty place.
+    bool pendingContents = std::any_of(body.loans.begin(), body.loans.end(),
+        [&](const HirLoan &loan) {
+          return loan.referenceContents || loan.contentsOpening ||
+                 hasContentsSource(loan.additionalDependencies);
+        });
+    for (const auto &value : body.values)
+      pendingContents |= value.referenceContentsLoan != 0 ||
+          (value.borrowDependencies && hasContentsSource(value.borrowDependencies->dependencies)) ||
+          hasContentsSource(value.captureBorrowDependencies);
+    if (constructor)
+      for (const auto &initializer : constructor->initializers)
+        pendingContents |= initializer.completeBorrow &&
+            hasContentsSource(initializer.completeBorrow->dependencies);
+    if (pendingContents)
+      result.errors.emplace_back(
+          "HIR reference contents require checked opening replay before publication");
     std::unordered_set<HirValueId> expandedCalls;
     std::unordered_set<HirValueId> expandedInputs;
     std::unordered_set<HirValueId> expandedElements;
@@ -796,6 +821,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
              copy.programConstantSubstitution ==
                  source.programConstantSubstitution &&
              copy.borrowDependencies == source.borrowDependencies &&
+             copy.referenceContentsLoan == source.referenceContentsLoan &&
              copy.borrowPlace == source.borrowPlace &&
              copy.borrowOrigin == source.borrowOrigin &&
              copy.borrowArgument == source.borrowArgument &&

@@ -1342,7 +1342,6 @@ private:
         const auto &b = output.signatures[signature];
         if (a.returnType != b.returnType ||
             a.parameterTypes != b.parameterTypes ||
-            a.lifetimeArguments != b.lifetimeArguments ||
             !preservesHirLifetimeApplication(a.lifetimeApplication,
                                              b.lifetimeApplication) ||
             a.requiredCapability != b.requiredCapability ||

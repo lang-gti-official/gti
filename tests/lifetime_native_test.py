@@ -833,6 +833,47 @@ int main() {
   return observed - 7;
 }
 """,
+    "local_carrier_second_reference": """
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Pair<lifetime a, lifetime b> : public Base<a> {
+  int&<b> other;
+  Pair(int&<a> first, int&<b> second) : Base<a>(first), other(second) {}
+};
+int&<a> external<lifetime a>(int&<a> input) {
+  int local = 9;
+  Pair pair{local, input};
+  return pair.other;
+}
+int main() { int value = 7; return external(value) - 7; }
+""",
+    "local_carrier_nested_reference": """
+struct Inner<lifetime a> { int&<a> value; Inner(int&<a> input) : value(input) {} };
+struct Pair<lifetime a, lifetime b> { Inner<a> first; int&<b> other; Pair(int&<a> firstValue, int&<b> secondValue) : first(Inner<a>(firstValue)), other(secondValue) {} };
+int&<a> external<lifetime a>(int&<a> input) { int local = 9; Pair pair{input, local}; return pair.first.value; }
+int main() { int value = 7; return external(value) - 7; }
+""",
+    "local_carrier_reference_cleanup": """
+mut int observed = 0;
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+  ~Base() { observed = observed + this.value; }
+};
+struct Pair<lifetime a, lifetime b> : public Base<a> {
+  int&<b> other;
+  Pair(int&<a> first, int&<b> second) : Base<a>(first), other(second) {}
+  ~Pair() { observed = observed + this.other; }
+};
+int&<a> external<lifetime a>(int&<a> input) {
+  int local = 9;
+  Pair pair{input, local};
+  return pair.value;
+}
+int main() { int value = 7; int result = external(value); return result + observed - 23; }
+""",
     "inherited_independent_referents": """
 struct Base<lifetime a> {
   int&<a> value;

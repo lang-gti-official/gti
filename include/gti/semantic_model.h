@@ -105,11 +105,38 @@ struct BorrowAlternativePath {
                          const BorrowAlternativePath &) = default;
 };
 
+// An external reference stored in the direct referent of a checked reference.
+// The opening loan owns the evaluated address/type witness. This is not a
+// projection of that reference's lifetime-supplier place, which may protect
+// storage unrelated to its address (for example an unsafe owner assertion).
+struct SemanticReferenceContentsSource {
+  SemanticLoanId openingLoan = 0;
+  BorrowPath fields;
+
+  friend bool operator==(const SemanticReferenceContentsSource &,
+                         const SemanticReferenceContentsSource &) = default;
+};
+
+// Formation reads the source reference under these active capabilities. A
+// copied shared field retains its own external authority; readLoans are not
+// reborrow parents and cannot extend an exclusive field's permission.
+struct SemanticReferenceContentsOpening {
+  const Expr *reference = nullptr;
+  SemanticType referenceType = SemanticType::Unknown;
+  std::vector<SemanticLoanId> readLoans;
+
+  friend bool operator==(const SemanticReferenceContentsOpening &,
+                         const SemanticReferenceContentsOpening &) = default;
+};
+
 // One field of a composed borrowed value protects its own independent owner.
 // The first dependency remains in the scalar loan fields for the ordinary
 // one-owner reference path; these records contain the additional dependencies.
 struct SemanticLoanDependency {
   SemanticLoanPlace place;
+  // Exactly one source alternative is present. Contents sources have no
+  // place; their opening and typed field selection must be proved separately.
+  std::optional<SemanticReferenceContentsSource> referenceContents;
   BorrowPath designatedFields;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
@@ -167,6 +194,7 @@ struct SemanticLoanInfo {
   // the backend.
   const Stmt *entryDeclaration = nullptr;
   SemanticLoanPlace place;
+  std::optional<SemanticReferenceContentsSource> referenceContents;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
   // A lifecycle-bound owner dependency remains active until its one carrier
@@ -182,6 +210,9 @@ struct SemanticLoanInfo {
   std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additionalDependencies;
   std::optional<SemanticReferenceSelection> referenceSelection;
+  // Only a completely checked StoredValue group may define an opening.
+  // Its identity is not evidence that two openings are disjoint.
+  std::optional<SemanticReferenceContentsOpening> contentsOpening;
   std::vector<SymbolId> carriers;
   std::vector<SemanticLoanEndpoint> endpoints;
 };
@@ -2850,6 +2881,10 @@ public:
   // is affirmative evidence of no dependencies and shadows an inherited set.
   [[nodiscard]] const SemanticBorrowDependencySet *
   findBorrowDependencySet(const Expr &expression) const;
+  // Index into ordinary checked StoredValue loans, separate from the
+  // expression's scalar reference-address or owned-value result fact.
+  [[nodiscard]] SemanticLoanId
+  findReferenceContentsLoan(const Expr &expression) const;
   [[nodiscard]] std::span<const SemanticLoanDependency>
   findBorrowDependencies(const Expr &expression) const;
   // Constructor inputs for the separately checked closure-loan producer.
@@ -3332,6 +3367,8 @@ private:
   // Explicitly unknown in this analysis, including when a base snapshot had
   // a fact for the same syntax in a different concrete instance.
   void clearBorrowDependencySet(const Expr &expression);
+  void recordReferenceContentsLoan(const Expr &expression, SemanticLoanId loan);
+  void clearReferenceContentsLoan(const Expr &expression);
   void recordCaptureBorrowDependencies(
       const Expr &expression, std::vector<SemanticLoanDependency> dependencies);
 
@@ -3591,6 +3628,8 @@ private:
   std::vector<SemanticLoanInfo> retainedLoans;
   std::unordered_map<const Expr *, std::optional<SemanticBorrowDependencySet>>
       expressionBorrowDependencies;
+  std::unordered_map<const Expr *, std::optional<SemanticLoanId>>
+      referenceContentsLoans;
   std::unordered_map<const Expr *, std::vector<SemanticLoanDependency>>
       captureBorrowDependencies;
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
