@@ -17087,6 +17087,10 @@ private:
               publicationSource = ancestor->source;
               ancestor = output.findLoan(ancestor->parent);
             }
+            const auto erasedProjection =
+                mir_detail::candidateSharedErasedReferenceReturn(output, source);
+            if (erasedProjection)
+              publicationSource = erasedProjection->publication.dependencies.front().source;
             const MirLoanId published = createLoan(
                 MirLoanKind::Return, publicationSource,
                 output.returnType.referenceAccess, source.producedBy);
@@ -17096,6 +17100,13 @@ private:
                 source.additionalDependencies;
             output.loans[published - 1].designatedFields =
                 source.designatedFields;
+            if (erasedProjection) {
+              auto &publication = output.loans[published - 1];
+              publication.storedDependency = erasedProjection->stored;
+              publication.additionalDependencies.assign(
+                  erasedProjection->publication.dependencies.begin() + 1,
+                  erasedProjection->publication.dependencies.end());
+            }
             output.loans[published - 1].escapes = true;
             (void)appendInstruction({.kind = MirInstructionKind::Borrow,
                                      .hirValue = source.producedBy,

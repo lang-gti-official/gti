@@ -5,6 +5,18 @@
 #include <iterator>
 
 namespace lang {
+namespace {
+bool needsCheckedStaticReturnSupplier(const FunctionInfo *function) {
+  return function && !function->virtualMethod && function->intrinsic == IntrinsicKind::None &&
+         function->returnBorrowOrigin == BorrowOriginKind::None &&
+         function->lifetimeContract.valid() &&
+         function->returnType.kind == SemanticType::Reference &&
+         function->returnType.referenceLifetime == Lifetime::staticLifetime() &&
+         function->declaration && !function->declaration->hasCLinkage() &&
+         !function->declaration->hasFunctionAttribute("borrowed_from") &&
+         function->bodyDeclaration() && function->bodyDeclaration()->body();
+}
+} // namespace
 
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.packBorrowInvocationSequence.reset();
@@ -3962,6 +3974,12 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                   functionInfo->parameterTypes.end(), [](const auto &type) {
                     return type.kind == SemanticType::TypePack && !type.concretePack;
                   });
+  // A fixed static result states a required lifetime, not an origin. A source
+  // definition may establish its exact global supplier through checked local
+  // operations; declaration-time syntax need not name that global directly.
+  // No summary is published here. The body must prove every return and finish
+  // with one complete, exact Global contract before this deferral is admitted.
+  const bool deferredStaticSupplier = needsCheckedStaticReturnSupplier(functionInfo);
   // A source body can establish a complete conditional return contract without
   // a single unconditional origin (for example, a dependency-free variant).
   // Each return and each call still requires its independently checked complete
@@ -3997,7 +4015,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
            "GTI-S2045");
   } else if (isBorrowReturningType(declaredReturnType) &&
              !intrinsicDeclaration && !hasReturnBorrowSummary &&
-             !deferredPackSuppliers &&
+             !deferredPackSuppliers && !deferredStaticSupplier &&
              !(stmt.body() && stmt.receiverMutability() == ReceiverMutability::Consuming &&
                functionInfo && functionInfo->lifetimeContract.valid()) &&
              functionInfo != nullptr &&
@@ -4218,6 +4236,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
 auto SemanticVisitor::Impl::analyzeFunctionBody(
     const FunctionDecl &stmt, const FunctionInfo *functionInfo,
     bool declarationErrors, bool constexprDeclarationValid) -> void {
+  const bool deferredStaticSupplier = needsCheckedStaticReturnSupplier(functionInfo);
   struct SyntaxTypeScope {
     bool &flag;
     bool saved;
@@ -4372,6 +4391,25 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   if (functionInfo != nullptr && !functionErrors()) {
     recordRestoredReferenceResult(*functionInfo);
     recordCompleteFunctionReturnBorrow(*functionInfo);
+    if (deferredStaticSupplier && !loanFlow.deferredGenericFlow &&
+        !containsOpenTypeParameter(currentReturnType)) {
+      const auto *checked = semanticModel.findFunction(stmt);
+      const auto exactGlobal = checked && checked->returnBorrowOrigin == BorrowOriginKind::Global &&
+          checked->returnBorrowPlace && checked->completeReturnBorrow &&
+          !checked->completeReturnBorrow->dependencies.empty() &&
+          checked->completeReturnBorrow->possibleAlternatives.empty() &&
+          std::all_of(checked->completeReturnBorrow->dependencies.begin(),
+                      checked->completeReturnBorrow->dependencies.end(), [&](const auto &supplier) {
+                        return supplier.origin == BorrowOriginKind::Global &&
+                               supplier.globalRoot == checked->returnBorrowPlace->root &&
+                               supplier.sourceFields == checked->returnBorrowPlace->projections &&
+                               supplier.resultFields.empty() && supplier.sourceConditions.empty() &&
+                               supplier.resultConditions.empty() &&
+                               supplier.access == currentReturnType.referenceAccess;
+                      });
+      if (!exactGlobal)
+        reportMissingFunctionReturnBorrowSummary(stmt, *functionInfo);
+    }
     if (stmt.receiverMutability() == ReceiverMutability::Consuming &&
         isBorrowReturningType(currentReturnType) &&
         !loanFlow.deferredGenericFlow &&

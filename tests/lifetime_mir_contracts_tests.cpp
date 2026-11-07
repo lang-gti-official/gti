@@ -1544,6 +1544,197 @@ int main() {
          "erasure controls cover opaque identity, used/unused suppliers, conversion types and repeated exact referents");
 }
 
+void checkReferenceErasureAddressIdentity() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto prelude = std::filesystem::weakly_canonical(root / "prelude.gti");
+  const auto capability = std::filesystem::weakly_canonical(root / "std/detail/memory_capabilities.gti");
+  const auto entry = std::filesystem::weakly_canonical(root / "__trusted_tests__/erasure-address-identity.gti");
+  const std::string declarations = R"gti(export module detail.memory_capabilities;
+namespace gti_internal {
+export class erased_object {};
+export erased_object& erase_reference<T>(T& input);
+export mut erased_object& erase_reference_mut<T>(mut T& input);
+export unsafe T&<a> restore_reference<T, lifetime a>(erased_object&<a> input) requires outlives<T, a>;
+}
+)gti";
+  const std::string source = R"gti(import "../std/detail/memory_capabilities.gti";
+using Opaque = gti_internal::erased_object;
+Opaque& leaf(int& input) { return gti_internal::erase_reference(input); }
+mut Opaque& mutable_leaf(mut int& input) { return gti_internal::erase_reference_mut(input); }
+Opaque&<a> through<lifetime a>(int&<a> first, int&<a> second, bool choice) {
+  if (choice && second == 7) { return leaf(first); }
+  return leaf(first);
+}
+Opaque& forward(Opaque& input) { return input; }
+struct Pair { int first; int second; Pair(int firstValue, int secondValue) : first(firstValue), second(secondValue) {} };
+Opaque& field(Pair& input) { return gti_internal::erase_reference(input.first); }
+[[borrowed_from(owner)]] unsafe Opaque& raw_forward(const Opaque* address, Opaque& owner) {
+  unsafe { return *address; }
+}
+int main() {
+  mut int first = 3;
+  mut int exclusive = 11;
+  int second = 7;
+  Pair pair{3, 7};
+  Opaque& erased = forward(through(first, second, first == 3));
+  unsafe {
+    [[discard]] raw_forward(&erased, erased);
+    [[discard]] gti_internal::restore_reference<int>(field(pair));
+    [[discard]] gti_internal::restore_reference<int>(mutable_leaf(exclusive));
+    return gti_internal::restore_reference<int>(erased) - 3;
+  }
+}
+)gti";
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      entry, source, {prelude, entry},
+      {{prelude.string(), ""}, {capability.string(), declarations}, {entry.string(), source}}, {root});
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(), "erasure address proof fixture reaches verified MIR");
+  const auto functionId = [&](std::string_view name) {
+    for (const auto &function : checked.hir.functionInstances())
+      if (function.source && function.source->name().lexeme == name)
+        return function.id;
+    return HirFunctionInstanceId{0};
+  };
+  const auto throughId = functionId("through");
+  const auto leafId = functionId("leaf");
+  const auto forwardId = functionId("forward");
+  const auto fieldId = functionId("field");
+  const auto rawId = functionId("raw_forward");
+  const auto mutableId = functionId("mutable_leaf");
+  const auto mainId = functionId("main");
+  expect(throughId && leafId && forwardId && fieldId && rawId && mutableId && mainId,
+         "address proof covers static helpers, mutable erasure, projected fields and raw owner witnesses");
+  const auto *main = checked.mir.findFunctionInstance(mainId);
+  const MirInstruction *throughCall = nullptr;
+  bool forwarded = false, mutableInput = false, rejectedField = false, rejectedRaw = false;
+  for (const auto &block : main->body.blocks)
+    for (const auto &call : block.instructions) {
+      if (call.kind != MirInstructionKind::Call || !call.functionTarget || !call.loan)
+        continue;
+      const auto target = *call.functionTarget;
+      if (target != throughId && target != forwardId && target != fieldId &&
+          target != rawId && target != mutableId)
+        continue;
+      const auto applied = instantiateMirLifetimeTarget(checked.mir, call);
+      expect(applied.has_value(), "selected erasure fixture call has its exact lifetime application");
+      const MirOperand output{.kind = MirOperandKind::Loan, .loan = *call.loan,
+                              .type = applied->returnType};
+      const auto identity = mir_detail::verifiedReferenceErasureSource(checked.mir, main->body, output);
+      if (target == fieldId || target == rawId) {
+        expect(!identity, "field addresses and raw owner witnesses are not whole-formal erasure identity");
+        rejectedField |= target == fieldId;
+        rejectedRaw |= target == rawId;
+        continue;
+      }
+      expect(identity.has_value(), "finite erasing and forwarding helper chains retain actual address identity");
+      if (target == throughId) {
+        throughCall = &call;
+        expect(identity->operand == call.operands.front() &&
+                   identity->referenceType == call.parameterTypes.front(),
+               "the query preserves the original caller CallInput operand and applied reference type");
+      } else if (target == mutableId) {
+        mutableInput = identity->referenceType.referenceAccess == AccessMode::Mutable &&
+                       identity->operand == call.operands.front();
+      } else {
+        forwarded = identity->referenceType.arguments.front() == SemanticType::Int32;
+      }
+    }
+  expect(throughCall && forwarded && mutableInput && rejectedField && rejectedRaw,
+         "address queries exercise all intended source shapes");
+  const auto query = [&](const MirProgram &program) {
+    const auto *caller = program.findFunctionInstance(mainId);
+    const auto applied = instantiateMirLifetimeTarget(program, *throughCall);
+    return applied ? mir_detail::verifiedReferenceErasureSource(program, caller->body,
+        {.kind = MirOperandKind::Loan, .loan = *throughCall->loan,
+         .type = applied->returnType}) : std::nullopt;
+  };
+  for (int mutation = 0; mutation != 8; ++mutation) {
+    auto forged = checked.mir;
+    auto &helper = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(throughId))->body;
+    auto &leaf = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(leafId))->body;
+    bool changed = false;
+    if (mutation == 0) {
+      // Same type, same region, same lifetime summary: change only the actual
+      // staged pointer on one normal-return path to the other formal.
+      const auto &target = *forged.findFunctionInstance(throughId);
+      const auto inputs = mir_detail::concreteFormalInputs(helper, target.parameterTypes,
+                                                          target.parameterBindings);
+      expect(inputs && inputs->size() == 3, "two equal reference formals retain distinct ordinals");
+      const auto second = std::find_if(helper.loans.begin(), helper.loans.end(), [&](const auto &loan) {
+        return loan.entry && loan.kind == MirLoanKind::Parameter &&
+               loan.carriers == std::vector<HirBindingId>{(*inputs)[1].binding};
+      });
+      const auto place = std::find_if(helper.places.begin(), helper.places.end(), [&](const auto &value) {
+        return value.root == MirPlaceRootKind::Binding && value.binding == (*inputs)[1].binding &&
+               value.type == SemanticType::Int32 && value.projections.size() == 1 &&
+               value.projections.front().kind == MirProjectionKind::Dereference;
+      });
+      expect(second != helper.loans.end() && place != helper.places.end(),
+             "the wrong-formal control has an exact independently typed entry address");
+      for (auto &block : helper.blocks)
+        for (auto &call : block.instructions)
+          if (!changed && call.functionTarget == leafId) {
+            auto *stage = call.operands.front().kind == MirOperandKind::Value
+                ? const_cast<MirInstruction *>(mir_detail::definitionFor(helper, call.operands.front().value))
+                : nullptr;
+            auto &input = stage ? stage->operands.front() : call.operands.front();
+            input.kind = MirOperandKind::Loan;
+            input.value = 0;
+            input.loan = second->id;
+            input.place = place->id;
+            changed = true;
+          }
+    } else if (mutation == 1) {
+      for (auto &block : helper.blocks)
+        if (!changed && block.terminator.kind == MirTerminatorKind::Return &&
+            block.terminator.value) {
+          block.terminator.value->loan = 0;
+          changed = true;
+        }
+    } else if (mutation == 2) {
+      for (auto &block : helper.blocks)
+        for (const auto &instruction : block.instructions)
+          if (!changed && instruction.kind == MirInstructionKind::Borrow && instruction.loan) {
+            auto duplicate = instruction;
+            duplicate.id += 100000;
+            block.instructions.push_back(std::move(duplicate));
+            changed = true;
+            break;
+          }
+    } else {
+      for (auto &block : leaf.blocks)
+        for (auto &call : block.instructions)
+          if (!changed && call.intrinsic == IntrinsicKind::EraseReference) {
+            if (mutation == 3) call.intrinsic = IntrinsicKind::RawBorrow;
+            if (mutation == 4) call.lifetimeApplication.bindings.push_back(
+                {Lifetime::parameter(987654), Lifetime::staticLifetime()});
+            if (mutation == 5) call.tombstone = true;
+            if (mutation == 6) {
+              call.intrinsic = IntrinsicKind::None;
+              call.functionTarget = leafId;
+              const auto *target = forged.findFunctionInstance(leafId);
+              expect(target->lifetimeContract.parameters.size() == 1,
+                     "recursive pointer helper has one exact invocation binder");
+              call.lifetimeApplication.callableSignature.reset();
+              call.lifetimeApplication.bindings = {{
+                  target->lifetimeContract.parameters.front(),
+                  call.parameterTypes.front().referenceLifetime}};
+              expect(instantiateMirLifetimeTarget(forged, call).has_value(),
+                     "recursive negative preserves the applied signature before the cycle check");
+            }
+            if (mutation == 7) call.operands.front().place = leaf.places.size() + 100;
+            changed = true;
+          }
+    }
+    expect(changed, "each erasure identity mutation reaches an actual proof edge");
+    expect(!query(forged),
+           "all-return address proof rejects wrong formal, return pointer, ambiguity, raw witness, application, tombstone, recursion and missing actual address");
+  }
+}
+
 void checkCarrierReferenceShellInputs() {
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "carrier-reference-shell-inputs.gti", R"gti(int shared = 7;
@@ -3124,6 +3315,7 @@ int main() {
              failure->fixes.empty(),
          "an invocation pointer cannot discard a target outlives requirement or invent a repair");
   checkReferenceErasureLifetimeAuthority();
+  checkReferenceErasureAddressIdentity();
   checkCarrierReferenceShellInputs();
   checkScopedReceiverOwner();
   checkAppliedBorrowFieldSummary();

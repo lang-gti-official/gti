@@ -276,6 +276,19 @@ restoredBorrowAuthority(const MirBody &body, const MirLoan &loan);
 [[nodiscard]] bool
 verifiedReferenceRestoreCall(const MirProgram &program, const MirBody &body,
                              const MirInstruction &instruction);
+// Derived address identity through trusted erasure and finite source helpers.
+// The returned operand is the exact caller argument at the erasing boundary,
+// including its CallInput value if staged. Every normal helper return must
+// forward the same whole reference formal; lifetime-owner sources, summaries,
+// raw witnesses and projected helper fields never establish pointer identity.
+// This is not liveness, escape, contents or lifetime-conversion authority.
+struct MirReferenceErasureSource {
+  MirOperand operand;
+  SemanticType referenceType = SemanticType::Unknown;
+};
+[[nodiscard]] std::optional<MirReferenceErasureSource>
+verifiedReferenceErasureSource(const MirProgram &program, const MirBody &body,
+                               const MirOperand &opaqueOperand);
 // Nonempty, exact local reference aliases of a CallResult. Every alias has
 // one dominating Initialize from this loan, after its unique typed producer
 // and before consumerPosition; its pointer storage is never reseated, moved,
@@ -381,6 +394,29 @@ textAddressResultLoan(const MirBody &body, const MirInstruction &instruction,
 // initializer fact and checks all normal exits, while loan flow checks liveness.
 [[nodiscard]] bool storedCarrierConstructorPublication(const MirBody &body,
                                                        const MirLoan &loan);
+
+// A lowering candidate only: preserve every original supplier while exporting
+// the exact incoming reference shell. Program admission must independently
+// replay address-preserving erasure/restoration and complete producer facts.
+// This initial structural profile has only shared, unconditional suppliers.
+struct MirReferenceReturnProjection {
+  const MirInstruction *restoration = nullptr;
+  const MirInstruction *erasure = nullptr;
+  MirOperand erasureInput;
+  SemanticType referenceType = SemanticType::Unknown;
+  MirLoanId parameter = 0;
+  MirLoanId stored = 0;
+  MirBorrowDependencySet originalSuppliers;
+  MirBorrowDependencySet publication;
+};
+[[nodiscard]] std::optional<MirReferenceReturnProjection>
+candidateSharedErasedReferenceReturn(const MirBody &, const MirLoan &);
+[[nodiscard]] std::optional<MirReferenceReturnProjection>
+verifiedSharedErasedReferenceReturn(const MirProgram &, const MirBody &,
+                                   const MirLoan &, std::size_t owner);
+[[nodiscard]] bool matchesSharedErasedReferenceReturn(
+    const MirBody &, const MirBlock &, const MirInstruction &,
+    const MirReferenceReturnProjection &);
 
 [[nodiscard]] bool storedReferenceReturnPublication(const MirBody &body,
                                                     const MirBlock &block,

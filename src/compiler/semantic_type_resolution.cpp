@@ -5660,13 +5660,23 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
 auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
     const ExprPtr &value, std::string_view destination) -> bool {
   if (currentReturnType.kind == SemanticType::Reference &&
-      currentReturnType.referenceAccess == AccessMode::ReadOnly)
-    if (const auto complete = completeBorrowDependencySet(value);
-        complete && checkedSharedStoredReferenceCopy(value.get(), *complete))
+      currentReturnType.referenceAccess == AccessMode::ReadOnly) {
+    auto complete = completeBorrowDependencySet(value);
+    if (!complete) {
+      // Unconditional retained carriers can still use the ordinary scalar
+      // projection here: visitReturnStmt publishes this same set after return
+      // validation. The typed copy proof below requires every selected group
+      // row; an absent/empty or incomplete projection cannot grant escape.
+      auto dependencies = storedBorrowDependencies(value);
+      if (!dependencies.empty())
+        complete = SemanticBorrowDependencySet{.dependencies = std::move(dependencies)};
+    }
+    if (complete && checkedSharedStoredReferenceCopy(value.get(), *complete))
       // Copying this exact shared field retains its independently checked
       // original parents. The carrier's read and cleanup group stays intact;
       // ordinary return-region and complete-supplier checks still follow.
       return false;
+  }
   const std::optional<RetainedLoanSource> source = retainedLoanSource(value);
   const Symbol *symbol = !source || source->carrier == nullptr
                              ? nullptr

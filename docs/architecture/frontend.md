@@ -477,6 +477,12 @@ field read still names the carrier's Stored group; neither that group nor its
 other fields lose their cleanup obligations. MIR must independently capture the
 selected reference before retiring the carrier. This rule does not open the
 contents of a referenced object or make a lifetime-owner place an address.
+A fixed `static` reference result can obtain its exact global supplier from an
+available nonvirtual GTI source definition. Declaration analysis defers only that
+missing supplier metadata: every return still proves its region and access,
+and body admission requires a complete summary naming one exact global place.
+An unavailable definition, differing global suppliers, or an unknown/cyclic
+summary cannot acquire origin authority merely from the `static` result type.
 
 The shared callable contract derivation obtains each nominal application's
 formation formula from the owning phase. Semantics supplies the instantiated

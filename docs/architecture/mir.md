@@ -1004,8 +1004,22 @@ address facts cross a stage only after its exact reference conversion is
 proved. Restoration retains the evaluated opaque input loan, not another loan
 with the same lifetime supplier; wrapper field recipes are instantiated through
 the selected lifetime application. Trusted intrinsic replay preserves the
-input's complete address suppliers without inventing referent contents. The GTI
-function-pointer operation records either one
+input's complete address suppliers without inventing referent contents.
+A shared carrier-reference return can export its incoming shell and Stored entry
+through erasure/restoration only after independently proving that every normal
+helper return preserves the exact whole reference argument address. A raw owner
+witness, matching lifetime summaries, or same-typed field cannot establish that
+identity. Lowering proposes an outgoing group without altering the transient
+calls; program verification replays both the helper addresses and the complete
+original supplier sets, including parents, at publication. Only the incoming
+shell's local parameter parent is removed; every external Stored parent remains.
+The evaluated restored pointer is forwarded once. Its transient loans retire
+before scope exit, while the outgoing Stored authority stays live. This initial
+projection supports shared, unconditional suppliers; exclusive and guarded
+transfers need their own capability proof. Context-free verification cannot
+admit this projection, and unused publications or absent optional annotations
+still require executable supplier proof.
+The GTI function-pointer operation records either one
 safe function instance or one stateless lambda instance, with its exact signature;
 invocation uses the same explicit failure and cleanup protocol as other GTI
 calls. It is not a native C callback adapter. Reference-field initialization
@@ -1242,6 +1256,15 @@ Checked restoration of an opaque reference has a separate explicit proof:
 the concrete restored field paths and access must match a verified restore
 operation or body-proven helper summary. Its hidden dependencies remain bounded
 by the original checked witness rather than becoming invented `Stored` owners.
+A separate derived address query follows actual reference operands through
+`Borrow`, reference `CallInput`, and statically selected source helpers to a
+trusted erasure operation. Every normal helper return must identify the same
+whole reference formal, including its exact pack lane. The query preserves the
+caller's original staged operand and applied reference type; it never derives
+pointer identity from a lifetime-owner place or a complete supplier summary.
+Cycles, ambiguous producers, raw owner-witness results, and projected helper
+fields fail this proof. Its result supplies no liveness, contents, escape, or
+lifetime-conversion authority.
 A named restored-reference return may retain that exact caller-parameter witness
 only when its source and access agree, there are no additional, designated, or
 cleanup-bound dependencies, and every local reference carrier has a unique

@@ -14902,10 +14902,22 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       if (instruction.kind == MirInstructionKind::Borrow) {
         const MirLoan &produced = body.loans[*instruction.loan - 1];
         const MirOperand &source = instruction.operands.front();
+        const auto erasedProjection = produced.kind == MirLoanKind::Return &&
+                source.kind == MirOperandKind::Loan &&
+                produced.storedDependency != body.loans[source.loan - 1].storedDependency
+            ? (catalog ? mir_detail::verifiedSharedErasedReferenceReturn(
+                             *catalog, body, body.loans[source.loan - 1], owner)
+                       : provisional ? mir_detail::candidateSharedErasedReferenceReturn(
+                                           body, body.loans[source.loan - 1])
+                                     : std::nullopt)
+            : std::nullopt;
+        const bool erasedReferenceReturnTransfer = erasedProjection &&
+            mir_detail::matchesSharedErasedReferenceReturn(
+                body, block, instruction, *erasedProjection);
         if (produced.kind == MirLoanKind::Return &&
             source.kind == MirOperandKind::Loan &&
             body.loans[source.loan - 1].storedDependency !=
-                produced.storedDependency) {
+                produced.storedDependency && !erasedReferenceReturnTransfer) {
           return failure(body, owner,
                          "return publication does not preserve the source "
                          "shell's stored dependency",
@@ -15050,7 +15062,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         // its transient call-result chain into the published Return loan (the
         // loan renames only provenance) and retires that chain at this exact
         // instruction boundary.
-        const bool callResultReturnTransfer = [&] {
+        const bool callResultReturnTransfer = erasedReferenceReturnTransfer || [&] {
           const bool field = body.kind == MirBodyKind::Constructor &&
                              produced.kind == MirLoanKind::Stored &&
                              !produced.storedPath.empty();

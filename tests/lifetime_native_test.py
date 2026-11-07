@@ -897,6 +897,20 @@ int main() {
   return consume(copied(number), later(0));
 }
 """,
+    "copied_static_reference_cleanup": """
+int global = 7;
+int otherGlobal = 11;
+mut int observed = 0;
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  ~View() { observed = observed + this.value; }
+};
+int&<static> selected();
+int read() { return selected(); }
+int&<static> selected() { View<static> view{global}; return view.value; }
+int main() { return read() + observed - 14; }
+""",
     "inherited_independent_referents": """
 struct Base<lifetime a> {
   int&<a> value;

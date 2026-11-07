@@ -979,6 +979,193 @@ bool storedCarrierConstructorPublication(const MirBody &body, const MirLoan &loa
   return initialization != nullptr;
 }
 
+std::optional<MirReferenceReturnProjection>
+candidateSharedErasedReferenceReturn(const MirBody &body, const MirLoan &restored) {
+  if (body.returnType.kind != SemanticType::Reference ||
+      body.returnType.arguments.size() != 1 ||
+      body.returnType.referenceAccess != AccessMode::ReadOnly ||
+      restored.kind != MirLoanKind::CallResult || restored.entry || restored.escapes ||
+      restored.access != AccessMode::ReadOnly || restored.lifecycleBound ||
+      restored.referenceSelection || restored.referenceContents || restored.contentsOpening ||
+      !restored.designatedFields.empty() || !restored.conditions.empty())
+    return std::nullopt;
+  const auto *restore = restoredBorrowAuthority(body, restored);
+  const auto *opaque = body.findLoan(restored.storedDependency);
+  if (!restore || restore->loan != restored.id || !restore->result ||
+      restore->info.type != body.returnType.arguments.front() ||
+      !opaque || opaque->kind != MirLoanKind::CallResult || opaque->entry || opaque->escapes ||
+      opaque->access != AccessMode::ReadOnly || opaque->lifecycleBound ||
+      opaque->referenceSelection || opaque->referenceContents || opaque->contentsOpening ||
+      !opaque->designatedFields.empty() || !opaque->conditions.empty())
+    return std::nullopt;
+  const MirInstruction *erase = nullptr;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (!instruction.tombstone && instruction.loan == opaque->id &&
+          (instruction.kind == MirInstructionKind::Call ||
+           instruction.kind == MirInstructionKind::Borrow)) {
+        if (erase) return std::nullopt;
+        erase = &instruction;
+      }
+  if (!erase || erase->kind != MirInstructionKind::Call || !erase->result ||
+      erase->hirValue != opaque->producedBy ||
+      erase->borrowOrigin != BorrowOriginKind::Argument ||
+      erase->borrowArgument >= erase->operands.size() ||
+      erase->borrowArgument >= erase->parameterTypes.size())
+    return std::nullopt;
+  const auto &input = erase->operands[erase->borrowArgument];
+  const auto &reference = erase->parameterTypes[erase->borrowArgument];
+  if (reference.kind != SemanticType::Reference || reference.arguments.size() != 1 ||
+      reference.referenceAccess != AccessMode::ReadOnly || input.type != reference ||
+      !sameLifetimeConversionShape(reference, body.returnType))
+    return std::nullopt;
+  const auto terminal = [&](const auto &self, const MirOperand &operand,
+                            std::size_t depth) -> const MirOperand * {
+    if (depth > body.values.size()) return nullptr;
+    if (operand.kind != MirOperandKind::Value) return &operand;
+    const auto *stage = definitionFor(body, operand.value);
+    if (!stage || stage->tombstone || stage->kind != MirInstructionKind::CallInput ||
+        stage->callInputKind != HirCallInputKind::ReadBorrow || stage->operands.size() != 1)
+      return nullptr;
+    return self(self, stage->operands.front(), depth + 1);
+  };
+  const auto *actual = terminal(terminal, input, 0);
+  if (!actual || actual->value || actual->literal ||
+      (actual->kind == MirOperandKind::BorrowRead && actual->loan))
+    return std::nullopt;
+  const MirLoan *parameter = actual->kind == MirOperandKind::Loan
+      ? body.findLoan(actual->loan) : nullptr;
+  const auto *address = body.findPlace(actual->place);
+  if (actual->kind == MirOperandKind::BorrowRead && address)
+    for (const auto &loan : body.loans) {
+      const auto *root = body.findPlace(loan.source);
+      if (loan.kind == MirLoanKind::Parameter && loan.entry && root &&
+          wholeEntryPlaceMatches(body, *root, *address)) {
+        if (parameter) return std::nullopt;
+        parameter = &loan;
+      }
+    }
+  const auto *root = parameter ? body.findPlace(parameter->source) : nullptr;
+  if (!parameter || parameter->kind != MirLoanKind::Parameter || !parameter->entry ||
+      parameter->parent || parameter->escapes || parameter->access != AccessMode::ReadOnly ||
+      parameter->lifecycleBound || parameter->referenceSelection ||
+      parameter->referenceContents || parameter->contentsOpening ||
+      !parameter->additionalDependencies.empty() || !parameter->designatedFields.empty() ||
+      !parameter->conditions.empty() || !root || root->root != MirPlaceRootKind::Binding ||
+      !root->initiallyAvailable || root->foreignStorage ||
+      root->type.kind != SemanticType::Reference ||
+      !sameLifetimeConversionShape(root->type, reference) ||
+      parameter->carriers.size() != 1 || parameter->carriers.front() != root->binding ||
+      (actual->place && (!address || !wholeEntryPlaceMatches(body, *root, *address))) ||
+      (actual->kind != MirOperandKind::Loan && actual->kind != MirOperandKind::BorrowRead))
+    return std::nullopt;
+  const auto *stored = body.findLoan(parameter->storedDependency);
+  if (!stored || stored->kind != MirLoanKind::Stored || !stored->entry ||
+      stored->source != parameter->source || stored->parent || stored->storedDependency ||
+      stored->access != AccessMode::ReadOnly || stored->lifecycleBound || stored->escapes ||
+      stored->referenceSelection || stored->referenceContents || stored->contentsOpening ||
+      stored->designatedFields.empty() || !stored->conditions.empty())
+    return std::nullopt;
+  MirBorrowDependencySet original{.dependencies = {{
+      .source = opaque->source, .parent = opaque->parent,
+      .designatedFields = opaque->designatedFields, .access = opaque->access,
+      .conditions = opaque->conditions}}};
+  original.dependencies.insert(original.dependencies.end(),
+      opaque->additionalDependencies.begin(), opaque->additionalDependencies.end());
+  MirBorrowDependencySet publication;
+  std::optional<MirLoanDependency> shell;
+  for (const auto &dependency : original.dependencies) {
+    if (!body.findPlace(dependency.source) || dependency.referenceContents ||
+        dependency.access != AccessMode::ReadOnly || !dependency.designatedFields.empty() ||
+        !dependency.conditions.empty())
+      return std::nullopt;
+    if (dependency.parent == parameter->id) {
+      const auto *supplier = body.findPlace(dependency.source);
+      if (shell || !supplier || !wholeEntryPlaceMatches(body, *root, *supplier))
+        return std::nullopt;
+      shell = dependency;
+      shell->source = parameter->source;
+      shell->parent = 0;
+    } else if (dependency.parent == stored->id) {
+      publication.dependencies.push_back(dependency);
+    } else {
+      return std::nullopt;
+    }
+  }
+  if (!shell || publication.dependencies.empty()) return std::nullopt;
+  publication.dependencies.insert(publication.dependencies.begin(), *shell);
+  std::vector<MirLoanDependency> expected = original.dependencies;
+  for (auto &dependency : expected) dependency.parent = opaque->id;
+  std::vector<MirLoanDependency> restoredSuppliers{{
+      .source = restored.source, .parent = restored.parent,
+      .designatedFields = restored.designatedFields, .access = restored.access,
+      .conditions = restored.conditions}};
+  restoredSuppliers.insert(restoredSuppliers.end(), restored.additionalDependencies.begin(),
+                           restored.additionalDependencies.end());
+  if (!std::is_permutation(expected.begin(), expected.end(),
+                           restoredSuppliers.begin(), restoredSuppliers.end()))
+    return std::nullopt;
+  return MirReferenceReturnProjection{.restoration = restore, .erasure = erase,
+      .erasureInput = input, .referenceType = reference, .parameter = parameter->id,
+      .stored = stored->id, .originalSuppliers = std::move(original),
+      .publication = std::move(publication)};
+}
+
+std::optional<MirReferenceReturnProjection>
+verifiedSharedErasedReferenceReturn(const MirProgram &program, const MirBody &body,
+                                   const MirLoan &restored, std::size_t owner) {
+  auto candidate = candidateSharedErasedReferenceReturn(body, restored);
+  if (!candidate || !verifiedReferenceRestoreCall(program, body, *candidate->restoration))
+    return std::nullopt;
+  const auto &restore = *candidate->restoration;
+  const auto actual = verifiedReferenceErasureSource(program, body,
+      restore.operands[restore.borrowArgument]);
+  const auto *parameter = body.findLoan(candidate->parameter);
+  const auto *root = parameter ? body.findPlace(parameter->source) : nullptr;
+  if (!actual || actual->operand != candidate->erasureInput ||
+      actual->referenceType != candidate->referenceType || !root ||
+      !mirLifetimeReferenceConversion(program, body, owner, root->type, actual->referenceType) ||
+      !mirLifetimeReferenceConversion(program, body, owner, actual->referenceType, body.returnType))
+    return std::nullopt;
+  return candidate;
+}
+
+bool matchesSharedErasedReferenceReturn(const MirBody &body, const MirBlock &block,
+    const MirInstruction &instruction, const MirReferenceReturnProjection &projection) {
+  const auto *published = instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+  if (instruction.tombstone || instruction.kind != MirInstructionKind::Borrow ||
+      instruction.operands.size() != 1 || !published ||
+      published->kind != MirLoanKind::Return || published->entry || !published->escapes ||
+      published->parent || published->lifecycleBound || published->referenceSelection ||
+      published->referenceContents || published->contentsOpening ||
+      published->storedDependency != projection.stored ||
+      instruction.hirValue != projection.restoration->hirValue ||
+      published->producedBy != instruction.hirValue ||
+      instruction.info.type != projection.restoration->info.type)
+    return false;
+  const auto &operand = instruction.operands.front();
+  if (operand.kind != MirOperandKind::Loan || operand.place || operand.value || operand.literal ||
+      operand.loan != projection.restoration->loan || operand.type != instruction.info.type)
+    return false;
+  std::vector<MirLoanDependency> claimed{{.source = published->source,
+      .parent = published->parent, .designatedFields = published->designatedFields,
+      .access = published->access, .conditions = published->conditions}};
+  claimed.insert(claimed.end(), published->additionalDependencies.begin(),
+                 published->additionalDependencies.end());
+  if (claimed != projection.publication.dependencies) return false;
+  const auto current = std::find_if(block.instructions.begin(), block.instructions.end(),
+      [&](const auto &item) { return &item == &instruction; });
+  if (current == block.instructions.end() || std::next(current) == block.instructions.end())
+    return false;
+  const auto *restored = body.findLoan(operand.loan);
+  if (!restored || (!restored->carriers.empty() &&
+      !callResultReferenceAliases(body, *restored, block, current - block.instructions.begin())))
+    return false;
+  const auto &retire = *std::next(current);
+  return !retire.tombstone && retire.kind == MirInstructionKind::EndBorrow &&
+      retire.loan == restored->id && retire.hirValue == instruction.hirValue;
+}
+
 bool storedReferenceReturnPublication(const MirBody &body,
                                        const MirBlock &block,
                                        const MirInstruction &instruction) {

@@ -21,7 +21,8 @@ struct SemanticLifetimeTestAccess {
     bool callOwnerRejected = false;
   };
 
-  static ContentsChecks referenceContentsChecks(const FrontendResult &source) {
+  static ContentsChecks referenceContentsChecks(const FrontendResult &source,
+                                               std::size_t selectorDepth = 1) {
     ContentsChecks checks;
     SemanticVisitor analyzer(TargetInfo::host(), &source.sourceGraph, true,
                              nullptr, &source.sources);
@@ -52,7 +53,7 @@ struct SemanticLifetimeTestAccess {
     checks.selectors = first && second && left->object().get() != right->object().get() &&
         first->root == second->root && first->receiver == second->receiver &&
         first->fields == second->fields && first->type == second->type &&
-        first->fields.size() == 1 && first->type.kind == SemanticType::Reference;
+        first->fields.size() == selectorDepth && first->type.kind == SemanticType::Reference;
     checks.callOwnerRejected = indirect &&
         !impl.referenceContentsSelector(indirect->object().get());
     if (!checks.selectors)
@@ -3459,6 +3460,7 @@ void testSharedStoredReferenceCleanupCopy() {
   const std::string declarations = R"gti(
 mut int observed = 0;
 int global = 7;
+int otherGlobal = 11;
 struct View<lifetime a> {
   int&<a> value;
   View(int&<a> input) : value(input) {}
@@ -3491,6 +3493,13 @@ int&<static> permanent() {
 int main() { int value = 7; return direct(value) + inherited(value) + permanent() - 21; }
 )gti");
   expectValid(valid, "copying an exact shared reference field retains its independent supplier through carrier cleanup");
+  const auto *permanent = function(valid, "permanent");
+  const auto *global = permanent && permanent->returnBorrowPlace
+      ? valid.semantics.database().findSymbol(permanent->returnBorrowPlace->root) : nullptr;
+  expect(global && global->name == "global" && permanent->completeReturnBorrow &&
+             permanent->completeReturnBorrow->dependencies.size() == 1 &&
+             permanent->completeReturnBorrow->dependencies.front().globalRoot == global->id,
+         "a checked static return retains the exact global used by its field initializer, not another same-type global");
   for (const auto name : {"direct", "inherited"}) {
     const auto *target = function(valid, name);
     const auto *body = target && target->declaration ? target->declaration->body().get() : nullptr;
@@ -3524,6 +3533,21 @@ int main() { int value = 7; return direct(value) + inherited(value) + permanent(
     const auto rejected = check(source);
     expect(rejected.syntaxValid && !rejected.semanticValid,
            "cleanup copying cannot extend local/owned storage, detach an exclusive parent, or recover a shortened field's longer input lifetime");
+  }
+  const auto beforeDefinition = check(R"gti(
+int&<static> later();
+int use() { return later(); }
+int&<static> later() { View<static> view{global}; return view.value; }
+)gti");
+  expectValid(beforeDefinition, "an available source definition supplies its checked static origin through the existing body query");
+  for (const auto source : {
+           R"gti(int&<static> unavailable();)gti",
+           R"gti(int&<static> invalid(bool first) { View<static> left{global}; View<static> right{otherGlobal}; if (first) { return left.value; } return right.value; })gti",
+           R"gti(int&<static> invalid() { return unknownValue; })gti",
+           R"gti(int&<static> invalid() { return invalid(); })gti"}) {
+    const auto rejected = check(source);
+    expect(rejected.syntaxValid && !rejected.semanticValid,
+           "a static result does not invent origin authority for absent definitions, differing globals, unknown bodies or recursive summaries");
   }
 }
 
@@ -3632,6 +3656,27 @@ int indirect<lifetime a, lifetime owner>(Leaf<a>&<owner> input) { return choose(
   expect(checks.immutableSnapshot, "slot invalidation forgets current contents while preserving copied shared authority");
   expect(checks.malformed, "mixed sources, wrong fields, exclusive copies and forged read/cleanup authority reject");
   expect(checks.callOwnerRejected, "a call's lifetime owner is not fabricated into its actual reference selector");
+  const auto inherited = lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+      "staged-inherited-reference-contents.gti", R"gti(
+struct Leaf<lifetime a> { int&<a> external; Leaf(int&<a> input) : external(input) {} };
+struct Storage<lifetime a, lifetime owner> {
+  Leaf<a>&<owner> value;
+  Storage(Leaf<a>&<owner> input) : value(input) {}
+};
+struct Holder<lifetime a, lifetime owner> : public Storage<a, owner> {
+  Holder(Leaf<a>&<owner> input) : Storage<a, owner>(input) {}
+};
+int read<lifetime a, lifetime owner, lifetime shell>(Holder<a, owner>&<shell> holder) {
+  return holder.value.external + holder.value.external;
+}
+Leaf<a>&<owner> choose<lifetime a, lifetime owner>(Leaf<a>&<owner> input) { return input; }
+int indirect<lifetime a, lifetime owner>(Leaf<a>&<owner> input) { return choose(input).external; }
+)gti");
+  expectValid(inherited, "staged inherited contents queries use the exact instantiated storage-base view");
+  const auto inheritedChecks = lang::SemanticLifetimeTestAccess::referenceContentsChecks(inherited, 2);
+  expect(inheritedChecks.selectors && inheritedChecks.normalized && inheritedChecks.immutableSnapshot &&
+             inheritedChecks.aliasing && inheritedChecks.malformed && inheritedChecks.callOwnerRejected,
+         "an inherited selector preserves its typed Base prefix, independent regions and the same read/alias/cleanup proof gates");
 }
 } // namespace
 

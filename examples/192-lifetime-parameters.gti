@@ -40,6 +40,10 @@ int&<data> copy_before_cleanup<lifetime data>(int&<data> input) {
   ObservedReading reading{input};
   return reading.value;
 }
+int&<static> copy_global_before_cleanup() {
+  ObservedReading<static> reading{permanent_value};
+  return reading.value;
+}
 
 // The conformance head infers Reading's stored lifetime. A reference to the
 // Reading shell remains a separate, short-lived operation borrow.
@@ -99,5 +103,6 @@ int main() {
   if (observe(identity, left) != 4 || observe(permanent, left) != 11) { return 8; }
   if (read_in_environment(right, right) != 9) { return 9; }
   if (copy_before_cleanup(right) != 9 || cleaned_reading != 9) { return 10; }
+  if (copy_global_before_cleanup() != 11 || cleaned_reading != 20) { return 11; }
   return identity(left) - 4;
 }

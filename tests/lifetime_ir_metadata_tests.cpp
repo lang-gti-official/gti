@@ -5,10 +5,12 @@
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_editor.h"
+#include "gti/mir_verifier.h"
 #include "gti/callable_lifetimes.h"
 #include "gti/nominal_variance.h"
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 
 namespace lang {
@@ -221,8 +223,123 @@ int main() { int value = 7; return external(value) - 7; }
            "nested publication rejects changed paths, source, permission and coordinated false ownership");
     if (mutation == 5)
       expect(std::any_of(result.errors.begin(), result.errors.end(), [](const auto &error) {
-               return error.message == "constructor field publication is not active at normal exit";
+               return error.message == "constructor field dependency cannot retire on a successful construction path";
              }), "unconditional constructor publication must remain live at successful exit");
+  }
+}
+
+void erasedCarrierReturnPublication() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto prelude = std::filesystem::weakly_canonical(root / "prelude.gti");
+  const auto capability = std::filesystem::weakly_canonical(root / "std/detail/memory_capabilities.gti");
+  const auto entry = std::filesystem::weakly_canonical(root / "__trusted_tests__/erased-carrier-return.gti");
+  const std::string declarations = R"gti(export module detail.memory_capabilities;
+namespace gti_internal {
+export class erased_object {};
+export erased_object& erase_reference<T>(T& input);
+export unsafe T&<a> restore_reference<T, lifetime a>(erased_object&<a> input) requires outlives<T, a>;
+}
+)gti";
+  const std::string source = R"gti(import "../std/detail/memory_capabilities.gti";
+using Opaque = gti_internal::erased_object;
+Opaque& erase<T>(T& source) { return gti_internal::erase_reference(source); }
+unsafe T&<a> restore<T, lifetime a>(Opaque&<a> source) requires outlives<T, a> {
+  unsafe { return gti_internal::restore_reference<T>(source); }
+}
+T&<a> round_trip<T, lifetime a>(T&<a> source) requires outlives<T, a> {
+  unsafe { return restore<T, a>(erase(source)); }
+}
+struct Borrowed<lifetime storage> {
+  int&<storage> value;
+  Borrowed(int&<storage> source) : value(source) {}
+};
+int main() {
+  int number = 7;
+  Borrowed view{number};
+  Borrowed& same = round_trip(view);
+  return same.value - 7;
+}
+)gti";
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      entry, source, {prelude, entry},
+      {{prelude.string(), ""}, {capability.string(), declarations}, {entry.string(), source}}, {root});
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(), "transparent erasure returns the exact carrier shell and its original external owners");
+  HirFunctionInstanceId functionId = 0;
+  for (const auto &function : checked.hir.functionInstances())
+    if (function.source && function.source->name().lexeme == "round_trip") functionId = function.id;
+  const auto *function = checked.mir.findFunctionInstance(functionId);
+  expect(function, "erased return fixture has its concrete returning body");
+  const MirInstruction *publication = nullptr;
+  for (const auto &block : function->body.blocks)
+    for (const auto &instruction : block.instructions) {
+      const auto *loan = instruction.loan ? function->body.findLoan(*instruction.loan) : nullptr;
+      if (instruction.kind == MirInstructionKind::Borrow && loan && loan->kind == MirLoanKind::Return)
+        publication = &instruction;
+    }
+  expect(publication && publication->operands.size() == 1, "return publishes the evaluated restored pointer");
+  const auto *restored = function->body.findLoan(publication->operands.front().loan);
+  const auto projection = restored ? mir_detail::verifiedSharedErasedReferenceReturn(
+      checked.mir, function->body, *restored, functionId) : std::nullopt;
+  expect(projection && projection->publication.dependencies.size() == 2,
+         "independent erasure proof distinguishes shell permission from the stored reference owner");
+  const auto &returned = *function->body.findLoan(*publication->loan);
+  expect(returned.storedDependency == projection->stored && returned.parent == 0 &&
+             returned.additionalDependencies.size() == 1 &&
+             returned.additionalDependencies.front().parent == projection->stored &&
+             restored->storedDependency != projection->stored,
+         "only outgoing authority is projected; transient erased/restored loans retain their original witnesses");
+  expect(!verifyMirBody(function->body).valid(),
+         "context-free verification cannot replace independent erasure helper proof");
+  for (int mutation = 0; mutation != 8; ++mutation) {
+    auto forged = checked.mir;
+    auto &body = MirProgramTestAccess::functions(forged)[functionId - 1].body;
+    auto &published = body.loans[returned.id - 1];
+    auto &opaque = body.loans[restored->storedDependency - 1];
+    auto &restoreLoan = body.loans[restored->id - 1];
+    if (mutation == 0) published.storedDependency = opaque.id;
+    if (mutation == 1) published.additionalDependencies.clear();
+    if (mutation == 2) published.additionalDependencies.front().parent = 0;
+    if (mutation == 3) published.source = opaque.source;
+    if (mutation == 4) published.additionalDependencies.front().access = AccessMode::Mutable;
+    if (mutation == 5 || mutation == 7) {
+      // All attached sets agree on the same lie. The actual erasure argument
+      // still has the real external field supplier, so executable replay must
+      // reject even without optional annotations or a consuming return.
+      const auto old = opaque.source;
+      const auto wrong = published.source;
+      opaque.source = wrong;
+      for (auto &dependency : opaque.additionalDependencies)
+        if (dependency.source == old) dependency.source = wrong;
+      restoreLoan.source = wrong;
+      for (auto &dependency : restoreLoan.additionalDependencies)
+        if (dependency.source == old) dependency.source = wrong;
+      for (auto &dependency : published.additionalDependencies)
+        if (dependency.source == old) dependency.source = wrong;
+      if (mutation == 7) {
+        for (auto &value : body.values) value.borrowDependencies.reset();
+        for (auto &block : body.blocks)
+          if (block.terminator.kind == MirTerminatorKind::Return)
+            block.terminator = {.kind = MirTerminatorKind::Unreachable};
+      }
+    }
+    if (mutation == 6) {
+      MirInstructionId next = 1;
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions) next = std::max(next, instruction.id + 1);
+      for (auto &block : body.blocks)
+        for (auto it = block.instructions.begin(); it != block.instructions.end(); ++it)
+          if (it->id == publication->id) {
+            block.instructions.insert(it, {.id = next, .kind = MirInstructionKind::EndBorrow,
+                                          .loan = projection->stored});
+            break;
+          }
+    }
+    expect(rebuildMirValueUses(body), "rebuild exact erased-return mutation use records");
+    expect(!verifyMirProgram(forged).valid(),
+           "erased return cannot substitute shell identity, lose owners, upgrade access or bypass executable replay");
   }
 }
 
@@ -1047,6 +1164,7 @@ void quantifiedNominalLiftInventory() {
 int main() {
   stagedReferenceContentsMetadata();
   nestedCarrierPublication();
+  erasedCarrierReturnPublication();
   closureEnvironmentReplay();
   rawPointerStorageOutlives();
   packEntrySourceIdentity();
