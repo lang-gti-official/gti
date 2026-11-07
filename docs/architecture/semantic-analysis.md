@@ -260,6 +260,9 @@ that entry, and the declared result lifetime and access still require proof.
 Generic instantiation rebuilds the full region-permitted supplier inventory
 after substituting concrete stored fields. The unsafe assertion's written owner
 remains exact and is not selected by taking the first supplier in that inventory.
+Call metadata uses that same complete concrete contract for namespace functions
+and member functions. A legacy compact `borrowed_from` spelling cannot erase
+newly revealed stored-field suppliers or their expanded parameter ordinals.
 
 Anonymous stored regions remain determined by field structure. A constructor's
 checked initializer-list summary may relate its inputs to those anonymous
@@ -2722,13 +2725,15 @@ complete resolved closure identity; consumption does not permit capture mutation
 
 ### Namespace Function Items
 
-A bare namespace function name in a value context selects one eligible
-non-generic, body-bearing GTI declaration. With no required signature, multiple
+A bare namespace function name in a value context selects one eligible,
+body-bearing GTI declaration with no unspecialized type or value binders. With no required signature, multiple
 eligible declarations are ambiguous. Existing confined callable contracts and
 managed-thread task contracts can instead select one exact matching target.
 Semantics constructs `SemanticType::FunctionItem` from the selected
 `FunctionId`, result, and parameter list; neither HIR nor a backend sees an
 overload set or must infer which declaration the source intended.
+Declaration lifetime parameters remain invocation quantifiers; fixed `static`
+results stay fixed when the item passes through a generic callable parameter.
 
 The expression records a function occurrence for hover and definition, the
 exact target, and read-callable capability. Its zero-state type is trivial,
@@ -2745,6 +2750,29 @@ reanalysis; an expression entry inherited from another analysis does not prove
 the argument was analyzed here. Contextual array tails retain their selected
 constructor parameter context. Ordinary direct function calls and the separate
 named-native-callback conversion retain their existing resolution paths.
+
+### Fixed Lambda Environment Premises
+
+A closure records an `environmentContract` separately from its invocation
+`lifetimeContract`. The former contains declared enclosing lifetime premises
+and capture storage well-formedness expressed only in the closure's fixed
+environment slots. Creation applies those exact slots to the enclosing body
+and records a checked lifetime application. Local body regions and a fresh
+invocation's binders cannot enter the published environment contract.
+
+Body analysis composes the two contracts through the shared callable helper.
+Complete `All`/`Any` formulas survive projection and composition. Forgetting a
+premise in another invocation scope weakens the formula; it never selects one
+arm of a disjunction. Lexical concept lookup remains available, but lifetime
+proof does not reimport its original, unrenamed enclosing binders.
+
+The fixed contract is part of the exact lambda type's formation requirements,
+including when the type supplies a generic argument. Callable erasure first
+reconciles those fixed slots with the requested carrier and then proves the
+invocation contract. A fixed input cannot implement a fresh universal input.
+HIR/MIR preserve the formation application and replay it before consuming the
+type invariant. These contracts add compile-time metadata, not closure fields
+or runtime checks; integrated runtime coverage remains a required gate.
 
 ## Owned Managed-Thread Tasks
 

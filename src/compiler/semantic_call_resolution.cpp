@@ -8530,7 +8530,9 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   // decides its origin per substitution; the selected instance's contract
   // binds this call exactly as its own reanalysis records it.
   bool genericContract = false;
-  if (declarationInfo != nullptr && declarationInfo->declaration != nullptr &&
+  if ((function.returnType.kind != SemanticType::Reference ||
+       !function.lifetimeContract.valid()) && declarationInfo != nullptr &&
+      declarationInfo->declaration != nullptr &&
       declarationInfo->bodyDeclaration() != nullptr &&
       containsOpenTypeParameter(declarationInfo->returnType) &&
       declarationInfo->bodyDeclaration()->hasFunctionAttribute(
@@ -8706,8 +8708,27 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     const bool contractFields =
         complete && !compactReferenceSupplier &&
                     (function.returnType.kind == SemanticType::Class ||
-                     (function.returnType.kind == SemanticType::Reference &&
-                      function.dispatchOwner.kind == SemanticType::Class));
+                     function.returnType.kind == SemanticType::Reference);
+    if (contractFields && function.returnType.kind == SemanticType::Reference &&
+        function.lifetimeContract.valid() && !complete->dependencies.empty()) {
+      // The complete declaration is authoritative after concrete type
+      // substitution. An open generic's compact borrowed_from spelling may
+      // have only one owner before its stored reference fields are known.
+      // Publish the same supplier inventory and ordinals as the executable
+      // target, for namespace functions as well as member accessors.
+      const auto &first = complete->dependencies.front();
+      // Static suppliers are materialized as an exact global place below.
+      if (first.origin != BorrowOriginKind::Global)
+        resolved.borrowOrigin = first.origin;
+      resolved.borrowArgument = first.parameter;
+      resolved.borrowAccess = first.access;
+      resolved.borrowArguments.clear();
+      for (const auto &source : complete->dependencies)
+        if (source.origin == BorrowOriginKind::Argument &&
+            std::find(resolved.borrowArguments.begin(), resolved.borrowArguments.end(),
+                      source.parameter) == resolved.borrowArguments.end())
+          resolved.borrowArguments.push_back(source.parameter);
+    }
     // A reference selected from a receiver's alternative-guarded stored path
     // is relayed only from a named or fresh receiver. Reaching that carrier
     // through a field, element or dereference of another value needs a

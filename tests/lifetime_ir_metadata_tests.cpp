@@ -31,6 +31,115 @@ SemanticType reference(GenericParameterId id) {
   type.referenceLifetime = Lifetime::parameter(id);
   return type;
 }
+void closureEnvironmentReplay() {
+  const auto first = Lifetime::parameter(841), second = Lifetime::parameter(842);
+  const auto actualFirst = Lifetime::parameter(843), actualSecond = Lifetime::parameter(844);
+  MirLambdaInstance lambda;
+  lambda.id = 1;
+  lambda.declaration = 84;
+  lambda.environmentLifetimes = {first, second};
+  lambda.environmentContract = {.parameters = {first, second},
+      .bounds = {{first, second}}, .complete = true};
+  lambda.type = SemanticType::lambdaType(84, SemanticType::Void, {}, {});
+  lambda.type.lifetimeArguments = {first, second};
+  lambda.returnType = SemanticType::Void;
+  lambda.lifetimeContract = {.parameters = {first, second}, .complete = true};
+  lambda.body.kind = MirBodyKind::Lambda;
+  lambda.body.returnType = SemanticType::Void;
+  lambda.body.lifetimeBody.complete = true;
+  MirProgram program;
+  MirProgramTestAccess::lambdas(program) = {lambda};
+  MirFunctionInstance context;
+  context.id = 1;
+  context.lifetimeContract = {.parameters = {actualFirst, actualSecond},
+      .bounds = {{actualFirst, actualSecond}}, .complete = true};
+  MirProgramTestAccess::functions(program) = {context};
+  const std::vector<LifetimeBinding> bindings{{first, actualFirst}, {second, actualSecond}};
+  const auto actual = *substituteTypeLifetimes(lambda.type, bindings);
+  MirBody body;
+  body.kind = MirBodyKind::Function;
+  body.returnType = SemanticType::Void;
+  body.lifetimeBody = {.obligations = {{actualFirst, actualSecond}}, .complete = true};
+  MirInstruction creation{.id = 1, .kind = MirInstructionKind::Compute,
+      .operation = MirOperation::Closure, .lambdaTarget = 1,
+      .info = {.type = actual}};
+  creation.lifetimeApplication = {.bindings = bindings,
+      .obligations = {{actualFirst, actualSecond}}, .complete = true};
+  body.blocks = {{.id = 1, .instructions = {creation}}};
+  expect(verifyMirLifetimeApplications(program, body, 1).valid(),
+         "closure formation independently proves its fixed environment in the enclosing graph");
+  for (int mutation = 0; mutation != 6; ++mutation) {
+    auto forged = body;
+    auto &claim = forged.blocks.front().instructions.front();
+    MirProgramTestAccess::lambdas(program) = {lambda};
+    MirProgramTestAccess::functions(program) = {context};
+    if (mutation == 0) claim.lifetimeApplication = {};
+    if (mutation == 1) claim.lifetimeApplication.bindings.front().second = Lifetime::staticLifetime();
+    if (mutation == 2) claim.info.type.lifetimeArguments.front() = actualSecond;
+    if (mutation == 3) {
+      MirProgramTestAccess::functions(program).front().lifetimeContract.bounds.clear();
+      MirProgramTestAccess::lambdas(program).front().lifetimeContract.bounds = {{first, second}};
+    }
+    if (mutation == 4)
+      MirProgramTestAccess::lambdas(program).front().environmentContract.typeBounds = {{reference(899), second}};
+    if (mutation == 5)
+      MirProgramTestAccess::lambdas(program).front().environmentContract.parameters.front() = Lifetime::local(841);
+    expect(!verifyMirLifetimeApplications(program, forged, 1).valid(),
+           "closure creation rejects missing proof, changed fixed types, invocation-only premises and foreign scopes");
+  }
+  MirProgramTestAccess::functions(program) = {context};
+  lambda.environmentContract.bounds.clear();
+  lambda.environmentContract.requirements = {
+      .nodes = {{.kind = LifetimeRequirementNode::Kind::Region, .bound = {first, second}},
+                {.kind = LifetimeRequirementNode::Kind::Region, .bound = {second, first}},
+                {.kind = LifetimeRequirementNode::Kind::Any, .left = 0, .right = 1}}, .root = 2};
+  MirProgramTestAccess::lambdas(program) = {lambda};
+  expect(verifyMirLifetimeApplications(program, body, 1).valid(),
+         "closure formation can prove one arm of its complete environment disjunction");
+  lambda.body.lifetimeBody.obligations = {{first, second}};
+  MirProgramTestAccess::lambdas(program) = {lambda};
+  expect(!verifyMirLifetimeApplications(program, lambda.body, 1).valid(),
+         "lambda body assumptions retain OR instead of granting both environment alternatives");
+  lambda.environmentContract.requirements.nodes.back().kind = LifetimeRequirementNode::Kind::All;
+  MirProgramTestAccess::lambdas(program) = {lambda};
+  expect(verifyMirLifetimeApplications(program, lambda.body, 1).valid(),
+         "lambda body receives both premises only from an actual conjunctive environment");
+
+  lambda.returnType = reference(842);
+  lambda.parameterTypes = {reference(841)};
+  lambda.type = SemanticType::lambdaType(84, lambda.returnType, lambda.parameterTypes, {});
+  lambda.type.lifetimeArguments = {first, second};
+  lambda.lifetimeContract.bounds = {{first, second}};
+  lambda.environmentContract.requirements = {};
+  lambda.environmentContract.bounds = {{first, second}};
+  const auto actualTarget = *substituteTypeLifetimes(lambda.type, bindings);
+  CallableLifetimeSignature requested;
+  requested.signature = SemanticType::functionSignature(reference(851), {reference(852)});
+  requested.contract = *callableLifetimeContract(requested.signature);
+  requested.signatureBindings = {{Lifetime::parameter(851), actualSecond},
+                                 {Lifetime::parameter(852), actualFirst}};
+  expect(mirLambdaCallableLifetimeTargetMatches(program, requested, lambda, actualTarget),
+         "exact fixed environment facts prove a closed callable target's invocation requirements");
+  auto missingEnvironment = lambda;
+  missingEnvironment.environmentContract.bounds.clear();
+  expect(!mirLambdaCallableLifetimeTargetMatches(program, requested, missingEnvironment, actualTarget),
+         "a callable target identifier alone cannot supply a missing environment premise");
+  auto changedFixed = requested;
+  changedFixed.signatureBindings.front().second = Lifetime::staticLifetime();
+  expect(!mirLambdaCallableLifetimeTargetMatches(program, changedFixed, lambda, actualTarget),
+         "a fixed environment fact cannot be attached to a different requested region");
+  auto changedInvocation = requested;
+  changedInvocation.signature.quantifiedLifetimes = {851};
+  expect(!mirLambdaCallableLifetimeTargetMatches(program, changedInvocation, lambda, actualTarget),
+         "fixed environment facts cannot specialize a fresh requested invocation binder");
+  lambda.environmentContract.bounds.clear();
+  lambda.environmentContract.requirements = {
+      .nodes = {{.kind = LifetimeRequirementNode::Kind::Region, .bound = {first, second}},
+                {.kind = LifetimeRequirementNode::Kind::Region, .bound = {second, first}},
+                {.kind = LifetimeRequirementNode::Kind::Any, .left = 0, .right = 1}}, .root = 2};
+  expect(!mirLambdaCallableLifetimeTargetMatches(program, requested, lambda, actualTarget),
+         "target implication proves every environment alternative rather than selecting one");
+}
 void rawPointerStorageOutlives() {
   MirProgram program;
   const auto generic = SemanticType::typeParameter(810);
@@ -131,6 +240,68 @@ void rawPointerStorageOutlives() {
   expect(!verifyMirLifetimeApplications(program, conversion, 1).valid(),
          "a forged null operand tag cannot hide a non-null pointer source with different nested regions");
 }
+void packElementLifetimeReplay() {
+  const auto first = Lifetime::parameter(821);
+  const auto second = Lifetime::parameter(822);
+  const auto firstUse = Lifetime::inference(823);
+  const auto secondUse = Lifetime::inference(824);
+  const auto firstReference = SemanticType::referenceTo(SemanticType::Int32, AccessMode::ReadOnly, first);
+  const auto secondReference = SemanticType::referenceTo(SemanticType::Int32, AccessMode::ReadOnly, second);
+  auto pack = SemanticType(SemanticType::TypePack);
+  pack.concretePack = true;
+  pack.arguments = {firstReference, secondReference};
+  MirProgram program;
+  MirFunctionInstance context;
+  context.id = 1;
+  context.lifetimeContract = {.parameters = {first, second}, .complete = true};
+  MirProgramTestAccess::functions(program) = {context};
+  MirBody body;
+  body.kind = MirBodyKind::Function;
+  body.lifetimeBody = {.variables = {firstUse, secondUse},
+      .obligations = {{first, firstUse}, {second, secondUse}}, .complete = true};
+  body.places = {{.id = 1, .root = MirPlaceRootKind::Binding, .binding = 1, .type = pack}};
+  MirBlock block;
+  block.id = 1;
+  for (std::size_t index = 0; index != 2; ++index) {
+    body.places.push_back({.id = index + 2, .root = MirPlaceRootKind::Binding, .binding = 1,
+        .projections = {{.kind = MirProjectionKind::PackElement, .constantIndex = index}},
+        .type = pack.arguments[index]});
+    MirInstruction input;
+    input.id = index + 1;
+    input.kind = MirInstructionKind::CallInput;
+    input.hirValue = 1;
+    input.callInputKind = HirCallInputKind::ReadBorrow;
+    input.info.type = SemanticType::referenceTo(SemanticType::Int32, AccessMode::ReadOnly,
+                                               index == 0 ? firstUse : secondUse);
+    input.operands = {{.kind = MirOperandKind::BorrowRead, .place = index + 2, .type = input.info.type}};
+    block.instructions.push_back(input);
+  }
+  body.blocks = {block};
+  expect(verifyMirLifetimeApplications(program, body, 1).valid(),
+         "each exact pack lane retains its declared reference region during independent stage replay");
+  auto missing = body;
+  missing.lifetimeBody.obligations.erase(missing.lifetimeBody.obligations.begin());
+  expect(!verifyMirLifetimeApplications(program, missing, 1).valid(),
+         "the first lane cannot borrow the second lane's distinct outlives edge");
+  auto wrongLane = body;
+  wrongLane.blocks.front().instructions.front().operands.front().place = 3;
+  expect(!verifyMirLifetimeApplications(program, wrongLane, 1).valid(),
+         "a matching operand tag cannot substitute another equal-referent pack lane");
+  auto nested = body;
+  auto inner = pack;
+  inner.arguments = {secondReference, firstReference};
+  nested.places.front().type.arguments = {firstReference, inner};
+  nested.places.back().projections.push_back({.kind = MirProjectionKind::PackElement, .constantIndex = 0});
+  expect(verifyMirLifetimeApplications(program, nested, 1).valid(),
+         "nested first-child projection retains the exact independent reference region");
+  nested.places.back().projections.back().constantIndex = 1;
+  expect(!verifyMirLifetimeApplications(program, nested, 1).valid(),
+         "a wrong nested lane cannot gain the selected lane's reference lifetime");
+  auto atomicReference = body;
+  atomicReference.places.front().type = SemanticType::referenceTo(pack, AccessMode::ReadOnly, first);
+  expect(!verifyMirLifetimeApplications(program, atomicReference, 1).valid(),
+         "a Reference<TypePack> does not become a grouped formal without an exact dereference");
+}
 void cleanupLifetimeRecipes() {
   const auto region = Lifetime::parameter(801);
   const auto actualRegion = Lifetime::local(901);
@@ -206,6 +377,7 @@ void cleanupLifetimeRecipes() {
   closure.id = 1;
   closure.declaration = 31;
   closure.environmentLifetimes = {region};
+  closure.environmentContract = {.parameters = {region}, .complete = true};
   closure.type = SemanticType::lambdaType(31, SemanticType::Int32, {}, std::array{outer.type});
   closure.type.lifetimeArguments = {region};
   closure.returnType = SemanticType::Int32;
@@ -534,7 +706,9 @@ void quantifiedNominalLiftInventory() {
 }
 } // namespace
 int main() {
+  closureEnvironmentReplay();
   rawPointerStorageOutlives();
+  packElementLifetimeReplay();
   cleanupLifetimeRecipes();
   owningCleanupShape();
   quantifiedNominalLiftInventory();
@@ -547,6 +721,7 @@ int main() {
   const std::array closureCaptures{reference(701)};
   MirLambdaInstance closure{
       .id = 1, .declaration = 70, .environmentLifetimes = {fixedEnvironment},
+      .environmentContract = {.parameters = {fixedEnvironment}, .complete = true},
       .type = SemanticType::lambdaType(70, reference(702), closureParameters, closureCaptures),
       .returnType = reference(702), .parameterTypes = {reference(702)},
       .lifetimeContract = {.parameters = {fixedEnvironment, Lifetime::parameter(702)}, .complete = true},

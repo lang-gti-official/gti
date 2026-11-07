@@ -284,7 +284,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v124 valid=" << program.valid() << '\n';
+    output << "mir-v125 valid=" << program.valid() << '\n';
     if (program.requiresNativeObjectLayout())
       output << "native-object-layout\n";
     for (const auto &recipe : program.nominalVarianceRecipes()) {
@@ -996,6 +996,8 @@ public:
         lifetime(instance.environmentLifetimes[index]);
       }
       output << ']';
+      output << " environment-contract=";
+      lifetimeContract(instance.environmentContract);
       output << " returns=";
       type(instance.returnType);
       output << " lifetime-contract=";

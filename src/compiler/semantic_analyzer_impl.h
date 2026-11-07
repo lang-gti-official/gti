@@ -1405,6 +1405,10 @@ private:
     const Expr *lifetimeExpression = nullptr;
     std::vector<Lifetime> lifetimeVariables;
     LifetimeSignatureContract lifetimeContract;
+    // Inherited lexical lifetime clauses are serialized in a lambda's fixed
+    // environment contract. Ordinary concept lookup keeps the source scopes,
+    // while lifetime proof must not reintroduce their unrenamed binders.
+    std::size_t capturedLifetimeRequirementScopes = 0;
     std::vector<std::pair<SymbolId, SemanticType>> lifetimeInputTypes;
     // Only isolated eligible-body probes may propose declaration bounds.
     // Ordinary body reanalysis always checks the finalized contract.
@@ -3323,6 +3327,12 @@ private:
       const LifetimeSignatureContract *assumptionCase = nullptr) const;
   [[nodiscard]] bool forEveryLifetimeAssumption(
       const std::function<bool(const LifetimeSignatureContract &)> &prove) const;
+  [[nodiscard]] std::optional<LifetimeSignatureContract>
+  currentLifetimeAssumptionContract() const;
+  [[nodiscard]] bool applyLambdaEnvironmentContract(
+      const LifetimeSignatureContract &contract,
+      std::span<const LifetimeBinding> bindings,
+      SemanticLifetimeApplication &application, const Token &site);
   [[nodiscard]] bool validateLifetimeConstraints(
       std::span<const LifetimeBound> additional = {},
       std::span<const LifetimeBound> prove = {}) const;
@@ -4582,7 +4592,9 @@ private:
   [[nodiscard]] bool callableLifetimeTargetCompatible(
       const SemanticType &result, std::span<const SemanticType> parameters,
       const LifetimeSignatureContract &target,
-      const CallableLifetimeSignature &requested) const;
+      const CallableLifetimeSignature &requested,
+      const LambdaInfo *lambda = nullptr,
+      const SemanticType *lambdaType = nullptr) const;
 
   [[nodiscard]] std::vector<const CallableCandidate *>
   matchingNativeFunctionCandidates(const Symbol &symbol,

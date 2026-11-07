@@ -8159,7 +8159,12 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
       function.returnType, function.parameterTypes, function.ownerClass,
       function.staticMember, function.record().intrinsic, std::nullopt, false,
       &function.lifetimeContract, function.receiverMutability);
-  if (function.declaration != nullptr) {
+  // A resolved scalar-reference contract already incorporates borrowed_from. Keep
+  // every supplier permitted by that contract; the attribute's exact owner
+  // is resolved separately when checking an unsafe raw-reference assertion.
+  if (function.declaration != nullptr &&
+      (function.returnType.kind != SemanticType::Reference ||
+       !function.lifetimeContract.valid())) {
     if (const auto *attribute =
             function.declaration->findFunctionAttribute("borrowed_from")) {
       // Resolve source spelling to the existing declaration-relative origin.

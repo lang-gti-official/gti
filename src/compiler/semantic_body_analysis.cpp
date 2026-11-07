@@ -1,4 +1,5 @@
 #include "semantic_analyzer_impl.h"
+#include "gti/callable_lifetimes.h"
 #include "gti/lifetime_types.h"
 
 #include <iterator>
@@ -10992,6 +10993,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     }
   }
 
+  const auto enclosingLifetimeAssumptions = currentLifetimeAssumptionContract();
   std::vector<Lifetime> environmentLifetimes;
   std::vector<LifetimeBinding> environmentBindings;
   std::vector<LifetimeBinding> ambientLifetimes;
@@ -11041,6 +11043,9 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     }
   }
   bindAmbient(currentReceiverLifetime);
+  if (enclosingLifetimeAssumptions)
+    for (const auto region : enclosingLifetimeAssumptions->parameters)
+      bindAmbient(region);
   for (const auto region : freeTypeLifetimes(returnType))
     bindAmbient(region);
   for (const auto &parameter : parameterTypes)
@@ -11387,21 +11392,47 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                .toolingSymbol = bindingSymbol});
   }
   analyzingCaptureList = false;
+  LifetimeSignatureContract captureEnvironmentContract{
+      .parameters = environmentLifetimes,
+      .origin = LifetimeContractOrigin::Declared, .complete = true};
   if (!captures.empty()) {
     std::vector<SemanticType> stored;
     for (const auto &capture : captures)
       stored.push_back(capture.type);
     SemanticType noResult = SemanticType::Void;
     auto storage = normalizeLifetimeSignature(noResult, stored,
-        std::move(normalizedLifetime.contract), {}, [] { return Lifetime{}; });
-    normalizedLifetime.contract = std::move(storage.contract);
-    if (!normalizedLifetime.contract.valid())
+        std::move(captureEnvironmentContract), {}, [] { return Lifetime{}; });
+    captureEnvironmentContract = std::move(storage.contract);
+    if (!captureEnvironmentContract.valid())
       report(expr.bracket(), "The lambda environment has an unresolved stored lifetime.",
              "GTI-S2127");
   }
 
   // Lambda body analysis is isolated, so transfer the enclosing stack
   // after capture initializers have executed left-to-right in that stack.
+  auto environmentContract = enclosingLifetimeAssumptions
+      ? projectLambdaEnvironmentContract(*enclosingLifetimeAssumptions,
+                                          ambientLifetimes, environmentLifetimes)
+      : std::nullopt;
+  if (environmentContract)
+    environmentContract = composeLambdaLifetimeContract(*environmentContract,
+                                                         captureEnvironmentContract);
+  SemanticLifetimeApplication environmentApplication;
+  if (!environmentContract ||
+      !applyLambdaEnvironmentContract(*environmentContract, environmentBindings,
+                                      environmentApplication, expr.bracket())) {
+    report(expr.bracket(),
+           "The lambda's fixed environment must preserve the enclosing lifetime requirements.",
+           "GTI-S2127");
+    environmentContract = LifetimeSignatureContract{
+        .parameters = environmentLifetimes, .complete = true};
+  }
+  const auto bodyLifetimeContract = composeLambdaLifetimeContract(
+      *environmentContract, normalizedLifetime.contract);
+  if (!bodyLifetimeContract)
+    report(expr.bracket(), "The lambda has an invalid fixed or invocation lifetime scope.",
+           "GTI-S2127");
+
   ScopeStack enclosingScopes = std::move(scopes);
   auto enclosingRawProgramStorage = saveRawProgramStorage();
   auto enclosingLifetimeScopes = lifetimeParameterScopes;
@@ -11515,7 +11546,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                                               : ReceiverMutability::ReadOnly;
   loanFlow = {};
   loanFlow.lifetimeExpression = &expr;
-  loanFlow.lifetimeContract = normalizedLifetime.contract;
+  loanFlow.lifetimeContract = bodyLifetimeContract.value_or(normalizedLifetime.contract);
+  loanFlow.capturedLifetimeRequirementScopes = requirementScopes.size();
   loanFlow.collectingLifetimeContract = collectingLambda;
   valueControlFlow.clear();
   analyzingCallCallee = false;
@@ -11596,7 +11628,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       currentLambdaReturn;
   LambdaReturnContext lambdaReturn{.declaration = &expr,
                                     .captures = captures,
-                                    .lifetimeContract = normalizedLifetime.contract,
+                                    .lifetimeContract = loanFlow.lifetimeContract,
                                     .completeReturnBorrow = inferredLambdaSuppliers};
   for (const auto &parameterType : parameterTypes)
     SemanticType::appendExpandedArgument(lambdaReturn.parameterTypes,
@@ -11604,7 +11636,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   if (returnType.kind == SemanticType::Reference) {
     const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
         returnType, lambdaReturn.parameterTypes, 0, true, IntrinsicKind::None,
-        std::nullopt, true, &normalizedLifetime.contract);
+        std::nullopt, true, &loanFlow.lifetimeContract);
     // A pack or open parameter type decides the origin only once concrete;
     // the instance's reanalysis reports a missing contract then.
     const bool openParameters = std::any_of(
@@ -11654,8 +11686,24 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   finalizeLoanFlow();
   if (collectingLambda)
     if (const auto *body = semanticModel.findLifetimeBody(expr))
-      if (auto inferred = projectInferredLifetimeContract(normalizedLifetime.contract, *body))
+      if (auto inferred = projectInferredLifetimeContract(loanFlow.lifetimeContract, *body)) {
+        // Inference may add invocation relations. Already checked fixed
+        // environment facts remain formation premises, not caller demands.
+        std::erase_if(inferred->bounds, [&](const auto &bound) {
+          return std::find(environmentContract->bounds.begin(), environmentContract->bounds.end(), bound) !=
+                     environmentContract->bounds.end() &&
+                 std::find(normalizedLifetime.contract.bounds.begin(), normalizedLifetime.contract.bounds.end(), bound) ==
+                     normalizedLifetime.contract.bounds.end();
+        });
+        std::erase_if(inferred->typeBounds, [&](const auto &bound) {
+          return std::find(environmentContract->typeBounds.begin(), environmentContract->typeBounds.end(), bound) !=
+                     environmentContract->typeBounds.end() &&
+                 std::find(normalizedLifetime.contract.typeBounds.begin(), normalizedLifetime.contract.typeBounds.end(), bound) ==
+                     normalizedLifetime.contract.typeBounds.end();
+        });
+        inferred->requirements = normalizedLifetime.contract.requirements;
         normalizedLifetime.contract = std::move(*inferred);
+      }
 
   lambdaUncapturedLocals.pop_back();
   const bool rawAccessFree =
@@ -11756,6 +11804,8 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                  .declaration = &expr,
                  .type = std::move(universalType),
                  .environmentLifetimes = std::move(environmentLifetimes),
+                 .environmentContract = std::move(*environmentContract),
+                 .environmentApplication = std::move(environmentApplication),
                  .returnType = returnType,
                  .parameterTypes = std::move(parameterTypes),
                  .lifetimeContract = std::move(normalizedLifetime.contract),

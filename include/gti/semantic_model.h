@@ -1141,6 +1141,8 @@ struct LambdaInfo {
   // instantiate its fixed environment slots for the concrete closure value.
   SemanticType type = SemanticType::Unknown;
   std::vector<Lifetime> environmentLifetimes;
+  LifetimeSignatureContract environmentContract{.complete = true};
+  SemanticLifetimeApplication environmentApplication;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
   LifetimeSignatureContract lifetimeContract;

@@ -3467,7 +3467,8 @@ private:
         if (instruction.kind == MirInstructionKind::Call ||
             instruction.kind == MirInstructionKind::Construct ||
             (instruction.kind == MirInstructionKind::Compute &&
-             instruction.operation == MirOperation::NativeCallback)) {
+             (instruction.operation == MirOperation::NativeCallback ||
+              instruction.operation == MirOperation::Closure))) {
           instruction.lifetimeArguments = source->lifetimeArguments;
           instruction.lifetimeApplication =
               lowerMirLifetimeApplication(source->lifetimeApplication);
@@ -7988,7 +7989,9 @@ private:
           input.operands.front().kind != MirOperandKind::BorrowRead ||
           input.operands.front().type != type || source == nullptr ||
           !materialization || !source->projections.empty() ||
-          source->type != type.arguments.front() ||
+          (source->type != type.arguments.front() &&
+           !(source->type.kind == SemanticType::FunctionItem &&
+             equivalentLifetimeTypes(source->type, type.arguments.front()))) ||
           source->access != AccessMode::Mutable ||
           source->sourceValue != sourceValue || scopes.empty()) {
         valid = false;

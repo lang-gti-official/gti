@@ -9,9 +9,30 @@ namespace lang {
 auto SemanticVisitor::Impl::callableLifetimeTargetCompatible(
     const SemanticType &result, std::span<const SemanticType> parameters,
     const LifetimeSignatureContract &target,
-    const CallableLifetimeSignature &requested) const -> bool {
-  const auto bindings = callableLifetimeTargetBindings(result, parameters, target,
-                                                       requested.signature);
+    const CallableLifetimeSignature &requested,
+    const LambdaInfo *lambda, const SemanticType *lambdaType) const -> bool {
+  auto assumptions = requested.contract;
+  auto bindings = callableLifetimeTargetBindings(result, parameters, target,
+                                                  requested.signature);
+  if (lambda || lambdaType) {
+    if (!lambda || !lambdaType || result != lambda->returnType ||
+        !std::equal(parameters.begin(), parameters.end(),
+                    lambda->parameterTypes.begin(), lambda->parameterTypes.end()))
+      return false;
+    const auto fixed = lambdaCallableLifetimeTarget(lambda->type, *lambdaType,
+        target, lambda->environmentContract, requested);
+    if (!fixed)
+      return false;
+    bindings = fixed->bindings;
+    for (const auto region : fixed->environment.parameters)
+      if (std::find(assumptions.parameters.begin(), assumptions.parameters.end(), region) ==
+          assumptions.parameters.end())
+        assumptions.parameters.push_back(region);
+    const auto composed = composeLambdaLifetimeContract(fixed->environment, assumptions);
+    if (!composed)
+      return false;
+    assumptions = *composed;
+  }
   if (!bindings || !target.valid() || !target.requirements.resolved())
     return false;
   const auto region = [&](Lifetime value) {
@@ -20,7 +41,7 @@ auto SemanticVisitor::Impl::callableLifetimeTargetCompatible(
         return binding.second;
     return value;
   };
-  return visitLifetimeAssumptionCases(requested.contract, [&](const auto &assumptions) {
+  return visitLifetimeAssumptionCases(assumptions, [&](const auto &assumptions) {
     LifetimeInferenceConstraints constraints(lifetimeBoundsForContract(assumptions));
     for (const auto bound : target.bounds)
       if (!constraints.proves(region(bound.longer), region(bound.shorter)))
@@ -424,6 +445,7 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
     LambdaId lambda = 0;
     const SemanticType *targetResult = nullptr;
     const LifetimeSignatureContract *targetContract = nullptr;
+    const LambdaInfo *lambdaInfo = nullptr;
     std::vector<SemanticType> targetParameters;
     if (target.hasFunctionItemShape()) {
       function = target.functionId;
@@ -452,14 +474,17 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
       const auto *info = semanticModel.findLambda(lambda);
       if (!info && instanceBaseModel)
         info = instanceBaseModel->findLambda(lambda);
+      lambdaInfo = info;
       targetContract = info ? &info->lifetimeContract : nullptr;
-      targetResult = target.lambdaReturnType();
-      for (const auto &type : target.lambdaParameterTypes())
+      targetResult = info ? &info->returnType : nullptr;
+      for (const auto &type : info ? std::span<const SemanticType>(info->parameterTypes)
+                                  : std::span<const SemanticType>{})
         SemanticType::appendExpandedArgument(targetParameters, type);
     }
     const bool compatible = targetResult && targetContract &&
         callableLifetimeTargetCompatible(*targetResult, targetParameters,
-                                         *targetContract, callable);
+                                         *targetContract, callable,
+                                         lambdaInfo, lambdaInfo ? &target : nullptr);
     if (!containsOpenTypeParameter(target) && !compatible) {
       report(expressionToken(expr.arguments().front()),
              "GTI invocation pointer construction requires an exact-signature "

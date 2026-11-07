@@ -356,6 +356,64 @@ int main() { return observeFixed(fixed) + observePair(choose) - 10; }
         }
       }
   expect(fixed && quantified, "function item fixture contrasts fixed storage and two independent invocation slots");
+  bool temporary = false;
+  bool renamed = false;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &input : block.instructions) {
+        if (input.kind != MirInstructionKind::CallInput ||
+            input.callInputKind != HirCallInputKind::ReadTemporaryBorrow ||
+            input.operands.size() != 1 || input.info.type.arguments.size() != 1)
+          continue;
+        const auto *place = function.body.findPlace(input.operands.front().place);
+        if (!place || place->type.kind != SemanticType::FunctionItem) continue;
+        const auto *loan = input.loan ? function.body.findLoan(*input.loan) : nullptr;
+        expect(loan && loan->kind == MirLoanKind::CallArgument && loan->source == place->id &&
+                   equivalentLifetimeTypes(place->type, input.info.type.arguments.front()),
+               "a fresh scoped item publishes its exact materialized argument loan");
+        temporary = true;
+        auto missingLoan = checked.mir;
+        auto *changed = const_cast<MirFunctionInstance *>(missingLoan.findFunctionInstance(function.id));
+        for (auto &changedBlock : changed->body.blocks)
+          for (auto &instruction : changedBlock.instructions)
+            if (instruction.id == input.id) instruction.loan.reset();
+        expect(!verifyMirProgram(missingLoan).valid(),
+               "bound scope matching cannot omit a temporary item's argument loan");
+        if (place->type != input.info.type.arguments.front()) {
+          auto changedCleanup = checked.mir;
+          auto *changedOwner = const_cast<MirFunctionInstance *>(changedCleanup.findFunctionInstance(function.id));
+          for (auto &drop : changedOwner->body.dropObligations)
+            if (drop.place == place->id) {
+              expect(drop.dropType.type == place->type,
+                     "an alpha-renamed parameter keeps the producer's exact cleanup type");
+              drop.dropType.type = input.info.type.arguments.front();
+              renamed = true;
+            }
+          expect(!verifyMirProgram(changedCleanup).valid(),
+                 "parameter scope renaming cannot retag materialized item cleanup storage");
+        }
+      }
+  expect(temporary && renamed, "item fixture exercises fresh materialization across a renamed bound scope");
+  bool appliedDescriptor = false;
+  for (const auto &function : checked.mir.functionInstances())
+    for (std::size_t parameter = 0; parameter != function.callableParameters.size(); ++parameter)
+      for (std::size_t index = 0; index != function.callableParameters[parameter].signatures.size(); ++index) {
+        const auto &signature = function.callableParameters[parameter].signatures[index];
+        if (signature.lifetimeApplication.bindings.empty() || signature.parameterTypes.empty() ||
+            signature.parameterTypes.front().kind != SemanticType::Reference) continue;
+        appliedDescriptor = true;
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto broken = checked.mir;
+          auto *changed = const_cast<MirFunctionInstance *>(broken.findFunctionInstance(function.id));
+          auto &descriptor = changed->callableParameters[parameter].signatures[index];
+          if (mutation == 0) descriptor.lifetimeApplication.complete = false;
+          if (mutation == 1) descriptor.parameterTypes.front().referenceLifetime = Lifetime::staticLifetime();
+          if (mutation == 2) descriptor.lifetimeArguments.push_back(Lifetime::staticLifetime());
+          expect(!verifyMirProgram(broken).valid(),
+                 "callable descriptors independently reject missing application, retagged input and invented explicit region arguments");
+        }
+      }
+  expect(appliedDescriptor, "item fixture publishes a concrete callable invocation lifetime application");
 }
 
 void checkScalarLoadDependencyDomain() {
@@ -984,6 +1042,79 @@ int main() {
   expect(borrowedRestoration, "restoration fixture exercises a concrete borrowed type obligation");
 }
 
+bool checkRawOwnerLifetimeFacts() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "raw-owner-lifetime-facts.gti", R"gti([[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
+[[borrowed_from(owner)]] unsafe mut T& borrow_mut<T, Owner>(T* address, mut Owner& owner) { unsafe { return *address; } }
+struct Storage { mut int value = 7; Storage() {} };
+int rewrite(mut int& value) { value = 5; return value; }
+int main() {
+  mut Storage storage{};
+  rewrite(storage.value);
+  unsafe {
+    borrow_mut(&storage.value, storage) = 11;
+    return borrow(&storage.value, storage) - 11;
+  }
+}
+)gti");
+  if (!checked.canGenerateCode()) {
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return false;
+  }
+  expect(verifyMirProgram(checked.mir).valid(),
+         "shared and exclusive raw-reference producers replay their checked owner");
+  bool shared = false, exclusive = false;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *loan = mir_detail::rawBorrowResultLoan(function.body, instruction);
+        if (!loan)
+          continue;
+        shared |= instruction.intrinsic == IntrinsicKind::RawBorrow;
+        exclusive |= instruction.intrinsic == IntrinsicKind::RawBorrowMut;
+        expect(instruction.result && loan->parent &&
+                   function.body.values[*instruction.result - 1].borrowDependencies,
+               "raw-reference controls require an explicit checked owner fact");
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto forged = checked.mir;
+          auto *target = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+          auto &changed = *std::find_if(target->body.blocks[block.id - 1].instructions.begin(),
+                                       target->body.blocks[block.id - 1].instructions.end(),
+                                       [&](const auto &candidate) { return candidate.id == instruction.id; });
+          if (mutation == 0)
+            changed.unsafeOperation = UnsafeOperationKind::None;
+          else if (mutation == 1)
+            target->body.loans[loan->id - 1].parent = 0;
+          else
+            target->body.values[*instruction.result - 1].borrowDependencies->dependencies.clear();
+          expect(!verifyMirProgram(forged).valid(),
+                 "raw-reference replay rejects missing unsafe authority, owner ancestry or lifetime supplier");
+        }
+      }
+  bool rejectedWriteOmission = false;
+  for (const auto &function : checked.mir.functionInstances()) {
+    if (function.owner || function.parameterTypes.size() != 1 ||
+        function.returnType != SemanticType::Int32 ||
+        function.parameterTypes.front().kind != SemanticType::Reference ||
+        function.parameterTypes.front().referenceAccess != AccessMode::Mutable ||
+        !function.effectSummary.traits.writesPlace)
+      continue;
+    auto forged = checked.mir;
+    auto *target = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+    target->effectSummary.traits.writesPlace = false;
+    target->effectSummary.traits.writesUnknownMemory = false;
+    const auto proof = verifyMirProgram(forged);
+    expect(!proof.valid() && std::any_of(proof.errors.begin(), proof.errors.end(), [](const auto &error) {
+      return error.message.find("effect") != std::string::npos;
+    }), "preserving carrier facts requires independently verified non-writing effects");
+    rejectedWriteOmission = true;
+  }
+  expect(rejectedWriteOmission, "effect control must reach a mutable operation that writes");
+  expect(shared && exclusive, "raw-reference controls must cover both access modes");
+  return true;
+}
+
 bool checkPhysicalOwnerSuppliers() {
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "physical-owner-suppliers.gti", R"gti([[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
@@ -1017,6 +1148,31 @@ int main() {
   }
   expect(verifyMirProgram(checked.mir).valid(),
          "owner-relative references require independently verified typed producers");
+  bool rejectedMissingMapping = false;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *loan = instruction.loan ? function.body.findLoan(*instruction.loan) : nullptr;
+        const auto *parent = loan ? function.body.findLoan(loan->parent) : nullptr;
+        if (instruction.kind != MirInstructionKind::Call || !instruction.functionTarget ||
+            instruction.borrowFields.size() < 2 || !loan ||
+            loan->kind != MirLoanKind::CallResult || !parent || parent->kind != MirLoanKind::Stored ||
+            std::none_of(instruction.borrowFields.begin(), instruction.borrowFields.end(),
+                         [](const auto &mapping) { return !mapping.sourceFields.empty(); }))
+          continue;
+        auto forged = checked.mir;
+        auto *target = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+        auto &changed = *std::find_if(target->body.blocks[block.id - 1].instructions.begin(),
+                                     target->body.blocks[block.id - 1].instructions.end(),
+                                     [&](const auto &candidate) { return candidate.id == instruction.id; });
+        changed.borrowFields.clear();
+        const auto proof = verifyMirBody(forged, target->body, function.id);
+        expect(!proof.valid() && std::any_of(proof.errors.begin(), proof.errors.end(), [](const auto &error) {
+          return error.message.find("declared parent") != std::string::npos;
+        }), "a mapped primary supplier needs its exact staged input path even beside other suppliers");
+        rejectedMissingMapping = true;
+      }
+  expect(rejectedMissingMapping, "owner controls must reach a primary stored-reference supplier beside physical storage");
   bool sameTypeOwners = false;
   for (const auto &function : checked.mir.functionInstances()) {
     if (function.owner || function.parameterTypes.size() != 2 ||
@@ -1125,10 +1281,11 @@ int main() {
 } // namespace
 
 int main() {
+  const bool rawOwnerFacts = checkRawOwnerLifetimeFacts();
   const bool ownerSuppliers = checkPhysicalOwnerSuppliers();
   const bool referenceInitializers = checkCompleteReferenceInitializers();
   const bool consumingResults = checkConsumingExternalBorrowResults();
-  expect(ownerSuppliers && referenceInitializers && consumingResults,
+  expect(rawOwnerFacts && ownerSuppliers && referenceInitializers && consumingResults,
          "reference publication and consuming result fixtures must both reach independently verified MIR");
   const auto frontend = Frontend({.stopAfter = FrontendPhase::Mir})
                             .analyze("lifetime-mir-contracts.gti", R"gti(

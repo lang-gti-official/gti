@@ -825,7 +825,22 @@ crossing cannot substitute another supplier. A call result with multiple
 permitted suppliers retains each source's own checked authority or physical
 owned input. An additional source need not lie inside the first parent's
 storage; unique call production, staged inputs, access/liveness and independent
-complete-result replay still prove the exact set. A dereference through a class ends
+complete-result replay still prove the exact set. A mapped primary source is
+selected from the complete contract using its exact staged input, typed path,
+access and parent permission; other suppliers retain their own proofs.
+The raw-reference primitives replay their explicit checked owner operand only
+after verifying the address type, unsafe operation, access and produced loan.
+Their scalar-reference result domain is distinct from the owner's stored-field
+layout, and their published dependency annotation is checked against that
+independent operand replay. A `CallResult` lifetime source does not establish
+the selected runtime address for storage-content flow. Writes through such a
+reference cannot publish their value facts over its owner. A known empty
+reference and alternative inventory proves that a typed write cannot reseat
+tracked borrowed fields; other unknown-address writes invalidate conservatively.
+Mutable calls preserve contents only when independently verified effects prove
+that they do not write to storage; movement and cleanup retain their separate
+availability and loan proofs. Otherwise all potential supplier footprints are
+invalidated. A dereference through a class ends
 that path. Published dependencies keep a `CallResult` accessor as their parent
 together with its exact source, as reference loan facts do; a parentless
 referent names the exact input place, either the reference argument's place or
@@ -5255,6 +5270,20 @@ compare that closed type by bound alpha equivalence; fixed and free regions,
 unused binders, and repeated-region relationships remain exact. A temporary
 parameter may rename the item's bound scope, while its materialized value,
 place, producer and cleanup obligation retain one identical storage type.
+
+A closure records a fixed environment contract separately from its invocation
+contract. Its `Closure` producer carries the exact formation application; MIR
+reconstructs the canonical-to-actual environment mapping and proves the whole
+formula in the enclosing body. The lambda body receives the conjunction of
+formation and invocation premises, preserving every alternative in an OR.
+Typed transport retains that environment invariant. Function-pointer adaptation
+may consume it only through the exact closure type and requested fixed-slot
+mapping; a fixed slot cannot become a fresh invocation binder. HIR, MIR and the
+lowered program preserve the same contract, while LLVM uses the instantiated
+capture types and layout. This metadata adds no runtime environment fields.
+Callable descriptors retain their complete lifetime application and compare it
+at every executable call edge; their result and parameter types are checked
+against that application's exact target substitution.
 
 An ordinary enum observer and the generated `has_value` observation for
 source-defined propagation use the same schedule. Their materialization may be the

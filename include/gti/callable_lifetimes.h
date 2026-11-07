@@ -12,6 +12,182 @@ namespace lang {
 using CallableNominalFormation = std::function<
     std::optional<LifetimeRequirementFormula>(const SemanticType &)>;
 
+// Fixed closure premises are established at formation. They may mention only
+// the closure's environment slots (and static storage), never a local region
+// or an invocation binder. The same predicate guards source and IR metadata.
+inline bool validLambdaEnvironmentContract(
+    const LifetimeSignatureContract &contract,
+    std::span<const Lifetime> environment) {
+  if (!contract.valid() || contract.receiver.specified() ||
+      contract.parameters.size() != environment.size() ||
+      !std::equal(contract.parameters.begin(), contract.parameters.end(),
+                  environment.begin()))
+    return false;
+  std::size_t work = 0;
+  const auto scopedType = [&](auto &&self, const SemanticType &type,
+                               std::vector<GenericParameterId> bound,
+                               std::size_t depth) -> bool {
+    if (++work > 4096 || depth > 256)
+      return false;
+    if (!type.quantifiedLifetimes.empty() &&
+        type.kind != SemanticType::FunctionSignature && type.kind != SemanticType::NativeFunction &&
+        type.kind != SemanticType::FunctionItem && type.kind != SemanticType::Lambda)
+      return false;
+    for (const auto id : type.quantifiedLifetimes) {
+      if (!id || std::find(bound.begin(), bound.end(), id) != bound.end() ||
+          std::find(environment.begin(), environment.end(), Lifetime::parameter(id)) != environment.end())
+        return false;
+      bound.push_back(id);
+    }
+    bool valid = true;
+    lifetime_detail::children(type, [&](const auto &child) {
+      valid = self(self, child, bound, depth + 1) && valid;
+    });
+    return valid;
+  };
+  const auto scoped = [&](const SemanticType &type) {
+    if (!scopedType(scopedType, type, {}, 0))
+      return false;
+    for (const auto region : freeTypeLifetimes(type))
+      if (region != Lifetime::staticLifetime() &&
+          std::find(environment.begin(), environment.end(), region) == environment.end())
+        return false;
+    return true;
+  };
+  for (const auto &bound : contract.typeBounds)
+    if (!scoped(bound.type))
+      return false;
+  for (const auto &node : contract.requirements.nodes)
+    if (node.kind == LifetimeRequirementNode::Kind::Type && !scoped(node.type))
+      return false;
+  return true;
+}
+
+// Forget premises whose regions belong to a different invocation scope. This
+// is monotone Boolean projection: forgetting an atom replaces it with true,
+// so forgetting either arm of an OR never grants the other arm. Whole fixed
+// All/Any subexpressions retain their original meaning and source order.
+inline std::optional<LifetimeSignatureContract> projectLambdaEnvironmentContract(
+    const LifetimeSignatureContract &enclosing,
+    std::span<const LifetimeBinding> fixed,
+    std::span<const Lifetime> environment) {
+  if (!enclosing.valid())
+    return std::nullopt;
+  for (std::size_t index = 0; index < fixed.size(); ++index) {
+    if (fixed[index].first.kind != Lifetime::Kind::Parameter ||
+        fixed[index].second.kind != Lifetime::Kind::Parameter)
+      return std::nullopt;
+    for (std::size_t previous = 0; previous < index; ++previous)
+      if (fixed[previous].first == fixed[index].first || fixed[previous].second == fixed[index].second)
+        return std::nullopt;
+  }
+  LifetimeSignatureContract result{.parameters = {environment.begin(), environment.end()},
+      .origin = LifetimeContractOrigin::Declared, .complete = true};
+  const auto region = [&](Lifetime value) -> std::optional<Lifetime> {
+    if (value == Lifetime::staticLifetime())
+      return value;
+    for (const auto binding : fixed)
+      if (binding.first == value &&
+          std::find(environment.begin(), environment.end(), binding.second) != environment.end())
+        return binding.second;
+    return std::nullopt;
+  };
+  const auto type = [&](const SemanticType &value) -> std::optional<SemanticType> {
+    for (const auto free : freeTypeLifetimes(value))
+      if (!region(free))
+        return std::nullopt;
+    return substituteTypeLifetimes(value, fixed);
+  };
+  for (const auto bound : enclosing.bounds) {
+    const auto longer = region(bound.longer), shorter = region(bound.shorter);
+    if (longer && shorter)
+      result.bounds.push_back({*longer, *shorter});
+  }
+  for (const auto &bound : enclosing.typeBounds) {
+    const auto target = region(bound.region);
+    const auto value = type(bound.type);
+    if (target && value)
+      result.typeBounds.push_back({*value, *target});
+  }
+  using Node = LifetimeRequirementNode;
+  using Kind = Node::Kind;
+  auto &nodes = result.requirements.nodes;
+  bool valid = true;
+  std::size_t work = 0;
+  const auto project = [&](auto &&self, std::size_t index, std::size_t depth) -> std::size_t {
+    if (++work > 4096 || depth > 256 || index >= enclosing.requirements.nodes.size()) {
+      valid = false;
+      return Node::invalidIndex;
+    }
+    auto node = enclosing.requirements.nodes[index];
+    if (node.kind == Kind::All || node.kind == Kind::Any) {
+      const auto start = nodes.size();
+      const auto left = self(self, node.left, depth + 1);
+      const auto right = self(self, node.right, depth + 1);
+      if (node.kind == Kind::Any &&
+          (left == Node::invalidIndex || right == Node::invalidIndex)) {
+        nodes.resize(start);
+        return Node::invalidIndex;
+      }
+      if (left == Node::invalidIndex)
+        return right;
+      if (right == Node::invalidIndex)
+        return left;
+      node.left = left;
+      node.right = right;
+    } else if (node.kind == Kind::Region) {
+      const auto longer = region(node.bound.longer), shorter = region(node.bound.shorter);
+      if (!longer || !shorter)
+        return Node::invalidIndex;
+      node.bound = {*longer, *shorter};
+    } else if (node.kind == Kind::Type) {
+      const auto target = region(node.bound.shorter);
+      const auto value = type(node.type);
+      if (!target || !value)
+        return Node::invalidIndex;
+      node.type = *value;
+      node.bound.shorter = *target;
+    }
+    nodes.push_back(std::move(node));
+    return nodes.size() - 1;
+  };
+  if (!enclosing.requirements.nodes.empty())
+    result.requirements.root = project(project, enclosing.requirements.root, 0);
+  if (!valid || !validLambdaEnvironmentContract(result, environment))
+    return std::nullopt;
+  return result;
+}
+
+// Body assumptions are the conjunction of independently checked formation
+// premises and invocation requirements. Keep complete Boolean subexpressions;
+// a disjunctive environment never grants both of its alternatives.
+inline std::optional<LifetimeSignatureContract> composeLambdaLifetimeContract(
+    const LifetimeSignatureContract &environment,
+    const LifetimeSignatureContract &invocation) {
+  if (!validLambdaEnvironmentContract(environment, environment.parameters) ||
+      !invocation.valid())
+    return std::nullopt;
+  for (const auto region : environment.parameters)
+    if (std::find(invocation.parameters.begin(), invocation.parameters.end(), region) ==
+        invocation.parameters.end())
+      return std::nullopt;
+  auto result = invocation;
+  result.bounds = environment.bounds;
+  result.typeBounds = environment.typeBounds;
+  const auto append = [](auto &destination, const auto &source) {
+    for (const auto &value : source)
+      if (std::find(destination.begin(), destination.end(), value) == destination.end())
+        destination.push_back(value);
+  };
+  append(result.bounds, invocation.bounds);
+  append(result.typeBounds, invocation.typeBounds);
+  result.requirements = environment.requirements;
+  if (!appendLifetimeRequirementFormula(result.requirements, invocation.requirements) ||
+      !result.valid())
+    return std::nullopt;
+  return result;
+}
+
 // A namespace function item has no captured lifetime environment. Its exact
 // declaration supplies invocation binders; static storage remains a fixed
 // signature choice. This builds the scoped type, not a new target contract.
@@ -86,7 +262,8 @@ deriveContract(const SemanticType &signature,
                           std::vector<Lifetime> bound) -> bool {
     if (++work > 4096)
       return false;
-    if (!type.quantifiedLifetimes.empty() && !isLifetimeInvocationSignature(type))
+    if (!type.quantifiedLifetimes.empty() && !isLifetimeInvocationSignature(type) &&
+        type.kind != SemanticType::Lambda)
       return false;
     for (const auto id : type.quantifiedLifetimes) {
       const auto region = Lifetime::parameter(id);
@@ -123,6 +300,12 @@ deriveContract(const SemanticType &signature,
       // Validate this callable's own formation contract. Its universally
       // quantified premises do not become assumptions of the enclosing one.
       return deriveContract(type, nominalFormation, work).has_value();
+    }
+    if (type.kind == SemanticType::Lambda) {
+      const auto formation = nominalFormation ? nominalFormation(type) : std::nullopt;
+      // Closure invocation binders stay closed. Only the checked fixed
+      // environment is a premise of the enclosing callable's type.
+      return formation && appendLifetimeRequirementFormula(contract.requirements, *formation);
     }
     if (!type.quantifiedLifetimes.empty())
       return false;
@@ -362,6 +545,96 @@ inline std::optional<std::vector<LifetimeBinding>> callableLifetimeTargetBinding
                      [&](const auto binding) { return binding.first == parameter; }))
       bindings.emplace_back(parameter, Lifetime::staticLifetime());
   return bindings;
+}
+
+inline std::optional<LifetimeRequirementFormula> lambdaEnvironmentLifetimeRequirements(
+    const SemanticType &canonical, const SemanticType &actual,
+    const LifetimeSignatureContract &environment) {
+  if (!canonical.hasLambdaShape() || !actual.hasLambdaShape() ||
+      !validLambdaEnvironmentContract(environment, canonical.lifetimeArguments))
+    return std::nullopt;
+  const auto bindings = matchUniversalTypeLifetimes(
+      canonical, actual, environment.parameters);
+  auto formula = lifetimeContractRequirements(environment);
+  if (!bindings || !formula)
+    return std::nullopt;
+  const auto region = [&](Lifetime value) {
+    for (const auto binding : *bindings)
+      if (binding.first == value)
+        return binding.second;
+    return value;
+  };
+  for (auto &node : formula->nodes) {
+    const auto type = substituteTypeLifetimes(node.type, *bindings);
+    if (!type)
+      return std::nullopt;
+    node.type = *type;
+    node.bound = {region(node.bound.longer), region(node.bound.shorter)};
+  }
+  return formula;
+}
+
+struct LambdaCallableLifetimeTarget {
+  std::vector<LifetimeBinding> bindings;
+  LifetimeSignatureContract environment;
+};
+
+// Reconcile fixed closure slots with a requested callable's fixed carrier
+// slots before proving invocation implication. A fixed slot cannot stand for
+// a fresh invocation quantifier, even if its current actual value coincides.
+inline std::optional<LambdaCallableLifetimeTarget> lambdaCallableLifetimeTarget(
+    const SemanticType &canonical, const SemanticType &actual,
+    const LifetimeSignatureContract &invocation,
+    const LifetimeSignatureContract &environment,
+    const CallableLifetimeSignature &requested) {
+  if (!canonical.hasLambdaShape() || !actual.hasLambdaShape() ||
+      !validLambdaEnvironmentContract(environment, canonical.lifetimeArguments) ||
+      !composeLambdaLifetimeContract(environment, invocation))
+    return std::nullopt;
+  const auto fixed = matchUniversalTypeLifetimes(canonical, actual, environment.parameters);
+  auto bindings = callableLifetimeTargetBindings(*canonical.lambdaReturnType(),
+      canonical.lambdaParameterTypes(), invocation, requested.signature);
+  if (!fixed || !bindings)
+    return std::nullopt;
+  std::vector<Lifetime> mentioned = freeTypeLifetimes(*canonical.lambdaReturnType());
+  for (const auto &parameter : canonical.lambdaParameterTypes()) {
+    const auto regions = freeTypeLifetimes(parameter);
+    mentioned.insert(mentioned.end(), regions.begin(), regions.end());
+  }
+  const auto requestedActual = [&](Lifetime value) {
+    for (const auto binding : requested.signatureBindings)
+      if (binding.first == value)
+        return binding.second;
+    return value;
+  };
+  for (const auto fixedBinding : *fixed) {
+    auto mapped = std::find_if(bindings->begin(), bindings->end(), [&](const auto binding) {
+      return binding.first == fixedBinding.first;
+    });
+    if (mapped == bindings->end())
+      return std::nullopt;
+    if (std::find(mentioned.begin(), mentioned.end(), fixedBinding.first) == mentioned.end()) {
+      // An unused fixed slot remains a private proof name. It is never
+      // replaced by the default static choice used for unused universals.
+      if (std::find(requested.contract.parameters.begin(), requested.contract.parameters.end(),
+                    fixedBinding.first) != requested.contract.parameters.end())
+        return std::nullopt;
+      mapped->second = fixedBinding.first;
+    } else {
+      if (mapped->second.kind == Lifetime::Kind::Parameter &&
+          std::find(requested.signature.quantifiedLifetimes.begin(),
+                    requested.signature.quantifiedLifetimes.end(), mapped->second.id) !=
+              requested.signature.quantifiedLifetimes.end())
+        return std::nullopt;
+      if (requestedActual(mapped->second) != fixedBinding.second)
+        return std::nullopt;
+    }
+  }
+  auto mappedEnvironment = substituteLifetimeContract(environment, *bindings);
+  if (!mappedEnvironment ||
+      !validLambdaEnvironmentContract(*mappedEnvironment, mappedEnvironment->parameters))
+    return std::nullopt;
+  return LambdaCallableLifetimeTarget{std::move(*bindings), std::move(*mappedEnvironment)};
 }
 
 } // namespace lang

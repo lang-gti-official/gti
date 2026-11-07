@@ -160,4 +160,8 @@ mirCallableLifetimeBorrowSummary(const MirProgram &, const MirInstruction &);
     const SemanticType &returnType, std::span<const SemanticType> parameters,
     const LifetimeSignatureContract &);
 
+[[nodiscard]] bool mirLambdaCallableLifetimeTargetMatches(
+    const MirProgram &, const CallableLifetimeSignature &,
+    const MirLambdaInstance &, const SemanticType &actual);
+
 } // namespace lang

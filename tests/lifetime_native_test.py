@@ -14,6 +14,14 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "lambda_fixed_environment_premises": """
+int needsStorage<T, lifetime a>() requires outlives<T, a> { return 1; }
+int enclosing<T, lifetime a>(T&<a> input, int&<a> token) {
+  auto body = [](int&<a> value) -> int { return value + needsStorage<T, a>(); };
+  return body(token);
+}
+int main() { int input = 7; return enclosing(input, input) - 8; }
+""",
     "checked_owner_witness_suppliers": """
 [[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
 struct View<lifetime a> {
@@ -37,6 +45,20 @@ int main() {
   View first{value}; View second{value};
   Wrapper wrapper{first};
   return read(first, second) + wrapper.read() + copied(first, second) - 21;
+}
+""",
+    "checked_scalar_owner_witness": """
+[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
+[[borrowed_from(owner)]] unsafe mut T& borrow_mut<T, Owner>(T* address, mut Owner& owner) { unsafe { return *address; } }
+struct Storage { mut int value = 7; Storage() {} };
+int rewrite(mut int& value) { value = 5; return value; }
+int main() {
+  mut Storage storage{};
+  rewrite(storage.value);
+  unsafe {
+    borrow_mut(&storage.value, storage) = 11;
+    return borrow(&storage.value, storage) - 11;
+  }
 }
 """,
     "checked_mutable_owner_witness": """

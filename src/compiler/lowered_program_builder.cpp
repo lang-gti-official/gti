@@ -1571,6 +1571,7 @@ private:
     const MirLambdaInstance &lowered = mir.lambdaInstances()[index];
     if (source.id != lowered.id || source.declaration != lowered.declaration ||
         source.environmentLifetimes != lowered.environmentLifetimes ||
+        source.environmentContract != lowered.environmentContract ||
         source.type != lowered.type ||
         source.returnType != lowered.returnType ||
         source.parameterTypes != lowered.parameterTypes ||
@@ -2334,6 +2335,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
         .id = instance.id,
         .declaration = instance.declaration,
         .environmentLifetimes = instance.environmentLifetimes,
+        .environmentContract = instance.environmentContract,
         .type = instance.type,
         .returnType = instance.returnType,
         .lifetimeContract = instance.lifetimeContract,

@@ -1890,8 +1890,18 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         return selected != nullptr && source != nullptr &&
                selected->id == source->id;
       };
-      if (!lambda || !sameLambda(lambda->source) ||
-          !matchUniversalTypeLifetimes(lambda->type, value.info.type, lambda->environmentLifetimes)) {
+      const auto environment = lambda ? matchUniversalTypeLifetimes(
+          lambda->type, value.info.type, lambda->environmentLifetimes) : std::nullopt;
+      if (!lambda || !sameLambda(lambda->source) || !environment ||
+          !validLambdaEnvironmentContract(lambda->environmentContract, lambda->environmentLifetimes) ||
+          !composeLambdaLifetimeContract(lambda->environmentContract, lambda->lifetimeContract) ||
+          !value.lifetimeApplication.complete || value.lifetimeApplication.callableSignature ||
+          value.lifetimeApplication.bindings.size() != environment->size() ||
+          std::any_of(environment->begin(), environment->end(), [&](const auto binding) {
+            return std::find(value.lifetimeApplication.bindings.begin(),
+                             value.lifetimeApplication.bindings.end(), binding) ==
+                   value.lifetimeApplication.bindings.end();
+          })) {
         result.errors.emplace_back(
             "construction context has no exact lambda creator");
         continue;

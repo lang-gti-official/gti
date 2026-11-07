@@ -1047,7 +1047,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v38\n";
+  output << "lowered-program-v39\n";
   for (const auto &unit : program.compiledInterfaceUnits())
     output << "compiled-interface-unit " << unit.sourceUnit
            << " package=" << std::quoted(unit.owner.package)
@@ -1393,7 +1393,9 @@ void LoweredProgramPrinter::print(const LoweredProgram &program,
   output << "lambda-instances " << program.lambdaInstances().size() << '\n';
   for (const LoweredLambdaInstance &instance : program.lambdaInstances()) {
     output << "lambda-instance " << instance.id
-           << " declaration=" << instance.declaration << " type=";
+           << " declaration=" << instance.declaration << " environment-contract=";
+    values.semanticLifetimeContract(instance.environmentContract);
+    output << " type=";
     values.semanticType(instance.type);
     output << " return=";
     values.semanticType(instance.returnType);

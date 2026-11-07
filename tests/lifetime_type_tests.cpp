@@ -474,6 +474,81 @@ void testFunctionItemLifetimeScopes() {
   expect(!functionItemLifetimeType(17, reference(b), std::array{reference(b)}, contract),
          "namespace function items cannot acquire receiver lifetime state");
 }
+void testLambdaEnvironmentContracts() {
+  using namespace lang;
+  using Node = LifetimeRequirementNode;
+  const auto a = Lifetime::parameter(901), b = Lifetime::parameter(902);
+  const auto fixed = Lifetime::parameter(903), invoke = Lifetime::parameter(904);
+  LifetimeSignatureContract enclosing{.parameters = {a, b},
+      .typeBounds = {{SemanticType::typeParameter(905), a}},
+      .requirements = {.nodes = {{.kind = Node::Kind::Region, .bound = {a, b}},
+                                {.kind = Node::Kind::Region, .bound = {b, a}},
+                                {.kind = Node::Kind::Any, .left = 0, .right = 1}}, .root = 2},
+      .complete = true};
+  const std::array bothBindings{LifetimeBinding{a, fixed}, LifetimeBinding{b, invoke}};
+  const std::array bothSlots{fixed, invoke};
+  const auto both = projectLambdaEnvironmentContract(enclosing, bothBindings, bothSlots);
+  expect(both && both->requirements.nodes.size() == 3 &&
+             both->requirements.nodes.back().kind == Node::Kind::Any &&
+             both->typeBounds.front().region == fixed,
+         "fixed environment projection preserves complete disjunctions and exact type facts");
+  const std::array oneBinding{LifetimeBinding{a, fixed}};
+  const std::array oneSlot{fixed};
+  const auto projected = projectLambdaEnvironmentContract(enclosing, oneBinding, oneSlot);
+  expect(projected && projected->requirements.nodes.empty() &&
+             projected->typeBounds.size() == 1,
+         "forgetting a foreign invocation atom cannot select an OR alternative");
+  LifetimeSignatureContract invocation{.parameters = {fixed, invoke},
+      .bounds = {{invoke, fixed}}, .complete = true};
+  const auto composed = composeLambdaLifetimeContract(*projected, invocation);
+  expect(composed && composed->bounds == invocation.bounds &&
+             composed->typeBounds == projected->typeBounds &&
+             composed->parameters == invocation.parameters,
+         "body composition keeps formation premises distinct from invocation slots");
+  auto invalid = *projected;
+  invalid.typeBounds.front().type = reference(invoke);
+  expect(!validLambdaEnvironmentContract(invalid, oneSlot),
+         "a fixed environment cannot assume a free invocation region");
+  invalid = *projected;
+  invalid.typeBounds.front().type = reference(Lifetime::local(77));
+  expect(!validLambdaEnvironmentContract(invalid, oneSlot),
+         "a fixed environment cannot publish a local body region");
+  invalid = *projected;
+  invalid.parameters = {invoke};
+  expect(!validLambdaEnvironmentContract(invalid, oneSlot),
+         "environment contract binder identity matches its exact slot inventory");
+  invocation.parameters = {invoke};
+  invocation.bounds.clear();
+  expect(!composeLambdaLifetimeContract(*projected, invocation),
+         "composition cannot hide an undeclared fixed environment slot");
+  auto canonical = SemanticType::lambdaType(41, SemanticType::Int32,
+      std::array{reference(fixed)}, {});
+  canonical.lifetimeArguments = {fixed};
+  const auto actual = substituteTypeLifetimes(canonical,
+      std::array{LifetimeBinding{fixed, a}});
+  LifetimeSignatureContract target{.parameters = {fixed}, .complete = true};
+  auto signature = SemanticType::functionSignature(SemanticType::Int32, {reference(b)});
+  CallableLifetimeSignature requested{.signature = signature,
+      .contract = *callableLifetimeContract(signature), .signatureBindings = {{b, a}}};
+  const auto mapped = lambdaCallableLifetimeTarget(canonical, *actual,
+      target, *projected, requested);
+  expect(mapped && mapped->environment.typeBounds.front().region == b,
+         "callable forming preserves a checked fixed environment in the requested fixed scope");
+  requested.signatureBindings.front().second = Lifetime::staticLifetime();
+  expect(!lambdaCallableLifetimeTarget(canonical, *actual, target, *projected, requested),
+         "a target fixed environment cannot be replaced by a stronger fixed carrier");
+  requested.signatureBindings.clear();
+  requested.signature.quantifiedLifetimes = {b.id};
+  requested.contract = *callableLifetimeContract(requested.signature);
+  expect(!lambdaCallableLifetimeTarget(canonical, *actual, target, *projected, requested),
+         "a fixed closure input cannot implement a universally quantified invocation input");
+  invalid = *projected;
+  auto nested = SemanticType::functionSignature(reference(fixed), {reference(fixed)});
+  nested.quantifiedLifetimes = {fixed.id};
+  invalid.typeBounds.front().type = nested;
+  expect(!validLambdaEnvironmentContract(invalid, oneSlot),
+         "nested quantified scopes cannot capture an environment binder identity");
+}
 } // namespace
 
 void testContextualLifetimeInference() {
@@ -606,6 +681,7 @@ void testReferenceErasureContracts() {
 }
 
 int main() {
+  testLambdaEnvironmentContracts();
   testInlineBorrowPathDisjointness();
   testBorrowConditionTransport();
   testBorrowAlternativeCoverage();

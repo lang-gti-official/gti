@@ -1733,7 +1733,9 @@ callableSignatureMatches(const MirCallableSignature &signature,
   return sameTarget && signature.selectedCapability &&
          instruction.callableInvocation == signature.selectedCapability &&
          callResultMatches(instruction.info, signature.returnType) &&
-         signature.parameterTypes == instruction.parameterTypes;
+         signature.parameterTypes == instruction.parameterTypes &&
+         signature.lifetimeArguments == instruction.lifetimeArguments &&
+         signature.lifetimeApplication == instruction.lifetimeApplication;
 }
 
 [[nodiscard]] const MirClassInstance *
@@ -13682,6 +13684,19 @@ using CompleteBorrowCallSummaryLookup =
   return result;
 }
 
+[[nodiscard]] std::optional<MirFunctionInstance>
+lambdaBodyPublication(const MirLambdaInstance &lambda, bool withBody) {
+  if (!mirLambdaLifetimeView(lambda, lambda.type))
+    return std::nullopt;
+  const auto contract = composeLambdaLifetimeContract(
+      lambda.environmentContract, lambda.lifetimeContract);
+  if (!contract)
+    return std::nullopt;
+  auto result = lambdaPublication(lambda, withBody);
+  result.lifetimeContract = *contract;
+  return result;
+}
+
 [[nodiscard]] MirFunctionInstance
 constructorPublication(const MirProgram &program,
                        const MirConstructorInstance &constructor) {
@@ -14295,7 +14310,7 @@ completeBorrowSourcePath(const MirProgram &program,
                              : nullptr;
   const auto *lambda =
       body.kind == MirBodyKind::Lambda ? program.findLambda(owner) : nullptr;
-  const auto lambdaFormal = lambda ? std::optional(lambdaPublication(*lambda)) : std::nullopt;
+  const auto lambdaFormal = lambda ? lambdaBodyPublication(*lambda, false) : std::nullopt;
   const auto *callableFormal = function ? function : lambdaFormal ? &*lambdaFormal : nullptr;
   const auto *constructor = body.kind == MirBodyKind::Constructor
                                 ? program.findConstructorInstance(owner)
@@ -14381,6 +14396,13 @@ completeBorrowSourcePath(const MirProgram &program,
     if (through) {
       const auto *loan = body.findLoan(through);
       if (!loan || loan->source == id)
+        return {.ambiguous = true};
+      // A call's lifetime supplier governs how long its result can be used;
+      // it does not identify the runtime address selected by the callee.
+      // In particular an unsafe owner witness may govern an unrelated typed
+      // subobject. Never treat that owner's complete field set as the
+      // contents of the returned reference, or publish a write over it.
+      if (loan->kind == MirLoanKind::CallResult)
         return {.ambiguous = true};
       auto result = self(self, loan->source, depth + 1);
       result.projections.insert(result.projections.end(),
@@ -15085,6 +15107,20 @@ completeBorrowSourcePath(const MirProgram &program,
     }
   };
   const auto publish = [&](State &state, MirPlaceId id, const Fact &fact) {
+    if (id && id <= identities.size() && identities[id - 1].ambiguous) {
+      const auto *destination = body.findPlace(id);
+      const auto inventory = destination
+          ? findStoredCarrierReferenceInventory(program, destination->type)
+          : std::nullopt;
+      const auto alternatives = destination
+          ? findStoredCarrierAlternativeInventory(program, destination->type)
+          : std::nullopt;
+      // A typed write into a known reference-free domain cannot reseat any
+      // tracked checked reference or alternative. Its unknown address still
+      // supplies no positive storage identity for another place.
+      if (inventory && inventory->empty() && alternatives && alternatives->empty())
+        return;
+    }
     invalidate(state, id);
     if (!id || id > identities.size() || identities[id - 1].ambiguous)
       return;
@@ -15760,6 +15796,24 @@ completeBorrowSourcePath(const MirProgram &program,
       if (summary)
         result = callResult(state, instruction, lambdaPublication(*target), *summary);
     } else if (instruction.kind == MirInstructionKind::Call &&
+               mir_detail::rawBorrowResultLoan(body, instruction)) {
+      // This unsafe primitive asserts a typed address against one checked
+      // owner. Its exact operand/loan/access proof is independent of the
+      // published dependency annotation. Replay that owner's live authority,
+      // not the raw pointer and not the pointee's stored-field inventory.
+      result = fromOperand(state, instruction.operands[1]);
+      if (result)
+        for (auto &dependency : result->dependencies) {
+          if (!dependency.designatedFields.empty() ||
+              !dependency.conditions.empty() ||
+              (instruction.info.access == AccessMode::Mutable &&
+               dependency.access != AccessMode::Mutable)) {
+            result.reset();
+            break;
+          }
+          dependency.access = instruction.info.access;
+        }
+    } else if (instruction.kind == MirInstructionKind::Call &&
                instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke &&
                mir_detail::functionPointerOperation(program, instruction)) {
       const auto *callable = checkedMirCallableLifetimeSignature(program, instruction);
@@ -15909,8 +15963,17 @@ completeBorrowSourcePath(const MirProgram &program,
               : obligation == body.dropObligations.end() || retiresShell)
         invalidate(state, operand.place);
     }
-    if (instruction.kind == MirInstructionKind::Call ||
-        instruction.kind == MirInstructionKind::Construct) {
+    const bool invocation = instruction.kind == MirInstructionKind::Call ||
+                            instruction.kind == MirInstructionKind::Construct;
+    const auto operationEffects = invocation ? effects(program, body, instruction)
+                                             : MirEffectTraits{};
+    if (invocation &&
+        (operationEffects.writesPlace || operationEffects.writesUnknownMemory)) {
+      // Acquiring an exclusive reference does not itself mutate its referent.
+      // Independently verified effects distinguish that acquisition from a
+      // call that can replace or mutate the addressed carrier's contents.
+      // Abstract lifecycle flags do not imply a storage write; movement and
+      // cleanup retain their separate availability and loan proofs.
       const auto invalidateUnknown = [&] {
         for (auto &fact : state.values)
           fact.reset();
@@ -15957,6 +16020,13 @@ completeBorrowSourcePath(const MirProgram &program,
           if (loan && loan->access == AccessMode::Mutable && loan->source &&
               loan->source <= identities.size()) {
             invalidate(state, loan->source);
+            for (const auto &dependency : loan->additionalDependencies) {
+              if (!dependency.source || dependency.source > identities.size()) {
+                invalidateUnknown();
+                return;
+              }
+              invalidate(state, dependency.source);
+            }
             return;
           }
         }
@@ -16847,7 +16917,7 @@ public:
       return nullptr;
     lambdaStates[id - 1] = State::Visiting;
     const auto *lambda = program.findLambda(id);
-    const auto publication = lambda ? std::optional(lambdaPublication(*lambda, true)) : std::nullopt;
+    const auto publication = lambda ? lambdaBodyPublication(*lambda, true) : std::nullopt;
     const auto *function = publication ? &*publication : nullptr;
     if (function && !retainsDeclaredSuppliers(*function)) {
       lambdaStates[id - 1] = State::Complete;
@@ -18023,6 +18093,12 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
           resultType =
               SemanticType::referenceTo(value.info.type, value.info.access);
         else if (producer->kind == MirInstructionKind::Call) {
+          if (mir_detail::rawBorrowResultLoan(body, *producer)) {
+            resultType = SemanticType::referenceTo(value.info.type,
+                                                    value.info.access);
+            resultType.referenceLifetime =
+                producer->parameterTypes[1].referenceLifetime;
+          }
           const auto signature =
               instantiateMirLifetimeTarget(program, *producer);
           if (signature &&
@@ -21742,6 +21818,28 @@ verifyMirProgramContracts(const MirProgram &program) {
           continue;
         }
 
+        // The descriptor records an invocation of the selected declaration,
+        // whose lifetime universals are instantiated by this exact application.
+        // Its executable edge must carry the same application (checked above
+        // by callableSignatureMatches); ordinary body replay proves the actual
+        // input/storage obligations independently.
+        MirInstruction invocation;
+        invocation.kind = MirInstructionKind::Call;
+        invocation.functionTarget = signature.functionTarget;
+        invocation.lambdaTarget = signature.lambdaTarget;
+        invocation.nativeCalleeType = signature.nativeCalleeType;
+        invocation.lifetimeArguments = signature.lifetimeArguments;
+        invocation.lifetimeApplication = signature.lifetimeApplication;
+        const auto applied = instantiateMirLifetimeTarget(program, invocation);
+        if (!applied ||
+            !equivalentLifetimeTypes(signature.returnType, applied->returnType) ||
+            signature.parameterTypes.size() != applied->parameterTypes.size() ||
+            !std::equal(signature.parameterTypes.begin(), signature.parameterTypes.end(),
+                        applied->parameterTypes.begin(), [](const auto &actual, const auto &expected) {
+                          return equivalentLifetimeTypes(actual, expected);
+                        }))
+          rejectCallableContract(prefix + "does not match its exact lifetime application");
+
         CallableInvocationCapability expected =
             CallableInvocationCapability::Read;
         if (signature.functionTarget) {
@@ -21753,14 +21851,15 @@ verifyMirProgramContracts(const MirProgram &program) {
           const MirFunctionInstance &target =
               program.functionInstances().at(*signature.functionTarget - 1);
           const bool functionItem = callableType.hasFunctionItemShape();
-          if ((functionItem
+          const auto itemType = functionItem ? functionItemLifetimeType(
+              target.declaration, target.returnType, target.parameterTypes,
+              target.lifetimeContract) : std::nullopt;
+          if (functionItem
                    ? target.owner.has_value() ||
-                         target.overloadedOperator.has_value() ||
-                         callableType.functionId != target.declaration
+                         target.overloadedOperator.has_value() || !itemType ||
+                         !equivalentLifetimeTypes(callableType, *itemType)
                    : target.overloadedOperator != OverloadedOperator::Call ||
-                         !target.owner || target.staticMember) ||
-              signature.returnType != target.returnType ||
-              signature.parameterTypes != target.parameterTypes) {
+                         !target.owner || target.staticMember) {
             rejectCallableContract(prefix +
                                    "does not match an exact callable target");
           }
@@ -21771,9 +21870,7 @@ verifyMirProgramContracts(const MirProgram &program) {
         } else if (signature.lambdaTarget) {
           const MirLambdaInstance *target =
               program.findLambda(*signature.lambdaTarget);
-          if (target == nullptr || target->returnType != signature.returnType ||
-              target->parameterTypes != signature.parameterTypes ||
-              target->type != callableType) {
+          if (target == nullptr || target->type != callableType) {
             rejectCallableContract(prefix +
                                    "does not match an exact lambda target");
           }
@@ -21781,12 +21878,7 @@ verifyMirProgramContracts(const MirProgram &program) {
             expected = target->capability;
         } else if (signature.nativeCalleeType) {
           const auto &type = *signature.nativeCalleeType;
-          const auto parameters = type.nativeFunctionParameterTypes();
-          if (type != callableType || !type.hasNativeFunctionShape() ||
-              signature.returnType != *type.nativeFunctionReturnType() ||
-              signature.parameterTypes.size() != parameters.size() ||
-              !std::equal(parameters.begin(), parameters.end(),
-                          signature.parameterTypes.begin())) {
+          if (type != callableType || !type.hasNativeFunctionShape()) {
             rejectCallableContract(prefix +
                                    "does not match an exact native signature");
           }
@@ -23334,7 +23426,9 @@ verifyMirProgramContracts(const MirProgram &program) {
     const std::span<const SemanticType> exactCaptures =
         instance.type.lambdaCaptureTypes();
     const SemanticType *exactReturn = instance.type.lambdaReturnType();
-    if (instance.type.kind != SemanticType::Lambda ||
+    if (!mirLambdaLifetimeView(instance, instance.type) ||
+        !composeLambdaLifetimeContract(instance.environmentContract, instance.lifetimeContract) ||
+        instance.type.kind != SemanticType::Lambda ||
         instance.type.lambdaId != instance.declaration ||
         !instance.type.hasLambdaShape() || exactReturn == nullptr ||
         *exactReturn != instance.returnType ||
@@ -23504,9 +23598,9 @@ verifyMirProgramContracts(const MirProgram &program) {
     // static shell naming the lambda's parameters, type and body.
     if (instance.returnBorrowOrigin != BorrowOriginKind::None ||
         instance.returnType.kind == SemanticType::Reference) {
-      auto shell = lambdaPublication(instance, true);
-      appendVerification(result, verifyMirFunctionBorrowSummary(
-          program, shell, completeBorrowSummaries.queryLambda(instance.id) != nullptr));
+      if (const auto shell = lambdaBodyPublication(instance, true))
+        appendVerification(result, verifyMirFunctionBorrowSummary(
+            program, *shell, completeBorrowSummaries.queryLambda(instance.id) != nullptr));
     }
   }
   if (const MirBody *hosted = program.hostedStartup()) {

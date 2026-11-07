@@ -533,9 +533,16 @@ The invocation's `a` is separate from any fixed region held by a callable's
 captured environment. Nested callable requirements remain in their own scope;
 they cannot justify a surrounding return or stored reference.
 
+A lambda can retain lifetime facts established by its enclosing reference
+parameters. Those fixed facts are checked when the lambda is formed and remain
+separate from the requirements of each invocation. For example, a surrounding
+`T&<a>` establishes `outlives<T, a>` for a lambda that explicitly uses the fixed
+`a`; it does not establish the same promise for an unrelated fresh invocation
+region. A disjunctive requirement remains a disjunction inside the lambda.
+
 [Example 192](../../examples/192-lifetime-parameters.gti) demonstrates named
 relationships, elided identity, a borrowed record and a projected reference-region
-pattern with inferred callers.
+pattern with inferred callers, and a lambda with a checked fixed environment.
 The complete target is [RFC 0004](https://github.com/lang-gti-official/rfcs/blob/codex/proposal-lifetime-parameters/rfcs/0004-lifetime-parameters-and-elision.md).
 Implementation of all compositions is still in progress: inherited borrowed
 storage, recursive forwarded packs and public generic callable wrappers need

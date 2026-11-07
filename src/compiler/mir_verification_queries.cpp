@@ -2659,10 +2659,9 @@ bool functionPointerOperation(const MirProgram &program,
                                                target->parameterTypes, target->lifetimeContract);
     }
     const auto *target = program.findLambda(*instruction.functionPointerLambdaTarget);
-    return target && target->type == targetType && target->captureTypes.empty() &&
+    return target && target->captureTypes.empty() &&
            target->capability == CallableInvocationCapability::Read &&
-           mirCallableLifetimeTargetMatches(program, *callable, target->returnType,
-                                             target->parameterTypes, target->lifetimeContract);
+           mirLambdaCallableLifetimeTargetMatches(program, *callable, *target, targetType);
   }
   if (instruction.functionPointerFunctionTarget || instruction.functionPointerLambdaTarget ||
       instruction.definedFailure.propagation != FailurePropagationKind::Callable)

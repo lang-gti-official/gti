@@ -5047,6 +5047,7 @@ private:
         .id = id,
         .declaration = info->id,
         .environmentLifetimes = info->environmentLifetimes,
+        .environmentContract = info->environmentContract,
         .source = &lambda,
         .type = info->type.kind == SemanticType::Unknown ? model.typeOf(lambda) : info->type,
         .returnType = info->returnType,
@@ -7136,6 +7137,9 @@ private:
                    .enumValue = enumValue,
                    .enumVariant = enumVariant,
                    .payloadIndex = payloadIndex};
+    if (const auto *lambda = exprAs<Lambda>(raw))
+      if (const auto *selected = model.findLambda(*lambda))
+        value.lifetimeApplication = lowerLifetimeApplication(selected->environmentApplication, body);
     if (const auto *conversion = model.findNativeFunctionConversion(*raw))
       value.lifetimeApplication = lowerLifetimeApplication(conversion->lifetimeApplication, body);
     if (const auto *complete = model.findBorrowDependencySet(*raw)) {

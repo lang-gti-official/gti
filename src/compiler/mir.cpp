@@ -5862,30 +5862,44 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
             if (stage && stage->callSite == instruction.callSite &&
                 instruction.kind == MirInstructionKind::Call &&
                 instruction.functionTarget &&
-                instruction.borrowFields.size() == 1 &&
-                result.kind == MirLoanKind::Stored &&
-                result.additionalDependencies.empty()) {
-              const auto &mapping = instruction.borrowFields.front();
-              const bool receiverInput =
-                  mapping.origin == BorrowOriginKind::Receiver &&
-                  instruction.borrowOrigin == BorrowOriginKind::Receiver &&
-                  instruction.receiver == operand &&
-                  stage->callInputRole == MirCallInputRole::Receiver &&
-                  stage->callInputIndex == 0;
-              const bool argumentInput =
-                  mapping.origin == BorrowOriginKind::Argument &&
-                  instruction.borrowOrigin == BorrowOriginKind::Argument &&
-                  mapping.parameter == instruction.borrowArgument &&
-                  stage->callInputRole == MirCallInputRole::Argument &&
-                  stage->callInputIndex == mapping.parameter;
-              if ((receiverInput || argumentInput) &&
-                  !mapping.sourceFields.empty() &&
-                  mapping.sourceConditions.empty() &&
-                  mapping.resultConditions.empty() &&
-                  mapping.resultFields == result.designatedFields &&
-                  mapping.access == result.access) {
-                if (!appendBorrowPath(selectedInput, stage->info.type, mapping.sourceFields))
-                  return false;
+                (result.kind == MirLoanKind::Stored ||
+                 result.kind == MirLoanKind::CallResult)) {
+              // Complete lifetime contracts may also retain the containing
+              // storage and other independently permitted suppliers. Select
+              // the mapping for this primary source, rather than requiring
+              // the complete result to have only one dependency. Additional
+              // suppliers retain their own parent and producer proofs.
+              for (const auto &mapping : instruction.borrowFields) {
+                const bool receiverInput =
+                    mapping.origin == BorrowOriginKind::Receiver &&
+                    instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+                    instruction.receiver == operand &&
+                    stage->callInputRole == MirCallInputRole::Receiver &&
+                    stage->callInputIndex == 0;
+                const bool argumentInput =
+                    mapping.origin == BorrowOriginKind::Argument &&
+                    instruction.borrowOrigin == BorrowOriginKind::Argument &&
+                    mapping.parameter == instruction.borrowArgument &&
+                    mapping.parameter < instruction.operands.size() &&
+                    instruction.operands[mapping.parameter] == operand &&
+                    stage->callInputRole == MirCallInputRole::Argument &&
+                    stage->callInputIndex == mapping.parameter;
+                if ((!receiverInput && !argumentInput) ||
+                    mapping.sourceFields.empty() ||
+                    !mapping.sourceConditions.empty() ||
+                    !mapping.resultConditions.empty() ||
+                    mapping.resultFields != result.designatedFields ||
+                    mapping.access != result.access)
+                  continue;
+                auto candidate = operandPlace;
+                if (!appendBorrowPath(candidate, stage->info.type,
+                                      mapping.sourceFields) ||
+                    !sameCanonicalPlace(candidate,
+                                        canonicalPlace(body, result.source,
+                                                       bindingLoans, active)))
+                  continue;
+                selectedInput = std::move(candidate);
+                break;
               }
             }
             if ((resolved->kind == MirOperandKind::BorrowRead ||

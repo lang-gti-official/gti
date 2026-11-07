@@ -228,6 +228,7 @@ void packAndCapturePaths() {
   lambda.id = 1;
   lambda.declaration = 31;
   lambda.environmentLifetimes = {universal};
+  lambda.environmentContract = {.parameters = {universal}, .complete = true};
   lambda.type = SemanticType::lambdaType(31, SemanticType::Int32, {}, std::array{capture});
   lambda.type.lifetimeArguments = {universal};
   lambda.returnType = SemanticType::Int32;

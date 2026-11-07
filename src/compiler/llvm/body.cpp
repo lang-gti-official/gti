@@ -1,6 +1,7 @@
 #include "representation.h"
 #include "body.h"
 #include "../mir_verification_queries.h"
+#include "../mir_lifetimes.h"
 #include "atomics.h"
 #include "callables.h"
 #include "closure_environment.h"
@@ -1087,20 +1088,22 @@ private:
     if (!instruction.result || !instruction.lambdaTarget)
       throw std::logic_error("LLVM closure construction lost its identity");
     const auto &target = callables.lambda(*instruction.lambdaTarget);
-    if (target.type != instruction.info.type ||
-        target.captureTypes != instruction.closureCaptureTypes ||
+    const auto view = mirLambdaLifetimeView(target, instruction.info.type);
+    const auto captures = instruction.info.type.lambdaCaptureTypes();
+    if (!view || !std::equal(captures.begin(), captures.end(),
+                            instruction.closureCaptureTypes.begin(), instruction.closureCaptureTypes.end()) ||
         target.captureModes != instruction.closureCaptureModes ||
-        target.captureTypes.size() != instruction.operands.size())
+        captures.size() != instruction.operands.size())
       throw std::logic_error(
           "LLVM closure construction disagrees with sealed capture facts");
     auto *environment = destination(*instruction.result);
-    auto *storage = session.layouts().get(target.type).storage;
-    if (target.captureTypes.empty()) {
+    auto *storage = session.layouts().get(instruction.info.type).storage;
+    if (captures.empty()) {
       ir.CreateStore(ir.getInt8(0),
                      ir.CreateStructGEP(storage, environment, 0));
       return environment;
     }
-    for (std::size_t index = 0; index < target.captureTypes.size(); ++index) {
+    for (std::size_t index = 0; index < captures.size(); ++index) {
       // A moved hierarchy capture was relocated into its slot by its own
       // planned transfer; storing its value would copy dispatch state.
       const auto &source = instruction.operands[index];
@@ -1116,12 +1119,12 @@ private:
       if (source.kind == MirOperandKind::Copy && source.place &&
           target.captureModes[index] == LambdaCaptureMode::Copy &&
           containsHierarchyStorage(session.program().mir(),
-                                   target.captureTypes[index])) {
+                                   captures[index])) {
         copyHierarchy(slot, memory.address(source.place),
-                      target.captureTypes[index]);
+                      captures[index]);
         continue;
       }
-      store(operand(source), slot, target.captureTypes[index]);
+      store(operand(source), slot, captures[index]);
     }
     return environment;
   }

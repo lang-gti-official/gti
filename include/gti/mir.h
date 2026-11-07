@@ -1717,6 +1717,7 @@ struct MirLambdaInstance {
   HirLambdaId id = 0;
   LambdaId declaration = 0;
   std::vector<Lifetime> environmentLifetimes;
+  LifetimeSignatureContract environmentContract{.complete = true};
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;

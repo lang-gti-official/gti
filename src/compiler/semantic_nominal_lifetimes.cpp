@@ -259,7 +259,8 @@ auto SemanticVisitor::Impl::nominalVariance(const SemanticType &type) const
 auto SemanticVisitor::Impl::nominalFormationRequirements(
     const SemanticType &type, bool includeChildren) const
     -> std::optional<LifetimeRequirementFormula> {
-  if (!includeChildren && type.kind != SemanticType::Class && type.kind != SemanticType::Enum)
+  if (!includeChildren && type.kind != SemanticType::Class &&
+      type.kind != SemanticType::Enum && type.kind != SemanticType::Lambda)
     return std::nullopt;
   LifetimeRequirementFormula result;
   using Node = LifetimeRequirementNode;
@@ -267,6 +268,15 @@ auto SemanticVisitor::Impl::nominalFormationRequirements(
   const auto visit = [&](auto &&self, const SemanticType &current) -> bool {
     if (++work > 4096)
       return false;
+    if (current.kind == SemanticType::Lambda) {
+      const auto *lambda = semanticModel.findLambda(current.lambdaId);
+      if (!lambda && instanceBaseModel)
+        lambda = instanceBaseModel->findLambda(current.lambdaId);
+      const auto formula = lambda ? lambdaEnvironmentLifetimeRequirements(
+          lambda->type, current, lambda->environmentContract) : std::nullopt;
+      // Only fixed environment WF escapes the closure's invocation scope.
+      return formula && appendLifetimeRequirementFormula(result, *formula);
+    }
     if (isLifetimeInvocationSignature(current)) {
       if (dependentCallablePattern(current))
         return true;

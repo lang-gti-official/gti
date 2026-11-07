@@ -1,13 +1,13 @@
 #include "semantic_analyzer_impl.h"
+#include "gti/callable_lifetimes.h"
 #include "gti/lifetime_types.h"
 #include "gti/lifetime_requirements.h"
 #include <array>
 
 namespace lang {
 
-auto SemanticVisitor::Impl::forEveryLifetimeAssumption(
-    const std::function<bool(const LifetimeSignatureContract &)> &prove) const
-    -> bool {
+auto SemanticVisitor::Impl::currentLifetimeAssumptionContract() const
+    -> std::optional<LifetimeSignatureContract> {
   LifetimeSignatureContract contract{.complete = true};
   if (loanFlow.lifetimeContract.valid())
     contract = loanFlow.lifetimeContract;
@@ -18,17 +18,21 @@ auto SemanticVisitor::Impl::forEveryLifetimeAssumption(
   // Keep their Boolean structure; collecting each leaf would assume both
   // sides of an OR. A duplicate declaration formula needs no second expansion.
   std::vector<LifetimeRequirementFormula> seen{contract.requirements};
-  for (const auto &scope : requirementScopes) {
+  if (loanFlow.capturedLifetimeRequirementScopes > requirementScopes.size())
+    return std::nullopt;
+  for (std::size_t index = loanFlow.capturedLifetimeRequirementScopes;
+       index < requirementScopes.size(); ++index) {
+    const auto &scope = requirementScopes[index];
     const auto formula = buildLifetimeRequirements(scope, false);
     if (!formula)
-      return false;
+      return std::nullopt;
     if (formula->nodes.empty() ||
         std::find(seen.begin(), seen.end(), *formula) != seen.end())
       continue;
     seen.push_back(*formula);
     const auto offset = contract.requirements.nodes.size();
     if (offset + formula->nodes.size() + 1 > 4096)
-      return false;
+      return std::nullopt;
     for (auto node : formula->nodes) {
       if (node.kind == LifetimeRequirementNode::Kind::All ||
           node.kind == LifetimeRequirementNode::Kind::Any) {
@@ -47,8 +51,66 @@ auto SemanticVisitor::Impl::forEveryLifetimeAssumption(
       contract.requirements.root = contract.requirements.nodes.size() - 1;
     }
   }
-  return visitLifetimeAssumptionCases(contract, prove).proof ==
+  return contract;
+}
+
+auto SemanticVisitor::Impl::forEveryLifetimeAssumption(
+    const std::function<bool(const LifetimeSignatureContract &)> &prove) const
+    -> bool {
+  const auto contract = currentLifetimeAssumptionContract();
+  return contract && visitLifetimeAssumptionCases(*contract, prove).proof ==
          LifetimeFormulaProof::Proven;
+}
+
+auto SemanticVisitor::Impl::applyLambdaEnvironmentContract(
+    const LifetimeSignatureContract &contract,
+    std::span<const LifetimeBinding> bindings,
+    SemanticLifetimeApplication &application, const Token &site) -> bool {
+  if (!validLambdaEnvironmentContract(contract, contract.parameters) ||
+      bindings.size() != contract.parameters.size())
+    return false;
+  SemanticLifetimeApplication selected;
+  for (std::size_t index = 0; index < bindings.size(); ++index) {
+    if (bindings[index].first != contract.parameters[index] ||
+        !bindings[index].second.specified())
+      return false;
+    selected.bindings.push_back(bindings[index]);
+    if (bindings[index].second.kind == Lifetime::Kind::Inference &&
+        std::find(selected.variables.begin(), selected.variables.end(), bindings[index].second) ==
+            selected.variables.end())
+      selected.variables.push_back(bindings[index].second);
+  }
+  const auto region = [&](Lifetime value) {
+    for (const auto binding : bindings)
+      if (binding.first == value)
+        return binding.second;
+    return value;
+  };
+  auto formula = lifetimeContractRequirements(contract);
+  if (!formula)
+    return false;
+  for (auto &node : formula->nodes) {
+    const auto type = substituteTypeLifetimes(node.type, bindings);
+    if (!type)
+      return false;
+    node.type = *type;
+    node.bound = {region(node.bound.longer), region(node.bound.shorter)};
+  }
+  for (const auto bound : contract.bounds)
+    selected.obligations.push_back({region(bound.longer), region(bound.shorter)});
+  for (const auto &bound : contract.typeBounds) {
+    const auto type = substituteTypeLifetimes(bound.type, bindings);
+    if (!type)
+      return false;
+    selected.typeObligations.push_back({*type, region(bound.region)});
+  }
+  if (!validateLifetimeConstraints(selected.obligations) ||
+      !applyLifetimeRequirements(*formula, selected, site, true))
+    return false;
+  selected.complete = true;
+  application = std::move(selected);
+  commitLifetimeApplication(application);
+  return true;
 }
 
 auto SemanticVisitor::Impl::validateLifetimeConstraints(

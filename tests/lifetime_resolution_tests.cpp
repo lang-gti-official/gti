@@ -1914,6 +1914,85 @@ int main() {
            "fixed closure environments reject incompatible input, local escape and static storage promises");
   }
 }
+void testLambdaEnvironmentPremises() {
+  const auto fixed = analyze(R"(
+int needsStorage<T, lifetime a>() requires outlives<T, a> { return 1; }
+int enclosing<T, lifetime a>(T&<a> input, int&<a> token) {
+  auto body = [](int&<a> ignored) -> int { return needsStorage<T, a>(); };
+  return body(token);
+}
+int main() { int input = 1; return enclosing(input, input) - 1; }
+)");
+  expectValid(fixed, "an explicitly scoped lambda preserves checked fixed environment type premises");
+  const auto *enclosing = function(fixed, "enclosing");
+  const auto *binding = enclosing && enclosing->declaration && enclosing->declaration->body()
+      ? lang::stmtAs<lang::VariableDecl>(enclosing->declaration->body()->statements().front().get())
+      : nullptr;
+  const auto *syntax = binding ? lang::exprAs<lang::Lambda>(binding->initializer().get()) : nullptr;
+  const auto *lambda = syntax ? fixed.semantics.findLambda(*syntax) : nullptr;
+  const bool retained = lambda && lambda->environmentContract.valid() &&
+      !lambda->environmentContract.typeBounds.empty() &&
+      lambda->environmentApplication.complete &&
+      lambda->environmentApplication.bindings.size() == lambda->environmentLifetimes.size();
+  expect(retained, "lambda formation records a separate complete environment application");
+  const auto either = analyze(R"(
+int either<T, U, lifetime a>() requires outlives<T, a> || outlives<U, a> { return 1; }
+int enclosing<T, U, lifetime a>(int&<a> token)
+    requires outlives<T, a> || outlives<U, a> {
+  auto body = [](int&<a> ignored) -> int { return either<T, U, a>(); };
+  return body(token);
+}
+int main() { int input = 1; return enclosing<int, int>(input) - 1; }
+)");
+  expectValid(either, "fixed environment formation preserves an entire disjunctive premise");
+  for (const std::string source : {
+      R"(int needsStorage<T, lifetime a>() requires outlives<T, a> { return 1; }
+int invalid<T, lifetime a>(int&<a> token) {
+  auto body = [](int&<a> ignored) -> int { return needsStorage<T, a>(); };
+  return body(token);
+}
+int main() { return 0; })",
+      R"(int needsStorage<T, lifetime a>() requires outlives<T, a> { return 1; }
+int invalid<T, U, lifetime a>(int&<a> token)
+    requires outlives<T, a> || outlives<U, a> {
+  auto body = [](int&<a> ignored) -> int { return needsStorage<T, a>(); };
+  return body(token);
+}
+int main() { return 0; })"}) {
+    const auto invalid = analyze(source);
+    expect(invalid.syntaxValid && !invalid.semanticValid,
+           "fixed environments neither invent a type premise nor choose one OR branch");
+  }
+  const auto library = std::filesystem::weakly_canonical(
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib");
+  const lang::PackageSourceRoot modules{
+      .identity = "toolchain:std", .name = "std", .packageRoot = library,
+      .sourceRoot = library,
+      .modules = {{"meta", library / "std/meta.gti"},
+                  {"detail_function_pointer_impl", library / "std/detail/function_pointer.gti"}},
+      .kind = lang::SourceOwnerKind::Toolchain, .implicitAlias = "std", .defaultModule = "meta"};
+  const auto pointerSource = [](std::string_view signature) {
+    return std::string(R"(import std.detail_function_pointer_impl;
+int needsStorage<T, lifetime a>() requires outlives<T, a> { return 1; }
+int enclosing<T, lifetime a>(T&<a> input, int&<a> token) {
+  auto pointer = gti_internal::function_pointer_from_item<)") + std::string(signature) + R"(>(
+      [](int&<a> ignored) -> int { return needsStorage<T, a>(); });
+  return gti_internal::function_pointer_invoke(pointer, token);
+}
+int main() { int input = 1; return enclosing(input, input) - 1; })";
+  };
+  const auto checkPointer = [&](std::string_view signature) {
+    const auto source = pointerSource(signature);
+    const auto path = library / "lifetime-fixed-environment-pointer.gti";
+    return lang::Frontend().analyze(path, source, {library / "prelude.gti", path},
+        {{path.string(), source}}, {library}, {modules});
+  };
+  expectValid(checkPointer("int(int&<a>)"),
+              "a pointer formed from a stateless lambda retains its checked fixed environment premise");
+  const auto universal = checkPointer("for<lifetime b> int(int&<b>)");
+  expect(universal.syntaxValid && !universal.semanticValid,
+         "erasure cannot reinterpret a fixed lambda input as a fresh invocation universal");
+}
 void testForwardedPackBorrowPaths() {
   expect(lang::SemanticLifetimeTestAccess::packProjectionChecks(),
          "typed pack projection preserves repeated-element identity and rejects wrong or ancestor paths");
@@ -2945,5 +3024,6 @@ int main() {
   testInstantiatedReferenceIdentity();
   testLambdaLifetimeInference();
   testLambdaLifetimeEnvironments();
+  testLambdaEnvironmentPremises();
   return failures == 0 ? 0 : 1;
 }
