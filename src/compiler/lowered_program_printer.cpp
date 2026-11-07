@@ -16,6 +16,8 @@ requirementKindName(LoweredRequirementKind kind) {
   switch (kind) {
   case LoweredRequirementKind::Concept:
     return "concept";
+  case LoweredRequirementKind::Lifetime:
+    return "lifetime";
   case LoweredRequirementKind::Member:
     return "member";
   case LoweredRequirementKind::Expression:
@@ -243,6 +245,23 @@ private:
       const auto &value = values[index];
       output << "{kind=" << requirementKindName(value.kind)
              << ";concept=" << value.conceptId;
+      if (!value.lifetimeArguments.empty()) {
+        output << ";lifetimes=[";
+        for (std::size_t i = 0; i < value.lifetimeArguments.size(); ++i) {
+          separator(i);
+          lifetime(value.lifetimeArguments[i]);
+        }
+        output << ']';
+      }
+      if (value.lifetimeBound) {
+        output << ";outlives=";
+        if (value.outlivesType)
+          type(*value.outlivesType);
+        else
+          lifetime(value.lifetimeBound->longer);
+        output << '>';
+        lifetime(value.lifetimeBound->shorter);
+      }
       if (!value.memberName.empty())
         output << ";member=" << std::quoted(value.memberName);
       if (value.mutableReceiver)

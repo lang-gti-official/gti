@@ -26,7 +26,107 @@ MirInstruction *firstLifetimeCall(MirBody &body) {
         return &instruction;
   return nullptr;
 }
-void checkCompleteReferenceInitializers() {
+bool checkConsumingExternalBorrowResults() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "consuming-external-results.gti", R"gti(
+int shared = 7;
+struct Parcel<lifetime a> {
+  int&<a> value;
+  Parcel(int&<a> input) : value(input) {}
+};
+enum Optional<lifetime a> { value(int&<a> input), empty };
+struct External<lifetime a> {
+  int&<a> value;
+  int owned;
+  External(int&<a> input) : value(input), owned(1) {}
+  int&<a> release() && { return this.value; }
+  int& immediate() && { return this.value; }
+  Parcel<a> relay() && { return Parcel<a>(this.value); }
+};
+struct Independent {
+  Independent() {}
+  int&<a> argument<lifetime a>(int&<a> input) && { return input; }
+  int&<static> global() && { return shared; }
+  Optional<static> empty() && { return Optional<static>::empty; }
+};
+struct Exclusive<lifetime a> {
+  mut int&<a> value;
+  Exclusive(mut int&<a> input) : value(input) {}
+  mut int&<a> release() && { return this.value; }
+};
+External<a> makeExternal<lifetime a>(int&<a> input) { return External<a>(input); }
+int&<a> release<lifetime a>(int&<a> input) { return makeExternal(input).release(); }
+Parcel<a> relay<lifetime a>(int&<a> input) { return External<a>(input).relay(); }
+int main() {
+  int value = 3;
+  mut int exclusive = 5;
+  Parcel parcel = relay(value);
+  Optional<static> empty = Independent().empty();
+  mut int& selected = Exclusive(exclusive).release();
+  selected = 9;
+  return release(value) + parcel.value + Independent().argument(value) +
+         Independent().global() + External(value).immediate() + exclusive - 28;
+}
+)gti");
+  if (!checked.canGenerateCode()) {
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << " at "
+                << diagnostic.primary.start << '-' << diagnostic.primary.end << '\n';
+    for (const auto &error : verifyMirProgram(checked.mir).errors)
+      std::cerr << error.message << '\n';
+    std::cerr << "consuming methods retain only independently checked external result suppliers\n";
+    return false;
+  }
+  bool receiver = false, argument = false, global = false, empty = false, mutableResult = false;
+  for (const auto &function : checked.mir.functionInstances()) {
+    if (function.receiverMutability != ReceiverMutability::Consuming ||
+        !function.completeReturnBorrow)
+      continue;
+    const auto &summary = *function.completeReturnBorrow;
+    empty |= function.returnType.kind == SemanticType::Enum && summary.dependencies.empty();
+    for (const auto &dependency : summary.dependencies) {
+      argument |= dependency.origin == BorrowOriginKind::Argument;
+      global |= dependency.origin == BorrowOriginKind::Global;
+    }
+    if (function.returnType.kind != SemanticType::Reference || summary.dependencies.size() != 1 ||
+        summary.dependencies.front().origin != BorrowOriginKind::Receiver)
+      continue;
+    expect(!summary.dependencies.front().sourceFields.empty(),
+           "a consuming receiver's scalar contract never adds a whole-shell supplier");
+    mutableResult |= function.returnType.referenceAccess == AccessMode::Mutable;
+    if (function.returnType.referenceAccess == AccessMode::Mutable)
+      continue;
+    receiver = true;
+    const auto *owner = checked.mir.findClassInstance(*function.owner);
+    const auto owned = std::find_if(owner->declaredFields.begin(), owner->declaredFields.end(),
+        [](const auto &field) { return field.type.kind == SemanticType::Int32; });
+    expect(owned != owner->declaredFields.end(), "receiver fixture retains a distinct owned scalar field");
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto forged = checked.mir;
+      auto *target = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+      if (mutation == 3) {
+        target->completeReturnBorrow.reset();
+      } else {
+        auto invalid = target->completeReturnBorrow->dependencies.front();
+        invalid.sourceFields = mutation == 0 ? BorrowPath{} : BorrowPath{fieldProjection(owned->symbol)};
+        if (mutation == 2) {
+          target->completeReturnBorrow->dependencies.push_back(invalid);
+          target->returnBorrowFields.push_back(invalid);
+        } else {
+          target->completeReturnBorrow->dependencies = {invalid};
+          target->returnBorrowFields = {invalid};
+        }
+      }
+      expect(!verifyMirProgram(forged).valid(),
+             "consuming result proof rejects shell, owned field, mixed suppliers and missing complete evidence");
+    }
+  }
+  expect(receiver && argument && global && empty && mutableResult,
+         "consuming result fixture covers stored readonly/mutable, argument, global and checked empty suppliers");
+  return true;
+}
+
+bool checkCompleteReferenceInitializers() {
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "complete-reference-initializers.gti", R"gti(
 int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
@@ -55,7 +155,32 @@ int main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     for (const auto &error : verifyMirProgram(checked.mir).errors)
       std::cerr << error.message << '\n';
-    expect(false, "reference-field constructors independently publish scalar, selected and exclusive inputs");
+    for (const auto &constructor : checked.mir.constructorInstances()) {
+      if (std::none_of(constructor.parameterTypes.begin(), constructor.parameterTypes.end(),
+          [](const auto &type) { return type.kind == SemanticType::Reference &&
+                                      type.referenceAccess == AccessMode::Mutable; }))
+        continue;
+      std::cerr << "exclusive constructor=" << constructor.id << " parameters=";
+      for (const auto binding : constructor.parameterBindings) std::cerr << binding << ',';
+      std::cerr << '\n';
+      for (const auto &initializer : constructor.initializers) {
+        std::cerr << "  field=" << initializer.field << " arguments=";
+        for (const auto value : initializer.arguments) std::cerr << value << ',';
+        std::cerr << " complete=" << initializer.completeBorrow.has_value();
+        if (initializer.completeBorrow)
+          for (const auto &dependency : initializer.completeBorrow->dependencies)
+            std::cerr << " [source=" << dependency.source << " parent=" << dependency.parent
+                      << " access=" << static_cast<int>(dependency.access)
+                      << " fields=" << dependency.designatedFields.size()
+                      << " conditions=" << dependency.conditions.size() << ']';
+        std::cerr << '\n';
+      }
+      const auto dump = MirPrinter{}.print(constructor.body);
+      std::cerr << dump.substr(0, 10000);
+      if (dump.size() > 10000) std::cerr << "[bounded constructor dump: " << dump.size() << " bytes]\n";
+    }
+    std::cerr << "reference-field constructors independently publish scalar, selected and exclusive inputs\n";
+    return false;
   }
   bool selected = false;
   bool exclusive = false;
@@ -102,6 +227,7 @@ int main() {
     }
   }
   expect(selected && exclusive, "constructor fixture exercises both selected suppliers and entry transfer");
+  return true;
 }
 
 void checkProgramBasePathAuthority() {
@@ -386,7 +512,10 @@ int main() {
 } // namespace
 
 int main() {
-  checkCompleteReferenceInitializers();
+  const bool referenceInitializers = checkCompleteReferenceInitializers();
+  const bool consumingResults = checkConsumingExternalBorrowResults();
+  expect(referenceInitializers && consumingResults,
+         "reference publication and consuming result fixtures must both reach independently verified MIR");
   const auto frontend = Frontend({.stopAfter = FrontendPhase::Mir})
                             .analyze("lifetime-mir-contracts.gti", R"gti(
 int&<a> identity<lifetime a>(int&<a> value) { return value; }

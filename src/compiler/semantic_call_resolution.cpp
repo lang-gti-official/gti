@@ -5674,22 +5674,68 @@ auto SemanticVisitor::Impl::constructorSignatureSpelling(
 auto SemanticVisitor::Impl::consumingResultCarriesBorrow(
     const CallableCandidate &function) const -> bool {
   return function.receiverMutability == ReceiverMutability::Consuming &&
+         !function.record().neverReturns &&
          !receiverTextFieldResult(function.returnType,
                                   function.returnBorrowOrigin,
                                   function.returnBorrowFields) &&
-         !conditionalReferenceReturn(function.returnType,
-                                     function.parameterTypes,
-                                     function.dispatchOwner) &&
          (function.returnType.kind == SemanticType::Reference ||
           function.returnBorrowOrigin != BorrowOriginKind::None ||
           typeTraits(function.returnType).containsBorrowedState);
 }
 
+auto SemanticVisitor::Impl::checkedConsumingReturnBorrow(
+    const CallableCandidate &function,
+    const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &valueArguments, const SourceSpan &site)
+    -> std::optional<FunctionBorrowDependencySummary> {
+  if (function.returnType.kind != SemanticType::Reference &&
+      function.returnType.kind != SemanticType::Class &&
+      function.returnType.kind != SemanticType::Enum)
+    return std::nullopt;
+  const auto complete = completeFunctionReturnBorrow(function, typeArguments,
+                                                     valueArguments, site);
+  if (!complete || (function.returnType.kind == SemanticType::Reference &&
+                    complete->dependencies.empty()))
+    return std::nullopt;
+  for (const auto &source : complete->dependencies) {
+    if (source.origin == BorrowOriginKind::Global) {
+      if (!source.globalRoot)
+        return std::nullopt;
+      continue;
+    }
+    if (source.origin == BorrowOriginKind::Argument) {
+      if (source.parameter >= function.parameterTypes.size())
+        return std::nullopt;
+      continue;
+    }
+    if (source.origin != BorrowOriginKind::Receiver)
+      return std::nullopt;
+    auto type = function.dispatchOwner;
+    bool external = false;
+    for (const auto &step : source.sourceFields) {
+      const auto selected = borrowedPathElement(type, step);
+      if (!selected)
+        return std::nullopt;
+      type = *selected;
+      if (type.kind == SemanticType::Reference) {
+        if (type.arguments.size() != 1)
+          return std::nullopt;
+        external = true;
+        type = SemanticType(type.arguments.front());
+      }
+    }
+    if (!external)
+      return std::nullopt;
+  }
+  return complete;
+}
+
 auto SemanticVisitor::Impl::reportConsumingBorrowedResult(
     const CallableCandidate &function, const Token &paren) -> void {
   report(paren,
-         "A consuming method cannot return a reference or tracked borrowed "
-         "state; this call returns '" +
+         "A consuming borrowed result requires a complete checked external "
+         "supplier contract; the consumed receiver cannot own the result's "
+         "storage. This call returns '" +
              typeSpelling(function.returnType) + "'.",
          "GTI-S2022");
 }
@@ -5697,7 +5743,9 @@ auto SemanticVisitor::Impl::reportConsumingBorrowedResult(
 auto SemanticVisitor::Impl::validateSelectedFunction(
     const CallableCandidate &function, const ExprPtr &callee,
     const Token &paren, const CallArgumentExpressions &arguments,
-    CallReceiverMode receiverMode, std::span<const AnalyzedCallArgument> concrete) -> bool {
+    CallReceiverMode receiverMode, std::span<const AnalyzedCallArgument> concrete,
+    const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &valueArguments) -> bool {
   std::vector<const ExprPtr *> expressions;
   for (const ExprPtr &argument : arguments)
     expressions.push_back(&argument);
@@ -5727,7 +5775,9 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     diagnostics.emplace_back(std::move(diagnostic));
     return false;
   }
-  if (consumingResultCarriesBorrow(function)) {
+  if (consumingResultCarriesBorrow(function) &&
+      !checkedConsumingReturnBorrow(function, typeArguments, valueArguments,
+                                     tokenSpan(paren))) {
     reportConsumingBorrowedResult(function, paren);
     return false;
   }
@@ -7285,16 +7335,7 @@ auto SemanticVisitor::Impl::resolveOperator(
   }
   requireFunctionDefinition(selected, token);
   const CallReceiverMode selectedReceiverMode = viable.front().receiverMode;
-  if (selected.receiverMutability == ReceiverMutability::Consuming &&
-      (selected.returnType.kind == SemanticType::Reference ||
-       selected.returnBorrowOrigin != BorrowOriginKind::None ||
-       typeTraits(selected.returnType).containsBorrowedState)) {
-    report(token,
-           "A consuming operator cannot return a reference or tracked borrowed "
-           "state.",
-           "GTI-S2022");
-    return std::nullopt;
-  }
+  std::optional<FunctionBorrowDependencySummary> consumingBorrow;
   if (contextualArguments && contextualArguments->hasDeferred()) {
     const auto *call = exprAs<Call>(&site);
     if (call == nullptr || !finishContextualCallArguments(
@@ -7312,6 +7353,14 @@ auto SemanticVisitor::Impl::resolveOperator(
       !applyCallLifetimeContract(selected, concreteArguments, token,
                                  receiver.get(), true, lifetimeReceiver))
     return std::nullopt;
+  if (consumingResultCarriesBorrow(selected)) {
+    consumingBorrow =
+        checkedConsumingReturnBorrow(selected, {}, {}, tokenSpan(token));
+    if (!consumingBorrow) {
+      reportConsumingBorrowedResult(selected, token);
+      return std::nullopt;
+    }
+  }
   if (!canAccessMember(selected.access, selected.ownerClass, receiverType,
                        selected.dispatchOwner)) {
     const std::string access(accessModifierSpelling(selected.access));
@@ -7430,6 +7479,20 @@ auto SemanticVisitor::Impl::resolveOperator(
       selected.returnBorrowParameters;
   std::vector<BorrowedFieldOrigin> operatorBorrowFields =
       selected.returnBorrowFields;
+  if (consumingBorrow) {
+    operatorBorrowFields = consumingBorrow->dependencies;
+    if (!operatorBorrowFields.empty()) {
+      operatorBorrowOrigin = operatorBorrowFields.front().origin;
+      operatorBorrowParameter = operatorBorrowFields.front().parameter;
+      operatorBorrowAccess = operatorBorrowFields.front().access;
+    }
+    operatorBorrowParameters.clear();
+    for (const auto &source : operatorBorrowFields)
+      if (source.origin == BorrowOriginKind::Argument &&
+          std::find(operatorBorrowParameters.begin(), operatorBorrowParameters.end(),
+                    source.parameter) == operatorBorrowParameters.end())
+        operatorBorrowParameters.push_back(source.parameter);
+  }
   if (operatorBorrowOrigin == BorrowOriginKind::None &&
       (selected.returnType.kind == SemanticType::StringView ||
        selected.returnType.kind == SemanticType::CString)) {
@@ -7454,6 +7517,27 @@ auto SemanticVisitor::Impl::resolveOperator(
           operatorBorrowFields = text->fields;
         }
       }
+    }
+  }
+  std::optional<SemanticBorrowDependencySet> consumingDependencies;
+  if (consumingBorrow) {
+    const ResolvedCallInfo publication{
+        .function = selected.id,
+        .declaration = selected.declaration,
+        .returnType = selected.returnType,
+        .parameterTypes = selected.parameterTypes,
+        .lifetimeArguments = selected.lifetimeArguments,
+        .lifetimeApplication = selected.lifetimeApplication,
+        .dispatch = selected.virtualMethod ? CallDispatch::Virtual
+                                           : CallDispatch::Static,
+        .dispatchOwner = selected.dispatchOwner,
+        .receiverMode = selectedReceiverMode};
+    consumingDependencies = instantiateCompleteBorrowArguments(
+        publication, *consumingBorrow, concreteArguments,
+        receiverState ? nullptr : &receiver);
+    if (!consumingDependencies) {
+      reportConsumingBorrowedResult(selected, token);
+      return std::nullopt;
     }
   }
   commitLifetimeApplication(selected.lifetimeApplication);
@@ -7541,6 +7625,8 @@ auto SemanticVisitor::Impl::resolveOperator(
   } else {
     semanticModel.recordOperator(site, std::move(resolved));
   }
+  if (consumingDependencies)
+    semanticModel.recordBorrowDependencySet(site, *consumingDependencies);
   return selected;
 }
 
@@ -8356,7 +8442,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       function.returnType, function.parameterTypes, function.ownerClass,
       function.staticMember, function.record().intrinsic,
       declarationInfo == nullptr ? std::nullopt
-                                 : exactMovedReturnParameter(*declarationInfo));
+                                 : exactMovedReturnParameter(*declarationInfo),
+      false, &function.lifetimeContract, function.receiverMutability);
   // A generic-result declaration with an explicit borrowed_from contract
   // decides its origin per substitution; the selected instance's contract
   // binds this call exactly as its own reanalysis records it.
@@ -8567,6 +8654,21 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     if (instantiated) {
       if (contractFields)
         resolved.borrowFields = complete->dependencies;
+      if (function.receiverMutability == ReceiverMutability::Consuming &&
+          resolved.borrowOrigin == BorrowOriginKind::None &&
+          !complete->dependencies.empty() &&
+          complete->dependencies.front().origin != BorrowOriginKind::Global) {
+        const auto &first = complete->dependencies.front();
+        resolved.borrowOrigin = first.origin;
+        resolved.borrowArgument = first.parameter;
+        resolved.borrowAccess = first.access;
+        resolved.borrowFields = complete->dependencies;
+        for (const auto &source : complete->dependencies)
+          if (source.origin == BorrowOriginKind::Argument &&
+              std::find(resolved.borrowArguments.begin(), resolved.borrowArguments.end(),
+                        source.parameter) == resolved.borrowArguments.end())
+            resolved.borrowArguments.push_back(source.parameter);
+      }
       // A result whose contract names only static storage has no caller
       // input to borrow from: it borrows that exact global place.
       if (resolved.borrowOrigin == BorrowOriginKind::None)
@@ -8603,6 +8705,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
         semanticModel.record(call, resolved);
       }
       semanticModel.clearBorrowDependencySet(call);
+      if (consumingResultCarriesBorrow(function))
+        reportConsumingBorrowedResult(function, call.paren());
     }
   }
   recordSelectedCallOccurrence(call, std::move(resolved));

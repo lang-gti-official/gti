@@ -15108,16 +15108,30 @@ auto SemanticVisitor::Impl::baseTypeOf(
       if (!owner.declaration->genericArgumentPatterns().empty() ||
           !owner.definitionFamilyMembers.empty() ||
           owner.definitionFamilyPrimary != 0) {
+        const auto typeArity = owner.declaration->genericArgumentPatterns().empty()
+            ? genericTypeParameterCount(owner.genericParameters)
+            : owner.declaration->genericArgumentPatterns().size();
+        if (type.arguments.size() < typeArity)
+          return SemanticType::Unknown;
         std::vector<SemanticType> arguments;
-        for (const TypeRef &argument : type.arguments) {
+        for (const TypeRef &argument : std::span(type.arguments).first(typeArity))
           arguments.push_back(typeOf(argument, fromScope));
-        }
         auto selected = selectExactClassSpecialization(
             SemanticType::classType(*id, std::move(arguments)));
-        if (selected.kind == SemanticType::Class)
-          for (const auto &parameter : classInfo(selected.classId).genericParameters)
-            if (parameter.lifetime)
-              selected.lifetimeArguments.push_back(inferredLifetime(type.name.last(), parameter.id));
+        if (selected.kind != SemanticType::Class)
+          return selected;
+        std::vector<GenericParameterInfo> lifetimeParameters;
+        for (const auto &parameter : classInfo(selected.classId).genericParameters)
+          if (parameter.lifetime)
+            lifetimeParameters.push_back(parameter);
+        const std::vector<TypeRef> trailing(
+            type.arguments.begin() + static_cast<std::ptrdiff_t>(typeArity),
+            type.arguments.end());
+        const auto regions = nominalArguments(lifetimeParameters, trailing,
+                                               fromScope, type.name.last());
+        if (!regions)
+          return SemanticType::Unknown;
+        selected.lifetimeArguments = regions->lifetimes;
         return selected;
       }
       const auto arguments = nominalArguments(owner.genericParameters,

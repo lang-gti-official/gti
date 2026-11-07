@@ -198,6 +198,7 @@ struct LoweredGenericParameter {
 
 enum class LoweredRequirementKind {
   Concept,
+  Lifetime,
   Member,
   Expression,
   InferredExpression,
@@ -210,6 +211,11 @@ struct LoweredConceptRequirement {
   LoweredRequirementKind kind = LoweredRequirementKind::Concept;
   ConceptId conceptId = 0;
   std::vector<SemanticType> arguments;
+  std::vector<Lifetime> lifetimeArguments;
+  // Region/type-outlives leaves retain their typed declaration relationship.
+  // The normalized lifetime contract remains the executable proof authority.
+  std::optional<LifetimeBound> lifetimeBound;
+  std::optional<SemanticType> outlivesType;
   // For an unnamed structural leaf, arguments are receiver/result followed by
   // exact parameter types. Semantics establishes receiver access and the
   // caller's unsafe obligation; neither is inferred from a member spelling.

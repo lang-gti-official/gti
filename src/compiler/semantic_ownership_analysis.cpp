@@ -6648,6 +6648,8 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
       (cleared.returnType.kind != SemanticType::Enum &&
        !(cleared.returnType.kind == SemanticType::Class &&
          typeTraits(cleared.returnType).containsBorrowedState) &&
+       !(cleared.returnType.kind == SemanticType::Reference &&
+         cleared.lifetimeContract.valid()) &&
        !conditionalReferenceReturn(cleared.returnType, cleared.parameterTypes,
                                    cleared.ownerClass
                                        ? openClassType(cleared.ownerClass)
@@ -6681,9 +6683,11 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     const auto *info = returned->value()
                            ? semanticModel.findExpression(*returned->value())
                            : nullptr;
-    const auto complete = cleared.returnType.kind == SemanticType::Reference
+    auto complete = cleared.returnType.kind == SemanticType::Reference
         ? completeBorrowDependencySet(returned->value())
         : completeBorrowDependencySetForType(returned->value().get(), cleared.returnType);
+    if (!complete && cleared.returnType.kind == SemanticType::Reference)
+      complete = initializerBorrowDependencies(returned->value(), cleared.returnType);
     const auto *contextual =
         returned->value()
             ? semanticModel.findContextualConstruction(*returned->value())
@@ -6734,6 +6738,22 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
       (updated.returnType.kind == SemanticType::Reference &&
        updated.ownerClass))
     updated.returnBorrowFields = summary.dependencies;
+  if (syntax->receiverMutability() == ReceiverMutability::Consuming &&
+      !summary.dependencies.empty()) {
+    const auto &first = summary.dependencies.front();
+    if (first.origin != BorrowOriginKind::Global)
+      updated.returnBorrowOrigin = first.origin;
+    updated.returnBorrowParameter = first.parameter;
+    updated.returnBorrowAccess = first.access;
+    updated.returnBorrowFields = summary.dependencies;
+    updated.returnBorrowParameters.clear();
+    for (const auto &source : summary.dependencies)
+      if (source.origin == BorrowOriginKind::Argument &&
+          std::find(updated.returnBorrowParameters.begin(),
+                    updated.returnBorrowParameters.end(), source.parameter) ==
+              updated.returnBorrowParameters.end())
+        updated.returnBorrowParameters.push_back(source.parameter);
+  }
   // A result that depends only on one static place has no caller input to
   // summarize; its declaration borrows that exact global place.
   if (updated.returnBorrowOrigin == BorrowOriginKind::None &&
@@ -7785,7 +7805,8 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
     bool staticMember, IntrinsicKind intrinsic,
     std::optional<std::size_t> exactReturnParameter,
     bool allowReadOnlyReferenceReborrow,
-    const LifetimeSignatureContract *lifetimeContract) const
+    const LifetimeSignatureContract *lifetimeContract,
+    ReceiverMutability receiverMutability) const
     -> FunctionReturnBorrowSummary {
   FunctionReturnBorrowSummary summary;
   if (!isBorrowReturningType(returnType) || intrinsic != IntrinsicKind::None) {
@@ -7829,6 +7850,7 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
       }
     };
     if (ownerClass != 0 && !staticMember &&
+        receiverMutability != ReceiverMutability::Consuming &&
         declaredLifetimeRelationship(*lifetimeContract, lifetimeContract->receiver, result)) {
       summary.origin = BorrowOriginKind::Receiver;
       summary.fields.push_back({.origin = BorrowOriginKind::Receiver,
@@ -7872,7 +7894,8 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
     return summary;
   }
   if (ownerClass != 0 && !staticMember) {
-    summary.origin = BorrowOriginKind::Receiver;
+    if (receiverMutability != ReceiverMutability::Consuming)
+      summary.origin = BorrowOriginKind::Receiver;
     return summary;
   }
 
@@ -7983,7 +8006,7 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
   FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
       function.returnType, function.parameterTypes, function.ownerClass,
       function.staticMember, function.record().intrinsic, std::nullopt, false,
-      &function.lifetimeContract);
+      &function.lifetimeContract, function.receiverMutability);
   if (function.declaration != nullptr) {
     if (const auto *attribute =
             function.declaration->findFunctionAttribute("borrowed_from")) {
@@ -8018,7 +8041,9 @@ auto SemanticVisitor::Impl::refreshDeclaredLifetimeBorrowSummary(
   const auto summary = functionReturnBorrowSummary(
       function.returnType, function.parameterTypes, function.ownerClass,
       function.staticMember, function.intrinsic, std::nullopt, false,
-      &function.lifetimeContract);
+      &function.lifetimeContract,
+      function.declaration ? function.declaration->receiverMutability()
+                           : ReceiverMutability::ReadOnly);
   function.returnBorrowOrigin = summary.origin;
   function.returnBorrowParameter = summary.parameter;
   function.returnBorrowAccess = summary.access;
@@ -8226,7 +8251,8 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
     const FunctionDecl &function, const FunctionInfo &info) -> void {
   const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
       info.returnType, info.parameterTypes, info.ownerClass, info.staticMember,
-      info.intrinsic);
+      info.intrinsic, std::nullopt, false, &info.lifetimeContract,
+      function.receiverMutability());
   const std::string code = info.returnType.kind == SemanticType::Reference
                                ? "GTI-S2017"
                                : "GTI-S2045";

@@ -94,6 +94,11 @@ int main() { Flag flag{1}; return choose(flag) - 1 + unary(); }
       if (value.kind != HirValueKind::Call || !value.source ||
           !result.semantics.findContextualConversion(*value.source))
         continue;
+      const auto *target = value.functionTarget
+          ? result.hir.findFunctionInstance(*value.functionTarget) : nullptr;
+      expect(target && target->source && target->source->operatorName() &&
+                 target->source->operatorName()->kind == OverloadedOperator::ContextualBool,
+             "operator bool retains its distinct checked conversion identity");
       expect(value.lifetimeApplication.complete &&
                  !value.lifetimeApplication.bindings.empty(),
              "HIR contextual calls retain the independently checked receiver substitution");

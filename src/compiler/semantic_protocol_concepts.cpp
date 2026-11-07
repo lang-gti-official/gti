@@ -1152,9 +1152,26 @@ auto SemanticVisitor::Impl::validateConformanceTypes(
         declaration.requiresClause() ? &*declaration.requiresClause() : nullptr,
         check.namespaceScope);
     requirementScopes.push_back(std::move(requirements));
-    for (const TypeRef *type : check.types) {
-      validateType(*type);
-    }
+    // A conformance ranges over well-formed instances of its head. These
+    // formation premises belong to its declaration scope, not to a fictitious
+    // top-level call. Associated definitions may use the same premises but
+    // must still prove any stronger formation requirements themselves.
+    struct RestoreFlow {
+      LoanFlowState &target;
+      LoanFlowState saved;
+      ~RestoreFlow() { target = std::move(saved); }
+    } restoreFlow{loanFlow, std::move(loanFlow)};
+    loanFlow = {};
+    loanFlow.lifetimeContract.complete = true;
+    for (const auto &parameter : check.genericParameters)
+      if (parameter.lifetime)
+        loanFlow.lifetimeContract.parameters.push_back(Lifetime::parameter(parameter.id));
+    for (const auto &pattern : check.patterns)
+      if (!collectNominalFormationAssumptions(pattern, loanFlow.lifetimeContract))
+        reportConformanceError(declaration.forKeyword(),
+                               "A conformance head has unresolved nominal lifetime formation requirements.");
+    for (const TypeRef *type : check.types)
+      validateType(*type, false, true);
     bindAssociatedTypeNames(check.conceptId, check.patterns);
     for (const auto &associated : check.associatedTypes) {
       beginTypeParameterScope(associated.parameters);

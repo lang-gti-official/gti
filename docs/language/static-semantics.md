@@ -382,6 +382,14 @@ the class key's default access, and its name cannot collide with a value, callab
 type alias in that owner. A public alias of a non-generic type may be named with
 `Owner::Name` outside the class.
 
+An alias retains the target's explicit and anonymous lifetime parameters. Naming
+the target is a declaration operation; each instantiated use must satisfy the
+target's lifetime formation contract. For example, a class-scoped alias of
+`View<T>` can infer its borrowed region at a use without proving a particular
+region while the alias is declared. An alias of `View<T, static>` still requires
+`T` to remain valid for static storage at that use. Ordinary type/value and
+concept constraints keep their declaration-order checks.
+
 A generic class alias may name the owner's type or value parameters and is
 substituted for each concrete member-body and backend instance. The alias is
 usable unqualified within that owner. A type alias naming a specialization may
@@ -1026,7 +1034,15 @@ string view. Such a borrow cannot outlive the temporary's full expression.
 A read-only member that returns one text field of a temporary that holds a
 local owner's text is not such a borrow: its result is a view of that owner
 (see [owner-tracked view fields](ownership-and-lifetimes.md#owner-tracked-view-fields)).
-Consuming members cannot return any reference or tracked borrowed state.
+An ordinary consuming member may return a reference or a borrowed class or
+enum when its complete checked result contract names only external suppliers.
+These include argument or global storage and stored references reached through
+the receiver's exact field/base paths. Receiver-owned storage, including a
+checked owning pointee, cannot supply such a result. All return paths must
+preserve the declared regions, access and cleanup rules; a carrier's proven
+empty alternative needs no supplier, while a reference always does. Unknown
+or incomplete supplier contracts remain rejected. This does not extend the
+separate in-place invocation rule for retained owned fields or pointees.
 
 For an ordinary GTI function, method, or member operator call, a supported
 fresh value may initialize an exact read-only `T&` parameter for that invocation

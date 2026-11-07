@@ -14,6 +14,56 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "consuming_static_mapper_results": """
+int stored = 41;
+mut int calls = 0;
+int&<static> map(int input) { calls++; return stored; }
+expected<int, int> read(bool fail) {
+  if (fail) { return unexpected(9); }
+  return 7;
+}
+int main() {
+  auto value = read(false).transform(map);
+  if (!value.has_value() || value.value() != 41 || calls != 1) { return 1; }
+  auto error = read(true).transform_error(map);
+  if (error.has_value() || error.error() != 41 || calls != 2) { return 2; }
+  auto skipped_value = read(true).transform(map);
+  if (skipped_value.has_value() || skipped_value.error() != 9 || calls != 2) {
+    return 3;
+  }
+  auto skipped_error = read(false).transform_error(map);
+  if (!skipped_error.has_value() || skipped_error.value() != 7 || calls != 2) {
+    return 4;
+  }
+  return 0;
+}
+""",
+    "consuming_external_results": """
+mut int drops = 0;
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+class Consumer<lifetime a> {
+  View<a> external;
+public:
+  Consumer(int&<a> input) : external(View<a>(input)) {}
+  ~Consumer() { drops++; }
+  int&<a> take() && { return this.external.value; }
+  int&<a> operator()(int&<a> input) && { return input; }
+  View<a> carrier() && { return this.external; }
+};
+int main() {
+  int value = 7;
+  int& first = Consumer(value).take();
+  if (drops != 1 || first != 7) { return 1; }
+  int& second = Consumer(value)(value);
+  if (drops != 2 || second != 7) { return 2; }
+  View copy = Consumer(value).carrier();
+  if (drops != 3 || copy.value != 7) { return 3; }
+  return 0;
+}
+""",
     "complete_scalar_constructor_inputs": """
 int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
   if (first) { return left; }
@@ -384,6 +434,15 @@ struct Adder<lifetime data> {
   int operator()(int value) { return this.base + value; }
 };
 int main() { int value = 3; Adder add{value}; BorrowedCall<int(int)> callback{add}; return callback(4) - 7; }
+""",
+    "class_alias_lifetime_inference": """
+struct View<T, lifetime a> { T&<a> value; View(T&<a> input) : value(input) {} };
+class Collection<T> { public: using view = View<T>; };
+int read<lifetime a>(int&<a> input) {
+  Collection<int>::view value{input};
+  return value.value;
+}
+int main() { int value = 7; return read(value) - 7; }
 """,
     "patterned_nominal_environment": """
 struct Callback<R(Args...), lifetime environment> {

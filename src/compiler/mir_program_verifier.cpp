@@ -1550,6 +1550,11 @@ exactInPlaceConstructionRoles(const std::vector<SemanticType> &arguments,
          result.access == returnType.referenceAccess;
 }
 
+// Structural supplier classification only. Call sites must also require the
+// independently reconstructed complete summary before admitting the result.
+[[nodiscard]] bool hasExternalConsumingResultSuppliers(
+    const MirProgram &, const MirFunctionInstance &);
+
 // Temporary argument borrows and borrowed-carrier receivers cannot export
 // reference-like results, including untracked raw/native address values.
 [[nodiscard]] bool supportsEphemeralBorrowResult(
@@ -1977,14 +1982,17 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                                       functionTarget->returnBorrowOrigin,
                                       functionTarget->returnBorrowParameter,
                                       functionTarget->returnBorrowFields);
+      const bool externalConsumingResult =
+          functionTarget &&
+          hasExternalConsumingResultSuppliers(program, *functionTarget) &&
+          completeReturnProof && completeReturnProof(functionTarget->id);
       if (functionTarget != nullptr &&
           functionTarget->receiverMutability == ReceiverMutability::Consuming &&
           !consumedTextField &&
           (functionTarget->returnType.kind == SemanticType::Reference ||
            functionTarget->returnBorrowOrigin != BorrowOriginKind::None ||
            instruction.info.traits.containsBorrowedState) &&
-          !(functionTarget->returnType.kind == SemanticType::Reference &&
-            completeReturnProof(functionTarget->id))) {
+          !externalConsumingResult) {
         return verificationFailure(body, owner,
                                    "consuming receiver invocation cannot "
                                    "publish tracked borrowed state",
@@ -2056,32 +2064,25 @@ uniqueMirClassInstanceForType(const MirProgram &program,
         // selected member may be declared by that class or inherited from one
         // of its recorded base instances; the borrow is of the whole object
         // either way, and dispatch below remains the member's own.
-        const auto receiverInstance =
-            receiverPlace == nullptr
-                ? program.classInstances().end()
-                : std::find_if(program.classInstances().begin(),
-                               program.classInstances().end(),
-                               [&](const MirClassInstance &candidate) {
-                                 return candidate.type == receiverPlace->type;
-                               });
+        const auto receiverView = receiverPlace
+            ? mirClassLifetimeView(program, receiverPlace->type) : std::nullopt;
         const MirClassInstance *receiverClass =
-            receiverInstance == program.classInstances().end()
-                ? nullptr
-                : &*receiverInstance;
+            receiverView ? receiverView->instance : nullptr;
         const auto inheritsOwner = [&](const auto &self,
-                                       const MirClassInstance &candidate,
+                                       const MirClassLifetimeView &candidate,
                                        std::size_t depth) -> bool {
           if (ownerClass == nullptr || depth > program.classInstances().size())
             return false;
-          if (candidate.id == ownerClass->id)
+          if (candidate.instance == ownerClass)
             return true;
-          return std::any_of(candidate.bases.begin(), candidate.bases.end(),
+          return std::any_of(candidate.instance->bases.begin(),
+                             candidate.instance->bases.end(),
                              [&](const HirBaseInstance &base) {
-                               const MirClassInstance *instance =
-                                   program.findClassInstance(base.instance);
-                               return instance != nullptr &&
-                                      instance->type == base.type &&
-                                      self(self, *instance, depth + 1);
+                               const auto type = candidate.instantiate(base.type);
+                               const auto view = type ? mirClassLifetimeView(program, *type)
+                                                      : std::nullopt;
+                               return view && view->instance->id == base.instance &&
+                                      self(self, *view, depth + 1);
                              });
         };
         const bool mutableInput = receiverInput->callInputKind ==
@@ -2121,9 +2122,11 @@ uniqueMirClassInstanceForType(const MirProgram &program,
           const MirClassInstance *producerOwner =
               target == nullptr ? nullptr
                                 : program.findClassInstance(target->owner);
+          const auto producedType = instantiateMirLifetimeTarget(program, *producer);
           exactProducer =
               target != nullptr && producerOwner != nullptr &&
-              producerOwner->type == receiverPlace->type &&
+              receiverView && receiverView->instance == producerOwner &&
+              producedType && producedType->returnType == receiverPlace->type &&
               producer->constructorKind == ConstructorKind::Ordinary;
           if (!producer->constructorTarget && receiverClass != nullptr) {
             exactProducer =
@@ -2144,9 +2147,10 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               producer->functionTarget
                   ? program.findFunctionInstance(*producer->functionTarget)
                   : nullptr;
+          const auto producedType = instantiateMirLifetimeTarget(program, *producer);
           exactProducer =
               target != nullptr && target->linkage == LanguageLinkage::Gti &&
-              target->returnType == receiverPlace->type &&
+              producedType && producedType->returnType == receiverPlace->type &&
               (borrowedCarrier
                    ? (target->returnBorrowOrigin != BorrowOriginKind::None ||
                       dependentTextCallPublication(*producer, *target)) &&
@@ -2156,8 +2160,8 @@ uniqueMirClassInstanceForType(const MirProgram &program,
           if (producer->lambdaTarget && !producer->functionTarget) {
             const MirLambdaInstance *lambda =
                 program.findLambda(*producer->lambdaTarget);
-            exactProducer = lambda != nullptr &&
-                            lambda->returnType == receiverPlace->type &&
+            exactProducer = lambda != nullptr && producedType &&
+                            producedType->returnType == receiverPlace->type &&
                             !producer->info.traits.containsBorrowedState;
           }
         }
@@ -2169,24 +2173,6 @@ uniqueMirClassInstanceForType(const MirProgram &program,
              (functionTarget->returnType.kind == SemanticType::Reference &&
               functionTarget->returnType.referenceAccess ==
                   AccessMode::ReadOnly));
-        const bool externalConsumingReference =
-            functionTarget && borrowedCarrier && mutableInput &&
-            functionTarget->receiverMutability ==
-                ReceiverMutability::Consuming &&
-            functionTarget->returnType.kind == SemanticType::Reference &&
-            functionTarget->returnType.referenceAccess ==
-                AccessMode::ReadOnly &&
-            functionTarget->completeReturnBorrow &&
-            !functionTarget->completeReturnBorrow->dependencies.empty() &&
-            std::all_of(
-                functionTarget->completeReturnBorrow->dependencies.begin(),
-                functionTarget->completeReturnBorrow->dependencies.end(),
-                [](const auto &dependency) {
-                  return dependency.origin == BorrowOriginKind::Receiver &&
-                         dependency.resultFields.empty() &&
-                         !dependency.sourceFields.empty() &&
-                         dependency.access == AccessMode::ReadOnly;
-                });
         const bool ownedResult =
             functionTarget != nullptr &&
             functionTarget->returnType.kind != SemanticType::Reference &&
@@ -2216,11 +2202,11 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             ownerClass == nullptr || functionTarget->staticMember ||
             functionTarget->linkage != LanguageLinkage::Gti ||
             instruction.dispatch != exactDispatch || receiverClass == nullptr ||
-            !inheritsOwner(inheritsOwner, *receiverClass, 0) ||
+            !receiverView || !inheritsOwner(inheritsOwner, *receiverView, 0) ||
             !exactReceiverQualifier || !exactProducer ||
             receiverObligations != 1 ||
-            (!readObservation && !ownedResult && !externalConsumingReference) ||
-            (borrowedCarrier && !externalConsumingReference &&
+            (!readObservation && !ownedResult && !externalConsumingResult) ||
+            (borrowedCarrier && !externalConsumingResult &&
              !textFieldRelay &&
              !supportsEphemeralBorrowResult(functionTarget,
                                             instruction.info))) {
@@ -16259,6 +16245,31 @@ completeBorrowSourcePath(const MirProgram &program,
   return source;
 }
 
+[[nodiscard]] bool hasExternalConsumingResultSuppliers(
+    const MirProgram &program, const MirFunctionInstance &function) {
+  if (function.receiverMutability != ReceiverMutability::Consuming ||
+      !function.completeReturnBorrow ||
+      (function.returnType.kind != SemanticType::Reference &&
+       function.returnType.kind != SemanticType::Class &&
+       function.returnType.kind != SemanticType::Enum) ||
+      (function.returnType.kind == SemanticType::Reference &&
+       function.completeReturnBorrow->dependencies.empty()))
+    return false;
+  // An empty carrier alternative is meaningful only after the caller has
+  // independently verified the complete typed result domain. Absence of a
+  // summary is never an empty result proof.
+  return std::all_of(function.completeReturnBorrow->dependencies.begin(),
+                     function.completeReturnBorrow->dependencies.end(),
+                     [&](const BorrowedFieldOrigin &mapping) {
+    if (mapping.origin == BorrowOriginKind::Receiver) {
+      const auto path = completeBorrowSourcePath(program, function, mapping);
+      return path && path->externalPrefix;
+    }
+    return mapping.origin == BorrowOriginKind::Argument ||
+           mapping.origin == BorrowOriginKind::Global;
+  });
+}
+
 // A declaration lifetime may permit the whole borrowed input as a supplier.
 // The particular returned subobject is checked independently by the body flow;
 // it need not be frozen into the public signature of this implementation.
@@ -16274,6 +16285,13 @@ completeBorrowSourcePath(const MirProgram &program,
   const auto path = mapping.sourceFields.empty()
                         ? std::optional<CompleteBorrowSourcePath>{}
                         : completeBorrowSourcePath(program, function, mapping);
+  // Destroying a receiver cannot export its shell or an owned capture. Only
+  // an exact stored-reference crossing supplies an external owner; the body
+  // flow separately proves that this is the value actually returned.
+  if (mapping.origin == BorrowOriginKind::Receiver &&
+      function.receiverMutability == ReceiverMutability::Consuming &&
+      (!path || !path->externalPrefix))
+    return false;
   if (path && path->externalPrefix) {
     if (path->conditions != mapping.sourceConditions)
       return false;

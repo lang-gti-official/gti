@@ -49,6 +49,18 @@ void printDiagnostics(const lang::FrontendResult &frontend,
   const auto region = [&](lang::Lifetime value) {
     hir << static_cast<int>(value.kind) << ':' << value.id;
   };
+  const auto origins = [&](std::span<const lang::HirLifetimeOrigin> values) {
+    for (const auto &origin : values) {
+      hir << '['; region(origin.region);
+      hir << " source=" << origin.source << " place=" << origin.place.domain.snapshot
+          << ':' << origin.place.domain.body << ':' << origin.place.domain.revision
+          << ':' << origin.place.root << ':' << origin.place.receiver;
+      for (const auto &step : origin.place.projections)
+        hir << '/' << static_cast<int>(step.kind) << ':' << step.field
+            << ':' << step.baseOwner << ':' << step.index;
+      hir << ']';
+    }
+  };
   const auto body = [&](std::string_view kind, const auto &instance, std::size_t owner) {
     hir << kind << "=" << instance.id << " declaration=" << instance.declaration
         << " owner=" << owner
@@ -58,6 +70,7 @@ void printDiagnostics(const lang::FrontendResult &frontend,
     for (const auto &parameter : instance.lifetimeContract.parameters) {
       region(parameter); hir << ',';
     }
+    hir << " origins="; origins(instance.body.lifetimeBody.origins);
     hir << '\n';
     for (const auto &value : instance.body.values) {
       hir << " value=" << value.id << " kind=" << static_cast<int>(value.kind)
@@ -71,6 +84,14 @@ void printDiagnostics(const lang::FrontendResult &frontend,
       for (const auto &[parameter, actual] : value.lifetimeApplication.bindings) {
         region(parameter); hir << "->"; region(actual); hir << ',';
       }
+      hir << " origins="; origins(value.lifetimeApplication.origins);
+      hir << " receiver=" << value.receiver.value_or(0)
+          << " planned-receiver=" << (value.callPlan && value.callPlan->receiver
+                  ? value.callPlan->receiver->value : 0);
+      const auto *target = value.functionTarget
+          ? frontend.hir.findFunctionInstance(*value.functionTarget) : nullptr;
+      if (target && target->source && target->source->operatorName())
+        hir << " operator=" << static_cast<int>(target->source->operatorName()->kind);
       hir << '\n';
     }
   };

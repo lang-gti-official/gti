@@ -412,7 +412,12 @@ lowerRequirements(const std::vector<AppliedConceptRequirement> &requirements) {
   result.reserve(requirements.size());
   for (const AppliedConceptRequirement &requirement : requirements) {
     LoweredConceptRequirement lowered{.conceptId = requirement.conceptId,
-                                      .arguments = requirement.arguments};
+                                      .arguments = requirement.arguments,
+                                      .lifetimeArguments = requirement.lifetimeArguments,
+                                      .lifetimeBound = requirement.lifetimeBound,
+                                      .outlivesType = requirement.outlivesType};
+    if (requirement.lifetimeBound)
+      lowered.kind = LoweredRequirementKind::Lifetime;
     if (requirement.syntax) {
       lowered.source = tokenSpan(requirement.syntax->name.last());
       if (requirement.syntax->predicate) {

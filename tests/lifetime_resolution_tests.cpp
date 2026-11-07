@@ -1849,6 +1849,65 @@ int main() { int value = 1; invalid(value); return 0; }
          "concrete reference-pack return proof cannot publish a local owner as static");
 }
 
+void testConsumingExternalResults() {
+  const auto valid = analyze(R"(
+int global = 4;
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+class Consumer<lifetime a> {
+  View<a> external;
+public:
+  Consumer(int&<a> input) : external(View<a>(input)) {}
+  int&<a> take() && { return this.external.value; }
+  int&<a> operator()(int&<a> input) && { return input; }
+  View<a> carrier() && { return this.external; }
+};
+struct Stateless {
+  Stateless() = default;
+  int&<a> argument<lifetime a>(int&<a> value) && { return value; }
+  int&<static> persistent() && { return global; }
+};
+struct Exclusive<lifetime a> {
+  mut int&<a> value;
+  Exclusive(mut int&<a> input) : value(input) {}
+  mut int&<a> release() && { return this.value; }
+};
+enum Result<lifetime a> { present(int&<a> value), empty(int code) };
+struct Empty {
+  Empty() = default;
+  Result<static> take() && { return Result<static>::empty(0); }
+};
+int main() {
+  int value = 7;
+  int& first = Consumer(value).take();
+  int& second = Consumer(value)(value);
+  View copy = Consumer(value).carrier();
+  int& third = Stateless().argument(value);
+  int& fourth = Stateless().persistent();
+  Result empty = Empty().take();
+  mut int slot = 5;
+  mut int& last = Exclusive(slot).release();
+  last = 6;
+  return first + second + copy.value + third + fourth + last - 38;
+}
+)");
+  expectValid(valid,
+              "consuming methods and call operators retain only complete external suppliers, including empty carrier alternatives");
+  for (const std::string &source : {
+           "struct Owned { int value; Owned() : value(1) {} int&<this> bad() && { return this.value; } }; int main() { return 0; }",
+           "struct Owned { int value; Owned() : value(1) {} int&<this> operator()() && { return this.value; } }; int main() { return 0; }",
+           "struct Owned { int value; Owned() : value(1) {} }; struct Outer { Owned value; Outer() : value() {} int&<this> bad() && { return this.value.value; } }; int main() { return 0; }",
+           "struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} }; struct Owned { int value; Owned() : value(1) {} View<this> bad() && { return View<this>(this.value); } }; int main() { return 0; }",
+           "struct Local { Local() = default; int&<static> bad() && { int value = 1; return value; } }; int main() { return 0; }",
+           "struct Mixed<lifetime a> { int&<a> external; int owned; Mixed(int&<a> input) : external(input), owned(1) {} int&<a> bad(bool first) && requires outlives<this, a> { if (first) { return this.external; } return this.owned; } }; int main() { return 0; }"}) {
+    const auto invalid = analyze(source);
+    expect(invalid.syntaxValid && !invalid.semanticValid,
+           "consuming borrowed results reject receiver shells, owned fields and mixed external/owned return paths");
+  }
+}
+
 void testFixedArityPackCallSelection() {
   const auto result = analyze(R"(
 int choose(int first, int second = 5) { return first + second; }
@@ -2187,12 +2246,23 @@ int main() { return 0; }
 )");
   expect(!wrongAccess.semanticValid,
          "physical owned-pointee authority cannot strengthen the trusted borrow operation's access");
+  const auto consumedPointee = check(R"(
+class Vessel<T> {
+  gti_internal::unique_owner<T> storage = nullptr;
+public:
+  T&<this> invalid() && { return gti_internal::unique_owner_borrow(this.storage); }
+};
+int main() { return 0; }
+)");
+  expect(consumedPointee.syntaxValid && !consumedPointee.semanticValid,
+         "a consuming checked owner cannot return storage destroyed with its owned pointee");
 }
 } // namespace
 
 int main() {
   testForwardedPackBorrowPaths();
   testReferencePackReturnContracts();
+  testConsumingExternalResults();
   testFixedArityPackCallSelection();
   testSelectedBaseConstructorInputs();
   testCompleteOrdinaryConstructorInputs();

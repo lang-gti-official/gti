@@ -1811,7 +1811,11 @@ auto SemanticVisitor::Impl::validateTypeAliasTarget(
     ~Restore() { flag = previous; }
   } restore{allowProceduralSyntaxType, allowProceduralSyntaxType};
   allowProceduralSyntaxType = true;
-  validateType(type, allowNativeFunctionType);
+  // An alias names a type expression, including its implicit lifetime
+  // parameters. Uses validate the instantiated target's formation contract;
+  // declaration checking must not demand a body proof before those anonymous
+  // regions have been lifted. Ordinary type/concept constraints still run.
+  validateType(type, allowNativeFunctionType, true);
 }
 
 auto SemanticVisitor::Impl::validateTypeAliasReference(
@@ -10216,7 +10220,7 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
       auto summary = functionReturnBorrowSummary(
           updated.returnType, updated.parameterTypes, updated.ownerClass,
           updated.staticMember, updated.intrinsic, std::nullopt, false,
-          &updated.lifetimeContract);
+          &updated.lifetimeContract, declaration->receiverMutability());
       if (summary.origin == BorrowOriginKind::None) {
         if (auto place = globalReturnBorrowPlace(updated)) {
           summary.origin = BorrowOriginKind::Global;
@@ -10266,7 +10270,8 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     }
     FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
         updated.returnType, updated.parameterTypes, updated.ownerClass,
-        updated.staticMember, updated.intrinsic);
+        updated.staticMember, updated.intrinsic, std::nullopt, false,
+        &updated.lifetimeContract, declaration->receiverMutability());
     if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
             dynamicTextReturnBorrowSummary(updated)) {
       summary = *dynamicText;
@@ -11258,7 +11263,8 @@ auto SemanticVisitor::Impl::publishCallableDeclaration(
   const FunctionReturnBorrowSummary concreteBorrow =
       functionReturnBorrowSummary(
           candidate.returnType, candidate.parameterTypes, ownerClass,
-          candidate.staticMember, candidate.record().intrinsic);
+          candidate.staticMember, candidate.record().intrinsic, std::nullopt, false,
+          &candidate.lifetimeContract, candidate.receiverMutability);
   const bool candidateOwnsBorrow =
       candidate.returnBorrowOrigin != BorrowOriginKind::None ||
       function.hasFunctionAttribute("borrowed_from");

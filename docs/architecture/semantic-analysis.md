@@ -1107,6 +1107,18 @@ carrier production uses the production's own access, as a fresh-temporary
 receiver does, so consuming a read-only carrier claims no exclusive access to
 its owners.
 
+Consuming reference and borrowed nominal results use the same complete
+normalization and exact instance query as other results. The declaration
+supplier inventory excludes a physical whole-receiver fallback in consuming
+mode. Selected calls require a complete result summary and instantiate its
+actual dependency set before publishing the result. Every receiver supplier
+must cross a checked stored reference on its typed path; argument/global
+suppliers and proven empty nominal alternatives retain their ordinary proof.
+The body normalizer still checks source access, parents, regions and cleanup,
+and rejects owned receiver storage even when a written bound names it. MIR
+independently reconstructs this supplier contract before admitting a consuming
+result. Retained owned-field/pointee invocation keeps its separate restriction.
+
 Dependent generic type defaults retain their resolved symbolic semantic type.
 Only while resolving that default, constraints on open type arguments defer;
 name lookup, arity, and closed constraints remain checked immediately. Selecting
@@ -3133,6 +3145,12 @@ implementation's requirements under every interface assumption case. Block
 regions remain fixed even when an operation does not mention them in a value
 parameter or result. Concrete type arguments in lifetime-open heads keep exact
 identity during selection and overlap checks.
+A head is checked as a declaration over well-formed nominal instances. Its
+nominal formation premises are scoped to that conformance while associated
+definitions are checked, then discarded from the enclosing flow. Associated
+types still have to prove any stronger bounds; a head `View<T, a>` does not
+make `View<T, static>` well formed for an arbitrary `T`.
+
 
 `SemanticCatalog::conformances` is copied into instance-analysis snapshots and
 included in the instance-reuse fingerprint.

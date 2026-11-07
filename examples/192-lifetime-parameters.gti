@@ -18,6 +18,8 @@ struct Reading<lifetime data> {
   Reading(int&<data> left, int&<data> right, bool first)
       : value(choose(left, right, first)) {}
   int&<data> get() { return this.value; }
+  // Consuming the view destroys its shell, while its external owner survives.
+  int&<data> take() && { return this.value; }
 };
 
 // The conformance head infers Reading's stored lifetime. A reference to the
@@ -57,6 +59,8 @@ int main() {
   if (reading.get() != 9) { return 1; }
   Reading constructedChoice{left, right, false};
   if (constructedChoice.get() != 9) { return 5; }
+  int& released = Reading(right).take();
+  if (released != 9) { return 7; }
   if (ValueReader<Reading>::read(reading) != 9) { return 4; }
   if (read_through_view(right) != 9) { return 2; }
   IntBorrow<int&> projected{right};

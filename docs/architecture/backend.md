@@ -540,8 +540,13 @@ contains:
   exact type/value substitutions and source provenance; and
 - exhaustive generated-item identities, payloads, roots, and dependencies.
 
-Generic requirement leaves have explicit `Concept`, `Member`, `Expression`,
-or `Predicate` kinds. A concept keeps its declaration identity; an exact member
+Generic requirement leaves have explicit concept, lifetime, member, expression,
+iteration, inferred-expression, and predicate kinds. A concept retains its
+resolved type and lifetime arguments. A lifetime leaf retains either its exact
+region-outlives bound or a resolved type with its outlives region; declaration
+metadata rejects missing bounds and body-local regions. The normalized lifetime
+contract remains the executable proof authority, and the original Boolean
+requirement graph retains its leaf ordering. An exact member
 keeps its actual name and receiver-access facts. A general expression instead
 owns ordered synthetic-parameter types, its exact owned result type and any
 explicit expression type arguments, with a checked result index separating

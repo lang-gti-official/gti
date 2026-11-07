@@ -3149,6 +3149,69 @@ int main() { Box<1> first{}; Box<2> second{}; Box<3> third{}; return 0; }
   }
 }
 
+void testLifetimeRequirementMetadata() {
+  const auto frontend = lang::Frontend().analyze("lowered-lifetime-requirements.gti", R"gti(
+void relation<lifetime a, lifetime b>(int&<a> first, int&<b> second)
+  requires outlives<a, b> {}
+void type_bound<T, lifetime a>() requires outlives<T, a> {}
+concept Borrow<T, lifetime a> { void inspect(T&<a> value); };
+for<lifetime a> concept Borrow<int, a> { void inspect(int&<a> value) {} };
+int main() { int value = 7; relation(value, value); return 0; }
+)gti");
+  expect(frontend.canGenerateCode(), "typed lifetime requirement fixture lowers to MIR");
+  if (!frontend.canGenerateCode())
+    return;
+  auto built = lang::LoweredProgramBuilder{}.build(
+      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
+      frontend.mir, {}, lang::TargetInfo::host());
+  expect(built.valid(), "region, type and concept lifetime arguments retain distinct lowered metadata");
+  if (!built.valid()) {
+    for (const auto &issue : built.issues)
+      std::cerr << "  lifetime requirement boundary: " << issue.detail << '\n';
+    return;
+  }
+  std::size_t regionLeaves = 0, typeLeaves = 0, conceptArguments = 0;
+  const auto &program = *built.program;
+  for (std::size_t row = 0; row < program.declarations().size(); ++row) {
+    const auto *function = std::get_if<lang::LoweredFunctionDeclaration>(
+        &program.declarations()[row].payload);
+    if (!function)
+      continue;
+    for (std::size_t index = 0; index < function->requirements.size(); ++index) {
+      const auto &requirement = function->requirements[index];
+      conceptArguments += !requirement.lifetimeArguments.empty();
+      if (requirement.kind != lang::LoweredRequirementKind::Lifetime)
+        continue;
+      (requirement.outlivesType ? typeLeaves : regionLeaves)++;
+      for (unsigned mutation = 0; mutation < 5; ++mutation) {
+        auto forged = program;
+        auto &changed = std::get<lang::LoweredFunctionDeclaration>(
+            lang::LoweredProgramTestAccess::declarations(forged)[row].payload)
+                            .requirements[index];
+        if (mutation == 0)
+          changed.lifetimeBound.reset();
+        else if (mutation == 1)
+          changed.lifetimeBound->shorter = lang::Lifetime::local(1);
+        else if (mutation == 2)
+          changed.lifetimeArguments.push_back(lang::Lifetime::staticLifetime());
+        else if (mutation == 3)
+          changed.outlivesType = lang::SemanticType::Unknown;
+        else
+          changed.conceptId = 1;
+        expect(hasIssue(lang::verifyLoweredProgram(forged),
+                        lang::LoweredProgramIssueKind::InvalidDeclarationInventory),
+               "malformed lifetime requirement metadata is rejected independently");
+      }
+    }
+  }
+  expect(regionLeaves && typeLeaves && conceptArguments,
+         "fixture observes both outlives kinds and explicit concept lifetime arguments");
+  const auto text = lang::LoweredProgramPrinter{}.print(program);
+  expect(text.find("kind=lifetime;concept=0;outlives=") != std::string::npos &&
+             text.find(";lifetimes=[") != std::string::npos,
+         "lowered serialization exposes exact lifetime requirement relationships");
+}
+
 void testGeneralRequirementMetadata() {
   auto frontend = lang::Frontend().analyze("lowered-requirements.gti", R"(
 constexpr bool accepted<T>() { return true; }
@@ -3514,6 +3577,7 @@ int main() {
   testConcreteBranchSymbols();
   testConcreteLambdaPacks();
   testConcreteClassAliases();
+  testLifetimeRequirementMetadata();
   testGeneralRequirementMetadata();
   testClassDefinitionFamilyIdentity();
   if (failures != 0) {

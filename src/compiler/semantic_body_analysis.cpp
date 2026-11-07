@@ -644,7 +644,9 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       const FunctionReturnBorrowSummary borrow = functionReturnBorrowSummary(
           concreteFunction.returnType, concreteFunction.parameterTypes,
           concreteFunction.ownerClass, concreteFunction.staticMember,
-          concreteFunction.intrinsic, exactMovedReturnParameter(*function));
+          concreteFunction.intrinsic, exactMovedReturnParameter(*function), false,
+          &concreteFunction.lifetimeContract,
+          function->declaration->receiverMutability());
       concreteFunction.returnBorrowOrigin = borrow.origin;
       concreteFunction.returnBorrowParameter = borrow.parameter;
       concreteFunction.returnBorrowAccess = borrow.access;
@@ -3987,6 +3989,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   } else if (isBorrowReturningType(declaredReturnType) &&
              !intrinsicDeclaration && !hasReturnBorrowSummary &&
              !deferredPackSuppliers &&
+             !(stmt.body() && stmt.receiverMutability() == ReceiverMutability::Consuming &&
+               functionInfo && functionInfo->lifetimeContract.valid()) &&
              functionInfo != nullptr &&
              !stmt.hasFunctionAttribute("borrowed_from") &&
              // A complete conditional contract comes from the body, but it
@@ -3996,7 +4000,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
               functionReturnBorrowSummary(
                   functionInfo->returnType, functionInfo->parameterTypes,
                   functionInfo->ownerClass, functionInfo->staticMember,
-                  functionInfo->intrinsic)
+                  functionInfo->intrinsic, std::nullopt, false,
+                  &functionInfo->lifetimeContract, stmt.receiverMutability())
                       .eligibleParameters > 1)) {
     reportMissingFunctionReturnBorrowSummary(stmt, *functionInfo);
   }
@@ -4005,7 +4010,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       report(stmt.name(), "A mutable function return must be a reference type.",
              "GTI-S2017");
     } else if (methodDeclaration && !staticMethod &&
-               stmt.receiverMutability() != ReceiverMutability::Mutable) {
+               !receiverAllowsMutation(stmt.receiverMutability())) {
       report(stmt.name(),
              "A mutable reference return requires a mutable receiver.",
              "GTI-S2017");
@@ -4140,7 +4145,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   if (stmt.receiverMutability() == ReceiverMutability::Consuming) {
     const SemanticType result =
         typeOf(stmt.returnType(), stmt.returnMutability());
-    if (!conditionalReferenceReturn(result, {},
+    if (result.kind != SemanticType::Reference &&
+        result.kind != SemanticType::Class && result.kind != SemanticType::Enum &&
+        !conditionalReferenceReturn(result, {},
                                     currentClass ? openClassType(*currentClass)
                                                  : SemanticType::Unknown) &&
         (result.kind == SemanticType::Reference ||
@@ -4363,13 +4370,13 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     recordRestoredReferenceResult(*functionInfo);
     recordCompleteFunctionReturnBorrow(*functionInfo);
     if (stmt.receiverMutability() == ReceiverMutability::Consuming &&
-        currentReturnType.kind == SemanticType::Reference &&
+        isBorrowReturningType(currentReturnType) &&
         !loanFlow.deferredGenericFlow &&
         !containsOpenTypeParameter(currentReturnType)) {
       const auto *checked = semanticModel.findFunction(stmt);
       if (!checked || !checked->completeReturnBorrow)
         report(stmt.name(),
-               "A consuming reference result must preserve a complete checked "
+               "A consuming borrowed result must preserve a complete checked "
                "external dependency; the consumed receiver cannot own its "
                "storage.",
                "GTI-S2022");
@@ -8896,7 +8903,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       const CallReceiverMode receiverMode =
           callReceiverMode(expr.callee(), resolved);
       valid = validateSelectedFunction(resolved, expr.callee(), expr.paren(),
-                                       callExpressions, receiverMode, argumentsFor(argumentAnalysis)) &&
+                                       callExpressions, receiverMode, argumentsFor(argumentAnalysis),
+                                       resolvedTypeArguments, resolvedValueArguments) &&
               valid;
       valid = validateConfinedCallableArguments(
                   candidate, resolved, argumentTypes, callExpressions) &&
@@ -9306,7 +9314,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   if (!validateSelectedFunction(viable.front().function, expr.callee(),
                                 expr.paren(), callExpressions,
                                 viable.front().receiverMode,
-                                argumentsFor(viable.front().argumentAnalysis))) {
+                                argumentsFor(viable.front().argumentAnalysis),
+                                viable.front().typeArguments,
+                                viable.front().valueArguments)) {
     currentType = SemanticType::Unknown;
     return;
   }

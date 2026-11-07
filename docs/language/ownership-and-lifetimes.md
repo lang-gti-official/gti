@@ -1442,8 +1442,15 @@ demonstrates preserving a named root while reusing owned path intermediates.
 The receiver may
 mutate or move from its fields because the whole exact receiver place is being
 consumed, and it may finish with moved fields rather than restoring a value
-that is no longer available. It cannot return a reference or tracked
-borrowed-state carrier. Mutually exclusive control-flow paths may each consume
+that is no longer available. A reference or borrowed class/enum result must
+have a complete checked supplier contract independent of storage owned by the
+consumed receiver. Argument and global suppliers are permitted. A receiver
+supplier must cross an exact stored reference along its typed field/base path;
+neither the receiver shell nor its owned fields or owning pointees survive by
+virtue of the result's lifetime annotation. Every return path is checked, so a
+mixture of external and receiver-owned suppliers is rejected. A proven empty
+carrier alternative may have no suppliers; a reference result may not.
+Mutually exclusive control-flow paths may each consume
 the callable, but any path permitting a second invocation or later use is
 rejected by the same availability analysis as an ordinary explicit move.
 Inside a consuming method, `std::move(this)` explicitly transfers the whole

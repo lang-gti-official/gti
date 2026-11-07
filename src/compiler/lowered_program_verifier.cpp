@@ -213,7 +213,26 @@ validRequirement(const LoweredConceptRequirement &requirement) {
   if (requirement.kind != LoweredRequirementKind::InferredExpression &&
       requirement.inferredResultAccess)
     return false;
+  if ((requirement.kind != LoweredRequirementKind::Lifetime &&
+       (requirement.lifetimeBound || requirement.outlivesType)) ||
+      (requirement.kind != LoweredRequirementKind::Concept &&
+       !requirement.lifetimeArguments.empty()) ||
+      !std::all_of(requirement.lifetimeArguments.begin(), requirement.lifetimeArguments.end(),
+                   [](Lifetime region) { return region.declarationRegion(); }))
+    return false;
   switch (requirement.kind) {
+  case LoweredRequirementKind::Lifetime:
+    return requirement.conceptId == 0 && requirement.arguments.empty() &&
+           requirement.memberName.empty() && !requirement.mutableReceiver &&
+           !requirement.requiresUnsafe && requirement.expressionParameterCount == 0 &&
+           !requirement.resultArgument && !requirement.resultOriginParameter &&
+           requirement.lifetimeBound &&
+           requirement.lifetimeBound->shorter.declarationRegion() &&
+           (requirement.outlivesType
+                ? requirement.lifetimeBound->longer == Lifetime{} &&
+                  resolvedType(*requirement.outlivesType)
+                : requirement.lifetimeBound->longer.declarationRegion()) &&
+           !requirement.source.source.empty() && requirement.source.start < requirement.source.end;
   case LoweredRequirementKind::Concept:
     return requirement.conceptId != 0 && requirement.memberName.empty() &&
            !requirement.mutableReceiver && !requirement.requiresUnsafe &&

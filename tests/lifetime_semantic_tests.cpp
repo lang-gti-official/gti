@@ -282,6 +282,22 @@ int&<shorter> shorten<lifetime longer, lifetime shorter>(int&<longer> input) {
   return input;
 }
 )gti", false);
+  check("class-alias-keeps-target-lifetime-inference-at-use", R"gti(
+struct View<T, lifetime a> { T&<a> value; View(T&<a> input) : value(input) {} };
+class Collection<T> { public: using view = View<T>; };
+int read<lifetime a>(int&<a> input) {
+  Collection<int>::view value{input};
+  return value.value;
+}
+int main() { int value = 7; return read(value) - 7; }
+)gti", true);
+  check("alias-target-still-proves-stronger-static-bound-at-use", R"gti(
+struct Item<lifetime a> { int&<a> value; Item(int&<a> input) : value(input) {} };
+struct View<T, lifetime a> { T&<a> value; View(T&<a> input) : value(input) {} };
+class Collection<T> { public: using view = View<T, static>; };
+void invalid<lifetime a>(Item<a>& input) { Collection<Item<a>>::view value{input}; }
+int main() { return 0; }
+)gti", false, "GTI-S2127");
   check("patterned-primary-separates-nominal-environment", R"gti(
 struct Callback<R(Args...), lifetime environment> {
   int&<environment> value;
@@ -352,6 +368,17 @@ concept Inspect<T> { bool inspect(T& value); };
 for<T> concept Inspect<View<T>> { bool inspect(View<T>& value) { return true; } };
 int main() { int value = 7; View<int> view{value}; if (Inspect<View<int>>::inspect(view)) { return 0; } return 1; }
 )gti", true);
+  check("conformance-head-well-formedness-bounds-associated-type", R"gti(
+struct View<T, lifetime a> { T&<a> value; View(T&<a> input) : value(input) {} };
+concept Wrapped<T> { typename Item; };
+for<T, lifetime a> concept Wrapped<View<T, a>> { using Item = View<T, a>; };
+int main() { return 0; }
+)gti", true);
+  check("conformance-head-does-not-invent-stronger-associated-bound", R"gti(
+struct View<T, lifetime a> { T&<a> value; View(T&<a> input) : value(input) {} };
+concept Wrapped<T> { typename Item; };
+for<T, lifetime a> concept Wrapped<View<T, a>> { using Item = View<T, static>; };
+)gti", false, "GTI-S2127");
   check("conformance-explicit-static-cannot-replace-head-region", R"gti(
 struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
 concept Inspect<T> { int inspect(T& value); };

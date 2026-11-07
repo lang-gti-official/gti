@@ -3241,7 +3241,8 @@ private:
       bool staticMember, IntrinsicKind intrinsic,
       std::optional<std::size_t> exactReturnParameter = std::nullopt,
       bool allowReadOnlyReferenceReborrow = false,
-      const LifetimeSignatureContract *lifetimeContract = nullptr) const;
+      const LifetimeSignatureContract *lifetimeContract = nullptr,
+      ReceiverMutability receiverMutability = ReceiverMutability::ReadOnly) const;
 
   void applyFunctionReturnBorrowSummary(CallableCandidate &function) const;
 
@@ -4316,11 +4317,18 @@ private:
                            const ExprPtr &callee, const Token &paren,
                            const CallArgumentExpressions &arguments,
                            CallReceiverMode receiverMode,
-                           std::span<const AnalyzedCallArgument> concrete = {});
+                           std::span<const AnalyzedCallArgument> concrete = {},
+                           const std::vector<SemanticType> &typeArguments = {},
+                           const std::vector<CompileTimeValue> &valueArguments = {});
 
-  // Whether a consuming method's (instantiated) result is a reference or
-  // carries tracked borrowed state, which its consumed receiver cannot keep
-  // alive. GTI-S2022 names that result type.
+  [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
+  checkedConsumingReturnBorrow(const CallableCandidate &function,
+                              const std::vector<SemanticType> &typeArguments,
+                              const std::vector<CompileTimeValue> &valueArguments,
+                              const SourceSpan &site);
+
+  // Whether the consuming result needs a complete external-supplier proof.
+  // The receiver's own storage cannot supply that proof.
   [[nodiscard]] bool
   consumingResultCarriesBorrow(const CallableCandidate &function) const;
   void reportConsumingBorrowedResult(const CallableCandidate &function,

@@ -3202,9 +3202,8 @@ void testRejectedInstanceCascades() {
                                     {root / "stdlib/prelude.gti"}, {},
                                     {root / "stdlib"});
   };
-  // A consumed receiver cannot keep a returned borrow alive, so the selected
-  // signature is rejected once, naming its result. The fresh argument that
-  // result would have borrowed is not checked against it as well.
+  // A consuming generic member may return checked storage independent of its
+  // receiver. The exact instance proves the mapper's static supplier.
   const std::string consumingSource = R"(import std.meta;
 class Source {
 public:
@@ -3212,21 +3211,13 @@ public:
   std::meta::callable_return_type<F> map<F>(F& mapper) && { return mapper(1); }
 };
 int stored = 1;
-int& pick(int value) { return stored; }
+int&<static> pick(int value) { return stored; }
 int main() { [[discard]] Source().map(pick); return 0; }
 )";
   const auto consuming =
       analyze("consuming-borrowed-result.gti", consumingSource);
-  const std::size_t paren = consumingSource.find("(pick)") + 5;
-  expect(!consuming.canGenerateCode() && consuming.diagnostics.size() == 1 &&
-             consuming.diagnostics.front().code == "GTI-S2022" &&
-             consuming.diagnostics.front().message ==
-                 "A consuming method cannot return a reference or tracked "
-                 "borrowed state; this call returns 'int32_t&'." &&
-             consuming.diagnostics.front().primary.start == paren &&
-             consuming.diagnostics.front().primary.end == paren + 1,
-         "a consuming call that would return a borrow is one error at the "
-         "call, naming the result");
+  expect(consuming.canGenerateCode(),
+         "a consuming generic call preserves a checked static supplier");
 
   // A function instance whose own assertion fails is invalid for the reason
   // it states; its body does not also report the index that assumption

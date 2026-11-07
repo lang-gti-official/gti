@@ -419,7 +419,8 @@ private:
       if (!visited.insert(current->id).second || current->source != origin.source ||
           current->kind != HirValueKind::Call || !target || !target->source ||
           !target->source->operatorName() ||
-          target->source->operatorName()->kind != OverloadedOperator::Conversion ||
+          (target->source->operatorName()->kind != OverloadedOperator::Conversion &&
+           target->source->operatorName()->kind != OverloadedOperator::ContextualBool) ||
           !current->receiver || current->operands != std::vector<HirValueId>{*current->receiver} ||
           !current->parameterTypes.empty() || !current->callPlan ||
           !current->callPlan->arguments.empty() || !current->callPlan->receiver ||

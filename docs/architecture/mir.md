@@ -451,8 +451,8 @@ witnesses. Body records collect the selected applications with assignment and
 return obligations. HIR qualifies semantic places to its body and replaces
 source expressions with stable value IDs; MIR maps those witnesses to exact
 places, rejecting stale domains and ambiguous temporary materializations.
-A contextual conversion has a distinct HIR value even when it shares its
-receiver's source expression. Body-origin finalization reuses the already
+A contextual `operator bool` or general target conversion has a distinct HIR
+value even when it shares its receiver's source expression. Body-origin finalization reuses the already
 checked region/place/source witness only through that exact conversion's
 receiver chain; conflicting evaluations cannot be selected by source order.
 These maps and completion states participate in the sealed fingerprint; a
@@ -821,11 +821,17 @@ for that proof. Direct reference fields retain their separate reference-binding
 authority rather than being treated as copied carrier values.
 
 A consuming receiver transfers its complete stored group through the ordinary
-ordered call-input stages. A reference result may outlive the consumed shell
-only when the independently checked callee contract derives it from the
-retained external owners. Exact receiver entry identity and access, selected
-alternative proof, group transfer and retirement remain separate requirements;
-a receiver-owned origin cannot escape its destroyed shell.
+ordered call-input stages. Reference and borrowed class/enum results may
+outlive the consumed shell only when the independently checked complete callee
+summary derives every supplier from an argument, static storage, or an exact
+receiver path crossing a stored external reference. A checked empty carrier
+alternative may have no supplier; a missing summary is never an empty proof.
+The declared scalar supplier inventory excludes the consumed shell and owned
+captures even if their region appears to satisfy the result bound. Exact
+receiver entry identity and access, selected alternative proof, group transfer
+and retirement remain separate requirements; a receiver-owned origin cannot
+escape its destroyed shell. Retained owned-pointee invocation keeps its
+separate non-borrowing-result policy.
 Initializing a distinct direct field of the same exact non-union record does
 not erase the retained field's complete fact. This separation is proved from
 the concrete record and its declared field identities, not merely unequal

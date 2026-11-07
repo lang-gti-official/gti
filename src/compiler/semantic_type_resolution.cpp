@@ -1168,7 +1168,8 @@ auto SemanticVisitor::Impl::ephemeralBorrowResultSupported(
     const auto summary = functionReturnBorrowSummary(
         function.returnType, function.parameterTypes, function.ownerClass,
         function.staticMember, function.record().intrinsic,
-        exactMovedReturnParameter(*declaration));
+        exactMovedReturnParameter(*declaration), false, &function.lifetimeContract,
+        function.receiverMutability);
     if (summary.origin == BorrowOriginKind::None)
       return false;
     CallableCandidate concrete = function;
@@ -1730,7 +1731,7 @@ auto SemanticVisitor::Impl::resolveClassArguments(
     resolveClassArgumentPatterns(classId);
     const auto typeArity = owner.declaration->genericArgumentPatterns().empty()
         ? genericTypeParameterCount(owner.genericParameters)
-        : owner.genericArgumentPatterns.size();
+        : owner.declaration->genericArgumentPatterns().size();
     const auto typeCount = std::min(typeArity, arguments.size());
     for (const TypeRef &argument : std::span(arguments).first(typeCount)) {
       const std::size_t before = diagnostics.size();
@@ -5974,12 +5975,19 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   const std::optional<ReturnBorrowContract> contract =
       currentReturnBorrowContract();
   const FunctionInfo *function =
-      contract && !contract->lambda ? currentFunctionInfo() : nullptr;
+      !currentLambdaReturn ? currentFunctionInfo() : nullptr;
   const bool lifetimeReferenceContract =
       function && function->lifetimeContract.valid() &&
       function->returnType.kind == SemanticType::Reference;
-  if (!contract ||
-      (contract->origin == BorrowOriginKind::None && !lifetimeReferenceContract)) {
+  const bool consumingCarrierContract =
+      function && function->declaration && function->lifetimeContract.valid() &&
+      function->declaration->receiverMutability() == ReceiverMutability::Consuming &&
+      (function->returnType.kind == SemanticType::Class ||
+       function->returnType.kind == SemanticType::Enum) &&
+      !containsOpenTypeParameter(function->returnType) &&
+      typeTraits(function->returnType).containsBorrowedState;
+  if ((!contract || contract->origin == BorrowOriginKind::None) &&
+      !lifetimeReferenceContract && !consumingCarrierContract) {
     return;
   }
   // Field-path contracts belong to function declarations; a lambda's
@@ -5989,6 +5997,19 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   if (valueInfo == nullptr || valueInfo->type == SemanticType::Unknown) {
     return;
   }
+  if (consumingCarrierContract) {
+    const auto complete = completeBorrowDependencySetForType(value.get(), function->returnType);
+    if (complete && normalizedCompleteReturnBorrow(*function, *complete))
+      return;
+    report(expressionToken(value),
+           "A consuming borrowed result requires every active dependency to "
+           "retain a checked external owner, access permission and cleanup "
+           "obligation; the consumed receiver cannot own its storage.",
+           std::move(code));
+    return;
+  }
+  if (!contract)
+    return;
   // A generic callable's reference result has no source until a concrete
   // instance selects the callable; that reanalysis proves the relay.
   {
@@ -9667,7 +9688,8 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
       fail("A consuming receiver is supported only by value-producing "
            "operators, conversion operators and operator().");
     }
-    if (returnType.kind == SemanticType::Reference ||
+    if (returnType.kind != SemanticType::Reference &&
+        returnType.kind != SemanticType::Class && returnType.kind != SemanticType::Enum &&
         typeTraits(returnType).containsBorrowedState) {
       fail(
           "A consuming operator cannot return borrowed state from its consumed "

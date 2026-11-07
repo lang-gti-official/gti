@@ -71,7 +71,8 @@ def main():
                 errors = [item for item in publish(unknown) if item.get("severity") == 1]
                 assert len(errors) == 1 and errors[0]["code"] == "GTI-S2123", errors
             valid = source.replace('"middle.gti"', '"measure.gti"')
-            assert (publish(valid) == []), "correcting the import clears the error"
+            cleared = publish(valid)
+            assert cleared == [], ("correcting the import clears the error", cleared)
             lifetime_source = (
                 "concept chooser<T> { int&<picked> choose<lifetime picked>(int&<picked> value); };\n"
                 "struct Reading<lifetime storage> { int&<storage> value; Reading(int&<storage> value) : value(value) {} };\n"
