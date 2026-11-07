@@ -16204,7 +16204,9 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
     return true;
   // Caller storage reached without crossing a stored reference, and holding
   // no stored reference itself, may contain the referent anywhere inside it;
-  // an external referent is exact.
+  // an external referent is exact. The trusted opaque object capability may
+  // view either exact source without claiming that its stored inventory is
+  // empty. Producer replay must still reach the checked erasure intrinsic.
   const auto source = completeBorrowSourcePath(program, function, mapping);
   const auto contained =
       source && !source->externalPrefix
@@ -16212,6 +16214,8 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
           : std::nullopt;
   return source &&
          (source->referent == result->reference.arguments.front() ||
+          exactMirCapabilityClass(program, result->reference.arguments.front(),
+                                  CompilerCapabilityTypeKind::ErasedObject) ||
           (contained && contained->empty())) &&
          (mapping.access == AccessMode::ReadOnly ||
           source->access == AccessMode::Mutable) &&

@@ -229,7 +229,36 @@ auto SemanticVisitor::Impl::analyzeReferenceErasureCall(const Call &expr,
   ConstraintFailure failure;
   if (!tryInstantiateFunction(declaration, {restoring ? result : arguments.front()},
                               {}, arguments, expr.arguments(), selected,
-                              typeArguments, valueArguments, &failure) ||
+                              typeArguments, valueArguments, &failure)) {
+    report(expr.paren(), "Checked reference erasure must preserve its exact "
+                         "input and result lifetime contract.", "GTI-S2127");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  // Intrinsic calls have no executable function target. Retain their exact
+  // universal interface so MIR can independently derive its well-formedness
+  // contract and replay this application under the trusted operation's shape.
+  // Declaration normalization and callable derivation may order their facts
+  // differently; require implication in both directions rather than silently
+  // dropping an obligation when choosing the source-free witness.
+  auto signature = SemanticType::functionSignature(selected.returnType,
+                                                   selected.parameterTypes);
+  for (const auto region : selected.lifetimeContract.parameters)
+    signature.quantifiedLifetimes.push_back(region.id);
+  const auto contract = referenceErasureLifetimeContract(signature, restoring,
+      [&](const SemanticType &nominal) {
+        return nominalFormationRequirements(nominal, false);
+      });
+  CallableLifetimeSignature callable{.signature = signature};
+  if (contract)
+    callable.contract = *contract;
+  const CallableLifetimeSignature declarationContract{
+      .signature = std::move(signature), .contract = selected.lifetimeContract};
+  if (!contract ||
+      !callableLifetimeTargetCompatible(selected.returnType, selected.parameterTypes,
+                                        selected.lifetimeContract, callable) ||
+      !callableLifetimeTargetCompatible(selected.returnType, selected.parameterTypes,
+                                        callable.contract, declarationContract) ||
       !applyCallLifetimeContract(selected, arguments, expr.arguments(), expr.paren()) ||
       selected.returnType.kind != SemanticType::Reference ||
       selected.returnType.arguments.size() != 1 ||
@@ -245,6 +274,7 @@ auto SemanticVisitor::Impl::analyzeReferenceErasureCall(const Call &expr,
     currentType = SemanticType::Unknown;
     return;
   }
+  selected.lifetimeApplication.callableSignature = std::move(callable);
   commitLifetimeApplication(selected.lifetimeApplication);
   currentType = selected.returnType.arguments.front();
   semanticModel.record(

@@ -430,10 +430,51 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
 namespace {
 std::optional<LifetimeRequirementFormula>
 mirNominalFormationRequirements(const MirProgram &program, const SemanticType &type);
+
+bool referenceErasureIntrinsic(IntrinsicKind intrinsic) {
+  return intrinsic == IntrinsicKind::EraseReference ||
+         intrinsic == IntrinsicKind::EraseReferenceMut ||
+         intrinsic == IntrinsicKind::RestoreReference ||
+         intrinsic == IntrinsicKind::RestoreReferenceMut;
+}
 } // namespace
 
 const CallableLifetimeSignature *checkedMirCallableLifetimeSignature(
     const MirProgram &program, const MirInstruction &instruction) {
+  if (referenceErasureIntrinsic(instruction.intrinsic)) {
+    const bool restoring = instruction.intrinsic == IntrinsicKind::RestoreReference ||
+                           instruction.intrinsic == IntrinsicKind::RestoreReferenceMut;
+    const auto access = instruction.intrinsic == IntrinsicKind::EraseReferenceMut ||
+                                instruction.intrinsic == IntrinsicKind::RestoreReferenceMut
+                            ? AccessMode::Mutable : AccessMode::ReadOnly;
+    const auto &application = instruction.lifetimeApplication;
+    if (instruction.kind != MirInstructionKind::Call || instruction.functionTarget ||
+        instruction.constructorTarget || instruction.lambdaTarget || instruction.nativeCalleeType ||
+        instruction.receiver || !application.complete || !application.callableSignature)
+      return nullptr;
+    const auto &callable = *application.callableSignature;
+    const auto derived = referenceErasureLifetimeContract(callable.signature, restoring,
+        [&](const SemanticType &type) { return mirNominalFormationRequirements(program, type); });
+    if (!derived || callable.contract != *derived || !callable.signatureBindings.empty() ||
+        callable.signature.arguments.front().referenceAccess != access ||
+        callable.contract.parameters.size() != callable.signature.quantifiedLifetimes.size())
+      return nullptr;
+    for (std::size_t index = 0; index < callable.contract.parameters.size(); ++index)
+      if (callable.contract.parameters[index] !=
+          Lifetime::parameter(callable.signature.quantifiedLifetimes[index]))
+        return nullptr;
+    const auto &opaque = callable.signature.arguments[restoring ? 1 : 0].arguments.front();
+    if (opaque.kind != SemanticType::Class || !opaque.arguments.empty() ||
+        !opaque.valueArguments.empty() || !opaque.lifetimeArguments.empty())
+      return nullptr;
+    const auto owner = mirClassLifetimeView(program, opaque);
+    if (!owner || owner->instance->compilerCapability != CompilerCapabilityTypeKind::ErasedObject)
+      return nullptr;
+    // The operation and exact capability determine this rule. The attached
+    // signature is only a witness: it cannot invent requirements, a stronger
+    // result region, receiver facts or authority from an opaque input.
+    return &callable;
+  }
   const bool nativeForming = instruction.kind == MirInstructionKind::Compute &&
                             instruction.operation == MirOperation::NativeCallback;
   const bool nativeInvoke = instruction.kind == MirInstructionKind::Call &&
@@ -1395,7 +1436,8 @@ appliedTargetSignature(const MirProgram &program,
         target->lifetimeContract, target->returnType, target->parameterTypes,
         instruction.lifetimeApplication);
   }
-  if (instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke || instruction.nativeCalleeType) {
+  if (instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke || instruction.nativeCalleeType ||
+      referenceErasureIntrinsic(instruction.intrinsic)) {
     const auto *callable = checkedMirCallableLifetimeSignature(program, instruction);
     if (!callable)
       return std::nullopt;
@@ -2124,7 +2166,8 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
         const bool hasTarget = instruction.functionTarget ||
                                instruction.constructorTarget ||
                                instruction.lambdaTarget || instruction.nativeCalleeType ||
-                               instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke;
+                               instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke ||
+                               referenceErasureIntrinsic(instruction.intrinsic);
         if (!hasTarget) {
           const auto &application = instruction.lifetimeApplication;
           if (!application.bindings.empty() || !application.variables.empty() ||
@@ -2138,6 +2181,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
         }
         const auto signature = appliedTargetSignature(program, instruction);
         if (!signature || (instruction.intrinsic != IntrinsicKind::FunctionPointerInvoke &&
+                           !referenceErasureIntrinsic(instruction.intrinsic) &&
                            !instruction.nativeCalleeType && instruction.lifetimeApplication.callableSignature)) {
           reject("MIR call lifetime substitution does not cover its exact "
                  "target contract",

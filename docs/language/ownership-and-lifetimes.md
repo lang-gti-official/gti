@@ -1881,6 +1881,11 @@ Two general facilities support this ordinary source wrapper:
   `unsafe`: the caller must supply precisely the original type. Shared erasure
   cannot be restored with mutable access. Restoration retains checked lifetime
   dependencies; `unsafe` does not make them disappear.
+  For an inferred output region `a`, restoration requires `outlives<T, a>`
+  independently of the opaque reference's storage lifetime. A generic helper
+  with only an erased input declares that requirement explicitly; a typed
+  `T&<a>` input already supplies it. An erased reference to static storage
+  cannot turn a shorter reference stored inside `T` into a static reference.
   When the restored object itself contains borrows, those field dependencies
   remain conservatively bounded by the erased reference's checked witness.
   Ordinary helper functions can forward that restoration contract when every

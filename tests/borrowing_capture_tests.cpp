@@ -259,13 +259,15 @@ int main() {
     return restored.read() - 9;
   }
 }
-unsafe T& forward<T>(std::erased_object& object) {
+unsafe T&<a> forward<T, lifetime a>(std::erased_object&<a> object)
+    requires outlives<T, a> {
   unsafe {
     T& restored = restore<T>(object);
     return restored;
   }
 }
-unsafe T& restore<T>(std::erased_object& object) {
+unsafe T&<a> restore<T, lifetime a>(std::erased_object&<a> object)
+    requires outlives<T, a> {
   unsafe { return std::restore_ref<T>(object); }
 }
 )");

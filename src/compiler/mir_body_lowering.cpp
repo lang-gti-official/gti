@@ -4937,6 +4937,106 @@ private:
     }
   }
 
+  // A resolved field symbol is declaration identity. Translate it through
+  // the exact receiver instance rather than flattening an inherited member
+  // into a direct field of the most-derived object. The source language has
+  // one storage base; interfaces retain their ordinal but supply no storage.
+  [[nodiscard]] bool appendMemberProjections(MirPlaceId place,
+                                              SemanticType object,
+                                              const HirValue &value) {
+    if (!place || place > output.places.size() || !value.symbol)
+      return false;
+    if (object.kind == SemanticType::Reference && object.arguments.size() == 1)
+      object = SemanticType(object.arguments.front());
+    if (value.operation == TokenKind::ARROW && object.arguments.size() == 1 &&
+        (object.kind == SemanticType::UniqueOwner ||
+         (value.unsafeOperation == UnsafeOperationKind::RawMember &&
+          object.kind == SemanticType::RawPointer)))
+      object = SemanticType(object.arguments.front());
+    // Non-class built-in projections keep their existing operation-specific
+    // type checks; they cannot acquire an invented nominal Base step.
+    if (object.kind != SemanticType::Class) {
+      output.places[place - 1].projections.push_back(
+          {.kind = MirProjectionKind::Field, .field = value.symbol});
+      return true;
+    }
+    const auto publish = [&](const SemanticType &type,
+                             const std::vector<MirPlaceProjection> &suffix) {
+      if ((value.storedReferenceAccess &&
+           (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
+            type.arguments.front() != value.info.type)) ||
+          (!value.storedReferenceAccess && type != value.info.type))
+        return false;
+      auto &projections = output.places[place - 1].projections;
+      projections.insert(projections.end(), suffix.begin(), suffix.end());
+      return true;
+    };
+    // Prefer the already-selected semantic path whenever both ends name the
+    // same ordinary receiver. The catalog validates every retained step;
+    // this path supplies no additional origin or access authority.
+    if (!value.functionTarget && value.operation != TokenKind::ARROW &&
+        !value.operands.empty()) {
+      const auto *receiver = findValue(value.operands.front());
+      if (receiver && receiver->place && value.place) {
+        const auto &prefix = *receiver->place;
+        const auto &selected = *value.place;
+        if (prefix.domain != selected.domain || prefix.root != selected.root ||
+            prefix.projections.size() >= selected.projections.size() ||
+            !std::equal(prefix.projections.begin(), prefix.projections.end(),
+                        selected.projections.begin()))
+          return false;
+        std::vector<MirPlaceProjection> suffix;
+        for (std::size_t index = prefix.projections.size();
+             index < selected.projections.size(); ++index) {
+          const auto &step = selected.projections[index];
+          if (index + 1 == selected.projections.size()
+                  ? step != fieldProjection(value.symbol)
+                  : step.kind != PlaceProjectionKind::Base)
+            return false;
+          const auto child = borrowedProjectionType(object, step);
+          if (!child)
+            return false;
+          suffix.push_back(child->projection);
+          object = child->type;
+        }
+        return publish(object, suffix);
+      }
+    }
+    std::vector<MirPlaceProjection> suffix;
+    std::vector<HirClassInstanceId> visited;
+    for (std::size_t depth = 0; depth < borrowInventoryDepthLimit; ++depth) {
+      const auto owner = hirLifetimeInstanceView(program.classInstances(), object);
+      if (!owner || std::find(visited.begin(), visited.end(), owner->instance->id) != visited.end())
+        return false;
+      visited.push_back(owner->instance->id);
+      const auto count = std::count_if(owner->instance->fields.begin(), owner->instance->fields.end(),
+          [&](const auto &field) { return field.info.symbol == value.symbol; });
+      if (count != 0) {
+        const auto field = borrowedProjectionType(object, fieldProjection(value.symbol));
+        if (count != 1 || !field)
+          return false;
+        suffix.push_back(field->projection);
+        return publish(field->type, suffix);
+      }
+      std::optional<std::size_t> ordinal;
+      for (std::size_t index = 0; index < owner->instance->bases.size(); ++index)
+        if (!owner->instance->bases[index].interface) {
+          if (ordinal)
+            return false;
+          ordinal = index;
+        }
+      if (!ordinal)
+        return false;
+      const auto base = borrowedProjectionType(object,
+          baseProjection(owner->instance->declaration, *ordinal));
+      if (!base)
+        return false;
+      suffix.push_back(base->projection);
+      object = base->type;
+    }
+    return false;
+  }
+
   [[nodiscard]] MirPlaceId placeForValue(HirValueId id) {
     ensureThreadLocalValue(id);
     if (const auto found = valuePlaces.find(id); found != valuePlaces.end()) {
@@ -5002,15 +5102,24 @@ private:
         place = loanOrValuePlace(*value);
         if (place != 0 && value->info.category == ValueCategory::Place &&
             value->symbol != 0) {
-          output.places[place - 1].projections.push_back(
-              {.kind = MirProjectionKind::Field, .field = value->symbol});
+          const auto *target = program.findFunctionInstance(*value->functionTarget);
+          const auto receiver = target
+              ? substituteTypeLifetimes(target->returnType, value->lifetimeApplication.bindings)
+              : std::nullopt;
+          if (!receiver || !appendMemberProjections(place, *receiver, *value)) {
+            valid = false;
+            return 0;
+          }
         }
       } else if (!value->operands.empty() &&
                  value->unsafeOperation == UnsafeOperationKind::RawMember) {
         place = rawPointerPlace(value->operands.front(), *value,
                                 MirProjectionKind::RawDereference);
-        output.places[place - 1].projections.push_back(
-            {.kind = MirProjectionKind::Field, .field = value->symbol});
+        const auto *receiver = findValue(value->operands.front());
+        if (!receiver || !appendMemberProjections(place, receiver->info.type, *value)) {
+          valid = false;
+          return 0;
+        }
       } else if (!value->operands.empty()) {
         place = clonePlace(placeForValue(value->operands.front()), *value);
         // A class-valued temporary is an SSA value, not a pre-existing place.
@@ -5039,8 +5148,11 @@ private:
             output.places[place - 1].projections.push_back(
                 {.kind = MirProjectionKind::Dereference});
           }
-          output.places[place - 1].projections.push_back(
-              {.kind = MirProjectionKind::Field, .field = value->symbol});
+          const auto *receiver = findValue(value->operands.front());
+          if (!receiver || !appendMemberProjections(place, receiver->info.type, *value)) {
+            valid = false;
+            return 0;
+          }
           if (value->storedReferenceAccess) {
             output.places[place - 1].projections.push_back(
                 {.kind = MirProjectionKind::Dereference});
@@ -5248,8 +5360,11 @@ private:
             output.places[place - 1].projections.push_back(
                 {.kind = MirProjectionKind::Dereference});
           }
-          output.places[place - 1].projections.push_back(
-              {.kind = MirProjectionKind::Field, .field = value.symbol});
+          const auto *receiver = findValue(value.operands.front());
+          if (!receiver || !appendMemberProjections(place, receiver->info.type, value)) {
+            valid = false;
+            return 0;
+          }
           if (value.storedReferenceAccess)
             output.places[place - 1].projections.push_back(
                 {.kind = MirProjectionKind::Dereference});

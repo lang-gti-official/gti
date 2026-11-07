@@ -1492,9 +1492,9 @@ borrow. Mutable arguments always require a mutable source place.
 Named method packs can bind the enclosing class's final generic pack by its
 resolved identity. Declaration signatures retain symbolic `TypePack` metadata;
 class substitution preserves that identity through symbolic base forwarding.
-Method selection groups the owner's prescribed concrete list by source argument
-expression and reuses exact argument and ownership checks, including forwarding
-and `operator()`. It does not infer owner arguments from the call. Concrete
+Method selection uses the owner's prescribed concrete list and reuses exact
+argument and ownership checks, including forwarding and `operator()`. It does
+not infer owner arguments from the call. Concrete
 lexical pack scopes retain the declaring name/ID independently of a substituted
 pack's canonical type identity. Signature-pattern forwarding does not rewrite
 that type identity to impersonate the receiving declaration, and a nearer
@@ -1517,6 +1517,18 @@ constant element index and each resolved reference-field path/access mode.
 Expanded call arguments preserve that element path, even when several elements
 have the same type. Generic reanalysis forwards these exact dependencies rather
 than treating the grouped binding as a referent or dropping its other origins.
+
+Ordinary overload selection expands concrete call arguments into transient
+`AnalyzedCallArgument` descriptors before arity, generic, default, lifetime and
+ownership checks. Each forwarded lane retains its original expression and full
+constant-index path; a syntax view supplies diagnostic/contextual-expression
+access without reevaluating that expression. The selected call records the flat
+explicit count, so an empty expansion cannot suppress a trailing default.
+Symbolic packs defer executable target publication. Reference-origin checks use
+the same exact concrete-formal inventory as return normalization, keeping an
+indexed physical reference entry separate from its referent's external stored
+dependencies. Constructor initializer parsing shares the ordinary final-pack
+argument-list parser.
 
 One call to either public `SemanticVisitor::check` overload owns one complete
 semantic request session. `SemanticVisitor::Impl::RequestSessionState` owns one
@@ -3061,7 +3073,7 @@ Every function also carries a requires clause naming the block's own
 application, under a generated `requires` keyword. Each existing declaration
 and lowering pass therefore sees ordinary namespace functions. HIR enqueues their
 instances from ordinary `ResolvedCallInfo` records, MIR lowers them like any
-generic function, and the C++ backend names them by the existing instance
+generic function, and code generation consumes the existing checked instance
 identity, which includes the generated namespace.
 
 **Registration** happens in three stages before the catalog is sealed:
@@ -3091,6 +3103,19 @@ identity, which includes the generated namespace.
    other declaration. The restated requires clause on each block function is
    resolved for its body but not validated again, so a pattern problem
    reports once at the block rather than once per operation.
+
+Omitted stored regions in a conformance head become implicit block lifetime
+parameters through the same nominal declaration normalizer used by stored
+fields. Each exact occurrence keeps its identity, separately from an operation's
+reference-shell universals. Ordinary operation registration contextualizes only
+unwritten slots that structurally correspond to those head parameters; named or
+static regions are never replaced. The interface is normalized again after its
+block substitution, so associated-type aliases use ordinary per-use elision.
+Signature matching alpha-renames operation-local binders and proves the
+implementation's requirements under every interface assumption case. Block
+regions remain fixed even when an operation does not mention them in a value
+parameter or result. Concrete type arguments in lifetime-open heads keep exact
+identity during selection and overlap checks.
 
 `SemanticCatalog::conformances` is copied into instance-analysis snapshots and
 included in the instance-reuse fingerprint.

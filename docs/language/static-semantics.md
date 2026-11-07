@@ -329,12 +329,17 @@ between definitions or erase checked references' origins/access/lifetimes.
 [Source value profiles](../../examples/168-source-value-profiles.gti) demonstrates
 ordinary owned, empty and borrowed classes without a library-specific capability.
 
-A lambda or nominal `operator()` call can expand a concrete parameter pack. Concrete
+A function, lambda or nominal `operator()` call can expand a concrete parameter
+pack. Constructor initializer arguments use the same final `values...` syntax,
+including when forwarding into a fixed-arity base constructor. Concrete
 reanalysis checks the flattened arity and each exact argument type, including
-an empty expansion. It does not pass a pack object as one lambda argument.
+an empty expansion. A fixed-arity function may use its ordinary trailing
+defaults after the expanded arguments. It does not receive a pack object as one argument.
 Declaration-wide symbolic packs defer target publication until that check.
 Nominal operator overloads compare the expanded arguments in exact order;
 this does not expand operands of non-call operators or add implicit conversions.
+[Variadic generics](../../examples/015-variadic-generics.gti) demonstrates
+fixed-arity and base-constructor forwarding.
 
 Concrete fixed-array values also retain their exact element type and every
 extent through by-value parameter-pack forwarding and constructor emplacement.

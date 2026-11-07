@@ -17,6 +17,13 @@ struct Reading<lifetime data> {
   int&<data> get() { return this.value; }
 };
 
+// The conformance head infers Reading's stored lifetime. A reference to the
+// Reading shell remains a separate, short-lived operation borrow.
+concept ValueReader<T> { int read(T& input); };
+for concept ValueReader<Reading> {
+  int read(Reading& input) { return input.value; }
+};
+
 int read_through_view<lifetime data>(int&<data> input) {
   Reading<data> reading{input};
   return reading.get();
@@ -37,6 +44,7 @@ int main() {
   int& selected = choose(left, right, false);
   Reading reading{selected};
   if (reading.get() != 9) { return 1; }
+  if (ValueReader<Reading>::read(reading) != 9) { return 4; }
   if (read_through_view(right) != 9) { return 2; }
   IntBorrow<int&> projected{right};
   if (projected.get() != 9) { return 3; }

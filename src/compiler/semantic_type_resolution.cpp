@@ -321,7 +321,7 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
     const CallableCandidate &target,
     const std::vector<SemanticType> &explicitTypeArguments,
     const std::vector<CompileTimeValue> &explicitValueArguments,
-    const ExprList &arguments, ContextualCallArguments &analysis, bool diagnose)
+    const CallArgumentExpressions &arguments, ContextualCallArguments &analysis, bool diagnose)
     -> bool {
   if (arguments.size() != analysis.types.size() ||
       arguments.size() != analysis.deferred.size()) {
@@ -986,7 +986,7 @@ auto SemanticVisitor::Impl::contextualCallArgumentPotentiallyMatches(
 }
 
 auto SemanticVisitor::Impl::finishContextualCallArguments(
-    const std::vector<SemanticType> &parameterTypes, const ExprList &arguments,
+    const std::vector<SemanticType> &parameterTypes, const CallArgumentExpressions &arguments,
     ContextualCallArguments &analysis, const Token &location,
     std::string_view callable) -> bool {
   if (parameterTypes.size() < arguments.size() ||
@@ -1354,6 +1354,22 @@ auto SemanticVisitor::Impl::contextualIntegerLiteralArgumentFits(
   return value && integerFits(parameter, *value);
 }
 
+auto SemanticVisitor::Impl::functionCallArgumentMatch(
+    const CallableCandidate &function, std::size_t index,
+    const AnalyzedCallArgument &argument) -> CallArgumentMatchKind {
+  if (!argument.expression || index >= function.parameterTypes.size())
+    return CallArgumentMatchKind::Mismatch;
+  if (!argument.forwardedPackElement)
+    return functionCallArgumentMatch(function, index, argument.type,
+                                      *argument.expression, argument.deferred);
+  const auto &parameter = function.parameterTypes[index];
+  if (forwardedPackArgumentMatches(parameter, argument.type))
+    return CallArgumentMatchKind::Exact;
+  const auto adjusted = callLifetimeArgumentType(function, argument.type, parameter);
+  return adjusted && forwardedPackArgumentMatches(parameter, *adjusted)
+             ? CallArgumentMatchKind::Exact : CallArgumentMatchKind::Mismatch;
+}
+
 auto SemanticVisitor::Impl::adoptContextualIntegerLiteralArgument(
     const ExprPtr &expression, const SemanticType &parameter) -> SemanticType {
   // The selected candidate's parameter type is the literal's type. The same
@@ -1363,7 +1379,7 @@ auto SemanticVisitor::Impl::adoptContextualIntegerLiteralArgument(
 }
 
 auto SemanticVisitor::Impl::adoptContextualIntegerLiteralArguments(
-    std::span<const SemanticType> parameterTypes, const ExprList &arguments,
+    std::span<const SemanticType> parameterTypes, const CallArgumentExpressions &arguments,
     std::vector<SemanticType> &argumentTypes,
     std::span<const std::size_t> indices) -> void {
   for (const std::size_t index : indices) {
@@ -9294,6 +9310,7 @@ auto SemanticVisitor::Impl::functionSymbol(
                   [this](const SemanticType &type) {
                     return semanticModel.isCompilerPrivateType(type);
                   });
+  contextualizeConformanceLifetimeSignature(candidate);
   normalizeFunctionLifetimeContract(candidate);
   applyFunctionReturnBorrowSummary(candidate);
   if (registered != nullptr) {

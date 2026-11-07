@@ -3,6 +3,7 @@
 #include "gti/lexer.h"
 #include "gti/parser.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -498,6 +499,50 @@ for<T> concept P<Wrap<T>> {
          "a local lifetime requirement conjoins with the block's inherited application");
 }
 
+void testConstructorInitializerPackArguments() {
+  const std::string source = R"(
+struct Derived<Args...> : public Base {
+  int[2] values;
+  Derived(Args... pack) : Base(7, pack...), values({1, 2}) {}
+};
+)";
+  lang::Lexer lexer;
+  lang::Parser parser(lexer.scan(source, "initializer-pack.gti"));
+  const auto program = parser.parse();
+  expect(!lexer.hadError() && !parser.hadError() && program.declarations().size() == 1,
+         "constructor initializers share ordinary call pack and brace arguments");
+  const auto *owner = lang::stmtAs<lang::ClassDecl>(program.declarations().front().get());
+  const auto *constructor = owner && owner->members().size() == 2
+      ? lang::stmtAs<lang::ConstructorDecl>(owner->members()[1].get()) : nullptr;
+  expect(constructor && constructor->initializers().size() == 2 &&
+             constructor->initializers()[0].arguments.size() == 2 &&
+             constructor->initializers()[1].arguments.size() == 1,
+         "initializer argument parsing preserves separate base and field lists");
+  const auto *pack = lang::exprAs<lang::PackExpansion>(
+      constructor->initializers()[0].arguments[1].get());
+  expect(pack && pack->name().lexeme == "pack" &&
+             pack->name().position == source.find("pack...") &&
+             pack->ellipsis().position == source.find("pack...") + 4 &&
+             lang::exprAs<lang::ArrayInitializer>(
+                 constructor->initializers()[1].arguments[0].get()),
+         "initializer pack tokens and brace expression retain exact AST identity");
+  for (const auto &[argument, message] : {
+           std::pair{"pack..., 7", "must be the final call argument"},
+           std::pair{"(pack)...", "Only a named function parameter pack"}}) {
+    const std::string invalid = "struct Derived<Args...> { Derived(Args... pack) : Base(" +
+                                std::string(argument) + ") {} };";
+    lang::Lexer invalidLexer;
+    lang::Parser invalidParser(invalidLexer.scan(invalid, "invalid-initializer-pack.gti"));
+    (void)invalidParser.parse();
+    expect(invalidParser.hadError() &&
+               std::any_of(invalidParser.errors().begin(), invalidParser.errors().end(),
+                           [&](const auto &error) {
+                             return error.message.find(message) != std::string::npos;
+                           }),
+           "initializer packs enforce the same named-final-argument restrictions as calls");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -508,4 +553,5 @@ int main() {
   testCompletionMarkers();
   testMalformedLifetimeRecovery();
   testProtocolOperationBinders();
+  testConstructorInitializerPackArguments();
 }

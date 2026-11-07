@@ -269,6 +269,86 @@ int&<shorter> shorten<lifetime longer, lifetime shorter>(int&<longer> input) {
   return input;
 }
 )gti", false);
+  check("conformance-head-elides-borrowed-nominal-region", R"gti(
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+concept Inspect<T> { int inspect(T& input); };
+for concept Inspect<View> { int inspect(View& input) { return input.value; } };
+int main() { int value = 7; View view{value}; return Inspect<View>::inspect(view) - 7; }
+)gti", true);
+  check("conformance-head-keeps-repeated-storage-and-independent-shells", R"gti(
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+concept ReadPair<T> { int read(T& first, T& second); };
+for concept ReadPair<View> {
+  int read(View& first, View& second) { return first.value + second.value; }
+};
+int main() { int value = 7; View view{value}; return ReadPair<View>::read(view, view) - 14; }
+)gti", true);
+  check("conformance-associated-reference-uses-operation-elision", R"gti(
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+concept Take<T> { typename Item; [[borrowed_from(value)]] Item take(T value); };
+for concept Take<View> {
+  using Item = int&;
+  [[borrowed_from(value)]] int& take(View value) { return value.value; }
+};
+int main() { int value = 7; View view{value}; return Take<View>::take(view) - 7; }
+)gti", true);
+  check("conformance-head-keeps-closed-type-arguments-distinct", R"gti(
+struct View<T, lifetime a> { T&<a> value; View(T&<a> input) : value(input) {} };
+concept Inspect<T> { int inspect(T& value); };
+for concept Inspect<View<int>> { int inspect(View<int>& value) { return value.value; } };
+for concept Inspect<View<bool>> { int inspect(View<bool>& value) { if (value.value) { return 1; } return 0; } };
+int main() { int value = 7; View<int> view{value}; return Inspect<View<int>>::inspect(view) - 7; }
+)gti", true);
+  check("conformance-head-keeps-generic-types-and-hidden-regions", R"gti(
+struct View<T, lifetime a> { T&<a> value; View(T&<a> input) : value(input) {} };
+concept Inspect<T> { bool inspect(T& value); };
+for<T> concept Inspect<View<T>> { bool inspect(View<T>& value) { return true; } };
+int main() { int value = 7; View<int> view{value}; if (Inspect<View<int>>::inspect(view)) { return 0; } return 1; }
+)gti", true);
+  check("conformance-explicit-static-cannot-replace-head-region", R"gti(
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+concept Inspect<T> { int inspect(T& value); };
+for concept Inspect<View> { int inspect(View<static>& value) { return value.value; } };
+)gti", false, "GTI-S2123");
+  check("conformance-preserves-declared-operation-lifetime-requirements", R"gti(
+concept Pair<lifetime a, lifetime b> {
+  void use(int&<a> first, int&<b> second) requires outlives<a, b>;
+};
+for<lifetime a, lifetime b> concept Pair<a, b> {
+  void use(int&<a> first, int&<b> second) requires outlives<a, b> {}
+};
+int main() { return 0; }
+)gti", true);
+  check("conformance-head-keeps-independent-stored-regions", R"gti(
+struct PairView {
+  int& first; int& second;
+  PairView(int& left, int& right) : first(left), second(right) {}
+};
+concept Inspect<T> { int inspect(T& value); };
+for concept Inspect<PairView> {
+  int inspect(PairView& value) { return value.first + value.second; }
+};
+int main() { int left = 3; int right = 8; PairView value{left, right}; return Inspect<PairView>::inspect(value) - 11; }
+)gti", true);
+  check("conformance-cannot-strengthen-operation-lifetime-requirements", R"gti(
+concept Pair<lifetime a, lifetime b> { void use(int&<a> first, int&<b> second); };
+for<lifetime a, lifetime b> concept Pair<a, b> {
+  void use(int&<a> first, int&<b> second) requires outlives<a, b> {}
+};
+)gti", false, "GTI-S2123");
+  check("conformance-unused-head-region-does-not-become-static", R"gti(
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+concept Marker<T> { int value(); };
+for<lifetime a> concept Marker<View<a>> {
+  int value() requires outlives<a, static> { return 1; }
+};
+)gti", false, "GTI-S2123");
+  check("conformance-implicit-head-overlaps-explicit-lifetime-head", R"gti(
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+concept Marker<T> { int value(); };
+for concept Marker<View> { int value() { return 1; } };
+for<lifetime a> concept Marker<View<a>> { int value() { return 2; } };
+)gti", false, "GTI-S2123");
   check("named-outlives-contract", R"gti(
 concept Survives<lifetime longer, lifetime shorter> = outlives<longer, shorter>;
 int&<shorter> shorten<lifetime longer, lifetime shorter>(int&<longer> input)

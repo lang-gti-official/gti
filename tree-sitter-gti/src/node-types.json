@@ -2305,6 +2305,10 @@
           "named": true
         },
         {
+          "type": "pack_expansion",
+          "named": true
+        },
+        {
           "type": "primary_expression",
           "named": true
         },

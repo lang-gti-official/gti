@@ -8689,18 +8689,38 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     return;
   }
 
-  if (hasPackExpansion(argumentTypes) &&
-      std::none_of(callee->overloads.begin(), callee->overloads.end(),
-                   [](const CallableCandidate &candidate) {
-                     return candidate.record().parameterPack;
-                   })) {
-    report(expressionToken(expr.arguments().back()),
-           "A parameter pack can only be forwarded to another variadic "
-           "function or method.",
-           "GTI-S2023");
-    currentType = SemanticType::Unknown;
+  const auto concreteArguments =
+      concreteCallArguments(argumentTypes, expr.arguments());
+  if (!concreteArguments) {
+    // A symbolic pack has no executable arity. Concrete instance reanalysis
+    // owns its fixed or variadic target; never publish a provisional call.
+    semanticModel.suppressInheritedCall(expr);
+    loanFlow.deferredGenericFlow = true;
+    currentType = callee->overloads.size() == 1
+                      ? callExpressionType(callee->overloads.front().returnType)
+                      : SemanticType::Unknown;
     return;
   }
+  ContextualCallArguments flatAnalysis;
+  for (const auto &argument : *concreteArguments) {
+    flatAnalysis.types.push_back(argument.type);
+    const auto written = std::find_if(
+        expr.arguments().begin(), expr.arguments().end(),
+        [&](const ExprPtr &source) { return &source == argument.expression; });
+    const auto index = static_cast<std::size_t>(written - expr.arguments().begin());
+    flatAnalysis.deferred.push_back(!argument.forwardedPackElement &&
+        index < argumentAnalysis.deferred.size() && argumentAnalysis.deferred[index]);
+  }
+  argumentAnalysis = std::move(flatAnalysis);
+  const CallArgumentExpressions callExpressions{std::span(*concreteArguments)};
+  const auto argumentsFor = [&](const ContextualCallArguments &analysis) {
+    auto result = *concreteArguments;
+    for (std::size_t index = 0; index < result.size(); ++index) {
+      result[index].type = analysis.types[index];
+      result[index].deferred = analysis.deferred[index];
+    }
+    return result;
+  };
 
   if (callee->overloads.size() == 1) {
     const CallableCandidate &candidate = callee->overloads.front();
@@ -8708,7 +8728,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     const std::size_t contextualDiagnostics = diagnostics.size();
     bool valid = contextualizeFunctionItemArguments(
         candidate, explicitTypeArguments, explicitValueArguments,
-        expr.arguments(), argumentAnalysis, true);
+        callExpressions, argumentAnalysis, true);
     if (!valid && diagnostics.size() != contextualDiagnostics) {
       // Context selection already owns this failure. A function item's type
       // has no source spelling, so a subsequent request to write F explicitly
@@ -8718,7 +8738,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     }
     valid = applyFunctionTypeArguments(resolved, explicitTypeArguments,
                                        explicitValueArguments, argumentTypes,
-                                       expr.arguments(), expr.paren(), true) &&
+                                       callExpressions, expr.paren(), true) &&
             valid;
     if (valid &&
         reportUnsupportedCallableReturn(candidate, resolved, expr.paren())) {
@@ -8731,7 +8751,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     ConstraintFailure constraintFailure;
     if (tryInstantiateFunction(
             candidate, explicitTypeArguments, explicitValueArguments,
-            argumentTypes, expr.arguments(), trial, resolvedTypeArguments,
+            argumentsFor(argumentAnalysis), trial, resolvedTypeArguments,
             resolvedValueArguments, &constraintFailure, true)) {
       resolved = std::move(trial);
     } else if (hasConstraintFailure(constraintFailure)) {
@@ -8744,7 +8764,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     const auto *receiver = exprAs<Get>(expr.callee().get());
     if (valid)
       valid = applyCallLifetimeContract(
-          resolved, argumentTypes, expr.arguments(), expr.paren(),
+          resolved, argumentsFor(argumentAnalysis), expr.paren(),
           resolved.ownerClass != 0 && !resolved.staticMember && receiver
               ? receiver->object().get() : nullptr, true);
 
@@ -8783,16 +8803,17 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     } else {
       std::vector<std::size_t> ephemeralBorrowArguments;
       std::vector<std::size_t> literalArguments;
+      const auto matchedArguments = argumentsFor(argumentAnalysis);
       for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
         const CallArgumentMatchKind match = functionCallArgumentMatch(
-            resolved, index, argumentTypes[index], expr.arguments()[index],
-            argumentAnalysis.deferred[index]);
+            resolved, index, matchedArguments[index]);
         if (match == CallArgumentMatchKind::EphemeralReadBorrow) {
           ephemeralBorrowArguments.push_back(index);
         } else if (match == CallArgumentMatchKind::ContextualIntegerLiteral) {
           literalArguments.push_back(index);
         } else if (match == CallArgumentMatchKind::Mismatch) {
-          if (checkedArgumentPotential(expr.arguments()[index],
+          if (!matchedArguments[index].forwardedPackElement &&
+              checkedArgumentPotential(callExpressions[index],
                                        argumentTypes[index],
                                        resolved.parameterTypes[index])) {
             const Token parameter =
@@ -8800,21 +8821,21 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                     ? resolved.declaration->parameters()[index].name
                     : resolved.declaration->name();
             valid = applyCheckedArgument(
-                        expr.arguments()[index], argumentTypes[index],
+                        callExpressions[index], argumentTypes[index],
                         resolved.parameterTypes[index], parameter) &&
                     valid;
             continue;
           }
-          if (isContextualArrayArgument(expr.arguments()[index])) {
+          if (isContextualArrayArgument(callExpressions[index])) {
             const auto *initializer =
-                exprAs<ArrayInitializer>(expr.arguments()[index].get());
+                exprAs<ArrayInitializer>(callExpressions[index].get());
             if (resolved.parameterTypes[index].kind != SemanticType::Array) {
-              report(expressionToken(expr.arguments()[index]),
+              report(expressionToken(callExpressions[index]),
                      "A brace argument requires one exact fixed-array "
                      "parameter type from the selected function.",
                      "GTI-S2015");
             } else {
-              report(expressionToken(expr.arguments()[index]),
+              report(expressionToken(callExpressions[index]),
                      "Brace argument provides " +
                          std::to_string(initializer == nullptr
                                             ? 0
@@ -8830,19 +8851,19 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
           } else {
             reportCallArgumentMismatch(
                 index, resolved.parameterTypes[index], argumentTypes[index],
-                expr.arguments()[index], "Function", &resolved);
+                callExpressions[index], "Function", &resolved);
           }
           valid = false;
         }
       }
       if (valid) {
         adoptContextualIntegerLiteralArguments(resolved.parameterTypes,
-                                               expr.arguments(), argumentTypes,
+                                               callExpressions, argumentTypes,
                                                literalArguments);
       }
       if (valid && argumentAnalysis.hasDeferred()) {
         valid = finishContextualCallArguments(
-                    resolved.parameterTypes, expr.arguments(), argumentAnalysis,
+                    resolved.parameterTypes, callExpressions, argumentAnalysis,
                     expr.paren(), "Function") &&
                 valid;
       }
@@ -8854,17 +8875,17 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       const CallReceiverMode receiverMode =
           callReceiverMode(expr.callee(), resolved);
       valid = validateSelectedFunction(resolved, expr.callee(), expr.paren(),
-                                       expr.arguments(), receiverMode) &&
+                                       callExpressions, receiverMode, argumentsFor(argumentAnalysis)) &&
               valid;
       valid = validateConfinedCallableArguments(
-                  candidate, resolved, argumentTypes, expr.arguments()) &&
+                  candidate, resolved, argumentTypes, callExpressions) &&
               valid;
       if (valid) {
         commitLifetimeApplication(resolved.lifetimeApplication);
         recordResolvedCall(
             expr, resolved, resolvedTypeArguments, resolvedValueArguments,
             std::move(ephemeralBorrowArguments),
-            lambdaArgumentBoundaries(argumentTypes), receiverMode);
+            lambdaArgumentBoundaries(argumentTypes), receiverMode, nullptr, argumentTypes.size());
       }
       currentType = valid ? callExpressionType(resolved.returnType)
                           : SemanticType::Unknown;
@@ -8926,7 +8947,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       if (!acceptsArgumentShape(candidate, candidateArguments.types) ||
           !contextualizeFunctionItemArguments(
               candidate, explicitTypeArguments, explicitValueArguments,
-              expr.arguments(), candidateArguments, false)) {
+              callExpressions, candidateArguments, false)) {
         continue;
       }
       CallableCandidate resolved;
@@ -8937,7 +8958,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       ConstraintFailure constraintFailure;
       if (!tryInstantiateFunction(
               candidate, explicitTypeArguments, explicitValueArguments,
-              candidateArguments.types, expr.arguments(), resolved,
+              argumentsFor(candidateArguments), resolved,
               resolvedTypeArguments, resolvedValueArguments, &constraintFailure,
               allowChecked)) {
         if (hasConstraintFailure(constraintFailure)) {
@@ -8947,32 +8968,33 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       }
       const auto *receiver = exprAs<Get>(expr.callee().get());
       if (!applyCallLifetimeContract(
-              resolved, candidateArguments.types, expr.arguments(), expr.paren(),
+              resolved, argumentsFor(candidateArguments), expr.paren(),
               resolved.ownerClass != 0 && !resolved.staticMember && receiver
                   ? receiver->object().get() : nullptr, false))
         continue;
       bool exact = true;
       std::vector<std::size_t> checkedArguments;
       std::optional<std::size_t> rejectedCopy;
+      const auto matchedArguments = argumentsFor(candidateArguments);
       for (std::size_t index = 0; index < candidateArguments.types.size();
            ++index) {
         const CallArgumentMatchKind match = functionCallArgumentMatch(
-            resolved, index, candidateArguments.types[index],
-            expr.arguments()[index], candidateArguments.deferred[index]);
+            resolved, index, matchedArguments[index]);
         if (match == CallArgumentMatchKind::Mismatch) {
           const bool copyFailure =
+              !matchedArguments[index].forwardedPackElement &&
               !candidateArguments.deferred[index] &&
               index < resolved.parameterTypes.size() &&
               callArgumentRejectedByOwnership(resolved.parameterTypes[index],
                                               candidateArguments.types[index],
-                                              expr.arguments()[index]);
+                                              callExpressions[index]);
           if (copyFailure) {
             if (!rejectedCopy)
               rejectedCopy = index;
             continue;
           }
-          if (allowChecked &&
-              checkedArgumentPotential(expr.arguments()[index],
+          if (allowChecked && !matchedArguments[index].forwardedPackElement &&
+              checkedArgumentPotential(callExpressions[index],
                                        candidateArguments.types[index],
                                        resolved.parameterTypes[index])) {
             checkedArguments.push_back(index);
@@ -9187,7 +9209,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         reportCallArgumentMismatch(
             rejected.argument,
             rejected.function.parameterTypes[rejected.argument],
-            rejected.argumentType, expr.arguments()[rejected.argument],
+            rejected.argumentType, callExpressions[rejected.argument],
             "Function", &rejected.function);
         if (diagnostics.size() > diagnosticCount &&
             rejected.source->declaration != nullptr) {
@@ -9238,19 +9260,19 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     const Token parameter = index < selected.declaration->parameters().size()
                                 ? selected.declaration->parameters()[index].name
                                 : selected.declaration->name();
-    if (!applyCheckedArgument(expr.arguments()[index], argumentTypes[index],
+    if (!applyCheckedArgument(callExpressions[index], argumentTypes[index],
                               selected.parameterTypes[index], parameter)) {
       currentType = SemanticType::Unknown;
       return;
     }
   }
   adoptContextualIntegerLiteralArguments(
-      viable.front().function.parameterTypes, expr.arguments(),
+      viable.front().function.parameterTypes, callExpressions,
       viable.front().argumentAnalysis.types,
       viable.front().contextualIntegerLiteralArguments);
   if (argumentAnalysis.hasDeferred() &&
       !finishContextualCallArguments(
-          viable.front().function.parameterTypes, expr.arguments(),
+          viable.front().function.parameterTypes, callExpressions,
           viable.front().argumentAnalysis, expr.paren(), "Function")) {
     currentType = SemanticType::Unknown;
     return;
@@ -9261,14 +9283,15 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                             viable.front().valueArguments))
     return;
   if (!validateSelectedFunction(viable.front().function, expr.callee(),
-                                expr.paren(), expr.arguments(),
-                                viable.front().receiverMode)) {
+                                expr.paren(), callExpressions,
+                                viable.front().receiverMode,
+                                argumentsFor(viable.front().argumentAnalysis))) {
     currentType = SemanticType::Unknown;
     return;
   }
   if (!validateConfinedCallableArguments(
           *viable.front().source, viable.front().function,
-          viable.front().argumentAnalysis.types, expr.arguments())) {
+          viable.front().argumentAnalysis.types, callExpressions)) {
     currentType = SemanticType::Unknown;
     return;
   }
@@ -9277,7 +9300,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       expr, viable.front().function, viable.front().typeArguments,
       viable.front().valueArguments,
       std::move(viable.front().ephemeralBorrowArguments),
-      lambdaArgumentBoundaries(argumentTypes), viable.front().receiverMode);
+      lambdaArgumentBoundaries(argumentTypes), viable.front().receiverMode, nullptr,
+      viable.front().argumentAnalysis.types.size());
   currentType = callExpressionType(viable.front().function.returnType);
 }
 

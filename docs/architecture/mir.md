@@ -672,6 +672,11 @@ field searches or guessed dereferences. These are structural facts, not origin,
 branch-dominance, capability, liveness or cleanup authority. Live dependency, condition, selection and result paths share this typed
 `BorrowPath`; there is no parallel symbol-only path. Constructor publication
 uses `storedPath` to identify one exact direct field or base initializer.
+Member reads and writes retain the selected Base chain through the actual
+receiver view, including interface positions in the ordinal count. When a
+materialized receiver has no semantic place key, lowering maps its already
+resolved field symbol through the unique checked storage-base chain; unknown
+or ambiguous catalog entries fail rather than flattening inherited fields.
 A base initializer preserves the semantic complete dependency set captured
 before argument effects are retired. MIR reconstructs it from the selected
 constructor summary, checked lifetime application and staged operands, then
@@ -871,8 +876,14 @@ loans symmetrically rather than silently treating the first field as
 unconditional.
 
 Checked erased-reference operations preserve the exact origin and access while
-changing the referent type. Restoration is explicitly unsafe and retains its
-checked lifetime witness. The GTI function-pointer operation records either one
+changing the referent type. MIR rederives each operation's lifetime rule from
+its intrinsic identity, exact opaque capability, access, and equal input/result
+outer region. The attached callable signature is a checked witness, not an
+independent source of bounds. Restoration is explicitly unsafe and additionally
+requires the concrete restored referent to outlive the result region in the
+caller's graph. An opaque input supplies no such validity premise; stored and
+nested callable regions remain scoped and independently checked. The GTI
+function-pointer operation records either one
 safe function instance or one stateless lambda instance, with its exact signature;
 invocation uses the same explicit failure and cleanup protocol as other GTI
 calls. It is not a native C callback adapter. Reference-field initialization

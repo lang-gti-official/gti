@@ -21,6 +21,22 @@ T construct<T, Args...>(Args... values) {
   return T(values...);
 }
 
+// Concrete pack lanes also select ordinary fixed-arity functions.
+int add(int first, int second = 5) { return first + second; }
+int add_forwarded<Args...>(Args... values) { return add(values...); }
+
+class SumBase {
+  int total;
+public:
+  SumBase(int first, int second) : total(first + second) {}
+  int sum() { return this.total; }
+};
+
+class SumDerived : public SumBase {
+public:
+  SumDerived<Args...>(Args... values) : SumBase(values...) {}
+};
+
 int main() {
   forward();
   forward(1, true, "gti");
@@ -33,7 +49,10 @@ int main() {
   Samples copied = construct<Samples>(seed);
   forward(seed); // Each expansion copies the array; seed remains available.
 
-  if (inferred == 7 and explicit_types == 9 and copied.sum() == 6) {
+  SumDerived inherited{2, 4};
+
+  if (inferred == 7 and explicit_types == 9 and copied.sum() == 6 and
+      add_forwarded(3) == 8 and inherited.sum() == 6) {
     return 0;
   }
   return 1;

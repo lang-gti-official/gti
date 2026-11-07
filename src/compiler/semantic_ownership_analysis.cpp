@@ -10088,27 +10088,35 @@ auto SemanticVisitor::Impl::hasCheckedExternalBorrowOrigin(
       // similarly named binding from another demanded generic instance.
       const auto *function = currentFunctionInfo();
       const auto *syntax = function ? function->bodyDeclaration() : nullptr;
-      if (!syntax || loan->parent != 0 || loan->storedDependency != 0 ||
-          !loan->place.projections.empty())
+      if (loan->parent != 0 || loan->storedDependency != 0)
         return false;
       SemanticType carrier = SemanticType::Unknown;
       if (loan->place.receiver) {
-        if (loan->place.root != 0 || !function->ownerClass ||
+        if (!syntax || currentLambdaReturn || loan->place.root != 0 ||
+            !loan->place.projections.empty() || !function->ownerClass ||
             function->staticMember || loan->entryDeclaration != syntax)
           return false;
         carrier = openClassType(function->ownerClass);
       } else {
-        if (function->parameterTypes.size() != syntax->parameters().size())
+        if (loan->owner != loan->place.root ||
+            (!currentLambdaReturn && !syntax) ||
+            (currentLambdaReturn && !currentLambdaReturn->declaration))
           return false;
-        for (std::size_t index = 0; index < syntax->parameters().size();
-             ++index)
-          if (const auto *binding =
-                  semanticModel.findBinding(syntax->parameters()[index]);
-              binding && binding->symbol == loan->place.root) {
+        const auto inputs = currentLambdaReturn
+            ? formalBorrowInputs(currentLambdaReturn->declaration->parameters(),
+                                 currentLambdaReturn->parameterTypes)
+            : formalBorrowInputs(syntax->parameters(), function->parameterTypes);
+        if (!inputs)
+          return false;
+        for (const auto &input : *inputs)
+          if (input.binding == loan->place.root &&
+              input.bindingPrefix == loan->place.projections) {
             if (carrier != SemanticType::Unknown)
               return false;
-            carrier = function->parameterTypes[index];
+            carrier = input.type;
           }
+        if (carrier == SemanticType::Unknown)
+          return false;
         if (carrier.kind == SemanticType::Reference &&
             carrier.arguments.size() == 1)
           carrier = SemanticType(carrier.arguments.front());
@@ -10591,7 +10599,8 @@ auto SemanticVisitor::Impl::validateLoanPlaceAccess(const Expr &expression,
 
 auto SemanticVisitor::Impl::validateMutableCallArgumentLoans(
     std::span<const SemanticType> parameterTypes,
-    std::span<const ExprPtr> arguments, const Token &location) -> void {
+    const CallArgumentExpressions &arguments, const Token &location,
+    std::span<const AnalyzedCallArgument> concrete) -> void {
   const std::size_t count = std::min(parameterTypes.size(), arguments.size());
   for (std::size_t index = 0; index < count; ++index) {
     const SemanticType &parameter = parameterTypes[index];
@@ -10599,14 +10608,33 @@ auto SemanticVisitor::Impl::validateMutableCallArgumentLoans(
         parameter.referenceAccess != AccessMode::Mutable) {
       continue;
     }
-    const auto origins = loanPlaces(arguments[index], true);
-    invalidateBorrowDependencySet(semanticPlace(arguments[index]));
+    std::vector<SemanticLoanPlace> origins;
+    SemanticLoanId throughLoan = 0;
+    if (index < concrete.size() && concrete[index].forwardedPackElement) {
+      const auto *entry = entryBorrowElement(concrete[index]);
+      const auto *loan = entry ? semanticModel.findLoan(entry->reference) : nullptr;
+      if (!loan)
+        continue; // Exact forwarded-lane exclusivity owns the missing-authority diagnostic.
+      origins.push_back(loan->place);
+      throughLoan = loan->id;
+      const auto *expansion =
+          exprAs<PackExpansion>(concrete[index].expression->get());
+      auto *carrier = expansion ? resolveMutable(expansion->name()) : nullptr;
+      if (carrier) {
+        invalidateBorrowDependencySet(
+            {.root = carrier, .rootIdentity = loan->place.root,
+             .projections = loan->place.projections});
+      }
+    } else {
+      origins = loanPlaces(arguments[index], true);
+      invalidateBorrowDependencySet(semanticPlace(arguments[index]));
+      throughLoan = accessLoan(arguments[index]);
+    }
     for (const auto &origin : origins)
       recordMutableBindingUse(origin.root);
     if (origins.empty()) {
       continue;
     }
-    const SemanticLoanId throughLoan = accessLoan(arguments[index]);
     if (suppressLoanPlaceAccessDepth == 0 &&
         std::any_of(origins.begin(), origins.end(), [&](const auto &origin) {
           return !conflictingLoans(origin, AccessMode::ReadOnly, throughLoan)

@@ -145,6 +145,44 @@ callableLifetimeContract(const SemanticType &signature,
   return callable_lifetime_detail::deriveContract(signature, nominalFormation, work);
 }
 
+// Checked erasure preserves an object's physical storage region and access.
+// Restoration additionally requires validity of the exact requested referent
+// for that region: an opaque input does not imply this premise. Phase adapters
+// independently verify the intrinsic identity and its trusted opaque side.
+inline std::optional<LifetimeSignatureContract>
+referenceErasureLifetimeContract(
+    const SemanticType &signature, bool restoring,
+    const CallableNominalFormation &nominalFormation = {}) {
+  if (signature.kind != SemanticType::FunctionSignature ||
+      signature.signatureReceiver != ReceiverMutability::ReadOnly ||
+      signature.arguments.size() != 2)
+    return std::nullopt;
+  const auto &result = signature.arguments[0];
+  const auto &input = signature.arguments[1];
+  if (result.kind != SemanticType::Reference || result.arguments.size() != 1 ||
+      input.kind != SemanticType::Reference || input.arguments.size() != 1 ||
+      result.referenceAccess != input.referenceAccess ||
+      result.referenceLifetime != input.referenceLifetime ||
+      result.referenceLifetime.kind != Lifetime::Kind::Parameter ||
+      std::find(signature.quantifiedLifetimes.begin(), signature.quantifiedLifetimes.end(),
+                result.referenceLifetime.id) == signature.quantifiedLifetimes.end())
+    return std::nullopt;
+  auto contract = callableLifetimeContract(signature, nominalFormation);
+  if (!contract || !restoring)
+    return contract;
+  const LifetimeTypeBound validity{result.arguments.front(), result.referenceLifetime};
+  if (std::find(contract->typeBounds.begin(), contract->typeBounds.end(), validity) ==
+      contract->typeBounds.end())
+    contract->typeBounds.push_back(validity);
+  LifetimeRequirementFormula required;
+  required.nodes.push_back({.kind = LifetimeRequirementNode::Kind::Type,
+                            .bound = {{}, validity.region}, .type = validity.type});
+  required.root = 0;
+  if (!appendLifetimeRequirementFormula(contract->requirements, required))
+    return std::nullopt;
+  return contract;
+}
+
 // Fixed carrier choices are distinct from invocation quantifiers. The phase
 // supplies fresh declaration identities when publishing the result; a query
 // may use temporary fresh names provided the returned metadata does not escape.

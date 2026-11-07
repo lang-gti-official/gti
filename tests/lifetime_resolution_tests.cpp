@@ -1816,6 +1816,26 @@ int main() { twice(Owned()); return 0; }
          "entry projection cannot revive a pack consumed by an earlier forwarding call");
 }
 
+void testFixedArityPackCallSelection() {
+  const auto result = analyze(R"(
+int choose(int first, int second = 5) { return first + second; }
+int choose(bool first, int second) { return second; }
+int defaulted(int value = 9) { return value; }
+int relay<Args...>(Args... values) { return choose(values...); }
+int emptyRelay<Args...>(Args... values) { return defaulted(values...); }
+int main() { return relay(3) + relay(true, 4) + emptyRelay() - 21; }
+)");
+  expectValid(result,
+              "fixed overload selection and default arguments use flattened pack arity, including zero lanes");
+  const auto wrongArity = analyze(R"(
+int fixed(int first, int second) { return first + second; }
+int relay<Args...>(Args... values) { return fixed(values...); }
+int main() { return relay(3); }
+)");
+  expect(!wrongArity.semanticValid,
+         "a concrete forwarded pack still satisfies the selected fixed target arity");
+}
+
 void testConstructorRelationsAfterFieldIdentity() {
   const auto result = analyze(R"(
 struct Early {
@@ -1941,8 +1961,8 @@ namespace gti_internal {
 export class erased_object {};
 export erased_object& erase_reference<T>(T& object);
 export mut erased_object& erase_reference_mut<T>(mut T& object);
-export unsafe T& restore_reference<T>(erased_object& object);
-export unsafe mut T& restore_reference_mut<T>(mut erased_object& object);
+export unsafe T&<a> restore_reference<T, lifetime a>(erased_object&<a> object) requires outlives<T, a>;
+export unsafe mut T&<a> restore_reference_mut<T, lifetime a>(mut erased_object&<a> object) requires outlives<T, a>;
 }
 )";
   const auto check = [&](std::string source) {
@@ -1956,8 +1976,12 @@ export unsafe mut T& restore_reference_mut<T>(mut erased_object& object);
 using Opaque = gti_internal::erased_object;
 Opaque& erase<T>(T& source) { return gti_internal::erase_reference(source); }
 mut Opaque& erase_mut<T>(mut T& source) { return gti_internal::erase_reference_mut(source); }
-unsafe T& restore<T>(Opaque& source) { unsafe { return gti_internal::restore_reference<T>(source); } }
-unsafe mut T& restore_mut<T>(mut Opaque& source) { unsafe { return gti_internal::restore_reference_mut<T>(source); } }
+unsafe T&<a> restore<T, lifetime a>(Opaque&<a> source) requires outlives<T, a> {
+  unsafe { return gti_internal::restore_reference<T>(source); }
+}
+unsafe mut T&<a> restore_mut<T, lifetime a>(mut Opaque&<a> source) requires outlives<T, a> {
+  unsafe { return gti_internal::restore_reference_mut<T>(source); }
+}
 )";
   const auto valid = check(wrappers + R"(
 int main() {
@@ -2001,6 +2025,37 @@ int main() { return 0; }
 )");
   expect(unrelatedTarget.syntaxValid && !unrelatedTarget.semanticValid,
          "opaque physical-view proof does not authorize unrelated ordinary referent types");
+  const std::string borrowed = R"(
+struct Borrowed<lifetime storage> {
+  int&<storage> value;
+  Borrowed(int&<storage> source) : value(source) {}
+};
+)";
+  const auto validBorrowed = check(wrappers + borrowed + R"(
+unsafe Borrowed<storage>&<shell> recover<lifetime storage, lifetime shell>(Opaque&<shell> source)
+    requires outlives<storage, shell> {
+  unsafe { return restore<Borrowed<storage>, shell>(source); }
+}
+int main() { return 0; }
+)");
+  expectValid(validBorrowed,
+              "restoration of borrowed T uses its independently proved type-outlives relationship");
+  const auto shortBorrowed = check(wrappers + borrowed + R"(
+unsafe Borrowed<storage>&<static> invalid<lifetime storage>(Opaque&<static> source) {
+  unsafe { return restore<Borrowed<storage>, static>(source); }
+}
+int main() { return 0; }
+)");
+  expect(shortBorrowed.syntaxValid && !shortBorrowed.semanticValid,
+         "a static opaque witness cannot make an independent nested borrow static");
+  const auto unknownReferent = check(wrappers + R"(
+unsafe T&<a> invalid<T, lifetime a>(Opaque&<a> source) {
+  unsafe { return restore<T, a>(source); }
+}
+int main() { return 0; }
+)");
+  expect(unknownReferent.syntaxValid && !unknownReferent.semanticValid,
+         "unsafe restoration still requires validity of an opaque generic referent for the output lifetime");
 }
 
 void testOwnedPointeeLifetimeAuthority() {
@@ -2058,6 +2113,7 @@ int main() { return 0; }
 
 int main() {
   testForwardedPackBorrowPaths();
+  testFixedArityPackCallSelection();
   testSelectedBaseConstructorInputs();
   testConstructorRelationsAfterFieldIdentity();
   testOwnedPointeeLifetimeAuthority();

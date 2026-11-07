@@ -2052,14 +2052,7 @@ private:
         TypeRef target = parseBaseType();
         consume(TokenKind::LEFT_PAREN,
                 "Expect '(' after constructor initializer target.");
-        ExprList arguments;
-        if (!check(TokenKind::RIGHT_PAREN)) {
-          do {
-            arguments.emplace_back(check(TokenKind::LEFT_BRACE)
-                                       ? arrayInitializer()
-                                       : assignment());
-          } while (match({TokenKind::COMMA}));
-        }
+        ExprList arguments = callArgumentList();
         consume(TokenKind::RIGHT_PAREN,
                 "Expect ')' after constructor initializer arguments.");
         initializers.push_back(ConstructorInitializer{
@@ -3981,9 +3974,7 @@ private:
     return parsed;
   }
 
-  ExprPtr finishCall(ExprPtr callee, std::vector<TypeRef> typeArguments) {
-    Token leftParen = previous();
-    std::vector<Token> argumentCommas;
+  ExprList callArgumentList(std::vector<Token> *argumentCommas = nullptr) {
     ExprList arguments;
     if (!check(TokenKind::RIGHT_PAREN)) {
       do {
@@ -4025,12 +4016,19 @@ private:
           break;
         }
         arguments.emplace_back(std::move(argument));
-        if (check(TokenKind::COMMA)) {
-          argumentCommas.push_back(peek());
+        if (argumentCommas && check(TokenKind::COMMA)) {
+          argumentCommas->push_back(peek());
         }
       } while (match({TokenKind::COMMA}));
     }
 
+    return arguments;
+  }
+
+  ExprPtr finishCall(ExprPtr callee, std::vector<TypeRef> typeArguments) {
+    Token leftParen = previous();
+    std::vector<Token> argumentCommas;
+    ExprList arguments = callArgumentList(&argumentCommas);
     Token paren =
         consume(TokenKind::RIGHT_PAREN, "Expect ')' after arguments.");
     auto call =

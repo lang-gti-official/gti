@@ -259,7 +259,7 @@ is a teaching helper, not a production server.
 | `012-fixed-arrays.gti` | bounded arrays, signed literals, passive records/unions, checked raw record array fields, receiver element-field projections, and indexing fresh call and move results |
 | `013-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
 | `014-operators.gti` | restricted member operators; self-read dereference stores, named mutable-reference assignment, nested subscripts and once-formed compound targets |
-| `015-variadic-generics.gti` | confined type packs, explicit forwarding, and exact passive fixed-array arguments |
+| `015-variadic-generics.gti` | confined type packs, fixed-arity and base-constructor forwarding, defaults, and exact passive fixed-array arguments |
 | `016-move-generics.gti` | ownership-aware concrete generic instances |
 | `017-standard-array.gti` | standard imports and source-defined `std::array<T, N>` |
 | `018-lambdas.gti` | typed lambdas with explicit immutable value captures |
@@ -425,7 +425,7 @@ is a teaching helper, not a production server.
 | `189-protocol-format-hash.gti` | Conditional conformance formats and hashes a generic user family and uses a pair as a hash-table key (LLVM). |
 | `190-conditional-member-operators.gti` | Conditional user operators, inserting map indexing, exclusive result loans and pair equality (LLVM). |
 | `191-reference-parameter-packs.gti` | Variadic move-only observers, temporary lifetime, constrained mutable packs and per-element exclusive access (LLVM). |
-| `192-lifetime-parameters.gti` | Named reference relationships, elided identity, mutable input, shared result suppliers, borrowed records and a lifetime projected from a reference argument; ordinary callers infer lifetime arguments (LLVM). |
+| `192-lifetime-parameters.gti` | Named reference relationships, elided identity, mutable input, shared result suppliers, borrowed records, inferred conformance-head regions and a lifetime projected from a reference argument; ordinary callers infer lifetime arguments (LLVM). |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

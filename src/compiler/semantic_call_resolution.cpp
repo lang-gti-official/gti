@@ -2659,7 +2659,7 @@ auto SemanticVisitor::Impl::reportConstraintFailure(
 auto SemanticVisitor::Impl::attachConstraintCallContext(
     ConstraintFailure &failure, const CallableCandidate &candidate,
     const std::vector<SemanticType> &argumentTypes,
-    const ExprList &expressions) const -> void {
+    const CallArgumentExpressions &expressions) const -> void {
   if (candidate.declaration != nullptr) {
     failure.candidate = candidate.declaration->name();
   }
@@ -2780,7 +2780,7 @@ auto SemanticVisitor::Impl::applyVariadicFunctionTypeArguments(
     CallableCandidate &function,
     const std::vector<SemanticType> &explicitTypeArguments,
     const std::vector<CompileTimeValue> &explicitValueArguments,
-    const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
+    const std::vector<SemanticType> &argumentTypes, const CallArgumentExpressions &arguments,
     const Token &paren, bool checkedArguments) -> bool {
   notePrivateLifetimeDependency(function.id);
   if (!explicitValueArguments.empty()) {
@@ -2954,7 +2954,7 @@ auto SemanticVisitor::Impl::applyFunctionTypeArguments(
     CallableCandidate &function,
     const std::vector<SemanticType> &explicitTypeArguments,
     const std::vector<CompileTimeValue> &explicitValueArguments,
-    const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
+    const std::vector<SemanticType> &argumentTypes, const CallArgumentExpressions &arguments,
     const Token &paren, bool checkedArguments) -> bool {
   notePrivateLifetimeDependency(function.id);
   if (function.parameterPack || packGenericParameter(function) != nullptr) {
@@ -3317,7 +3317,24 @@ auto SemanticVisitor::Impl::tryInstantiateFunction(
     const CallableCandidate &candidate,
     const std::vector<SemanticType> &explicitTypeArguments,
     const std::vector<CompileTimeValue> &explicitValueArguments,
-    const std::vector<SemanticType> &argumentTypes, const ExprList &expressions,
+    std::span<const AnalyzedCallArgument> arguments, CallableCandidate &resolved,
+    std::vector<SemanticType> &resolvedTypeArguments,
+    std::vector<CompileTimeValue> &resolvedValueArguments,
+    ConstraintFailure *constraintFailure, bool checkedArguments) -> bool {
+  std::vector<SemanticType> types;
+  types.reserve(arguments.size());
+  for (const auto &argument : arguments)
+    types.push_back(argument.type);
+  return tryInstantiateFunction(candidate, explicitTypeArguments, explicitValueArguments,
+      types, CallArgumentExpressions(arguments), resolved, resolvedTypeArguments,
+      resolvedValueArguments, constraintFailure, checkedArguments);
+}
+
+auto SemanticVisitor::Impl::tryInstantiateFunction(
+    const CallableCandidate &candidate,
+    const std::vector<SemanticType> &explicitTypeArguments,
+    const std::vector<CompileTimeValue> &explicitValueArguments,
+    const std::vector<SemanticType> &argumentTypes, const CallArgumentExpressions &expressions,
     CallableCandidate &resolved,
     std::vector<SemanticType> &resolvedTypeArguments,
     std::vector<CompileTimeValue> &resolvedValueArguments,
@@ -4945,7 +4962,7 @@ auto SemanticVisitor::Impl::validateConfinedCallableUses() -> void {
 
 auto SemanticVisitor::Impl::validateConfinedCallableArguments(
     const CallableCandidate &candidate, const CallableCandidate &,
-    const std::vector<SemanticType> &argumentTypes, const ExprList &arguments)
+    const std::vector<SemanticType> &argumentTypes, const CallArgumentExpressions &arguments)
     -> bool {
   bool valid = true;
   for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
@@ -5679,8 +5696,17 @@ auto SemanticVisitor::Impl::reportConsumingBorrowedResult(
 
 auto SemanticVisitor::Impl::validateSelectedFunction(
     const CallableCandidate &function, const ExprPtr &callee,
-    const Token &paren, std::span<const ExprPtr> arguments,
-    CallReceiverMode receiverMode) -> bool {
+    const Token &paren, const CallArgumentExpressions &arguments,
+    CallReceiverMode receiverMode, std::span<const AnalyzedCallArgument> concrete) -> bool {
+  std::vector<const ExprPtr *> expressions;
+  for (const ExprPtr &argument : arguments)
+    expressions.push_back(&argument);
+  const auto validateExclusivity = [&](std::optional<SemanticLoanPlace> receiver,
+      AccessMode access, bool transient,
+      std::span<const SemanticLoanPlace> origins = {}) {
+    validateCallPlaceExclusivityImpl(function.parameterTypes, expressions, paren,
+                                      receiver, access, transient, origins, concrete);
+  };
   const auto *consumedMember = exprAs<Get>(callee.get());
   const auto *move = consumedMember == nullptr
                          ? nullptr
@@ -5784,7 +5810,7 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     diagnostics.emplace_back(std::move(diagnostic));
   }
 
-  validateMutableCallArgumentLoans(function.parameterTypes, arguments, paren);
+  validateMutableCallArgumentLoans(function.parameterTypes, arguments, paren, concrete);
   if (member == nullptr && function.ownerClass != 0 && !function.staticMember) {
     SemanticPlace receiver{.root = receiverStateSymbol(), .receiver = true};
     if (const auto *state = unavailableProjectedState(receiver)) {
@@ -5836,9 +5862,7 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
           ? loanPlaces(member->object(), true)
           : (receiverPlace ? std::vector<SemanticLoanPlace>{*receiverPlace}
                            : std::vector<SemanticLoanPlace>{});
-  validateCallPlaceExclusivity(function.parameterTypes, arguments, paren,
-                               receiverPlace, callReceiverAccess,
-                               transientReceiver, receiverOrigins);
+  validateExclusivity(receiverPlace, callReceiverAccess, transientReceiver, receiverOrigins);
   const ExpressionInfo *receiverInfo =
       member == nullptr ? nullptr
                         : semanticModel.findExpression(*member->object());
@@ -5862,8 +5886,7 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
         continue;
       }
       checkedPlaces.push_back(dependency.place);
-      validateCallPlaceExclusivity(function.parameterTypes, arguments, paren,
-                                   dependency.place, dependency.access, true);
+      validateExclusivity(dependency.place, dependency.access, true);
     }
   }
   if (receiverPlace && callReceiverAccess == AccessMode::Mutable) {
@@ -6916,6 +6939,14 @@ auto SemanticVisitor::Impl::resolveOperator(
               call->arguments(), candidate, typeArguments, valueArguments)) {
         continue;
       }
+    } else {
+      // SubstituteSymbol selects the receiver's nominal types for lookup; it
+      // is not the callable's declaration universe. Reconstruct the same
+      // canonical executable contract ordinary calls use before binding its
+      // owner and invocation regions, including non-call operators.
+      std::vector<SemanticType> typeArguments;
+      if (!universalizeFunctionCandidate(candidate, typeArguments, {}, {}))
+        continue;
     }
     if (kind == OverloadedOperator::Call) {
       std::vector<SemanticType> concreteParameters;
@@ -8209,7 +8240,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     std::vector<CompileTimeValue> valueArguments,
     std::vector<std::size_t> ephemeralBorrowArguments,
     std::vector<CallableArgumentBoundary> callableArguments,
-    CallReceiverMode receiverMode, const ExprPtr *argumentReceiver) -> void {
+    CallReceiverMode receiverMode, const ExprPtr *argumentReceiver,
+    std::optional<std::size_t> suppliedArgumentCount) -> void {
   requireFunctionDefinition(function, expressionToken(call.callee()));
   recordSelectedCallSafety(call, function);
   recordCallableForwardings(call, function);
@@ -8369,7 +8401,7 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       function.declaration == nullptr
           ? std::vector<const Expr *>{}
           : omittedDefaultArguments(function.declaration->parameters(),
-                                    call.arguments().size() +
+                                    suppliedArgumentCount.value_or(call.arguments().size()) +
                                         (argumentReceiver != nullptr));
   recordDefaultArgumentDependencies(defaultArguments);
   if (declarationInfo != nullptr) {

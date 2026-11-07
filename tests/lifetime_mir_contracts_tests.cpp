@@ -28,10 +28,15 @@ MirInstruction *firstLifetimeCall(MirBody &body) {
 }
 void checkProgramBasePathAuthority() {
   const auto source = Frontend({.stopAfter = FrontendPhase::Mir}).analyze("base-path-authority.gti", R"gti(
+interface Marker { int mark(); };
 struct Base { int value; Base(int input) : value(input) {} };
-struct Derived : public Base { Derived(int input) : Base(input) {} };
+struct Middle : public Base { Middle(int input) : Base(input) {} };
+struct Derived : public Marker, public Middle {
+  Derived(int input) : Middle(input) {}
+  int mark() override { return this.value; }
+};
 int&<a> inherited<lifetime a>(Derived&<a> input) { return input.value; }
-int main() { Derived value{7}; return inherited(value) - 7; }
+int main() { Derived value{7}; value.value = 11; return inherited(value) - 11; }
 )gti");
   if (!source.semanticValid || !source.mir.valid()) {
     for (const auto &diagnostic : source.diagnostics)
@@ -53,13 +58,17 @@ int main() { Derived value{7}; return inherited(value) - 7; }
     if (selected) break;
   }
   expect(selected.has_value(), "fixture must preserve an exact inherited typed place");
-  for (int mutation = 0; mutation != 3; ++mutation) {
+  for (int mutation = 0; mutation != 4; ++mutation) {
     auto broken = source.mir;
     auto *body = findMirBody(broken, *selected);
     auto &place = body->places[placeId - 1];
     if (mutation == 0) {
       for (auto &step : place.key->projections)
         if (step.kind == PlaceProjectionKind::Base) { step.baseOwner += 1000; break; }
+    } else if (mutation == 3) {
+      std::erase_if(place.projections, [](const auto &step) {
+        return step.kind == MirProjectionKind::Base;
+      });
     } else {
       for (auto &step : place.projections)
         if (step.kind == MirProjectionKind::Base) {
@@ -152,6 +161,147 @@ int main() { int number = 7; Derived view{number, 1}; return 0; }
     expect(!verifyMirProgram(broken).valid(),
            "Base publication rejects missing retention, origin, complete evidence, rollback type and early release");
   }
+}
+void checkReferenceErasureLifetimeAuthority() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto prelude = std::filesystem::weakly_canonical(root / "prelude.gti");
+  const auto capability = std::filesystem::weakly_canonical(root / "std/detail/memory_capabilities.gti");
+  const auto entry = std::filesystem::weakly_canonical(root / "__trusted_tests__/lifetime-erasure-mir.gti");
+  const std::string declarations = R"gti(
+export module detail.memory_capabilities;
+namespace gti_internal {
+export class erased_object {};
+export erased_object& erase_reference<T>(T& object);
+export mut erased_object& erase_reference_mut<T>(mut T& object);
+export unsafe T&<a> restore_reference<T, lifetime a>(erased_object&<a> object) requires outlives<T, a>;
+export unsafe mut T&<a> restore_reference_mut<T, lifetime a>(mut erased_object&<a> object) requires outlives<T, a>;
+}
+)gti";
+  const std::string source = R"gti(
+import "../std/detail/memory_capabilities.gti";
+using Opaque = gti_internal::erased_object;
+Opaque& erase<T>(T& source) { return gti_internal::erase_reference(source); }
+mut Opaque& erase_mut<T>(mut T& source) { return gti_internal::erase_reference_mut(source); }
+unsafe T&<a> restore<T, lifetime a>(Opaque&<a> source) requires outlives<T, a> {
+  unsafe { return gti_internal::restore_reference<T>(source); }
+}
+unsafe mut T&<a> restore_mut<T, lifetime a>(mut Opaque&<a> source) requires outlives<T, a> {
+  unsafe { return gti_internal::restore_reference_mut<T>(source); }
+}
+struct Borrowed<lifetime storage> {
+  int&<storage> value;
+  Borrowed(int&<storage> source) : value(source) {}
+};
+unsafe Borrowed<storage>&<shell> recover<lifetime storage, lifetime shell>(Opaque&<shell> source)
+    requires outlives<storage, shell> {
+  unsafe { return restore<Borrowed<storage>, shell>(source); }
+}
+int inspect<lifetime storage, lifetime shell>(Borrowed<storage>&<shell> source) {
+  unsafe { return recover<storage, shell>(erase(source)).value; }
+}
+int main() {
+  mut int number = 3;
+  unsafe { restore_mut<int>(erase_mut(number)) = 7; }
+  Borrowed view{number};
+  unsafe { return restore<int>(erase(number)) + inspect(view) - 14; }
+}
+)gti";
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      entry, source, {prelude, entry},
+      {{prelude.string(), ""}, {capability.string(), declarations}, {entry.string(), source}}, {root});
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(),
+         "trusted erased views preserve read/mutable origins and independently prove restored borrowed types");
+  struct Site { MirBodyAddress body; MirInstructionId instruction; IntrinsicKind intrinsic; };
+  std::vector<Site> sites;
+  std::vector<IntrinsicKind> kinds;
+  for (const auto address : enumerateMirBodyAddresses(checked.mir))
+    if (const auto *body = findMirBody(checked.mir, address))
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.intrinsic == IntrinsicKind::EraseReference ||
+              instruction.intrinsic == IntrinsicKind::EraseReferenceMut ||
+              instruction.intrinsic == IntrinsicKind::RestoreReference ||
+              instruction.intrinsic == IntrinsicKind::RestoreReferenceMut) {
+            expect(checkedMirCallableLifetimeSignature(checked.mir, instruction) &&
+                       instantiateMirLifetimeTarget(checked.mir, instruction),
+                   "every erased-view operation has a rederived trusted lifetime rule");
+            sites.push_back({address, instruction.id, instruction.intrinsic});
+            if (std::find(kinds.begin(), kinds.end(), instruction.intrinsic) == kinds.end())
+              kinds.push_back(instruction.intrinsic);
+          }
+  expect(kinds.size() == 4, "erased-view fixture reaches all four trusted operations");
+  const auto instructionAt = [](MirBody &body, MirInstructionId id) -> MirInstruction * {
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == id) return &instruction;
+    return nullptr;
+  };
+  bool borrowedRestoration = false;
+  for (const auto &site : sites) {
+    const bool restoring = site.intrinsic == IntrinsicKind::RestoreReference ||
+                           site.intrinsic == IntrinsicKind::RestoreReferenceMut;
+    for (int mutation = 0; mutation != 10; ++mutation) {
+      auto broken = checked.mir;
+      auto *body = findMirBody(broken, site.body);
+      auto *instruction = instructionAt(*body, site.instruction);
+      auto &application = instruction->lifetimeApplication;
+      auto &witness = *application.callableSignature;
+      const auto outer = witness.signature.arguments.front().referenceLifetime;
+      switch (mutation) {
+      case 0: application.callableSignature.reset(); break;
+      case 1: witness.signatureBindings.push_back({outer, Lifetime::staticLifetime()}); break;
+      case 2: witness.contract.receiver = outer; break;
+      case 3: witness.contract.bounds.push_back({Lifetime::staticLifetime(), outer}); break;
+      case 4: witness.signature.arguments[1].referenceLifetime = Lifetime::staticLifetime(); break;
+      case 5: witness.signature.arguments[restoring ? 1 : 0].arguments.front().classId += 100000; break;
+      case 6:
+        instruction->intrinsic = restoring
+            ? (site.intrinsic == IntrinsicKind::RestoreReference ? IntrinsicKind::RestoreReferenceMut
+                                                               : IntrinsicKind::RestoreReference)
+            : (site.intrinsic == IntrinsicKind::EraseReference ? IntrinsicKind::EraseReferenceMut
+                                                             : IntrinsicKind::EraseReference);
+        break;
+      case 7: application.bindings.clear(); break;
+      case 8: application.complete = false; break;
+      case 9:
+        witness.contract.requirements.nodes.push_back(
+            {.kind = LifetimeRequirementNode::Kind::SemanticPredicate, .predicate = 1, .semanticTruth = true});
+        witness.contract.requirements.root = witness.contract.requirements.nodes.size() - 1;
+        break;
+      }
+      expect(!verifyMirLifetimeApplications(broken, *body, site.body.owner).valid(),
+             "erased-view witnesses cannot invent scope, access, capability, receiver facts or requirements");
+    }
+    if (!restoring) continue;
+    auto missing = checked.mir;
+    auto *body = findMirBody(missing, site.body);
+    auto *instruction = instructionAt(*body, site.instruction);
+    const auto signature = instantiateMirLifetimeTarget(missing, *instruction);
+    expect(signature.has_value(), "restoration mutation starts from the exact applied signature");
+    const LifetimeTypeBound required{signature->returnType.arguments.front(),
+                                     signature->returnType.referenceLifetime};
+    const auto removed = std::erase(instruction->lifetimeApplication.typeObligations, required);
+    std::erase(body->lifetimeBody.typeObligations, required);
+    expect(removed != 0 && !verifyMirLifetimeApplications(missing, *body, site.body.owner).valid(),
+           "restored referent validity cannot disappear from both application and body facts");
+    if (required.type.kind != SemanticType::Class || required.type.lifetimeArguments.empty())
+      continue;
+    borrowedRestoration = true;
+    auto stronger = checked.mir;
+    body = findMirBody(stronger, site.body);
+    instruction = instructionAt(*body, site.instruction);
+    // A forged extra obligation is not an assumption. Even with complete
+    // application/body metadata, the independent stored region is not static.
+    const LifetimeTypeBound forged{required.type, Lifetime::staticLifetime()};
+    instruction->lifetimeApplication.typeObligations.push_back(forged);
+    body->lifetimeBody.typeObligations.push_back(forged);
+    expect(!verifyMirLifetimeApplications(stronger, *body, site.body.owner).valid(),
+           "unsafe opaque restoration cannot manufacture static validity for a nested borrowed type");
+  }
+  expect(borrowedRestoration, "restoration fixture exercises a concrete borrowed type obligation");
 }
 } // namespace
 
@@ -1211,6 +1361,7 @@ int main() {
              failure->primary.end == targetOffset + std::string("constrained").size() &&
              failure->fixes.empty(),
          "an invocation pointer cannot discard a target outlives requirement or invent a repair");
+  checkReferenceErasureLifetimeAuthority();
   checkProgramBasePathAuthority();
   checkBorrowedBasePublication();
   std::cout << "lifetime MIR contracts passed\n";

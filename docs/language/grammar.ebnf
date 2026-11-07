@@ -654,8 +654,7 @@ constructor-initializer-list
                          { "," constructor-initializer } ;
 
 constructor-initializer
-                       = base-type "(" [ initializer-expression
-                         { "," initializer-expression } ] ")" ;
+                       = base-type "(" [ argument-list ] ")" ;
 
 destructor-declaration = "~" IDENTIFIER "(" ")"
                          ( block | default-member-specifier ) ;

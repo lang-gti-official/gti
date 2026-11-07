@@ -437,8 +437,10 @@ constructor declaration hover retains its symbolic
 local type/value parameters and requirements, while selected construction
 hover substitutes the exact inferred arguments, requirements, and parameter
 types from `ResolvedConstructionInfo`. Definition, references, and signature
-help keep the generic constructor declaration's semantic identity. Method
-calls also apply the concrete receiver specialization retained in
+help keep the generic constructor declaration's semantic identity. Constructor
+initializer argument lists accept the same final named pack expansion as
+ordinary calls, while preserving brace-array arguments in the structural editor
+grammar. Method calls also apply the concrete receiver specialization retained in
 `ResolvedCallInfo::dispatchOwner`, including generic class type arguments.
 Forwarding-only parameters are identified without inventing a signature. The
 protocol adapter only serializes these notes. Hovering the parameter binding

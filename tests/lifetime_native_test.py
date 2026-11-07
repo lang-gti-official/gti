@@ -118,6 +118,14 @@ int main() {
   return carrier.invoke(first, view) - 8;
 }
 """,
+    "fixed_pack_call_defaults": """
+int choose(int first, int second = 5) { return first + second; }
+int choose(bool first, int second) { return second; }
+int defaulted(int value = 9) { return value; }
+int relay<Args...>(Args... values) { return choose(values...); }
+int emptyRelay<Args...>(Args... values) { return defaulted(values...); }
+int main() { return relay(3) + relay(true, 4) + emptyRelay() - 21; }
+""",
     "elided_identity": """
 int& identity(int& value) { return value; }
 int main() { int value = 7; return identity(value) - 7; }
@@ -312,6 +320,12 @@ int bump(mut int& first, mut int& second) {
   return first + second;
 }
 int main() { mut Derived pair{}; return bump(pair.left, pair.right) - 5; }
+""",
+    "elided_conformance_head_regions": """
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+concept Inspect<T> { int inspect(T& input); };
+for concept Inspect<View> { int inspect(View& input) { return input.value; } };
+int main() { int value = 7; View view{value}; return Inspect<View>::inspect(view) - 7; }
 """,
     "checked_operator_lifetime_applications": """
 struct Reader<lifetime a> {
@@ -704,6 +718,7 @@ def main():
             [args.census.resolve(), root, example.name], "public-example-census"))
     inherited_example = Path(__file__).resolve().parent / "fixtures/llvm_dispatch_borrowed_base.gti"
     cases = {"public_example": example.read_text(),
+             "public_variadic_example": (root / "examples/015-variadic-generics.gti").read_text(),
              "inherited_legacy_elision": inherited_example.read_text(), **CASES}
     for label, source in cases.items():
         path = output / (label + ".gti")

@@ -538,6 +538,46 @@ void testNativeInvocationScopes() {
          "native invocation types reject an escaped binder occurrence");
 }
 
+void testReferenceErasureContracts() {
+  using namespace lang;
+  const auto a = Lifetime::parameter(710);
+  const auto opaque = SemanticType::classType(17);
+  const auto referent = SemanticType::typeParameter(711);
+  const auto formation = [](const SemanticType &) {
+    return std::optional{LifetimeRequirementFormula{}};
+  };
+  auto signature = SemanticType::functionSignature(
+      SemanticType::referenceTo(referent, AccessMode::ReadOnly, a),
+      {SemanticType::referenceTo(opaque, AccessMode::ReadOnly, a)});
+  signature.quantifiedLifetimes = {a.id};
+  const auto ordinary = callableLifetimeContract(signature, formation);
+  const auto restored = referenceErasureLifetimeContract(signature, true, formation);
+  const LifetimeTypeBound required{referent, a};
+  expect(ordinary && restored &&
+             std::find(ordinary->typeBounds.begin(), ordinary->typeBounds.end(), required) ==
+                 ordinary->typeBounds.end() &&
+             std::find(restored->typeBounds.begin(), restored->typeBounds.end(), required) !=
+                 restored->typeBounds.end() &&
+             restored->requirements.nodes.size() == 1 &&
+             restored->requirements.nodes.front().kind == LifetimeRequirementNode::Kind::Type &&
+             restored->requirements.nodes.front().type == referent &&
+             restored->requirements.nodes.front().bound.shorter == a,
+         "restoration independently requires the exact output referent validity, not an opaque input premise");
+  std::swap(signature.arguments[0], signature.arguments[1]);
+  const auto erased = referenceErasureLifetimeContract(signature, false, formation);
+  expect(erased && erased->requirements.nodes.empty() &&
+             std::find(erased->typeBounds.begin(), erased->typeBounds.end(), required) !=
+                 erased->typeBounds.end(),
+         "erasure keeps ordinary typed-input validity without inventing a new output obligation");
+  signature.arguments.front().referenceLifetime = Lifetime::staticLifetime();
+  expect(!referenceErasureLifetimeContract(signature, false, formation),
+         "an erasure witness cannot strengthen the source region to static");
+  signature.arguments.front().referenceLifetime = a;
+  signature.arguments.front().referenceAccess = AccessMode::Mutable;
+  expect(!referenceErasureLifetimeContract(signature, false, formation),
+         "an erasure witness cannot strengthen the source access");
+}
+
 int main() {
   testInlineBorrowPathDisjointness();
   testBorrowConditionTransport();
@@ -548,6 +588,7 @@ int main() {
   testScopedCallableFormation();
   testContextualLifetimeInference();
   testNativeInvocationScopes();
+  testReferenceErasureContracts();
   const auto a = Lifetime::parameter(1);
   const auto b = Lifetime::parameter(2);
   const auto x = Lifetime::parameter(31);

@@ -16,10 +16,12 @@ export mut erased_object& erase_mut<T>(mut T& object) {
 }
 /// The caller must restore precisely the original referent type. Lifetime
 /// and shared/exclusive access remain checked even inside unsafe.
-export unsafe T& restore_ref<T>(erased_object& object) {
+export unsafe T&<a> restore_ref<T, lifetime a>(erased_object&<a> object)
+    requires outlives<T, a> {
   unsafe { return gti_internal::restore_reference<T>(object); }
 }
-export unsafe mut T& restore_mut<T>(mut erased_object& object) {
+export unsafe mut T&<a> restore_mut<T, lifetime a>(mut erased_object&<a> object)
+    requires outlives<T, a> {
   unsafe { return gti_internal::restore_reference_mut<T>(object); }
 }
 /// Complete object types supported by the runtime representation query.

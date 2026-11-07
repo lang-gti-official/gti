@@ -2471,17 +2471,21 @@ const MirLoan *erasedReferenceResultLoan(const MirProgram &program,
           (restoring ? UnsafeOperationKind::ErasedReferenceRestore
                      : UnsafeOperationKind::None))
     return nullptr;
+  const auto signature = instantiateMirLifetimeTarget(program, instruction);
+  if (!signature || signature->parameterTypes != instruction.parameterTypes ||
+      signature->returnType.kind != SemanticType::Reference ||
+      signature->returnType.arguments.size() != 1 ||
+      signature->returnType.referenceAccess != access ||
+      signature->returnType.arguments.front() != instruction.info.type ||
+      signature->returnType.referenceLifetime !=
+          instruction.parameterTypes.front().referenceLifetime)
+    return nullptr;
   const auto &opaque =
       restoring ? instruction.parameterTypes.front().arguments.front()
                 : instruction.info.type;
-  const bool exactOpaque =
-      opaque.kind == SemanticType::Class && opaque.arguments.empty() &&
-      std::any_of(program.classInstances().begin(),
-                  program.classInstances().end(), [&](const auto &owner) {
-                    return owner.type == opaque &&
-                           owner.compilerCapability ==
-                               CompilerCapabilityTypeKind::ErasedObject;
-                  });
+  const auto owner = mirClassLifetimeView(program, opaque);
+  const bool exactOpaque = owner && opaque.arguments.empty() &&
+      owner->instance->compilerCapability == CompilerCapabilityTypeKind::ErasedObject;
   const auto source =
       borrowSourceForOperand(body, instruction.operands.front());
   const auto *loan = body.findLoan(*instruction.loan);

@@ -1123,6 +1123,33 @@ private:
     std::vector<std::size_t> packPath;
   };
 
+  // A transient syntax view for flat argument positions. It never evaluates
+  // or clones an expression; forwarded lanes retain their provenance in the
+  // accompanying AnalyzedCallArgument, including the complete packPath.
+  struct CallArgumentExpressions {
+    std::vector<std::reference_wrapper<const ExprPtr>> values;
+
+    CallArgumentExpressions() = default;
+    CallArgumentExpressions(const ExprList &expressions)
+        : CallArgumentExpressions(std::span<const ExprPtr>(expressions)) {}
+    CallArgumentExpressions(std::span<const ExprPtr> expressions) {
+      for (const auto &expression : expressions)
+        values.emplace_back(expression);
+    }
+    CallArgumentExpressions(std::span<const AnalyzedCallArgument> arguments) {
+      static const ExprPtr absent;
+      for (const auto &argument : arguments)
+        values.emplace_back(argument.expression ? *argument.expression : absent);
+    }
+    [[nodiscard]] std::size_t size() const { return values.size(); }
+    [[nodiscard]] bool empty() const { return values.empty(); }
+    [[nodiscard]] const ExprPtr &operator[](std::size_t index) const {
+      return values[index].get();
+    }
+    [[nodiscard]] auto begin() const { return values.begin(); }
+    [[nodiscard]] auto end() const { return values.end(); }
+  };
+
   struct ContextualCallArguments {
     std::vector<SemanticType> types;
     std::vector<bool> deferred;
@@ -3502,8 +3529,9 @@ private:
 
   void
   validateMutableCallArgumentLoans(std::span<const SemanticType> parameterTypes,
-                                   std::span<const ExprPtr> arguments,
-                                   const Token &location);
+                                   const CallArgumentExpressions &arguments,
+                                   const Token &location,
+                                   std::span<const AnalyzedCallArgument> concrete = {});
 
   struct TransientBorrowProduction {
     SemanticLoanPlace place;
@@ -4063,7 +4091,7 @@ private:
   attachConstraintCallContext(ConstraintFailure &failure,
                               const CallableCandidate &candidate,
                               const std::vector<SemanticType> &argumentTypes,
-                              const ExprList &expressions) const;
+                              const CallArgumentExpressions &expressions) const;
 
   void warnCheckedOverloadOverlap(const CallableCandidate &left,
                                   const CallableCandidate &right);
@@ -4080,7 +4108,7 @@ private:
       CallableCandidate &function,
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<CompileTimeValue> &explicitValueArguments,
-      const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
+      const std::vector<SemanticType> &argumentTypes, const CallArgumentExpressions &arguments,
       const Token &paren, bool checkedArguments = false);
 
   bool explicitFunctionLifetimeSubstitution(
@@ -4098,7 +4126,7 @@ private:
       CallableCandidate &function,
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<CompileTimeValue> &explicitValueArguments,
-      const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
+      const std::vector<SemanticType> &argumentTypes, const CallArgumentExpressions &arguments,
       const Token &paren, bool checkedArguments = false);
 
   [[nodiscard]] bool tryInferTypeArguments(
@@ -4113,11 +4141,20 @@ private:
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<CompileTimeValue> &explicitValueArguments,
       const std::vector<SemanticType> &argumentTypes,
-      const ExprList &expressions, CallableCandidate &resolved,
+      const CallArgumentExpressions &expressions, CallableCandidate &resolved,
       std::vector<SemanticType> &resolvedTypeArguments,
       std::vector<CompileTimeValue> &resolvedValueArguments,
       ConstraintFailure *constraintFailure = nullptr,
       bool checkedArguments = false);
+
+  [[nodiscard]] bool tryInstantiateFunction(
+      const CallableCandidate &candidate,
+      const std::vector<SemanticType> &explicitTypeArguments,
+      const std::vector<CompileTimeValue> &explicitValueArguments,
+      std::span<const AnalyzedCallArgument> arguments, CallableCandidate &resolved,
+      std::vector<SemanticType> &resolvedTypeArguments,
+      std::vector<CompileTimeValue> &resolvedValueArguments,
+      ConstraintFailure *constraintFailure = nullptr, bool checkedArguments = false);
 
   [[nodiscard]] static bool containsLambdaType(const SemanticType &type);
 
@@ -4201,7 +4238,7 @@ private:
   bool validateConfinedCallableArguments(
       const CallableCandidate &candidate, const CallableCandidate &,
       const std::vector<SemanticType> &argumentTypes,
-      const ExprList &arguments);
+      const CallArgumentExpressions &arguments);
 
   [[nodiscard]] static std::vector<CallableArgumentBoundary>
   lambdaArgumentBoundaries(const std::vector<SemanticType> &argumentTypes);
@@ -4271,8 +4308,9 @@ private:
   [[nodiscard]] bool
   validateSelectedFunction(const CallableCandidate &function,
                            const ExprPtr &callee, const Token &paren,
-                           std::span<const ExprPtr> arguments,
-                           CallReceiverMode receiverMode);
+                           const CallArgumentExpressions &arguments,
+                           CallReceiverMode receiverMode,
+                           std::span<const AnalyzedCallArgument> concrete = {});
 
   // Whether a consuming method's (instantiated) result is a reference or
   // carries tracked borrowed state, which its consumed receiver cannot keep
@@ -4432,7 +4470,8 @@ private:
                      std::vector<std::size_t> ephemeralBorrowArguments,
                      std::vector<CallableArgumentBoundary> callableArguments,
                      CallReceiverMode receiverMode,
-                     const ExprPtr *argumentReceiver = nullptr);
+                     const ExprPtr *argumentReceiver = nullptr,
+                     std::optional<std::size_t> suppliedArgumentCount = {});
 
   void requireFunctionDefinition(const CallableCandidate &function,
                                  const Token &location);
@@ -4519,7 +4558,7 @@ private:
       const CallableCandidate &target,
       const std::vector<SemanticType> &explicitTypeArguments,
       const std::vector<CompileTimeValue> &explicitValueArguments,
-      const ExprList &arguments, ContextualCallArguments &analysis,
+      const CallArgumentExpressions &arguments, ContextualCallArguments &analysis,
       bool diagnose);
 
   [[nodiscard]] bool
@@ -4546,7 +4585,7 @@ private:
 
   bool finishContextualCallArguments(
       const std::vector<SemanticType> &parameterTypes,
-      const ExprList &arguments, ContextualCallArguments &analysis,
+      const CallArgumentExpressions &arguments, ContextualCallArguments &analysis,
       const Token &location, std::string_view callable);
 
   [[nodiscard]] bool
@@ -4580,7 +4619,7 @@ private:
                                         const SemanticType &parameter);
 
   void adoptContextualIntegerLiteralArguments(
-      std::span<const SemanticType> parameterTypes, const ExprList &arguments,
+      std::span<const SemanticType> parameterTypes, const CallArgumentExpressions &arguments,
       std::vector<SemanticType> &argumentTypes,
       std::span<const std::size_t> indices);
 
@@ -4614,6 +4653,9 @@ private:
   functionCallArgumentMatch(const CallableCandidate &function,
                             std::size_t index, const SemanticType &argument,
                             const ExprPtr &expression, bool deferred);
+  [[nodiscard]] CallArgumentMatchKind
+  functionCallArgumentMatch(const CallableCandidate &function,
+                            std::size_t index, const AnalyzedCallArgument &argument);
 
   void reportCallArgumentMismatch(std::size_t index,
                                   const SemanticType &parameter,
@@ -5402,6 +5444,9 @@ private:
   void resolveProtocolConcept(RegisteredConcept &conceptInfo, bool &valid);
   void registerConformances(const StmtList &statements,
                             std::vector<std::string> scope);
+  [[nodiscard]] SemanticType conformanceOperationType(
+      const RegisteredConformance &conformance, const SemanticType &type) const;
+  void contextualizeConformanceLifetimeSignature(CallableCandidate &function);
   void bindConformanceOperations();
   void validateConformanceTypes(const ConformanceDecl &declaration);
   [[nodiscard]] std::optional<ConformanceMatch>

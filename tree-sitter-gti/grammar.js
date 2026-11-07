@@ -594,7 +594,13 @@ module.exports = grammar({
       seq(
         "(",
         optional(
-          commaSep1(choice($._expression_not_comma, $.array_initializer)),
+          choice(
+            $.pack_expansion,
+            seq(
+              commaSep1(choice($._expression_not_comma, $.array_initializer)),
+              optional(seq(",", $.pack_expansion)),
+            ),
+          ),
         ),
         ")",
       ),

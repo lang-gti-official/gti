@@ -1274,14 +1274,23 @@ existing restriction on inline protocol constraints such as `<measurable T>`
 remains; write protocol applications in the trailing clause.
 
 A block function is an ordinary function definition. The block's parameters
-apply to it, and it cannot declare its own generic parameters or a requires
-clause. Like the operation it defines, it declares no default arguments, so
+apply to it. An operation may add lifetime binders and lifetime requirements
+that satisfy its interface; it cannot add ordinary type/value parameters or
+stronger lifetime preconditions. Like the operation it defines, it declares no default arguments, so
 a call accepts the same arguments whether it names a concrete type or goes
 through a requirement. Inside the block:
 - the block's associated types are transparent, whether written as
   `unit_type` or as `measurable<Crate<T>>::unit_type`;
 - each operation requires the block's own application and its trailing requirements;
 - the block's functions can call each other by name.
+
+Omitted lifetimes in a conformance head are implicit block parameters. For
+example, `for concept Inspect<View>` covers the stored regions of `View` without
+naming them. An operation's omitted `View` slots inherit that exact head
+relationship, while a reference to the `View` shell still has its own lifetime.
+Explicit named or `static` arguments retain their meaning and must match the
+interface. An associated alias such as `using Item = int&` follows ordinary
+per-use elision; an ambiguous returned reference still needs a named relation.
 
 ### Selection and coherence
 
