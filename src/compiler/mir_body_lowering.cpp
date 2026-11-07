@@ -10619,6 +10619,123 @@ private:
         });
   }
 
+  [[nodiscard]] std::optional<HirLoan>
+  completeCallResultRetention(MirLoanId id, const HirValue &value,
+                              const HirLoan &recorded) {
+    const auto *published = output.findLoan(id);
+    const auto lowered = loweredValues.find(value.id);
+    const auto *result = lowered == loweredValues.end()
+                             ? nullptr : output.findValue(lowered->second);
+    if (!published || published->kind != MirLoanKind::CallResult ||
+        published->producedBy != value.id || published->entry ||
+        published->escapes || !published->carriers.empty() ||
+        published->referenceContents || published->contentsOpening ||
+        published->referenceSelection || !loanIsActive(scopes, id) ||
+        recorded.kind != SemanticLoanKind::Reference || recorded.entry ||
+        recorded.referenceContents || recorded.contentsOpening ||
+        recorded.referenceSelection || !value.borrowDependencies ||
+        !value.borrowDependencies->possibleAlternatives.empty() || !result ||
+        result->sourceValue != value.id || !result->borrowDependencies ||
+        !result->borrowDependencies->possibleAlternatives.empty())
+      return std::nullopt;
+    const auto *block = output.findBlock(result->definitionBlock);
+    const MirInstruction *producer = nullptr;
+    if (block)
+      for (const auto &instruction : block->instructions)
+        if (instruction.id == result->definition) {
+          if (producer)
+            return std::nullopt;
+          producer = &instruction;
+        }
+    if (!producer || producer->kind != MirInstructionKind::Call ||
+        producer->hirValue != value.id || producer->loan != id ||
+        producer->result != result->id)
+      return std::nullopt;
+
+    const auto *stored = output.findLoan(published->storedDependency);
+    const auto *semanticStored = stored && stored->semanticLoan
+                                    ? source.findLoan(stored->semanticLoan)
+                                    : nullptr;
+    if (!stored || stored->kind != MirLoanKind::Stored || !semanticStored ||
+        semanticStored->kind != SemanticLoanKind::StoredValue ||
+        !semanticLoans.contains(stored->semanticLoan) ||
+        semanticLoans.at(stored->semanticLoan) != stored->id ||
+        !loanIsActive(scopes, stored->id) ||
+        (recorded.storedDependency &&
+         recorded.storedDependency != stored->semanticLoan))
+      return std::nullopt;
+
+    std::vector<MirLoanDependency> actual{
+        {.source = published->source,
+         .parent = published->parent,
+         .designatedFields = published->designatedFields,
+         .access = published->access,
+         .conditions = published->conditions}};
+    actual.insert(actual.end(), published->additionalDependencies.begin(),
+                  published->additionalDependencies.end());
+    if (!std::is_permutation(actual.begin(), actual.end(),
+                             result->borrowDependencies->dependencies.begin(),
+                             result->borrowDependencies->dependencies.end()))
+      return std::nullopt;
+    std::vector<SemanticLoanDependency> expected{
+        {.place = recorded.place,
+         .designatedFields = recorded.designatedFields,
+         .access = recorded.access,
+         .parent = recorded.parent,
+         .conditions = recorded.conditions}};
+    expected.insert(expected.end(), recorded.additionalDependencies.begin(),
+                    recorded.additionalDependencies.end());
+    if (expected.size() != actual.size())
+      return std::nullopt;
+    std::vector<SemanticLoanDependency> ordered;
+    std::vector<bool> used(expected.size());
+    for (const auto &dependency : actual) {
+      const auto *place = output.findPlace(dependency.source);
+      if (!place || !place->key || dependency.referenceContents)
+        return std::nullopt;
+      std::optional<std::size_t> selected;
+      for (std::size_t index = 0; index < expected.size(); ++index) {
+        const auto &candidate = expected[index];
+        const auto parent = candidate.parent == 0 ? MirLoanId{0}
+            : semanticLoans.contains(candidate.parent)
+                ? semanticLoans.at(candidate.parent) : MirLoanId{0};
+        if (used[index] || candidate.referenceContents ||
+            candidate.place != *place->key ||
+            (candidate.parent && (!parent || !loanIsActive(scopes, parent))) ||
+            parent != dependency.parent || candidate.access != dependency.access ||
+            candidate.designatedFields != dependency.designatedFields ||
+            candidate.conditions != dependency.conditions)
+          continue;
+        if (selected)
+          return std::nullopt;
+        selected = index;
+      }
+      if (!selected)
+        return std::nullopt;
+      used[*selected] = true;
+      ordered.push_back(expected[*selected]);
+    }
+    // The complete semantic set records all lifetime suppliers; its first
+    // supplier need not be the call's evaluated address. Preserve that exact
+    // producer and its independently derived Stored relation, changing only
+    // the temporary view used to attach the binding's semantic identity.
+    const auto address = placeForValue(value.id);
+    const auto *place = output.findPlace(address);
+    if (!place || place->root != MirPlaceRootKind::Loan || place->loan != id ||
+        !place->projections.empty() || place->sourceValue != value.id ||
+        place->type != value.info.type)
+      return std::nullopt;
+    HirLoan view = recorded;
+    view.place = ordered.front().place;
+    view.parent = ordered.front().parent;
+    view.access = ordered.front().access;
+    view.designatedFields = ordered.front().designatedFields;
+    view.conditions = ordered.front().conditions;
+    view.additionalDependencies.assign(ordered.begin() + 1, ordered.end());
+    view.storedDependency = stored->semanticLoan;
+    return view;
+  }
+
   // A retained binding may name a call result the expression reached through
   // more than one link: in `carrier.right.reach().write()` the receiver of
   // `write()` is itself a borrowed call result, so lowering builds a chain of
@@ -13046,6 +13163,25 @@ private:
                 .type = value->info.type};
       }
 
+      if (const auto *published = output.findLoan(existing);
+          published && published->kind == MirLoanKind::CallResult &&
+          published->producedBy == valueId && published->storedDependency &&
+          value->borrowDependencies &&
+          value->info.traits.containsBorrowedState &&
+          !desired->additionalDependencies.empty() && !exactRangeElement &&
+          !desired->referenceSelection && borrowsCarrierStorage(*value)) {
+        const auto retained = completeCallResultRetention(existing, *value, *desired);
+        if (!retained) {
+          reject(valueId, "reference initializer does not preserve its complete "
+                          "call-result suppliers and evaluated address");
+          return {};
+        }
+        recordLoanIdentity(existing, *retained, binding);
+        return {.kind = MirOperandKind::Loan,
+                .loan = existing,
+                .type = value->info.type};
+      }
+
       const auto desiredSourcePlace = [&]() {
         // Semantic places describe overlap, not every executable projection.
         // In particular a reference field's identity omits its dereference.
@@ -13412,11 +13548,12 @@ private:
     const auto conditions = source->conditions;
     const MirLoanId published = createLoan(MirLoanKind::Stored, source->source,
                                            access, valueId, 0, BorrowPath{fieldProjection(field)});
+    // The primary field path is part of the transferred group's provenance
+    // even when no variant guard is needed. Dropping it would turn an inline
+    // carrier's selected field into a claim about the whole incoming value.
     output.loans[published - 1].additionalDependencies = dependencies;
-    if (!conditions.empty()) {
-      output.loans[published - 1].designatedFields = designatedFields;
-      output.loans[published - 1].conditions = conditions;
-    }
+    output.loans[published - 1].designatedFields = designatedFields;
+    output.loans[published - 1].conditions = conditions;
     (void)appendInstruction({.kind = MirInstructionKind::Borrow,
                              .hirValue = valueId,
                              .operands = {{.kind = MirOperandKind::Loan,

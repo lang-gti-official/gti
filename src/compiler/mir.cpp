@@ -6399,16 +6399,17 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         block.terminator.kind == MirTerminatorKind::ContainFailure ||
         block.terminator.kind == MirTerminatorKind::Exit) {
       for (const MirLoan &loan : body.loans) {
-        // A conditional field's exact external group must still be live when
-        // construction succeeds, independently of whether cleanup uses it.
+        // A published carrier's exact external group must still be live when
+        // construction succeeds, independently of guards or cleanup uses.
         // This additional rejection never grants publication authority.
         if (body.kind == MirBodyKind::Constructor &&
             block.terminator.kind == MirTerminatorKind::Return &&
             loan.kind == MirLoanKind::Stored && loan.escapes &&
-            !loan.storedPath.empty() && !loan.conditions.empty() &&
+            !loan.storedPath.empty() &&
+            (!loan.conditions.empty() || !loan.designatedFields.empty()) &&
             active[loan.id - 1] != MirLoanFlowState::Active)
           return failure(body, owner,
-                         "conditional constructor field publication is not "
+                         "constructor field publication is not "
                          "active at normal exit",
                          block.id);
         // A successful constructor publishes every cleanup-bound field along
@@ -13555,13 +13556,10 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           loan.storedPath.front().kind != PlaceProjectionKind::Base)))
       return failure(body, owner, "constructor publication has no exact structural destination");
     const bool basePublication = mir_detail::baseConstructorPublicationStage(body, loan) != nullptr;
-    const bool conditionalFieldPublication = basePublication ||
-        (body.kind == MirBodyKind::Constructor &&
-        loan.kind == MirLoanKind::Stored && loan.escapes && !loan.entry &&
-        !loan.storedPath.empty() && loan.producedBy != 0 && loan.parent == 0 &&
-        loan.storedDependency == 0 && !loan.conditions.empty());
+    const bool carrierFieldPublication = basePublication ||
+        mir_detail::storedCarrierConstructorPublication(body, loan);
     if (!loan.storedPath.empty() && !loan.designatedFields.empty() &&
-        !conditionalFieldPublication) {
+        !carrierFieldPublication) {
       return failure(body, owner,
                      "loan " + std::to_string(loan.id) +
                          " cannot both initialize and designate a stored "
@@ -13570,7 +13568,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
     if (!loan.designatedFields.empty() &&
         !((loan.kind == MirLoanKind::Stored && !loan.escapes) ||
           (loan.kind == MirLoanKind::Return && loan.escapes) ||
-          conditionalFieldPublication)) {
+          carrierFieldPublication)) {
       return failure(body, owner,
                      "loan " + std::to_string(loan.id) +
                          " designates a stored referent without being one "

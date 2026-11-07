@@ -467,6 +467,17 @@ Inherited storage requires exact constructor publication, independent
 program-aware MIR replay and cleanup validation before code generation; the
 structural path itself grants no lifetime, access or escape permission.
 
+A shared reference copied from an inline field of a local cleanup-bound carrier
+can retain that field's independent external suppliers. The return check uses
+the evaluated expression's exact place and the direct typed storage inventory,
+then checks every selected supplier's original shared parent chain. It rejects
+owned/local referents, exclusive parents, reference crossings, unknown paths and
+shortened fields that cannot satisfy the declared result region. The ordinary
+field read still names the carrier's Stored group; neither that group nor its
+other fields lose their cleanup obligations. MIR must independently capture the
+selected reference before retiring the carrier. This rule does not open the
+contents of a referenced object or make a lifetime-owner place an address.
+
 The shared callable contract derivation obtains each nominal application's
 formation formula from the owning phase. Semantics supplies the instantiated
 declaration contract; MIR supplies its verified nominal view. Inputs and

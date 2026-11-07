@@ -875,6 +875,28 @@ int&<a> external<lifetime a>(int&<a> input) {
 }
 int main() { int value = 7; int result = external(value); return result + observed - 23; }
 """,
+    "copied_reference_before_argument_failure": """
+struct Outer {
+  Outer() = default;
+  ~Outer() { std::println("outer"); }
+};
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  ~View() { std::println(this.value); }
+};
+int&<a> copied<lifetime a>(int&<a> input) {
+  View view{input};
+  return view.value;
+}
+int later(int divisor) { return 1 / divisor; }
+int consume<lifetime a>(int&<a> input, int unused) { return input; }
+int main() {
+  Outer outer{};
+  int number = 7;
+  return consume(copied(number), later(0));
+}
+""",
     "inherited_independent_referents": """
 struct Base<lifetime a> {
   int&<a> value;
@@ -1230,6 +1252,7 @@ def main():
                 failure_case = label in {
                     "borrowed_prepared_argument_failure",
                     "inherited_borrowed_base_rollback",
+                    "copied_reference_before_argument_failure",
                 }
                 executed = run([binary], label + "-" + mode + "-run", expect_success=not failure_case)
                 if failure_case:

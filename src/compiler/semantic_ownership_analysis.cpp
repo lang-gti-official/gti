@@ -5719,12 +5719,19 @@ auto SemanticVisitor::Impl::normalizedCompleteReturnBorrow(
     const FunctionInfo &function, const SemanticBorrowDependencySet &complete,
     std::vector<LifetimeBound> *requiredLifetimes)
     -> std::optional<FunctionBorrowDependencySummary> {
+  return normalizedCompleteReturnBorrow(function, complete, requiredLifetimes, nullptr);
+}
+
+auto SemanticVisitor::Impl::normalizedCompleteReturnBorrow(
+    const FunctionInfo &function, const SemanticBorrowDependencySet &complete,
+    std::vector<LifetimeBound> *requiredLifetimes, const Expr *sourceExpression)
+    -> std::optional<FunctionBorrowDependencySummary> {
   const auto *syntax = function.bodyDeclaration();
   if (!syntax)
     return std::nullopt;
   return normalizedCompleteBorrow(function, syntax->parameters(),
                                   syntax->receiverMutability(), complete,
-                                  requiredLifetimes);
+                                  requiredLifetimes, {}, sourceExpression);
 }
 
 auto SemanticVisitor::Impl::normalizedCompleteBorrow(
@@ -5733,6 +5740,17 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
     const SemanticBorrowDependencySet &complete,
     std::vector<LifetimeBound> *requiredLifetimes,
     std::span<const LambdaCaptureInfo> captures) const
+    -> std::optional<FunctionBorrowDependencySummary> {
+  return normalizedCompleteBorrow(function, parameters, receiverMutability, complete,
+                                  requiredLifetimes, captures, nullptr);
+}
+
+auto SemanticVisitor::Impl::normalizedCompleteBorrow(
+    const FunctionInfo &function, std::span<const Parameter> parameters,
+    ReceiverMutability receiverMutability,
+    const SemanticBorrowDependencySet &complete,
+    std::vector<LifetimeBound> *requiredLifetimes,
+    std::span<const LambdaCaptureInfo> captures, const Expr *sourceExpression) const
     -> std::optional<FunctionBorrowDependencySummary> {
   const auto formals = formalBorrowInputs(parameters, function.parameterTypes);
   if (!formals)
@@ -5800,6 +5818,10 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
 
   FunctionBorrowDependencySummary summary{.possibleAlternatives =
                                               complete.possibleAlternatives};
+  const auto sharedCopy = directReference &&
+                                 function.returnType.referenceAccess == AccessMode::ReadOnly
+                             ? checkedSharedStoredReferenceCopy(sourceExpression, complete)
+                             : std::nullopt;
   std::vector<LifetimeBound> pendingLifetimes;
   for (const auto &dependency : complete.dependencies) {
     const auto resultPath = std::find_if(
@@ -6008,8 +6030,16 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
     // cannot escape merely because its underlying place has that same root.
     std::unordered_set<SemanticLoanId> visiting;
     std::unordered_set<SemanticLoanId> checked;
-    std::vector<std::pair<SemanticLoanId, bool>> pending{
-        {dependency.parent, false}};
+    std::vector<std::pair<SemanticLoanId, bool>> pending;
+    if (sharedCopy && dependency.parent == sharedCopy->group) {
+      // The exact evaluated field read still retains its Stored group for
+      // formation and cleanup. Its copied shared reference keeps the selected
+      // field's original independent parents; no carrier loan is rewritten.
+      for (const auto parent : sharedCopy->independentParents)
+        pending.emplace_back(parent, false);
+    } else {
+      pending.emplace_back(dependency.parent, false);
+    }
     while (!pending.empty()) {
       const auto [id, completed] = pending.back();
       pending.pop_back();
@@ -6868,7 +6898,7 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
              : (!contextualResult && info->type != cleared.returnType &&
                 !sameLifetimeConversionShape(info->type, cleared.returnType))))
       return;
-    const auto normalized = normalizedCompleteReturnBorrow(cleared, *complete);
+    const auto normalized = normalizedCompleteReturnBorrow(cleared, *complete, nullptr, returned->value().get());
     // This source contract is still checked independently against executable
     // MIR return/call facts. Collecting it does not bypass payload admission,
     // ordinary escape checking, or the conditional loan proofs.
@@ -9969,6 +9999,154 @@ auto SemanticVisitor::Impl::hasRetainedBorrow(const Variable &variable) const
     -> bool {
   const Symbol *symbol = resolve(variable.name());
   return symbol != nullptr && !symbol->storageLoans.empty();
+}
+
+auto SemanticVisitor::Impl::checkedSharedStoredReferenceCopy(
+    const Expr *expression, const SemanticBorrowDependencySet &complete) const
+    -> std::optional<SharedStoredReferenceCopy> {
+  if (!expression || complete.dependencies.empty() || !complete.possibleAlternatives.empty())
+    return std::nullopt;
+  // This is the evaluated field/index expression's address selector, never
+  // loanPlace(expression) or a lifetime supplier's place. The direct carrier
+  // inventory below proves every inline step and stops at the first reference.
+  const auto *selectedPlace = semanticModel.findPlace(*expression);
+  const auto *expressionInfo = semanticModel.findExpression(*expression);
+  if (!selectedPlace || selectedPlace->receiver || !selectedPlace->root ||
+      selectedPlace->projections.empty() ||
+      !isWellFormedBorrowPath(selectedPlace->projections) || !expressionInfo ||
+      expressionInfo->category != ValueCategory::Place ||
+      expressionInfo->access != AccessMode::ReadOnly)
+    return std::nullopt;
+  const auto groupId = complete.dependencies.front().parent;
+  const auto *group = semanticModel.findLoan(groupId);
+  if (!group || group->kind != SemanticLoanKind::StoredValue || !group->lifecycleBound ||
+      group->entry || group->referenceContents || group->contentsOpening ||
+      std::find(group->carriers.begin(), group->carriers.end(), selectedPlace->root) == group->carriers.end())
+    return std::nullopt;
+  const auto *record = semanticModel.database().findSymbol(selectedPlace->root);
+  if (!record || (record->kind != SymbolKind::LocalVariable && record->kind != SymbolKind::Parameter))
+    return std::nullopt;
+  auto carrier = record->type;
+  for (const auto &scope : scopes)
+    for (const auto &[_, symbol] : scope)
+      if (symbol.toolingSymbol == selectedPlace->root ||
+          symbolForDeclaration(symbol.declaration) == selectedPlace->root)
+        carrier = symbol.type;
+  if (carrier.kind == SemanticType::Unknown || carrier.kind == SemanticType::Reference)
+    return std::nullopt;
+  const auto inventory = storedReferenceInventory(carrier);
+  if (!inventory)
+    return std::nullopt;
+  const bool exactField = std::any_of(inventory->begin(), inventory->end(), [&](const auto &field) {
+    // The direct inventory stops at references. Matching the full selected
+    // path therefore proves inline Field/Base/index storage, with no implicit
+    // reference crossing or detached lifetime-owner projection.
+    return field.conditions.empty() && field.reference.kind == SemanticType::Reference &&
+           field.reference.arguments.size() == 1 &&
+           field.reference.referenceAccess == AccessMode::ReadOnly &&
+           field.reference.referenceLifetime.specified() &&
+           equivalentLifetimeTypes(field.reference.arguments.front(), expressionInfo->type) &&
+           storedBorrowPath(carrier, field.fields) == selectedPlace->projections;
+  });
+  if (!exactField)
+    return std::nullopt;
+  std::vector<SemanticLoanDependency> selected;
+  const auto retain = [&](SemanticLoanDependency dependency) {
+    if (dependency.designatedFields == selectedPlace->projections)
+      selected.push_back(std::move(dependency));
+  };
+  retain({.place = group->place, .referenceContents = group->referenceContents,
+          .designatedFields = group->designatedFields, .access = group->access,
+          .protectsStorage = group->protectsStorage, .parent = group->parent,
+          .conditions = group->conditions});
+  for (const auto &dependency : group->additionalDependencies)
+    retain(dependency);
+  if (selected.empty())
+    return std::nullopt;
+  const auto sameSource = [&](const SemanticLoanDependency &value,
+                              const SemanticLoanDependency &stored) {
+    return value.parent == groupId && value.place.valid() && value.place == stored.place &&
+           !value.referenceContents && !stored.referenceContents &&
+           value.designatedFields.empty() && value.conditions.empty() && stored.conditions.empty() &&
+           value.access == AccessMode::ReadOnly && stored.access == AccessMode::ReadOnly &&
+           value.protectsStorage == stored.protectsStorage;
+  };
+  for (const auto &value : complete.dependencies)
+    if (std::none_of(selected.begin(), selected.end(), [&](const auto &stored) {
+          return sameSource(value, stored);
+        }))
+      return std::nullopt;
+  for (const auto &stored : selected)
+    if (std::none_of(complete.dependencies.begin(), complete.dependencies.end(), [&](const auto &value) {
+          return sameSource(value, stored);
+        }))
+      return std::nullopt;
+
+  const auto staticStorage = [&](const SemanticLoanPlace &place) {
+    const auto *symbol = semanticModel.database().findSymbol(place.root);
+    return place.valid() && !place.receiver && symbol && !symbol->threadLocal &&
+           !semanticModel.findForeignStorage(place.root) &&
+           (symbol->kind == SymbolKind::GlobalVariable ||
+            (symbol->kind == SymbolKind::Field && symbol->staticMember));
+  };
+  SharedStoredReferenceCopy result{.group = groupId};
+  for (const auto &stored : selected) {
+    if (!stored.parent) {
+      if (!staticStorage(stored.place))
+        return std::nullopt;
+    } else if (std::find(result.independentParents.begin(), result.independentParents.end(), stored.parent) ==
+               result.independentParents.end()) {
+      result.independentParents.push_back(stored.parent);
+    }
+  }
+  BorrowInventoryBudget budget;
+  std::unordered_set<SemanticLoanId> visiting;
+  std::unordered_set<SemanticLoanId> checked;
+  std::vector<std::pair<SemanticLoanId, bool>> pending;
+  for (const auto id : result.independentParents)
+    pending.emplace_back(id, false);
+  while (!pending.empty()) {
+    if (!budget.consume())
+      return std::nullopt;
+    const auto [id, leaving] = pending.back();
+    pending.pop_back();
+    if (checked.contains(id))
+      continue;
+    if (leaving) {
+      visiting.erase(id);
+      checked.insert(id);
+      continue;
+    }
+    const auto *loan = semanticModel.findLoan(id);
+    if (!id || id == groupId || !visiting.insert(id).second || !loan ||
+        loan->lifecycleBound || loan->referenceContents || loan->contentsOpening ||
+        loan->access != AccessMode::ReadOnly ||
+        std::any_of(loan->additionalDependencies.begin(), loan->additionalDependencies.end(),
+                    [](const auto &dependency) { return dependency.access != AccessMode::ReadOnly; }))
+      return std::nullopt;
+    if (loan->entry) {
+      // This is the same original shared parameter capability that an ordinary
+      // reference return retains. Its separate storedDependency remains in the
+      // normalizer's complete ancestry proof; it is not copied or discarded.
+      if (loan->kind != SemanticLoanKind::Reference || loan->parent ||
+          !loan->additionalDependencies.empty())
+        return std::nullopt;
+      visiting.erase(id);
+      checked.insert(id);
+      continue;
+    }
+    pending.emplace_back(id, true);
+    if (loan->parent)
+      pending.emplace_back(loan->parent, false);
+    else if (!staticStorage(loan->place))
+      return std::nullopt;
+    for (const auto &dependency : loan->additionalDependencies)
+      if (dependency.parent)
+        pending.emplace_back(dependency.parent, false);
+      else if (!staticStorage(dependency.place))
+        return std::nullopt;
+  }
+  return result;
 }
 
 auto SemanticVisitor::Impl::projectedStoredDependency(

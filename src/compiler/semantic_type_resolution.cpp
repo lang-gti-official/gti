@@ -5659,6 +5659,14 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
 
 auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
     const ExprPtr &value, std::string_view destination) -> bool {
+  if (currentReturnType.kind == SemanticType::Reference &&
+      currentReturnType.referenceAccess == AccessMode::ReadOnly)
+    if (const auto complete = completeBorrowDependencySet(value);
+        complete && checkedSharedStoredReferenceCopy(value.get(), *complete))
+      // Copying this exact shared field retains its independently checked
+      // original parents. The carrier's read and cleanup group stays intact;
+      // ordinary return-region and complete-supplier checks still follow.
+      return false;
   const std::optional<RetainedLoanSource> source = retainedLoanSource(value);
   const Symbol *symbol = !source || source->carrier == nullptr
                              ? nullptr
@@ -5800,7 +5808,7 @@ auto SemanticVisitor::Impl::validateStoredBorrowReturn(
     const auto *function =
         currentLambdaReturn ? nullptr : currentFunctionInfo();
     if (complete && function &&
-        normalizedCompleteReturnBorrow(*function, *complete))
+        normalizedCompleteReturnBorrow(*function, *complete, nullptr, value.get()))
       return;
     report(expressionToken(value),
            "A borrowed return requires a complete dependency set preserving "
@@ -6006,7 +6014,7 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
     if (const auto *function = currentFunctionInfo();
         function && !currentLambdaReturn && function->lifetimeContract.valid()) {
       const auto checked = physicalReferenceReturnBorrow(value, reference.referenceAccess);
-      validShell = checked && normalizedCompleteReturnBorrow(*function, *checked).has_value();
+      validShell = checked && normalizedCompleteReturnBorrow(*function, *checked, nullptr, value.get()).has_value();
       if (!validShell && checked && validateKnownLeadingReturnBorrow(*function, *checked)) {
         loanFlow.deferredGenericFlow = true;
         requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
@@ -6113,7 +6121,7 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   }
   if (consumingCarrierContract) {
     const auto complete = completeBorrowDependencySetForType(value.get(), function->returnType);
-    if (complete && normalizedCompleteReturnBorrow(*function, *complete))
+    if (complete && normalizedCompleteReturnBorrow(*function, *complete, nullptr, value.get()))
       return;
     report(expressionToken(value),
            "A consuming borrowed result requires every active dependency to "
@@ -6179,7 +6187,7 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
           .protectsStorage = true};
       const SemanticBorrowDependencySet checked{
           .dependencies = {std::move(dependency)}};
-      validShell = normalizedCompleteReturnBorrow(*function, checked).has_value();
+      validShell = normalizedCompleteReturnBorrow(*function, checked, nullptr, value.get()).has_value();
       if (!validShell && validateKnownLeadingReturnBorrow(*function, checked)) {
         loanFlow.deferredGenericFlow = true;
         requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
@@ -6263,7 +6271,7 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       std::vector<LifetimeBound> required;
       if (normalizedCompleteReturnBorrow(
               *function, checked,
-              loanFlow.collectingLifetimeContract ? &required : nullptr)) {
+              loanFlow.collectingLifetimeContract ? &required : nullptr, value.get())) {
         for (const auto edge : required)
           if (!requireLifetimeRelationship(edge.longer, edge.shorter,
                                             expressionToken(value)))
@@ -6310,7 +6318,7 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       if (!conditionalSignature)
         constrained.explicitReturnBorrowOrigin = true;
       if (normalizedCompleteReturnBorrow(
-              constrained, {.dependencies = std::move(dependencies)}))
+              constrained, {.dependencies = std::move(dependencies)}, nullptr, value.get()))
         return;
     }
   }

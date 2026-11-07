@@ -2552,12 +2552,32 @@ private:
                                  const SemanticBorrowDependencySet &complete,
                                  std::vector<LifetimeBound> *requiredLifetimes = nullptr);
   [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
+  normalizedCompleteReturnBorrow(const FunctionInfo &function,
+                                 const SemanticBorrowDependencySet &complete,
+                                 std::vector<LifetimeBound> *requiredLifetimes,
+                                 const Expr *sourceExpression);
+  [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
   normalizedCompleteBorrow(const FunctionInfo &function,
                            std::span<const Parameter> parameters,
                            ReceiverMutability receiverMutability,
                            const SemanticBorrowDependencySet &complete,
                            std::vector<LifetimeBound> *requiredLifetimes = nullptr,
                            std::span<const LambdaCaptureInfo> captures = {}) const;
+  [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
+  normalizedCompleteBorrow(const FunctionInfo &function,
+                           std::span<const Parameter> parameters,
+                           ReceiverMutability receiverMutability,
+                           const SemanticBorrowDependencySet &complete,
+                           std::vector<LifetimeBound> *requiredLifetimes,
+                           std::span<const LambdaCaptureInfo> captures,
+                           const Expr *sourceExpression) const;
+  struct SharedStoredReferenceCopy {
+    SemanticLoanId group = 0;
+    std::vector<SemanticLoanId> independentParents;
+  };
+  [[nodiscard]] std::optional<SharedStoredReferenceCopy>
+  checkedSharedStoredReferenceCopy(const Expr *expression,
+                                  const SemanticBorrowDependencySet &complete) const;
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   completeBaseInitializerBorrow(const ConstructorInitializer &syntax,
                                const ResolvedConstructorInitializerInfo &selected,

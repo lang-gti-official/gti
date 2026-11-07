@@ -206,7 +206,7 @@ auto SemanticVisitor::Impl::validateLambdaLifetimeReturn(const ExprPtr &value) -
   std::vector<LifetimeBound> required;
   const auto normalized = normalizedCompleteBorrow(
       signature, context.declaration->parameters(), currentReceiverMutability, *complete,
-      loanFlow.collectingLifetimeContract ? &required : nullptr, context.captures);
+      loanFlow.collectingLifetimeContract ? &required : nullptr, context.captures, value.get());
   if (!normalized) {
     report(expressionToken(value),
            "Every possible owner returned by the lambda must satisfy its lifetime contract and preserve access and cleanup obligations.",

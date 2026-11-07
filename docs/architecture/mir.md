@@ -985,7 +985,11 @@ retained Stored group from the evaluated input address and loan. The carrier's
 physical supplier may be the primary source while its external owners remain
 additional suppliers; changing that order preserves every original source,
 parent, access, path and guard. An external lifetime supplier is never used as
-the carrier's runtime address.
+the carrier's runtime address. Named-reference retention matches the complete
+unordered semantic supplier set against the active emitted call result before
+attaching its binding identity. Its actual returned pointer and already-derived
+Stored relation stay unchanged; a missing parent, altered source or extra
+supplier cannot be repaired by recreating an address from a lifetime owner.
 
 Checked erased-reference operations preserve the exact origin and access while
 changing the referent type. MIR rederives each operation's lifetime rule from
@@ -1120,6 +1124,14 @@ field path, selected receiver or parameter, source field path, and permission.
 Calls preserve the semantic contract; program verification also checks the
 callee's actual return publication or constructor initializers independently.
 Matching forged caller/callee summaries are therefore not sufficient proof.
+Publishing an inline borrowed carrier into a constructor field transfers its
+whole proved group: the primary selected field path, additional suppliers,
+permissions and alternative guards. The primary path remains present for
+unconditional references as well as enum alternatives. The field-initialization
+proof compares that group with the actual constructed SSA value before retiring
+the incoming group, and requires the published group to remain live on successful
+exit. Matching forged initializer and declaration annotations
+cannot redirect the construction to another same-typed input.
 An abstract entry retains caller-owned field identities without treating the
 carrier's physical shell as the external referent. Its complete value transfer
 is checked against the returned SSA producer. Compact sole-origin carriers

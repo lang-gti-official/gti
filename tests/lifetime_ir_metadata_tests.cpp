@@ -4,6 +4,7 @@
 #include "gti/mir_printer.h"
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
+#include "gti/mir_editor.h"
 #include "gti/callable_lifetimes.h"
 #include "gti/nominal_variance.h"
 
@@ -13,6 +14,7 @@
 namespace lang {
 struct MirProgramTestAccess {
   static auto &classes(MirProgram &program) { return program.classes; }
+  static auto &constructors(MirProgram &program) { return program.constructors; }
   static auto &functions(MirProgram &program) { return program.functions; }
   static auto &payloads(MirProgram &program) { return program.payloadEnums_; }
   static auto &integrals(MirProgram &program) { return program.integralEnums_; }
@@ -124,6 +126,106 @@ int main() { int value = 7; return external(value) - 7; }
            "contents proof identity survives deterministic versioned MIR serialization");
   }
 }
+void nestedCarrierPublication() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "nested-carrier-publication.gti", R"gti(
+struct Inner<lifetime a> {
+  int&<a> value;
+  Inner(int&<a> input) : value(input) {}
+};
+struct Pair<lifetime a, lifetime b> {
+  Inner<a> first;
+  int&<b> other;
+  Pair(int&<a> firstValue, int&<b> secondValue)
+      : first(Inner<a>(firstValue)), other(secondValue) {}
+};
+int&<a> external<lifetime a>(int&<a> input) {
+  int local = 9;
+  Pair pair{input, local};
+  return pair.first.value;
+}
+int main() { int value = 7; return external(value) - 7; }
+)gti");
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(),
+         "unconditional nested carrier publication preserves its complete field provenance");
+  const auto constructor = std::find_if(checked.mir.constructorInstances().begin(),
+      checked.mir.constructorInstances().end(), [](const auto &candidate) {
+        return candidate.parameterTypes.size() == 2;
+      });
+  expect(constructor != checked.mir.constructorInstances().end(),
+         "nested fixture has its exact two-source constructor");
+  const auto &body = constructor->body;
+  const auto publication = std::find_if(body.loans.begin(), body.loans.end(),
+      [](const auto &loan) {
+        return loan.escapes && !loan.storedPath.empty() && !loan.designatedFields.empty();
+      });
+  expect(publication != body.loans.end() && publication->conditions.empty(),
+         "an unconditional publication still names its selected reference field");
+  const MirInstruction *producer = nullptr;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.kind == MirInstructionKind::Borrow && instruction.loan == publication->id)
+        producer = &instruction;
+  expect(producer && producer->operands.size() == 1 &&
+             producer->operands.front().kind == MirOperandKind::Loan,
+         "nested publication transfers one exact constructed group");
+  const auto *input = body.findLoan(producer->operands.front().loan);
+  expect(input && !input->entry && !input->escapes &&
+             input->source == publication->source &&
+             input->designatedFields == publication->designatedFields &&
+             input->additionalDependencies == publication->additionalDependencies,
+         "constructed and published groups retain the same complete referents");
+  const auto other = std::find_if(body.loans.begin(), body.loans.end(),
+      [&](const auto &loan) {
+        return loan.escapes && loan.id != publication->id && loan.source != input->source;
+      });
+  expect(other != body.loans.end(), "mutation fixture has an independent same-typed source");
+  for (int mutation = 0; mutation != 6; ++mutation) {
+    auto forged = checked.mir;
+    auto &changed = MirProgramTestAccess::constructors(forged)[constructor->id - 1];
+    auto &published = changed.body.loans[publication->id - 1];
+    if (mutation == 0) published.designatedFields.clear();
+    if (mutation == 1) published.designatedFields = other->storedPath;
+    if (mutation == 2) published.source = other->source;
+    if (mutation == 3) published.access = AccessMode::Mutable;
+    if (mutation == 4) {
+      // Coordinated annotation changes still cannot rewrite the actual
+      // constructed value's input. The executable producer is authoritative.
+      changed.body.loans[input->id - 1].source = other->source;
+      published.source = other->source;
+      for (auto &initializer : changed.initializers)
+        if (initializer.field == published.storedPath.front().field && initializer.completeBorrow)
+          for (auto &dependency : initializer.completeBorrow->dependencies)
+            dependency.source = other->source;
+      for (auto &dependency : changed.completeBorrow->dependencies)
+        if (!dependency.resultFields.empty() &&
+            dependency.resultFields.front() == published.storedPath.front())
+          dependency.parameter = 1;
+    }
+    if (mutation == 5) {
+      MirInstructionId next = 1;
+      for (const auto &block : changed.body.blocks)
+        for (const auto &instruction : block.instructions)
+          next = std::max(next, instruction.id + 1);
+      for (auto &block : changed.body.blocks)
+        if (block.terminator.kind == MirTerminatorKind::Return)
+          block.instructions.push_back({.id = next++,
+              .kind = MirInstructionKind::EndBorrow, .loan = published.id});
+      expect(rebuildMirValueUses(changed.body), "rebuild the precise early-retirement mutation");
+    }
+    const auto result = verifyMirProgram(forged);
+    expect(!result.valid(),
+           "nested publication rejects changed paths, source, permission and coordinated false ownership");
+    if (mutation == 5)
+      expect(std::any_of(result.errors.begin(), result.errors.end(), [](const auto &error) {
+               return error.message == "constructor field publication is not active at normal exit";
+             }), "unconditional constructor publication must remain live at successful exit");
+  }
+}
+
 void closureEnvironmentReplay() {
   const auto first = Lifetime::parameter(841), second = Lifetime::parameter(842);
   const auto actualFirst = Lifetime::parameter(843), actualSecond = Lifetime::parameter(844);
@@ -944,6 +1046,7 @@ void quantifiedNominalLiftInventory() {
 } // namespace
 int main() {
   stagedReferenceContentsMetadata();
+  nestedCarrierPublication();
   closureEnvironmentReplay();
   rawPointerStorageOutlives();
   packEntrySourceIdentity();

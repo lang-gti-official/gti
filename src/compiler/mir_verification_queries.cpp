@@ -924,6 +924,61 @@ bool hasReferenceContents(const MirBody &body) {
     });
 }
 
+bool storedCarrierConstructorPublication(const MirBody &body, const MirLoan &loan) {
+  if (body.kind != MirBodyKind::Constructor || loan.kind != MirLoanKind::Stored ||
+      !loan.escapes || loan.entry || loan.parent || loan.storedDependency ||
+      !loan.producedBy || loan.designatedFields.empty() || loan.storedPath.size() != 1 ||
+      loan.storedPath.front().kind != PlaceProjectionKind::Field)
+    return false;
+  const MirInstruction *publication = nullptr;
+  const MirBlock *publicationBlock = nullptr;
+  std::size_t publicationPosition = 0;
+  for (const auto &block : body.blocks)
+    for (std::size_t position = 0; position < block.instructions.size(); ++position) {
+      const auto &instruction = block.instructions[position];
+      if (instruction.tombstone || instruction.loan != loan.id ||
+          instruction.kind == MirInstructionKind::EndBorrow ||
+          instruction.kind == MirInstructionKind::ActivateBorrow)
+        continue;
+      if (publication) return false;
+      publication = &instruction;
+      publicationBlock = &block;
+      publicationPosition = position;
+    }
+  if (!publication || publication->kind != MirInstructionKind::Borrow ||
+      publication->hirValue != loan.producedBy || publication->operands.size() != 1)
+    return false;
+  const auto &operand = publication->operands.front();
+  const auto *input = body.findLoan(operand.loan);
+  if (operand.kind != MirOperandKind::Loan || !operand.value || operand.place ||
+      !input || input->id == loan.id || input->kind != MirLoanKind::Stored ||
+      input->escapes || input->storedDependency || input->source != loan.source ||
+      input->access != loan.access || input->designatedFields != loan.designatedFields ||
+      input->conditions != loan.conditions ||
+      input->additionalDependencies != loan.additionalDependencies)
+    return false;
+  const MirInstruction *initialization = nullptr;
+  for (std::size_t position = 0; position < publicationPosition; ++position) {
+    const auto &instruction = publicationBlock->instructions[position];
+    if (instruction.tombstone || instruction.kind != MirInstructionKind::Initialize ||
+        !instruction.constructorInitializer || instruction.hirValue != loan.producedBy)
+      continue;
+    const auto *destination = instruction.destination ? body.findPlace(*instruction.destination) : nullptr;
+    if (!destination || destination->root != MirPlaceRootKind::This ||
+        destination->projections.size() != 1 ||
+        destination->projections.front().kind != MirProjectionKind::Field ||
+        destination->projections.front().field != loan.storedPath.front().field)
+      continue;
+    if (initialization || instruction.operands.size() != 1 ||
+        instruction.operands.front().kind != MirOperandKind::Value ||
+        instruction.operands.front().value != operand.value ||
+        instruction.operands.front().type != operand.type)
+      return false;
+    initialization = &instruction;
+  }
+  return initialization != nullptr;
+}
+
 bool storedReferenceReturnPublication(const MirBody &body,
                                        const MirBlock &block,
                                        const MirInstruction &instruction) {

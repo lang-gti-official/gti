@@ -28,6 +28,19 @@ struct Reading<lifetime data> {
   int&<data> take() && { return this.value; }
 };
 
+// Copying a shared external reference does not keep its local carrier alive.
+// Cleanup still observes the carrier's original field before it is destroyed.
+mut int cleaned_reading = 0;
+struct ObservedReading<lifetime data> {
+  int&<data> value;
+  ObservedReading(int&<data> input) : value(input) {}
+  ~ObservedReading() { cleaned_reading = cleaned_reading + this.value; }
+};
+int&<data> copy_before_cleanup<lifetime data>(int&<data> input) {
+  ObservedReading reading{input};
+  return reading.value;
+}
+
 // The conformance head infers Reading's stored lifetime. A reference to the
 // Reading shell remains a separate, short-lived operation borrow.
 concept ValueReader<T> { int read(T& input); };
@@ -85,5 +98,6 @@ int main() {
   if (environment.read() != 9) { return 6; }
   if (observe(identity, left) != 4 || observe(permanent, left) != 11) { return 8; }
   if (read_in_environment(right, right) != 9) { return 9; }
+  if (copy_before_cleanup(right) != 9 || cleaned_reading != 9) { return 10; }
   return identity(left) - 4;
 }

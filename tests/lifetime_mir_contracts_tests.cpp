@@ -4,6 +4,7 @@
 #include "gti/callable_lifetimes.h"
 #include "gti/borrow_conditions.h"
 #include "gti/mir_verifier.h"
+#include "gti/mir_lowering.h"
 #include "gti/mir_printer.h"
 
 #include <algorithm>
@@ -1588,7 +1589,9 @@ int main() {
                    stage->operands.front().kind == MirOperandKind::BorrowRead,
                "carrier shell result has one exact read-only prepared input and stored group");
         const auto *input = body->findPlace(stage->operands.front().place);
-        expect(input && input->type == call.info.type && loan->source == input->id &&
+        expect(input && mirLifetimeValueConversion(checked.mir, *body, address.owner,
+                                                  input->type, call.info.type) &&
+                   loan->source == input->id &&
                    std::find(group->carriers.begin(), group->carriers.end(), input->binding) !=
                        group->carriers.end() && loan->parent != group->id &&
                    std::any_of(loan->additionalDependencies.begin(), loan->additionalDependencies.end(),
@@ -1596,6 +1599,19 @@ int main() {
                          return dependency.source == group->source && dependency.parent == group->id;
                        }),
                "the primary input shell and every original external parent retain distinct roles");
+        bool retainedAddress = false;
+        for (const auto &consumerBlock : body->blocks)
+          for (const auto &consumer : consumerBlock.instructions) {
+            if (consumer.kind != MirInstructionKind::Initialize ||
+                consumer.operands.size() != 1 ||
+                consumer.operands.front().loan != loan->id)
+              continue;
+            const auto *place = body->findPlace(consumer.operands.front().place);
+            retainedAddress |= place && place->root == MirPlaceRootKind::Loan &&
+                               place->loan == loan->id && place->projections.empty();
+          }
+        expect(retainedAddress,
+               "named reference binding retains the exact emitted call-result address");
         for (const auto &other : body->loans) {
           if (other.id == group->id || other.kind != MirLoanKind::Stored ||
               other.carriers.size() != 1 || other.designatedFields != group->designatedFields)
@@ -1615,7 +1631,7 @@ int main() {
               owner->projections == otherOwner->projections;
           sameOwner |= sharesOwner;
           differentOwner |= !sharesOwner;
-          for (int mutation = 0; mutation != 3; ++mutation) {
+          for (int mutation = 0; mutation != 5; ++mutation) {
             auto forged = checked.mir;
             auto *changed = findMirBody(forged, address);
             if (mutation == 0) changed->loans[loan->id - 1].storedDependency = other.id;
@@ -1625,6 +1641,15 @@ int main() {
                   if (instruction.id == stage->id)
                     instruction.operands.front().place = unrelated->id;
             if (mutation == 2) changed->loans[loan->id - 1].source = unrelated->id;
+            if (mutation == 3)
+              changed->loans[loan->id - 1].additionalDependencies.front().parent = other.id;
+            if (mutation == 4)
+              for (auto &changedBlock : changed->blocks)
+                for (auto &instruction : changedBlock.instructions)
+                  if (instruction.kind == MirInstructionKind::Initialize &&
+                      instruction.operands.size() == 1 &&
+                      instruction.operands.front().loan == loan->id)
+                    instruction.operands.front().place = unrelated->id;
             expect(!verifyMirProgram(forged).valid(),
                    "same-typed unrelated carriers cannot replace input address, shell source or stored group");
           }
@@ -1633,6 +1658,36 @@ int main() {
   }
   expect(sameOwner && differentOwner,
          "shell mutations distinguish different carriers sharing an owner from different external owners");
+  bool retainedSources = false;
+  for (const auto &function : checked.hir.functionInstances()) {
+    if (!function.source || function.source->name().lexeme != "main") continue;
+    for (const auto &loan : function.body.loans) {
+      if (loan.kind != SemanticLoanKind::Reference || loan.entry ||
+          loan.additionalDependencies.size() != 1 || !loan.parent)
+        continue;
+      const auto peer = std::find_if(function.body.loans.begin(), function.body.loans.end(),
+          [&](const auto &other) {
+            return other.kind == SemanticLoanKind::Reference && !other.entry &&
+                   other.additionalDependencies.size() == 1 && other.parent &&
+                   other.additionalDependencies.front().place != loan.additionalDependencies.front().place;
+          });
+      expect(peer != function.body.loans.end(), "retained source controls have another exact carrier");
+      retainedSources = true;
+      for (int mutation = 0; mutation != 4; ++mutation) {
+        auto forged = checked.hir;
+        auto &body = const_cast<HirFunctionInstance *>(forged.findFunctionInstance(function.id))->body;
+        auto &changed = *std::find_if(body.loans.begin(), body.loans.end(),
+            [&](const auto &candidate) { return candidate.semanticLoan == loan.semanticLoan; });
+        if (mutation == 0) changed.parent = 0;
+        if (mutation == 1) changed.additionalDependencies.front().place = peer->additionalDependencies.front().place;
+        if (mutation == 2) changed.additionalDependencies.front().access = AccessMode::Mutable;
+        if (mutation == 3) changed.additionalDependencies.push_back(changed.additionalDependencies.front());
+        expect(!MirLowerer{}.lower(forged, checked.failureMetadata).valid(),
+               "retention rejects a changed semantic parent, carrier, access or complete supplier count");
+      }
+    }
+  }
+  expect(retainedSources, "retention controls reach the complete semantic reference supplier set");
 }
 
 bool checkRawOwnerLifetimeFacts() {

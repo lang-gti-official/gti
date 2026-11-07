@@ -3455,6 +3455,78 @@ int main() { return 0; }
   expect(consumedPointee.syntaxValid && !consumedPointee.semanticValid,
          "a consuming checked owner cannot return storage destroyed with its owned pointee");
 }
+void testSharedStoredReferenceCleanupCopy() {
+  const std::string declarations = R"gti(
+mut int observed = 0;
+int global = 7;
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  ~View() { observed = observed + this.value; }
+};
+struct Pair<lifetime a, lifetime b> : public View<a> {
+  int&<b> other;
+  Pair(int&<a> first, int&<b> second) : View<a>(first), other(second) {}
+  ~Pair() { observed = observed + this.other; }
+};
+)gti";
+  const auto check = [&](std::string body) {
+    return lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+        "shared-reference-cleanup-copy.gti", declarations + body);
+  };
+  const auto valid = check(R"gti(
+int&<a> direct<lifetime a>(int&<a> input) {
+  View view{input};
+  return view.value;
+}
+int&<a> inherited<lifetime a>(int&<a> input) {
+  int local = 9;
+  Pair pair{input, local};
+  return pair.value;
+}
+int&<static> permanent() {
+  View<static> view{global};
+  return view.value;
+}
+int main() { int value = 7; return direct(value) + inherited(value) + permanent() - 21; }
+)gti");
+  expectValid(valid, "copying an exact shared reference field retains its independent supplier through carrier cleanup");
+  for (const auto name : {"direct", "inherited"}) {
+    const auto *target = function(valid, name);
+    const auto *body = target && target->declaration ? target->declaration->body().get() : nullptr;
+    const auto *returned = body && !body->statements().empty()
+        ? lang::stmtAs<lang::ReturnStmt>(body->statements().back().get()) : nullptr;
+    const auto *complete = returned ? valid.semantics.findBorrowDependencySet(*returned->value()) : nullptr;
+    const auto *place = returned ? valid.semantics.findPlace(*returned->value()) : nullptr;
+    const auto *group = complete && complete->dependencies.size() == 1
+        ? valid.semantics.findLoan(complete->dependencies.front().parent) : nullptr;
+    const auto *parent = group ? valid.semantics.findLoan(group->parent) : nullptr;
+    expect(group && group->kind == lang::SemanticLoanKind::StoredValue && group->lifecycleBound &&
+               place && group->designatedFields == place->projections && parent && parent->entry &&
+               parent->kind == lang::SemanticLoanKind::Reference &&
+               parent->access == lang::AccessMode::ReadOnly && target->completeReturnBorrow &&
+               target->completeReturnBorrow->dependencies.size() == 1 &&
+               target->completeReturnBorrow->dependencies.front().origin == lang::BorrowOriginKind::Argument &&
+               target->completeReturnBorrow->dependencies.front().parameter == 0,
+           "the field read keeps its cleanup-bound Stored parent while the return retains only the selected external supplier");
+    if (std::string_view(name) == "inherited")
+      expect(group && group->additionalDependencies.size() == 1 &&
+                 group->additionalDependencies.front().parent == 0 &&
+                 group->additionalDependencies.front().place != complete->dependencies.front().place,
+             "an unrelated local sibling remains in the carrier cleanup group without becoming a returned supplier");
+  }
+  for (const auto source : {
+           R"gti(int&<static> invalid() { int local = 7; View view{local}; return view.value; })gti",
+           R"gti(struct Owner { int value = 7; ~Owner() {} }; int&<static> invalid() { Owner owner{}; View view{owner.value}; return view.value; })gti",
+           R"gti(struct Owner { int value = 7; ~Owner() {} }; int&<static> invalid() { Owner owner{}; return owner.value; })gti",
+           R"gti(struct Exclusive<lifetime a> { mut int&<a> value; Exclusive(mut int&<a> input) : value(input) {} ~Exclusive() {} }; int&<a> invalid<lifetime a>(mut int&<a> input) { Exclusive view{input}; return view.value; })gti",
+           R"gti(int&<longer> invalid<lifetime longer, lifetime shorter>(int&<longer> input) requires outlives<longer, shorter> { View<shorter> view{input}; return view.value; })gti"}) {
+    const auto rejected = check(source);
+    expect(rejected.syntaxValid && !rejected.semanticValid,
+           "cleanup copying cannot extend local/owned storage, detach an exclusive parent, or recover a shortened field's longer input lifetime");
+  }
+}
+
 void testStoredFieldReturnRegions() {
   const std::string declarations = R"gti(
 struct View<lifetime a> {
@@ -3564,6 +3636,7 @@ int indirect<lifetime a, lifetime owner>(Leaf<a>&<owner> input) { return choose(
 } // namespace
 
 int main() {
+  testSharedStoredReferenceCleanupCopy();
   testStagedReferenceContentsSources();
   testSemanticReferenceSupplierQueries();
   testStoredFieldReturnRegions();

@@ -376,6 +376,12 @@ textAddressResultLoan(const MirBody &body, const MirInstruction &instruction,
 [[nodiscard]] bool hasReferenceContents(const MirBorrowDependencySet &dependencies);
 [[nodiscard]] bool hasReferenceContents(const MirBody &body);
 
+// Exact whole-group publication into an inline constructor field. This is
+// independent of variant guards; program verification still derives the typed
+// initializer fact and checks all normal exits, while loan flow checks liveness.
+[[nodiscard]] bool storedCarrierConstructorPublication(const MirBody &body,
+                                                       const MirLoan &loan);
+
 [[nodiscard]] bool storedReferenceReturnPublication(const MirBody &body,
                                                     const MirBlock &block,
                                                     const MirInstruction &instruction);
