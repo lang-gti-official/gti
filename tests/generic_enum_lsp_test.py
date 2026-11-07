@@ -24,8 +24,15 @@ class Resource { public: Resource() {} ~Resource() {} };
 enum Owned { Empty, Item(Resource resource) };
 void forward<Args...>(Args... args) {}
 using Count = Message<int32_t>;
+class ClosureResource { public: ClosureResource() {} ~ClosureResource() {} };
+enum ClosureEvent<T> { empty, item(T value) };
 int main() {
   forward(Owned::Item(Resource()));
+  auto owner = ClosureEvent<ClosureResource>::item(ClosureResource());
+  auto callback = [owner = std::move(owner)](ClosureEvent<ClosureResource> input) -> ClosureEvent<ClosureResource> {
+    return std::move(input);
+  };
+  auto result = callback(ClosureEvent<ClosureResource>::empty);
   // The supplementary character tests UTF-16 navigation below.
   /* 😀 */ auto first = Count::item(1, int64_t(2));
   auto second = Message<bool, bool, 7>::item(true, false);
