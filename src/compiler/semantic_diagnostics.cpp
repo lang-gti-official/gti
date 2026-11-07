@@ -1,5 +1,7 @@
 #include "semantic_diagnostics.h"
 
+#include "gti/lexer.h"
+#include "gti/parser.h"
 #include "semantic_spelling.h"
 
 #include <algorithm>
@@ -7,6 +9,16 @@
 #include <tuple>
 
 namespace lang {
+
+ExprPtr parseRepairExpression(const std::string &text,
+                              const std::string &sourceName) {
+  Lexer lexer;
+  Parser parser(lexer.scan(text, sourceName));
+  auto expression = parser.parseExpression();
+  if (lexer.hadError() || parser.hadError())
+    return nullptr;
+  return expression;
+}
 
 void SemanticConstantTrace::appendTo(Diagnostic &diagnostic) const {
   for (const auto &call : calls)

@@ -8362,6 +8362,15 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
     return std::nullopt;
   }
   const auto enumerator = resolveEnumerator(*qualified);
+  if (!enumerator &&
+      reportInvisibleSymbol(qualified->name().last(),
+                            pathSpelling(qualified->name()),
+                            resolveQualifiedGlobally(qualified->name()))) {
+    // Pattern lookup obeys the same source-unit visibility rules as an
+    // ordinary qualified use. A loaded but unimported variant is not a
+    // different variant of the subject enum.
+    return std::nullopt;
+  }
   if (!enumerator || enumerator->symbol.type != subjectType) {
     report(qualified->name().last(),
            "Switch case must name a variant of '" + typeSpelling(subjectType) +

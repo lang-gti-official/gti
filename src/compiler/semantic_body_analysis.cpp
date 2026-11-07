@@ -4,6 +4,74 @@
 
 namespace lang {
 
+namespace {
+// Only layout comes from source text. The parser owns the insertion token and
+// semantic coverage supplies the exact missing alternatives.
+std::optional<FixIt>
+missingSwitchCasesFix(const SwitchStmt &stmt, const SourceManager *sources,
+                      const std::vector<std::string> &variants) {
+  const Token &close = stmt.closingBrace();
+  const Token &keyword = stmt.keyword();
+  const std::string *source = sources ? sources->find(close.source) : nullptr;
+  if (!source || variants.empty() || close.kind != TokenKind::RIGHT_BRACE ||
+      close.generated || keyword.generated || close.expansion != 0 ||
+      keyword.expansion != 0 || close.source != keyword.source ||
+      keyword.position >= close.position || close.position >= source->size() ||
+      source->compare(keyword.position, 6, "switch") != 0 ||
+      (*source)[close.position] != '}')
+    return std::nullopt;
+
+  const auto lineStart = [&](std::size_t position) {
+    const auto previous =
+        position == 0 ? std::string::npos : source->rfind('\n', position - 1);
+    return previous == std::string::npos ? 0 : previous + 1;
+  };
+  const auto indentation = [&](std::size_t position) {
+    const auto start = lineStart(position);
+    auto end = start;
+    while (end < position && ((*source)[end] == ' ' || (*source)[end] == '\t'))
+      ++end;
+    return source->substr(start, end - start);
+  };
+  std::string caseIndent = indentation(keyword.position);
+  for (const auto &arm : stmt.arms()) {
+    if (arm.labels.empty())
+      continue;
+    const auto &label = arm.labels.front().keyword;
+    if (!label.generated && label.source == close.source &&
+        label.position < close.position) {
+      const auto indent = indentation(label.position);
+      if (lineStart(label.position) + indent.size() == label.position)
+        caseIndent = indent;
+    }
+    break;
+  }
+  const std::string bodyIndent =
+      caseIndent + (caseIndent.find('\t') == std::string::npos ? "  " : "\t");
+  const std::string newline =
+      source->find("\r\n") == std::string::npos ? "\n" : "\r\n";
+  SourceSpan insertion = tokenSpan(close);
+  const std::string closeIndent = indentation(close.position);
+  const bool ownLine =
+      lineStart(close.position) + closeIndent.size() == close.position;
+  if (ownLine)
+    insertion.start = lineStart(close.position);
+  insertion.end = insertion.start;
+  std::string replacement = ownLine ? "" : newline;
+  for (const auto &variant : variants)
+    replacement += caseIndent + "case " + variant + ":" + newline + bodyIndent +
+                   "// TODO: Handle this case." + newline + bodyIndent +
+                   "break;" + newline;
+  if (!ownLine)
+    replacement += indentation(keyword.position);
+  return FixIt{.span = std::move(insertion),
+               .replacement = std::move(replacement),
+               .message = "Insert missing switch cases",
+               .preferred = false,
+               .applicability = RepairApplicability::RequiresReview};
+}
+} // namespace
+
 void SemanticVisitor::Impl::validateCodegenAttributes(
     const std::vector<FunctionAttribute> &attributes, bool sourceBody,
     bool lifecycle) {
@@ -6078,6 +6146,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   if (payloadEnum != nullptr && !hasDefault && !invalidPayloadPattern &&
       !exhaustivePayload) {
     std::string missing;
+    std::vector<std::string> missingVariants;
     for (const EnumeratorInfo &enumerator : payloadEnum->enumerators) {
       if (coveredPayloadVariants.contains(enumerator.variantIndex) ||
           enumerator.declaration == nullptr) {
@@ -6088,12 +6157,35 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       }
       missing += payloadEnum->qualifiedName +
                  "::" + enumerator.declaration->name.lexeme;
+      missingVariants.push_back(typeSpelling(subjectType) +
+                                "::" + enumerator.declaration->name.lexeme);
     }
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2067", DiagnosticPhase::Semantics, stmt.keyword(),
         "Payload-enum switch is not exhaustive; missing " + missing + ".");
     diagnostic.hints.emplace_back(
         "Handle every variant explicitly or add a 'default' arm.");
+    // Tag-only arms do not guess payload bindings or ownership. These are
+    // explicit-review scaffolds, never an automatic behavior-preserving fix.
+    const auto &owner = enums[subjectType.enumId - 1];
+    // A concrete instance's owner may not be the written generic owner's
+    // spelling, and one definition can be instantiated with several enums.
+    if (macroExpansionDepth == 0 && !instanceAnalysisActive &&
+        declarationVisible(owner.sourceUnit, owner.name) &&
+        !missingVariants.empty()) {
+      // Diagnostic type spelling is not necessarily a usable source name in
+      // this scope (namespace shadowing, aliases, or unnamed type arguments).
+      // Prove the proposed owner with the ordinary parser and exact lookup;
+      // never offer an edit naming a different concrete enum instance.
+      const auto expression =
+          parseRepairExpression(missingVariants.front(), stmt.keyword().source);
+      const auto *qualified = exprAs<QualifiedName>(expression.get());
+      const auto resolved =
+          qualified ? resolveEnumerator(*qualified) : std::nullopt;
+      if (resolved && resolved->symbol.type == subjectType)
+        if (auto fix = missingSwitchCasesFix(stmt, sources, missingVariants))
+          diagnostic.fixes.push_back(std::move(*fix));
+    }
     diagnostics.emplace_back(std::move(diagnostic));
   }
   ValueControlFlowContext valueFlow = endValueControlFlow();

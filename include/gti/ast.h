@@ -2771,9 +2771,10 @@ struct SwitchArm {
 
 class SwitchStmt final : public StmtOfKind<StmtKind::SwitchStmt> {
 public:
-  SwitchStmt(Token keyword, ExprPtr expression, std::vector<SwitchArm> arms)
+  SwitchStmt(Token keyword, ExprPtr expression, std::vector<SwitchArm> arms,
+             Token closingBrace = {})
       : keyword_(std::move(keyword)), expression_(std::move(expression)),
-        arms_(std::move(arms)) {}
+        arms_(std::move(arms)), closingBrace_(std::move(closingBrace)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitSwitchStmt(*this);
@@ -2782,11 +2783,13 @@ public:
   [[nodiscard]] const Token &keyword() const { return keyword_; }
   [[nodiscard]] const ExprPtr &expression() const { return expression_; }
   [[nodiscard]] const std::vector<SwitchArm> &arms() const { return arms_; }
+  [[nodiscard]] const Token &closingBrace() const { return closingBrace_; }
 
 private:
   Token keyword_;
   ExprPtr expression_;
   std::vector<SwitchArm> arms_;
+  Token closingBrace_;
 };
 
 class TypeAliasDecl final : public StmtOfKind<StmtKind::TypeAliasDecl> {
