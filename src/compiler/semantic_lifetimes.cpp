@@ -310,6 +310,27 @@ auto SemanticVisitor::Impl::normalizeConstructorLifetimeContract(
            "GTI-S2127");
 }
 
+auto SemanticVisitor::Impl::structuralConstructorPolicy(
+    const ConstructorInfo &constructor) -> bool {
+  if ((constructor.kind != ConstructorKind::Copy && constructor.kind != ConstructorKind::Move) ||
+      !constructor.declaration || !constructor.declaration->specifier() ||
+      constructor.declaration->specifier()->kind != SpecialMemberSpecifierKind::Defaulted ||
+      constructor.requiresUnsafe || !constructor.genericParameters.empty() ||
+      std::any_of(constructor.requirements.begin(), constructor.requirements.end(),
+          [](const auto &requirement) { return !requirement.lifetimeBound; }))
+    return false;
+  const auto &owner = classInfo(constructor.owner);
+  struct RestoreOwner {
+    std::optional<ClassId> &current;
+    std::optional<ClassId> saved;
+    ~RestoreOwner() { current = saved; }
+  } restore{currentClass, currentClass};
+  currentClass = owner.id;
+  return structuralConstructorPolicyMatches(openClassType(owner.id), owner.lifetimeContract,
+      constructor.parameterTypes, constructor.lifetimeContract,
+      [&](const SemanticType &type) { return nominalFormationRequirements(type, false); });
+}
+
 auto SemanticVisitor::Impl::addConstructorInitializerLifetimeBounds(
     ConstructorInfo &constructor) -> void {
   const auto &owner = classInfo(constructor.owner);

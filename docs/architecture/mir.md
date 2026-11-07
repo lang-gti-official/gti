@@ -5721,6 +5721,15 @@ producer, checks the complete direct shared field inventory and explicit source
 tags, and rejects cyclic read ancestry. Producer result, block and instruction
 identities remain exact. Shape success does not prove address authorization,
 active reads, dominance or contents flow.
+A staged branch of the existing CFG loan-flow engine checks formation against
+that exact shape, observes the capabilities used by the canonical read, and
+requires a related live frontier covering every physical parent branch. An
+external stored dependency cannot stand in for permission to read the container
+shell. The separate stored-dependency checks retain its liveness obligation.
+The opening becomes a shared snapshot without acquiring its transient read
+capabilities as reborrow parents. This component check does not yet establish
+current-content invalidation, tagged result transport, later read authority or
+the complete alias/lifecycle proof needed for publication.
 This transport creates no admission permission: the normal HIR and MIR guards
 below remain closed. The MIR supplier selector query uses the shared bounded traversal with MIR's own exact
 concrete field inventory; it does not extend that finite storage inventory

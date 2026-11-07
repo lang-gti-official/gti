@@ -2,6 +2,7 @@
 #include "gti/lowered_program.h"
 #include "gti/mir_verifier.h"
 #include "gti/lifetime_types.h"
+#include "structural_constructor_policy.h"
 
 #include "gti/failure_metadata.h"
 #include "gti/lowered_program_printer.h"
@@ -22,6 +23,80 @@
 
 namespace lang {
 namespace {
+
+std::optional<LifetimeRequirementFormula> loweredPolicyNominalRequirements(
+    const LoweredProgram &program, const SemanticType &type) {
+  using namespace structural_policy_detail;
+  if (type.kind == SemanticType::Class) {
+    const auto *declaration = program.findClassDeclaration(type.classId);
+    const auto owner = declaration ? openClassType(*declaration) : std::nullopt;
+    return owner ? nominalRequirements(*owner, type, declaration->lifetimeContract,
+                       identities(declaration->genericParameters),
+                       identities(declaration->genericArgumentPatternLifetimes))
+                 : std::nullopt;
+  }
+  std::optional<LifetimeRequirementFormula> result;
+  if (type.kind == SemanticType::Enum) {
+    for (const auto &row : program.declarations()) {
+      const auto *declaration = std::get_if<LoweredEnumDeclaration>(&row.payload);
+      if (!declaration || !declaration->lifetimeContract.valid())
+        continue;
+      const auto bindings = matchUniversalTypeLifetimes(
+          declaration->type, type, declaration->lifetimeContract.parameters);
+      if (!bindings)
+        continue;
+      const auto contract = substituteLifetimeContract(declaration->lifetimeContract, *bindings);
+      const auto actual = contract && contract->valid()
+          ? lifetimeContractRequirements(*contract) : std::nullopt;
+      if (!actual || (result && *result != *actual))
+        return std::nullopt;
+      result = *actual;
+    }
+  } else if (type.kind == SemanticType::Lambda) {
+    for (const auto &instance : program.mir().lambdaInstances()) {
+      const auto actual = lambdaEnvironmentLifetimeRequirements(
+          instance.type, type, instance.environmentContract);
+      if (!actual)
+        continue;
+      if (result && *result != *actual)
+        return std::nullopt;
+      result = *actual;
+    }
+  }
+  return result;
+}
+
+bool loweredStructuralPolicyMatches(const LoweredProgram &program,
+                                    const LoweredClassDeclaration &owner,
+                                    const LoweredConstructorDeclaration &policy) {
+  const auto type = structural_policy_detail::openClassType(owner);
+  if (!type || policy.owner != owner.id || policy.access != AccessModifier::Public ||
+      policy.requiresUnsafe || !policy.genericParameters.empty() ||
+      policy.parameters.size() != 1 || policy.requiredParameterCount != 1 ||
+      policy.parameters.front().pack || policy.parameters.front().hasDefault)
+    return false;
+  auto contract = policy.lifetimeContract;
+  const auto written = structural_policy_detail::writtenRequirements(
+      policy.requirementExpression, policy.requirementRoot, policy.requirements.size(),
+      [&](std::size_t index) -> std::optional<LifetimeRequirementNode> {
+        const auto &requirement = policy.requirements[index];
+        if (requirement.kind != LoweredRequirementKind::Lifetime ||
+            !requirement.lifetimeBound || requirement.conceptId)
+          return std::nullopt;
+        return LifetimeRequirementNode{
+            .kind = requirement.outlivesType ? LifetimeRequirementNode::Kind::Type
+                                            : LifetimeRequirementNode::Kind::Region,
+            .bound = *requirement.lifetimeBound,
+            .type = requirement.outlivesType.value_or(SemanticType::Unknown)};
+      });
+  if (!written || !appendLifetimeRequirementFormula(contract.requirements, *written))
+    return false;
+  const auto &parameter = policy.parameters.front().type;
+  return structuralConstructorPolicyMatches(*type, owner.lifetimeContract,
+      std::span(&parameter, 1), contract, [&](const SemanticType &node) {
+        return loweredPolicyNominalRequirements(program, node);
+      });
+}
 
 // A lowered dispatch selection names exactly the MIR selection's instances.
 template <typename Mir>
@@ -1121,6 +1196,32 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
                    &declaration.payload)) {
       recordIdentity(storageDeclarations, payload->symbol, "storage");
     }
+  }
+
+  std::set<std::pair<ClassId, ConstructorKind>> structuralPolicies;
+  for (const auto &row : program.declarations_) {
+    const auto *policy = std::get_if<LoweredConstructorDeclaration>(&row.payload);
+    if (!policy || policy->specifier != SpecialMemberSpecifierKind::Defaulted)
+      continue;
+    if (policy->kind == ConstructorKind::Ordinary) {
+      if (!policy->parameters.empty())
+        addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+                 "defaulted ordinary constructor cannot hide a structural policy",
+                 std::nullopt, row.id);
+      continue;
+    }
+    const auto *owner = program.findClassDeclaration(policy->owner);
+    const auto status = owner && policy->kind == ConstructorKind::Copy
+        ? owner->copyConstructor : owner ? owner->moveConstructor : SpecialMemberStatus::Deleted;
+    if ((policy->kind != ConstructorKind::Copy && policy->kind != ConstructorKind::Move) ||
+        !structuralPolicies.emplace(policy->owner, policy->kind).second || !owner ||
+        status != ((policy->kind == ConstructorKind::Copy ? owner->traits.copyable
+                                                         : owner->traits.movable)
+                       ? SpecialMemberStatus::Generated : SpecialMemberStatus::Deleted) ||
+        !loweredStructuralPolicyMatches(program, *owner, *policy))
+      addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
+               "defaulted constructor policy changes its structural lifetime contract",
+               std::nullopt, row.id);
   }
 
   for (const LoweredDeclaration &declaration : program.declarations_) {

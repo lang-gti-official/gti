@@ -3369,6 +3369,11 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
   std::vector<std::vector<MirLoanId>> children(body.loans.size());
   std::vector<std::vector<MirLoanId>> dependentShells(body.loans.size());
   for (const MirLoan &loan : body.loans) {
+    if (loan.contentsOpening &&
+        (!catalog || !mir_detail::referenceContentsOpeningShape(*catalog, body, loan) ||
+         loan.contentsOpening->reference.kind != MirOperandKind::BorrowRead))
+      return failure(body, owner,
+                     "reference contents formation lacks its exact checked read shape");
     for (const HirBindingId carrier : loan.carriers) {
       bindingLoans[carrier].push_back(loan.id);
     }
@@ -3806,6 +3811,17 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
               dependency.access == AccessMode::Mutable);
     };
 
+    // Observe only the authority actually used by the canonical read check.
+    // Stored-dependency liveness is a prerequisite, never a substitute for
+    // permission to read the physical reference's target.
+    std::vector<MirLoanId> *formationAuthorities = nullptr;
+    const auto observeFormationAuthority = [&](MirLoanId id) {
+      if (formationAuthorities && id &&
+          std::find(formationAuthorities->begin(), formationAuthorities->end(), id) ==
+              formationAuthorities->end())
+        formationAuthorities->push_back(id);
+    };
+
     const auto requireStoredDependency =
         [&](MirLoanId loan, const char *context, MirInstructionId instruction)
         -> std::optional<MirVerificationResult> {
@@ -4083,6 +4099,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                              std::string(context),
                          block.id, instruction);
         abstractAccesses.insert(loan.id);
+        if (access.referent)
+          observeFormationAuthority(loan.id);
       }
       if (place.throughLoan != 0) {
         if (auto invalid = requireStoredDependency(place.throughLoan, context,
@@ -4147,6 +4165,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         }
       }
 
+      observeFormationAuthority(place.throughLoan);
       for (const auto id : liveLoanIds()) {
         const auto &loan = body.loans[id - 1];
         const MirLoanFlowState loanState = active[loan.id - 1];
@@ -5007,6 +5026,104 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           changingLoan(outer) = MirLoanFlowState::Suspended;
         changingLoan(loan) = MirLoanFlowState::Active;
         activatedForCommit = loan;
+        continue;
+      }
+
+      if (instruction.kind == MirInstructionKind::Borrow && instruction.loan &&
+          body.loans[*instruction.loan - 1].contentsOpening) {
+        const auto &opened = body.loans[*instruction.loan - 1];
+        const auto &opening = *opened.contentsOpening;
+        if (active[opened.id - 1] != MirLoanFlowState::Inactive)
+          return failure(body, owner,
+                         "reference contents are opened while the snapshot is live",
+                         block.id, instruction.id);
+        std::vector<MirLoanId> actualAuthorities;
+        formationAuthorities = &actualAuthorities;
+        const auto invalidRead = checkOperand(
+            opening.reference, "reference contents formation", instruction.id);
+        formationAuthorities = nullptr;
+        if (invalidRead)
+          return *invalidRead;
+        if (actualAuthorities.empty())
+          return failure(body, owner,
+                         "reference contents read lacks an independently derived capability",
+                         block.id, instruction.id);
+
+        // A returned reference can require several correlated authorities.
+        // The recorded frontier must cover every branch of the physical
+        // parent graph. The stored-dependency edge admits related prerequisite
+        // records but cannot turn an external-content owner into permission
+        // to read a container shell.
+        std::vector<unsigned char> reachable(body.loans.size(), 0);
+        std::size_t work = 0;
+        const auto visit = [&](const auto &self, MirLoanId id,
+                               std::size_t depth) -> bool {
+          const auto *record = body.findLoan(id);
+          if (!record || record->id != id || id > reachable.size() || depth > 256 ||
+              ++work > 4096 || reachable[id - 1] == 1)
+            return false;
+          if (reachable[id - 1] == 2)
+            return true;
+          reachable[id - 1] = 1;
+          const auto edge = [&](MirLoanId parent) {
+            return !parent || self(self, parent, depth + 1);
+          };
+          if (!edge(record->parent) || !edge(record->storedDependency))
+            return false;
+          for (const auto &dependency : record->additionalDependencies)
+            if (!edge(dependency.parent))
+              return false;
+          reachable[id - 1] = 2;
+          return true;
+        };
+        for (const auto actual : actualAuthorities)
+          if (!visit(visit, actual, 0))
+            return failure(body, owner,
+                           "reference contents read has an invalid capability graph",
+                           block.id, instruction.id);
+        std::unordered_set<MirLoanId> frontier;
+        for (const auto read : opening.readLoans) {
+          if (!read || read > reachable.size() || reachable[read - 1] != 2 ||
+              !frontier.insert(read).second ||
+              (active[read - 1] != MirLoanFlowState::Active &&
+               active[read - 1] != MirLoanFlowState::Suspended))
+            return failure(body, owner,
+                           "reference contents claim an unrelated or inactive read capability",
+                           block.id, instruction.id);
+          if (const auto invalid = requireStoredDependency(
+                  read, "reference contents formation", instruction.id))
+            return *invalid;
+        }
+        std::vector<unsigned char> covered(body.loans.size(), 0);
+        const auto covers = [&](const auto &self, MirLoanId id) -> bool {
+          if (frontier.contains(id))
+            return true;
+          if (covered[id - 1])
+            return covered[id - 1] == 2;
+          const auto &record = body.loans[id - 1];
+          bool hasParent = false;
+          bool complete = true;
+          const auto edge = [&](MirLoanId parent) {
+            if (parent) {
+              hasParent = true;
+              complete = complete && self(self, parent);
+            }
+          };
+          edge(record.parent);
+          for (const auto &dependency : record.additionalDependencies)
+            edge(dependency.parent);
+          covered[id - 1] = hasParent && complete ? 2 : 1;
+          return covered[id - 1] == 2;
+        };
+        for (const auto actual : actualAuthorities)
+          if (!covers(covers, actual))
+            return failure(body, owner,
+                           "reference contents read omits part of its physical capability frontier",
+                           block.id, instruction.id);
+        // The shared snapshot does not become a child of the transient read.
+        // Source/whole-program admission remains closed until tagged contents
+        // flow, aliasing and invalidation have their independent proof.
+        changingLoan(opened.id) = MirLoanFlowState::Active;
         continue;
       }
 

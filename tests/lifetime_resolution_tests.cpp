@@ -3477,6 +3477,74 @@ int main() { return relay(3); }
          "a concrete forwarded pack still satisfies the selected fixed target arity");
 }
 
+void testStructuralSpecialMemberPolicies() {
+  const auto scalar = analyze(R"(
+struct Plain {
+  int value;
+  Plain(int input) : value(input) {}
+  Plain(Plain& other) = default;
+  Plain(Plain&& other) = default;
+};
+int main() {
+  Plain original{3}; Plain copied{original}; Plain moved{Plain(4)};
+  return copied.value + moved.value - 7;
+}
+)");
+  expectValid(scalar, "explicit defaulted copy and move preserve the generated scalar operation");
+  unsigned transfers = 0;
+  if (const auto *main = function(scalar, "main"); main && main->declaration->body())
+    for (const auto &statement : main->declaration->body()->statements())
+      if (const auto *binding = lang::stmtAs<lang::VariableDecl>(statement.get());
+          binding && binding->initializer())
+        if (const auto *selected = scalar.semantics.findConstruction(*binding->initializer());
+            selected && selected->kind != lang::ConstructorKind::Ordinary) {
+          ++transfers;
+          expect(selected->constructor != 0 && selected->declaration &&
+                     selected->parameterTypes.size() == 1 &&
+                     selected->parameterTypes.front().kind == lang::SemanticType::Reference &&
+                     !selected->parameterTypes.front().referenceLifetime.specified() &&
+                     selected->lifetimeApplication == lang::SemanticLifetimeApplication{},
+                 "a proved structural policy retains declaration identity without publishing a fictitious invocation");
+        }
+  expect(transfers == 2, "both explicit structural transfer modes retain checked selections");
+
+  const auto borrowed = analyze(R"(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  View(View<a>& other) requires outlives<int, a> = default;
+  View(View<a>&& other) = default;
+};
+int read<lifetime a>(int&<a> input) {
+  View<a> original{input}; View<a> copied{original}; View<a> moved{View<a>(input)};
+  return copied.value + moved.value;
+}
+int main() { int value = 7; return read(value) - 14; }
+)");
+  expectValid(borrowed, "structural policy proof preserves fixed owner regions and redundant nominal formation facts");
+
+  for (const auto &[source, parameter] : std::array<std::pair<std::string_view, std::string_view>, 3>{{
+      {"struct Plain { int value; Plain(Plain&<static> other) = default; }; int main() { return 0; }", "Plain&"},
+      {"struct View<lifetime a> { int&<a> value; View(View<a>&<a> other) = default; }; int main() { return 0; }", "View<a>&"},
+      {"struct View<lifetime a> { int&<a> value; View(View<a>& other) requires outlives<a, static> = default; }; int main() { return 0; }", "View<a>&"}}}) {
+    const auto rejected = analyze(source);
+    const auto diagnostic = std::find_if(rejected.diagnostics.begin(), rejected.diagnostics.end(),
+        [](const auto &item) {
+          return item.code == "GTI-S2020" && item.message.find("structural lifetime contract") != std::string::npos;
+        });
+    expect(!rejected.semanticValid && diagnostic != rejected.diagnostics.end() &&
+               diagnostic->primary.source == "lifetime-resolution.gti" &&
+               diagnostic->primary.start == source.find(parameter),
+           "stronger default policies reject at their written source parameter before any invocation");
+  }
+  for (const auto source : {
+      "struct Plain { int value; Plain(int input):value(input){} Plain(Plain& other)=delete; }; int main(){Plain source{1}; Plain copy{source}; return copy.value;}",
+      "struct Plain { int value; Plain(int input):value(input){} Plain(Plain&& other)=delete; }; int main(){Plain value{Plain(1)}; return value.value;}",
+      "struct Plain { int value; Plain(Plain& other):value(other.value){} }; int main(){return 0;}"})
+    expect(!analyze(source).semanticValid,
+           "deleted policies and unsupported custom copy bodies retain their existing rejection");
+}
+
 void testConstructorRelationsAfterFieldIdentity() {
   const auto result = analyze(R"(
 struct Early {
@@ -4189,6 +4257,7 @@ int indirect<lifetime a, lifetime owner>(Leaf<a>&<owner> input) { return choose(
 } // namespace
 
 int main() {
+  testStructuralSpecialMemberPolicies();
   testSharedStoredReferenceCleanupCopy();
   testStagedReferenceContentsAdapters();
   testStagedReferenceContentsSources();

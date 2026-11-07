@@ -1067,6 +1067,20 @@ private:
   enqueueConstructor(const ResolvedConstructionInfo &requestedConstruction,
                      std::optional<SourceSpan> site = std::nullopt) {
     auto construction = requestedConstruction;
+    if (construction.kind == ConstructorKind::Copy ||
+        construction.kind == ConstructorKind::Move) {
+      // A checked defaulted policy retains its declaration identity, but the
+      // operation is still generated. Never canonicalize it as an executable
+      // constructor or drop an arbitrary invocation application.
+      if (!construction.lifetimeArguments.empty() ||
+          construction.lifetimeApplication != SemanticLifetimeApplication{} ||
+          (construction.constructedType.kind == SemanticType::Class &&
+           !enqueueClass(construction.constructedType, site)) ||
+          (construction.constructor != 0 &&
+           construction.constructedType.kind != SemanticType::Class))
+        lifecycleValid = false;
+      return 0;
+    }
     const auto *declaration =
         construction.declaration == nullptr
             ? nullptr
@@ -5761,6 +5775,7 @@ private:
             lowerLifetimeApplication(construction.lifetimeApplication, body),
         .definedFailure = {.propagation =
                                construction.constructor != 0 &&
+                                       construction.kind == ConstructorKind::Ordinary &&
                                        !construction.generatedDefault
                                    ? FailurePropagationKind::Constructor
                                    : FailurePropagationKind::None},
@@ -5778,6 +5793,7 @@ private:
       value.constructorTarget = target;
       value.definedFailure.propagation = FailurePropagationKind::Constructor;
     } else if (construction.constructor != 0 &&
+               construction.kind == ConstructorKind::Ordinary &&
                !construction.generatedDefault) {
       lifecycleValid = false;
       return std::nullopt;

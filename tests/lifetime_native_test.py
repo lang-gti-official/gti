@@ -14,6 +14,29 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "explicit_structural_special_members": """
+struct Plain {
+  int value;
+  Plain(int input) : value(input) {}
+  Plain(Plain& other) = default;
+  Plain(Plain&& other) = default;
+};
+Plain copy(Plain& input) { return Plain(input); }
+mut int drops = 0;
+struct Guard {
+  int value;
+  Guard(int input) : value(input) {}
+  Guard(Guard&& other) = default;
+  ~Guard() { drops += this.value; }
+};
+int moveOnce() { Guard moved{Guard(5)}; return moved.value; }
+int main() {
+  Plain original{3}; Plain direct{original}; Plain forwarded{copy(original)};
+  Plain moved{Plain(4)};
+  int guard = moveOnce();
+  return original.value + direct.value + forwarded.value + moved.value + guard + drops - 23;
+}
+""",
     "carrier_reference_shell_inputs": 'int shared = 7;\nint independent = 9;\nstruct Borrowed<lifetime storage> {\n  int&<storage> value;\n  Borrowed(int&<storage> input) : value(input) {}\n};\nBorrowed<storage>&<shell> relay<lifetime storage, lifetime shell>(\n    Borrowed<storage>&<shell> input) { return input; }\nint main() {\n  Borrowed<static> first{shared};\n  Borrowed<static> second{shared};\n  Borrowed<static> third{independent};\n  Borrowed<static>& firstRef = relay(first);\n  Borrowed<static>& secondRef = relay(second);\n  Borrowed<static>& thirdRef = relay(third);\n  return firstRef.value + secondRef.value + thirdRef.value - 23;\n}\n',
     "deferred_callable_copy_evidence": """
 import std.utility;

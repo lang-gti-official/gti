@@ -2632,19 +2632,16 @@ auto SemanticVisitor::Impl::selectConstructorCandidate(
       if (available) {
         const std::optional<ConstructorInfo> &declared =
             *moving ? owner.moveConstructor : owner.copyConstructor;
-        std::vector<SemanticType> parameterTypes;
-        if (declared && !declared->parameterTypes.empty()) {
-          parameterTypes.push_back(
-              substituteType(declared->parameterTypes.front(), substitution));
-        } else {
-          parameterTypes.push_back(SemanticType::referenceTo(constructedType));
-        }
-        viable.push_back({declared ? &*declared : nullptr,
-                          std::move(parameterTypes),
-                          {},
-                          {},
-                          false,
-                          *attemptedSpecial});
+        // Defaulted policies preserve the generated operation, including its
+        // source read/transfer role. Their independent declaration-shell name
+        // is not a callable formal to instantiate or export into this body.
+        if (!declared || structuralConstructorPolicy(*declared))
+          viable.push_back({declared ? &*declared : nullptr,
+                            {SemanticType::referenceTo(constructedType)},
+                            {},
+                            {},
+                            false,
+                            *attemptedSpecial});
       }
     }
   }
@@ -3020,7 +3017,8 @@ auto SemanticVisitor::Impl::selectConstructorCandidate(
     return std::nullopt;
   }
 
-  if (selected.constructor && !selected.lifetimeCandidate.lifetimeApplication.complete) {
+  if (selected.kind == ConstructorKind::Ordinary && selected.constructor &&
+      !selected.lifetimeCandidate.lifetimeApplication.complete) {
     const auto inputs = lifetimeInputs(selected.constructor);
     if (!applyCallLifetimeContract(selected.lifetimeCandidate, inputs, paren)) {
       currentType = SemanticType::Unknown;

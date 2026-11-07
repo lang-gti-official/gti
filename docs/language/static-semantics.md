@@ -1574,6 +1574,15 @@ the structural operation and is ill-formed when a base, field, stored borrow,
 or cleanup policy makes that operation unavailable. `= delete` makes the
 corresponding operation unavailable.
 
+The lifetime contract of `= default` must also preserve that structural
+operation. Its source has one independent, call-only lifetime; the owner's
+stored lifetimes remain fixed. A fixed `static` source lifetime, a source
+lifetime tied to one of the owner's regions, or an additional requirement that
+normalization cannot prove equivalent to the structural contract is rejected
+at the declaration with `GTI-S2020`. Redundant nominal well-formedness facts
+are permitted. These declarations do not introduce constrained copy/move
+overloads or an executable constructor call.
+
 `T&&` is not a general GTI reference or forwarding-reference type. It is
 permitted only in the exact move constructor policy. A custom copy or move
 constructor body is not supported. GTI currently uses structural movement and

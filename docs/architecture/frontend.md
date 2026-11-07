@@ -609,6 +609,17 @@ cannot add anonymous region slots or strengthen formation obligations. Public
 lifetime variance is conservative across all definitions in the family, so an
 open primary cannot promise a conversion that a selected layout invalidates.
 
+Defaulted copy/move policies are checked after nominal contracts settle. The
+shared structural-policy predicate derives the source-reference signature
+from the exact owner declaration, retaining its fixed regions and adding one
+independent shell binder. It compares the complete normalized `All`/`Any`
+alternatives, including formation of nested nominal type arguments. Missing or
+stronger facts, correlated/fixed shell regions and unsupported predicates fail
+the declaration check. Accepted policies select the existing structural
+copy/read or move/value operation; their declaration identity is retained, but
+no fictitious callable target or invocation application is published. Whole
+value lifetime, liveness and cleanup checks continue to govern the transfer.
+
 Every final expression and statement node exposes one closed `ExprKind` or
 `StmtKind` tag in addition to the visitor interface. `exprAs<T>`/`stmtAs<T>`
 check that tag before a static cast. This avoids repeated RTTI name comparisons

@@ -10430,6 +10430,16 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
     if (owner.declaration == nullptr) {
       continue;
     }
+    for (const auto *policy : {&owner.copyConstructor, &owner.moveConstructor})
+      if (*policy && (*policy)->declaration && (*policy)->declaration->specifier() &&
+          (*policy)->declaration->specifier()->kind == SpecialMemberSpecifierKind::Defaulted &&
+          !structuralConstructorPolicy(**policy)) {
+        const auto &declaration = *(*policy)->declaration;
+        report(declaration.parameters().front().type.name.last(),
+               "A defaulted copy or move policy must preserve the structural lifetime contract: "
+               "one independent source lifetime and no additional requirements.",
+               "GTI-S2020");
+      }
     for (const FieldInfo &field : owner.fields) {
       if (field.declaration == nullptr || field.declaration->initializer())
         continue;

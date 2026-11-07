@@ -4,6 +4,7 @@
 #include "gti/generic_type_patterns.h"
 #include "gti/lifetime_types.h"
 #include "gti/callable_lifetimes.h"
+#include "structural_constructor_policy.h"
 
 #include <algorithm>
 #include <functional>
@@ -22,6 +23,107 @@ SemanticType substituteHirSemanticType(const SemanticType &type,
     regions.emplace_back(Lifetime::parameter(parameter), actual);
   return substituteTypeLifetimes(std::move(result), regions)
       .value_or(SemanticType::Unknown);
+}
+
+std::optional<LifetimeRequirementFormula> hirPolicyNominalRequirements(
+    const SemanticModel &semantics, const SemanticType &type) {
+  using namespace structural_policy_detail;
+  if (type.kind == SemanticType::Class) {
+    const auto *declaration = semantics.findClassType(type.classId);
+    const auto owner = declaration ? openClassType(*declaration) : std::nullopt;
+    return owner ? nominalRequirements(*owner, type, declaration->lifetimeContract,
+                       identities(declaration->genericParameters),
+                       identities(declaration->genericArgumentPatternLifetimes))
+                 : std::nullopt;
+  }
+  if (type.kind == SemanticType::Enum) {
+    const auto *declaration = semantics.findEnumType(type.enumId);
+    const auto owner = declaration
+        ? openNominalType(SemanticType::enumType(declaration->id),
+                          declaration->genericParameters) : std::nullopt;
+    return owner ? nominalRequirements(*owner, type, declaration->lifetimeContract,
+                                      identities(declaration->genericParameters))
+                 : std::nullopt;
+  }
+  if (type.kind == SemanticType::Lambda) {
+    const auto *declaration = semantics.findLambda(type.lambdaId);
+    return declaration ? lambdaEnvironmentLifetimeRequirements(
+                             declaration->type, type, declaration->environmentContract)
+                       : std::nullopt;
+  }
+  return std::nullopt;
+}
+
+bool hirStructuralPolicyMatches(const SemanticModel &semantics,
+                                const ClassTypeInfo &owner,
+                                const ConstructorInfo &policy) {
+  const auto type = structural_policy_detail::openClassType(owner);
+  if (!type || policy.owner != owner.id || !policy.declaration ||
+      !policy.declaration->specifier() ||
+      policy.declaration->specifier()->kind != SpecialMemberSpecifierKind::Defaulted ||
+      policy.access != AccessModifier::Public || policy.requiresUnsafe ||
+      !policy.genericParameters.empty() || policy.requiredParameterCount != 1 ||
+      policy.parameterPack)
+    return false;
+  auto contract = policy.lifetimeContract;
+  std::vector<const ConstraintExpression *> seen;
+  for (const auto &requirement : policy.requirements) {
+    if (!requirement.lifetimeBound || requirement.conceptId)
+      return false;
+    const auto leaf = [](const auto &value) -> std::optional<LifetimeRequirementNode> {
+      if (!value.lifetimeBound || value.conceptId)
+        return std::nullopt;
+      return LifetimeRequirementNode{
+          .kind = value.outlivesType ? LifetimeRequirementNode::Kind::Type
+                                    : LifetimeRequirementNode::Kind::Region,
+          .bound = *value.lifetimeBound,
+          .type = value.outlivesType.value_or(SemanticType::Unknown)};
+    };
+    LifetimeRequirementFormula part;
+    if (!requirement.expression) {
+      part = {.nodes = {*leaf(requirement)}, .root = 0};
+    } else {
+      const auto *expression = requirement.expression;
+      if (std::find(seen.begin(), seen.end(), expression) != seen.end())
+        continue;
+      seen.push_back(expression);
+      if (expression->nodes.size() > 4096)
+        return false;
+      std::size_t count = 0;
+      for (const auto &node : expression->nodes)
+        if (node.kind == ConstraintExpressionKind::Application)
+          count = std::max(count, node.application + 1);
+      std::size_t members = 0;
+      for (const auto &candidate : policy.requirements)
+        if (candidate.expression == expression) {
+          if (candidate.expressionApplication >= count)
+            return false;
+          ++members;
+        }
+      if (members != count)
+        return false;
+      const auto translated = structural_policy_detail::writtenRequirements(
+          expression->nodes, expression->root, count, [&](std::size_t index) {
+            const AppliedConceptRequirement *selected = nullptr;
+            for (const auto &candidate : policy.requirements)
+              if (candidate.expression == expression && candidate.expressionApplication == index) {
+                if (selected)
+                  return std::optional<LifetimeRequirementNode>{};
+                selected = &candidate;
+              }
+            return selected ? leaf(*selected) : std::nullopt;
+          });
+      if (!translated)
+        return false;
+      part = *translated;
+    }
+    if (!appendLifetimeRequirementFormula(contract.requirements, part))
+      return false;
+  }
+  return structuralConstructorPolicyMatches(*type, owner.lifetimeContract,
+      policy.parameterTypes, contract, [&](const SemanticType &node) {
+        return hirPolicyNominalRequirements(semantics, node);
+      });
 }
 } // namespace
 
@@ -1298,6 +1400,30 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           "HIR class alias inventory differs from semantics");
       continue;
     }
+    if (owner->declaration) {
+      const auto *lifecycle = semantics.findClassLifecycle(*owner->declaration);
+      if (!lifecycle) {
+        result.errors.emplace_back("HIR class lacks its structural constructor policies");
+      } else {
+        for (const auto kind : {ConstructorKind::Copy, ConstructorKind::Move}) {
+          const auto &policy = kind == ConstructorKind::Copy
+              ? lifecycle->declaredCopyConstructor : lifecycle->declaredMoveConstructor;
+          const auto status = kind == ConstructorKind::Copy
+              ? instance.copyConstructor : instance.moveConstructor;
+          const bool available = kind == ConstructorKind::Copy
+              ? instance.traits.copyable : instance.traits.movable;
+          const bool defaulted = policy && policy->declaration && policy->declaration->specifier() &&
+              policy->declaration->specifier()->kind == SpecialMemberSpecifierKind::Defaulted;
+          const auto expected = defaulted && available ? SpecialMemberStatus::Generated
+                                                      : SpecialMemberStatus::Deleted;
+          if (policy && status != expected)
+            result.errors.emplace_back("HIR class changes its selected structural constructor policy");
+          if (defaulted && (policy->kind != kind ||
+               !hirStructuralPolicyMatches(semantics, *owner, *policy)))
+            result.errors.emplace_back("HIR defaulted constructor policy changes its structural lifetime contract");
+        }
+      }
+    }
     // Aliases and dispatch views use the same exact selected owner recipe as
     // construction contexts, including compact lifetime and scoped callable
     // arguments. Raw projected type leaves are not an independent authority.
@@ -2039,6 +2165,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                                substitution, &semantics),
                         semantics))
               : SemanticType::Unknown;
+      if (construction && (construction->kind == ConstructorKind::Copy ||
+                           construction->kind == ConstructorKind::Move)) {
+        if (value.constructorKind != construction->kind || value.constructorTarget ||
+            value.lifetimeApplication != HirLifetimeApplication{} ||
+            !value.lifetimeArguments.empty())
+          result.errors.emplace_back("HIR structural transfer retains an arbitrary constructor invocation");
+      }
       const auto *type = construction != nullptr &&
                                  construction->generatedDefault &&
                                  construction->kind == ConstructorKind::Ordinary

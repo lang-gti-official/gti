@@ -810,7 +810,92 @@ void testReferenceErasureContracts() {
          "an erasure witness cannot strengthen the source access");
 }
 
+void testStructuralConstructorPolicies() {
+  using namespace lang;
+  const auto a = Lifetime::parameter(601), b = Lifetime::parameter(602);
+  const auto shell = Lifetime::parameter(603), renamed = Lifetime::parameter(604);
+  auto owner = SemanticType::classType(71);
+  const LifetimeSignatureContract ownerContract{.complete = true};
+  auto input = SemanticType::referenceTo(owner);
+  input.referenceLifetime = shell;
+  LifetimeSignatureContract policy{.parameters = {shell}, .typeBounds = {{owner, shell}},
+                                    .complete = true};
+  const auto formation = [&](const SemanticType &type)
+      -> std::optional<LifetimeRequirementFormula> {
+    return type == owner ? lifetimeContractRequirements(ownerContract) : std::nullopt;
+  };
+  expect(structuralConstructorPolicyMatches(owner, ownerContract, std::array{input}, policy, formation),
+         "defaulted scalar policies have one independent structural source lifetime");
+  auto renamedInput = input;
+  renamedInput.referenceLifetime = renamed;
+  auto renamedPolicy = *substituteLifetimeContract(policy, std::array{LifetimeBinding{shell, renamed}});
+  expect(structuralConstructorPolicyMatches(owner, ownerContract, std::array{renamedInput}, renamedPolicy, formation),
+         "only the independent policy source binder may rename");
+  for (unsigned mutation = 0; mutation != 7; ++mutation) {
+    auto changed = policy;
+    auto parameter = input;
+    if (mutation == 0) { parameter.referenceLifetime = Lifetime::staticLifetime(); changed.parameters.clear(); changed.typeBounds[0].region = Lifetime::staticLifetime(); }
+    if (mutation == 1) changed.parameters.push_back(a);
+    if (mutation == 2) changed.typeBounds.clear();
+    if (mutation == 3) changed.bounds.push_back({shell, Lifetime::staticLifetime()});
+    if (mutation == 4) parameter.referenceAccess = AccessMode::Mutable;
+    if (mutation == 5) parameter.arguments[0] = SemanticType::classType(72);
+    if (mutation == 6) changed.origin = LifetimeContractOrigin::BodyInferred;
+    expect(!structuralConstructorPolicyMatches(owner, ownerContract, std::array{parameter}, changed, formation),
+           "fixed, foreign, missing, stronger, mutable, wrong-owner and body-inferred policy contracts reject");
+  }
+
+  auto nested = SemanticType::classType(72);
+  nested.lifetimeArguments = {a};
+  owner = SemanticType::classType(73, {nested});
+  const LifetimeSignatureContract nestedOwner{.parameters = {a}, .complete = true};
+  input = SemanticType::referenceTo(owner);
+  input.referenceLifetime = shell;
+  policy = {.parameters = {a, shell}, .typeBounds = {{owner, shell}, {SemanticType::Int32, a}},
+            .complete = true};
+  const auto nestedFormation = [&](const SemanticType &type)
+      -> std::optional<LifetimeRequirementFormula> {
+    if (type == owner) return lifetimeContractRequirements(nestedOwner);
+    if (type == nested) return LifetimeRequirementFormula{
+        .nodes = {{.kind = LifetimeRequirementNode::Kind::Type, .bound = {{}, a},
+                   .type = SemanticType::Int32}}, .root = 0};
+    return std::nullopt;
+  };
+  expect(structuralConstructorPolicyMatches(owner, nestedOwner, std::array{input}, policy, nestedFormation),
+         "structural policy derivation retains formation of nested nominal type arguments");
+  auto missingNested = policy;
+  missingNested.typeBounds.pop_back();
+  expect(!structuralConstructorPolicyMatches(owner, nestedOwner, std::array{input}, missingNested, nestedFormation),
+         "a phantom nested type argument's formation requirement cannot disappear");
+  input.referenceLifetime = a;
+  expect(!structuralConstructorPolicyMatches(owner, nestedOwner, std::array{input}, policy, nestedFormation),
+         "an owner region cannot replace the independent source shell");
+
+  owner = SemanticType::classType(74);
+  owner.lifetimeArguments = {a, b};
+  LifetimeSignatureContract either{.parameters = {a, b}, .complete = true};
+  either.requirements = {.nodes = {
+      {.kind = LifetimeRequirementNode::Kind::Type, .bound = {{}, a}, .type = SemanticType::Int32},
+      {.kind = LifetimeRequirementNode::Kind::Type, .bound = {{}, b}, .type = SemanticType::Int32},
+      {.kind = LifetimeRequirementNode::Kind::Any, .left = 0, .right = 1}}, .root = 2};
+  policy = either;
+  policy.parameters.push_back(shell);
+  policy.typeBounds.push_back({owner, shell});
+  input = SemanticType::referenceTo(owner);
+  input.referenceLifetime = shell;
+  const auto eitherFormation = [&](const SemanticType &type)
+      -> std::optional<LifetimeRequirementFormula> {
+    return type == owner ? lifetimeContractRequirements(either) : std::nullopt;
+  };
+  expect(structuralConstructorPolicyMatches(owner, either, std::array{input}, policy, eitherFormation),
+         "repeated nominal formation preserves the entire disjunctive structural contract");
+  policy.requirements.nodes.back().kind = LifetimeRequirementNode::Kind::All;
+  expect(!structuralConstructorPolicyMatches(owner, either, std::array{input}, policy, eitherFormation),
+         "a policy cannot strengthen a nominal alternative into joint requirements");
+}
+
 int main() {
+  testStructuralConstructorPolicies();
   testReferenceSupplierQueries();
   testLambdaEnvironmentContracts();
   testInlineBorrowPathDisjointness();

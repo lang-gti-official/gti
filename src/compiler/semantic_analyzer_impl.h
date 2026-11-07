@@ -3346,6 +3346,7 @@ private:
   [[nodiscard]] bool representableInferredLifetimeBound(
       const LifetimeSignatureContract &declaration, LifetimeBound bound) const;
   void normalizeConstructorLifetimeContract(ConstructorInfo &constructor);
+  [[nodiscard]] bool structuralConstructorPolicy(const ConstructorInfo &constructor);
   void addConstructorInitializerLifetimeBounds(ConstructorInfo &constructor);
   void finalizeConstructorInitializerLifetimes();
   void normalizeDestructorLifetimeContract(DestructorInfo &destructor);

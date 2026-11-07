@@ -353,6 +353,120 @@ callableLifetimeContract(const SemanticType &signature,
   return callable_lifetime_detail::deriveContract(signature, nominalFormation, work);
 }
 
+// A defaulted copy/move declaration selects the structural operation; it is
+// not an invocation that may impose additional caller preconditions. The
+// owner is supplied by the declaration catalog, never inferred from the
+// policy's claimed parameter. Only its independent source-shell binder may
+// vary. Actual copy/read or move/value transport remains a consumer concern.
+inline bool structuralConstructorPolicyMatches(
+    const SemanticType &owner, const LifetimeSignatureContract &ownerContract,
+    std::span<const SemanticType> parameters,
+    const LifetimeSignatureContract &policy,
+    const CallableNominalFormation &nominalFormation) {
+  if (owner.kind != SemanticType::Class || !owner.classId ||
+      !ownerContract.valid() || ownerContract.receiver.specified() ||
+      !policy.valid() || policy.receiver.specified() || parameters.size() != 1 ||
+      ownerContract.origin == LifetimeContractOrigin::BodyInferred ||
+      policy.origin != ownerContract.origin)
+    return false;
+  const auto &source = parameters.front();
+  const auto shell = source.referenceLifetime;
+  auto structuralSource = SemanticType::referenceTo(owner);
+  structuralSource.referenceLifetime = shell;
+  if (source.kind != SemanticType::Reference || source.arguments.size() != 1 ||
+      source.referenceAccess != AccessMode::ReadOnly ||
+      !equivalentLifetimeTypes(source, structuralSource) ||
+      shell.kind != Lifetime::Kind::Parameter || !shell.specified() ||
+      std::find(ownerContract.parameters.begin(), ownerContract.parameters.end(), shell) !=
+          ownerContract.parameters.end())
+    return false;
+  auto expectedParameters = ownerContract.parameters;
+  expectedParameters.push_back(shell);
+  if (policy.parameters != expectedParameters)
+    return false;
+
+  auto signature = SemanticType::functionSignature(owner, {structuralSource});
+  for (const auto parameter : expectedParameters)
+    signature.quantifiedLifetimes.push_back(parameter.id);
+  // Shared derivation validates nested scopes and the exact nominal arguments,
+  // including phantom arguments, without importing their invocation premises.
+  auto expected = callableLifetimeContract(signature, nominalFormation);
+  signature.arguments[1] = source;
+  const auto checkedSource = callableLifetimeContract(signature, nominalFormation);
+  const auto ownerRequirements = lifetimeContractRequirements(ownerContract);
+  if (!expected || !checkedSource || !ownerRequirements ||
+      !appendLifetimeRequirementFormula(expected->requirements, *ownerRequirements))
+    return false;
+
+  // Compare normalized All/Any alternatives, not a union of their premises.
+  // This is bounded syntactic equivalence of exact facts, not a second region
+  // solver. A predicate this normalization cannot prove remains unsupported.
+  const auto supported = [](const LifetimeSignatureContract &contract) {
+    return std::none_of(contract.requirements.nodes.begin(), contract.requirements.nodes.end(),
+        [](const auto &node) {
+          return node.kind == LifetimeRequirementNode::Kind::SemanticPredicate;
+        });
+  };
+  if (!supported(policy) || !supported(*expected))
+    return false;
+  std::size_t remaining = 4096;
+  const auto includedFacts = [&](const LifetimeSignatureContract &left,
+                                 const LifetimeSignatureContract &right) {
+    const auto contained = [&](const auto &values, const auto &other, const auto &same) {
+      for (const auto &value : values) {
+        bool found = false;
+        for (const auto &candidate : other) {
+          if (!remaining)
+            return false;
+          --remaining;
+          if (same(value, candidate)) {
+            found = true;
+            break;
+          }
+        }
+        if (!found)
+          return false;
+      }
+      return true;
+    };
+    const auto region = [](const auto &left, const auto &right) { return left == right; };
+    const auto type = [](const LifetimeTypeBound &left, const LifetimeTypeBound &right) {
+      return left.region == right.region && equivalentLifetimeTypes(left.type, right.type);
+    };
+    return contained(left.bounds, right.bounds, region) &&
+           contained(left.typeBounds, right.typeBounds, type);
+  };
+  const auto cases = [&](const LifetimeSignatureContract &contract)
+      -> std::optional<std::vector<LifetimeSignatureContract>> {
+    std::vector<LifetimeSignatureContract> result;
+    const auto proof = visitLifetimeAssumptionCases(contract, [&](const auto &current) {
+      // Repeated nominal WF can produce A or (A and B). The latter is
+      // redundant, but neither A nor B may be dropped from A or B.
+      if (std::any_of(result.begin(), result.end(),
+              [&](const auto &existing) { return includedFacts(existing, current); }))
+        return remaining != 0;
+      std::erase_if(result, [&](const auto &existing) { return includedFacts(current, existing); });
+      if (!remaining || result.size() == 256)
+        return false;
+      result.push_back(current);
+      return remaining != 0;
+    });
+    return proof.proof == LifetimeFormulaProof::Proven ? std::optional(std::move(result))
+                                                     : std::nullopt;
+  };
+  const auto actualCases = cases(policy);
+  const auto expectedCases = cases(*expected);
+  if (!actualCases || !expectedCases || actualCases->size() != expectedCases->size())
+    return false;
+  for (const auto &actual : *actualCases)
+    if (std::none_of(expectedCases->begin(), expectedCases->end(),
+            [&](const auto &expected) {
+              return includedFacts(actual, expected) && includedFacts(expected, actual);
+            }))
+      return false;
+  return remaining != 0;
+}
+
 // Checked erasure preserves an object's physical storage region and access.
 // Restoration additionally requires validity of the exact requested referent
 // for that region: an opaque input does not imply this premise. Phase adapters

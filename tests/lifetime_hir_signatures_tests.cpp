@@ -588,8 +588,99 @@ int main() { Count callback = count; return invoke(callback, "text") - 7; }
     }
   expect(found, "native HIR fixture retains an indirect invocation");
 }
+void structuralConstructorPolicies() {
+  auto result = Frontend({.stopAfter = FrontendPhase::Hir}).analyze(
+      "structural-constructor-policy-hir.gti", R"gti(
+struct Cell<lifetime a> {
+  int&<a> value;
+  Cell(int&<a> input) : value(input) {}
+  Cell(Cell<a>& source) = default;
+  Cell(Cell<a>&& source) = default;
+};
+struct Plain {
+  int value = 7;
+  Plain() = default;
+  Plain(Plain& source) = default;
+  Plain(Plain&& source) = default;
+};
+int main() {
+  int input = 7;
+  Cell cell{input};
+  Plain first{};
+  Plain second{first};
+  return second.value + cell.value - 14;
+}
+)gti");
+  if (!result.semanticValid || !result.hir.valid())
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(result.semanticValid && result.hir.valid(),
+         "defaulted structural policies retain checked HIR declarations and targetless copies");
+  expect(verifyHirProgramPlans(result.semantics, result.hir).valid(),
+         "independent HIR policy replay accepts exact owner and shell scopes");
+  bool foundPolicy = false, foundCopy = false;
+  for (const auto &instance : result.hir.classInstances()) {
+    if (!instance.source || instance.source->name().lexeme != "Cell") continue;
+    auto *lifecycle = const_cast<ClassLifecycleInfo *>(
+        result.semantics.findClassLifecycle(*instance.source));
+    expect(lifecycle && lifecycle->declaredCopyConstructor,
+           "the HIR fixture retains its declared borrowed-owner policy");
+    foundPolicy = true;
+    const auto original = *lifecycle->declaredCopyConstructor;
+    for (int mutation = 0; mutation != 5; ++mutation) {
+      auto &policy = *lifecycle->declaredCopyConstructor;
+      policy = original;
+      if (mutation == 0) policy.parameterTypes.front().referenceLifetime = Lifetime::staticLifetime();
+      if (mutation == 1) {
+        policy.lifetimeContract.typeBounds.clear();
+        policy.lifetimeContract.requirements = {};
+      }
+      if (mutation == 2)
+        policy.parameterTypes.front().arguments.front().lifetimeArguments.front() = Lifetime::staticLifetime();
+      if (mutation == 3) policy.parameterTypes.front().referenceAccess = AccessMode::Mutable;
+      if (mutation == 4) policy.requirements.push_back({
+          .lifetimeBound = LifetimeBound{{}, Lifetime::staticLifetime()},
+          .outlivesType = policy.parameterTypes.front().arguments.front()});
+      const auto proof = verifyHirProgramPlans(result.semantics, result.hir);
+      expect(std::any_of(proof.errors.begin(), proof.errors.end(), [](const auto &error) {
+        return error == "HIR defaulted constructor policy changes its structural lifetime contract";
+      }), "HIR policies reject static/tied owner, missing requirements and changed access");
+    }
+    lifecycle->declaredCopyConstructor = original;
+    auto forged = result.hir;
+    auto &changed = const_cast<HirClassInstance &>(forged.classInstances()[instance.id - 1]);
+    changed.copyConstructor = SpecialMemberStatus::Deleted;
+    const auto proof = verifyHirProgramPlans(result.semantics, forged);
+    expect(std::any_of(proof.errors.begin(), proof.errors.end(), [](const auto &error) {
+      return error == "HIR class changes its selected structural constructor policy";
+    }), "HIR cannot change a declared structural operation's availability");
+  }
+  for (const auto &function : result.hir.functionInstances())
+    for (const auto &value : function.body.values) {
+      if (value.constructorKind != ConstructorKind::Copy || !value.source) continue;
+      foundCopy = true;
+      expect(!value.constructorTarget && value.lifetimeApplication == HirLifetimeApplication{} &&
+                 value.lifetimeArguments.empty(),
+             "generated copies have no discarded policy invocation application");
+      for (int mutation = 0; mutation != 3; ++mutation) {
+        auto forged = result.hir;
+        auto &body = const_cast<HirBody &>(forged.findFunctionInstance(function.id)->body);
+        auto *changed = const_cast<HirValue *>(body.findValue(value.id));
+        if (mutation == 0) changed->lifetimeApplication.complete = true;
+        if (mutation == 1) changed->lifetimeArguments.push_back(Lifetime::staticLifetime());
+        if (mutation == 2) changed->constructorKind = ConstructorKind::Move;
+        const auto proof = verifyHirProgramPlans(result.semantics, forged);
+        expect(std::any_of(proof.errors.begin(), proof.errors.end(), [](const auto &error) {
+          return error == "HIR structural transfer retains an arbitrary constructor invocation";
+        }), "HIR generated transfer rejects arbitrary policy applications, arguments and modes");
+      }
+    }
+  expect(foundPolicy && foundCopy, "the HIR policy fixture exercises both declaration and transfer proof");
+}
+
 } // namespace
 int main() {
+  structuralConstructorPolicies();
   unprovedReferenceContents();
   preparedReceiverRegion();
   contextualOperatorApplication();

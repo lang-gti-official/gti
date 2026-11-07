@@ -78,6 +78,16 @@ on that application, because construction overload resolution never selects
 it. Its concrete status is `Deleted`, while the open primary keeps `Declared`.
 HIR does not ask a backend to evaluate generic arithmetic or synthesize missing
 field initialization.
+An explicit defaulted copy or move policy preserves the generated structural
+operation. HIR independently checks its normalized declaration contract against
+the exact open owner, with fixed owner regions and one independent source-shell
+binder. The lowered declaration catalog repeats that proof without source
+pointers and includes the retained Boolean lifetime requirements, so a stronger
+written condition cannot hide behind a weaker claimed contract. Only the shell
+binder and nested invocation binders may be alpha-renamed. The selection retains
+its policy declaration identity but creates no executable constructor target or
+lifetime application; actual copy/read and move/value operands keep their normal
+typed conversion, loan, transfer and cleanup checks.
 `HirProgram::instanceSymbols` retains the exact ordered semantic symbol records
 introduced only by those concrete analyses. Their request-wide IDs are disjoint
 from primary and other instance symbols. HIR checks concrete binding types and

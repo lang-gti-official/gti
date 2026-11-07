@@ -1,4 +1,5 @@
 #include "../src/compiler/mir_lifetimes.h"
+#include "../src/compiler/mir_storage_effects.h"
 #include "../src/compiler/mir_verification_queries.h"
 #include "../src/compiler/mir_verification_support.h"
 #include "gti/mir_printer.h"
@@ -265,6 +266,37 @@ int main() { int x = 2; int y = 5; View view{x, y}; return read(view) - 7; }
                  "opening is explicitly anchored to its evaluated source instruction");
         }
     expect(definitions == 1, "one evaluated expression creates exactly one staged opening");
+    if (!copyContents) {
+      const auto flow = verifyMirPersistentStorageLoanFlow(
+          instance->body, instance->id, {}, nullptr, nullptr, {}, &lowered.program);
+      if (!flow.valid())
+        for (const auto &issue : flow.errors) std::cerr << issue.message << '\n';
+      expect(flow.valid(),
+             "canonical loan flow proves the evaluated read and the complete formation frontier");
+      expect(!verifyMirPersistentStorageLoanFlow(instance->body, instance->id, {}).valid(),
+             "formation cannot use a context-free structural guess");
+      auto wrong = instance->body;
+      const auto dependency = authority->storedDependency;
+      expect(dependency != 0, "reference read and external contents use separate capabilities");
+      wrong.loans[found->id - 1].contentsOpening->readLoans = {dependency};
+      expect(!verifyMirPersistentStorageLoanFlow(
+                 wrong, instance->id, {}, nullptr, nullptr, {}, &lowered.program).valid(),
+             "external contents liveness cannot substitute for physical container read permission");
+      wrong = instance->body;
+      MirInstructionId next = 1;
+      for (const auto &block : wrong.blocks)
+        for (const auto &instruction : block.instructions) next = std::max(next, instruction.id + 1);
+      for (auto &block : wrong.blocks)
+        for (auto position = block.instructions.begin(); position != block.instructions.end(); ++position)
+          if (position->kind == MirInstructionKind::Borrow && position->loan == found->id) {
+            block.instructions.insert(position,
+                {.id = next, .kind = MirInstructionKind::EndBorrow, .loan = authority->id});
+            break;
+          }
+      expect(!verifyMirPersistentStorageLoanFlow(
+                 wrong, instance->id, {}, nullptr, nullptr, {}, &lowered.program).valid(),
+             "formation after its physical read capability ends is rejected");
+    }
     if (copyContents)
       expect(std::any_of(instance->body.values.begin(), instance->body.values.end(),
           [&](const auto &copied) {
