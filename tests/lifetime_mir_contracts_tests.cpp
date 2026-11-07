@@ -2748,6 +2748,93 @@ int main() {
   return true;
 }
 
+void checkLocalInlineStorageBounds() {
+  // This source-free body deliberately exceeds the optional containment
+  // budget with unrelated, independently mapped local storage origins.
+  MirProgram empty;
+  MirBody manyLocals;
+  manyLocals.placeDomain = {1, 2, 0};
+  manyLocals.lifetimeBody.complete = true;
+  constexpr std::size_t localCount = 4097;
+  for (std::size_t index = 1; index <= localCount; ++index) {
+    MirPlace place;
+    place.id = index;
+    place.root = MirPlaceRootKind::Binding;
+    place.binding = index;
+    place.type = SemanticType::Int32;
+    place.key = PlaceKey{.domain = manyLocals.placeDomain, .root = index};
+    manyLocals.places.push_back(place);
+    manyLocals.lifetimeBody.origins.push_back(
+        {.region = Lifetime::local(index), .place = index, .key = *place.key});
+  }
+  LifetimeSignatureContract noRequirements{.complete = true};
+  expect(verifyMirLifetimeBodyFacts(empty, manyLocals, noRequirements).valid(),
+         "unrelated local origins cannot exhaust an optional storage proof when no type fact is requested");
+  const auto opaque = SemanticType::typeParameter(910001);
+  manyLocals.places.back().type = opaque;
+  manyLocals.lifetimeBody.typeObligations = {{opaque, Lifetime::local(localCount)}};
+  expect(verifyMirLifetimeBodyFacts(empty, manyLocals, noRequirements).valid(),
+         "a late direct local storage fact survives every unrelated origin");
+  manyLocals.lifetimeBody.typeObligations = {{opaque, Lifetime::local(1)}};
+  expect(!verifyMirLifetimeBodyFacts(empty, manyLocals, noRequirements).valid(),
+         "retaining direct facts does not invent a relationship to another local storage region");
+
+  const auto frontend = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "local-inline-storage-bounds.gti", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+struct Phantom<T> {
+  Phantom() = default;
+  int touch() { return 0; }
+};
+struct ReferenceHolder<T, lifetime a> {
+  T&<a> value;
+  ReferenceHolder(T&<a> input) : value(input) {}
+  int touch() { return 0; }
+};
+int inspect<lifetime a, lifetime b>(View<a>&<b> input) {
+  Phantom<View<a>> phantom{};
+  ReferenceHolder<View<a>, b> external{input};
+  return phantom.touch() + external.touch();
+}
+int main() { int value = 7; View view{value}; return inspect(view); }
+)gti");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "local storage-bound controls must reach independently checked MIR");
+  }
+  bool checkedPhantom = false, checkedExternal = false;
+  for (const auto &function : frontend.mir.functionInstances()) {
+    for (const auto &origin : function.body.lifetimeBody.origins) {
+      const auto *place = function.body.findPlace(origin.place);
+      if (!place || place->type.kind != SemanticType::Class ||
+          place->type.arguments.size() != 1) continue;
+      const auto *declaration = frontend.semantics.findClassType(place->type.classId);
+      if (!declaration || (declaration->qualifiedName != "Phantom" &&
+                           declaration->qualifiedName != "ReferenceHolder")) continue;
+      auto forged = function.body;
+      forged.lifetimeBody.typeObligations.push_back({place->type.arguments.front(), origin.region});
+      expect(!verifyMirLifetimeBodyFacts(frontend.mir, forged,
+                  function.lifetimeContract, function.id).valid(),
+             "a local object cannot prove a phantom argument or an external reference target outlives its shell");
+      if (declaration->qualifiedName == "Phantom") checkedPhantom = true;
+      else {
+        checkedExternal = true;
+        forged = function.body;
+        forged.lifetimeBody.typeObligations.push_back({place->type, Lifetime::staticLifetime()});
+        expect(!verifyMirLifetimeBodyFacts(frontend.mir, forged,
+                    function.lifetimeContract, function.id).valid(),
+               "local inline storage facts cannot be retagged as a static lifetime guarantee");
+      }
+    }
+  }
+  expect(checkedPhantom && checkedExternal,
+         "local storage bounds must exercise both non-stored arguments and stored-reference boundaries");
+}
+
 } // namespace
 
 int main() {
@@ -3816,6 +3903,7 @@ int main() {
          "an invocation pointer cannot discard a target outlives requirement or invent a repair");
   checkReferenceContentsOpeningShape();
   checkReferenceReceiverProducer();
+  checkLocalInlineStorageBounds();
   checkReferenceErasureLifetimeAuthority();
   checkReferenceErasureAddressIdentity();
   checkCarrierReferenceShellInputs();

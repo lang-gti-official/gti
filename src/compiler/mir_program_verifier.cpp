@@ -1,4 +1,5 @@
 #include "gti/mir.h"
+#include "class_hierarchy_lifetimes.h"
 #include "gti/borrow_conditions.h"
 #include "gti/callable_lifetimes.h"
 #include "gti/compiled_scalar_signature.h"
@@ -12965,33 +12966,12 @@ exactMirCapabilityClass(const MirProgram &program, const SemanticType &type,
 [[nodiscard]] bool mirPublicBaseConversion(const MirProgram &program,
                                            const SemanticType &derived,
                                            const SemanticType &base) {
-  const MirClassInstance *source =
-      uniqueMirClassInstanceForType(program, derived);
-  if (source == nullptr) {
-    return false;
-  }
-  std::unordered_set<HirClassInstanceId> visited;
-  const auto visit = [&](const auto &self,
-                         const MirClassInstance &current) -> bool {
-    if (!visited.insert(current.id).second) {
-      return false;
-    }
-    for (const HirBaseInstance &candidate : current.structuralBases) {
-      if (candidate.type == base) {
-        return true;
-      }
-      const MirClassInstance *next =
-          program.findClassInstance(candidate.instance);
-      if (next == nullptr || next->type != candidate.type) {
-        return false;
-      }
-      if (self(self, *next)) {
-        return true;
-      }
-    }
-    return false;
-  };
-  return visit(visit, *source);
+  const auto source = mirClassLifetimeView(program, derived);
+  if (!source) return false;
+  const auto selected = findUniqueClassHierarchyView(
+      program, source->instance->id, derived,
+      [&](const auto &view) { return equivalentLifetimeTypes(view.type, base); });
+  return selected && !selected->path.empty();
 }
 
 [[nodiscard]] std::optional<SemanticTypeTraits>
@@ -24921,23 +24901,6 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       }
       return false;
     };
-    const auto exactPath = [&](const auto &path, HirClassInstanceId endpoint) {
-      auto current = instance.id;
-      std::unordered_set<HirClassInstanceId> seen{current};
-      for (const auto next : path) {
-        const auto *owner = program.findClassInstance(current);
-        const auto *base = program.findClassInstance(next);
-        if (!owner || !base || !seen.insert(next).second ||
-            std::none_of(owner->bases.begin(), owner->bases.end(),
-                         [&](const auto &edge) {
-                           return edge.instance == next &&
-                                  edge.type == base->type;
-                         }))
-          return false;
-        current = next;
-      }
-      return current == endpoint && program.findClassInstance(endpoint);
-    };
     std::unordered_set<HirFunctionInstanceId> expectedRoots;
     std::vector<const MirFunctionInstance *> members;
     std::vector<HirClassInstanceId> pending{instance.id};
@@ -24962,16 +24925,24 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     for (const auto &row : instance.virtualDispatch) {
       const auto *root = program.findFunctionInstance(row.root);
       const auto *target = program.findFunctionInstance(row.target);
+      const auto rootView = classHierarchyPathView(
+          program, instance.id, instance.type, row.rootPath);
+      const auto targetView = classHierarchyPathView(
+          program, instance.id, instance.type, row.targetPath);
+      const auto rootSignature = rootView && root
+          ? hierarchyMemberSignature(*rootView, *root) : std::nullopt;
+      const auto targetSignature = targetView && target
+          ? hierarchyMemberSignature(*targetView, *target) : std::nullopt;
       bool exact =
           root && target && actualRoots.insert(row.root).second &&
           expectedRoots.contains(row.root) && root->owner == row.rootOwner &&
           target->owner == row.targetOwner &&
-          exactPath(row.rootPath, row.rootOwner) &&
-          exactPath(row.targetPath, row.targetOwner) && root->virtualMethod &&
+          rootView && rootView->instance->id == row.rootOwner &&
+          targetView && targetView->instance->id == row.targetOwner && root->virtualMethod &&
           !root->overrideMethod && target->virtualMethod &&
           !root->staticMember && !target->staticMember &&
-          root->parameterTypes == target->parameterTypes &&
-          root->returnType == target->returnType &&
+          rootSignature && targetSignature &&
+          equivalentLifetimeTypes(*rootSignature, *targetSignature) &&
           root->receiverMutability == target->receiverMutability &&
           root->overloadedOperator == target->overloadedOperator &&
           root->returnBorrowOrigin == target->returnBorrowOrigin &&

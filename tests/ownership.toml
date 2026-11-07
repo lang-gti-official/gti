@@ -482,6 +482,8 @@ area = "hir"
 risk = "shared"
 paths = [
   "src/compiler/hir_*",
+  "src/compiler/class_hierarchy_lifetimes.h",
+  "src/compiler/structural_constructor_policy.h",
   "src/compiler/hir.cpp",
   "include/gti/hir*",
 ]
@@ -497,6 +499,7 @@ owners = [
   "output_determinism",
 ]
 consumers = [
+  "llvm_dispatch_plans",
   "concept_conditions",
   "reference_parameter_pack_mir",
   "reference_parameter_packs",

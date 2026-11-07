@@ -4531,6 +4531,14 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
                                     OccurrenceRole requestedRoles,
                                     const EnumeratorRecord *contextualEnumerator)
     -> SemanticType {
+  return analyze(expr, requestedRoles, contextualEnumerator, {});
+}
+
+auto SemanticVisitor::Impl::analyze(const Expr &expr,
+                                    OccurrenceRole requestedRoles,
+                                    const EnumeratorRecord *contextualEnumerator,
+                                    std::span<const Lifetime> destinationInferences)
+    -> SemanticType {
   if (!requestSession.recoveryCauses.empty())
     requestSession.recoveryCauses.erase(&expr);
   struct RestoreDeferredArgumentFlow {
@@ -4596,6 +4604,9 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
         std::exchange(contextualOperatorIntegerType, *macroLiteralType);
   if (const auto *qualified = exprAs<QualifiedName>(&expr); qualified && contextualEnumerator)
     analyzeQualifiedName(*qualified, contextualEnumerator);
+  else if (const auto *direct = exprAs<DirectInitializer>(&expr);
+           direct && !destinationInferences.empty())
+    visitDirectInitializerExpr(*direct, destinationInferences);
   else
     expr.accept(*this);
   if (macroLiteralType)
@@ -5190,6 +5201,14 @@ auto SemanticVisitor::Impl::analyzeInitializer(
     const ExprPtr &expr, const SemanticType &expectedType,
     bool allowExactNullConstruction, bool allowDeclarationConstruction)
     -> SemanticType {
+  return analyzeInitializer(expr, expectedType, allowExactNullConstruction,
+                            allowDeclarationConstruction, nullptr);
+}
+
+auto SemanticVisitor::Impl::analyzeInitializer(
+    const ExprPtr &expr, const SemanticType &expectedType,
+    bool allowExactNullConstruction, bool allowDeclarationConstruction,
+    const TypeRef *destinationSyntax) -> SemanticType {
   const auto fullExpression =
       expr ? beginProgramFullExpression(*expr) : std::nullopt;
   const std::optional<SemanticType> enclosingType = contextualInitializerType;
@@ -5208,8 +5227,26 @@ auto SemanticVisitor::Impl::analyzeInitializer(
       isIntegral(expectedType) && isContextualIntegerLiteral(expr.get())
           ? integerConstant(expr.get())
           : std::nullopt;
-  SemanticType result =
-      literal &&
+  SemanticType result;
+  if (destinationSyntax && expectedType.kind == SemanticType::Class &&
+      exprAs<DirectInitializer>(expr.get())) {
+    const auto bindings = inferredTypeSyntaxBindings(*destinationSyntax);
+    if (!bindings) {
+      report(destinationSyntax->name.last(),
+             "This destination has an unresolved lifetime inference context.", "GTI-S2127");
+      result = SemanticType::Unknown;
+    } else {
+      std::vector<Lifetime> inferences;
+      for (const auto &[key, region] : *bindings) {
+        (void)key;
+        if (std::find(inferences.begin(), inferences.end(), region) == inferences.end())
+          inferences.push_back(region);
+      }
+      result = analyze(*expr, OccurrenceRole::Reference | OccurrenceRole::Read,
+                       nullptr, inferences);
+    }
+  } else
+    result = literal &&
               (!isInteger(expectedType) || integerFits(expectedType, *literal))
           ? analyzeContextualIntegerOperand(expr, expectedType)
           : analyzeExpectedCallableResult(expr, expectedType);
@@ -8224,45 +8261,19 @@ auto SemanticVisitor::Impl::resolveEnumerator(
     return std::nullopt;
   if (contextualOwner) {
     std::vector<Lifetime> inferences;
-    std::vector<std::pair<LifetimeSyntaxKey, Lifetime>> inferenceSites;
-    const auto addSite = [&](const Token &token) {
-      const auto key = lifetimeSyntaxKey(token);
-      for (auto entry = lifetimeInferences.lower_bound(key);
-           entry != lifetimeInferences.end() &&
-           std::get<0>(entry->first) == std::get<0>(key) &&
-           std::get<1>(entry->first) == std::get<1>(key) &&
-           std::get<2>(entry->first) == std::get<2>(key); ++entry)
-        {
-          if (entry->second.kind != Lifetime::Kind::Inference)
-            continue;
-          if (std::find(inferences.begin(), inferences.end(), entry->second) == inferences.end())
-            inferences.push_back(entry->second);
-          if (std::none_of(inferenceSites.begin(), inferenceSites.end(),
-                           [&](const auto &site) { return site.first == entry->first; }))
-            inferenceSites.emplace_back(entry->first, entry->second);
-        }
-    };
-    const auto syntaxSites = [&](auto &&self, const TypeRef &type, std::size_t depth) -> bool {
-      if (depth >= 256)
-        return false;
-      if (!type.name.segments.empty())
-        addSite(type.name.last());
-      if (type.reference)
-        addSite(type.referenceLifetime ? type.referenceLifetime->name : *type.reference);
-      if (type.qualifiedOwner && !self(self, *type.qualifiedOwner, depth + 1))
-        return false;
-      for (const auto &argument : type.arguments)
-        if (!self(self, argument, depth + 1))
-          return false;
-      return true;
-    };
-    if (!syntaxSites(syntaxSites, ownerSyntax, 0))
+    const auto inferenceSites = inferredTypeSyntaxBindings(ownerSyntax);
+    if (!inferenceSites)
       return std::nullopt;
+    for (const auto &[key, region] : *inferenceSites) {
+      (void)key;
+      if (std::find(inferences.begin(), inferences.end(), region) == inferences.end())
+        inferences.push_back(region);
+    }
     const auto bindings = matchInferredTypeLifetimes(ownerType, *contextualOwner, inferences);
     if (!bindings)
       return std::nullopt;
     if (contextualBindings)
-      for (const auto &[key, region] : inferenceSites)
+      for (const auto &[key, region] : *inferenceSites)
         for (const auto &[parameter, actual] : *bindings)
           if (parameter == region)
             contextualBindings->emplace_back(key, actual);

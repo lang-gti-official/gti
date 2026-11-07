@@ -2054,6 +2054,13 @@ auto SemanticVisitor::Impl::analyzeConstructorCall(
     const Expr &construction, const SemanticType &type,
     const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
     const Token &paren) -> void {
+  analyzeConstructorCall(construction, type, argumentTypes, arguments, paren, {});
+}
+
+auto SemanticVisitor::Impl::analyzeConstructorCall(
+    const Expr &construction, const SemanticType &type,
+    const std::vector<SemanticType> &argumentTypes, const ExprList &arguments,
+    const Token &paren, std::span<const Lifetime> destinationInferences) -> void {
   if (type.classId &&
       classInfo(type.classId).compilerType >= CompilerTypeKind::SyntaxTokens) {
     report(paren,
@@ -2087,7 +2094,43 @@ auto SemanticVisitor::Impl::analyzeConstructorCall(
                                    .deferred = deferred});
     }
   }
-  analyzeConstructorCallArguments(construction, type, analyzedArguments, paren);
+  SemanticType destination = type;
+  if (!destinationInferences.empty() && type.kind == SemanticType::Class &&
+      analyzedArguments.size() == 1) {
+    const auto &source = analyzedArguments.front().type;
+    if (const auto bindings = matchInferredTypeLifetimes(type, source, destinationInferences)) {
+      // Infer only this spelling's holes. Keep the written destination in the
+      // body graph: equality is checked in both directions, including phantom
+      // slots, rather than overwriting any existing lifetime identity.
+      std::vector<LifetimeBound> equalities;
+      const auto append = [](auto &values, const auto &value) {
+        if (std::find(values.begin(), values.end(), value) == values.end())
+          values.push_back(value);
+      };
+      for (const auto &[parameter, actual] : *bindings)
+        if (parameter != actual) {
+          append(equalities, LifetimeBound{parameter, actual});
+          append(equalities, LifetimeBound{actual, parameter});
+        }
+      if (!validateLifetimeConstraints(equalities)) {
+        report(paren, "The structural construction does not satisfy the written "
+                      "destination's lifetime relationships.", "GTI-S2127");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      for (const auto edge : equalities) {
+        append(loanFlow.lifetimeObligations, edge);
+        for (const auto region : {edge.longer, edge.shorter})
+          if (region.kind == Lifetime::Kind::Inference)
+            append(loanFlow.lifetimeVariables, region);
+      }
+      destination = source;
+    }
+  }
+  // The ordinary selector still owns Copy/Move availability, deleted policy
+  // rejection and fresh-result elision. Raw and substituted-T construction
+  // enter through the overload without a syntax inference inventory.
+  analyzeConstructorCallArguments(construction, destination, analyzedArguments, paren);
 }
 
 auto SemanticVisitor::Impl::forwardedPackArgumentMatches(
@@ -8058,6 +8101,39 @@ auto SemanticVisitor::Impl::inferredLifetime(const Token &site,
   if (inserted)
     entry->second = Lifetime::inference(nextLifetimeInferenceId++);
   return entry->second;
+}
+
+auto SemanticVisitor::Impl::inferredTypeSyntaxBindings(const TypeRef &syntax) const
+    -> std::optional<std::vector<std::pair<LifetimeSyntaxKey, Lifetime>>> {
+  std::vector<std::pair<LifetimeSyntaxKey, Lifetime>> result;
+  const auto addSite = [&](const Token &token) {
+    const auto key = lifetimeSyntaxKey(token);
+    for (auto entry = lifetimeInferences.lower_bound(key);
+         entry != lifetimeInferences.end() &&
+         std::get<0>(entry->first) == std::get<0>(key) &&
+         std::get<1>(entry->first) == std::get<1>(key) &&
+         std::get<2>(entry->first) == std::get<2>(key); ++entry)
+      if (entry->second.kind == Lifetime::Kind::Inference &&
+          std::none_of(result.begin(), result.end(),
+                       [&](const auto &binding) { return binding.first == entry->first; }))
+        result.emplace_back(entry->first, entry->second);
+  };
+  std::size_t work = 0;
+  const auto visit = [&](auto &&self, const TypeRef &type, std::size_t depth) -> bool {
+    if (++work > 4096 || depth >= 256)
+      return false;
+    if (!type.name.segments.empty())
+      addSite(type.name.last());
+    if (type.reference)
+      addSite(type.referenceLifetime ? type.referenceLifetime->name : *type.reference);
+    if (type.qualifiedOwner && !self(self, *type.qualifiedOwner, depth + 1))
+      return false;
+    for (const auto &argument : type.arguments)
+      if (!self(self, argument, depth + 1))
+        return false;
+    return true;
+  };
+  return visit(visit, syntax, 0) ? std::optional(std::move(result)) : std::nullopt;
 }
 
 auto SemanticVisitor::Impl::lifetimeOf(const Token &name) const -> Lifetime {

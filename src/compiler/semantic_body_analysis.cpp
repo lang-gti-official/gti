@@ -6959,7 +6959,7 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     // Constant and synthesized range-element bindings keep exact types.
     initializerType =
         analyzeInitializer(initializer, declaredType, true,
-                           !stmt.isConstexpr() && !stmt.isRangeBinding());
+                           !stmt.isConstexpr() && !stmt.isRangeBinding(), &stmt.type());
     if (declaredType.kind == SemanticType::Reference &&
         declaredType.referenceAccess == AccessMode::Mutable) {
       recordMutableBindingUse(initializer);
@@ -8426,8 +8426,21 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                                   expr.paren())) {
       return;
     }
+    const auto bindings = inferredTypeSyntaxBindings(TypeRef(expr.paren(), expr.typeArguments()));
+    if (!bindings) {
+      report(expr.paren(), "This destination has an unresolved lifetime inference context.",
+             "GTI-S2127");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    std::vector<Lifetime> inferences;
+    for (const auto &[key, region] : *bindings) {
+      (void)key;
+      if (std::find(inferences.begin(), inferences.end(), region) == inferences.end())
+        inferences.push_back(region);
+    }
     analyzeConstructorCall(expr, constructed, argumentTypes,
-                           expr.arguments(), expr.paren());
+                           expr.arguments(), expr.paren(), inferences);
     return;
   }
 
@@ -10086,6 +10099,11 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
 
 auto SemanticVisitor::Impl::visitDirectInitializerExpr(
     const DirectInitializer &expr) -> void {
+  visitDirectInitializerExpr(expr, {});
+}
+
+auto SemanticVisitor::Impl::visitDirectInitializerExpr(
+    const DirectInitializer &expr, std::span<const Lifetime> destinationInferences) -> void {
   PackBorrowInvocationScope packInvocation(*this);
   if (!expr.designators().empty()) {
     analyzeDesignatedInitializer(expr);
@@ -10143,7 +10161,7 @@ auto SemanticVisitor::Impl::visitDirectInitializerExpr(
   }
 
   analyzeConstructorCall(expr, targetType, argumentTypes,
-                         expr.arguments(), expr.brace());
+                         expr.arguments(), expr.brace(), destinationInferences);
 }
 
 auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)

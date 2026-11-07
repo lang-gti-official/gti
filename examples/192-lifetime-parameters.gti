@@ -98,6 +98,12 @@ int main() {
   int& selected = choose(left, right, false);
   Reading reading{selected};
   if (reading.get() != 9) { return 1; }
+  // A typed copy or move infers the destination's omitted stored lifetime.
+  // The original external owner remains unchanged through both transfers.
+  Reading copied{reading};
+  Reading moved{std::move(copied)};
+  auto explicit_region_copy = Reading<_>(reading);
+  if (moved.value != 9 || explicit_region_copy.value != 9) { return 13; }
   Reading& same = round_trip_reference(reading);
   if (same.value != 9) { return 12; }
   Reading constructedChoice{left, right, false};

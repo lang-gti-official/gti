@@ -5,6 +5,7 @@
 #include "gti/lifetime_types.h"
 #include "gti/callable_lifetimes.h"
 #include "structural_constructor_policy.h"
+#include "class_hierarchy_lifetimes.h"
 
 #include <algorithm>
 #include <functional>
@@ -1428,31 +1429,20 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     // construction contexts, including compact lifetime and scoped callable
     // arguments. Raw projected type leaves are not an independent authority.
     const auto substitution = constructionClassContext(instance.id);
+    bool exactBases = instance.bases.size() == owner->bases.size();
+    for (std::size_t index = 0; exactBases && index < instance.bases.size(); ++index) {
+      const auto &base = instance.bases[index];
+      const auto &declared = owner->bases[index];
+      const auto actual = substituteHirSemanticType(declared.type, substitution, &semantics);
+      const auto selected = classHierarchyLifetimeView(program, base.instance, actual);
+      exactBases = selected && base.interface == declared.interface &&
+                   equivalentLifetimeTypes(base.type, actual);
+    }
+    if (!exactBases)
+      result.errors.emplace_back("HIR base inventory differs from its exact semantic owner view");
     if (instance.virtualDispatch.size() != owner->virtualDispatch.size())
       result.errors.emplace_back(
           "HIR virtual dispatch inventory differs from semantic selection");
-    const auto exactDispatchPath = [&](const auto &path,
-                                       HirClassInstanceId endpoint) {
-      auto current = instance.id;
-      std::unordered_set<HirClassInstanceId> seen{current};
-      for (const auto next : path) {
-        if (!current || current > program.classInstances().size() ||
-            !seen.insert(next).second)
-          return false;
-        const auto &bases = program.classInstances()[current - 1].bases;
-        const auto found =
-            std::find_if(bases.begin(), bases.end(), [&](const auto &base) {
-              return base.instance == next;
-            });
-        if (found == bases.end() || !next ||
-            next > program.classInstances().size() ||
-            program.classInstances()[next - 1].type != found->type)
-          return false;
-        current = next;
-      }
-      return current == endpoint && endpoint != 0 &&
-             endpoint <= program.classInstances().size();
-    };
     std::unordered_set<HirFunctionInstanceId> dispatchRoots;
     for (std::size_t index = 0; index < instance.virtualDispatch.size();
          ++index) {
@@ -1462,20 +1452,30 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const auto *selected = index < owner->virtualDispatch.size()
                                  ? &owner->virtualDispatch[index]
                                  : nullptr;
+      const auto rootView = classHierarchyPathView(
+          program, instance.id, instance.type, row.rootPath);
+      const auto targetView = classHierarchyPathView(
+          program, instance.id, instance.type, row.targetPath);
+      const auto rootSignature = rootView && root
+          ? hierarchyMemberSignature(*rootView, *root) : std::nullopt;
+      const auto targetSignature = targetView && target
+          ? hierarchyMemberSignature(*targetView, *target) : std::nullopt;
       if (!selected || !root || !target ||
           !dispatchRoots.insert(row.root).second ||
           root->declaration != selected->root ||
           target->declaration != selected->target ||
           root->owner != row.rootOwner || target->owner != row.targetOwner ||
-          !exactDispatchPath(row.rootPath, row.rootOwner) ||
-          !exactDispatchPath(row.targetPath, row.targetOwner) ||
-          program.classInstances()[row.targetOwner - 1].type !=
+          !rootView || rootView->instance->id != row.rootOwner ||
+          !targetView || targetView->instance->id != row.targetOwner ||
+          targetView->type !=
               substituteHirSemanticType(selected->targetOwner, substitution,
                                      &semantics) ||
           !root->virtualMethod || !target->virtualMethod ||
           root->staticMember || target->staticMember ||
-          root->parameterTypes != target->parameterTypes ||
-          root->returnType != target->returnType ||
+          !root->source || !target->source ||
+          root->source->receiverMutability() != target->source->receiverMutability() ||
+          !rootSignature || !targetSignature ||
+          !equivalentLifetimeTypes(*rootSignature, *targetSignature) ||
           (target->pureVirtual && !instance.abstract) ||
           (!target->pureVirtual &&
            (!target->source || !target->source->body())))

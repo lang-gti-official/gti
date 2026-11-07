@@ -448,6 +448,16 @@ proof and assumption expansion: `T*:a` describes the pointer value, never `T:a`
 or any checked reference in the pointee. Type shape and nested region scope
 remain validated; dereference still requires its separate unsafe authority.
 
+An independently mapped local storage origin also establishes type-outlives
+facts for its actual inline class fields and state-bearing bases. This bounded
+closure uses the exact instantiated storage inventory, stops at reference, raw
+pointer and callable boundaries, and never treats generic arguments as stored
+objects. Every direct mapped-origin fact is retained independently of that
+expansion budget. An unknown or exhausted expansion adds no further premise;
+only obligations that still lack a proof reject. These remain local premises:
+they introduce no region edges, cannot establish a static guarantee, and do not
+replace initialization, availability, loan or cleanup proof.
+
 Each application preserves its full universal substitution, explicit existential
 inventory, required region and exact-type obligations, and local origin
 witnesses. Body records collect the selected applications with assignment and
@@ -604,7 +614,11 @@ exact failure-channel self-copies erase before native code generation.
 Class records also preserve semantic-selected virtual root/target declarations.
 HIR binds each selection to exact concrete function and owner identities plus
 successive direct-base paths; MIR verifies complete root coverage, signatures,
-final target coherence and paths independently. Abstract classes may retain pure
+final target coherence and paths independently. Each path composes exact
+canonical-to-actual owner bindings before comparing a method signature. LLVM
+uses that same verified instantiated base view for layout and receiver offsets;
+canonical declaration region identities do not replace the active view.
+Abstract classes may retain pure
 targets. Lowered declaration and instance records seal and serialize the same
 selection. These are backend-neutral facts; this metadata alone does not admit
 LLVM virtual execution or prescribe a table layout or physical call ABI.

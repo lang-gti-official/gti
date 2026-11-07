@@ -1,4 +1,5 @@
 #include "gti/hir.h"
+#include "class_hierarchy_lifetimes.h"
 #include "gti/concrete_formals.h"
 
 #include <array>
@@ -2052,26 +2053,6 @@ private:
       }
       const auto substitution = classSubstitution(
           *declaration, owner.typeArguments, owner.valueArguments);
-      const auto pathTo = [&](const auto &self, HirClassInstanceId current,
-                              const auto &matches,
-                              std::vector<HirClassInstanceId> &path,
-                              std::unordered_set<HirClassInstanceId> &seen)
-          -> const HirClassInstance * {
-        if (current == 0 || current > output.program.classes.size() ||
-            !seen.insert(current).second)
-          return nullptr;
-        const auto &candidate = output.program.classes[current - 1];
-        if (matches(candidate))
-          return &candidate;
-        for (const auto &base : candidate.bases) {
-          path.push_back(base.instance);
-          if (const auto *found =
-                  self(self, base.instance, matches, path, seen))
-            return found;
-          path.pop_back();
-        }
-        return nullptr;
-      };
       const auto concreteFunction = [&](FunctionId id,
                                         HirClassInstanceId selectedOwner) {
         const auto found = functions.find(selectedOwner);
@@ -2085,26 +2066,23 @@ private:
         const auto *root = baseModel->findFunction(selected.root);
         const auto targetType = substitute(selected.targetOwner, substitution);
         HirVirtualDispatch row;
-        std::unordered_set<HirClassInstanceId> seen;
-        const auto *rootOwner =
-            root ? pathTo(
-                       pathTo, owner.id,
-                       [&](const auto &candidate) {
-                         return candidate.declaration == root->ownerClass;
-                       },
-                       row.rootPath, seen)
-                 : nullptr;
-        seen.clear();
-        const auto *targetOwner = pathTo(
-            pathTo, owner.id,
-            [&](const auto &candidate) { return candidate.type == targetType; },
-            row.targetPath, seen);
+        const auto rootOwner = root
+            ? findUniqueClassHierarchyView(output.program, owner.id, owner.type,
+                [&](const auto &view) {
+                  return view.instance->declaration == root->ownerClass;
+                })
+            : std::nullopt;
+        const auto targetOwner = findUniqueClassHierarchyView(
+            output.program, owner.id, owner.type,
+            [&](const auto &view) { return view.type == targetType; });
         if (!rootOwner || !targetOwner) {
           lifecycleValid = false;
           continue;
         }
-        row.rootOwner = rootOwner->id;
-        row.targetOwner = targetOwner->id;
+        row.rootOwner = rootOwner->instance->id;
+        row.targetOwner = targetOwner->instance->id;
+        row.rootPath = rootOwner->path;
+        row.targetPath = targetOwner->path;
         row.root = concreteFunction(selected.root, row.rootOwner);
         row.target = concreteFunction(selected.target, row.targetOwner);
         if (!row.root || !row.target) {

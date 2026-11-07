@@ -624,6 +624,19 @@ copy/read or move/value operation; their declaration identity is retained, but
 no fictitious callable target or invocation application is published. Whole
 value lifetime, liveness and cleanup checks continue to govern the transfer.
 
+Explicit local class construction can infer its anonymous destination regions
+from one structurally identical source before ordinary copy/move selection.
+The inference inventory comes from the written type tokens, including explicit
+`_` arguments; it never comes from arbitrary region IDs in a substituted type.
+The exact structural matcher preserves fixed regions, repeated-slot correlations,
+type/value arguments and closed callable scopes. The existing body constraint
+solver proves both region directions, retaining the written destination and
+its formation obligations. Deleted policies and fresh-result elision still use
+their ordinary rules. Ordinary conversions, raw-storage construction and a
+substituted generic `T` do not acquire this syntax-owned inference authority.
+The inventory is transient semantic context; no HIR/MIR field or runtime
+representation is added.
+
 Every final expression and statement node exposes one closed `ExprKind` or
 `StmtKind` tag in addition to the visitor interface. `exprAs<T>`/`stmtAs<T>`
 check that tag before a static cast. This avoids repeated RTTI name comparisons

@@ -595,6 +595,81 @@ void testExistingBaseBoundaries() {
     for (const auto &diagnostic : inherited.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
 }
+void testInheritedLifetimeDispatch() {
+  const auto frontend = Frontend().analyze("inherited-lifetime-dispatch.gti", R"gti(
+interface Marker { int marker(); };
+class Root<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+public:
+  Root(int&<a> first, int&<b> second) : first(first), second(second) {}
+  virtual int read() { return this.first; }
+};
+class Middle<lifetime a, lifetime b> : public Marker, public Root<b, a> {
+public:
+  Middle(int&<a> first, int&<b> second) : Root<b, a>(second, first) {}
+  int marker() override { return 1; }
+};
+class Leaf<lifetime a, lifetime b> : public Middle<a, b> {
+public:
+  Leaf(int&<a> first, int&<b> second) : Middle<a, b>(first, second) {}
+  int read() override { return 4; }
+};
+int main() {
+  int first = 3; int second = 4;
+  Leaf leaf{first, second};
+  return leaf.read() - 4;
+}
+)gti");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "borrowed virtual bases retain exact instantiated views through multiple edges");
+    return;
+  }
+  const auto &middle = namedClass(frontend.hir, frontend.semantics, "Middle");
+  const auto &root = namedClass(frontend.hir, frontend.semantics, "Root");
+  const auto &leaf = namedClass(frontend.hir, frontend.semantics, "Leaf");
+  expect(middle.bases.size() == 2 && middle.bases.front().interface &&
+             middle.bases.back().instance == root.id &&
+             middle.bases.back().type.lifetimeArguments.size() == 2 &&
+             middle.bases.back().type != root.type,
+         "the state-bearing base follows an interface and keeps the parent's correlated region view");
+  const auto row = std::find_if(leaf.virtualDispatch.begin(), leaf.virtualDispatch.end(),
+      [&](const auto &entry) { return entry.rootOwner == root.id; });
+  expect(row != leaf.virtualDispatch.end() &&
+             row->rootPath == std::vector<HirClassInstanceId>{middle.id, root.id} &&
+             row->targetPath.empty(),
+         "the override retains its exact complete two-edge root path");
+  for (int mutation = 0; mutation != 7; ++mutation) {
+    const auto change = [&](auto &program) {
+      auto &changedMiddle = namedClass(program, frontend.semantics, "Middle");
+      auto &changedLeaf = namedClass(program, frontend.semantics, "Leaf");
+      auto &base = changedMiddle.bases.back();
+      if (mutation == 0) std::swap(base.type.lifetimeArguments[0], base.type.lifetimeArguments[1]);
+      if (mutation == 1) base.type.lifetimeArguments[0] = Lifetime::staticLifetime();
+      if (mutation == 2) base.instance = changedMiddle.bases.front().instance;
+      if (mutation == 3) changedMiddle.bases.push_back(base);
+      if constexpr (requires { changedMiddle.structuralBases; })
+        changedMiddle.structuralBases = changedMiddle.bases;
+      auto selected = std::find_if(changedLeaf.virtualDispatch.begin(), changedLeaf.virtualDispatch.end(),
+          [&](const auto &entry) { return entry.rootOwner == root.id; });
+      if (selected == changedLeaf.virtualDispatch.end()) throw std::runtime_error("missing lifetime dispatch row");
+      if (mutation == 4) selected->rootPath.clear();
+      if (mutation == 5) selected->rootPath.push_back(root.id);
+      if (mutation == 6) selected->targetOwner = root.id;
+    };
+    auto hir = frontend.hir;
+    change(hir);
+    expect(!verifyHirProgramPlans(frontend.semantics, hir).valid(),
+           "HIR rejects wrong region correlation, fixed region, identity and ambiguous/cyclic dispatch paths");
+    auto mir = frontend.mir;
+    change(mir);
+    expect(!verifyMirProgram(mir).valid(),
+           "MIR independently rejects coordinated wrong base views and dispatch paths");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -608,6 +683,7 @@ int main() {
   testPlans(frontend);
   testConstructorState(frontend);
   testExistingBaseBoundaries();
+  testInheritedLifetimeDispatch();
   if (failures)
     return 1;
   std::cout << "LLVM dispatch prerequisite plans and mutations passed\n";

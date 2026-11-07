@@ -3477,6 +3477,122 @@ int main() { return relay(3); }
          "a concrete forwarded pack still satisfies the selected fixed target arity");
 }
 
+void testAnonymousStructuralDestinationRegions() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto check = [&](std::string source) {
+    return lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+        "anonymous-destination.gti", std::move(source), {root / "prelude.gti"}, {}, {root});
+  };
+  const auto hidden = check(R"gti(
+struct View { int& value; View(int& input) : value(input) {} };
+int main() {
+  int input = 7;
+  View original{input}; View copied{original};
+  View moved{std::move(original)}; auto called = View(copied);
+  return copied.value + moved.value + called.value - 21;
+}
+)gti");
+  expectValid(hidden, "anonymous typed destinations infer the exact structural source with no explicit policy");
+  const auto *main = function(hidden, "main");
+  const auto *body = main && main->declaration ? main->declaration->body().get() : nullptr;
+  const auto *original = body && body->statements().size() > 2
+      ? lang::stmtAs<lang::VariableDecl>(body->statements()[1].get()) : nullptr;
+  const auto *copy = body && body->statements().size() > 2
+      ? lang::stmtAs<lang::VariableDecl>(body->statements()[2].get()) : nullptr;
+  const auto *source = original ? hidden.semantics.findBinding(*original) : nullptr;
+  const auto *destination = copy ? hidden.semantics.findBinding(*copy) : nullptr;
+  const auto *selection = copy && copy->initializer()
+      ? hidden.semantics.findConstruction(*copy->initializer()) : nullptr;
+  const auto *graph = body ? hidden.semantics.findLifetimeBody(*body) : nullptr;
+  if (source && destination && selection && graph &&
+      source->type.lifetimeArguments.size() == 1 && destination->type.lifetimeArguments.size() == 1) {
+    const auto from = source->type.lifetimeArguments.front();
+    const auto to = destination->type.lifetimeArguments.front();
+    expect(from != to && selection->constructedType == source->type &&
+               std::find(graph->obligations.begin(), graph->obligations.end(),
+                         lang::LifetimeBound{from, to}) != graph->obligations.end() &&
+               std::find(graph->obligations.begin(), graph->obligations.end(),
+                         lang::LifetimeBound{to, from}) != graph->obligations.end(),
+           "structural destination inference retains the written identity and proves both region directions");
+  } else {
+    expect(false, "anonymous structural copy retains its exact binding, selection and lifetime graph");
+  }
+  expectValid(check(R"gti(
+struct View<T> {
+  T& value; View(T& input) : value(input) {}
+  View(View<T>& other) = default; View(View<T>&& other) = default;
+};
+int main() {
+  int input = 7; View<int> original{input}; View<int> copied{original};
+  View<int> moved{std::move(original)}; auto called = View<int>(copied);
+  return copied.value + moved.value + called.value - 21;
+}
+)gti"), "explicit structural policies retain anonymous typed copy and actual named-source move");
+  const std::string cell = R"gti(
+struct Cell<lifetime a> { int&<a> value; Cell(int&<a> input) : value(input) {} };
+)gti";
+  expectValid(check(cell + R"gti(
+int&<a> read<lifetime a>(int&<a> input) {
+  Cell<a> original{input}; Cell copied{original}; return copied.value;
+}
+int main() { int input = 7; return read(input) - 7; }
+)gti"), "an anonymous copied destination retains the declared external reference result");
+  expectValid(check(cell + "int main(){int input=7;Cell original{input};auto copy=Cell<_>(original);return copy.value-7;}"),
+              "a written anonymous type argument uses only that construction's inference inventory");
+  const std::string pair = R"gti(
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first; int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+};
+using Equal<lifetime a> = Pair<a, a>;
+)gti";
+  expectValid(check(pair + R"gti(
+int read<lifetime a>(int&<a> input) {
+  Pair<a, a> source{input, input}; Equal copy{source}; return copy.first + copy.second;
+}
+int main() { int input = 7; return read(input) - 14; }
+)gti"), "repeated anonymous destination slots retain one correlated source region");
+  for (const std::string &invalid : {
+      pair + "void reject<lifetime a,lifetime b>(Pair<a,b>& source){Equal copy{source};}int main(){return 0;}",
+      cell + "int main(){int input=7;Cell source{input};Cell<static> copy{source};return 0;}",
+      cell + "void reject<lifetime a,lifetime b>(Cell<b>& source){Cell<a> copy{source};}int main(){return 0;}",
+      cell + "struct View{int& value;View(int& input):value(input){}};int main(){int input=7;View source{input};Cell copy{source};return 0;}"}) {
+    const auto result = check(invalid);
+    expect(result.syntaxValid && !result.semanticValid &&
+               std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                           [](const auto &diagnostic) { return diagnostic.code == "GTI-S2012"; }),
+           "destination inference preserves fixed, repeated and unrelated structural identities");
+  }
+  const std::string fixedGeneric = cell + R"gti(
+int construct_fixed<T, Args...>(Args... values) { auto copy = T(values...); return 0; }
+)gti";
+  expectValid(check(fixedGeneric + R"gti(
+int same<lifetime a>(Cell<a>& source) { return construct_fixed<Cell<a>>(source); }
+int main() { int input = 7; Cell source{input}; return same(source); }
+)gti"), "a concrete generic construction accepts its unchanged exact target");
+  const auto fixed = check(fixedGeneric + R"gti(
+int reject<lifetime a, lifetime b>(Cell<b>& source) { return construct_fixed<Cell<a>>(source); }
+int main() { return 0; }
+)gti");
+  expect(fixed.syntaxValid && !fixed.semanticValid &&
+             std::any_of(fixed.diagnostics.begin(), fixed.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2012"; }) &&
+             std::none_of(fixed.diagnostics.begin(), fixed.diagnostics.end(),
+                          [](const auto &diagnostic) { return diagnostic.code == "GTI-S2029"; }),
+         "a substituted generic target does not acquire inference authority from the source application");
+  const auto deleted = check("struct View{int& value;View(int& input):value(input){}View(View&)=delete;};int main(){int input=7;View source{input};View copy{source};return 0;}");
+  expect(!deleted.semanticValid &&
+             std::any_of(deleted.diagnostics.begin(), deleted.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2020"; }),
+         "successful anonymous destination inference still reaches the deleted copy policy");
+  expect(!check("struct View{int& value;View(int& input):value(input){}View(View&&)=delete;};int main(){int input=7;View source{input};View copy{std::move(source)};return 0;}").semanticValid,
+         "anonymous destination inference never permits a deleted named-source move");
+  expectValid(check("struct View{int& value;View(int& input):value(input){}View(View&)=delete;View(View&&)=delete;};int main(){int input=7;View value{View(input)};return value.value-7;}"),
+              "fresh-result elision remains independent of deleted copy and move policies");
+  expect(!check(cell + "Cell<static> invalid<lifetime a>(int&<a> input){Cell source{input};Cell copy{source};return copy;}int main(){return 0;}").semanticValid,
+         "inferred destination equality cannot extend a local or generic owner to static storage");
+}
+
 void testStructuralSpecialMemberPolicies() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto withMove = [&](std::string source) {
@@ -4278,6 +4394,7 @@ int indirect<lifetime a, lifetime owner>(Leaf<a>&<owner> input) { return choose(
 } // namespace
 
 int main() {
+  testAnonymousStructuralDestinationRegions();
   testStructuralSpecialMemberPolicies();
   testSharedStoredReferenceCleanupCopy();
   testStagedReferenceContentsAdapters();

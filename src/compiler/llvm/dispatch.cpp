@@ -1,4 +1,5 @@
 #include "dispatch.h"
+#include "../class_hierarchy_lifetimes.h"
 #include "reachability.h"
 
 #include <algorithm>
@@ -117,8 +118,10 @@ Dispatch::views(HirClassInstanceId activeClass) {
       throw std::logic_error("LLVM dispatch view path is missing or ambiguous");
     if (view->polymorphic) {
       const auto viewLayout = session.layouts().basePath(active->type, path);
-      auto location = session.layouts().dispatchLocation(view->type);
-      if (viewLayout.type != view->type || !location)
+      const auto actualView = classHierarchyPathView(program, activeClass, active->type, path);
+      auto location = session.layouts().dispatchLocation(viewLayout.type);
+      if (!actualView || actualView->instance->id != id ||
+          viewLayout.type != actualView->type || !location)
         throw std::logic_error("LLVM dispatch view lost its exact storage");
       location->owner = session.layouts().baseSubobject(
           active->type, location->owner.type, "dispatch.activeView");
@@ -147,8 +150,10 @@ Dispatch::views(HirClassInstanceId activeClass) {
           const auto *owner = program.findClassInstance(selected->targetOwner);
           const auto targetLayout =
               session.layouts().basePath(active->type, selected->targetPath);
-          if (!target || !owner || target->owner != owner->id ||
-              targetLayout.type != owner->type)
+          const auto targetView = classHierarchyPathView(
+              program, activeClass, active->type, selected->targetPath);
+          if (!target || !owner || target->owner != owner->id || !targetView ||
+              targetView->instance->id != owner->id || targetLayout.type != targetView->type)
             throw std::logic_error("LLVM dispatch lost its target owner path");
           constexpr auto maxAdjustment = static_cast<std::uint64_t>(
               std::numeric_limits<std::int64_t>::max());

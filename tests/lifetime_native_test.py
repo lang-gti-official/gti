@@ -14,6 +14,11 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "anonymous_typed_destination": "struct View { int& value; View(int& input):value(input){} }; int main(){int input=7;View original{input};View copied{original};View moved{std::move(original)};auto called=View(copied);return copied.value+moved.value+called.value-21;}",
+    "anonymous_policy_destination": "struct View<T> { T& value; View(T& input):value(input){} View(View<T>&)=default; View(View<T>&&)=default; }; int main(){int input=7;View<int> original{input};View<int> copied{original};View<int> moved{std::move(original)};auto called=View<int>(copied);return copied.value+moved.value+called.value-21;}",
+    "anonymous_repeated_destination": "struct Pair<lifetime a,lifetime b>{int&<a> first;int&<b> second;Pair(int&<a>x,int&<b>y):first(x),second(y){}}; using Equal<lifetime a> = Pair<a,a>; int read<lifetime a>(int&<a> input){Pair<a,a> source{input,input};Equal copy{source};return copy.first+copy.second;}int main(){int input=7;return read(input)-14;}",
+    "anonymous_destination_elision": "struct View{int& value;View(int& x):value(x){} View(View&)=delete;View(View&&)=delete;};int main(){int input=7;View value{View(input)};return value.value-7;}",
+    "anonymous_copied_reference_return": "struct Cell<lifetime a>{int&<a> value;Cell(int&<a> input):value(input){}}; int&<a> read<lifetime a>(int&<a> input){Cell<a> original{input};Cell copied{original};return copied.value;} int main(){int input=7;return read(input)-7;}",
     "elided_structural_special_members": """
 struct Legacy {
   int& value;
@@ -1224,6 +1229,34 @@ int main() {
   second += 4;
   return first.get() + second.get() - 16;
 }
+""",
+    "inherited_dispatch_lifetime_views": """
+mut int retired = 0;
+interface Marker { int marker(); };
+class Root<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+public:
+  Root(int&<a> first, int&<b> second) : first(first), second(second) {}
+  virtual int read() { return this.first; }
+  ~Root() { retired += this.first; }
+};
+class Middle<lifetime a, lifetime b> : public Marker, public Root<b, a> {
+public:
+  Middle(int&<a> first, int&<b> second) : Root<b, a>(second, first) {}
+  int marker() override { return 1; }
+};
+class Leaf<lifetime a, lifetime b> : public Middle<a, b> {
+public:
+  Leaf(int&<a> first, int&<b> second) : Middle<a, b>(first, second) {}
+  int read() override { return 4; }
+};
+int exercise() {
+  int first = 3; int second = 4;
+  Leaf leaf{first, second};
+  return leaf.read() + leaf.marker() - 5;
+}
+int main() { int result = exercise(); return result + retired - 4; }
 """,
 }
 

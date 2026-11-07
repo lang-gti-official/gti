@@ -1180,25 +1180,76 @@ bool provesNominalLifetimeFormation(
 }
 
 LifetimeSignatureContract withLocalStorageLifetimeFacts(
-    const MirBody &body, LifetimeSignatureContract assumptions) {
+    const MirProgram &program, const MirBody &body,
+    LifetimeSignatureContract assumptions) {
   const auto add = [&](const SemanticType &type, Lifetime region) {
     const LifetimeTypeBound bound{type, region};
     if (std::find(assumptions.typeBounds.begin(), assumptions.typeBounds.end(), bound) ==
         assumptions.typeBounds.end())
       assumptions.typeBounds.push_back(bound);
   };
-  // Use only the independently resolved exact origin place. This is a
-  // body-local premise, not a declaration assumption or a promise that an
-  // opaque type outlives any caller-chosen region. Availability and lifetime
-  // verification remain responsible for every executable use of this place.
+  std::vector<LifetimeTypeBound> roots;
+  // Preserve every independently mapped direct premise before spending any
+  // budget on optional containment inference. Many unrelated local origins
+  // cannot invalidate a fact already established by their exact storage.
   for (const auto &origin : body.lifetimeBody.origins) {
     const auto *place = body.findPlace(origin.place);
     if (origin.region.kind != Lifetime::Kind::Local || !place ||
         place->foreignStorage || place->type.kind == SemanticType::Unknown)
       continue;
     add(place->type, origin.region);
-    if (place->type.kind == SemanticType::Reference && place->type.arguments.size() == 1)
-      add(place->type.arguments.front(), origin.region);
+    if (place->type.kind == SemanticType::Class)
+      roots.push_back({place->type, origin.region});
+    // A checked reference origin already designates its referent, unlike an
+    // arbitrary reference field encountered inside that referent's storage.
+    if (place->type.kind == SemanticType::Reference && place->type.arguments.size() == 1) {
+      const auto &referent = place->type.arguments.front();
+      add(referent, origin.region);
+      if (referent.kind == SemanticType::Class)
+        roots.push_back({referent, origin.region});
+    }
+  }
+  std::vector<LifetimeTypeBound> visited;
+  std::size_t remaining = 4096;
+  const auto expand = [&](const auto &self, const SemanticType &type,
+                          Lifetime region, std::size_t depth) -> void {
+    // These are additional proof facts, not a required complete inventory.
+    // A missing view or exhausted budget adds no premise and never erases a
+    // direct fact; an obligation needing an unavailable fact still fails.
+    if (type.kind != SemanticType::Class || remaining == 0 || depth >= 256)
+      return;
+    const LifetimeTypeBound bound{type, region};
+    if (std::find(visited.begin(), visited.end(), bound) != visited.end())
+      return;
+    --remaining;
+    visited.push_back(bound);
+    const auto view = mirClassLifetimeView(program, type);
+    if (!view || view->instance->kind == ClassKind::Union ||
+        view->instance->kind == ClassKind::Interface)
+      return;
+    const auto child = [&](const SemanticType &declared) {
+      if (remaining == 0) return;
+      --remaining;
+      const auto actual = view->instantiate(declared);
+      if (!actual || actual->kind == SemanticType::Unknown) return;
+      add(*actual, region);
+      self(self, *actual, region, depth + 1);
+    };
+    // Only actual inline fields and state bases are physical subobjects.
+    // References, raw pointers and callable values stop this traversal;
+    // nominal arguments are never an inventory of stored values.
+    for (const auto &field : view->instance->declaredFields) {
+      if (remaining == 0) return;
+      child(field.type);
+    }
+    for (const auto &base : view->instance->structuralBases) {
+      if (remaining == 0) return;
+      if (!base.interface) child(base.type);
+    }
+  };
+  for (const auto &root : roots) {
+    if (remaining == 0) break;
+    expand(expand, root.type, root.region, 0);
   }
   return assumptions;
 }
@@ -1379,7 +1430,7 @@ verifyMirLifetimeBodyFactsForCase(const MirProgram &program, const MirBody &body
            "declaration contract");
     return result;
   }
-  const auto localAssumptions = withLocalStorageLifetimeFacts(body, contract);
+  const auto localAssumptions = withLocalStorageLifetimeFacts(program, body, contract);
   for (const auto &bound : facts.typeObligations) {
     std::vector<SemanticType> pending;
     if (!mirTypeOutlives(program, bound.type, bound.region, localAssumptions, graph,
@@ -2108,7 +2159,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
   for (const auto bound : body.lifetimeBody.obligations)
     (void)graph.require(bound.longer, bound.shorter);
   const MirLifetimeRelations relations(program, body, *expanded, graph);
-  const auto localAssumptions = withLocalStorageLifetimeFacts(body, *expanded);
+  const auto localAssumptions = withLocalStorageLifetimeFacts(program, body, *expanded);
   const auto reject = [&](std::string message, MirBlockId block,
                           MirInstructionId instruction = 0) {
     result.errors.push_back({.bodyKind = body.kind,

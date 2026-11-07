@@ -837,6 +837,8 @@ public:
   void visitConversionExpr(const Conversion &expr) override;
 
   void visitDirectInitializerExpr(const DirectInitializer &expr) override;
+  void visitDirectInitializerExpr(const DirectInitializer &expr,
+                                 std::span<const Lifetime> destinationInferences);
 
   void visitDereferenceSetExpr(const DereferenceSet &expr) override;
   void visitPlaceSetExpr(const PlaceSet &expr) override;
@@ -4811,6 +4813,10 @@ private:
   analyzeConstructorCall(const Expr &construction, const SemanticType &type,
                          const std::vector<SemanticType> &argumentTypes,
                          const ExprList &arguments, const Token &paren);
+  void analyzeConstructorCall(const Expr &construction, const SemanticType &type,
+                             const std::vector<SemanticType> &argumentTypes,
+                             const ExprList &arguments, const Token &paren,
+                             std::span<const Lifetime> destinationInferences);
 
   [[nodiscard]] bool
   forwardedPackArgumentMatches(const SemanticType &parameter,
@@ -5120,6 +5126,8 @@ private:
                                                    std::size_t slot = 0) const;
   [[nodiscard]] Lifetime inferredLifetime(const Token &site,
                                          std::size_t slot = 0) const;
+  [[nodiscard]] std::optional<std::vector<std::pair<LifetimeSyntaxKey, Lifetime>>>
+  inferredTypeSyntaxBindings(const TypeRef &syntax) const;
   [[nodiscard]] Lifetime lifetimeOf(const Token &name) const;
   Lifetime resolveLifetimeArgument(const Token &name);
   [[nodiscard]] const std::vector<GenericParameterInfo> &
@@ -6300,6 +6308,9 @@ private:
 
   SemanticType analyze(const Expr &expr, OccurrenceRole requestedRoles,
                        const EnumeratorRecord *contextualEnumerator = nullptr);
+  SemanticType analyze(const Expr &expr, OccurrenceRole requestedRoles,
+                       const EnumeratorRecord *contextualEnumerator,
+                       std::span<const Lifetime> destinationInferences);
   void analyzeQualifiedName(const QualifiedName &expr,
                             const EnumeratorRecord *contextualEnumerator);
 
@@ -6320,6 +6331,11 @@ private:
                                   const SemanticType &expectedType,
                                   bool allowExactNullConstruction = false,
                                   bool allowDeclarationConstruction = false);
+  SemanticType analyzeInitializer(const ExprPtr &expr,
+                                  const SemanticType &expectedType,
+                                  bool allowExactNullConstruction,
+                                  bool allowDeclarationConstruction,
+                                  const TypeRef *destinationSyntax);
 
   [[nodiscard]] bool
   declarationConstructionApplies(const ExprPtr &expr,

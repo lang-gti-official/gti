@@ -540,9 +540,17 @@ separate from the requirements of each invocation. For example, a surrounding
 `a`; it does not establish the same promise for an unrelated fresh invocation
 region. A disjunctive requirement remains a disjunction inside the lambda.
 
+A typed local copy or move can infer omitted stored regions from its source:
+`Reading copied{original}` and `Reading moved{std::move(original)}` preserve
+the source's region relationships. Explicit `_` arguments have the same
+inference role. Written named or `static` regions remain fixed, repeated slots
+must agree, and deleted copy/move policies still apply. A generic type argument
+already substituted for `T` is an exact target, not a new omitted-region site.
+
 [Example 192](../../examples/192-lifetime-parameters.gti) demonstrates named
 relationships, elided identity, a borrowed record and a projected reference-region
-pattern with inferred callers, and a lambda with a checked fixed environment.
+pattern with inferred callers, typed copy/move inference, and a lambda with a
+checked fixed environment.
 The complete target is [RFC 0004](https://github.com/lang-gti-official/rfcs/blob/codex/proposal-lifetime-parameters/rfcs/0004-lifetime-parameters-and-elision.md).
 Implementation of all compositions is still in progress: inherited borrowed
 storage, recursive forwarded packs and public generic callable wrappers need

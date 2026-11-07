@@ -45,6 +45,14 @@ from concrete instance analysis. It is proof metadata, not a synthetic field
 access: the accessor call and its returned loan still describe execution. In
 particular, lowering must not replace a source accessor with a caller-side
 access to that accessor's private storage.
+Virtual dispatch paths retain each exact direct base instance. Their structural
+view composes the current owner's lifetime substitution at every edge; a base's
+canonical declaration regions do not replace its actual regions within the
+derived object. HIR independently checks those edges against the semantic base
+recipe and compares member signatures in the resulting owner views. Fixed owner
+regions remain exact; only independent invocation binders may alpha-rename.
+Missing, duplicate, cyclic or ambiguous paths fail verification.
+
 Synthesized receiver operands, including witnesses for unsafe raw-reference
 returns tied to `this`, retain the concrete body-domain receiver place key.
 Debug availability and ordinary ownership analysis therefore consume the same

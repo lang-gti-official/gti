@@ -1,4 +1,5 @@
 #include "layout.h"
+#include "../mir_lifetimes.h"
 #include "atomic_types.h"
 #include "closure_environment.h"
 #include "gti/object_layout.h"
@@ -595,8 +596,12 @@ Layouts::dispatchLocation(const SemanticType &type) {
     if (!base || !instance(base->type).polymorphic)
       throw std::logic_error(
           "LLVM dispatch pointer has no sealed primary owner");
+    const auto view = mirClassLifetimeView(session.program().mir(), selected);
+    const auto actual = view ? view->instantiate(base->type) : std::nullopt;
+    if (!actual || instance(*actual).id != base->instance)
+      throw std::logic_error("LLVM dispatch primary base lost its exact type view");
     path.push_back(base->instance);
-    selected = base->type;
+    selected = *actual;
   }
   throw std::logic_error("LLVM dispatch primary chain is cyclic");
 }
@@ -618,8 +623,9 @@ Layouts::basePath(const SemanticType &type,
         selected = &owner.bases[candidate];
         index = candidate;
       }
-    if (!selected || !seen.insert(id).second ||
-        instance(selected->type).id != id)
+    const auto view = mirClassLifetimeView(session.program().mir(), result.type);
+    const auto actual = view && selected ? view->instantiate(selected->type) : std::nullopt;
+    if (!selected || !seen.insert(id).second || !actual || instance(*actual).id != id)
       throw std::logic_error("LLVM base path lost its sealed direct identity");
     const auto parent = get(result.type);
     const auto offset = parent.fieldOffsets.at(index);
@@ -630,7 +636,7 @@ Layouts::basePath(const SemanticType &type,
           "LLVM base adjustment exceeds target range");
     result.offset += offset;
     result.indices.push_back(index);
-    result.type = selected->type;
+    result.type = *actual;
   }
   return result;
 }
