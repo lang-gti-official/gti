@@ -2065,7 +2065,7 @@ int main() { return 0; }
 )");
   expect(shellEscape.syntaxValid && !shellEscape.semanticValid &&
              std::any_of(shellEscape.diagnostics.begin(), shellEscape.diagnostics.end(),
-                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2017"; }),
          "a reference-to-carrier pack element never replaces its external owner with the carrier shell");
   const auto localShell = analyze(shellDeclarations + R"(
 int global = 7;
@@ -2397,7 +2397,9 @@ void testReferencePackReborrows() {
          "a checked mutable reborrow shortens only the outer region and retains invariant referent proof");
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto numeric = [&](std::string source) {
-    return lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+    // The primary fold retains its generic requirement; HIR demand checks each
+    // concrete lane, including rejected bool instantiations.
+    return lang::Frontend().analyze(
         "numeric-reference-pack.gti", std::move(source), {root / "prelude.gti"}, {}, {root});
   };
   const auto valid = numeric(R"(
@@ -2422,10 +2424,119 @@ struct Cell<lifetime a> { int&<a> value; Cell(int&<a> input) : value(input) {} }
 void use<lifetime b>(mut Cell<b>& value) {}
 void relay<lifetime b, Args...>(mut Args&... values) { use<b>(values...); }
 void invalid<lifetime a, lifetime b>(mut Cell<a>& value) requires outlives<a, b> { relay<b>(value); }
-int main() { return 0; }
+int main() { int input = 7; mut Cell value{input}; invalid(value); return 0; }
 )");
   expect(invariant.syntaxValid && !invariant.semanticValid,
          "a shorter call reborrow cannot change the lifetime stored through a mutable referent");
+}
+
+void testSymbolicCallablePackReturns() {
+  const auto library = std::filesystem::weakly_canonical(
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib");
+  const lang::PackageSourceRoot modules{
+      .identity = "toolchain:std", .name = "std", .packageRoot = library,
+      .sourceRoot = library,
+      .modules = {{"meta", library / "std/meta.gti"},
+                  {"detail_function_pointer_impl", library / "std/detail/function_pointer.gti"}},
+      .kind = lang::SourceOwnerKind::Toolchain, .implicitAlias = "std", .defaultModule = "meta"};
+  const auto check = [&](std::string source) {
+    source.insert(0, "import std.detail_function_pointer_impl;\n");
+    const auto path = library / "lifetime-symbolic-callable-pack.gti";
+    return lang::Frontend().analyze(path, source, {library / "prelude.gti", path},
+        {{path.string(), source}}, {library}, {modules});
+  };
+  const std::string pointer = R"(
+class Relay<R&<result>(Args...)> {
+  gti_internal::function_pointer<R&<result>(Args...)> target;
+public:
+  Relay<F>(F input)
+      : target(gti_internal::function_pointer_from_item<R&<result>(Args...)>(input)) {}
+  R&<result> invoke(Args... args) {
+    return gti_internal::function_pointer_invoke(this.target, args...);
+  }
+};
+using Selection = for<lifetime a> int&<a>(int&<a>, int&<a>, bool);
+int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; } return right;
+}
+)";
+  expectValid(check(pointer + R"(
+int main() {
+  Relay<Selection> relay{choose}; int left = 3; int right = 8;
+  return relay.invoke(left, right, false) - 8;
+}
+)"), "a symbolic pointer invocation defers its pack without fabricating reference suppliers");
+  for (const std::string main : {
+      "int main() { Relay<Selection> relay{choose}; return relay.invoke(); }",
+      "int main() { Relay<Selection> relay{choose}; return relay.invoke(true, false, true); }"}) {
+    const auto invalid = check(pointer + main);
+    expect(invalid.syntaxValid && !invalid.semanticValid,
+           "concrete pointer packs retain exact arity and reference-input requirements");
+  }
+  expectValid(check(R"(
+class Procedure<Args...> {
+  gti_internal::function_pointer<void(Args...)> target;
+public:
+  Procedure<F>(F input)
+      : target(gti_internal::function_pointer_from_item<void(Args...)>(input)) {}
+  void invoke(Args... args) {
+    return gti_internal::function_pointer_invoke(this.target, args...);
+  }
+};
+void complete() {}
+int main() { Procedure<> procedure{complete}; procedure.invoke(); return 0; }
+)"), "a concrete empty callable pack retains a genuine void result");
+  const std::string deferred = R"(
+class Forward<R&<result>(Args...)> {
+public:
+  Forward() = default;
+  R&<result> invoke<F>(F& callable, Args... args) {
+    auto relay = [](F& target, Args... values) -> R&<result> {
+      return target(values...);
+    };
+    return relay(callable, args...);
+  }
+};
+using Selection = for<lifetime a> int&<a>(int&<a>);
+)";
+  expectValid(check(deferred + R"(
+int&<a> identity<lifetime a>(int&<a> value) { return value; }
+int main() {
+  Forward<Selection> forward{}; auto callable = identity; int value = 7;
+  return forward.invoke(callable, value) - 7;
+}
+)"), "a deferred callable pack is replayed through its exact reference result contract");
+  for (const std::string tail : {
+      "int temporary(int value) { return value; } int main() { Forward<Selection> forward{}; auto callable = temporary; int value = 7; return forward.invoke(callable, value); }",
+      "mut int&<a> exclusive<lifetime a>(mut int&<a> value) { return value; } int main() { Forward<Selection> forward{}; auto callable = exclusive; int value = 7; return forward.invoke(callable, value); }"}) {
+    const auto invalid = check(deferred + tail);
+    expect(invalid.syntaxValid && !invalid.semanticValid,
+           "deferred callable packs cannot publish a temporary or strengthen argument access");
+  }
+  auto stronger = deferred;
+  const std::string original = "for<lifetime a> int&<a>(int&<a>)";
+  stronger.replace(stronger.find(original), original.size(),
+                   "for<lifetime a> int&<static>(int&<a>)");
+  const auto staticResult = check(stronger + R"(
+int&<a> identity<lifetime a>(int&<a> value) { return value; }
+int main() {
+  Forward<Selection> forward{}; auto callable = identity; int value = 7;
+  return forward.invoke(callable, value);
+}
+)");
+  expect(staticResult.syntaxValid && !staticResult.semanticValid,
+         "a pending result conversion cannot promote an independent input region to static");
+  auto sibling = deferred;
+  const std::string forwarding = "return target(values...);";
+  sibling.replace(sibling.find(forwarding), forwarding.size(),
+                  "target(values...); return 0;");
+  const auto unrelated = check(sibling + "int main() { return 0; }");
+  expect(unrelated.syntaxValid && !unrelated.semanticValid,
+         "a deferred lambda call cannot authorize a sibling temporary return");
+  const auto missing = analyze(
+      "int& missing<Args...>(Args... args); int main() { return 0; }");
+  expect(missing.syntaxValid && !missing.semanticValid,
+         "a symbolic prototype still needs a normalized result lifetime relationship");
 }
 
 void testConsumingExternalResults() {
@@ -2988,6 +3099,7 @@ int main() {
   testReferencePackReturnContracts();
   testFreshCallableLifetimeArguments();
   testReferencePackReborrows();
+  testSymbolicCallablePackReturns();
   testConsumingExternalResults();
   testFreshReceiverStorageRegions();
   testFixedArityPackCallSelection();

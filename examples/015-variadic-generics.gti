@@ -31,6 +31,12 @@ int&<a> select_forwarded<lifetime a, Args...>(Args&<a>... values) {
   return select_second(values...);
 }
 
+// A callable pack retains the same declared reference relationship. Its exact
+// callable and every argument lane are checked when this helper is instantiated.
+int&<a> call_forwarded<F, lifetime a, Args...>(F& callback, Args&<a>... values) {
+  return callback(values...);
+}
+
 class SumBase {
   int total;
 public:
@@ -57,10 +63,12 @@ int main() {
 
   SumDerived inherited{2, 4};
   int first = 3; int second = 8;
+  auto selector = select_second;
 
   if (inferred == 7 and explicit_types == 9 and copied.sum() == 6 and
       add_forwarded(3) == 8 and inherited.sum() == 6 and
-      select_forwarded(first, second) == 8) {
+      select_forwarded(first, second) == 8 and
+      call_forwarded(selector, first, second) == 8) {
     return 0;
   }
   return 1;

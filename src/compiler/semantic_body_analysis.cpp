@@ -3946,8 +3946,10 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   // A declaration's unresolved pack has no concrete supplier ordinals. Its
   // normalized lifetime signature is retained, but the exact complete return
   // contract must be derived and checked after expansion in instance analysis.
+  // A relational prototype retains that same declaration contract; the lack
+  // of a body does not make its still-symbolic supplier ordinals ambiguous.
   const bool deferredPackSuppliers =
-      stmt.body() && functionInfo && functionInfo->lifetimeContract.valid() &&
+      functionInfo && functionInfo->lifetimeContract.valid() &&
       std::any_of(functionInfo->parameterTypes.begin(),
                   functionInfo->parameterTypes.end(), [](const auto &type) {
                     return type.kind == SemanticType::TypePack && !type.concretePack;
@@ -8321,7 +8323,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         argumentTypes, expr.arguments(), false, boundary, std::nullopt, false,
         false, &argumentAnalysis);
     const bool valid =
-        selected && validateCallableReturn(expr, selected->returnType) &&
+        selected && validateCallableReturn(expr, selected->returnType,
+                                           &selected->lifetimeApplication) &&
         validateCallableCapability(
             expr, callableInvocationCapability(selected->receiverMutability));
     currentType = valid ? callExpressionType(selected->returnType)
@@ -8717,19 +8720,10 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
   if (!concreteArguments) {
     // A symbolic pack has no executable arity. Concrete instance reanalysis
     // owns its fixed or variadic target; never publish a provisional call.
-    semanticModel.suppressInheritedCall(expr);
-    const auto unresolvedPack = [](auto &&self, const SemanticType &type) -> bool {
-      return type.kind == SemanticType::TypePack &&
-             (!type.concretePack ||
-              std::any_of(type.arguments.begin(), type.arguments.end(),
-                          [&](const auto &element) { return self(self, element); }));
-    };
-    if (std::any_of(argumentTypes.begin(), argumentTypes.end(),
-                    [&](const auto &type) { return unresolvedPack(unresolvedPack, type); }))
-      loanFlow.deferredPackCalls.insert(&expr);
-    loanFlow.deferredGenericFlow = true;
-    requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
-    currentType = SemanticType::Unknown;
+    if (!deferUnexpandedPackCall(expr, argumentTypes)) {
+      semanticModel.suppressInheritedCall(expr);
+      currentType = SemanticType::Unknown;
+    }
     return;
   }
   ContextualCallArguments flatAnalysis;

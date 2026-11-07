@@ -463,12 +463,19 @@ completion flag alone is not proof of any outlives relation. Direct reference
 arguments may differ in free region annotations only when their exact target is
 independently instantiated; mandatory body replay then proves the original
 place's outer and nested region relationships. Pointee shape, mutable access and
-argument tags remain exact. Result and constructor-owner comparisons permit
+argument tags remain exact. An addressed receiver uses its exact place's
+stored-reference region; deeper projections produced by the same source
+expression cannot substitute their different external regions. Result,
+constructor-owner and ordinary member receiver comparisons permit
 alpha-renaming only inside closed callable quantifier scopes. Fixed outer
 regions, binder counts and relationships remain exact; runtime representation
 erasure is not a type proof. Targetless generated defaults likewise select one
 exact nominal lifetime view and retain the generated/no-schedule policy check;
 that structural view does not authorize an unattached lifetime application.
+Call supplier paths preserve the same target contract: typed enum guards are
+substituted through its independently checked invocation application before
+comparison. A sole global supplier retains its exact compact root and path,
+while the independently replayed complete dependency fact remains explicit.
 Lambda and
 destructor instances retain normalized contracts just as functions and
 constructors do. Authoritative nominal variance is preserved alongside the
@@ -874,6 +881,12 @@ entry loan transfers into the field. Independent replay validates the formal,
 addressed expression and unique destination, then compares a transient
 parentless publication view. It does not mutate the snapshot or accept an
 unrelated parent with a matching source.
+A shared reference initializer can likewise retain the caller-owned origin
+past its temporary formal entry. Its snapshot still names the exact physical
+reference entry, even when that entry has a separate stored-content group.
+The publication comparison removes that parent only after independently
+proving the same read-only formal and source. A stored-content entry, another
+formal, a local loan or an exclusive entry cannot authorize that adjustment.
 
 A consuming receiver transfers its complete stored group through the ordinary
 ordered call-input stages. Reference and borrowed class/enum results may
@@ -5349,10 +5362,14 @@ of an ordinary staged input or authorize new complex input producers. Scalar
 reference inputs of calls also require independently initialized storage;
 raw address formation and storage-lifetime-start destinations remain distinct.
 Physical pointee checks distinguish an object place from a reference-valued
-formal-pack element. For an exact single `PackElement` projection, the verifier
-resolves the binding's concrete pack and element index, checks the complete
-projected type and carrier facts, and derives the element reference's pointee
-and access. The immutable carrier does not make its referent immutable. This
+formal-pack element. For an exact concrete `PackElement` prefix, including
+nested packs, the verifier resolves every index and checks the complete
+projected type and carrier facts. Each reference entry retains that full prefix
+when deriving its pointee, parent authority and separate stored dependency.
+Equal-typed sibling leaves cannot substitute for one another, and the grouped
+binding cannot select one leaf implicitly. Canonical reference crossing uses
+only the uniquely selected active entry; `Reference<TypePack>` remains atomic.
+The immutable carrier does not make its referent immutable. This
 does not unwrap arbitrary reference-typed places or waive unrelated type,
 origin, index or access mismatches; ordinary exact/public-base compatibility
 still applies to the derived referent.

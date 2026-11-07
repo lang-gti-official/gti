@@ -296,12 +296,12 @@ auto SemanticVisitor::Impl::callableSignatureRequirement(const Call &call) const
       CallableSignatureRequirement result{
           .source = &call,
           .returnType =
-              substituteType(stored->returnType, instanceTypeSubstitution),
+              substituteType(stored->returnType, currentGenericSubstitution()),
           .parameterTypes = stored->parameterTypes,
           .capability = stored->capability,
           .inferResultFromInstantiation = stored->inferResultFromInstantiation};
       for (SemanticType &type : result.parameterTypes) {
-        type = substituteType(type, instanceTypeSubstitution);
+        type = substituteType(type, currentGenericSubstitution());
       }
       return result;
     }
@@ -317,9 +317,9 @@ auto SemanticVisitor::Impl::callableSignatureRequirement(const Call &call) const
   }
   CallableSignatureRequirement result = *signature;
   result.returnType =
-      substituteType(result.returnType, instanceTypeSubstitution);
+      substituteType(result.returnType, currentGenericSubstitution());
   for (SemanticType &parameter : result.parameterTypes) {
-    parameter = substituteType(parameter, instanceTypeSubstitution);
+    parameter = substituteType(parameter, currentGenericSubstitution());
   }
   return result;
 }
@@ -510,6 +510,14 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
       receiverInfo != nullptr &&
       receiverInfo->category == ValueCategory::Place &&
       receiverInfo->type.kind == SemanticType::TypeParameter;
+  const bool lambdaParameter =
+      currentLambdaReturn && currentLambdaReturn->declaration && parameter &&
+      !parameter->pack && receiverSymbol && receiverInfo &&
+      receiverInfo->category == ValueCategory::Place &&
+      receiverInfo->type.kind == SemanticType::TypeParameter &&
+      std::any_of(currentLambdaReturn->declaration->parameters().begin(),
+                  currentLambdaReturn->declaration->parameters().end(),
+                  [&](const auto &candidate) { return &candidate == parameter; });
   bool valid = true;
   SemanticType returnType = SemanticType::Void;
   bool inferResultFromInstantiation = false;
@@ -569,7 +577,7 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
       valid = false;
     }
   }
-  if (!storedReceiver && !ownedReceiverProjection &&
+  if (!storedReceiver && !ownedReceiverProjection && !lambdaParameter &&
       (variable == nullptr || parameter == nullptr || function == nullptr ||
        function->declaration == nullptr || parameter->pack ||
        calleeType.kind != SemanticType::TypeParameter)) {
@@ -609,7 +617,7 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
     return;
   }
 
-  if (storedReceiver || ownedReceiverProjection) {
+  if (storedReceiver || ownedReceiverProjection || lambdaParameter) {
     semanticModel.recordDeferredCallableCall(
         call,
         DeferredCallableCallInfo{
@@ -621,10 +629,13 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
                 consuming ? CallableInvocationCapability::Once
                           : callableInvocationCapability(receiverInfo->access),
             .boundary = std::nullopt,
-            .receiverBinding = storedReceiver ? receiverSymbol->id : 0,
+            // A lambda parameter belongs to its own exact call requirement,
+            // never to an ordinal in the enclosing function's parameter list.
+            .receiverBinding = storedReceiver || lambdaParameter ? receiverSymbol->id : 0,
             .ownedReceiverProjection = ownedReceiverProjection,
             .inferResultFromInstantiation = inferResultFromInstantiation});
-    currentType = callExpressionType(returnType);
+    if (!deferUnexpandedPackCall(call, argumentTypes, returnType))
+      currentType = callExpressionType(returnType);
     return;
   }
 
@@ -665,11 +676,13 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
                .parameterTypes = argumentTypes,
                .capability = capability,
                .inferResultFromInstantiation = inferResultFromInstantiation}}});
-  currentType = callExpressionType(returnType);
+  if (!deferUnexpandedPackCall(call, argumentTypes, returnType))
+    currentType = callExpressionType(returnType);
 }
 
 auto SemanticVisitor::Impl::validateCallableReturn(
-    const Call &call, const SemanticType &returnType) -> bool {
+    const Call &call, const SemanticType &returnType,
+    const SemanticLifetimeApplication *application) -> bool {
   const std::optional<CallableSignatureRequirement> requirement =
       callableSignatureRequirement(call);
   if (requirement && requirement->inferResultFromInstantiation &&
@@ -709,6 +722,36 @@ auto SemanticVisitor::Impl::validateCallableReturn(
       returnType.kind == SemanticType::Reference &&
       requirement->returnType == callExpressionType(returnType))
     return true;
+  if (application && application->complete &&
+      requirement->returnType.kind == SemanticType::Reference &&
+      returnType.kind == SemanticType::Reference) {
+    std::vector<LifetimeBound> resultObligations;
+    const auto adjusted = constrainLifetimeType(
+        returnType, requirement->returnType, 1, resultObligations);
+    auto obligations = application->obligations;
+    obligations.insert(obligations.end(), resultObligations.begin(), resultObligations.end());
+    if (adjusted && *adjusted == requirement->returnType &&
+        validateLifetimeConstraints(obligations)) {
+      // This is a selected, checked invocation. Its fresh result region may
+      // satisfy the contextual reference contract together with the actual
+      // inputs. Fixed-to-fixed relationships still require caller proof.
+      // Publish only the conversion; the ordinary successful call path owns
+      // committing the pending application and all actual supplier facts.
+      for (const auto bound : resultObligations) {
+        if (std::find(loanFlow.lifetimeObligations.begin(),
+                      loanFlow.lifetimeObligations.end(), bound) ==
+            loanFlow.lifetimeObligations.end())
+          loanFlow.lifetimeObligations.push_back(bound);
+        for (const auto region : {bound.longer, bound.shorter})
+          if (region.kind == Lifetime::Kind::Inference &&
+              std::find(loanFlow.lifetimeVariables.begin(),
+                        loanFlow.lifetimeVariables.end(), region) ==
+                  loanFlow.lifetimeVariables.end())
+            loanFlow.lifetimeVariables.push_back(region);
+      }
+      return true;
+    }
+  }
   const Variable *variable = directCallableParameterVariable(call.callee());
   const Token location =
       variable == nullptr ? expressionToken(call.callee()) : variable->name();
@@ -720,7 +763,8 @@ auto SemanticVisitor::Impl::validateCallableReturn(
           : nullptr;
   // The stored callable is a class field or a closure capture; name the
   // binding by what it is.
-  const std::string storedKind = field == nullptr ? "Callable parameter '"
+  const std::string storedKind = field == nullptr || field->kind == SymbolKind::Parameter
+                                     ? "Callable parameter '"
                                  : field->kind == SymbolKind::LambdaCapture
                                      ? "Callable capture '"
                                      : "Callable field '";
@@ -735,7 +779,9 @@ auto SemanticVisitor::Impl::validateCallableReturn(
           typeSpelling(returnType) + "'.");
   if (field) {
     diagnostic.related.push_back(
-        {field->nameSpan, field->kind == SymbolKind::LambdaCapture
+        {field->nameSpan, field->kind == SymbolKind::Parameter
+                              ? "Callable parameter declared here."
+                          : field->kind == SymbolKind::LambdaCapture
                               ? "Callable capture declared here."
                               : "Callable field declared here."});
   }
@@ -836,7 +882,8 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
   // A declaration-wide pack has no arity yet. Concrete reanalysis must select
   // the complete invocation; do not publish an executable provisional target.
   if (!arguments) {
-    currentType = valid ? lambda->returnType : SemanticType::Unknown;
+    if (!valid || !deferUnexpandedPackCall(call, argumentTypes, lambda->returnType))
+      currentType = SemanticType::Unknown;
     return;
   }
   if (arguments->size() != lambda->parameterTypes.size()) {
@@ -915,7 +962,8 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
   }
   validateCallPlaceExclusivityImpl(ordinaryParameterTypes, ordinaryArguments,
                                    call.paren(), receiver, access);
-  valid = validateCallableReturn(call, selected.returnType) && valid;
+  valid = validateCallableReturn(call, selected.returnType,
+                                 &selected.lifetimeApplication) && valid;
   valid = validateCallableCapability(call, lambda->capability) && valid;
   if (valid) {
     commitLifetimeApplication(selected.lifetimeApplication);
@@ -969,7 +1017,8 @@ auto SemanticVisitor::Impl::analyzeNativeIndirectCall(
                 "Calling a native function pointer");
   const auto arguments = concreteCallArguments(argumentTypes, call.arguments());
   if (!arguments) {
-    currentType = valid ? *result : SemanticType::Unknown;
+    if (!valid || !deferUnexpandedPackCall(call, argumentTypes, *result))
+      currentType = SemanticType::Unknown;
     return;
   }
   std::size_t slot = 0;
@@ -1033,7 +1082,8 @@ auto SemanticVisitor::Impl::analyzeNativeIndirectCall(
   }
   validateCallPlaceExclusivityImpl(ordinaryParameters, ordinaryArguments,
                                    call.paren());
-  valid = validateCallableReturn(call, *result) && valid;
+  valid = validateCallableReturn(call, *result,
+                                 &invocation.lifetimeApplication) && valid;
   valid =
       validateCallableCapability(call, CallableInvocationCapability::Read) &&
       valid;
@@ -1094,8 +1144,8 @@ auto SemanticVisitor::Impl::analyzeFunctionItemCall(
   }
   const auto arguments = concreteCallArguments(argumentTypes, call.arguments());
   if (!arguments) {
-    currentType =
-        valid ? callExpressionType(target->returnType) : SemanticType::Unknown;
+    if (!valid || !deferUnexpandedPackCall(call, argumentTypes, target->returnType))
+      currentType = SemanticType::Unknown;
     return;
   }
   if (arguments->size() != target->parameterTypes.size()) {
@@ -1176,7 +1226,8 @@ auto SemanticVisitor::Impl::analyzeFunctionItemCall(
       valid = false;
     }
   }
-  valid = validateCallableReturn(call, selected.returnType) && valid;
+  valid = validateCallableReturn(call, selected.returnType,
+                                 &selected.lifetimeApplication) && valid;
   valid =
       validateCallableCapability(call, CallableInvocationCapability::Read) &&
       valid;
@@ -1270,6 +1321,34 @@ auto SemanticVisitor::Impl::concreteCallArguments(
     }
   }
   return result;
+}
+
+auto SemanticVisitor::Impl::deferUnexpandedPackCall(
+    const Call &call, std::span<const SemanticType> arguments,
+    const SemanticType &declaredResult) -> bool {
+  // Match concreteCallArguments' value-pack boundary. A reference to a pack
+  // remains one physical argument; an unrelated unknown type is not staging.
+  const auto unresolved = [](auto &&self, const SemanticType &type) -> bool {
+    return type.kind == SemanticType::TypePack &&
+           (!type.concretePack ||
+            std::any_of(type.arguments.begin(), type.arguments.end(),
+                        [&](const auto &element) { return self(self, element); }));
+  };
+  if (!std::any_of(arguments.begin(), arguments.end(),
+                   [&](const auto &type) { return unresolved(unresolved, type); }))
+    return false;
+  // Preserve any deferred callable requirement, but no executable target,
+  // place or supplier fact exists before its exact argument lanes do.
+  semanticModel.suppressInheritedCall(call);
+  semanticModel.clearBorrowDependencySet(call);
+  loanFlow.deferredPackCalls.insert(&call);
+  loanFlow.deferredGenericFlow = true;
+  requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
+  // A known void signature publishes no result at all. Retain it so an
+  // ordinary `return invoke(pack...)` remains a valid void return.
+  currentType = declaredResult == SemanticType::Void
+                    ? SemanticType::Void : SemanticType::Unknown;
+  return true;
 }
 
 auto SemanticVisitor::Impl::acceptsArgumentShape(
@@ -8693,15 +8772,21 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     const bool compactReferenceSupplier = [&] {
       if (!complete || function.returnType.kind != SemanticType::Reference ||
           !resolved.borrowFields.empty() || !resolved.borrowArguments.empty() ||
-          resolved.borrowPlace || complete->dependencies.size() != 1 ||
-          !complete->possibleAlternatives.empty())
+          complete->dependencies.size() != 1 || !complete->possibleAlternatives.empty())
         return false;
       const auto &supplier = complete->dependencies.front();
-      return supplier.origin == resolved.borrowOrigin &&
-             supplier.parameter == resolved.borrowArgument &&
-             supplier.access == resolved.borrowAccess && supplier.globalRoot == 0 &&
-             supplier.resultFields.empty() && supplier.sourceFields.empty() &&
-             supplier.resultConditions.empty() && supplier.sourceConditions.empty();
+      if (supplier.origin != resolved.borrowOrigin ||
+          supplier.parameter != resolved.borrowArgument ||
+          supplier.access != resolved.borrowAccess || !supplier.resultFields.empty() ||
+          !supplier.resultConditions.empty() || !supplier.sourceConditions.empty())
+        return false;
+      // A sole static supplier retains the declaration's exact global-place
+      // spelling. Its full dependency fact remains published independently.
+      if (supplier.origin == BorrowOriginKind::Global)
+        return resolved.borrowPlace && supplier.globalRoot != 0 &&
+               supplier.globalRoot == resolved.borrowPlace->root &&
+               supplier.sourceFields == resolved.borrowPlace->projections;
+      return !resolved.borrowPlace && supplier.globalRoot == 0 && supplier.sourceFields.empty();
     }();
     // Nontrivial paths come from the exact instance's complete contract,
     // whether or not this call's inputs instantiate its dependency set.

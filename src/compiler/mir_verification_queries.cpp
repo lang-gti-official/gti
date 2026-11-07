@@ -2094,6 +2094,21 @@ const MirInstruction *definitionFor(const MirBody &body, MirValueId valueId) {
   return found == block->instructions.end() ? nullptr : &*found;
 }
 
+std::optional<std::size_t> entryProjectionPrefix(
+    const MirBody &body, const MirPlace &entry,
+    std::span<const MirPlaceProjection> selected) {
+  if (entry.projections.empty())
+    return 0;
+  if (entry.root != MirPlaceRootKind::Binding ||
+      !std::all_of(entry.projections.begin(), entry.projections.end(), [](const auto &step) {
+        return step.kind == MirProjectionKind::PackElement;
+      }) || mirConcretePackElementType(body, entry) == nullptr ||
+      selected.size() < entry.projections.size() ||
+      !std::equal(entry.projections.begin(), entry.projections.end(), selected.begin()))
+    return std::nullopt;
+  return entry.projections.size();
+}
+
 std::optional<MirPlaceId> borrowSourceForPlace(const MirBody &body,
                                                MirPlaceId placeId,
                                                std::size_t depth) {
@@ -2115,11 +2130,34 @@ std::optional<MirPlaceId> borrowSourceForPlace(const MirBody &body,
     return source ? source : std::optional<MirPlaceId>{placeId};
   }
   if (place->root == MirPlaceRootKind::Binding) {
+    if (!place->projections.empty() &&
+        place->projections.front().kind == MirProjectionKind::PackElement &&
+        !mirConcretePackElementType(body, *place))
+      return std::nullopt;
     const MirLoan *carrier = nullptr;
+    bool hasReferenceEntry = false;
+    bool projectedEntry = false;
     for (const MirLoan &loan : body.loans) {
       if (std::find(loan.carriers.begin(), loan.carriers.end(),
                     place->binding) == loan.carriers.end()) {
         continue;
+      }
+      if (loan.entry && loan.kind == MirLoanKind::Parameter) {
+        hasReferenceEntry = true;
+        const auto *entry = body.findPlace(loan.source);
+        const auto prefix = entry && entry->root == place->root &&
+            entry->binding == place->binding && entry->symbol == place->symbol
+            ? entryProjectionPrefix(body, *entry, place->projections) : std::nullopt;
+        if (!prefix) continue;
+        const auto suffix = std::span(place->projections).subspan(*prefix);
+        const bool whole = suffix.empty() && entry->type == place->type;
+        const bool referent = suffix.size() == 1 &&
+            suffix.front() == MirPlaceProjection{.kind = MirProjectionKind::Dereference} &&
+            entry->type.kind == SemanticType::Reference && entry->type.arguments.size() == 1 &&
+            entry->type.arguments.front() == place->type;
+        // Field/payload paths below this reference keep their own identity.
+        // The physical formal is a lifetime footprint, not their address.
+        projectedEntry = projectedEntry || (!whole && !referent);
       }
       if (carrier != nullptr && carrier->source != loan.source) {
         return std::nullopt;
@@ -2127,8 +2165,10 @@ std::optional<MirPlaceId> borrowSourceForPlace(const MirBody &body,
       carrier = &loan;
     }
     if (carrier != nullptr) {
-      return carrier->source;
+      return projectedEntry ? placeId : carrier->source;
     }
+    if (hasReferenceEntry)
+      return std::nullopt;
   }
   // A by-reference capture has an environment slot rather than a binding
   // carrier. Only its exact whole referent resolves to the slot's entry loan;

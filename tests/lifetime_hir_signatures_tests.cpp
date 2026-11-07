@@ -357,6 +357,13 @@ int main() {
   secondCreator->lambdaTarget = firstCreator->lambdaTarget;
   secondCreator->source = firstCreator->source;
   secondCreator->info = firstCreator->info;
+  const auto staleFormation = verifyHirProgramPlans(result.semantics, malformed);
+  expect(std::find(staleFormation.errors.begin(), staleFormation.errors.end(),
+                   "construction context has no exact lambda creator") != staleFormation.errors.end(),
+         "retargeting a closure cannot retain another creator's fixed-environment application");
+  // Keep the forged creator internally coherent to reach the separate
+  // unequal-parent-context gate rather than failing formation first.
+  secondCreator->lifetimeApplication = firstCreator->lifetimeApplication;
   const auto rejected = verifyHirProgramPlans(result.semantics, malformed);
   expect(std::find(rejected.errors.begin(), rejected.errors.end(),
                    "construction body has ambiguous instance arguments") != rejected.errors.end(),

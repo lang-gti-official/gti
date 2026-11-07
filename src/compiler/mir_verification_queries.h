@@ -389,6 +389,12 @@ fusedSignedMinimumNegation(const MirBody &body, const MirInstruction &carrier);
                                              HirBindingId binding,
                                              MirLoanId dependency,
                                              std::size_t depth = 0);
+// Structural entry-domain projection only. The caller still proves root,
+// formal identity, access and liveness. A grouped entry retains its complete
+// concrete PackElement prefix; references to packs remain atomic.
+[[nodiscard]] std::optional<std::size_t> entryProjectionPrefix(
+    const MirBody &, const MirPlace &entry,
+    std::span<const MirPlaceProjection> selected);
 [[nodiscard]] std::optional<MirPlaceId>
 borrowSourceForPlace(const MirBody &body, MirPlaceId place, std::size_t depth);
 [[nodiscard]] std::optional<MirPlaceId>

@@ -14,6 +14,24 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "symbolic_callable_pack_results": """
+class Forward<R&<result>(Args...)> {
+public:
+  Forward() = default;
+  R&<result> invoke<F>(F& callable, Args... args) {
+    auto relay = [](F& target, Args... values) -> R&<result> {
+      return target(values...);
+    };
+    return relay(callable, args...);
+  }
+};
+using Selection = for<lifetime a> int&<a>(int&<a>);
+int&<a> identity<lifetime a>(int&<a> value) { return value; }
+int main() {
+  Forward<Selection> forward{}; auto callable = identity; int value = 7;
+  return forward.invoke(callable, value) - 7;
+}
+""",
     "lambda_fixed_environment_premises": """
 int needsStorage<T, lifetime a>() requires outlives<T, a> { return 1; }
 int enclosing<T, lifetime a>(T&<a> input, int&<a> token) {
@@ -47,6 +65,22 @@ int main() {
   return read(first, second) + wrapper.read() + copied(first, second) - 21;
 }
 """,
+    "stored_reference_carrier_constructor": """
+struct View<lifetime a> {
+  int&<a> external; int local = 11;
+  View(int&<a> input) : external(input) {}
+};
+struct Holder<lifetime a, lifetime owner> {
+  View<a>&<owner> value;
+  Holder(View<a>&<owner> first, View<a>&<owner> second) : value(first) {}
+};
+int main() {
+  int first = 7; int second = 9;
+  View left{first}; View right{second};
+  Holder holder{left, right};
+  return holder.value.local - 11;
+}
+""",
     "checked_scalar_owner_witness": """
 [[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
 [[borrowed_from(owner)]] unsafe mut T& borrow_mut<T, Owner>(T* address, mut Owner& owner) { unsafe { return *address; } }
@@ -54,7 +88,7 @@ struct Storage { mut int value = 7; Storage() {} };
 int rewrite(mut int& value) { value = 5; return value; }
 int main() {
   mut Storage storage{};
-  rewrite(storage.value);
+  if (rewrite(storage.value) != 5) { return 1; }
   unsafe {
     borrow_mut(&storage.value, storage) = 11;
     return borrow(&storage.value, storage) - 11;

@@ -1,4 +1,5 @@
 #include "../src/compiler/mir_lifetimes.h"
+#include "../src/compiler/mir_verification_queries.h"
 #include "../src/compiler/mir_verification_support.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_effects.h"
@@ -240,6 +241,57 @@ void rawPointerStorageOutlives() {
   expect(!verifyMirLifetimeApplications(program, conversion, 1).valid(),
          "a forged null operand tag cannot hide a non-null pointer source with different nested regions");
 }
+void packEntrySourceIdentity() {
+  const auto reference = SemanticType::referenceTo(SemanticType::classType(88),
+      AccessMode::ReadOnly, Lifetime::parameter(881));
+  auto nested = SemanticType(SemanticType::TypePack);
+  nested.concretePack = true;
+  nested.arguments = {reference};
+  auto grouped = nested;
+  grouped.arguments = {reference, nested};
+  MirBody body;
+  body.places = {{.id = 1, .root = MirPlaceRootKind::Binding, .binding = 1,
+      .symbol = 88, .type = grouped, .initiallyAvailable = true}};
+  for (std::size_t index = 0; index != 2; ++index) {
+    MirPlace entry{.id = index + 2, .root = MirPlaceRootKind::Binding, .binding = 1,
+        .symbol = 88, .projections = {{.kind = MirProjectionKind::PackElement, .constantIndex = index}},
+        .type = reference, .traits = semanticTraits(reference), .initiallyAvailable = true};
+    if (index) entry.projections.push_back({.kind = MirProjectionKind::PackElement, .constantIndex = 0});
+    body.places.push_back(entry);
+    body.loans.push_back({.id = index + 1, .kind = MirLoanKind::Parameter,
+        .source = entry.id, .carriers = {1}, .entry = true});
+  }
+  expect(mir_detail::borrowSourceForPlace(body, 2, 0) == 2 &&
+             mir_detail::borrowSourceForPlace(body, 3, 0) == 3 &&
+             !mir_detail::borrowSourceForPlace(body, 1, 0),
+         "equal-typed grouped entries retain distinct full lane origins and no whole-pack owner");
+  auto referent = body.places.back();
+  referent.id = 4;
+  referent.projections.push_back({.kind = MirProjectionKind::Dereference});
+  referent.type = reference.arguments.front();
+  body.places.push_back(referent);
+  expect(mir_detail::borrowSourceForPlace(body, 4, 0) == 3,
+         "the exact whole referent retains its selected nested entry");
+  referent.id = 5;
+  referent.projections.push_back({.kind = MirProjectionKind::Field, .field = 880});
+  referent.projections.push_back({.kind = MirProjectionKind::Dereference});
+  referent.type = SemanticType::Int32;
+  body.places.push_back(referent);
+  expect(mir_detail::borrowSourceForPlace(body, 5, 0) == 5,
+         "a deeper stored field keeps its exact projection instead of the physical pack shell");
+  auto forged = body;
+  forged.places[2].projections.back().constantIndex = 1;
+  expect(!mir_detail::borrowSourceForPlace(forged, 3, 0),
+         "a wrong nested index cannot select an equal-typed entry loan");
+  forged = body;
+  forged.places.front().type = SemanticType::referenceTo(grouped);
+  expect(!mir_detail::borrowSourceForPlace(forged, 2, 0),
+         "reference-to-pack storage remains atomic during entry origin selection");
+  forged = body;
+  forged.loans.back().source = 2;
+  expect(mir_detail::borrowSourceForPlace(forged, 3, 0) != 2,
+         "substituting another equal-typed lane never grants that lane's source identity");
+}
 void packElementLifetimeReplay() {
   const auto first = Lifetime::parameter(821);
   const auto second = Lifetime::parameter(822);
@@ -301,6 +353,67 @@ void packElementLifetimeReplay() {
   atomicReference.places.front().type = SemanticType::referenceTo(pack, AccessMode::ReadOnly, first);
   expect(!verifyMirLifetimeApplications(program, atomicReference, 1).valid(),
          "a Reference<TypePack> does not become a grouped formal without an exact dereference");
+}
+void exactReceiverProjectionRegion() {
+  const auto external = Lifetime::parameter(1601), shell = Lifetime::parameter(1602);
+  const auto receiver = Lifetime::parameter(1603), use = Lifetime::inference(1604);
+  MirClassInstance inner;
+  inner.id = 1;
+  inner.declaration = 160;
+  inner.type = SemanticType::classType(160);
+  inner.type.lifetimeArguments = {external};
+  inner.lifetimeContract = {.parameters = {external}, .complete = true};
+  inner.declaredFields = {{.symbol = 1605, .type = reference(external.id)}};
+  MirClassInstance outer;
+  outer.id = 2;
+  outer.declaration = 161;
+  outer.type = SemanticType::classType(161);
+  outer.type.lifetimeArguments = {external, shell};
+  outer.lifetimeContract = {.parameters = {external, shell}, .complete = true};
+  outer.declaredFields = {{.symbol = 1606, .type =
+      SemanticType::referenceTo(inner.type, AccessMode::ReadOnly, shell)}};
+  MirProgram program;
+  MirProgramTestAccess::classes(program) = {inner, outer};
+  MirFunctionInstance function;
+  function.id = 1;
+  function.lifetimeContract = {.parameters = {external, shell, receiver}, .complete = true};
+  MirProgramTestAccess::functions(program) = {function};
+  MirBody body;
+  body.kind = MirBodyKind::Function;
+  body.lifetimeBody = {.variables = {use}, .obligations = {{shell, use}}, .complete = true};
+  MirPlace root{.id = 1, .root = MirPlaceRootKind::Binding, .binding = 1,
+      .type = SemanticType::referenceTo(outer.type, AccessMode::ReadOnly, receiver)};
+  auto selected = root;
+  selected.id = 2;
+  selected.projections = {{.kind = MirProjectionKind::Dereference},
+      {.kind = MirProjectionKind::Field, .field = 1606}, {.kind = MirProjectionKind::Dereference}};
+  selected.type = inner.type;
+  selected.sourceValue = 31;
+  auto nested = selected;
+  nested.id = 3;
+  nested.projections.push_back({.kind = MirProjectionKind::Field, .field = 1605});
+  nested.projections.push_back({.kind = MirProjectionKind::Dereference});
+  nested.type = SemanticType::Int32;
+  body.places = {root, selected, nested};
+  MirInstruction input;
+  input.id = 1;
+  input.kind = MirInstructionKind::CallInput;
+  input.hirValue = 31;
+  input.callInputKind = HirCallInputKind::ReadBorrow;
+  input.info.type = SemanticType::referenceTo(inner.type, AccessMode::ReadOnly, use);
+  input.operands = {{.kind = MirOperandKind::BorrowRead, .place = selected.id, .type = inner.type}};
+  body.blocks = {{.id = 1, .instructions = {input}}};
+  expect(verifyMirLifetimeApplications(program, body, 1).valid(),
+         "an exact addressed receiver keeps its stored shell region despite deeper projections from the same expression");
+  for (int mutation = 0; mutation != 4; ++mutation) {
+    auto forged = body;
+    if (mutation == 0) forged.lifetimeBody.obligations.clear();
+    if (mutation == 1) forged.blocks.front().instructions.front().operands.front().place = nested.id;
+    if (mutation == 2) forged.places[1].projections[1].field = 1699;
+    if (mutation == 3) forged.blocks.front().instructions.front().info.type.referenceLifetime = Lifetime::staticLifetime();
+    expect(!verifyMirLifetimeApplications(program, forged, 1).valid(),
+           "receiver replay rejects a missing edge, another projected place, unknown field and longer lifetime");
+  }
 }
 void cleanupLifetimeRecipes() {
   const auto region = Lifetime::parameter(801);
@@ -708,6 +821,8 @@ void quantifiedNominalLiftInventory() {
 int main() {
   closureEnvironmentReplay();
   rawPointerStorageOutlives();
+  packEntrySourceIdentity();
+  exactReceiverProjectionRegion();
   packElementLifetimeReplay();
   cleanupLifetimeRecipes();
   owningCleanupShape();

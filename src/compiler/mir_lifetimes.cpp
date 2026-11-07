@@ -1639,7 +1639,11 @@ public:
           }
       std::optional<Lifetime> selected;
       for (const auto &place : body.places)
-        if (place.sourceValue == source) {
+        if (place.sourceValue == source &&
+            (!actual->place || place.id == actual->place)) {
+          // One expression can also supply deeper projections with different
+          // external regions. An addressed operand selects its exact place;
+          // those other projections cannot replace or contradict that view.
           const auto known = declaredPlaceRegion(place);
           if (known.specified()) {
             if (selected && *selected != known)

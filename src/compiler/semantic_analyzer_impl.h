@@ -3942,7 +3942,8 @@ private:
                               const std::vector<SemanticType> &argumentTypes);
 
   [[nodiscard]] bool validateCallableReturn(const Call &call,
-                                            const SemanticType &returnType);
+      const SemanticType &returnType,
+      const SemanticLifetimeApplication *application = nullptr);
 
   [[nodiscard]] bool
   validateCallableCapability(const Call &call,
@@ -3979,6 +3980,10 @@ private:
   [[nodiscard]] std::optional<std::vector<AnalyzedCallArgument>>
   concreteCallArguments(const std::vector<SemanticType> &types,
                         const ExprList &expressions) const;
+
+  bool deferUnexpandedPackCall(const Call &call,
+      std::span<const SemanticType> arguments,
+      const SemanticType &declaredResult = SemanticType::Unknown);
 
   [[nodiscard]] static bool
   acceptsArgumentShape(const CallableCandidate &function,

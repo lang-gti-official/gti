@@ -1544,10 +1544,21 @@ without copying; multiple read-only aliases are permitted and exclusive alias
 conflicts use ordinary call checking. Function results use the same normalized
 lifetime contract and complete supplier proof as fixed reference inputs. An
 unresolved top-level pack defers supplier ordinals without publishing a summary;
-concrete instance analysis expands the signature and proves all returned owners.
+relational prototypes retain their normalized declaration contract on the same
+terms. Concrete instance analysis expands the signature and proves all returned
+owners.
 Only an exact call whose argument flattening encountered an unresolved pack may
 defer an unknown reference-result category. The body-local marker is cleared on
 each visit, and does not authorize sibling returns or create a provisional place.
+Named calls, invocation pointers, function items, lambdas and deferred callable
+parameters use this same staging boundary. Target, access, unsafe and declared
+call requirements remain checked; a lambda parameter's deferred requirement is
+attached to its own binding, not an enclosing function's parameter ordinal.
+After selection, a contextual reference result is checked with the completed
+pending lifetime application and the ordinary type-conversion constraints.
+Its existential invocation region may meet the requested result region only
+when every resulting fixed-region obligation is proved. The selected result
+type and complete supplier proof remain unchanged; this adds no runtime state.
 A known leading reference may be checked before an unresolved trailing pack by
 running the ordinary formal-input derivation and return normalizer on that exact
 leading slice. Published parameter binding metadata and the active body symbol

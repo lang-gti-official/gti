@@ -446,6 +446,7 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
     const SemanticType *targetResult = nullptr;
     const LifetimeSignatureContract *targetContract = nullptr;
     const LambdaInfo *lambdaInfo = nullptr;
+    std::optional<SemanticType> declaredItem;
     std::vector<SemanticType> targetParameters;
     if (target.hasFunctionItemShape()) {
       function = target.functionId;
@@ -465,9 +466,22 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
         currentType = SemanticType::Unknown;
         return;
       }
+      // A generic owner's canonical type can alpha-rename the item's closed
+      // invocation binders. Prove that exact item view, then use the signature
+      // in the declaration contract's own scope for lifetime implication.
+      declaredItem = functionItemLifetimeType(function, declaration->returnType,
+          declaration->parameterTypes, declaration->lifetimeContract);
+      if (!declaredItem || !equivalentLifetimeTypes(*declaredItem, target)) {
+        report(expressionToken(expr.arguments().front()),
+               "GTI invocation pointer construction requires an exact-signature "
+               "namespace function item or a lambda with no captures.",
+               "GTI-S2093");
+        currentType = SemanticType::Unknown;
+        return;
+      }
       targetContract = &declaration->lifetimeContract;
-      targetResult = target.functionItemReturnType();
-      for (const auto &type : target.functionItemParameterTypes())
+      targetResult = declaredItem->functionItemReturnType();
+      for (const auto &type : declaredItem->functionItemParameterTypes())
         SemanticType::appendExpandedArgument(targetParameters, type);
     } else if (target.hasLambdaShape() && target.lambdaCaptureTypes().empty()) {
       lambda = target.lambdaId;
@@ -607,12 +621,10 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
   const auto expanded = concreteCallArguments(arguments, expr.arguments());
   currentType = callExpressionType(result);
   if (!expanded) {
-    // A declaration-wide pack has no arity yet; the result still denotes a
-    // place for a reference result so the enclosing generic body types.
-    semanticModel.record(expr, ResolvedCallInfo{.returnType = result,
-                                                .parameterTypes = parameters,
-                                                .typeArguments = {signature},
-                                                .intrinsic = intrinsic});
+    // Signature/category checks above still apply, but a symbolic argument
+    // pack cannot publish an invocation or a provisional reference place.
+    if (!deferUnexpandedPackCall(expr, arguments, result))
+      currentType = SemanticType::Unknown;
     return;
   }
   CallableCandidate invocation;

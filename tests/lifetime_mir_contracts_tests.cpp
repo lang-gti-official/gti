@@ -2,6 +2,7 @@
 #include "../src/compiler/mir_verification_queries.h"
 #include "gti/frontend.h"
 #include "gti/callable_lifetimes.h"
+#include "gti/borrow_conditions.h"
 #include "gti/mir_verifier.h"
 #include "gti/mir_printer.h"
 
@@ -26,6 +27,116 @@ MirInstruction *firstLifetimeCall(MirBody &body) {
           !instruction.lifetimeApplication.bindings.empty())
         return &instruction;
   return nullptr;
+}
+void checkScopedReceiverOwner() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "scoped-receiver-owner.gti", R"gti(
+class Holder<Signature> {
+public:
+  Holder() = default;
+  int read() { return 3; }
+};
+using Signature = for<lifetime a, lifetime b> int&<a>(int&<a>, int&<b>);
+int main() { Holder<Signature> holder{}; return holder.read() - 3; }
+)gti");
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(), "nested closed invocation scopes retain exact ordinary receiver identity");
+  bool renamed = false;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (!instruction.receiver || !instruction.functionTarget) continue;
+        const auto *target = checked.mir.findFunctionInstance(*instruction.functionTarget);
+        const auto expected = target ? instantiateMirCallableOwnerType(
+            checked.mir, *target, instruction.lifetimeApplication) : std::nullopt;
+        if (!expected || instruction.receiver->type == *expected) continue;
+        const auto &ownerType = instruction.receiver->type;
+        expect(equivalentLifetimeTypes(ownerType, *expected) && ownerType.arguments.size() == 1 &&
+                   ownerType.arguments.front().kind == SemanticType::FunctionSignature,
+               "receiver scope adaptation changes only closed invocation binder names");
+        renamed = true;
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto forged = checked.mir;
+          auto &body = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id))->body;
+          auto &call = const_cast<MirBlock *>(body.findBlock(block.id))->instructions;
+          auto found = std::find_if(call.begin(), call.end(), [&](const auto &value) {
+            return value.id == instruction.id;
+          });
+          auto &signature = found->receiver->type.arguments.front();
+          if (mutation == 0) signature.quantifiedLifetimes.clear();
+          if (mutation == 1) signature.arguments.front().referenceLifetime = Lifetime::staticLifetime();
+          if (mutation == 2)
+            signature.arguments.back().referenceLifetime = signature.arguments[1].referenceLifetime;
+          expect(!verifyMirProgram(forged).valid(),
+                 "receiver alpha equivalence preserves binder inventory, fixed regions and correlations");
+        }
+      }
+  expect(renamed, "scoped receiver regression exercises the canonical-to-actual binder boundary");
+}
+void checkAppliedBorrowFieldSummary() {
+  const std::vector<std::pair<const char *, const char *>> fixtures = {
+      {"compact-global", R"gti(
+int global = 7;
+int&<static> map(int ignored) { return global; }
+int observe<F>(F& callback) { return callback(0); }
+int main() { return observe(map) - 7; }
+)gti"},
+      {"instantiated-payload", R"gti(
+enum Link<lifetime a> { value(int&<a> item) };
+int&<a> select<lifetime a>(Link<a>& link) {
+  switch (link) { case Link<a>::value(auto& payload): return payload; }
+}
+int main() { int value = 7; auto link = Link<_>::value(value); return select(link) - 7; }
+)gti"}};
+  for (const auto &[name, source] : fixtures) {
+    const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+        std::string(name) + ".gti", source);
+    if (!checked.canGenerateCode())
+      for (const auto &diagnostic : checked.diagnostics)
+        std::cerr << name << ": " << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(checked.canGenerateCode(), "compact global and applied conditional suppliers preserve exact target contracts");
+    bool examined = false;
+    for (const auto &function : checked.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &call : block.instructions) {
+          const auto *target = call.functionTarget
+              ? checked.mir.findFunctionInstance(*call.functionTarget) : nullptr;
+          if (call.kind != MirInstructionKind::Call || !target) continue;
+          const bool global = call.borrowOrigin == BorrowOriginKind::Global && call.borrowPlace;
+          const bool conditional = !call.borrowFields.empty() &&
+              !call.borrowFields.front().sourceConditions.empty();
+          if (!global && !conditional) continue;
+          if (global)
+            expect(call.borrowFields.empty() && call.borrowPlace == target->returnBorrowPlace,
+                   "a sole global dependency keeps the target's exact compact storage identity");
+          if (conditional) {
+            const auto applied = instantiateBorrowSummaryLifetimes(
+                {.dependencies = target->returnBorrowFields}, call.lifetimeApplication.bindings);
+            expect(applied && applied->dependencies == call.borrowFields &&
+                       call.borrowFields != target->returnBorrowFields,
+                   "conditional call suppliers use the independently instantiated guard scope");
+          }
+          examined = true;
+          for (int mutation = 0; mutation != (conditional ? 3 : 1); ++mutation) {
+            auto forged = checked.mir;
+            auto &body = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id))->body;
+            auto &instructions = const_cast<MirBlock *>(body.findBlock(block.id))->instructions;
+            auto changed = std::find_if(instructions.begin(), instructions.end(),
+                [&](const auto &instruction) { return instruction.id == call.id; });
+            if (global) ++changed->borrowPlace->root;
+            else if (mutation == 0)
+              changed->borrowFields.front().sourceConditions.front().enumeration.lifetimeArguments.front() =
+                  Lifetime::staticLifetime();
+            else if (mutation == 1) changed->borrowFields = target->returnBorrowFields;
+            else changed->lifetimeApplication.bindings.clear();
+            expect(!verifyMirProgram(forged).valid(),
+                   "summary replay rejects another global, strengthened/stale guard scope and missing application");
+          }
+        }
+    expect(examined, "supplier regression reaches the intended concrete call boundary");
+  }
 }
 bool checkConsumingExternalBorrowResults() {
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
@@ -521,7 +632,7 @@ int main() { int first = 3; int second = 8; View view{second}; Relay<Choice> rel
         examined = true;
         expect(place->projections.front().constantIndex == 1,
                "referenced carrier uses its second grouped formal lane");
-        for (int mutation = 0; mutation != 3; ++mutation) {
+        for (int mutation = 0; mutation != 5; ++mutation) {
           auto forged = checked.mir;
           auto *owner = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
           auto *input = const_cast<MirInstruction *>(mir_detail::definitionFor(owner->body, *stage.result));
@@ -544,8 +655,19 @@ int main() { int first = 3; int second = 8; View view{second}; Relay<Choice> rel
               }
             expect(removed, "pack lane control removes a real shell-to-external-group link");
           }
+          if (mutation == 3 || mutation == 4) {
+            bool changed = false;
+            for (auto &loan : owner->body.loans)
+              if (loan.entry && loan.kind == MirLoanKind::Parameter && loan.storedDependency &&
+                  loan.source == place->id) {
+                if (mutation == 3) loan.source = place->id - 1;
+                else loan.entry = false;
+                changed = true;
+              }
+            expect(changed, "pack entry control changes the exact physical reference authority");
+          }
           expect(!verifyMirProgram(forged).valid(),
-                 "pack stages preserve exact lane, source region and stored external authority");
+                 "pack stages preserve exact lane, source region, live entry and stored external authority");
         }
       }
   expect(examined, "carrier pack fixture reaches an exact referenced-carrier input stage");
@@ -1050,7 +1172,7 @@ struct Storage { mut int value = 7; Storage() {} };
 int rewrite(mut int& value) { value = 5; return value; }
 int main() {
   mut Storage storage{};
-  rewrite(storage.value);
+  if (rewrite(storage.value) != 5) { return 1; }
   unsafe {
     borrow_mut(&storage.value, storage) = 11;
     return borrow(&storage.value, storage) - 11;
@@ -1112,6 +1234,69 @@ int main() {
   }
   expect(rejectedWriteOmission, "effect control must reach a mutable operation that writes");
   expect(shared && exclusive, "raw-reference controls must cover both access modes");
+  return true;
+}
+
+bool checkReferencedCarrierInitializer() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "referenced-carrier-initializer.gti", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+struct Holder<lifetime a, lifetime owner> {
+  View<a>&<owner> value;
+  Holder(View<a>&<owner> first, View<a>&<owner> second) : value(first) {}
+};
+int main() {
+  int first = 7; int second = 9;
+  View left{first}; View right{second};
+  Holder holder{left, right};
+  return 0;
+}
+)gti");
+  if (!checked.canGenerateCode()) {
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return false;
+  }
+  bool exercised = false;
+  for (const auto &constructor : checked.mir.constructorInstances()) {
+    if (constructor.parameterTypes.size() != 2 || constructor.initializers.size() != 1)
+      continue;
+    const auto &initial = constructor.initializers.front();
+    if (!initial.completeBorrow || initial.completeBorrow->dependencies.size() != 1)
+      continue;
+    const auto &incoming = initial.completeBorrow->dependencies.front();
+    const auto *entry = constructor.body.findLoan(incoming.parent);
+    if (!entry || !entry->entry || entry->kind != MirLoanKind::Parameter ||
+        !entry->storedDependency || entry->access != AccessMode::ReadOnly)
+      continue;
+    const MirLoan *other = nullptr;
+    for (const auto &loan : constructor.body.loans)
+      if (loan.entry && loan.kind == MirLoanKind::Parameter && loan.id != entry->id)
+        other = &loan;
+    expect(other && other->source != entry->source,
+           "reference initializer controls require two independent carrier-reference inputs");
+    for (int mutation = 0; mutation != 4; ++mutation) {
+      auto forged = checked.mir;
+      auto *changed = const_cast<MirConstructorInstance *>(
+          forged.findConstructorInstance(constructor.id));
+      auto &captured = changed->initializers.front().completeBorrow->dependencies.front();
+      if (mutation == 0)
+        captured.parent = other->id;
+      else if (mutation == 1)
+        captured.parent = entry->storedDependency;
+      else if (mutation == 2)
+        captured.source = other->source;
+      else
+        changed->body.loans[entry->id - 1].access = AccessMode::Mutable;
+      expect(!verifyMirProgram(forged).valid(),
+             "shared formal publication preserves exact origin, physical entry and read access");
+    }
+    exercised = true;
+  }
+  expect(exercised, "reference-to-carrier initializer retains its incoming physical entry snapshot");
   return true;
 }
 
@@ -1281,11 +1466,12 @@ int main() {
 } // namespace
 
 int main() {
+  const bool referencedInitializer = checkReferencedCarrierInitializer();
   const bool rawOwnerFacts = checkRawOwnerLifetimeFacts();
   const bool ownerSuppliers = checkPhysicalOwnerSuppliers();
   const bool referenceInitializers = checkCompleteReferenceInitializers();
   const bool consumingResults = checkConsumingExternalBorrowResults();
-  expect(rawOwnerFacts && ownerSuppliers && referenceInitializers && consumingResults,
+  expect(referencedInitializer && rawOwnerFacts && ownerSuppliers && referenceInitializers && consumingResults,
          "reference publication and consuming result fixtures must both reach independently verified MIR");
   const auto frontend = Frontend({.stopAfter = FrontendPhase::Mir})
                             .analyze("lifetime-mir-contracts.gti", R"gti(
@@ -2343,6 +2529,8 @@ int main() {
              failure->fixes.empty(),
          "an invocation pointer cannot discard a target outlives requirement or invent a repair");
   checkReferenceErasureLifetimeAuthority();
+  checkScopedReceiverOwner();
+  checkAppliedBorrowFieldSummary();
   checkScopedFunctionItemIdentity();
   checkScalarLoadDependencyDomain();
   checkForwardedCarrierPackLifetimeStage();

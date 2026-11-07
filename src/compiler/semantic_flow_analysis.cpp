@@ -3676,6 +3676,8 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
   }
   if (kind == ExprKind::Call) {
     const Call &call = static_cast<const Call &>(expr);
+    if (loanFlow.deferredPackCalls.contains(&call))
+      return expressionInfo(std::move(type));
     const ResolvedCallInfo *resolved = semanticModel.findCall(call);
     if (resolved != nullptr &&
         resolved->returnType.kind == SemanticType::Reference &&

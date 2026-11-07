@@ -3841,7 +3841,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
               receiverType.arguments.size() == 1)
             receiverType = SemanticType(receiverType.arguments.front());
           if (!targetOwner ||
-              (receiverType != *targetOwner &&
+              (!equivalentLifetimeTypes(receiverType, *targetOwner) &&
                !mirPublicBaseConversion(program, receiverType,
                                         *targetOwner) &&
                !isMirExactReceiverPresentation(program, instruction,
@@ -3904,11 +3904,24 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                 block.id, instruction.id);
           }
         }
+        std::optional<FunctionBorrowDependencySummary> appliedBorrowFields =
+            FunctionBorrowDependencySummary{.dependencies = target->returnBorrowFields};
+        if (!instruction.lifetimeApplication.bindings.empty()) {
+          // Typed enum guards in a call live in the invocation's actual
+          // region scope. Replay the exact target application before applying
+          // that substitution to its authoritative supplier paths.
+          appliedBorrowFields = instantiateMirLifetimeTarget(program, instruction)
+              ? instantiateBorrowSummaryLifetimes(*appliedBorrowFields,
+                    instruction.lifetimeApplication.bindings)
+              : std::nullopt;
+        }
+        const bool sameBorrowFields = appliedBorrowFields &&
+            instruction.borrowFields == appliedBorrowFields->dependencies;
         if (!dependentTextCallPublication(instruction, *target) &&
             (instruction.borrowOrigin != target->returnBorrowOrigin ||
              instruction.borrowArgument != target->returnBorrowParameter ||
              instruction.borrowArguments != target->returnBorrowParameters ||
-             instruction.borrowFields != target->returnBorrowFields ||
+             !sameBorrowFields ||
              instruction.borrowAccess != target->returnBorrowAccess ||
              instruction.borrowPlace != target->returnBorrowPlace ||
              instruction.restoresReferenceResult !=
@@ -3928,7 +3941,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                   std::to_string(target->returnBorrowParameter) +
                   (instruction.borrowArguments != target->returnBorrowParameters
                        ? "; supplier parameters differ" : "") +
-                  (instruction.borrowFields != target->returnBorrowFields
+                  (!sameBorrowFields
                        ? "; supplier fields differ" : "") +
                   (instruction.borrowAccess != target->returnBorrowAccess
                        ? "; access differs" : "") +
@@ -6351,11 +6364,17 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
             entrySource != nullptr &&
             entrySource->root == dependencySource->root &&
             entrySource->binding == dependencySource->binding &&
-            entrySource->projections.empty() &&
+            mir_detail::entryProjectionPrefix(body, *entrySource, dependencySource->projections) ==
+                std::optional<std::size_t>{dependencySource->projections.size()} &&
             (entrySource->root == MirPlaceRootKind::This ||
              entrySource->type.kind == SemanticType::Reference);
+        const bool exactEntryLane = !candidate.entry ||
+            (entrySource && entrySource->root == dependencySource->root &&
+             entrySource->binding == dependencySource->binding &&
+             mir_detail::entryProjectionPrefix(body, *entrySource, dependencySource->projections) ==
+                 std::optional<std::size_t>{dependencySource->projections.size()});
         const bool carried =
-            dependencySource->root == MirPlaceRootKind::Binding &&
+            exactEntryLane && dependencySource->root == MirPlaceRootKind::Binding &&
             (std::find(candidate.carriers.begin(), candidate.carriers.end(),
                        dependencySource->binding) != candidate.carriers.end() ||
              (candidate.kind == MirLoanKind::Stored &&
@@ -13851,19 +13870,65 @@ completeReferenceInitializer(const MirProgram &program,
   return CompleteReferenceInitializer{&initializer, published, borrow};
 }
 
+// Shared formal references can be copied into an escaping reference field.
+// The publication retains the caller-owned origin after this body's temporary
+// entry loan ends. Only that exact read-only formal entry permits dropping a
+// parent; a local loan, another formal, or an exclusive capability does not.
+[[nodiscard]] bool readOnlyFormalReferencePublication(
+    const MirBody &body, std::span<const SemanticType> parameterTypes,
+    std::span<const HirBindingId> parameters,
+    const std::unordered_map<HirBindingId, std::vector<MirLoanId>> &bindingLoans,
+    const MirLoanDependency &dependency) {
+  if (!dependency.parent || dependency.access != AccessMode::ReadOnly ||
+      !dependency.designatedFields.empty() || !dependency.conditions.empty())
+    return false;
+  const auto *entry = body.findLoan(dependency.parent);
+  const auto *source = entry ? body.findPlace(entry->source) : nullptr;
+  const auto inputs = mir_detail::concreteFormalInputs(body, parameterTypes, parameters);
+  if (!entry || !entry->entry || entry->kind != MirLoanKind::Parameter ||
+      entry->parent || entry->access != AccessMode::ReadOnly ||
+      !entry->designatedFields.empty() || !entry->conditions.empty() ||
+      !entry->additionalDependencies.empty() || !source ||
+      !source->initiallyAvailable || source->foreignStorage || !inputs ||
+      std::count_if(inputs->begin(), inputs->end(), [&](const auto &input) {
+        return mir_detail::formalInputPlace(*source, input) &&
+               input.type.kind == SemanticType::Reference &&
+               input.type.referenceAccess == AccessMode::ReadOnly;
+      }) != 1)
+    return false;
+  const auto origin = canonicalBorrowOrigin(body, dependency.source, bindingLoans, true);
+  const auto entryOrigin = canonicalBorrowOrigin(body, source->id, bindingLoans, true);
+  return !origin.ambiguous && !entryOrigin.ambiguous &&
+         sameCanonicalPlace(entryOrigin, origin);
+}
+
 // The initializer captures its incoming capability before publication. A
 // verified mutable entry transfer retains that capability itself as the stored
 // group, rather than creating a child loan. Keep the captured identity intact
 // and compare its parentless publication view only after the exact formal,
 // addressed initializer expression, destination and transfer have been proved.
 [[nodiscard]] bool completeReferenceInitializerSnapshotMatches(
+    const MirConstructorInstance &constructor,
     const CompleteReferenceInitializer &publication,
     const CompleteBorrowFact &observed) {
   const auto &captured = publication.initializer->completeBorrow;
   if (!captured || !observed)
     return false;
-  if (!publication.loan->entry)
-    return equalCompleteBorrowSets(captured, observed);
+  if (!publication.loan->entry) {
+    if (equalCompleteBorrowSets(captured, observed))
+      return true;
+    std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindings;
+    for (const auto &loan : constructor.body.loans)
+      for (const auto binding : loan.carriers)
+        bindings[binding].push_back(loan.id);
+    auto published = *captured;
+    for (auto &dependency : published.dependencies)
+      if (readOnlyFormalReferencePublication(
+              constructor.body, constructor.parameterTypes,
+              constructor.parameterBindings, bindings, dependency))
+        dependency.parent = 0;
+    return equalCompleteBorrowSets(published, observed);
+  }
   const auto &entry = *publication.loan;
   if (captured->dependencies.size() != 1 ||
       !captured->possibleAlternatives.empty())
@@ -15000,23 +15065,9 @@ completeBorrowSourcePath(const MirProgram &program,
         bool parent = claim.parent == dependency.parent;
         if (!parent && !claim.parent && dependency.parent &&
             claim.access == AccessMode::ReadOnly && dependency.access == AccessMode::ReadOnly) {
-          const auto *entry = body.findLoan(dependency.parent);
-          const auto *source = entry ? body.findPlace(entry->source) : nullptr;
-          const auto inputs = parameterTypes && parameters
-              ? mir_detail::concreteFormalInputs(body, *parameterTypes, *parameters) : std::nullopt;
-          const auto entryOrigin = source ? canonicalBorrowOrigin(body, source->id, bindingLoans, true)
-                                          : CanonicalPlace{.ambiguous = true};
-          parent = entry && entry->entry && entry->kind == MirLoanKind::Parameter &&
-              !entry->parent && entry->access == AccessMode::ReadOnly &&
-              entry->designatedFields.empty() && entry->conditions.empty() &&
-              entry->additionalDependencies.empty() && source && source->initiallyAvailable &&
-              !source->foreignStorage && inputs && !entryOrigin.ambiguous &&
-              sameCanonicalPlace(entryOrigin, actual) &&
-              std::count_if(inputs->begin(), inputs->end(), [&](const auto &input) {
-                return mir_detail::formalInputPlace(*source, input) &&
-                       input.type.kind == SemanticType::Reference &&
-                       input.type.referenceAccess == AccessMode::ReadOnly;
-              }) == 1;
+          parent = parameterTypes && parameters &&
+              readOnlyFormalReferencePublication(body, *parameterTypes, *parameters,
+                                                bindingLoans, dependency);
         }
         if (!parent) continue;
         matched[index] = found = true;
@@ -15150,8 +15201,24 @@ completeBorrowSourcePath(const MirProgram &program,
     if (found->second.size() != 1)
       return std::nullopt;
     const auto *group = body.findLoan(found->second.front());
-    if (!group || group->kind != MirLoanKind::Stored || group->escapes)
+    if (!group || group->escapes)
       return std::nullopt;
+    if (group->kind != MirLoanKind::Stored) {
+      // A reference formal has a physical Parameter capability and a
+      // separate Stored entry for its referent's fields. Reading its contents
+      // uses that exact retained entry, not the physical reference as though
+      // it were a Stored group or a new owner for each external field.
+      const auto *source = body.findPlace(group->source);
+      const auto entry = source && group->entry &&
+                                 group->kind == MirLoanKind::Parameter &&
+                                 group->storedDependency && !group->parent
+          ? completeBorrowParameterEntryFactForPlace(program, body, owner, *source)
+          : std::nullopt;
+      return entry && entry->carrier == group->source &&
+                     entry->group == group->storedDependency &&
+                     equalCompleteBorrowSets(fact, entry->dependencies)
+          ? fact : Fact{};
+    }
     if (group->entry)
       return fact; // Exact typed entry reconstruction already names its group.
     std::vector<MirLoanDependency> retained{
@@ -17137,7 +17204,7 @@ private:
         const auto exact = completeReferenceInitializer(program, constructor, index - 1);
         return exact && initializer->completeBorrow &&
                index <= flow.referenceInitializerFacts.size() &&
-               completeReferenceInitializerSnapshotMatches(*exact, flow.referenceInitializerFacts[index - 1]) &&
+               completeReferenceInitializerSnapshotMatches(constructor, *exact, flow.referenceInitializerFacts[index - 1]) &&
                flow.referenceInitializerFacts[index - 1] &&
                completeBorrowSetHasTypedShape(program, fieldInfo.type, *flow.referenceInitializerFacts[index - 1]);
       }
