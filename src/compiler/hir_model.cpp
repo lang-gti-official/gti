@@ -962,10 +962,26 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                    binding.second.specified();
                           }) != 1)
           return false;
-      const auto appliedArgument = substituteTypeLifetimes(
-          target.typeArguments.front(), application.bindings);
-      if (!appliedArgument ||
-          !equivalentLifetimeTypes(*appliedArgument, argument))
+      std::vector<Lifetime> lifted;
+      for (const auto &parameter : target.liftedLifetimes) {
+        const auto region = Lifetime::parameter(parameter.id);
+        if (!parameter.lifetime || parameter.pack || parameter.value ||
+            !region.specified() ||
+            std::find(contract.parameters.begin(), contract.parameters.end(), region) ==
+                contract.parameters.end() ||
+            std::find(lifted.begin(), lifted.end(), region) != lifted.end())
+          return false;
+        lifted.push_back(region);
+      }
+      // The evaluated source lane retains its original regions. Match only
+      // the target's inventoried generic-region recipe here; a readonly
+      // reborrow may use shorter applied regions in the formal signature.
+      if (!matchUniversalTypeLifetimes(target.typeArguments.front(), argument, lifted) ||
+          target.parameterTypes.empty() ||
+          target.parameterTypes.back().kind != SemanticType::Reference ||
+          target.parameterTypes.back().arguments.size() != 1 ||
+          !equivalentLifetimeTypes(target.parameterTypes.back().arguments.front(),
+                                   target.typeArguments.front()))
         return false;
       // The selected lane uses this invocation's applied signature. The
       // concrete target retains its universal declaration regions; MIR
@@ -1082,7 +1098,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                  (element.elementType.kind == SemanticType::Reference &&
                   element.elementType.referenceAccess ==
                       AccessMode::Mutable)) &&
-                parameter.arguments == std::vector<SemanticType>{referent} &&
+                // The signature check proved this applied pointee from the
+                // exact target recipe. MIR proves the actual source lane's
+                // reference conversion without retagging its regions.
+                parameter.arguments.size() == 1 &&
                 input.kind == (parameter.referenceAccess == AccessMode::Mutable
                                    ? HirCallInputKind::MutableBorrow
                                    : HirCallInputKind::ReadBorrow) &&

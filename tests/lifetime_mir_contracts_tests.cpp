@@ -103,14 +103,16 @@ using Selection = for<lifetime a> int&<a>(int&<a>, int&<a>, bool);
 int&<a> select<lifetime a>(int&<a> left, int&<a> right, bool first) {
   if (first) { return left; } return right;
 }
-struct Dispatch {
-  gti_internal::function_pointer<Selection> target;
-  Dispatch() : target(gti_internal::function_pointer_from_item<Selection>(select)) {}
-  int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
-    return gti_internal::function_pointer_invoke(this.target, left, right, first);
+class Dispatch<R&<region>(Args...)> {
+  gti_internal::function_pointer<R&<region>(Args...)> target;
+public:
+  Dispatch<F>(F function)
+      : target(gti_internal::function_pointer_from_item<R&<region>(Args...)>(function)) {}
+  R&<region> choose(Args... args) {
+    return gti_internal::function_pointer_invoke(this.target, args...);
   }
 };
-int main() { Dispatch dispatch{}; int left = 3; int right = 8;
+int main() { Dispatch<Selection> dispatch{select}; int left = 3; int right = 8;
   return dispatch.choose(left, right, false) - 8; }
 )gti";
   const PackageSourceRoot modules{
@@ -2972,6 +2974,81 @@ int main() {
   return true;
 }
 
+void checkLifetimeConvertedCarrierReturn() {
+  const auto checked = Frontend().analyze("lifetime-converted-carrier-return.gti", R"gti(
+struct Cell { int value; Cell(int input) : value(input) {} };
+struct Slice {
+  Cell& cell;
+  Slice(Cell& input) : cell(input) {}
+  int read() { return this.cell.value; }
+};
+struct Owner {
+  Cell cell;
+  Owner(int input) : cell(Cell(input)) {}
+  Slice view() { return Slice(this.cell); }
+};
+int main() { Owner owner{7}; auto view = owner.view(); return view.read() - 7; }
+)gti");
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode() && verifyMirProgram(checked.mir).valid(),
+         "a carrier return preserves its applied type and proves the declared lifetime view");
+  bool observed = false;
+  for (const auto &function : checked.mir.functionInstances()) {
+    if (function.returnType.kind != SemanticType::Class ||
+        function.returnType.lifetimeArguments.size() != 1)
+      continue;
+    for (const auto &block : function.body.blocks) {
+      if (block.terminator.kind != MirTerminatorKind::Return ||
+          !block.terminator.value ||
+          block.terminator.value->type == function.returnType)
+        continue;
+      const auto actual = block.terminator.value->type;
+      expect(mirLifetimeValueConversion(checked.mir, function.body, function.id,
+                                       actual, function.returnType),
+             "the exact body independently proves the applied-to-declared result relation");
+      auto missing = function.body;
+      missing.lifetimeBody.obligations.clear();
+      expect(!mirLifetimeValueConversion(checked.mir, missing, function.id,
+                                        actual, function.returnType),
+             "a nominal shape alone cannot replace the return lifetime relation");
+      auto stronger = function.returnType;
+      stronger.lifetimeArguments[0] = Lifetime::staticLifetime();
+      expect(!mirLifetimeValueConversion(checked.mir, function.body, function.id,
+                                        actual, stronger),
+             "the checked carrier cannot acquire a static owner region");
+      for (int mutation = 0; mutation != 4; ++mutation) {
+        auto forged = checked.mir;
+        auto *changed = const_cast<MirFunctionInstance *>(
+            forged.findFunctionInstance(function.id));
+        if (mutation == 0)
+          changed->body.lifetimeBody.obligations.clear();
+        if (mutation == 1) {
+          changed->returnType = stronger;
+          changed->body.returnType = stronger;
+        }
+        if (mutation == 2) {
+          changed->returnType = stronger;
+          changed->body.returnType = stronger;
+          changed->body.lifetimeBody.obligations.push_back(
+              {function.returnType.lifetimeArguments[0], Lifetime::staticLifetime()});
+        }
+        if (mutation == 3) {
+          auto *returned = const_cast<MirBlock *>(changed->body.findBlock(block.id));
+          returned->terminator.value->type.classId = changed->ownerType.classId;
+        }
+        expect(!verifyMirProgram(forged).valid(),
+               "carrier return replay rejects missing/forged relations, static export and wrong nominal identity");
+      }
+      observed = true;
+      break;
+    }
+    if (observed) break;
+  }
+  expect(observed, "carrier fixture must retain distinct applied and declared lifetime domains");
+}
+
 void checkLocalInlineStorageBounds() {
   // This source-free body deliberately exceeds the optional containment
   // budget with unrelated, independently mapped local storage origins.
@@ -4145,6 +4222,7 @@ int main() {
   checkReferenceContentsOpeningShape();
   checkReferenceReceiverProducer();
   checkLocalInlineStorageBounds();
+  checkLifetimeConvertedCarrierReturn();
   checkReferenceErasureLifetimeAuthority();
   checkReferenceErasureAddressIdentity();
   checkCarrierReferenceShellInputs();

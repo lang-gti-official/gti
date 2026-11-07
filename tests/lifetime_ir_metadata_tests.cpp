@@ -530,6 +530,109 @@ int main() {
   }
 }
 
+void lifetimeConvertingObjectInitialization() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      root.parent_path() / "tests/fixtures/lifetime-converting-object-initialization.gti", R"gti(
+mut int trace = 0;
+int&<a> choose<lifetime a>(int&<a> left,int&<a> right,bool first) {
+  if (first) { return left; } return right;
+}
+struct Observed<lifetime a> {
+  int&<a> value;
+  Observed(int&<a> input) : value(input) {}
+  ~Observed() { trace += this.value; }
+};
+int observe(bool first) {
+  int left = 3; int right = 9;
+  int& selected = choose(left,right,first);
+  Observed original{selected};
+  Observed moved{std::move(original)};
+  if (trace != 0) { return 1; }
+  if (first) { return moved.value - 3; }
+  return moved.value - 9;
+}
+int main() {
+  if (observe(true) != 0 || trace != 3) { return 1; }
+  trace = 0;
+  if (observe(false) != 0 || trace != 9) { return 2; }
+  return 0;
+}
+)gti",
+      {root / "prelude.gti"}, {}, {root});
+  expect(checked.canGenerateCode(), "inferred lifetime conversion preserves the moved object's cleanup");
+  const MirInstruction *selected = nullptr;
+  HirFunctionInstanceId owner = 0;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Initialize || instruction.lifecycle.size() != 1 ||
+            instruction.lifecycle.front().kind != MirLifecycleEventKind::Reparent) continue;
+        const auto &event = instruction.lifecycle.front();
+        const auto *from = function.body.findDropObligation(event.source);
+        const auto *to = function.body.findDropObligation(event.target);
+        if (!from || !to || from->dropType.type == to->dropType.type) continue;
+        expect(!selected, "fixture selects one lifetime-converting value-to-binding reparent");
+        selected = &instruction;
+        owner = function.id;
+      }
+  expect(selected && owner, "same object with distinct inferred regions retains one cleanup obligation");
+  const auto &body = checked.mir.functionInstances()[owner - 1].body;
+  const auto event = selected->lifecycle.front();
+  const auto from = *body.findDropObligation(event.source);
+  const auto to = *body.findDropObligation(event.target);
+  expect(mir_detail::sameObjectLifetimeInitialization(body, *selected, from, to),
+         "exact value and destination roles share an identical erased cleanup recipe");
+  expect(mirLifetimeValueConversion(checked.mir, body, owner, from.dropType.type, to.dropType.type),
+         "the program independently proves the directional region conversion");
+  auto unproved = body;
+  unproved.lifetimeBody.obligations.clear();
+  expect(!mirLifetimeValueConversion(checked.mir, unproved, owner, from.dropType.type, to.dropType.type),
+         "cleanup shape alone cannot establish a lifetime conversion");
+  auto forever = to.dropType.type;
+  expect(forever.lifetimeArguments.size() == 1, "fixture has one named owner region");
+  forever.lifetimeArguments.front() = Lifetime::staticLifetime();
+  expect(!mirLifetimeValueConversion(checked.mir, body, owner, from.dropType.type, forever),
+         "same-layout initialization cannot strengthen a local owner to static");
+  for (unsigned mutation = 0; mutation != 14; ++mutation) {
+    auto changedBody = body;
+    auto input = from;
+    auto output = to;
+    auto instruction = *selected;
+    if (mutation == 0) input.kind = MirDropObligationKind::Binding;
+    if (mutation == 1) output.kind = MirDropObligationKind::Value;
+    if (mutation == 2) input.initiallyActive = true;
+    if (mutation == 3) output.initiallyActive = true;
+    if (mutation == 4) instruction.kind = MirInstructionKind::Assign;
+    if (mutation == 5) instruction.operands.front().type = SemanticType::Int32;
+    if (mutation == 6) instruction.destination = input.place;
+    if (mutation == 7) output.dropType.destructor.reset();
+    if (mutation == 8) output.dropType.classInstance.reset();
+    if (mutation == 9) changedBody.places[input.place - 1].value = 0;
+    if (mutation == 10) changedBody.places[output.place - 1].binding = 0;
+    if (mutation == 11) instruction.operands.front().kind = MirOperandKind::BorrowRead;
+    if (mutation == 12) output.dropType.type = SemanticType::Int32;
+    if (mutation == 13) instruction.info.type = SemanticType::Int32;
+    expect(!mir_detail::sameObjectLifetimeInitialization(changedBody, instruction, input, output),
+           "value-to-binding reparent rejects forged storage, ownership and cleanup roles");
+  }
+  for (unsigned mutation = 0; mutation != 5; ++mutation) {
+    auto forged = checked.mir;
+    auto &changedBody = MirProgramTestAccess::functions(forged)[owner - 1].body;
+    if (mutation == 0) changedBody.lifetimeBody.obligations.clear();
+    if (mutation == 2) changedBody.dropObligations[to.id - 1].dropType.destructor.reset();
+    if (mutation == 3) changedBody.places[from.place - 1].value = 0;
+    if (mutation == 4) changedBody.places[to.place - 1].binding = 0;
+    for (auto &block : changedBody.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == selected->id && mutation == 1)
+          instruction.lifecycle = {{.kind = MirLifecycleEventKind::TransferOut, .source = from.id},
+                                   {.kind = MirLifecycleEventKind::Initialize, .target = to.id}};
+    expect(!verifyMirProgram(forged).valid(),
+           "program verification independently rejects a broken lifetime or cleanup transfer");
+  }
+}
+
 void generatedMoveValueRoles() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
@@ -1617,6 +1720,7 @@ int main() {
   stagedReferenceContentsTransport();
   nestedCarrierPublication();
   erasedCarrierReturnPublication();
+  lifetimeConvertingObjectInitialization();
   generatedMoveValueRoles();
   generatedRecordCopies();
   inPlaceConstructorLifetimeApplication();

@@ -14,6 +14,25 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "generated_record_move_failure": r"""
+struct Outer {
+  Outer() = default;
+  ~Outer() { std::println("outer"); }
+};
+struct Observed<lifetime a> {
+  int&<a> value;
+  Observed(int&<a> input) : value(input) {}
+  ~Observed() { std::println(this.value); }
+};
+int later(int divisor) { return 1 / divisor; }
+int main() {
+  Outer outer{};
+  int value = 7;
+  Observed original{value};
+  Observed moved{std::move(original)};
+  return later(0);
+}
+""",
     "generated_record_move_cleanup": r"""
 mut int trace = 0;
 int&<a> choose<lifetime a>(int&<a> left,int&<a> right,bool first) {
@@ -1356,6 +1375,25 @@ int main() { int result = exercise(); return result + retired - 4; }
 }
 
 REJECTIONS = {
+    "mutation_before_moved_destructor": r"""
+
+mut int trace = 0;
+int&<a> choose<lifetime a>(int&<a> left,int&<a> right,bool first) {
+  if (first) { return left; } return right;
+}
+struct Observed<lifetime a> {
+  int&<a> value;
+  Observed(int&<a> input) : value(input) {}
+  ~Observed() { trace += this.value; }
+};
+int main() {
+  mut int number = 7;
+  Observed original{number};
+  Observed moved{std::move(original)};
+  number = 9;
+  return 0;
+}
+""",
     "mutation_before_destructor": """
 mut int cleanup_trace = 0;
 struct View<lifetime region> {
@@ -1514,6 +1552,7 @@ def main():
                 failure_case = label in {
                     "borrowed_prepared_argument_failure",
                     "inherited_borrowed_base_rollback",
+                    "generated_record_move_failure",
                     "copied_reference_before_argument_failure",
                 }
                 executed = run([binary], label + "-" + mode + "-run", expect_success=not failure_case)
@@ -1534,6 +1573,7 @@ def main():
 
     rejection_codes = {
         "mutation_before_destructor": {"GTI-S2017"},
+        "mutation_before_moved_destructor": {"GTI-S2017"},
         "unrelated_return": {"GTI-S2127"},
         "retained_other_supplier": {"GTI-S2017"},
         "retained_constructed_supplier": {"GTI-S2017"},

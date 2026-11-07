@@ -81,6 +81,12 @@ terminatorSuccessors(const MirTerminator &terminator);
 // Shape admission for a prepared owning input only: all cleanup identities,
 // selectors and effects stay exact while free region slots may differ. The
 // mandatory program lifetime verifier proves the source-to-input conversion.
+// Exact owned value-to-binding initialization with the same erased object and
+// cleanup recipe. This is a representation/role query only; program lifetime
+// verification must independently prove the forward source-to-target relation.
+[[nodiscard]] bool sameObjectLifetimeInitialization(
+    const MirBody &body, const MirInstruction &instruction,
+    const MirDropObligation &source, const MirDropObligation &target);
 [[nodiscard]] bool sameLifetimeDropShape(const MirDropType &source,
                                           const MirDropType &target);
 

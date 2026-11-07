@@ -1104,9 +1104,11 @@ its concrete type, selected function-instance identity, and a unique ordinary
 each concrete call and retains its selected callable-argument boundaries, just
 as it does for the symbolic pattern and ordinary calls. HIR checks the complete
 lifetime-binding inventory and applies it once to the target's universal
-parameter and generic argument types before comparing the selected lane. Fixed
-regions, exact free-region correlations and callable boundaries remain checked;
-MIR independently proves the invocation's actual lifetime obligations.
+parameter types before comparing the selected formal signature. The evaluated
+lane keeps its source regions: its generic type must match the target recipe
+using only inventoried lifted lifetimes. Fixed regions, repeated occurrences,
+access and callable boundaries remain exact. MIR independently proves the
+actual lane's conversion to the applied formal and its lifetime obligations.
 The fold's operand prefix
 retains its fixed source inputs and pack; its suffix lists these calls in
 execution order. Each call has fresh copies of the resolved named-input values,

@@ -4349,11 +4349,24 @@ auto SemanticVisitor::Impl::ownedTransportMatchesConcrete(
       substitution.types.emplace(parameter.id, call.typeArguments[typeIndex++]);
     }
   }
-  const SemanticType destination =
+  const SemanticType substitutedDestination =
       substituteType(contract.ownedTransport->destinationType, substitution);
   const SemanticType &callableType = parameterTypes[contract.parameterIndex];
+  // Value contracts were concretized from these applied parameters by
+  // instantiatedCallableParameters; applying the region map again could
+  // transitively remap one of its replacements.
   if (contract.ownedTransport->kind == CallableOwnedTransportKind::Value)
-    return contract.ownedTransport->field == 0 && destination == callableType;
+    return contract.ownedTransport->field == 0 &&
+           substitutedDestination == callableType;
+  // The retained owner/return recipe is in the selected declaration's domain.
+  // Type arguments can still contain its lifted region names, whereas the
+  // recorded parameter/result types have already received this application.
+  // Reuse that simultaneous, capture-safe mapping before comparing identity.
+  const auto appliedDestination = substituteTypeLifetimes(
+      substitutedDestination, call.lifetimeApplication.bindings);
+  if (!appliedDestination)
+    return false;
+  const SemanticType &destination = *appliedDestination;
   if (contract.ownedTransport->kind == CallableOwnedTransportKind::ThreadTask) {
     const SemanticTypeTraits traits = typeTraits(callableType);
     return contract.ownedTransport->field == 0 &&

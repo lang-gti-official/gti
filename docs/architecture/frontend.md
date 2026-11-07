@@ -540,6 +540,18 @@ while proof comparisons alpha-rename lexical binders and keep fixed environment
 and imported invocation choices exact. Declaration refresh restores the owning
 pattern context; concrete reconstruction still must resolve elision and prove
 nominal formation before publication.
+When reconstruction replaces a whole projected lambda parameter with a
+reference or owning value, its binding traits are recomputed from that same
+concrete type before HIR receives it. A reference must not retain the open
+parameter's value cleanup, and an owning projection keeps its destructor.
+
+An exact owned-callable transport recipe remains in the selected declaration's
+region domain. Its owner or return destination receives the recorded call
+lifetime application before comparison with applied parameter/result types;
+field identity, fixed regions and the full callable type remain exact. A
+plain value transport already comes from the applied parameter inventory and
+is not substituted a second time. This is transport checking, not a new origin
+or permission to discard captured borrow dependencies.
 
 Structural default construction keeps those nested invocation scopes closed.
 After exact owner substitution, a projected declaration formal captured only

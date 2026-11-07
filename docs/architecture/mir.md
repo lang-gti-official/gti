@@ -695,8 +695,11 @@ failure edges and malformed result activation.
 Function rows retain optional declaration-relative complete result dependency
 contracts. MIR independently validates
 each declared alternative's exact concrete type, tag and dependency-free
-payload layout, then reconstructs facts at every reachable normal return. The
-actual alternatives must be covered by the declaration contract; additional
+payload layout, then reconstructs facts at every reachable normal return.
+A by-value return retains its producer's applied type. The summary query proves
+its conversion to the declared result with the body's lifetime contract and
+constraints, preserving nominal shape, access and every nested region relation.
+The actual alternatives must be covered by the declaration contract; additional
 well-typed dependency-free cases are conservative, so optimizer narrowing does
 not change caller lifetime obligations. For a declared or elided scalar reference
 result, a separate query reconstructs every permitted physical input root and
@@ -2529,6 +2532,16 @@ the new result. Retiring the original lifecycle-bound loan requires that exact
 source/result handoff and unchanged dependency set; a same-typed construction
 alone is insufficient. Native reference members preserve their bindings rather
 than moving the referents.
+
+A value-to-binding initialization may shorten an inferred free region while
+preserving the same object and cleanup recipe. It uses `Reparent`, with an
+exact evaluated value source and destination binding; the structural query
+compares the complete erased cleanup shape, including the destructor and
+nested cleanup descriptors. Independent program verification proves the
+forward lifetime conversion. Cleanup-bound dependencies follow this verified
+transfer until the destination's normal or failure cleanup, so generated moves
+do not collapse a fresh result into the consumed carrier's lifetime. Neither
+matching layout nor an absent region proves that conversion.
 
 The bounded mutable-carrier extension reuses this explicit loan vocabulary
 rather than adding backend-only lifetime inference. A mutable parameter or

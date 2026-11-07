@@ -18035,8 +18035,12 @@ public:
                                                   function->returnType.arguments.size() == 1
                                               ? function->returnType.arguments.front()
                                               : function->returnType;
-            if (!block || !block->terminator.value || block->terminator.value->type != expected)
-              reason = "lambda return operand has a different declared type";
+            if (!block || !block->terminator.value ||
+                (block->terminator.value->type != expected &&
+                 (function->returnType.kind == SemanticType::Reference ||
+                  !mirLifetimeValueConversion(program, function->body, function->id,
+                                              block->terminator.value->type, expected))))
+              reason = "lambda return operand has no proved declared type conversion";
             else if (!returned.dependencies)
               reason = "lambda return has no independent dependency fact";
             else if (!completeBorrowSetHasTypedShape(program, function->returnType,
@@ -18419,8 +18423,16 @@ private:
                   function.returnType.arguments.size() == 1
               ? function.returnType.arguments.front()
               : function.returnType;
-      if (!block || !block->terminator.value ||
-          block->terminator.value->type != returnedType ||
+      // A by-value result retains its producer's applied regions. Its
+      // declaration view is proved under this body's exact constraints, not
+      // established by retagging the value or erasing nominal lifetimes.
+      const bool returnedTypeMatches = block && block->terminator.value &&
+          (block->terminator.value->type == returnedType ||
+           (function.returnType.kind != SemanticType::Reference &&
+            mirLifetimeValueConversion(program, function.body, function.id,
+                                       block->terminator.value->type,
+                                       returnedType)));
+      if (!returnedTypeMatches ||
           !returned.dependencies ||
           !completeBorrowSetHasTypedShape(program, function.returnType,
                                           *returned.dependencies)) {
@@ -20017,13 +20029,17 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
         const auto *from = body.findDropObligation(source);
         const auto *to = body.findDropObligation(target);
         const auto *input = transfer.instruction;
-        if (from && to && input && input->kind == MirInstructionKind::CallInput &&
+        const bool preparedInput = from && to && input &&
+            input->kind == MirInstructionKind::CallInput &&
             (input->callInputKind == HirCallInputKind::MoveValue ||
              input->callInputKind == HirCallInputKind::MoveBorrowedTemporary) &&
             input->callInputRole == MirCallInputRole::Argument &&
             input->preparedParameterDrop == target &&
             to->kind == MirDropObligationKind::PreparedParameter &&
-            input->info.type == to->dropType.type &&
+            input->info.type == to->dropType.type;
+        const bool initializedValue = from && to && input &&
+            mir_detail::sameObjectLifetimeInitialization(body, *input, *from, *to);
+        if ((preparedInput || initializedValue) &&
             mir_detail::sameLifetimeDropShape(from->dropType, to->dropType) &&
             mirLifetimeValueConversion(program, body, owner,
                                        from->dropType.type, to->dropType.type))

@@ -2057,7 +2057,11 @@ private:
         targetDrop->kind == MirDropObligationKind::PreparedParameter &&
         mir_detail::sameLifetimeDropShape(sourceDrop->dropType,
                                          targetDrop->dropType);
-    if (sourceDrop->dropType.type == targetDrop->dropType.type || lifetimeInput) {
+    const bool lifetimeInitialization =
+        mir_detail::sameObjectLifetimeInitialization(
+            output, instruction, *sourceDrop, *targetDrop);
+    if (sourceDrop->dropType.type == targetDrop->dropType.type || lifetimeInput ||
+        lifetimeInitialization) {
       appendLifecycle(instruction, {.kind = MirLifecycleEventKind::Reparent,
                                     .source = source,
                                     .target = target});
@@ -15174,7 +15178,7 @@ private:
               initializer->constructorKind == ConstructorKind::Move &&
               !initializer->constructorTarget && !initializer->callPlan &&
               arguments.size() == 1 &&
-              initializer->info.type == binding->info.type;
+              sameLifetimeConversionShape(initializer->info.type, binding->info.type);
           bool consumesExistingCarrier = false;
           if (existing != nullptr && candidate != nullptr &&
               initializer != nullptr &&

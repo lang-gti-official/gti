@@ -11195,6 +11195,10 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     if (const auto *old = semanticModel.findBinding(expr.parameters()[index])) {
       auto binding = *old;
       binding.type = parameterTypes[index];
+      // Reconstructing a projected callable parameter can replace an open
+      // value type with a reference. Its concrete storage/cleanup traits must
+      // describe the same type as the binding, not the pre-opening recipe.
+      binding.traits = typeTraits(binding.type);
       semanticModel.record(expr.parameters()[index], std::move(binding));
     }
   analyzeParameterDefaults(

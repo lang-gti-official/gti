@@ -1,4 +1,5 @@
 #include "compiler_test_fixture.h"
+#include "gti/lifetime_types.h"
 
 namespace {
 void checkFoldLifetimeApplication(const lang::FrontendResult &result) {
@@ -75,6 +76,88 @@ void checkFoldLifetimeApplication(const lang::FrontendResult &result) {
     if (checked) break;
   }
   expect(checked, "reference fold fixture exercises a complete selected lifetime application");
+}
+void checkConvertedFoldInputs(const lang::FrontendResult &result) {
+  using namespace lang;
+  bool checked = false;
+  for (const auto &function : result.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        const auto *target = instruction.functionTarget
+            ? result.mir.findFunctionInstance(*instruction.functionTarget) : nullptr;
+        if (instruction.kind != MirInstructionKind::Call || !target ||
+            target->typeArguments.size() != 1 || instruction.operands.size() != 1 ||
+            instruction.operands[0].kind != MirOperandKind::Value)
+          continue;
+        std::optional<Lifetime> appliedOwner;
+        for (const auto region : freeTypeLifetimes(target->typeArguments[0]))
+          if (region.kind == Lifetime::Kind::Parameter &&
+              std::any_of(instruction.lifetimeApplication.bindings.begin(),
+                          instruction.lifetimeApplication.bindings.end(),
+                          [&](const auto binding) { return binding.first == region; })) {
+            appliedOwner = region;
+            break;
+          }
+        if (!appliedOwner) continue;
+        const auto *value = function.body.findValue(instruction.operands[0].value);
+        const auto *inputBlock = value ? function.body.findBlock(value->definitionBlock) : nullptr;
+        const MirInstruction *input = nullptr;
+        if (inputBlock)
+          for (const auto &candidate : inputBlock->instructions)
+            if (candidate.id == value->definition) input = &candidate;
+        if (!input || input->kind != MirInstructionKind::CallInput ||
+            input->operands.size() != 1 || input->info.type.kind != SemanticType::Reference)
+          continue;
+        for (int mutation = 0; mutation != 2; ++mutation) {
+          auto forged = result.mir;
+          auto *changed = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+          auto *callBlock = const_cast<MirBlock *>(changed->body.findBlock(block.id));
+          auto *changedInputBlock = const_cast<MirBlock *>(changed->body.findBlock(inputBlock->id));
+          MirInstruction *call = nullptr;
+          MirInstruction *stage = nullptr;
+          for (auto &candidate : callBlock->instructions)
+            if (candidate.id == instruction.id) call = &candidate;
+          for (auto &candidate : changedInputBlock->instructions)
+            if (candidate.id == input->id) stage = &candidate;
+          expect(call && stage, "converted fold input retains exact producer IDs");
+          if (mutation == 0) {
+            const auto lifted = *appliedOwner;
+            bool changedBinding = false;
+            for (auto &binding : call->lifetimeApplication.bindings)
+              if (binding.first == lifted) {
+                binding.second = Lifetime::staticLifetime();
+                changedBinding = true;
+              }
+            expect(changedBinding, "carrier call applies the exact lifted owner region");
+            for (std::size_t index = 0; index < call->parameterTypes.size(); ++index) {
+              const auto applied = substituteTypeLifetimes(
+                  target->parameterTypes[index], call->lifetimeApplication.bindings);
+              expect(applied.has_value(), "forged static application remains structurally substitutable");
+              call->parameterTypes[index] = *applied;
+            }
+            stage->info.type = call->parameterTypes[0];
+            call->operands[0].type = stage->info.type;
+            auto *changedValue = const_cast<MirValue *>(changed->body.findValue(value->id));
+            changedValue->info.type = stage->info.type;
+          }
+          if (mutation == 1) {
+            stage->callInputKind = HirCallInputKind::MutableBorrow;
+            stage->info.type.referenceAccess = AccessMode::Mutable;
+            call->operands[0].type = stage->info.type;
+            auto *changedValue = const_cast<MirValue *>(changed->body.findValue(value->id));
+            changedValue->info.type = stage->info.type;
+          }
+          expect(!verifyMirProgram(forged).valid(),
+                 "full MIR rejects coordinated static and access strengthening over the unchanged actual lane");
+        }
+        checked = true;
+        break;
+      }
+      if (checked) break;
+    }
+    if (checked) break;
+  }
+  expect(checked, "carrier folds exercise an applied owner region and its exact staged reference input");
 }
 } // namespace
 
@@ -167,6 +250,8 @@ int main() { int first = 3; int second = 8; View left{first}; View right{second}
          "reference-to-carrier pack leaves retain separate physical shells and stored external groups");
   if (carriers.hirValid)
     checkFoldLifetimeApplication(carriers);
+  if (carriers.canGenerateCode())
+    checkConvertedFoldInputs(carriers);
   bool checkedGroups = false;
   for (const auto &function : carriers.mir.functionInstances()) {
     const lang::MirLoan *first = nullptr;

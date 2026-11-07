@@ -10711,6 +10711,27 @@ bool validCallInputType(const SemanticType &source,
          source.pointerAccess == AccessMode::Mutable;
 }
 
+bool sameObjectLifetimeInitialization(
+    const MirBody &body, const MirInstruction &instruction,
+    const MirDropObligation &source, const MirDropObligation &target) {
+  if (instruction.kind != MirInstructionKind::Initialize ||
+      instruction.destination != target.place || instruction.operands.size() != 1 ||
+      source.kind != MirDropObligationKind::Value || source.initiallyActive ||
+      target.kind != MirDropObligationKind::Binding || target.initiallyActive ||
+      instruction.info.type != target.dropType.type ||
+      !sameLifetimeDropShape(source.dropType, target.dropType))
+    return false;
+  const auto &operand = instruction.operands.front();
+  const auto *from = body.findPlace(source.place);
+  const auto *to = body.findPlace(target.place);
+  return operand.kind == MirOperandKind::Value && operand.value &&
+      operand.type == source.dropType.type && from && to &&
+      from->root == MirPlaceRootKind::Value && from->value == operand.value &&
+      from->projections.empty() && from->type == source.dropType.type &&
+      to->root == MirPlaceRootKind::Binding && to->binding == target.binding &&
+      to->projections.empty() && to->type == target.dropType.type;
+}
+
 bool sameLifetimeDropShape(const MirDropType &source,
                            const MirDropType &target) {
   std::vector<std::pair<const MirDropType *, const MirDropType *>> pending{
@@ -14845,7 +14866,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           // Prepared owning inputs may shorten free regions without changing
           // the object or its cleanup recipe. The independent program stage
           // gate reconstructs the source and proves this conversion even if
-          // the stage has no consumer. Other lifecycle operations stay exact.
+          // the stage has no consumer. Ordinary value initialization has the
+          // same obligation: its exact destination role and cleanup shape are
+          // checked here, its directional region conversion by program MIR.
           const bool preparedInput =
               instruction.kind == MirInstructionKind::CallInput &&
               (instruction.callInputKind == HirCallInputKind::MoveValue ||
@@ -14859,7 +14882,11 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                event.kind == MirLifecycleEventKind::Reparent) &&
               mir_detail::sameLifetimeDropShape(source->dropType,
                                                 target->dropType);
-          if (!preparedInput)
+          const bool initializedValue =
+              event.kind == MirLifecycleEventKind::Reparent &&
+              mir_detail::sameObjectLifetimeInitialization(
+                  body, instruction, *source, *target);
+          if (!preparedInput && !initializedValue)
             return failure(body, owner,
                            "lifecycle source and target types do not match",
                            block.id, instruction.id);

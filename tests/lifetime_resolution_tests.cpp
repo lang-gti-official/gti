@@ -46,6 +46,61 @@ struct SemanticModelTestAccess {
 // Exercise the real staging key and lookup without exposing cache internals as
 // a product API or relying on a timing-sensitive number of source evaluations.
 struct SemanticLifetimeTestAccess {
+  static std::pair<bool, std::size_t> ownedTransportApplicationChecks(
+      const FrontendResult &source) {
+    SemanticVisitor analyzer(TargetInfo::host(), &source.sourceGraph, true,
+                             nullptr, &source.sources);
+    if (!analyzer.check(source.program))
+      return {};
+    const ResolvedCallInfo *selected = nullptr;
+    for (const auto &declaration : source.program.declarations())
+      if (const auto *main = stmtAs<FunctionDecl>(declaration.get());
+          main && main->name().lexeme == "main" && main->body())
+        for (const auto &statement : main->body()->statements())
+          if (const auto *binding = stmtAs<VariableDecl>(statement.get());
+              binding && binding->name().lexeme == "stored")
+            if (const auto *call = exprAs<Call>(binding->initializer().get()))
+              selected = analyzer.model().findCall(*call);
+    const auto *target = selected ? analyzer.model().findFunction(selected->function) : nullptr;
+    if (!target || !selected->lifetimeApplication.complete ||
+        selected->lifetimeApplication.bindings.size() != 1)
+      return {};
+    const auto contracts = target->instantiatedCallableParameters(selected->parameterTypes);
+    if (contracts.size() != 1 || !contracts.front().ownedTransport ||
+        contracts.front().ownedTransport->kind != CallableOwnedTransportKind::ExactField)
+      return {};
+    const auto exact = analyzer.impl->ownedTransportMatchesConcrete(*target, contracts.front(), *selected);
+    const auto actual = selected->lifetimeApplication.bindings.front().second;
+    std::size_t rejected = 0;
+    for (unsigned mutation = 0; mutation < 8; ++mutation) {
+      auto call = *selected;
+      auto contract = contracts.front();
+      switch (mutation) {
+      case 0: call.lifetimeApplication.bindings.clear(); break;
+      case 1: call.lifetimeApplication.bindings.front().second = Lifetime::staticLifetime(); break;
+      case 2: call.lifetimeApplication.bindings.front().second = Lifetime::inference(900001); break;
+      case 3:
+        call.lifetimeApplication.bindings.emplace_back(
+            call.lifetimeApplication.bindings.front().first, Lifetime::staticLifetime());
+        break;
+      case 4: contract.ownedTransport->field = 0; break;
+      case 5:
+      case 6: {
+        const std::vector<LifetimeBinding> replacement{{actual, Lifetime::staticLifetime()}};
+        auto &type = mutation == 5 ? call.returnType : call.parameterTypes.front();
+        const auto changed = substituteTypeLifetimes(type, replacement);
+        if (!changed || *changed == type)
+          return {};
+        type = *changed;
+        break;
+      }
+      case 7: contract.ownedTransport->field += 900001; break;
+      }
+      rejected += !analyzer.impl->ownedTransportMatchesConcrete(*target, contract, call);
+    }
+    return {exact, rejected};
+  }
+
   static std::pair<bool, std::size_t> closedDefaultContractChecks(const FrontendResult &source) {
     SemanticVisitor analyzer(TargetInfo::host(), &source.sourceGraph, true, nullptr, &source.sources);
     if (!analyzer.check(source.program))
@@ -1501,6 +1556,47 @@ int main() { Captured<Selection> callback{}; int value = 4; return callback.invo
 )");
   expectValid(completeType,
               "an exact invocation projection imports a complete reference parameter and result type");
+  std::size_t referenceBindings = 0;
+  for (const auto &instance : completeType.hir.lambdaInstances())
+    for (const auto &binding : instance.body.bindings)
+      if (std::find(instance.parameterBindings.begin(), instance.parameterBindings.end(),
+                    binding.id) != instance.parameterBindings.end()) {
+        expect(binding.info.type.kind == lang::SemanticType::Reference &&
+                   binding.info.traits.ownership == lang::OwnershipKind::Borrowed &&
+                   binding.info.traits.drop == lang::DropKind::Trivial,
+               "a whole projected reference parameter has borrowed storage and no value destructor");
+        ++referenceBindings;
+      }
+  expect(completeType.hirValid && referenceBindings == 1,
+         "the complete projected parameter reaches one concrete HIR lambda binding");
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto owned = lang::Frontend().analyze("projected-owned-lambda.gti", R"gti(
+import std.memory;
+struct Ticket { Ticket() = default; ~Ticket() {} };
+class Sink<R(A)> {
+public:
+  Sink() = default;
+  int invoke(A value) {
+    auto consume = [](A input) -> int { return 7; };
+    return consume(std::move(value));
+  }
+};
+int main() { Sink<int(Ticket)> sink{}; return sink.invoke(Ticket()) - 7; }
+)gti", {root / "prelude.gti"}, {}, {root});
+  expectValid(owned, "a projected owning parameter retains its ordinary cleanup contract");
+  std::size_t ownedBindings = 0;
+  for (const auto &instance : owned.hir.lambdaInstances())
+    for (const auto &binding : instance.body.bindings)
+      if (std::find(instance.parameterBindings.begin(), instance.parameterBindings.end(),
+                    binding.id) != instance.parameterBindings.end()) {
+        expect(binding.info.type.kind == lang::SemanticType::Class &&
+                   binding.info.traits.ownership == lang::OwnershipKind::Value &&
+                   binding.info.traits.drop == lang::DropKind::Lexical,
+               "normalizing a projected parameter cannot erase an actual object's destructor");
+        ++ownedBindings;
+      }
+  expect(owned.hirValid && ownedBindings == 1,
+         "an owning projection keeps one concrete cleanup-bearing lambda parameter");
 }
 
 void testInferredCarrierRegions() {
@@ -2944,6 +3040,56 @@ int main() { Box box{3}; return box.get(); }
 )");
   expect(localSibling.syntaxValid && !localSibling.semanticValid,
          "a known receiver cannot authorize a sibling local return origin");
+}
+
+void testOwnedCallableAppliedRegions() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto check = [&](std::string source) {
+    return lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+        "owned-callable-applied-regions.gti", std::move(source),
+        {root / "prelude.gti"}, {}, {root});
+  };
+  const std::string declarations = R"gti(
+import std.memory;
+class Holder<F> {
+  mut F callable;
+public:
+  Holder(F callable) : callable(std::move(callable)) {}
+  int run() mut { return this.callable(); }
+};
+Holder<F> store<F>(F callable) { return Holder<F>(std::move(callable)); }
+)gti";
+  const auto valid = check(declarations + R"gti(
+int main() {
+  mut int value = 4;
+  mut auto update = [mut &value]() -> int { value += 1; return value; };
+  mut auto stored = store(std::move(update));
+  return stored.run() - 5;
+}
+)gti");
+  expectValid(valid, "owned callable field transport uses the selected declaration's checked lifetime application");
+  const auto [exact, rejected] = lang::SemanticLifetimeTestAccess::ownedTransportApplicationChecks(valid);
+  expect(exact && rejected == 8,
+         "transport retains exact field and free-region identity and rejects absent, conflicting or forged application facts");
+  const auto independent = check(declarations + R"gti(
+int main() {
+  int left = 3; int right = 4;
+  auto callback = [&left, &right]() -> int { return left + right; };
+  mut auto stored = store(std::move(callback));
+  return stored.run() - 7;
+}
+)gti");
+  expectValid(independent, "an owned callable retains both independent captured regions in its exact owner");
+  const auto noTransfer = check(declarations + R"gti(
+int main() {
+  mut int value = 4;
+  mut auto update = [mut &value]() -> int { value += 1; return value; };
+  mut auto stored = store(update);
+  return stored.run();
+}
+)gti");
+  expect(noTransfer.syntaxValid && !noTransfer.semanticValid,
+         "applying an owned callable's regions does not grant an implicit ownership transfer");
 }
 
 void testDependentCallableUseEvidence() {
@@ -4484,6 +4630,7 @@ int main() {
   testReferencePackReturnContracts();
   testAliasConstructionLifetimeApplications();
   testReceiverBeforeSymbolicPack();
+  testOwnedCallableAppliedRegions();
   testDependentCallableUseEvidence();
   testStatelessItemTemporaryBorrow();
   testFreshCallableLifetimeArguments();
