@@ -1062,6 +1062,13 @@ void checkReferenceCallSwitchSubjects() {
   try {
     expect(!gti_test::emitCpp(frontend).contents.empty(),
            "reference-call switch subjects reach the production backend");
+  } catch (const lang::BackendUnsupportedError &error) {
+    // The frozen C++ backend cannot represent a text call result that
+    // carries a borrow dependency and says so (GTI-B0003); LLVM executes it.
+    expect(std::string(error.what()).find(
+               "borrow-dependent text call results require the LLVM backend") != std::string::npos,
+           std::string("reference-call switch emission: unexpected C++ limitation: ") +
+               error.what());
   } catch (const std::logic_error &error) {
     expect(false,
            std::string("reference-call switch emission: ") + error.what());
