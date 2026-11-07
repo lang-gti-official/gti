@@ -3104,6 +3104,57 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
   const auto canonicalPlace = [catalog](const auto &...arguments) {
     return ::lang::canonicalPlace(arguments..., catalog);
   };
+  // Canonical roots may have several executable aliases. Derive one exact
+  // type only when all unprojected aliases agree; no first matching type can
+  // authorize sibling-storage separation. This cache is local to this proof.
+  using CanonicalRootKey = std::tuple<MirPlaceRootKind, std::size_t, std::size_t>;
+  const auto rootKey = [](const auto &place) -> std::optional<CanonicalRootKey> {
+    switch (place.root) {
+    case MirPlaceRootKind::Binding:
+      if (place.binding) return CanonicalRootKey{place.root, place.binding, 0};
+      break;
+    case MirPlaceRootKind::Symbol:
+      if (place.symbol) return CanonicalRootKey{place.root, place.symbol, place.capture};
+      break;
+    case MirPlaceRootKind::This:
+      return CanonicalRootKey{place.root, 0, 0};
+    case MirPlaceRootKind::Temporary:
+      if (place.temporary) return CanonicalRootKey{place.root, place.temporary, 0};
+      break;
+    case MirPlaceRootKind::Value:
+      if (place.value) return CanonicalRootKey{place.root, place.value, 0};
+      break;
+    case MirPlaceRootKind::Loan:
+      break;
+    }
+    return std::nullopt;
+  };
+  std::map<CanonicalRootKey, std::optional<SemanticType>> rootTypes;
+  if (catalog) {
+    for (const auto &place : body.places) {
+      if (!place.projections.empty()) continue;
+      const auto key = rootKey(place);
+      if (!key) continue;
+      const auto type = place.type.kind == SemanticType::Unknown
+                            ? std::nullopt : std::optional{place.type};
+      auto [found, inserted] = rootTypes.try_emplace(*key, type);
+      if (!inserted && found->second != type)
+        found->second.reset();
+    }
+  }
+  const auto canonicalPlacesOverlap = [&](const MirCanonicalPlace &left,
+                                          const MirCanonicalPlace &right) {
+    if (!::lang::canonicalPlacesOverlap(left, right)) return false;
+    if (!catalog || left.ambiguous || right.ambiguous ||
+        !sameCanonicalRoot(left, right) || !left.payloadSelections.empty() ||
+        !right.payloadSelections.empty())
+      return true;
+    const auto key = rootKey(left);
+    const auto found = key ? rootTypes.find(*key) : rootTypes.end();
+    return found == rootTypes.end() || !found->second ||
+           !mir_detail::inlineBorrowProjectionsDisjoint(
+               *catalog, *found->second, left.projections, right.projections);
+  };
   const auto loanPermitsPlace = [catalog](const auto &...arguments) {
     return ::lang::loanPermitsPlace(arguments..., catalog);
   };

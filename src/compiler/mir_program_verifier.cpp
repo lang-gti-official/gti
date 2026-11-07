@@ -22777,7 +22777,9 @@ verifyMirProgramContracts(const MirProgram &program) {
           initializer.kind == ConstructorInitializerTargetKind::Field &&
           !initializer.storesReference && !initializer.constructorTarget &&
           !initializer.generatedDefault && initializer.arguments.size() == 1 &&
-          field->type == initializer.targetType &&
+          exactCallableOwner &&
+          callableOwnerView->instantiate(field->type) ==
+              std::optional<SemanticType>(initializer.targetType) &&
           cleanupFreeInitializerType(initializer.targetType) &&
           (field->dropKind == DropKind::Trivial ||
            initializer.targetType.kind == SemanticType::Class ||
@@ -22797,7 +22799,9 @@ verifyMirProgramContracts(const MirProgram &program) {
           initializer.kind == ConstructorInitializerTargetKind::Field &&
           !initializer.storesReference && !initializer.generatedDefault &&
           initializer.arguments.size() == 1 &&
-          field->type == initializer.targetType &&
+          exactCallableOwner &&
+          callableOwnerView->instantiate(field->type) ==
+              std::optional<SemanticType>(initializer.targetType) &&
           field->dropKind == DropKind::Lexical;
       // Constructor full-expression boundaries are shared lifecycle facts,
       // not scalar-stage markers: reference, nested-construction, and

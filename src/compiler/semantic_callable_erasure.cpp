@@ -119,8 +119,14 @@ auto SemanticVisitor::Impl::recordRestoredReferenceResult(
     const auto *resolved =
         call == nullptr ? nullptr : semanticModel.findCall(*call);
     if (resolved == nullptr || !resolved->restoresReferenceResult ||
-        resolved->returnType != function.returnType ||
+        resolved->returnType.kind != SemanticType::Reference ||
+        resolved->returnType.referenceAccess != function.returnType.referenceAccess ||
+        resolved->returnType.arguments != function.returnType.arguments ||
         resolved->borrowOrigin != BorrowOriginKind::Argument)
+      return;
+    const std::array resultBound{LifetimeBound{
+        resolved->returnType.referenceLifetime, function.returnType.referenceLifetime}};
+    if (!validateLifetimeConstraints({}, resultBound))
       return;
     const auto *argument =
         resolvedCallArgument(*call, resolved, resolved->borrowArgument);
@@ -141,7 +147,7 @@ auto SemanticVisitor::Impl::recordRestoredReferenceResult(
 }
 
 auto SemanticVisitor::Impl::analyzeReferenceErasureCall(const Call &expr,
-                                                        IntrinsicKind intrinsic)
+    IntrinsicKind intrinsic, const CallableCandidate &declaration)
     -> void {
   std::vector<SemanticType> arguments;
   for (const auto &argument : expr.arguments())
@@ -217,12 +223,39 @@ auto SemanticVisitor::Impl::analyzeReferenceErasureCall(const Call &expr,
     }
     restoredFields = std::move(*fields);
   }
-  currentType = result;
+  CallableCandidate selected;
+  std::vector<SemanticType> typeArguments;
+  std::vector<CompileTimeValue> valueArguments;
+  ConstraintFailure failure;
+  if (!tryInstantiateFunction(declaration, {restoring ? result : arguments.front()},
+                              {}, arguments, expr.arguments(), selected,
+                              typeArguments, valueArguments, &failure) ||
+      !applyCallLifetimeContract(selected, arguments, expr.arguments(), expr.paren()) ||
+      selected.returnType.kind != SemanticType::Reference ||
+      selected.returnType.arguments.size() != 1 ||
+      selected.returnType.referenceAccess != access ||
+      selected.returnType.arguments.front() != result ||
+      selected.parameterTypes.size() != 1 ||
+      selected.parameterTypes.front().kind != SemanticType::Reference ||
+      selected.parameterTypes.front().arguments.size() != 1 ||
+      selected.parameterTypes.front().referenceAccess != access ||
+      selected.parameterTypes.front().arguments.front() != arguments.front()) {
+    report(expr.paren(), "Checked reference erasure must preserve its exact "
+                         "input and result lifetime contract.", "GTI-S2127");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  commitLifetimeApplication(selected.lifetimeApplication);
+  currentType = selected.returnType.arguments.front();
   semanticModel.record(
       expr, ResolvedCallInfo{
-                .returnType = SemanticType::referenceTo(result, access),
-                .parameterTypes = {parameter},
-                .typeArguments = {restoring ? result : arguments.front()},
+                .returnType = std::move(selected.returnType),
+                .parameterTypes = std::move(selected.parameterTypes),
+                .typeArguments = std::move(typeArguments),
+                .valueArguments = std::move(valueArguments),
+                .lifetimeArguments = std::move(selected.lifetimeArguments),
+                .lifetimeApplication = std::move(selected.lifetimeApplication),
+                .requirements = std::move(selected.requirements),
                 .intrinsic = intrinsic,
                 .restoresReferenceResult = restoring,
                 .restoredBorrowFields = std::move(restoredFields),

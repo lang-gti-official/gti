@@ -6879,6 +6879,12 @@ auto SemanticVisitor::Impl::resolveOperator(
   bool rejectedConsumingReceiver = false;
   bool rejectedCompilerPrivate = false;
   std::optional<ConstraintFailure> rejectedRequirements;
+  std::optional<CallableCandidate> rejectedLifetimeFunction;
+  std::vector<AnalyzedCallArgument> rejectedLifetimeInputs;
+  const auto lifetimeReceiverPlace = receiverState
+      ? std::optional<SemanticLoanPlace>{loanPlace(receiverState->place)}
+      : std::nullopt;
+  const auto *lifetimeReceiver = lifetimeReceiverPlace ? &*lifetimeReceiverPlace : nullptr;
   struct ViableOperator {
     CallableCandidate function;
     CallReceiverMode receiverMode = CallReceiverMode::None;
@@ -6925,18 +6931,33 @@ auto SemanticVisitor::Impl::resolveOperator(
     std::vector<std::size_t> literalArguments;
     for (std::size_t index = 0; index < concreteArguments.size(); ++index) {
       const auto &argument = concreteArguments[index];
+      const auto &parameter = candidate.parameterTypes[index];
+      const auto &target = parameter.kind == SemanticType::Reference &&
+                                  parameter.arguments.size() == 1 &&
+                                  argument.type.kind != SemanticType::Reference
+                              ? parameter.arguments.front() : parameter;
+      std::vector<LifetimeBound> provisional;
+      // Match only the non-lifetime operator shape here. The ordinary call
+      // contract below proves and records every region conversion before this
+      // candidate can be selected. Operators still forbid implicit base casts.
+      const auto adjusted = constrainLifetimeType(
+          argument.type, target,
+          parameter.kind == SemanticType::Reference &&
+                  parameter.referenceAccess == AccessMode::Mutable ? 0 : 1,
+          provisional, false);
+      const auto &matchedType = adjusted ? *adjusted : argument.type;
       if (argument.type == SemanticType::Unknown ||
           candidate.parameterTypes[index] == SemanticType::Unknown ||
           (argument.forwardedPackElement
                ? forwardedPackArgumentMatches(candidate.parameterTypes[index],
-                                              argument.type)
+                                              matchedType)
                : exactOperatorArgumentMatches(candidate.parameterTypes[index],
-                                              argument.type,
+                                              matchedType,
                                               *argument.expression)))
         continue;
       if (!argument.forwardedPackElement &&
           ephemeralTemporaryArgumentMatches(
-              candidate, candidate.parameterTypes[index], argument.type,
+              candidate, candidate.parameterTypes[index], matchedType,
               *argument.expression, index)) {
         ephemeralBorrowArguments.push_back(index);
         continue;
@@ -6953,7 +6974,23 @@ auto SemanticVisitor::Impl::resolveOperator(
     }
     if (!matches)
       continue;
-    if (auto failure = firstRequirementFailure(candidate.requirements)) {
+    auto lifetimeInputs = concreteArguments;
+    for (const auto index : literalArguments)
+      lifetimeInputs[index].type = candidate.parameterTypes[index];
+    const bool deferredLifetime = contextualArguments && contextualArguments->hasDeferred() &&
+        std::any_of(lifetimeInputs.begin(), lifetimeInputs.end(), [](const auto &input) {
+          return input.type == SemanticType::Unknown;
+        });
+    if (!deferredLifetime &&
+        !applyCallLifetimeContract(candidate, lifetimeInputs, token,
+                                   receiver.get(), false, lifetimeReceiver)) {
+      if (!rejectedLifetimeFunction) {
+        rejectedLifetimeFunction = candidate;
+        rejectedLifetimeInputs = std::move(lifetimeInputs);
+      }
+      continue;
+    }
+    if (auto failure = firstRequirementFailureBeforeLifetimeApplication(candidate.requirements)) {
       if (!rejectedRequirements)
         rejectedRequirements = std::move(failure);
       continue;
@@ -7078,6 +7115,9 @@ auto SemanticVisitor::Impl::resolveOperator(
       }
     } else if (viable.empty() && rejectedRequirements) {
       reportConstraintFailure(token, *rejectedRequirements);
+    } else if (viable.empty() && rejectedLifetimeFunction) {
+      (void)applyCallLifetimeContract(*rejectedLifetimeFunction, rejectedLifetimeInputs,
+                                      token, receiver.get(), true, lifetimeReceiver);
     } else if (viable.empty()) {
       std::string received;
       if (!argumentTypes.empty()) {
@@ -7202,7 +7242,7 @@ auto SemanticVisitor::Impl::resolveOperator(
     return std::nullopt;
   }
 
-  const CallableCandidate &selected = viable.front().function;
+  CallableCandidate &selected = viable.front().function;
   for (const std::size_t index :
        viable.front().contextualIntegerLiteralArguments) {
     if (index >= concreteArguments.size() ||
@@ -7237,6 +7277,10 @@ auto SemanticVisitor::Impl::resolveOperator(
                                       concreteArguments))
         return std::nullopt;
   }
+  if (!selected.lifetimeApplication.complete &&
+      !applyCallLifetimeContract(selected, concreteArguments, token,
+                                 receiver.get(), true, lifetimeReceiver))
+    return std::nullopt;
   if (!canAccessMember(selected.access, selected.ownerClass, receiverType,
                        selected.dispatchOwner)) {
     const std::string access(accessModifierSpelling(selected.access));
@@ -7381,6 +7425,7 @@ auto SemanticVisitor::Impl::resolveOperator(
       }
     }
   }
+  commitLifetimeApplication(selected.lifetimeApplication);
   ResolvedOperatorInfo resolved{
       .function = selected.id,
       .declaration = selected.declaration,
@@ -7392,6 +7437,8 @@ auto SemanticVisitor::Impl::resolveOperator(
       .receiverMode = selectedReceiverMode,
       .returnType = selected.returnType,
       .parameterTypes = selected.parameterTypes,
+      .lifetimeArguments = selected.lifetimeArguments,
+      .lifetimeApplication = selected.lifetimeApplication,
       .ephemeralBorrowArguments = viable.front().ephemeralBorrowArguments,
       .borrowOrigin = operatorBorrowOrigin,
       .borrowArgument = operatorBorrowParameter,
@@ -7421,6 +7468,8 @@ auto SemanticVisitor::Impl::resolveOperator(
                    .declaration = selected.declaration,
                    .returnType = selected.returnType,
                    .parameterTypes = selected.parameterTypes,
+                   .lifetimeArguments = selected.lifetimeArguments,
+                   .lifetimeApplication = selected.lifetimeApplication,
                    .dispatch = resolved.dispatch,
                    .dispatchOwner = selected.dispatchOwner,
                    .receiverMode = selectedReceiverMode},

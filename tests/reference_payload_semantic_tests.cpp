@@ -156,7 +156,10 @@ int main() { return 0; }
     acceptedSemantics(result);
     bool found = false;
     for (const auto &loan : result.semantics.loans()) {
-      if (!loan.referenceSelection)
+      // Imported prelude bodies also contain physical owned-payload selections.
+      // This fixture verifies stored external reference extraction specifically.
+      if (!loan.referenceSelection || loan.referenceSelection->kind !=
+              lang::ReferenceSelectionKind::StoredExternalReference)
         continue;
       found = true;
       const auto *entry = result.semantics.findLoan(loan.parent);
@@ -241,7 +244,9 @@ int main() { return 0; }
   acceptedSemantics(independent);
   std::vector<lang::SemanticLoanPlace> owners;
   for (const auto &loan : independent.semantics.loans())
-    if (loan.referenceSelection && loan.access == lang::AccessMode::Mutable &&
+    if (loan.referenceSelection && loan.referenceSelection->kind ==
+            lang::ReferenceSelectionKind::StoredExternalReference &&
+        loan.access == lang::AccessMode::Mutable &&
         std::find(owners.begin(), owners.end(), loan.place) == owners.end())
       owners.push_back(loan.place);
   expect(owners.size() == 2 && owners[0].root == owners[1].root &&

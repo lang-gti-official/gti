@@ -32,6 +32,10 @@ void testInlineBorrowPathDisjointness() {
         return base;
       if (step == fieldProjection(113))
         return SemanticType::Int32;
+      if (step == fieldProjection(115))
+        return SemanticType::typeParameter(71);
+      if (step == fieldProjection(116))
+        return SemanticType::typePack(72);
     }
     if (type == base) {
       if (step == fieldProjection(111))
@@ -67,6 +71,9 @@ void testInlineBorrowPathDisjointness() {
            "wrong base owner, interface ordinal or undeclared field cannot prove separation");
   expect(!disjoint(SemanticType::classType(13, {SemanticType::Bool}), inherited, direct),
          "an unavailable concrete nominal view cannot reuse a different instance");
+  expect(!disjoint(root, inherited, {fieldProjection(115)}) &&
+             !disjoint(root, inherited, {fieldProjection(116)}),
+         "an unresolved type or pack may instantiate to an external reference");
   auto indirect = inherited;
   indirect.push_back({.kind = PlaceProjectionKind::Dereference});
   expect(!disjoint(root, indirect, direct),

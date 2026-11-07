@@ -274,6 +274,97 @@ void derivedGuardsAndInventoryBudget() {
              result.errors.front().message.find("nominal verification context") != std::string::npos,
          "context-free verification rejects metadata-only Base guards before they can imply authority");
 }
+void inlineBaseDisjointness() {
+  Fixture fixture;
+  auto &classes = MirProgramTestAccess::classes(fixture.program);
+  classes[0].declaredFields.push_back({.symbol = 112, .type = SemanticType::Int32});
+  classes[0].declaredFields.push_back({.symbol = 113,
+      .type = SemanticType::referenceTo(SemanticType::Int32)});
+  classes[0].declaredFields.push_back({.symbol = 114,
+      .type = SemanticType::rawPointerTo(SemanticType::Int32)});
+  classes[0].declaredFields.push_back({.symbol = 115,
+      .type = SemanticType::arrayOf(SemanticType::Int32, std::uint64_t{2})});
+  classes[2].declaredFields = {{.symbol = 211, .type = SemanticType::Int32},
+      {.symbol = 212, .type = SemanticType::referenceTo(SemanticType::Int32)},
+      {.symbol = 213, .type = SemanticType::rawPointerTo(SemanticType::Int32)},
+      {.symbol = 214,
+       .type = SemanticType::arrayOf(SemanticType::Int32, std::uint64_t{2})}};
+  const std::vector<MirPlaceProjection> inherited{
+      {.kind = MirProjectionKind::Base, .constantIndex = 1, .selection = 1},
+      {.kind = MirProjectionKind::Field, .field = 112}};
+  const std::vector<MirPlaceProjection> direct{
+      {.kind = MirProjectionKind::Field, .field = 211}};
+  const auto disjoint = [&](const auto &left, const auto &right) {
+    return inlineBorrowProjectionsDisjoint(fixture.program, fixture.actual, left, right);
+  };
+  expect(disjoint(inherited, direct),
+         "exact nonzero state-base and direct inline field are disjoint");
+  expect(!disjoint(inherited, inherited),
+         "the same inherited leaf is never disjoint from itself");
+  expect(!disjoint(std::span{inherited}.first(1), inherited),
+         "an inherited root overlaps its contained leaf");
+  auto changed = inherited;
+  changed[0].constantIndex = 0;
+  expect(!disjoint(changed, direct), "an interface ordinal cannot prove inline separation");
+  changed = inherited;
+  changed[0].selection = 2;
+  expect(!disjoint(changed, direct), "a forged concrete Base instance rejects");
+  changed = inherited;
+  changed[0].field = 112;
+  expect(!disjoint(changed, direct), "unused Base projection metadata rejects");
+  expect(!inlineBorrowProjectionsDisjoint(fixture.program, classes[0].type,
+                                         inherited, direct),
+         "the exact typed Base owner cannot be replaced by its base declaration");
+  changed = inherited;
+  changed[1].field = 113;
+  changed.push_back({.kind = MirProjectionKind::Dereference});
+  auto other = direct;
+  other[0].field = 212;
+  other.push_back({.kind = MirProjectionKind::Dereference});
+  expect(!disjoint(changed, other),
+         "distinct stored reference slots do not prove disjoint external referents");
+  changed[1].field = 114;
+  changed.back().kind = MirProjectionKind::RawDereference;
+  other[0].field = 213;
+  other.back().kind = MirProjectionKind::RawDereference;
+  expect(!disjoint(changed, other), "raw pointee crossings retain overlap");
+  changed = inherited;
+  changed[1].field = 115;
+  changed.push_back({.kind = MirProjectionKind::Index, .constantIndex = 1});
+  other = direct;
+  other[0].field = 214;
+  other.push_back({.kind = MirProjectionKind::Index, .constantIndex = 0});
+  expect(disjoint(changed, other), "full inline array suffixes retain exact bounds");
+  changed.back().constantIndex = 2;
+  expect(!disjoint(changed, other), "an out-of-range suffix cannot hide behind Base divergence");
+  const auto physical = SemanticType::referenceTo(fixture.actual);
+  expect(inlineBorrowProjectionsDisjoint(fixture.program, physical, inherited, direct),
+         "a canonical physical reference root may already denote its referent");
+  changed = inherited;
+  changed.insert(changed.begin(), {.kind = MirProjectionKind::Dereference});
+  other = direct;
+  other.insert(other.begin(), {.kind = MirProjectionKind::Dereference});
+  expect(inlineBorrowProjectionsDisjoint(fixture.program, physical, changed, other),
+         "one explicit physical root dereference has the same exact referent view");
+  changed.front().field = 112;
+  expect(!inlineBorrowProjectionsDisjoint(fixture.program, physical, changed, other),
+         "a malformed root dereference cannot authorize a view");
+  const auto guarded = fixture.walk();
+  expect(guarded && !disjoint(guarded->projections, direct),
+         "enum alternative selection does not prove inline sibling separation");
+  classes[2].kind = ClassKind::Union;
+  expect(!disjoint(inherited, direct), "union members never use the inline class rule");
+  classes[2].kind = ClassKind::Interface;
+  expect(!disjoint(inherited, direct), "interface owners cannot grant storage separation");
+  classes[2].kind = ClassKind::Class;
+  auto duplicate = classes[2];
+  duplicate.id = 4;
+  classes.push_back(duplicate);
+  expect(!disjoint(inherited, direct), "ambiguous concrete root views remain overlapping");
+  classes.clear();
+  expect(!disjoint(inherited, direct), "missing nominal facts remain overlapping");
+}
+
 void concreteFormalPaths() {
   auto reference = SemanticType::referenceTo(SemanticType::Int32);
   reference.referenceLifetime = Lifetime::parameter(97);
@@ -359,4 +450,5 @@ int main() {
   derivedGuardsAndInventoryBudget();
   serializedOwnerIdentity();
   concreteFormalPaths();
+  inlineBaseDisjointness();
 }

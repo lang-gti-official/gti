@@ -1872,6 +1872,11 @@ Two general facilities support this ordinary source wrapper:
   `std::erased_object&` and `mut std::erased_object&` respectively. Erasure
   preserves lifetime/access dependencies. The referent cannot be constructed,
   read as a value, or used to acquire transfer/share capability.
+  Generic erasure protects the object's physical storage even when its type
+  hides nested borrowed fields. Erasing a local carrier does not make its
+  storage live as long as the carrier's external owners. The trusted operation
+  uses the same input/result lifetime application as ordinary checked calls;
+  it does not give ordinary unrelated types an opaque-view conversion.
 - `std::restore_ref<T>(erased)` and `std::restore_mut<T>(erased)` require
   `unsafe`: the caller must supply precisely the original type. Shared erasure
   cannot be restored with mutable access. Restoration retains checked lifetime

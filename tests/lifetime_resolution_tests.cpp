@@ -1816,6 +1816,56 @@ int main() { twice(Owned()); return 0; }
          "entry projection cannot revive a pack consumed by an earlier forwarding call");
 }
 
+void testConstructorRelationsAfterFieldIdentity() {
+  const auto result = analyze(R"(
+struct Early {
+  Early(int& first, int& second) : left(first), right(second) {}
+  int& left;
+  int& right;
+};
+struct Generic<T> {
+  Generic(T& input) : value(input) {}
+  T& value;
+};
+struct Explicit<lifetime stored, lifetime input> {
+  int&<stored> value;
+  Explicit(int&<input> source) requires outlives<input, stored> : value(source) {}
+};
+int main() {
+  int first = 3; int second = 8;
+  Early early{first, second}; Generic<int> generic{first};
+  return early.left + early.right + generic.value - 14;
+}
+)");
+  expectValid(result,
+              "anonymous constructor input relations are finalized after canonical field identities exist");
+  for (const auto name : {"Early", "Generic", "Explicit"}) {
+    const auto *owner = record(result, name);
+    const auto *lifecycle = owner && owner->declaration
+        ? result.semantics.findClassLifecycle(*owner->declaration) : nullptr;
+    expect(lifecycle && lifecycle->constructors.size() == 1,
+           "each constructor retains one normalized declaration contract");
+    if (!owner || !lifecycle || lifecycle->constructors.size() != 1)
+      continue;
+    const auto &constructor = lifecycle->constructors.front();
+    std::vector<lang::Lifetime> binders;
+    for (const auto region : constructor.lifetimeContract.parameters)
+      if (std::find(binders.begin(), binders.end(), region) == binders.end())
+        binders.push_back(region);
+    expect(binders.size() == constructor.lifetimeContract.parameters.size(),
+           "finalizing initializer relations never allocates duplicate lifetime binders");
+    const auto count = std::min(owner->fields.size(), constructor.parameterTypes.size());
+    for (std::size_t index = 0; index < count; ++index) {
+      const lang::LifetimeBound expected{constructor.parameterTypes[index].referenceLifetime,
+                                         owner->fields[index].type.referenceLifetime};
+      expect(std::find(constructor.lifetimeContract.bounds.begin(),
+                        constructor.lifetimeContract.bounds.end(), expected) !=
+                 constructor.lifetimeContract.bounds.end(),
+             "the finalized contract retains each exact input-to-stored-region edge");
+    }
+  }
+}
+
 void testSelectedBaseConstructorInputs() {
   const std::string declarations = R"(
 struct RegionBase<lifetime a> {
@@ -1916,6 +1966,9 @@ int main() {
 }
 )");
   expectValid(valid, "checked type erasure preserves the physical input lifetime through generic source wrappers");
+  const auto *restoration = function(valid, "restore");
+  expect(restoration && restoration->restoresReferenceResult,
+         "a checked restoration wrapper retains authority across its applied outer lifetime");
   const auto escaping = check(wrappers + R"(
 Opaque&<static> invalid() { int local = 3; return erase(local); }
 int main() { return 0; }
@@ -1928,6 +1981,26 @@ int main() { return 0; }
 )");
   expect(!wrongAccess.semanticValid,
          "checked erasure cannot manufacture mutable access to a shared source");
+  const auto localShell = check(wrappers + R"(
+struct Borrowed<lifetime storage> {
+  int&<storage> value;
+  Borrowed(int&<storage> source) : value(source) {}
+};
+Opaque&<storage> invalid<lifetime storage>(int&<storage> source) {
+  Borrowed<storage> local{source};
+  return erase(local);
+}
+int main() { return 0; }
+)");
+  expect(localShell.syntaxValid && !localShell.semanticValid,
+         "erasing a local borrowed carrier retains its shell lifetime, not its external owner's lifetime");
+  const auto unrelatedTarget = check(wrappers + R"(
+struct Other { Other() = default; };
+Other& invalid<T>(T& source) { return erase(source); }
+int main() { return 0; }
+)");
+  expect(unrelatedTarget.syntaxValid && !unrelatedTarget.semanticValid,
+         "opaque physical-view proof does not authorize unrelated ordinary referent types");
 }
 
 void testOwnedPointeeLifetimeAuthority() {
@@ -1986,6 +2059,7 @@ int main() { return 0; }
 int main() {
   testForwardedPackBorrowPaths();
   testSelectedBaseConstructorInputs();
+  testConstructorRelationsAfterFieldIdentity();
   testOwnedPointeeLifetimeAuthority();
   testCheckedReferenceErasureLifetimeAuthority();
   testNominalArguments();

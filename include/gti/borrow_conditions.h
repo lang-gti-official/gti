@@ -78,8 +78,10 @@ template <typename InlineProjector>
         return false;
       const auto child = project(type, step);
       if (!child || child->kind == SemanticType::Unknown ||
-          child->kind == SemanticType::Reference)
-        return false;
+          child->kind == SemanticType::Reference ||
+          child->kind == SemanticType::TypeParameter ||
+          (child->kind == SemanticType::TypePack && !child->concretePack))
+        return false; // An unresolved leaf may itself instantiate to a reference.
       type = *child;
       return true;
     };

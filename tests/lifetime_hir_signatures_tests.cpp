@@ -14,6 +14,148 @@ void expect(bool condition, const char *message) {
     std::exit(1);
   }
 }
+void preparedReceiverRegion() {
+  const auto standardLibrary = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto result = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "prepared-receiver-region.gti", R"gti(
+struct Ticket {
+  int value;
+  Ticket(int initial) : value(initial) {}
+  int take() && { return this.value; }
+};
+int consume(Ticket ticket) { return std::move(ticket).take(); }
+int main() { return consume(Ticket(7)) - 7; }
+)gti", {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  if (!result.canGenerateCode()) {
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "a moved receiver borrows its exact prepared destination until invocation");
+  }
+  bool checked = false;
+  for (const auto &function : result.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.kind != MirInstructionKind::CallInput ||
+            stage.callInputRole != MirCallInputRole::Receiver ||
+            stage.callInputKind != HirCallInputKind::MoveValue ||
+            !stage.preparedParameterDrop || !stage.destination)
+          continue;
+        const auto origin = std::find_if(function.body.lifetimeBody.origins.begin(),
+            function.body.lifetimeBody.origins.end(), [&](const auto &candidate) {
+              return candidate.place == *stage.destination && candidate.source == stage.hirValue;
+            });
+        if (origin == function.body.lifetimeBody.origins.end()) continue;
+        checked = true;
+        for (int mutation = 0; mutation != 4; ++mutation) {
+          auto forged = result.mir;
+          auto *owner = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+          auto *changed = &owner->body.blocks[block.id - 1].instructions[
+              &stage - block.instructions.data()];
+          if (mutation == 0) changed->hirValue = 0;
+          if (mutation == 1) changed->preparedParameterDrop = 0;
+          if (mutation == 2) changed->destination = 0;
+          if (mutation == 3) {
+            const auto remove = [&](const LifetimeBound &bound) { return bound.longer == origin->region; };
+            std::erase_if(owner->body.lifetimeBody.obligations, remove);
+            for (auto &candidateBlock : owner->body.blocks)
+              for (auto &instruction : candidateBlock.instructions)
+                std::erase_if(instruction.lifetimeApplication.obligations, remove);
+          }
+          expect(!verifyMirProgram(forged).valid(),
+                 "prepared receiver proof requires exact source, drop, destination and storage-region edge");
+        }
+      }
+  expect(checked, "the consuming receiver fixture must materialize a checked local storage witness");
+}
+
+void contextualOperatorApplication() {
+  const auto result = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "contextual-operator-lifetime-application.gti", R"gti(
+struct Flag {
+  int value;
+  Flag(int initial) : value(initial) {}
+  operator bool() { return this.value != 0; }
+};
+int choose(Flag& flag) { if (flag) { return 1; } return 0; }
+int main() { Flag flag{1}; return choose(flag) - 1; }
+)gti");
+  if (!result.canGenerateCode()) {
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "contextual operator calls preserve their checked receiver lifetime application");
+  }
+  bool checked = false;
+  for (const auto &function : result.hir.functionInstances())
+    for (const auto &value : function.body.values) {
+      if (value.kind != HirValueKind::Call || !value.source ||
+          !result.semantics.findContextualConversion(*value.source))
+        continue;
+      expect(value.lifetimeApplication.complete &&
+                 !value.lifetimeApplication.bindings.empty(),
+             "HIR contextual calls retain the independently checked receiver substitution");
+      auto forged = result.mir;
+      auto *changed = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+      if (!changed) continue;
+      for (auto &block : changed->body.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::Call && instruction.hirValue == value.id) {
+            instruction.lifetimeApplication.bindings.clear();
+            checked = true;
+          }
+      if (checked)
+        expect(!verifyMirProgram(forged).valid(),
+               "a contextual call cannot lose its receiver contract application");
+    }
+  expect(checked, "the contextual operator fixture must exercise a concrete checked call");
+}
+
+void defaultFieldCallableUniverse() {
+  const auto result = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "default-field-callable-universe.gti", R"gti(
+enum Reading<lifetime a> { empty, value(int&<a> item) };
+struct Default<int&<source>> {
+  Reading<source> reading = Reading<source>::empty;
+  Default(int count) {}
+};
+int main() { Default<int&<static>> holder{0}; return 0; }
+)gti");
+  if (!result.canGenerateCode()) {
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "a selected field default has one exact stage in its constructor region universe");
+  }
+  bool checked = false;
+  for (const auto &constructor : result.mir.constructorInstances()) {
+    const auto *owner = result.mir.findClassInstance(constructor.owner);
+    if (!owner || constructor.initializers.size() != 1 || owner->declaredFields.size() != 1)
+      continue;
+    const auto &initializer = constructor.initializers.front();
+    if (initializer.targetType.kind != SemanticType::Enum ||
+        initializer.targetType == owner->declaredFields.front().type)
+      continue;
+    checked = true;
+    auto forged = result.mir;
+    auto *changed = const_cast<MirConstructorInstance *>(forged.findConstructorInstance(constructor.id));
+    changed->initializers.front().targetType = owner->declaredFields.front().type;
+    expect(!verifyMirProgram(forged).valid(),
+           "a layout-region field type cannot replace the selected constructor field type");
+    forged = result.mir;
+    changed = const_cast<MirConstructorInstance *>(forged.findConstructorInstance(constructor.id));
+    bool removed = false;
+    for (auto &block : changed->body.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Initialize &&
+            instruction.constructorInitializer == 1) {
+          instruction.constructorInitializer = 0;
+          removed = true;
+        }
+    expect(removed && !verifyMirProgram(forged).valid(),
+           "a cleanup-free default still needs its exact initializer stage");
+    break;
+  }
+  expect(checked, "the default field fixture must distinguish layout and callable region identities");
+}
+
 void selectedBaseInputs() {
   const auto result = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "selected-base-input-lanes.gti", R"gti(
@@ -282,6 +424,9 @@ int main() { Count callback = count; return invoke(callback, "text") - 7; }
 }
 } // namespace
 int main() {
+  preparedReceiverRegion();
+  contextualOperatorApplication();
+  defaultFieldCallableUniverse();
   projectedOnlyCallableOwners();
   nativeInvocationContexts();
   constructionLifetimeContexts();

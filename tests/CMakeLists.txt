@@ -1370,7 +1370,8 @@ endif()
 add_executable("gti_failure_metadata_tests"
                "${PROJECT_SOURCE_DIR}/tests/failure_metadata_tests.cpp")
 target_link_libraries("gti_failure_metadata_tests" PRIVATE gti_compiler)
-add_test(NAME failure_metadata COMMAND gti_failure_metadata_tests)
+add_test(NAME failure_metadata COMMAND gti_failure_metadata_tests
+         --output-dir "${CMAKE_BINARY_DIR}/Testing/failure-metadata-evidence")
 add_test(NAME cpp_identifier_relocation
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/cpp_identifier_relocation_test.py"

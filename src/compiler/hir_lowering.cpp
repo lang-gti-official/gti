@@ -5819,11 +5819,11 @@ private:
         .id = nextValueId++,
         .kind = HirValueKind::Call,
         .source = &raw,
-        .info = {.type = resolved.returnType,
-                 .category = ValueCategory::Value,
-                 .access = AccessMode::ReadOnly,
-                 .traits = instanceProvider->traitsFor(resolved.returnType)},
+        .info = operatorResultInfo(resolved),
         .operands = {receiverValue},
+        .parameterTypes = resolved.parameterTypes,
+        .lifetimeArguments = resolved.lifetimeArguments,
+        .lifetimeApplication = lowerLifetimeApplication(resolved.lifetimeApplication, body),
         .definedFailure = {.propagation =
                                resolved.dispatch == CallDispatch::Virtual
                                    ? FailurePropagationKind::VirtualCall
@@ -5837,6 +5837,8 @@ private:
     conversion.borrowOrigin = resolved.borrowOrigin;
     conversion.borrowArgument = resolved.borrowArgument;
     conversion.borrowAccess = resolved.borrowAccess;
+    conversion.borrowArguments = resolved.borrowArguments;
+    conversion.borrowFields = resolved.borrowFields;
     if (resolved.receiverMode == CallReceiverMode::Consuming) {
       conversion.callableInvocation = resolved.capability;
     }

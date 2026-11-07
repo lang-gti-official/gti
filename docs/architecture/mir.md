@@ -707,6 +707,12 @@ rewrites and effect queries pass that same explicit read-only context.
 Context-free body verification fails closed for paths that need nominal Base
 or index evidence, including metadata-only conditions and publications. Neither
 a provisional result nor a caller-supplied concrete base ID seals a program.
+Program-aware overlap checks can prove a direct inline field separate from an
+inherited inline field only after both complete projection chains reproduce the
+exact root type, base ordinal and concrete instance. All unprojected aliases must
+agree on that root type. A physical reference root denotes its referent; later
+reference or pointer crossings, enum selections, union/interface storage and
+ambiguous catalog views do not receive this disjointness proof.
 
 A structural enum-field region query resolves a unique payload symbol in the
 exact instantiated enum type and uses the stored external region when crossing

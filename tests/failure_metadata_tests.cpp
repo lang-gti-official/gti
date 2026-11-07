@@ -11,6 +11,7 @@
 #include <functional>
 #include <iostream>
 #include <optional>
+#include <source_location>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -19,6 +20,8 @@
 namespace {
 
 bool passed = true;
+std::filesystem::path evidenceDirectory;
+std::size_t evidenceSequence = 0;
 
 void expect(bool condition, const std::string &message) {
   if (condition) {
@@ -28,10 +31,54 @@ void expect(bool condition, const std::string &message) {
   std::cerr << "FAIL: " << message << '\n';
 }
 
-void printDiagnostics(const lang::FrontendResult &frontend) {
+void printDiagnostics(const lang::FrontendResult &frontend,
+                      std::source_location source = std::source_location::current()) {
   for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
     std::cerr << "  " << diagnostic.code << ": " << diagnostic.message << '\n';
   }
+  if (evidenceDirectory.empty())
+    return;
+  std::filesystem::create_directories(evidenceDirectory);
+  const auto stem = "failure-line" + std::to_string(source.line()) + "-" +
+                    std::to_string(++evidenceSequence);
+  const auto mirPath = evidenceDirectory / (stem + ".mir.txt");
+  std::ofstream mir(mirPath);
+  lang::MirPrinter{}.print(frontend.mir, mir);
+  std::ofstream hir(evidenceDirectory / (stem + ".hir.txt"));
+  const lang::SemanticTypePrinter types(frontend.semantics);
+  const auto region = [&](lang::Lifetime value) {
+    hir << static_cast<int>(value.kind) << ':' << value.id;
+  };
+  const auto body = [&](std::string_view kind, const auto &instance, std::size_t owner) {
+    hir << kind << "=" << instance.id << " declaration=" << instance.declaration
+        << " owner=" << owner
+        << " owner-type=" << types.print(instance.ownerType) << " parameters=";
+    for (const auto &type : instance.parameterTypes) hir << '[' << types.print(type) << ']';
+    hir << " regions=";
+    for (const auto &parameter : instance.lifetimeContract.parameters) {
+      region(parameter); hir << ',';
+    }
+    hir << '\n';
+    for (const auto &value : instance.body.values) {
+      hir << " value=" << value.id << " kind=" << static_cast<int>(value.kind)
+          << " function=" << value.functionTarget.value_or(0)
+          << " constructor=" << value.constructorTarget.value_or(0)
+          << " type=" << types.print(value.info.type) << " operands=";
+      for (const auto operand : value.operands) hir << operand << ',';
+      hir << " parameters=";
+      for (const auto &type : value.parameterTypes) hir << '[' << types.print(type) << ']';
+      hir << " bindings=";
+      for (const auto &[parameter, actual] : value.lifetimeApplication.bindings) {
+        region(parameter); hir << "->"; region(actual); hir << ',';
+      }
+      hir << '\n';
+    }
+  };
+  for (const auto &instance : frontend.hir.functionInstances())
+    body("function", instance, instance.owner.value_or(0));
+  for (const auto &instance : frontend.hir.constructorInstances())
+    body("constructor", instance, instance.owner);
+  std::cerr << "  evidence: " << mirPath << '\n';
 }
 
 std::filesystem::path standardLibraryPrelude() {
@@ -4023,8 +4070,13 @@ int main() { auto owner = std::make_unique<Derived>(); return owner->read(); }
 } // namespace
 
 int main(int argc, char **argv) {
-  if (argc == 3 && std::string_view(argv[1]) == "--test") {
-    const std::string_view name(argv[2]);
+  int first = 1;
+  if (argc >= 3 && std::string_view(argv[1]) == "--output-dir") {
+    evidenceDirectory = argv[2];
+    first = 3;
+  }
+  if (argc - first == 2 && std::string_view(argv[first]) == "--test") {
+    const std::string_view name(argv[first + 1]);
     if (name == "testCleanupSpinePredecessorIndex")
       testCleanupSpinePredecessorIndex();
     else if (name == "testCollectionCleanupContracts")
@@ -4045,8 +4097,8 @@ int main(int argc, char **argv) {
     }
     return passed ? 0 : 1;
   }
-  if (argc != 1) {
-    std::cerr << "usage: " << argv[0] << " [--test <name>]\n";
+  if (argc != first) {
+    std::cerr << "usage: " << argv[0] << " [--output-dir <path>] [--test <name>]\n";
     return 2;
   }
   testCanonicalMetadataAndMirSites();

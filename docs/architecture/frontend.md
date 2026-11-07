@@ -423,6 +423,12 @@ not prove an alternative inactive. These declaration summaries supply input
 relationships to the existing lifetime normalizer, while ordinary body
 analysis still proves initialization, access, movement and conversion. Named
 owner lifetimes continue to require declared relationships.
+Constructor signature normalization allocates its declaration binders once.
+Initializer-derived relationships for anonymous stored regions are added after
+the class field identities are reserved, before contract validation and
+publication. This pass preserves explicit bounds and exact class/constructor
+generic scopes; it does not allocate symbols from read-only path queries or
+recreate normalized input lifetimes.
 Conditional nominal wrappers publish each initialized field's exact paths and
 alternative domains, including fields nested through other ordinary records.
 The shared coverage check requires a selected alternative for every active

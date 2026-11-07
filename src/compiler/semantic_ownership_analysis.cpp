@@ -5832,9 +5832,17 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
     const bool containedReferent = physicalCallerStorage && !externalReferent &&
                                    (checkedOwnedPointee ||
                                     (containedInventory && containedInventory->empty()));
+    // The trusted opaque referent is a view of the selected object's physical
+    // storage, not a claim about that object's hidden external dependencies.
+    // Checked erasure typechecks the exact transformation. Keep the complete
+    // source path and all ownership/access/region checks here even when an
+    // open referent prevents enumerating its stored references.
+    const auto *resultOwner = classInfo(resultPath->reference.arguments.front());
+    const bool erasedReferent = resultOwner &&
+        resultOwner->compilerCapability == CompilerCapabilityTypeKind::ErasedObject;
     if ((!physicalCallerStorage && !externalReferent) ||
         (sourceType != resultPath->reference.arguments.front() &&
-         !containedReferent) ||
+         !containedReferent && !erasedReferent) ||
         (dependency.access == AccessMode::Mutable &&
          sourceAccess != AccessMode::Mutable))
       return std::nullopt;
@@ -9384,7 +9392,10 @@ auto SemanticVisitor::Impl::storedBorrowDependencies(const Expr *expression)
       BorrowPath prefix;
       if (place != nullptr)
         for (const auto &projection : place->projections) {
-          if (projection.kind != PlaceProjectionKind::Field)
+          // These are already checked source-place identities. Preserve each
+          // exact base owner/ordinal and constant element just as a field;
+          // indirect or dynamic storage still ends the structural prefix.
+          if (!isWellFormedBorrowPath(std::span(&projection, 1)))
             break;
           prefix.push_back(projection);
         }
@@ -9706,10 +9717,7 @@ auto SemanticVisitor::Impl::retainedLoanSource(const Expr *expression) const
         !loan.entry && place != nullptr &&
         std::find(loan.carriers.begin(), loan.carriers.end(), place->root) !=
             loan.carriers.end() &&
-        std::all_of(place->projections.begin(), place->projections.end(),
-                    [](const auto &projection) {
-                      return projection.kind == PlaceProjectionKind::Field;
-                    }))
+        isWellFormedBorrowPath(place->projections))
       projections = place->projections;
     for (const auto field : sourceFields)
       projections.push_back(
@@ -9768,7 +9776,8 @@ auto SemanticVisitor::Impl::retainedLoanSource(const Expr *expression) const
           for (std::size_t index = 0;
                index < std::min(fields.size(), place->projections.size());
                ++index) {
-            if (place->projections[index].kind != PlaceProjectionKind::Field)
+            if (!isWellFormedBorrowPath(std::span(&place->projections[index], 1)) ||
+                !isWellFormedBorrowPath(std::span(&fields[index], 1)))
               return true;
             if (place->projections[index] != fields[index])
               return false;
@@ -16195,7 +16204,7 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
       intrinsic == IntrinsicKind::EraseReferenceMut ||
       intrinsic == IntrinsicKind::RestoreReference ||
       intrinsic == IntrinsicKind::RestoreReferenceMut) {
-    analyzeReferenceErasureCall(expr, intrinsic);
+    analyzeReferenceErasureCall(expr, intrinsic, declaration);
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

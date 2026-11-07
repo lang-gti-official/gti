@@ -46,10 +46,10 @@ namespace std {
                 << (code.empty() ? "" : std::string(" with ") + std::string(code)) << '\n';
       for (const auto &diagnostic : result.diagnostics)
         std::cerr << "  " << diagnostic.code << ": " << diagnostic.message << '\n';
-      if (mir && internal && argc > 2 && name == "projected-only-class-instantiation") {
+      if (mir && internal && argc > 2) {
         const auto directory = std::filesystem::path(argv[2]);
         std::filesystem::create_directories(directory);
-        std::ofstream evidence(directory / (std::string(name) + ".mir.txt"));
+        std::ofstream evidence(directory / (std::string(name) + ".program.mir.txt"));
         lang::MirPrinter{}.print(result.mir, evidence);
       }
       if (mir && internal && argc > 2 &&
@@ -139,6 +139,52 @@ int main() { std::string_view text = "hello"; return same(text, "hello") ? 0 : 1
   check("text-equality-does-not-admit-other-scalar-shapes", R"gti(
 bool wrong(std::string_view text, int number) { return text == number; }
 )gti", false, "GTI-S2000", true);
+  check("operator-calls-use-the-declared-lifetime-application", R"gti(
+struct Reader<lifetime a> {
+  int&<a> value;
+  Reader(int&<a> input) : value(input) {}
+  int operator()(int&<a> other) { return value + other; }
+  int&<a> operator*() { return value; }
+  operator bool() { return value != 0; }
+};
+int read<lifetime a>(int&<a> first, int&<a> second) {
+  Reader<a> reader{first};
+  if (reader) { return reader(second) + *reader; }
+  return 0;
+}
+int main() { int first = 3; int second = 4; return read(first, second) - 10; }
+)gti", true);
+  check("operator-calls-prove-independent-input-bounds", R"gti(
+struct Reader<lifetime a> {
+  int&<a> value;
+  Reader(int&<a> input) : value(input) {}
+  int operator()(int&<a> other) { return value + other; }
+};
+int read<lifetime a, lifetime b>(int&<a> first, int&<b> second)
+    requires outlives<b, a> {
+  Reader<a> reader{first}; return reader(second);
+}
+int main() { int first = 3; int second = 4; return read(first, second) - 7; }
+)gti", true);
+  check("operator-calls-cannot-invent-independent-input-bounds", R"gti(
+struct Reader<lifetime a> {
+  int&<a> value;
+  Reader(int&<a> input) : value(input) {}
+  int operator()(int&<a> other) { return value + other; }
+};
+int invalid<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
+  Reader<a> reader{first}; return reader(second);
+}
+int main() { return 0; }
+)gti", false, "GTI-S2127");
+  check("operator-lifetime-application-preserves-literal-adoption", R"gti(
+struct Number {
+  int value;
+  Number(int input) : value(input) {}
+  int operator+(uint8_t other) { return value + int(other); }
+};
+int main() { Number number{5}; return number + 2 - 7; }
+)gti", true);
   check("explicit-identity", R"gti(
 int&<a> identity<lifetime a>(int&<a> value) { return value; }
 int main() { int value = 7; int& result = identity(value); return result - 7; }
@@ -484,6 +530,21 @@ struct Derived<lifetime a> : public Base<a> {
 };
 int&<a> read<lifetime a>(Derived<a>& view) { return view.value; }
 int main() { int value = 7; Derived view{value}; return read(view) + view.get() - 14; }
+)gti", true);
+  check("nested-inherited-reference-retains-every-base-owner", R"gti(
+struct Root<T, lifetime a> {
+  T&<a> value;
+  Root(T&<a> input) : value(input) {}
+};
+struct Middle<T, lifetime a> : public Root<T, a> {
+  Middle(T&<a> input) : Root<T, a>(input) {}
+};
+struct Leaf<lifetime a> : public Middle<int, a> {
+  Leaf(int&<a> input) : Middle<int, a>(input) {}
+  int&<a> get() { return value; }
+};
+int&<a> read<lifetime a>(Leaf<a>& view) { return view.value; }
+int main() { int value = 7; Leaf view{value}; return read(view) + view.get() - 14; }
 )gti", true);
   check("inherited-reference-after-interface-base", R"gti(
 interface Marker { int mark(); };

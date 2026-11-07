@@ -14,6 +14,28 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "checked_erasure_regions": """
+import std.memory;
+T&<region> round_trip<T, lifetime region>(T&<region> source) {
+  unsafe { return std::restore_ref<T>(std::erase_ref(source)); }
+}
+mut T&<region> mutable_round_trip<T, lifetime region>(mut T&<region> source) {
+  unsafe { return std::restore_mut<T>(std::erase_mut(source)); }
+}
+struct Borrowed<lifetime storage> {
+  int&<storage> value;
+  Borrowed(int&<storage> source) : value(source) {}
+};
+int main() {
+  mut int value = 3;
+  mut int& restored = mutable_round_trip(value);
+  restored = 7;
+  if (round_trip(value) != 7) { return 1; }
+  Borrowed view{value};
+  Borrowed& same = round_trip(view);
+  return same.value - 7;
+}
+""",
     "independent_text_storage_regions": """
 bool same(std::string_view left, std::string_view right) { return left == right; }
 bool different(std::string_view left, std::string_view right) { return left != right; }
@@ -290,6 +312,36 @@ int bump(mut int& first, mut int& second) {
   return first + second;
 }
 int main() { mut Derived pair{}; return bump(pair.left, pair.right) - 5; }
+""",
+    "checked_operator_lifetime_applications": """
+struct Reader<lifetime a> {
+  int&<a> value;
+  Reader(int&<a> input) : value(input) {}
+  int operator()(int&<a> other) { return value + other; }
+  int&<a> operator*() { return value; }
+  operator bool() { return value != 0; }
+};
+int read<lifetime a>(int&<a> first, int&<a> second) {
+  Reader<a> reader{first};
+  if (reader) { return reader(second) + *reader; }
+  return 0;
+}
+int main() { int first = 3; int second = 4; return read(first, second) - 10; }
+""",
+    "nested_inherited_reference": """
+struct Root<T, lifetime a> {
+  T&<a> value;
+  Root(T&<a> input) : value(input) {}
+};
+struct Middle<T, lifetime a> : public Root<T, a> {
+  Middle(T&<a> input) : Root<T, a>(input) {}
+};
+struct Leaf<lifetime a> : public Middle<int, a> {
+  Leaf(int&<a> input) : Middle<int, a>(input) {}
+  int&<a> get() { return value; }
+};
+int&<a> read<lifetime a>(Leaf<a>& view) { return view.value; }
+int main() { int value = 7; Leaf view{value}; return read(view) + view.get() - 14; }
 """,
     "inherited_borrowed_base_cleanup": """
 mut int observed = 0;

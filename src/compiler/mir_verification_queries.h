@@ -184,6 +184,16 @@ deriveBorrowPathConditions(const MirProgram &, const SemanticType &, AccessMode,
     std::span<const MirPlaceProjection>, std::span<const BorrowDependencyCondition>,
     std::span<const MirBorrowPathPayloadSelection>, MirBorrowPathRoot);
 
+// Additional inline Base/field disjointness only. Both canonical projection
+// chains must reverse-replay against this exact root and nominal catalog. A
+// physical reference root may retain or omit its one initial dereference in
+// canonical form; no later reference/pointer crossing or enum selection proves
+// disjoint external storage. False means unknown/overlap, not a valid path.
+[[nodiscard]] bool inlineBorrowProjectionsDisjoint(
+    const MirProgram &, SemanticType root,
+    std::span<const MirPlaceProjection> left,
+    std::span<const MirPlaceProjection> right);
+
 // Concrete complete object representation, independent of any lifetime action.
 [[nodiscard]] bool completeObjectType(const MirProgram &program,
                                       const SemanticType &type);

@@ -1477,6 +1477,45 @@ public:
                        HirValueId source = 0) const {
     if (!target.specified())
       return false;
+    if (operand.kind == MirOperandKind::Value)
+      if (const auto *stage = definition(operand.value);
+          stage && stage->kind == MirInstructionKind::CallInput &&
+          stage->callInputRole == MirCallInputRole::Receiver &&
+          stage->preparedParameterDrop) {
+        // An owning receiver stage materializes new storage. Its borrow is
+        // bounded by that exact prepared destination, not the pre-transfer
+        // operand. Ordered-input and lifecycle verification independently
+        // prove source transfer, unique consumption and cleanup of this drop.
+        const auto *place = stage->destination
+                                ? body.findPlace(*stage->destination) : nullptr;
+        const auto *drop = body.findDropObligation(*stage->preparedParameterDrop);
+        if (stage->tombstone || !stage->result || *stage->result != operand.value ||
+            stage->hirValue == 0 || stage->callSite == 0 ||
+            stage->operands.size() != 1 || stage->info.type != operand.type ||
+            stage->info.type.kind == SemanticType::Reference ||
+            (stage->callInputKind != HirCallInputKind::MoveValue &&
+             stage->callInputKind != HirCallInputKind::CopyValue) ||
+            !place || place->root != MirPlaceRootKind::Temporary ||
+            place->temporary == 0 || !place->projections.empty() ||
+            place->sourceValue != stage->hirValue || place->type != stage->info.type ||
+            place->foreignStorage || place->initiallyAvailable || !drop ||
+            drop->kind != MirDropObligationKind::PreparedParameter ||
+            drop->place != place->id || drop->dropType.type != place->type ||
+            drop->initiallyActive ||
+            std::count_if(stage->lifecycle.begin(), stage->lifecycle.end(),
+                [&](const MirLifecycleEvent &event) {
+                  return (event.kind == MirLifecycleEventKind::Initialize ||
+                          event.kind == MirLifecycleEventKind::Reparent) &&
+                         event.target == drop->id && !event.conditional &&
+                         !event.failureCleanup;
+                }) != 1)
+          return false;
+        return std::any_of(body.lifetimeBody.origins.begin(), body.lifetimeBody.origins.end(),
+            [&](const MirLifetimeOrigin &origin) {
+              return origin.place == place->id && origin.source == stage->hirValue &&
+                     graph.proves(origin.region, target);
+            });
+      }
     const auto *actual = sourceOperand(operand, source);
     if (!actual)
       return false;

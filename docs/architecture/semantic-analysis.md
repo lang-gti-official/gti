@@ -379,6 +379,16 @@ contextual conversion on its initializer or operand, in the map that holds a con
 target's program effect edge, so a condition's `operator bool` contributes to
 initializer-order effects like a declaration's conversion does.
 
+Concrete operator selection applies the same lifetime contract as an ordinary
+function call. Exact non-lifetime shapes, literal-adoption tiers and access
+checks still select the target; its checked application proves region
+conversions and bounds. Only the selected application is committed. Deferred
+contextual arguments are completed before that application becomes executable.
+Synthetic operator receivers supply their exact checked place, rather than
+implicitly borrowing the current method's receiver. Normal, projected and
+contextual operator records all retain the selected lifetime arguments and
+application for independent HIR/MIR verification.
+
 ## Use-based accessor selection
 
 An accessor pair (a read-only overload returning `T&` and an otherwise exact

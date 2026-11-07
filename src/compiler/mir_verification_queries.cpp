@@ -544,6 +544,51 @@ std::optional<BorrowPath> borrowPathForProjections(
              ? std::optional{std::move(path)} : std::nullopt;
 }
 
+bool inlineBorrowProjectionsDisjoint(
+    const MirProgram &program, SemanticType root,
+    std::span<const MirPlaceProjection> left,
+    std::span<const MirPlaceProjection> right) {
+  if (root.kind == SemanticType::Reference) {
+    if (root.arguments.size() != 1 ||
+        root.arguments.front().kind == SemanticType::Reference)
+      return false;
+    root = SemanticType(root.arguments.front());
+    const auto referentPath = [](std::span<const MirPlaceProjection> &path) {
+      if (!path.empty() && path.front().kind == MirProjectionKind::Dereference) {
+        if (path.front() != MirPlaceProjection{.kind = MirProjectionKind::Dereference})
+          return false;
+        path = path.subspan(1);
+      }
+      return true;
+    };
+    if (!referentPath(left) || !referentPath(right))
+      return false;
+  }
+  const auto leftPath = borrowPathForProjections(
+      program, root, AccessMode::ReadOnly, left, {}, {}, MirBorrowPathRoot::Value);
+  const auto rightPath = borrowPathForProjections(
+      program, root, AccessMode::ReadOnly, right, {}, {}, MirBorrowPathRoot::Value);
+  if (!leftPath || !rightPath)
+    return false;
+  return inlineBorrowPathsDisjoint(root, *leftPath, *rightPath,
+      [&](const SemanticType &type, const PlaceProjection &step)
+          -> std::optional<SemanticType> {
+        if (type.kind == SemanticType::Class) {
+          const auto owner = mirClassLifetimeView(program, type);
+          if (!owner || (owner->instance->kind != ClassKind::Class &&
+                         owner->instance->kind != ClassKind::Struct))
+            return std::nullopt;
+        }
+        const auto view = walkBorrowPath(
+            program, type, AccessMode::ReadOnly, std::span{&step, std::size_t{1}},
+            {}, MirBorrowPathRoot::Value);
+        if (!view || !view->referenceCrossings.empty() ||
+            !view->payloadSelections.empty())
+          return std::nullopt;
+        return view->type;
+      });
+}
+
 const MirPlace *physicalPayloadSelectionSource(
     const MirProgram &program, const MirBody &body,
     const MirReferenceSelection &selection) {

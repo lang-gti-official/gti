@@ -304,6 +304,16 @@ auto SemanticVisitor::Impl::normalizeConstructorLifetimeContract(
       result, constructor.parameterTypes, std::move(contract),
       constructor.requirements, fresh);
   constructor.lifetimeContract = std::move(normalized.contract);
+  if (normalized.ambiguousResult)
+    report(site, "A constructed borrowed type needs a declared relationship "
+                 "between its stored lifetimes and constructor inputs.",
+           "GTI-S2127");
+}
+
+auto SemanticVisitor::Impl::addConstructorInitializerLifetimeBounds(
+    ConstructorInfo &constructor) -> void {
+  const auto &owner = classInfo(constructor.owner);
+  const auto result = openClassType(constructor.owner);
   // Anonymous stored regions are declaration-derived output slots. Their
   // initializer list can connect them to inputs without making callers name
   // those hidden slots. This is a serialized constructor contract, not an
@@ -348,10 +358,42 @@ auto SemanticVisitor::Impl::normalizeConstructorLifetimeContract(
           appendUnique(constructor.lifetimeContract.bounds, edge);
     }
   }
-  if (normalized.ambiguousResult)
-    report(site, "A constructed borrowed type needs a declared relationship "
-                 "between its stored lifetimes and constructor inputs.",
-           "GTI-S2127");
+}
+
+auto SemanticVisitor::Impl::finalizeConstructorInitializerLifetimes() -> void {
+  struct RestoreContext {
+    Impl &analyzer;
+    std::optional<ClassId> owner;
+    SourceUnitId source;
+    std::vector<std::string> nameSpace;
+    ~RestoreContext() {
+      analyzer.currentClass = owner;
+      analyzer.currentSourceUnit = source;
+      analyzer.currentNamespace = std::move(nameSpace);
+    }
+  } restore{*this, currentClass, currentSourceUnit, currentNamespace};
+  // Signature normalization has already allocated every declaration binder.
+  // Add only initializer-derived bounds after all exact field identities have
+  // been reserved; rebuilding signatures here could mint or lose input slots.
+  for (std::size_t index = registrationFloor.classes; index < classes.size(); ++index) {
+    auto &owner = classInfo(index + 1);
+    currentClass = owner.id;
+    currentSourceUnit = sourceUnitFor(owner.name);
+    currentNamespace = owner.namespaceScope;
+    beginClassParameterScope(owner);
+    const auto finish = [&](ConstructorInfo &constructor) {
+      beginTypeParameterScope(constructor.genericParameters);
+      addConstructorInitializerLifetimeBounds(constructor);
+      endTypeParameterScope();
+    };
+    for (auto &constructor : owner.constructors)
+      finish(constructor);
+    for (auto *constructor : {&owner.copyConstructor, &owner.moveConstructor,
+                              &owner.designatedConstructor, &owner.reversedDesignatedConstructor})
+      if (*constructor)
+        finish(**constructor);
+    endTypeParameterScope();
+  }
 }
 
 auto SemanticVisitor::Impl::normalizeDestructorLifetimeContract(
@@ -1099,7 +1141,8 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
 
 auto SemanticVisitor::Impl::applyCallLifetimeContract(
     CallableCandidate &function, std::span<const AnalyzedCallArgument> arguments,
-    const Token &site, const Expr *receiver, bool diagnose) -> bool {
+    const Token &site, const Expr *receiver, bool diagnose,
+    const SemanticLoanPlace *receiverPlace) -> bool {
   notePrivateLifetimeDependency(function.id);
   const auto reject = [&](std::string_view message) {
     if (diagnose)
@@ -1250,8 +1293,9 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
     }
   }
   if (function.lifetimeContract.receiver.specified()) {
-    const auto place = receiver ? loanPlace(receiver)
-                               : SemanticLoanPlace{.receiver = true};
+    const auto place = receiverPlace ? *receiverPlace
+                     : receiver ? loanPlace(receiver)
+                                : SemanticLoanPlace{.receiver = true};
     if (!require(actualRegion(place, receiver),
                  substitute(function.lifetimeContract.receiver)))
       return reject("The method receiver has no checked lifetime origin.");

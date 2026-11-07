@@ -10370,6 +10370,7 @@ auto SemanticVisitor::Impl::registerDesignatedConstructors() -> void {
                            .requiredParameterCount =
                                owner.fields.size() + (reversed ? 1 : 0)};
       normalizeConstructorLifetimeContract(info);
+      addConstructorInitializerLifetimeBounds(info);
       constructorGenericParameters.emplace(declaration.get(),
                                            std::vector<GenericParameterInfo>{});
       ClassLifecycleInfo lifecycle =

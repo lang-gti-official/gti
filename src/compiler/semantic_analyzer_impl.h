@@ -3231,6 +3231,8 @@ private:
   [[nodiscard]] bool representableInferredLifetimeBound(
       const LifetimeSignatureContract &declaration, LifetimeBound bound) const;
   void normalizeConstructorLifetimeContract(ConstructorInfo &constructor);
+  void addConstructorInitializerLifetimeBounds(ConstructorInfo &constructor);
+  void finalizeConstructorInitializerLifetimes();
   void normalizeDestructorLifetimeContract(DestructorInfo &destructor);
   struct LifetimeSignatureNormalization {
     LifetimeSignatureContract contract;
@@ -3268,7 +3270,8 @@ private:
       const Expr *receiver = nullptr, bool diagnose = true);
   [[nodiscard]] bool applyCallLifetimeContract(
       CallableCandidate &function, std::span<const AnalyzedCallArgument> arguments,
-      const Token &site, const Expr *receiver = nullptr, bool diagnose = true);
+      const Token &site, const Expr *receiver = nullptr, bool diagnose = true,
+      const SemanticLoanPlace *receiverPlace = nullptr);
   void commitLifetimeApplication(const SemanticLifetimeApplication &application);
   void finalizeLifetimeBody();
   [[nodiscard]] LifetimeBounds currentLifetimeBounds(
@@ -3751,7 +3754,8 @@ private:
 
   void analyzePolymorphicStorageIntrinsicCall(const Call &expr,
                                               IntrinsicKind intrinsic);
-  void analyzeReferenceErasureCall(const Call &expr, IntrinsicKind intrinsic);
+  void analyzeReferenceErasureCall(const Call &expr, IntrinsicKind intrinsic,
+                                  const CallableCandidate &declaration);
   void analyzeFunctionPointerCall(const Call &expr, IntrinsicKind intrinsic);
   [[nodiscard]] bool
   inlinePolymorphicPayload(const SemanticType &model,

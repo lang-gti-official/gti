@@ -306,6 +306,7 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
     }
   }
   recordClassFieldSymbols();
+  finalizeConstructorInitializerLifetimes();
   validateOrdinaryClassLayouts();
   registerGlobalBorrowStorage(declarations, {});
   resolveInheritedMembers();
