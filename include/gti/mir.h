@@ -1676,6 +1676,7 @@ struct MirConstructorDispatchState {
 
 struct MirConstructorInstance {
   std::vector<GenericParameterIdentity> liftedLifetimes;
+  FunctionCodegenAttributes codegenAttributes;
   HirConstructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
   // Universal owner type in this callable's region scope.
@@ -1725,6 +1726,7 @@ struct MirDestructorDispatchState {
 
 struct MirDestructorInstance {
   std::vector<GenericParameterIdentity> liftedLifetimes;
+  FunctionCodegenAttributes codegenAttributes;
   HirDestructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
   // Universal owner type in this callable's region scope.

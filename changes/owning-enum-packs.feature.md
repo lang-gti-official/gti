@@ -1,0 +1,1 @@
+Allow owning payload enums through ordinary variadic functions and constructors, including container insertion and emplacement. Concrete pack elements retain the same ownership and callable-boundary checks as individual parameters; unsupported elements are diagnosed by their concrete type.

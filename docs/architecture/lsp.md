@@ -1213,6 +1213,13 @@ least one structurally valid repair group appends `(fix available)` to its LSP-f
 message. The compiler diagnostic text remains unchanged, and clients without
 that action capability are not promised an unavailable editor operation.
 
+Non-exhaustive payload-enum switches expose the compiler's `Insert missing
+switch cases` repair. It inserts missing tag-only arms with TODO comments and
+`break`, preserving existing arms. It requires review and is not preferred:
+the action supplies scaffolding, while payload access and case behavior remain
+author decisions. The existing version/source checks also protect these edits;
+the adapter neither computes enum coverage nor parses diagnostic text.
+
 Equal nonempty repair IDs group edits atomically; different IDs and legacy
 singletons remain alternatives. This first profile supports one open target
 document per group. It rejects unknown or inconsistent source text, cross-file

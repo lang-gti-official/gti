@@ -3314,6 +3314,14 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(cpp_mir_body_emitter_corpus PROPERTIES PROCESSORS 4)
   add_test(
+    NAME cpp_mir_text_borrow_boundary
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/cpp_text_borrow_boundary_test.py"
+            "$<TARGET_FILE:gti>"
+  )
+  set_tests_properties(cpp_mir_text_borrow_boundary PROPERTIES
+                      LABELS "cpp-backend" TIMEOUT 900)
+  add_test(
     NAME cpp_mir_body_emitter_corpus_protocol
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/cpp_mir_body_emitter_corpus_coordinator_test.py"

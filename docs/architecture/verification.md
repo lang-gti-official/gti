@@ -1,5 +1,32 @@
 # Compiler Verification
 
+## Isolated native test fixtures
+
+C++ test executables that write source/module fixtures use
+`tests/temporary_directory.h`. Atomic directory creation gives each process a
+private root; descriptive fixture names live beneath it, and RAII cleanup removes
+only that owned root on normal exit or exception unwinding. Fixed paths directly
+under the system temporary directory are not safe across concurrent CTest runs
+or worktrees. Failure-only MIR dumps go to captured stderr so their evidence
+stays with the failed test. `testSupportFacilities` checks independent roots and
+cleanup without removing a surviving fixture.
+
+## Terminal switch continuations and C++ text-borrow admission
+
+`mir_full_expression` analyzes the issue #309 generic accessor and independently
+verifies its MIR. `class_payload_enum_runtime` executes that fixture with default
+and exhaustive payload arms, a discarded compile-time branch, a nested loop
+break, a switch break, an unmatched scalar switch and exact temporary cleanup
+counts. Dead continuation removal does not relax full-expression verification.
+
+`cpp_mir_text_borrow_boundary` checks issue #310's procedural HTML program and
+an unrelated macro-free generic text call: C++ reports `GTI-B0003` at the owning
+declaration without replacing an existing output, and LLVM executes both at
+O0/O3. Ownerless generic text results and ordinary reference results still
+execute under the retained C++23/O3 profile. The C++ corpus worker positively
+asserts the specific unsupported operation for the HTML example and completes
+both result records, rather than terminating with an uncaught exception.
+
 ## Google Spot runner pilot
 
 `gcp_spot_runner` is entirely offline: strict policy parsing, disabled/expired
@@ -12797,6 +12824,11 @@ rejection, sealed lowering, editor hover signatures, constexpr/defined-virtual c
 `inlinehint`/`noinline`/`cold` attributes (never `alwaysinline`). A body-lowered
 `[[noreturn, inline]]` panic wrapper retains its explicit hint without conflicting
 `noinline` or an invalid LLVM `noreturn` on the failure-status ABI.
+Source-bodied constructor and destructor coverage includes generic owners,
+implicit and constexpr construction, rejection on defaulted/deleted members,
+and policy-loss mutations at the MIR and sealed declaration boundaries.
+The hosted terminal-failure fixture also annotates its constructors and destructor
+to prove that call-boundary hints preserve construction rollback and cleanup order.
 `codegen_attribute_runtime` runs `examples/llvm/codegen-attributes.gti` on LLVM
 O0 and O3, including recursive call boundaries, normal return from a cold
 function, generic/member calls and exactly-once destructor cleanup.

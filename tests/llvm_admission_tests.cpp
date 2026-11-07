@@ -2844,6 +2844,39 @@ int main() { Pinned value{}; return 0; }
 }
 
 void testRawFieldWitnesses() {
+  const auto borrowedField = lang::planLlvmAdmission(lower(R"(
+struct Cell { mut int value = 7; Cell() = default; };
+int read(int& value) { return value; }
+void change(mut int& value) { value = 9; }
+struct Snapshot { int value; Snapshot(int& source) : value(source) {} };
+int main() {
+  mut Cell object{};
+  unsafe {
+    Cell* pointer = &object;
+    Snapshot snapshot{pointer->value};
+    change(pointer->value);
+    return read(pointer->value) + snapshot.value - 16;
+  }
+}
+)"));
+  expect(
+      borrowedField.admitted(),
+      "raw fields bind exact read/mutable call and constructor parameters: " +
+          borrowedField.limitation());
+  for (const auto &source :
+       {"struct Cell { mut int value = 7; Cell() = default; }; "
+        "int read(int& value) { return value; } "
+        "int main() { Cell object{}; const Cell* p = &object; return "
+        "read(p->value); }",
+        "struct Cell { mut int value = 7; Cell() = default; }; "
+        "void change(mut int& value) { value = 9; } "
+        "int main() { Cell object{}; const Cell* p = &object; unsafe { "
+        "change(p->value); } return 0; }"})
+    expect(
+        !lang::Frontend()
+             .analyze("raw-borrow-rejection.gti", source)
+             .canGenerateCode(),
+        "raw argument borrows preserve unsafe and mutable access requirements");
   for (const auto qualifier : {"const ", "mut "}) {
     const auto pointerInput = lang::planLlvmAdmission(lower(std::string(R"(
 struct Slot { mut int value = 7; Slot() = default; };

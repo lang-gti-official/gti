@@ -95,6 +95,14 @@ int main() {
   try {
     expect(!gti_test::emitCpp(frontend).contents.empty(),
            "verified text-reference adapters reach the production backend");
+  } catch (const lang::BackendUnsupportedError &error) {
+    // The frozen C++ backend cannot represent a text call result that
+    // carries a borrow dependency and says so (GTI-B0003); LLVM executes it.
+    expect(std::string(error.what())
+                   .find("borrow-dependent text call results require the LLVM "
+                         "backend") != std::string::npos,
+           std::string("text-reference backend: unexpected C++ limitation: ") +
+               error.what());
   } catch (const std::logic_error &error) {
     expect(false, std::string("text-reference backend: ") + error.what());
   }
@@ -2072,6 +2080,15 @@ int main() {
   try {
     expect(!gti_test::emitCpp(frontend).contents.empty(),
            "accessor-returned text carriers reach the production backend");
+  } catch (const lang::BackendUnsupportedError &error) {
+    // The frozen C++ backend cannot represent a text call result that
+    // carries a borrow dependency and says so (GTI-B0003); LLVM executes it.
+    expect(std::string(error.what())
+                   .find("borrow-dependent text call results require the LLVM "
+                         "backend") != std::string::npos,
+           std::string(
+               "accessor text carrier backend: unexpected C++ limitation: ") +
+               error.what());
   } catch (const std::logic_error &error) {
     expect(false,
            std::string("accessor text carrier backend: ") + error.what());

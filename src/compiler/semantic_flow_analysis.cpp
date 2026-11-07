@@ -8509,6 +8509,15 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
   }
   std::vector<std::pair<LifetimeSyntaxKey, Lifetime>> contextualBindings;
   const auto enumerator = resolveEnumerator(*qualified, &subjectType, &contextualBindings);
+  if (!enumerator &&
+      reportInvisibleSymbol(qualified->name().last(),
+                            pathSpelling(qualified->name()),
+                            resolveQualifiedGlobally(qualified->name()))) {
+    // Pattern lookup obeys the same source-unit visibility rules as an
+    // ordinary qualified use. A loaded but unimported variant is not a
+    // different variant of the subject enum.
+    return std::nullopt;
+  }
   if (!enumerator) {
     report(qualified->name().last(),
            "Switch case must name a variant of '" + typeSpelling(subjectType) +
@@ -10390,7 +10399,9 @@ auto SemanticVisitor::Impl::mergedProjectedValueStates(const Symbol &left,
 
 auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
                                              const ScopeStack &left,
-                                             const ScopeStack &right) -> void {
+                                             const ScopeStack &right,
+                                             bool leftCanFallThrough,
+                                             bool rightCanFallThrough) -> void {
   // A branch-local opening does not establish the slot's current contents on
   // every incoming path. Copied shared snapshots retain their own loan facts.
   invalidateReferenceContents();
@@ -10438,13 +10449,25 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
             leftSymbol->second.retainedLoan == rightSymbol->second.retainedLoan
                 ? leftSymbol->second.retainedLoan
                 : baseSymbol.retainedLoan;
-        target->second.completeBorrowSet = joinedBorrowDependencySets(
+        // Complete transport facts describe values reaching this join. A
+        // terminating arm is absent, not an unknown supplier to join with the
+        // continuing arm. Keep the conservative loan union above separate.
+        const auto leftSet =
             leftSymbol->second.valueState == ValueState::Available
                 ? leftSymbol->second.completeBorrowSet
-                : std::nullopt,
+                : std::nullopt;
+        const auto rightSet =
             rightSymbol->second.valueState == ValueState::Available
                 ? rightSymbol->second.completeBorrowSet
-                : std::nullopt);
+                : std::nullopt;
+        // If neither arm continues, later unreachable syntax still receives
+        // ordinary semantic diagnostics. Retain the conservative join for
+        // that analysis; it is never published as a reachable MIR value.
+        target->second.completeBorrowSet =
+            leftCanFallThrough == rightCanFallThrough
+                ? joinedBorrowDependencySets(leftSet, rightSet)
+            : leftCanFallThrough ? leftSet
+                                 : rightSet;
       }
     }
   }

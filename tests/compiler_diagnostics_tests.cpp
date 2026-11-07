@@ -3750,7 +3750,322 @@ void testRawAuditDiagnosticPublication() {
   }
 }
 
+void testPayloadPatternVisibilityDiagnostics() {
+  const auto root =
+      std::filesystem::current_path() / "payload-pattern-visibility-fixture";
+  const auto entry = root / "main.gti";
+  const auto types = root / "types.gti";
+  const auto api = root / "api.gti";
+  const std::string typesSource = R"(export module types;
+export namespace sample {
+  enum Value { none, item(int value) };
+}
+)";
+  const std::string apiSource = R"(export module api;
+import "types.gti";
+export sample::Value get() { return sample::Value::item(42); }
+)";
+  const std::string source = R"(import "api.gti";
+int main() {
+  auto value = get();
+  switch (value) {
+  case sample::Value::item(auto& number): return number;
+  case sample::Value::none: return 0;
+  }
+}
+)";
+  std::unordered_map<std::string, std::string> overlays{
+      {types.string(), typesSource}, {api.string(), apiSource}};
+  lang::FrontendOptions options;
+  options.suggestIncludes = false;
+  const auto check = [&](const std::string &input) {
+    return lang::Frontend(options).analyze(entry, input, {}, overlays);
+  };
+  const auto hidden = check(source);
+  expect(hidden.sourceValid && hidden.syntaxValid && !hidden.semanticValid &&
+             !hidden.canGenerateCode(),
+         "an ordinary import does not publish its enum dependency");
+  std::size_t invisibleCases = 0;
+  for (const auto &diagnostic : hidden.diagnostics) {
+    expect(diagnostic.message.find("Switch case must name a variant") ==
+               std::string::npos,
+           "a known unimported variant reports visibility rather than enum "
+           "identity");
+    if (diagnostic.code != "GTI-S2024")
+      continue;
+    ++invisibleCases;
+    const bool item = diagnostic.message.find("::item'") != std::string::npos;
+    const std::string variant = item ? "item" : "none";
+    const auto use = source.find("sample::Value::" + variant) +
+                     std::string_view("sample::Value::").size();
+    const auto declaration = typesSource.find(variant);
+    expect(diagnostic.phase == lang::DiagnosticPhase::Semantics &&
+               diagnostic.message.find("not visible") != std::string::npos &&
+               diagnostic.primary.source == entry.string() &&
+               diagnostic.primary.start == use &&
+               diagnostic.primary.end == use + variant.size(),
+           "the visibility diagnostic identifies the exact case variant use");
+    expect(diagnostic.related.size() == 1 &&
+               diagnostic.related.front().span.source == types.string() &&
+               diagnostic.related.front().span.start == declaration &&
+               diagnostic.related.front().span.end ==
+                   declaration + variant.size(),
+           "the visibility diagnostic relates the defining variant");
+    expect(std::any_of(diagnostic.hints.begin(), diagnostic.hints.end(),
+                       [](const auto &hint) {
+                         return hint.find("import") != std::string::npos &&
+                                hint.find("re-exports") != std::string::npos;
+                       }) &&
+               diagnostic.fixes.empty(),
+           "missing import guidance preserves the existing safe repair path");
+  }
+  expect(invisibleCases == 2,
+         "payload and tag-only cases both explain missing module visibility");
+  const auto emptyHidden =
+      check("import \"api.gti\";\n"
+            "int main() { auto value = get(); switch (value) {} return 0; }\n");
+  const auto hiddenCoverage = std::find_if(
+      emptyHidden.diagnostics.begin(), emptyHidden.diagnostics.end(),
+      [](const auto &diagnostic) {
+        return diagnostic.code == "GTI-S2067" &&
+               diagnostic.message.find("not exhaustive") != std::string::npos;
+      });
+  expect(hiddenCoverage != emptyHidden.diagnostics.end() &&
+             hiddenCoverage->fixes.empty(),
+         "an empty switch cannot insert names from an unimported enum");
+  const auto direct = check("import \"types.gti\";\n" + source);
+  expect(direct.semanticValid && direct.canGenerateCode(),
+         "a direct import makes the original case spellings valid");
+  overlays[api.string()] =
+      "export module api;\nexport import \"types.gti\";\n"
+      "export sample::Value get() { return sample::Value::item(42); }\n";
+  const auto reexported = check(source);
+  expect(reexported.semanticValid && reexported.canGenerateCode(),
+         "an explicit re-export also makes case spellings visible");
+
+  overlays[types.string()] = R"(export module types;
+namespace sample {
+  enum Value { none, item(int value) };
+}
+export sample::Value get() { return sample::Value::item(42); }
+)";
+  overlays[api.string()] = "export module api;\nexport import \"types.gti\";\n";
+  const auto privateEnum = check(source);
+  expect(!privateEnum.semanticValid && !privateEnum.canGenerateCode(),
+         "an inferred subject type does not expose a module-private enum");
+  std::size_t privateCases = 0;
+  for (const auto &diagnostic : privateEnum.diagnostics) {
+    if (diagnostic.code != "GTI-S2024")
+      continue;
+    ++privateCases;
+    expect(diagnostic.message.find("private to module 'types'") !=
+                   std::string::npos &&
+               diagnostic.message.find("not exported") != std::string::npos &&
+               std::none_of(diagnostic.hints.begin(), diagnostic.hints.end(),
+                            [](const auto &hint) {
+                              return hint.find("Add an import") !=
+                                     std::string::npos;
+                            }) &&
+               diagnostic.fixes.empty(),
+           "a private enum needs export guidance, not another import");
+  }
+  expect(privateCases == 2,
+         "both private enum case forms report their export boundary");
+
+  overlays[types.string()] = "export module types;\nexport namespace sample { "
+                             "enum Value<T> { none, item(T value) }; }\n";
+  overlays[api.string()] = "export module api;\nimport \"types.gti\";\n"
+                           "export sample::Value<bool> get() { "
+                           "return sample::Value<bool>::item(true); }\n";
+  const std::string genericSource =
+      "import \"api.gti\";\nint main() { auto value = get(); switch (value) {\n"
+      "case sample::Value<bool>::item: return 0;\n"
+      "case sample::Value<bool>::none: return 0;\n} }\n";
+  const auto genericHidden = check(genericSource);
+  expect(!genericHidden.semanticValid &&
+             countDiagnosticCode(genericHidden.diagnostics, "GTI-S2024") == 2 &&
+             countDiagnosticCode(genericHidden.diagnostics, "GTI-S2067") == 0,
+         "concrete generic case owners retain the same import diagnosis");
+  expect(check("import \"types.gti\";\n" + genericSource).semanticValid,
+         "importing the generic enum resolves its concrete case owners");
+
+  const std::string wrongVariant = R"(enum Value { none, item(int value) };
+enum Other { none, item(int value) };
+int main() {
+  Value value = Value::item(42);
+  switch (value) {
+  case Other::item(auto& number): return number;
+  default: return 0;
+  }
+}
+)";
+  const auto wrong = check(wrongVariant);
+  expect(!wrong.semanticValid &&
+             std::any_of(wrong.diagnostics.begin(), wrong.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2067" &&
+                                  diagnostic.message.find(
+                                      "Switch case must name a variant") !=
+                                      std::string::npos;
+                         }) &&
+             std::none_of(wrong.diagnostics.begin(), wrong.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code == "GTI-S2024";
+                          }),
+         "a visible variant of another enum retains its identity diagnostic");
+}
+
+void testMissingSwitchCasesFix() {
+  const auto entry = std::filesystem::current_path() / "switch-case-fix.gti";
+  const auto analyze = [&](const std::string &source) {
+    return lang::Frontend().analyze(entry, source);
+  };
+  const auto findMissing =
+      [](const lang::FrontendResult &result) -> const lang::Diagnostic * {
+    for (const auto &diagnostic : result.diagnostics)
+      if (diagnostic.code == "GTI-S2067" &&
+          diagnostic.message.find("switch is not exhaustive") !=
+              std::string::npos)
+        return &diagnostic;
+    return nullptr;
+  };
+  const std::string source = R"(enum Message { idle, item(int value), done };
+void handle(Message& value) {
+  switch (value) {
+    case Message::idle: break;
+  }
+}
+int main() { return 0; }
+)";
+  const auto result = analyze(source);
+  const auto *missing = findMissing(result);
+  expect(!result.semanticValid && !result.canGenerateCode() && missing &&
+             missing->fixes.size() == 1,
+         "an incomplete payload switch has one compiler-owned case scaffold");
+  if (missing && missing->fixes.size() == 1) {
+    const auto &fix = missing->fixes.front();
+    const auto insertion = source.find("  }\n");
+    const std::string expected = "    case Message::item:\n"
+                                 "      // TODO: Handle this case.\n"
+                                 "      break;\n"
+                                 "    case Message::done:\n"
+                                 "      // TODO: Handle this case.\n"
+                                 "      break;\n";
+    expect(missing->primary.source == entry.string() &&
+               missing->primary.start == source.find("switch") &&
+               missing->primary.end == source.find("switch") + 6 &&
+               fix.span.source == entry.string() &&
+               fix.span.start == insertion && fix.span.end == insertion &&
+               fix.replacement == expected,
+           "the fix inserts only missing tags at the parser-owned closing "
+           "brace, preserving case indentation and declaration order");
+    expect(fix.message == "Insert missing switch cases" && !fix.preferred &&
+               fix.applicability == lang::RepairApplicability::RequiresReview,
+           "placeholder behavior requires review and is never preferred");
+    std::string repaired = source;
+    repaired.insert(fix.span.start, fix.replacement);
+    const auto checked = analyze(repaired);
+    expect(checked.semanticValid && checked.canGenerateCode() &&
+               findMissing(checked) == nullptr,
+           "applying the exact scaffold resolves coverage without payload "
+           "binding or ownership choices");
+  }
+
+  const std::string generic =
+      "namespace nested { enum Packet<T> { empty, filled(T value) }; }\n"
+      "int main() { nested::Packet<bool> value = "
+      "nested::Packet<bool>::filled(true); switch (value) {} return 0; }\n";
+  const auto empty = analyze(generic);
+  const auto *emptyMissing = findMissing(empty);
+  expect(emptyMissing && emptyMissing->fixes.size() == 1,
+         "an empty generic enum switch receives all cases");
+  if (emptyMissing && emptyMissing->fixes.size() == 1) {
+    const auto &fix = emptyMissing->fixes.front();
+    expect(fix.span.start == generic.find("{}") + 1 &&
+               fix.span.end == fix.span.start &&
+               fix.replacement.find("case nested::Packet<bool>::empty:") !=
+                   std::string::npos &&
+               fix.replacement.find("case nested::Packet<bool>::filled:") !=
+                   std::string::npos,
+           "single-line generic switches retain concrete qualified owner "
+           "spelling");
+    std::string repaired = generic;
+    repaired.insert(fix.span.start, fix.replacement);
+    const auto checked = analyze(repaired);
+    expect(checked.semanticValid && checked.canGenerateCode(),
+           "a concrete generic case scaffold can be reanalyzed");
+  }
+
+  const std::string declaration =
+      "enum Message { idle, item(int value), done };\n";
+  for (const std::string arms : {
+           "case Message::idle: break; case Message::item: break; "
+           "case Message::done: break;",
+           "default: break;",
+           "case Message::unknown: break;",
+       }) {
+    const auto checked = analyze(
+        declaration + "void handle(Message& value) { switch (value) { " + arms +
+        " } }\nint main() { return 0; }\n");
+    expect(findMissing(checked) == nullptr,
+           "complete, default-covered, and invalid-pattern switches do not "
+           "offer missing-case repairs");
+  }
+
+  const auto macro = entry.parent_path() / "switch-macro-library.gti";
+  const auto expanded = lang::Frontend().analyze(
+      entry,
+      "import \"switch-macro-library.gti\";\n" + declaration +
+          "int main() { return identity!({ []() -> int { "
+          "Message value = Message::idle; switch (value) {} return 0; }() }); "
+          "}\n",
+      {standardLibraryPrelude()},
+      {{macro.string(),
+        "export module library; import std.syntax;\n"
+        "export #macro(proc) std::syntax::expr identity(std::syntax::tokens "
+        "input) { return std::syntax::parse(std::syntax::slice(input, "
+        "uint64_t(1), std::syntax::size(input) - uint64_t(1))); }\n"}},
+      {standardLibraryRoot()});
+  const auto *expandedMissing = findMissing(expanded);
+  expect(expandedMissing && expandedMissing->fixes.empty(),
+         "an expanded macro's switch cannot edit its definition or call site");
+
+  const auto instantiated = analyzeTrustedPreludeFixture(
+      "switch-template.gti",
+      "import std.meta;\n"
+      "enum Packet<T> { empty, filled(T value) };\n"
+      "void inspect<T>(Packet<T>& value) { "
+      "if constexpr (std::meta::is_same<T, bool>()) { switch (value) {} } }\n"
+      "int main() { Packet<bool> value = Packet<bool>::empty; "
+      "inspect(value); return 0; }\n");
+  const auto *instantiatedMissing = findMissing(instantiated);
+  expect(instantiatedMissing && instantiatedMissing->fixes.empty(),
+         "a concrete instance cannot insert its specialized enum spelling "
+         "into a shared generic definition");
+
+  for (const std::string shadowed : {
+           "namespace sample { enum Value { empty, item(int value) }; "
+           "namespace sample { enum Value { empty, item(int value) }; } "
+           "void inspect(Value& value) { switch (value) {} } } "
+           "int main() { return 0; }\n",
+           "namespace sample { struct Item { Item() = default; }; "
+           "namespace sample { struct Item { Item() = default; }; } "
+           "} enum Packet<T> { empty, item(T value) }; "
+           "namespace sample { void inspect(Packet<Item>& value) { "
+           "switch (value) {} } } int main() { return 0; }\n",
+       }) {
+    const auto checked = analyze(shadowed);
+    const auto *shadowedMissing = findMissing(checked);
+    expect(shadowedMissing && shadowedMissing->fixes.empty(),
+           "qualified owner and generic-argument spellings must resolve to "
+           "the original enum identity before offering a scaffold");
+  }
+}
+
 constexpr NamedTest kTests[] = {
+    {"testMissingSwitchCasesFix", testMissingSwitchCasesFix},
+    {"testPayloadPatternVisibilityDiagnostics",
+     testPayloadPatternVisibilityDiagnostics},
     {"testGenericAdvisorySoundness", testGenericAdvisorySoundness},
     {"testSemanticVisitorRequestReuse", testSemanticVisitorRequestReuse},
     {"testUnknownFunctionAttributeClassification",

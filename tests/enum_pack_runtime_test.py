@@ -12,8 +12,18 @@ if __name__ == "__main__":
         raise SystemExit("usage: enum_pack_runtime_test.py <gti>")
     run_cases(pathlib.Path(sys.argv[1]).resolve(), {
         "pack_enum_values": [(0, "", "")],
+        "pack_owning_enum_values": [(0, "", "")],
+        "pack_owning_enum_lifetimes": [
+            (0, "10\n2\n1\n9\n", ""),
+            (70, "2\n1\n9\n", report("pack_owning_enum_lifetimes", 21)),
+            (70, "2\n1\n9\n", report("pack_owning_enum_lifetimes", 36)),
+            (70, "10\n2\n1\n9\n", report("pack_owning_enum_lifetimes", 32)),
+        ],
         "pack_enum_lifetimes": [
             (0, "0\n1\n9\n", ""),
             (70, "0\n1\n9\n", report("pack_enum_lifetimes", 29)),
         ],
     })
+
+    run_cases(pathlib.Path(sys.argv[1]).resolve(), {"main": [(0, "", "")]},
+              pathlib.Path(__file__).resolve().parents[1] / "examples/owning-enum-packs")

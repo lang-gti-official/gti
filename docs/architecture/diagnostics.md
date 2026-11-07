@@ -649,8 +649,10 @@ The native, polymorphic, operator and bodyless restrictions apply to
 `[[noreturn]]`/`[[track_caller]]`, not to every function attribute.
 `[[discardable]]` may describe non-void native, polymorphic or operator results;
 `[[borrowed_from(...)]]` has its own checked GTI reference-return boundary.
-`[[inline]]`, `[[cold]]` and `[[noinline]]` require source-defined GTI functions
-or methods. Duplicate hints, contradictory `inline`/`noinline` and unsupported
+`[[inline]]`, `[[cold]]` and `[[noinline]]` require source-defined GTI functions,
+methods, constructors or destructors. Defaulted/deleted lifecycle declarations
+reject the annotations; other function contracts remain unsupported on lifecycle
+declarations. Duplicate hints, contradictory `inline`/`noinline` and unsupported
 declaration shapes use `GTI-S2099` at the annotation name, without an automatic
 fix that could discard the author's policy. Arguments and non-function syntax
 use `GTI-P0001`; `inline` is accepted contextually inside the attribute list.
@@ -1437,6 +1439,13 @@ fix changes ownership intent. The LSP publishes these same frontend records.
   milestone and available body/block/instruction. Do not suggest filing a compiler bug. A generic text-vocabulary
   rejection or unclassified backend exception remains `GTI-B0001`; only an
   explicit bounded backend classification may use `GTI-B0003`.
+  C++ preflight also classifies a text-valued call with a retained `CallResult`
+  loan as unsupported: its reference/accessor loan representation cannot carry
+  that value dependency. The diagnostic names LLVM and retains the enclosing
+  body's source location. Ownerless text calls and ordinary reference-returning
+  calls retain their existing routes; generic spelling and macro expansion are
+  not the rejected property. This does not reclassify generic text-vocabulary
+  failures or bypass lowered-program verification.
   The C++ module preflight uses it when distinct nominal declarations,
   incompatible type or namespace aliases, or namespace-storage declarations
   share a qualified name that its retained representation cannot distinguish,
@@ -1658,9 +1667,26 @@ suggest a checked reference. Direct enum captures, fixed arrays, restricted
 field owners, and direct result-carrier alternatives name their exact storage
 boundary before MIR. Expected combinators apply that same containment check to
 their inferred result, anchoring a rejected mapped alternative at the mapper
-expression. No fix-it is offered
-when choosing a payload type, binding, transport, or missing-arm behavior
-requires program intent.
+expression. An unresolved switch-pattern owner first receives the ordinary
+declaration-visibility diagnostic (`GTI-S2024`) when its declaration is known
+but not visible, including its declaration note and direct-import or export
+guidance. A visible wrong variant retains `GTI-S2067`.
+
+A non-exhaustive payload-enum switch offers `Insert missing switch cases` as
+a nonpreferred, `RequiresReview` repair. It inserts tag-only arms in declaration
+order, each containing a TODO comment and `break`; choosing payload bindings
+and meaningful behavior remains the author's task. This explicitly requested
+scaffolding does not assert that ignoring an alternative is correct, or that
+the surrounding function's return-flow requirements are satisfied. The parser
+retains the closing-brace token for exact insertion; semantics supplies coverage
+and concrete enum names. Existing arms and comments are preserved, including
+CRLF layout. No scaffold is offered for an invisible enum, invalid patterns,
+an existing default, an exhaustive switch, or generated expansion source.
+Concrete generic enum owners are supported when their printed source names
+resolve to the exact subject type in the current scope. Shadowed or unnameable
+owners are withheld. Diagnostics discovered only while instantiating a generic
+body do not edit its shared definition with instance-specific cases.
+No fix-it chooses a payload type, binding, or transport policy.
 
 The LSP publishes diagnostics from the same versioned `FrontendResult` used by
 semantic queries. It always preserves the stable code, severity, source, and

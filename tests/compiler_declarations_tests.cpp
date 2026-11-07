@@ -2,6 +2,7 @@
 #include "compiler_test_fixture.h"
 #include "native_symbol_spelling.h"
 #include "private_stdlib_fixture.h"
+#include "temporary_directory.h"
 
 namespace {
 
@@ -2203,7 +2204,7 @@ int Cell::take() && { return this.number; }
   }
 
   const auto root =
-      std::filesystem::temp_directory_path() / "gti-split-signature-types";
+      gti_test::temporaryDirectory() / "gti-split-signature-types";
   const auto canonical = [](const std::filesystem::path &path) {
     return std::filesystem::weakly_canonical(path).string();
   };
@@ -3957,7 +3958,7 @@ class demo::Value<int, bool> {};
          "diagnostic family");
 
   const std::filesystem::path root =
-      std::filesystem::temp_directory_path() / "gti-exact-specialization";
+      gti_test::temporaryDirectory() / "gti-exact-specialization";
   const lang::FrontendResult standardHash = lang::Frontend().analyze(
       root / "hash.gti", R"(
 import std.functional;
@@ -6117,7 +6118,7 @@ int main() { return 0; }
          "hard-coded std spellings");
 
   const std::filesystem::path visibilityRoot =
-      std::filesystem::temp_directory_path() / "gti-concept-visibility";
+      gti_test::temporaryDirectory() / "gti-concept-visibility";
   const std::filesystem::path visibilityEntry = visibilityRoot / "main.gti";
   const std::filesystem::path conceptsUnit = visibilityRoot / "concepts.gti";
   const std::filesystem::path wrapperUnit = visibilityRoot / "wrapper.gti";
@@ -8144,8 +8145,7 @@ void testConstructorLocalTypeGenerics() {
   expect(borrowedPackInputs == 1,
          "the borrowed emplacement fixture must exercise pack projection");
   const lang::FrontendResult inPlace = lang::Frontend().analyze(
-      std::filesystem::temp_directory_path() /
-          "gti-constructor-pack-in-place.gti",
+      gti_test::temporaryDirectory() / "gti-constructor-pack-in-place.gti",
       R"(
 import std.memory;
 enum class InPlaceTag { value };
@@ -8270,7 +8270,7 @@ int main() {
 }
 )";
 
-  const std::filesystem::path entry = std::filesystem::temp_directory_path() /
+  const std::filesystem::path entry = gti_test::temporaryDirectory() /
                                       "gti-constructor-local-generics/main.gti";
   const lang::FrontendResult valid = lang::Frontend().analyze(
       entry, source, {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -11572,7 +11572,7 @@ int main() { return shortcut::forward() - 3; }
          "namespace shorthand must not bypass existing declaration conflicts");
 
   const auto moduleRoot =
-      std::filesystem::temp_directory_path() / "gti-namespace-shorthand";
+      gti_test::temporaryDirectory() / "gti-namespace-shorthand";
   const auto modulePath =
       std::filesystem::weakly_canonical(moduleRoot / "api.gti").string();
   const std::unordered_map<std::string, std::string> modules{

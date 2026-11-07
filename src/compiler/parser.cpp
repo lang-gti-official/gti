@@ -1145,9 +1145,10 @@ private:
       }
       // Attribute spelling is semantic policy. A typed declaration identifies
       // the function-attribute context even when every attribute is unknown.
-      bool functionAttributeList = !functionAttributes.empty() ||
-                                   isTypedDeclaration() ||
-                                   check(TokenKind::HASH_MACRO);
+      bool functionAttributeList =
+          !functionAttributes.empty() || isTypedDeclaration() ||
+          (currentClassName && isLifecycleDeclarationStart()) ||
+          check(TokenKind::HASH_MACRO);
       for (const FunctionAttribute &attribute : attributes) {
         if (parsedNativeFunctionAttribute &&
             attribute.name.lexeme != "discardable") {
@@ -1182,6 +1183,11 @@ private:
                         "native or declared attributes.");
           }
           return macroDeclaration(previous(), std::move(functionAttributes));
+        }
+        if (currentClassName && isLifecycleDeclarationStart()) {
+          return attachDeclaredAttributes(
+              lifecycleDeclaration(std::move(functionAttributes)),
+              std::move(declared));
         }
         if (!isTypedDeclaration()) {
           throw error(peek(), "Function attributes require a function "
@@ -2045,10 +2051,11 @@ private:
     return parameters;
   }
 
-  StmtPtr constructorDeclaration(Token name,
-                                 std::optional<Token> constexprKeyword = {},
-                                 std::optional<Token> unsafeKeyword = {},
-                                 std::optional<Token> implicitKeyword = {}) {
+  StmtPtr
+  constructorDeclaration(Token name, std::optional<Token> constexprKeyword = {},
+                         std::optional<Token> unsafeKeyword = {},
+                         std::optional<Token> implicitKeyword = {},
+                         std::vector<FunctionAttribute> attributes = {}) {
     std::vector<GenericParameter> genericParameters;
     if (check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
@@ -2113,7 +2120,7 @@ private:
           SpecialMemberSpecifier{.equal = std::move(equal),
                                  .keyword = std::move(keyword),
                                  .kind = kind},
-          nullptr);
+          nullptr, std::nullopt, std::nullopt, std::move(attributes));
     }
 
     consume(TokenKind::LEFT_BRACE, "Expect '{' before constructor body.");
@@ -2122,7 +2129,8 @@ private:
         std::move(constexprKeyword), std::move(name),
         std::move(genericParameters), std::move(parameters),
         std::move(requiresClause), std::move(initializers), std::nullopt,
-        std::move(body), std::move(unsafeKeyword), std::move(implicitKeyword));
+        std::move(body), std::move(unsafeKeyword), std::move(implicitKeyword),
+        std::move(attributes));
   }
 
   // The length of a constructor modifier run containing the contextual
@@ -2158,7 +2166,8 @@ private:
 
   // Misordered or conflicting modifiers are reported, and the constructor
   // they introduce is still parsed so that recovery consumes it.
-  StmtPtr implicitConstructorDeclaration(std::size_t modifiers) {
+  StmtPtr implicitConstructorDeclaration(
+      std::size_t modifiers, std::vector<FunctionAttribute> attributes = {}) {
     std::optional<Token> implicitKeyword;
     std::optional<Token> unsafeKeyword;
     std::optional<Token> constexprKeyword;
@@ -2182,9 +2191,9 @@ private:
                   "value explicitly in an unsafe context instead.");
       implicitKeyword.reset();
     }
-    return constructorDeclaration(advance(), std::move(constexprKeyword),
-                                  std::move(unsafeKeyword),
-                                  std::move(implicitKeyword));
+    return constructorDeclaration(
+        advance(), std::move(constexprKeyword), std::move(unsafeKeyword),
+        std::move(implicitKeyword), std::move(attributes));
   }
 
   // The length of a conversion operator's modifier run containing the
@@ -2247,7 +2256,9 @@ private:
                                          std::move(implicitKeyword));
   }
 
-  StmtPtr destructorDeclaration(Token tilde) {
+  StmtPtr
+  destructorDeclaration(Token tilde,
+                        std::vector<FunctionAttribute> attributes = {}) {
     Token name = consume(TokenKind::IDENTIFIER, "Expect class name after '~'.");
     consume(TokenKind::LEFT_PAREN, "Expect '(' after destructor name.");
     consume(TokenKind::RIGHT_PAREN, "Destructors do not take parameters.");
@@ -2277,12 +2288,41 @@ private:
           SpecialMemberSpecifier{.equal = std::move(equal),
                                  .keyword = std::move(keyword),
                                  .kind = kind},
-          nullptr);
+          nullptr, std::move(attributes));
     }
     consume(TokenKind::LEFT_BRACE, "Expect '{' before destructor body.");
     auto body = std::make_unique<BlockStmt>(blockItems());
     return std::make_shared<DestructorDecl>(std::move(tilde), std::move(name),
-                                            std::nullopt, std::move(body));
+                                            std::nullopt, std::move(body),
+                                            std::move(attributes));
+  }
+
+  bool isLifecycleDeclarationStart() const {
+    return check(TokenKind::TILDE) || implicitConstructorModifiers() ||
+           isConstructorStart() ||
+           ((check(TokenKind::CONSTEXPR) || check(TokenKind::CONSTEVAL)) &&
+            isConstructorStart(1)) ||
+           (check(TokenKind::UNSAFE) &&
+            (isConstructorStart(1) ||
+             ((peekAt(1).kind == TokenKind::CONSTEXPR ||
+               peekAt(1).kind == TokenKind::CONSTEVAL) &&
+              isConstructorStart(2))));
+  }
+
+  StmtPtr lifecycleDeclaration(std::vector<FunctionAttribute> attributes = {}) {
+    if (match({TokenKind::TILDE}))
+      return destructorDeclaration(previous(), std::move(attributes));
+    if (const auto modifiers = implicitConstructorModifiers())
+      return implicitConstructorDeclaration(*modifiers, std::move(attributes));
+    std::optional<Token> unsafeKeyword;
+    std::optional<Token> constexprKeyword;
+    if (match({TokenKind::UNSAFE}))
+      unsafeKeyword = previous();
+    if (match({TokenKind::CONSTEXPR, TokenKind::CONSTEVAL}))
+      constexprKeyword = previous();
+    return constructorDeclaration(advance(), std::move(constexprKeyword),
+                                  std::move(unsafeKeyword), std::nullopt,
+                                  std::move(attributes));
   }
 
   std::vector<Parameter> parameterList() {
@@ -2922,9 +2962,8 @@ private:
       if (match({TokenKind::SEMICOLON})) {
         return std::make_shared<EmptyStmt>(previous());
       }
-      if (match({TokenKind::TILDE})) {
-        return destructorDeclaration(previous());
-      }
+      if (isLifecycleDeclarationStart())
+        return lifecycleDeclaration();
       if (match({TokenKind::OPERATOR})) {
         return conversionOperatorDeclaration(previous());
       }
@@ -2943,29 +2982,6 @@ private:
         Token operatorKeyword = advance();
         return conversionOperatorDeclaration(std::move(operatorKeyword),
                                              std::move(virtualKeyword));
-      }
-      if (const std::optional<std::size_t> modifiers =
-              implicitConstructorModifiers()) {
-        return implicitConstructorDeclaration(*modifiers);
-      }
-      if (check(TokenKind::UNSAFE) &&
-          (isConstructorStart(1) || ((peekAt(1).kind == TokenKind::CONSTEXPR ||
-                                      peekAt(1).kind == TokenKind::CONSTEVAL) &&
-                                     isConstructorStart(2)))) {
-        Token unsafeKeyword = advance();
-        std::optional<Token> constexprKeyword;
-        if (match({TokenKind::CONSTEXPR, TokenKind::CONSTEVAL}))
-          constexprKeyword = previous();
-        return constructorDeclaration(advance(), std::move(constexprKeyword),
-                                      std::move(unsafeKeyword));
-      }
-      if ((check(TokenKind::CONSTEXPR) || check(TokenKind::CONSTEVAL)) &&
-          isConstructorStart(1)) {
-        Token constexprKeyword = advance();
-        return constructorDeclaration(advance(), std::move(constexprKeyword));
-      }
-      if (isConstructorStart()) {
-        return constructorDeclaration(advance());
       }
       if (isStructuredBindingPrefix()) {
         throw error(peek(),
@@ -3596,9 +3612,11 @@ private:
       }
     }
 
-    consume(TokenKind::RIGHT_BRACE, "Expect '}' after switch arms.");
+    Token closingBrace =
+        consume(TokenKind::RIGHT_BRACE, "Expect '}' after switch arms.");
     return std::make_shared<SwitchStmt>(std::move(keyword), std::move(value),
-                                        std::move(arms));
+                                        std::move(arms),
+                                        std::move(closingBrace));
   }
 
   StmtPtr returnStatement() {

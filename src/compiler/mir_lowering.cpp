@@ -613,6 +613,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
     }
     result.program.constructors.push_back(
         {.liftedLifetimes = instance.liftedLifetimes,
+         .codegenAttributes = instance.codegenAttributes,
          .id = instance.id,
          .owner = instance.owner,
          .ownerType = instance.ownerType,
@@ -690,6 +691,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
   for (const HirDestructorInstance &instance : source.destructorInstances()) {
     result.program.destructors.push_back(
         {.liftedLifetimes = instance.liftedLifetimes,
+         .codegenAttributes = instance.codegenAttributes,
          .id = instance.id,
          .owner = instance.owner,
          .ownerType = instance.ownerType,

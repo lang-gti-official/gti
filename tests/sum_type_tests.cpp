@@ -28,6 +28,9 @@ struct MirProgramTestAccess {
   static std::vector<MirClassInstance> &classInstances(MirProgram &program) {
     return program.classes;
   }
+  static std::vector<MirLambdaInstance> &lambdaInstances(MirProgram &program) {
+    return program.lambdas;
+  }
 };
 
 } // namespace lang
@@ -911,11 +914,88 @@ int main() {
   return 0;
 }
 )");
-  expect(hasCode(arrayContainment, "GTI-S2067") &&
-             hasMessage(arrayContainment, "Fixed array 'values'") &&
-             hasMessage(arrayContainment, "bounded containment slice"),
-         "fixed arrays should retain the stable owning payload-enum "
-         "containment diagnostic");
+  expect(arrayContainment.canGenerateCode() &&
+             lang::verifyMirProgram(arrayContainment.mir).valid(),
+         "fixed arrays retain each owning enum element's verified cleanup");
+  if (arrayContainment.canGenerateCode()) {
+    auto forgedArray = arrayContainment.mir;
+    bool removedElement = false;
+    for (const auto address : lang::enumerateMirBodyAddresses(forgedArray)) {
+      auto *body = lang::findMirBody(forgedArray, address);
+      if (body == nullptr)
+        continue;
+      for (auto &drop : body->dropObligations) {
+        if (!removedElement && drop.dropType.fixedArray &&
+            drop.dropType.fixedArray->leafType.kind ==
+                lang::SemanticType::Enum &&
+            !drop.dropType.aggregate.empty()) {
+          drop.dropType.aggregate.clear();
+          removedElement = true;
+        }
+      }
+    }
+    expect(removedElement && !lang::verifyMirProgram(forgedArray).valid(),
+           "MIR rejects an owning enum array without its element cleanup");
+  }
+
+  const std::string arrayPrelude = R"(
+import std.memory;
+class resource {
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+)";
+  const auto copiedArray =
+      analyzeWithPrelude("owning-payload-array-copy.gti", arrayPrelude + R"(
+int main() {
+  holder values[2] = {holder::one(resource()), holder::none};
+  auto copied = values;
+  return 0;
+}
+)");
+  expect(hasCode(copiedArray, "GTI-S2003") &&
+             hasMessage(copiedArray, "move-only"),
+         "array copyability must fold the owning enum's move-only payload");
+  const auto movedElement = analyzeWithPrelude(
+      "owning-payload-array-moved-element.gti", arrayPrelude + R"(
+int main() {
+  mut holder values[2] = {holder::one(resource()), holder::none};
+  auto first = std::move(values[0]);
+  auto second = std::move(values[0]);
+  return 0;
+}
+)");
+  expect(hasCode(movedElement, "GTI-S2018") &&
+             hasMessage(movedElement, "values[0]' has already been moved"),
+         "an owning enum array element cannot be moved twice");
+  const auto missingElements = analyzeWithPrelude(
+      "owning-payload-array-initialization.gti", arrayPrelude + R"(
+int main() {
+  holder uninitialized[2];
+  holder partial[2] = {holder::none};
+  return 0;
+}
+)");
+  expect(countCode(missingElements, "GTI-S2015") == 2,
+         "owning enum arrays require every element to be initialized");
+
+  const auto arrayCapture =
+      analyzeWithPrelude("owning-payload-array-capture.gti", arrayPrelude + R"(
+int main() {
+  holder values[2] = {holder::one(resource()), holder::none};
+  auto callback = [items = std::move(values)]() -> int32_t { return 0; };
+  return callback();
+}
+)");
+  expect(countCode(arrayCapture, "GTI-S2067") == 1 &&
+             hasMessage(arrayCapture, "Lambda capture 'items'") &&
+             hasMessage(arrayCapture, "holder[2]"),
+         "array storage admission does not silently enable owning array "
+         "captures");
 
   const lang::FrontendResult unsupportedFieldOwners =
       analyze("owning-payload-unsupported-field-owners.gti", R"(
@@ -929,17 +1009,17 @@ class generic_wrapper<T> { holder value; };
 class polymorphic_wrapper {
 private:
   holder value;
+  holder values[2] = {holder::none, holder::none};
 public:
   virtual int32_t marker() { return 0; }
 };
 int main() { return 0; }
 )");
-  expect(countCode(unsupportedFieldOwners, "GTI-S2067") == 1 &&
-             hasHint(unsupportedFieldOwners,
-                     "direct owning payload-enum field is supported only") &&
+  expect(countCode(unsupportedFieldOwners, "GTI-S2067") == 2 &&
+             hasHint(unsupportedFieldOwners, "directly or in a fixed array") &&
              hasMessage(unsupportedFieldOwners, "Instance field 'value'"),
-         "only polymorphic owners retain the direct-field containment "
-         "diagnostic; concrete generic ownership is structural");
+         "polymorphic owners reject direct and array enum fields; "
+         "concrete generic ownership is structural");
 
   const lang::FrontendResult wrapperContainment =
       analyze("owning-payload-wrapper-containment.gti", R"(
@@ -983,7 +1063,7 @@ int main() {
          "source result class");
 
   const lang::FrontendResult lambdaCapture =
-      analyze("owning-payload-lambda-capture.gti", R"(
+      analyzeWithPrelude("owning-payload-lambda-capture.gti", R"(
 class resource {
 public:
   resource() {}
@@ -998,14 +1078,32 @@ int main() {
   return 0;
 }
 )");
-  expect(hasCode(lambdaCapture, "GTI-S2067") &&
-             hasMessage(lambdaCapture, "Lambda capture 'value'") &&
-             hasMessage(lambdaCapture, "cannot move owning payload-enum type"),
-         "owned lambda captures should reject owning payload enums before "
-         "callable-environment lowering");
+  expect(lambdaCapture.canGenerateCode() &&
+             lang::verifyMirProgram(lambdaCapture.mir).valid(),
+         "owned enum captures retain verified closure-environment cleanup");
+  if (!lambdaCapture.canGenerateCode())
+    printDiagnostics(lambdaCapture);
+  if (lambdaCapture.canGenerateCode()) {
+    auto forged = lambdaCapture.mir;
+    bool cleared = false;
+    for (auto &closure : lang::MirProgramTestAccess::lambdaInstances(forged)) {
+      for (std::size_t index = 0; index < closure.captureTypes.size();
+           ++index) {
+        if (closure.captureTypes[index].kind == lang::SemanticType::Enum &&
+            closure.captureRequiresActiveCleanup[index]) {
+          closure.captureRequiresActiveCleanup[index] = false;
+          cleared = true;
+        }
+      }
+    }
+    expect(cleared && hasMirMessage(lang::verifyMirProgram(forged),
+                                    "lambda capture cleanup metadata"),
+           "MIR independently rejects an owning enum capture without its "
+           "active cleanup fact");
+  }
 
   const lang::FrontendResult capturingTransport =
-      analyze("owning-payload-capturing-transport.gti", R"(
+      analyzeWithPrelude("owning-payload-capturing-transport.gti", R"(
 class resource {
 public:
   resource() {}
@@ -1020,12 +1118,68 @@ int main() {
   return 0;
 }
 )");
-  expect(hasCode(capturingTransport, "GTI-S2067") &&
-             hasMessage(capturingTransport,
-                        "by-value lambda parameter boundary") &&
-             hasMessage(capturingTransport, "by-value lambda return boundary"),
-         "capturing lambdas should retain the stable early diagnostic for "
-         "owning payload-enum callable transport");
+  expect(capturingTransport.canGenerateCode() &&
+             lang::verifyMirProgram(capturingTransport.mir).valid(),
+         "capturing lambdas transport owning enums through ordinary parameters "
+         "and results");
+  if (!capturingTransport.canGenerateCode())
+    printDiagnostics(capturingTransport);
+
+  const std::string capturePrefix = R"(
+class resource {
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  ~resource() {}
+};
+enum holder { one(resource value), none };
+)";
+  const auto copiedOwner =
+      analyzeWithPrelude("owning-enum-copy-capture.gti", capturePrefix + R"(
+int main() {
+  auto source = holder::one(resource());
+  auto callback = [source]() -> int { return 0; };
+  return callback();
+}
+)");
+  expect(!copiedOwner.semanticValid && hasCode(copiedOwner, "GTI-S2027") &&
+             hasMessage(copiedOwner, "not copyable"),
+         "copy capture preserves the enum payload's move-only contract");
+  const auto repeatedMove =
+      analyzeWithPrelude("owning-enum-repeated-capture.gti", capturePrefix + R"(
+int main() {
+  auto source = holder::one(resource());
+  auto first = [value = std::move(source)]() -> int { return 0; };
+  auto second = [value = std::move(source)]() -> int { return 0; };
+  return 0;
+}
+)");
+  expect(!repeatedMove.semanticValid && hasMessage(repeatedMove, "moved"),
+         "capture movement leaves the source unavailable");
+  const auto repeatedCall =
+      analyzeWithPrelude("owning-enum-consumed-closure.gti", capturePrefix + R"(
+int main() {
+  auto source = holder::one(resource());
+  auto callback = [value = std::move(source)]() -> int { return 0; };
+  std::move(callback)();
+  std::move(callback)();
+  return 0;
+}
+)");
+  expect(!repeatedCall.semanticValid && hasMessage(repeatedCall, "moved"),
+         "consuming invocation leaves an enum-owning closure unavailable");
+  const auto borrowedOwner =
+      analyzeWithPrelude("owning-enum-borrowed-capture.gti", capturePrefix + R"(
+enum mixed { owned(resource value), borrowed(int& value) };
+int main() {
+  auto source = mixed::owned(resource());
+  auto callback = [value = std::move(source)]() -> int { return 0; };
+  return 0;
+}
+)");
+  expect(!borrowedOwner.semanticValid && hasCode(borrowedOwner, "GTI-S2067"),
+         "conditional borrowed enum captures retain their separate boundary");
 
   const lang::FrontendResult nestedOwning =
       analyze("nested-owning-payload-enum.gti", R"(

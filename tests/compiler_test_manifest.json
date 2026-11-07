@@ -782,6 +782,14 @@
       "suite": "constexpr"
     },
     {
+      "name": "testMissingSwitchCasesFix",
+      "suite": "diagnostics"
+    },
+    {
+      "name": "testPayloadPatternVisibilityDiagnostics",
+      "suite": "diagnostics"
+    },
+    {
       "name": "testGenericAdvisorySoundness",
       "suite": "diagnostics"
     },

@@ -1,0 +1,1 @@
+Allow `[[inline]]`, `[[noinline]]` and `[[cold]]` on source-defined constructors and destructors, including generic classes, with matching editor signatures. Initialization, failure rollback and cleanup behavior are preserved.

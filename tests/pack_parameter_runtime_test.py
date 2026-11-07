@@ -72,8 +72,8 @@ def main():
     run_cases(compiler, cases)
 
 
-def run_cases(compiler, cases):
-    fixtures = pathlib.Path(__file__).parent / "fixtures"
+def run_cases(compiler, cases, fixtures=None):
+    fixtures = fixtures or pathlib.Path(__file__).parent / "fixtures"
     modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-pack-parameters-") as temporary:
         for mode, flags, native in modes:

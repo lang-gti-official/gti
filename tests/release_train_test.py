@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -185,6 +186,8 @@ def status_contract(base):
     assert train.withdrawn(withdrawn) == {"v0.12.0-beta.1"}
     refused(train.amend_status, status, "withdraw", "v0.12.0", "not a beta", NOW)
     refused(train.amend_status, status, "delete", "0.11.0", "x", NOW)
+    refused(train.amend_status, status, "initialize", "0.11.0", "", NOW)
+    refused(train.amend_status, status, "initialize", "", "replace records", NOW)
     for broken in ({"schema": 2, "stable": [], "yanked": [], "withdrawn": []},
                    {"schema": 1, "stable": ["0.2.0", "0.1.0"], "yanked": [], "withdrawn": []},
                    {"schema": 1, "stable": [], "yanked": [{"version": "0.1.0", "reason": "x",
@@ -199,8 +202,15 @@ def status_contract(base):
     repo.push("main")
     with inside(repo.work):
         assert train.read_status() == (train.empty_status(), "")
+        # The first beta must be installable before any stable release or rollback.
+        assert quiet(train.main, ["initialize-status"]) == 0
+        initial_status, initial_tip = train.read_status()
+        assert initial_status == train.empty_status() and initial_tip
+        assert quiet(train.main, ["initialize-status"]) == 0
+        assert train.read_status()[1] == initial_tip, "initialization is idempotent"
         quiet(train.publish_status, "stable", "0.11.0", "", NOW)
         first = run(["git", "rev-parse", "release-status"], repo.origin)
+        assert run(["git", "rev-parse", f"{first}^"], repo.origin) == initial_tip
         quiet(train.publish_status, "yank", "0.11.0", "miscompiles", NOW)
         status, tip = train.read_status()
         assert train.yanked(status) == {"0.11.0"} and status["stable"] == ["0.11.0"]
@@ -209,6 +219,42 @@ def status_contract(base):
         assert "miscompiles" in run(["git", "log", "-1", "--format=%B", tip], repo.origin)
         quiet(train.publish_status, "yank", "0.11.0", "miscompiles", NOW)
         assert train.read_status()[1] == tip, "a recorded change does not commit again"
+        quiet(train.publish_status, "withdraw", "v0.12.0-beta.1", "regression", NOW)
+        recorded = train.read_status()
+        assert quiet(train.main, ["initialize-status"]) == 0
+        assert train.read_status() == recorded, "initialization preserves stable/yank/withdraw records"
+
+        # A present but damaged registry must never be mistaken for first setup.
+        repo.checkout(recorded[1])
+        for files, remove in (({train.STATUS_FILE: "not JSON\n"}, ()),
+                              ({train.STATUS_FILE: '{"schema": 2}\n'}, ()),
+                              ({"README": "missing registry\n"}, (train.STATUS_FILE,))):
+            damaged = repo.commit(files, "Damaged status", remove=remove)
+            repo.push(f"{damaged}:refs/heads/release-status")
+            with contextlib.redirect_stderr(io.StringIO()):
+                assert quiet(train.main, ["initialize-status"]) == 1
+            assert run(["git", "rev-parse", "release-status"], repo.origin) == damaged
+
+
+def status_initialization_race_contract(base):
+    repo = Repository(base)
+    repo.commit({"VERSION": "0.1.0\n"}, "Base")
+    repo.push("main")
+    real_run_git = train.run_git
+    concurrent = []
+
+    def race(*arguments, **keywords):
+        if arguments[:2] == ("push", "--porcelain") and not concurrent:
+            # A rollback wins the initial branch creation. Initialization must
+            # retry from that tip, leaving the withdrawal and its history intact.
+            with patch.object(train, "run_git", real_run_git):
+                quiet(train.publish_status, "withdraw", "v0.12.0-beta.1", "regression", NOW)
+                concurrent.append(train.read_status())
+        return real_run_git(*arguments, **keywords)
+
+    with inside(repo.work), patch.object(train, "run_git", race):
+        assert quiet(train.main, ["initialize-status"]) == 0
+        assert train.read_status() == concurrent[0], "a concurrent withdrawal is never overwritten"
 
 
 def nightly_record(sha):
@@ -925,6 +971,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-release-train-") as temporary:
         base = Path(temporary)
         for name, contract in (("status", status_contract), ("cut", cut_contract), ("beta", beta_contract),
+                               ("status-race", status_initialization_race_contract),
                                ("promotion", promotion_contract), ("archives", archives_contract),
                                ("notes", notes_contract), ("cli", cli_contract)):
             (base / name).mkdir()

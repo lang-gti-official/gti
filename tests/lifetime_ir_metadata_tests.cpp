@@ -448,7 +448,7 @@ int main() { int value = 7; return external(value) - 7; }
     }
     const auto serialized = MirPrinter().print(forged);
     expect(serialized != original && serialized == MirPrinter().print(forged) &&
-               serialized.starts_with("mir-v127 "),
+               serialized.starts_with("mir-v128 "),
            "contents proof identity survives deterministic versioned MIR serialization");
   }
 }

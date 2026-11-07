@@ -385,6 +385,18 @@ def main() -> int:
         source.write_text(SOURCE, encoding="utf8")
 
         for mode, flags, _native in native_modes():
+            continuation = (pathlib.Path(__file__).parent / "fixtures" /
+                            "exhaustive_switch_continuation.gti")
+            continuation_executable = root / f"switch-continuation-{mode}"
+            built_continuation = run([str(compiler), str(continuation), *flags,
+                                      "-o", str(continuation_executable)])
+            if built_continuation.returncode != 0:
+                return fail(built_continuation)
+            continued = run([str(continuation_executable)])
+            if continued.returncode != 0 or continued.stdout or continued.stderr:
+                sys.stderr.write(f"switch continuation failed for {mode}: "
+                                 f"exit={continued.returncode}\n")
+                return fail(continued)
             executable = root / f"class-payload-{mode}"
             built = run(
                 [

@@ -1,0 +1,20 @@
+import std.string;
+
+class Token {
+  int id;
+public:
+  Token(int value) : id(value) {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  ~Token() { std::println(this.id); }
+};
+enum Event { Empty, Owned(Token token) };
+thread_local Event[2] thread_values = {Event::Owned(Token(3)), Event::Owned(Token(4))};
+int main() {
+  switch (thread_values[0]) {
+    case Event::Owned(auto& token): break;
+    default: return 1;
+  }
+  std::println(0);
+  return 0;
+}

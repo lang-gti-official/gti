@@ -3346,6 +3346,17 @@
       "type": "SEQ",
       "members": [
         {
+          "type": "REPEAT",
+          "content": {
+            "type": "FIELD",
+            "name": "attribute",
+            "content": {
+              "type": "SYMBOL",
+              "name": "function_contract_attribute"
+            }
+          }
+        },
+        {
           "type": "CHOICE",
           "members": [
             {
@@ -3672,6 +3683,17 @@
     "destructor_declaration": {
       "type": "SEQ",
       "members": [
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "FIELD",
+            "name": "attribute",
+            "content": {
+              "type": "SYMBOL",
+              "name": "function_contract_attribute"
+            }
+          }
+        },
         {
           "type": "STRING",
           "value": "~"

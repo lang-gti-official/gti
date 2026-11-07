@@ -1479,6 +1479,7 @@ enum class ConstructorKind {
 };
 
 struct ConstructorInfo {
+  FunctionCodegenAttributes codegenAttributes;
   ConstructorId id = 0;
   ClassId owner = 0;
   const ConstructorDecl *declaration = nullptr;
@@ -1507,6 +1508,7 @@ struct ConstructorInfo {
 };
 
 struct DestructorInfo {
+  FunctionCodegenAttributes codegenAttributes;
   ClassId owner = 0;
   const DestructorDecl *declaration = nullptr;
   AccessModifier access = AccessModifier::Public;

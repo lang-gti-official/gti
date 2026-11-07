@@ -1,5 +1,6 @@
 #include "compiler_test_fixture.h"
 #include "native_symbol_spelling.h"
+#include "temporary_directory.h"
 
 #include <regex>
 #include <set>
@@ -150,7 +151,7 @@ int main() {
 
 void testSourceUnitDependencyGraph() {
   const std::filesystem::path root =
-      std::filesystem::temp_directory_path() / "gti-source-graph";
+      gti_test::temporaryDirectory() / "gti-source-graph";
   const std::filesystem::path entry = root / "main.gti";
   const std::filesystem::path branch = root / "branch.gti";
   const std::filesystem::path leaf = root / "leaf.gti";
@@ -594,7 +595,7 @@ export int main() { return 0; }
 
 void testStandardLibraryImports() {
   const std::filesystem::path root =
-      std::filesystem::temp_directory_path() / "gti-standard-imports";
+      gti_test::temporaryDirectory() / "gti-standard-imports";
   const std::filesystem::path entry = root / "main.gti";
   const std::filesystem::path arrayUnit =
       standardLibraryRoot() / "std/array.gti";
@@ -760,7 +761,7 @@ void testStandardLibraryImports() {
       directOverlayGraph.findUnit(directOverlayGraph.entryUnit());
   lang::SourceLoader overlayLoader;
   const lang::SourceGraph overlayGraph = overlayLoader.load(
-      std::filesystem::temp_directory_path() / "gti-stdlib-overlay-main.gti",
+      gti_test::temporaryDirectory() / "gti-stdlib-overlay-main.gti",
       "import std.icap_override_only_probe_8f6d41c5;\n", {},
       {{overlayKey,
         R"GTIMODULE(export module icap_override_only_probe_8f6d41c5;
@@ -1150,7 +1151,7 @@ namespace std { export int cpp_keyword_path_value() { return 0; } }
 
 void testPackageImports() {
   const std::filesystem::path root =
-      std::filesystem::temp_directory_path() / "gti-package-imports";
+      gti_test::temporaryDirectory() / "gti-package-imports";
   const std::filesystem::path appRoot = root / "app";
   const std::filesystem::path mathRoot = root / "math";
   const std::filesystem::path hiddenRoot = root / "hidden";
@@ -2209,8 +2210,7 @@ void testTargetTripleParsing() {
 }
 
 void testSourceModuleInterfaces() {
-  const auto root =
-      std::filesystem::temp_directory_path() / "gti-module-interfaces";
+  const auto root = gti_test::temporaryDirectory() / "gti-module-interfaces";
   const auto entry = root / "main.gti";
   const auto leaf =
       std::filesystem::weakly_canonical(root / "leaf.gti").string();
@@ -2401,8 +2401,7 @@ namespace active {
 }
 
 void testExportPlacement() {
-  const auto root =
-      std::filesystem::temp_directory_path() / "gti-export-placement";
+  const auto root = gti_test::temporaryDirectory() / "gti-export-placement";
   const auto entry = root / "main.gti";
   const auto api = std::filesystem::weakly_canonical(root / "api.gti").string();
   const auto analyze = [&](const std::string &interface) {
@@ -2540,7 +2539,7 @@ void testOwnLineCommentPlacement() {
 
 void testSourceModuleResolution() {
   const auto root = std::filesystem::weakly_canonical(
-      std::filesystem::temp_directory_path() / "gti-module-resolution");
+      gti_test::temporaryDirectory() / "gti-module-resolution");
   const auto app = root / "app";
   const auto library = root / "library";
   const auto entry = app / "main.gti";
@@ -2711,7 +2710,7 @@ int main() { return local_value(); }
 
 void testSourceModuleConfigurationDomains() {
   const auto root = std::filesystem::weakly_canonical(
-      std::filesystem::temp_directory_path() / "gti-module-configuration");
+      gti_test::temporaryDirectory() / "gti-module-configuration");
   const auto entry = root / "main.gti";
   const auto flags = root / "flags.gti";
   const auto parent = root / "parent.gti";
@@ -2810,7 +2809,7 @@ int main() { return first_value() + second_value(); }
 
 void testStandardLibraryModules() {
   const auto root = std::filesystem::weakly_canonical(
-      std::filesystem::temp_directory_path() / "gti-standard-modules");
+      gti_test::temporaryDirectory() / "gti-standard-modules");
   const auto entry = root / "main.gti";
   const auto facade = root / "facade.gti";
   const auto legacy = root / "legacy.gti";
@@ -2995,7 +2994,7 @@ int main() {
 
 void testReachableExecutableLowering() {
   const auto entry = std::filesystem::weakly_canonical(
-      std::filesystem::temp_directory_path() / "gti-reachable-lowering.gti");
+      gti_test::temporaryDirectory() / "gti-reachable-lowering.gti");
   const auto analyze = [&](const std::string &source,
                            bool reachableOnly = true) {
     lang::FrontendOptions options;
@@ -3117,7 +3116,7 @@ int main() { return 0; }
   // the standard library. Each check adds one unreferenced function and counts
   // whether HIR lowered one more function instance.
   const auto libraryRoot = std::filesystem::weakly_canonical(
-      std::filesystem::temp_directory_path() / "gti-reachable-library-root");
+      gti_test::temporaryDirectory() / "gti-reachable-library-root");
   std::filesystem::create_directories(libraryRoot / "std");
   const auto libraryUnit = libraryRoot / "std" / "reachable_probe.gti";
   std::ofstream(libraryRoot / "module-map.json")
@@ -3234,6 +3233,29 @@ int main() {
 }
 
 void testSupportFacilities() {
+  std::filesystem::path retired;
+  const gti_test::TemporaryDirectory survivor("gti-same-prefix");
+  std::ofstream(survivor.root() / "fixture") << "survivor";
+  {
+    const gti_test::TemporaryDirectory scoped("gti-same-prefix");
+    retired = scoped.root();
+    expect(retired != survivor.root() && std::filesystem::is_directory(retired),
+           "same-prefix fixture directories have separate ownership");
+    std::ofstream(retired / "fixture") << "scoped";
+  }
+  expect(!std::filesystem::exists(retired) &&
+             std::filesystem::exists(survivor.root() / "fixture"),
+         "fixture cleanup removes only its own directory");
+  try {
+    const gti_test::TemporaryDirectory unwound("gti-unwind");
+    retired = unwound.root();
+    std::ofstream(retired / "fixture") << "unwound";
+    throw 1;
+  } catch (int) {
+  }
+  expect(!std::filesystem::exists(retired),
+         "fixture directories are removed during exception unwinding");
+
   bool ran = false;
   expect(lang::runGuarded([&ran] { ran = true; }) && ran,
          "guarded execution should run work and report success");

@@ -1033,6 +1033,7 @@ private:
               semantics_.findConstructor(*declaration)) {
         row.semanticIdentity = info->id;
         row.payload = LoweredConstructorDeclaration{
+            .codegenAttributes = info->codegenAttributes,
             .id = info->id,
             .owner = info->owner,
             .kind = info->kind,
@@ -1068,6 +1069,7 @@ private:
               semantics_.findDestructor(*declaration)) {
         row.semanticIdentity = info->owner;
         row.payload = LoweredDestructorDeclaration{
+            .codegenAttributes = info->codegenAttributes,
             .owner = info->owner,
             .access = info->access,
             .lifetimeContract = info->lifetimeContract,
@@ -1449,6 +1451,7 @@ private:
     if (source.id != lowered.id || source.owner != lowered.owner ||
         source.ownerType != lowered.ownerType ||
         source.generatedDefault != lowered.generatedDefault ||
+        source.codegenAttributes != lowered.codegenAttributes ||
         source.constexprConstructor != lowered.constexprConstructor ||
         source.requiresUnsafe != lowered.requiresUnsafe ||
         source.requiresUnsafe != (source.source != nullptr &&
@@ -1560,6 +1563,7 @@ private:
         source.ownerType != lowered.ownerType ||
         source.liftedLifetimes != lowered.liftedLifetimes ||
         source.lifetimeContract != lowered.lifetimeContract ||
+        source.codegenAttributes != lowered.codegenAttributes ||
         source.body.placeDomain != lowered.body.placeDomain) {
       return reject("destructor instance " + std::to_string(index + 1) +
                     " differs");

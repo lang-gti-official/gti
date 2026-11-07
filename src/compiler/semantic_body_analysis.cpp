@@ -18,6 +18,105 @@ bool needsCheckedStaticReturnSupplier(const FunctionInfo *function) {
 }
 } // namespace
 
+namespace {
+// Only layout comes from source text. The parser owns the insertion token and
+// semantic coverage supplies the exact missing alternatives.
+std::optional<FixIt>
+missingSwitchCasesFix(const SwitchStmt &stmt, const SourceManager *sources,
+                      const std::vector<std::string> &variants) {
+  const Token &close = stmt.closingBrace();
+  const Token &keyword = stmt.keyword();
+  const std::string *source = sources ? sources->find(close.source) : nullptr;
+  if (!source || variants.empty() || close.kind != TokenKind::RIGHT_BRACE ||
+      close.generated || keyword.generated || close.expansion != 0 ||
+      keyword.expansion != 0 || close.source != keyword.source ||
+      keyword.position >= close.position || close.position >= source->size() ||
+      source->compare(keyword.position, 6, "switch") != 0 ||
+      (*source)[close.position] != '}')
+    return std::nullopt;
+
+  const auto lineStart = [&](std::size_t position) {
+    const auto previous =
+        position == 0 ? std::string::npos : source->rfind('\n', position - 1);
+    return previous == std::string::npos ? 0 : previous + 1;
+  };
+  const auto indentation = [&](std::size_t position) {
+    const auto start = lineStart(position);
+    auto end = start;
+    while (end < position && ((*source)[end] == ' ' || (*source)[end] == '\t'))
+      ++end;
+    return source->substr(start, end - start);
+  };
+  std::string caseIndent = indentation(keyword.position);
+  for (const auto &arm : stmt.arms()) {
+    if (arm.labels.empty())
+      continue;
+    const auto &label = arm.labels.front().keyword;
+    if (!label.generated && label.source == close.source &&
+        label.position < close.position) {
+      const auto indent = indentation(label.position);
+      if (lineStart(label.position) + indent.size() == label.position)
+        caseIndent = indent;
+    }
+    break;
+  }
+  const std::string bodyIndent =
+      caseIndent + (caseIndent.find('\t') == std::string::npos ? "  " : "\t");
+  const std::string newline =
+      source->find("\r\n") == std::string::npos ? "\n" : "\r\n";
+  SourceSpan insertion = tokenSpan(close);
+  const std::string closeIndent = indentation(close.position);
+  const bool ownLine =
+      lineStart(close.position) + closeIndent.size() == close.position;
+  if (ownLine)
+    insertion.start = lineStart(close.position);
+  insertion.end = insertion.start;
+  std::string replacement = ownLine ? "" : newline;
+  for (const auto &variant : variants)
+    replacement += caseIndent + "case " + variant + ":" + newline + bodyIndent +
+                   "// TODO: Handle this case." + newline + bodyIndent +
+                   "break;" + newline;
+  if (!ownLine)
+    replacement += indentation(keyword.position);
+  return FixIt{.span = std::move(insertion),
+               .replacement = std::move(replacement),
+               .message = "Insert missing switch cases",
+               .preferred = false,
+               .applicability = RepairApplicability::RequiresReview};
+}
+} // namespace
+
+void SemanticVisitor::Impl::validateCodegenAttributes(
+    const std::vector<FunctionAttribute> &attributes, bool sourceBody,
+    bool lifecycle) {
+  std::unordered_set<std::string> names;
+  const bool hasInline = std::any_of(
+      attributes.begin(), attributes.end(),
+      [](const auto &attribute) { return attribute.name.lexeme == "inline"; });
+  for (const auto &attribute : attributes) {
+    const auto &name = attribute.name.lexeme;
+    const auto invalid = [&](std::string message) {
+      diagnostics.push_back(
+          makeDiagnostic(DiagnosticId::InvalidFunctionContract, attribute.name,
+                         {std::move(message)}));
+    };
+    if (name != "inline" && name != "noinline" && name != "cold") {
+      if (lifecycle)
+        invalid("Only [[inline]], [[noinline]] and [[cold]] apply to a "
+                "constructor or destructor.");
+      continue;
+    }
+    if (!names.insert(name).second)
+      invalid("Duplicate function attribute '" + name + "'.");
+    else if (name == "noinline" && hasInline)
+      invalid("[[inline]] and [[noinline]] cannot be combined on the same "
+              "function.");
+    else if (attribute.argument || !sourceBody)
+      invalid("Code-generation attributes require a source-defined GTI "
+              "function, method, constructor or destructor.");
+  }
+}
+
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.packBorrowInvocationSequence.reset();
   requestSession.collectingPrivateLifetimeContracts = false;
@@ -428,11 +527,11 @@ auto SemanticVisitor::Impl::containsOwningPayloadEnum(
   if (type.kind == SemanticType::Enum) {
     return requiresActiveCleanupFor(type);
   }
-  if (type.kind == SemanticType::Class) {
-    // Nominal values own their concrete fields through the ordinary class
-    // lifecycle contract. A generic argument is not a stored ownership edge:
-    // an empty tag, inline holder, and indirect collection may all name T.
-    // Direct enum fields are validated at their field declaration instead.
+  if (type.kind == SemanticType::Class || type.kind == SemanticType::Lambda) {
+    // Nominal values and closure environments own their concrete fields through
+    // their ordinary lifecycle contracts. Type arguments are not stored
+    // ownership edges: nominal metadata and callable signatures may name T.
+    // Direct enum fields and captures are validated at their declarations.
     return false;
   }
   if (type.kind == SemanticType::Reference ||
@@ -450,6 +549,16 @@ auto SemanticVisitor::Impl::containsOwningPayloadEnum(
 auto SemanticVisitor::Impl::validateOwningPayloadEnumByValueBoundary(
     const SemanticType &type, const Token &location, std::string_view boundary,
     bool directTransport) -> void {
+  if (type.kind == SemanticType::TypePack) {
+    // A concrete parameter pack expands into independent formals, not an
+    // aggregate that contains their ownership. Apply the ordinary boundary
+    // contract to every element, retaining the callable's eligibility.
+    for (const auto &element : type.arguments) {
+      validateOwningPayloadEnumByValueBoundary(element, location, boundary,
+                                               directTransport);
+    }
+    return;
+  }
   if (!containsOwningPayloadEnum(type)) {
     return;
   }
@@ -2312,6 +2421,8 @@ auto SemanticVisitor::Impl::visitStaticAssertDecl(const StaticAssertDecl &stmt)
 auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     -> void {
   const DeclarationOrderScope declarationOrder{*this, stmt};
+  validateCodegenAttributes(stmt.functionAttributes(), stmt.body() != nullptr,
+                            true);
   const std::size_t constructorDiagnosticStart = diagnostics.size();
   if (!currentClass) {
     report(stmt.name(),
@@ -2918,6 +3029,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
 auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
     -> void {
   const DeclarationOrderScope declarationOrder{*this, stmt};
+  validateCodegenAttributes(stmt.functionAttributes(), stmt.body() != nullptr,
+                            true);
   if (!currentClass) {
     report(stmt.tilde(),
            "Destructors can only be declared in a class or struct.",
@@ -3700,6 +3813,12 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                                          where, {std::move(message)}));
   };
   std::unordered_set<std::string> functionAttributeNames;
+  validateCodegenAttributes(
+      stmt.functionAttributes(),
+      functionInfo != nullptr && !stmt.hasCLinkage() &&
+          !stmt.runtimeBinding() && !stmt.isMacro() && !stmt.isPure() &&
+          functionInfo->bodyDeclaration() != nullptr &&
+          functionInfo->bodyDeclaration()->body() != nullptr);
   if (stmt.isMacro()) {
     const Token &keyword = *stmt.macroKeyword();
     if (functionInfo == nullptr || functionInfo->ownerClass != 0 ||
@@ -3771,22 +3890,6 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     }
     if (attribute.lexeme == "inline" || attribute.lexeme == "noinline" ||
         attribute.lexeme == "cold") {
-      if (!functionAttributeNames.insert(attribute.lexeme).second) {
-        reportContract(attribute, "Duplicate function attribute '" +
-                                      attribute.lexeme + "'.");
-      } else if (stmt.hasFunctionAttribute("inline") &&
-                 stmt.hasFunctionAttribute("noinline") &&
-                 attribute.lexeme == "noinline") {
-        reportContract(attribute, "[[inline]] and [[noinline]] cannot be "
-                                  "combined on the same function.");
-      } else if (contract.argument || functionInfo == nullptr ||
-                 stmt.hasCLinkage() || stmt.runtimeBinding() ||
-                 stmt.isMacro() || stmt.isPure() ||
-                 functionInfo->bodyDeclaration() == nullptr ||
-                 functionInfo->bodyDeclaration()->body() == nullptr) {
-        reportContract(attribute, "Code-generation attributes require a "
-                                  "source-defined GTI function or method.");
-      }
       continue;
     }
     if (attribute.lexeme == "test") {
@@ -5406,7 +5509,10 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
       valueControlFlow;
 
   scopes = beforeBranches;
-  mergeValueStates(beforeBranches, thenScopes, elseScopes);
+  mergeValueStates(
+      beforeBranches, thenScopes, elseScopes,
+      summarizeFlow(stmt.thenBranch().get(), nullptr, true).canFallThrough,
+      summarizeFlow(stmt.elseBranch().get(), nullptr, true).canFallThrough);
   const ScopeStack loanScopes = scopes;
   ScopeStack moveScopes = beforeBranches;
   if (const std::optional<bool> condition = constantBoolean(stmt.condition())) {
@@ -6375,6 +6481,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   if (payloadEnum != nullptr && !hasDefault && !invalidPayloadPattern &&
       !exhaustivePayload) {
     std::string missing;
+    std::vector<std::string> missingVariants;
     for (const EnumeratorInfo &enumerator : payloadEnum->enumerators) {
       if (coveredPayloadVariants.contains(enumerator.variantIndex) ||
           enumerator.declaration == nullptr) {
@@ -6385,12 +6492,35 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       }
       missing += payloadEnum->qualifiedName +
                  "::" + enumerator.declaration->name.lexeme;
+      missingVariants.push_back(typeSpelling(subjectType) +
+                                "::" + enumerator.declaration->name.lexeme);
     }
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2067", DiagnosticPhase::Semantics, stmt.keyword(),
         "Payload-enum switch is not exhaustive; missing " + missing + ".");
     diagnostic.hints.emplace_back(
         "Handle every variant explicitly or add a 'default' arm.");
+    // Tag-only arms do not guess payload bindings or ownership. These are
+    // explicit-review scaffolds, never an automatic behavior-preserving fix.
+    const auto &owner = enums[subjectType.enumId - 1];
+    // A concrete instance's owner may not be the written generic owner's
+    // spelling, and one definition can be instantiated with several enums.
+    if (macroExpansionDepth == 0 && !instanceAnalysisActive &&
+        declarationVisible(owner.sourceUnit, owner.name) &&
+        !missingVariants.empty()) {
+      // Diagnostic type spelling is not necessarily a usable source name in
+      // this scope (namespace shadowing, aliases, or unnamed type arguments).
+      // Prove the proposed owner with the ordinary parser and exact lookup;
+      // never offer an edit naming a different concrete enum instance.
+      const auto expression =
+          parseRepairExpression(missingVariants.front(), stmt.keyword().source);
+      const auto *qualified = exprAs<QualifiedName>(expression.get());
+      const auto resolved =
+          qualified ? resolveEnumerator(*qualified) : std::nullopt;
+      if (resolved && resolved->symbol.type == subjectType)
+        if (auto fix = missingSwitchCasesFix(stmt, sources, missingVariants))
+          diagnostic.fixes.push_back(std::move(*fix));
+    }
     diagnostics.emplace_back(std::move(diagnostic));
   }
   ValueControlFlowContext valueFlow = endValueControlFlow();
@@ -6752,38 +6882,25 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   semanticModel.recordFullExpression(stmt, initializer);
   if (catalog.sealed)
     validateOrdinaryClassLayout(declaredType);
-  if (declaredType.kind == SemanticType::Array &&
-      containsOwningPayloadEnum(declaredType)) {
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2067", DiagnosticPhase::Semantics, stmt.name(),
-        "Fixed array '" + stmt.name().lexeme + "' has type '" +
-            typeSpelling(declaredType) +
-            "', but owning payload-enum elements are not supported in this "
-            "bounded containment slice.");
-    diagnostic.hints.emplace_back(
-        "Keep each owning payload enum in its own local binding until "
-        "aggregate element lifecycle state is represented explicitly.");
-    diagnostics.emplace_back(std::move(diagnostic));
-  } else if (instanceField && declaredType.kind == SemanticType::Enum &&
-             containsOwningPayloadEnum(declaredType) &&
-             !(fieldOwner != nullptr &&
-               (fieldOwner->kind == ClassKind::Class ||
-                fieldOwner->kind == ClassKind::Struct) &&
-               !fieldOwner->polymorphic && !fieldOwner->cAbiRecord &&
-               !fieldOwner->cOpaqueHandle && !fieldOwner->storedReference &&
-               !fieldOwner->compilerPrivate &&
-               fieldOwner->compilerCapability ==
-                   CompilerCapabilityTypeKind::None)) {
+  if (instanceField && containsOwningPayloadEnum(declaredType) &&
+      !(fieldOwner != nullptr &&
+        (fieldOwner->kind == ClassKind::Class ||
+         fieldOwner->kind == ClassKind::Struct) &&
+        !fieldOwner->polymorphic && !fieldOwner->cAbiRecord &&
+        !fieldOwner->cOpaqueHandle && !fieldOwner->storedReference &&
+        !fieldOwner->compilerPrivate &&
+        fieldOwner->compilerCapability == CompilerCapabilityTypeKind::None)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2067", DiagnosticPhase::Semantics, stmt.name(),
         "Instance field '" + stmt.name().lexeme + "' has type '" +
             typeSpelling(declaredType) +
             "', which contains owning payload-enum state unsupported for "
-            "this owner in the bounded direct-field slice.");
+            "this owner in the owning-field slice.");
     diagnostic.hints.emplace_back(
-        "A direct owning payload-enum field is supported only in an ordinary "
-        "non-polymorphic GTI class or struct; keep "
-        "layout-constrained and compiler-owned shapes in separate bindings.");
+        "An owning payload-enum field, directly or in a fixed array, is "
+        "supported only in an ordinary non-polymorphic GTI class or struct; "
+        "keep layout-constrained and compiler-owned shapes in separate "
+        "bindings.");
     diagnostics.emplace_back(std::move(diagnostic));
   }
   const SemanticBindingKind bindingKind =
@@ -10956,8 +11073,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
            "GTI-S2093");
   }
   validateOwningPayloadEnumByValueBoundary(
-      returnType, expr.returnType().name.last(), "lambda return",
-      directOwningPayloadTransport);
+      returnType, expr.returnType().name.last(), "lambda return", true);
   if (returnType.kind != SemanticType::Reference &&
       typeTraits(returnType).containsBorrowedState) {
     report(expr.returnType().name.last(),
@@ -10977,8 +11093,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     const SemanticType declaredType = parameterBindingType(parameter);
     const SemanticType parameterType = declaredType;
     validateOwningPayloadEnumByValueBoundary(
-        parameterType, parameter.type.name.last(), "lambda parameter",
-        directOwningPayloadTransport);
+        parameterType, parameter.type.name.last(), "lambda parameter", true);
     const SymbolId parameterSymbol =
         recordParameterBinding(parameter, parameterType);
     BindingInfo parameterInfo =
@@ -11317,7 +11432,12 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
         : capture.explicitInitializer() ? LambdaCaptureMode::Move
                                         : LambdaCaptureMode::Copy;
     const SemanticTypeTraits traits = typeTraits(source->type);
-    if (!isBorrowingCapture(mode) && containsOwningPayloadEnum(source->type)) {
+    // An ordinary enum capture owns its active payload through the same
+    // environment lifecycle as a captured class. Conditional borrowed payload
+    // dependencies retain their separate transport boundary.
+    if (!isBorrowingCapture(mode) && containsOwningPayloadEnum(source->type) &&
+        (source->type.kind != SemanticType::Enum ||
+         traits.containsBorrowedState)) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2067", DiagnosticPhase::Semantics, capture.name,
           "Lambda capture '" + capture.name.lexeme + "' cannot " +

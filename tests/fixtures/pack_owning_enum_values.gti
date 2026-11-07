@@ -1,0 +1,34 @@
+import std.string;
+import std.memory;
+import std.unordered_map;
+
+mut int owner_drops = 0;
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() { owner_drops++; }
+};
+enum Event { Empty, Owned(Owner value) };
+void sink<Args...>(Args... args) {}
+void relay<Args...>(Args... args) { sink(args...); }
+int main() {
+  relay(1, Event::Empty);
+  if (owner_drops != 0) return 1;
+  {
+    mut std::unordered_map<std::string, Event> values{};
+    auto key = std::string("first");
+    values.insert(key.clone(), Event::Owned(Owner()));
+    if (owner_drops != 0) return 4;
+    values.insert(key.clone(), Event::Owned(Owner()));
+    if (owner_drops != 1) return 5;
+    values.insert_or_assign(key.clone(), Event::Owned(Owner()));
+    if (owner_drops != 2) return 6;
+    values.erase(key);
+    if (owner_drops != 3) return 7;
+    values.insert(key.clone(), Event::Owned(Owner()));
+    values.insert(std::string("second"), Event::Owned(Owner()));
+  }
+  return owner_drops == 5 ? 0 : 8;
+}

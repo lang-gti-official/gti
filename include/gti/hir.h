@@ -909,6 +909,7 @@ struct HirConstructorInitializer {
 
 struct HirConstructorInstance {
   std::vector<GenericParameterIdentity> liftedLifetimes;
+  FunctionCodegenAttributes codegenAttributes;
   HirConstructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ConstructorId declaration = 0;
@@ -940,6 +941,7 @@ struct HirConstructorInstance {
 
 struct HirDestructorInstance {
   std::vector<GenericParameterIdentity> liftedLifetimes;
+  FunctionCodegenAttributes codegenAttributes;
   HirDestructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   const DestructorDecl *source = nullptr;

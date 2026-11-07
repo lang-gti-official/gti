@@ -447,12 +447,29 @@ verifyCompiledScalarUnit(const LoweredProgram &program) {
   }
   if (program.compiledScalarBindings().size() > 256 || program.embeddingPlan())
     errors.push_back("invalid compiled scalar unit profile");
+  // Object data has no startup/retirement ordering to compose. Admit only the
+  // already verified passive MIR storage stages; executable initialization,
+  // lazy local storage and cleanup still need a per-library lifetime plan.
+  const auto &storage = program.mir().programInitializationPlan().steps;
+  const bool passiveStorage =
+      std::all_of(storage.begin(), storage.end(), [](const auto &step) {
+        return step.role == ProgramInitializationStepRole::DataOnly &&
+               (step.storageKind == ProgramStorageKind::NamespaceGlobal ||
+                step.storageKind == ProgramStorageKind::StaticField) &&
+               !step.requiresActiveCleanup && !step.nativeRetirement &&
+               ((step.dataInitialization ==
+                     MirProgramDataInitializationKind::ImplicitZero &&
+                 !step.dataConstant) ||
+                (step.dataInitialization ==
+                     MirProgramDataInitializationKind::Constant &&
+                 step.dataConstant));
+      });
   if (program.compiledScalarProducer() &&
-      (program.mir().hostedStartupPlan() ||
-       !program.mir().programInitializationPlan().steps.empty() ||
+      (program.mir().hostedStartupPlan() || !passiveStorage ||
        !program.mir().threadLocalStorage().empty()))
     errors.push_back(
-        "compiled scalar library requires no entry point or program storage");
+        "compiled library requires passive program storage without entry, "
+        "thread-local initialization or cleanup");
   if (program.compiledScalarProducer() &&
       std::none_of(program.compiledScalarBindings().begin(),
                    program.compiledScalarBindings().end(),

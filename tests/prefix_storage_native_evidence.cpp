@@ -1,3 +1,4 @@
+#include "temporary_directory.h"
 // Source-defined prefix ownership evidence. Ordinary fixtures exercise the
 // owner's full contract — append order,
 // pop-last destruction, complete-prefix relocation, move transfer, reverse
@@ -496,7 +497,7 @@ int main(int argc, char **argv) {
   const std::string compiler = argc > 1 ? argv[1] : "c++";
   std::error_code error;
   const std::filesystem::path directory =
-      std::filesystem::temp_directory_path() / "gti-prefix-evidence";
+      gti_test::temporaryDirectory() / "gti-prefix-evidence";
   std::filesystem::remove_all(directory, error);
   std::filesystem::create_directories(directory, error);
 

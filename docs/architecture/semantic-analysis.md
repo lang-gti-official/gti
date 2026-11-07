@@ -626,6 +626,16 @@ Namespace raw storage also receives loop-input symbols. Source write effects
 through loop-carried aliases defer their destination substitution and weakly
 close projected writes over backedge symbol facts before checking deferred uses.
 
+At an `if` join, complete borrow dependency sets and enum alternatives merge
+only arms that structurally reach the continuation. An arm ending in `return`,
+`break`, `continue`, or a non-returning call contributes no continuing value;
+it is not an unknown supplier. This uses structural flow, matching MIR's CFG,
+so ordinary constant conditions still retain both structural edges. The
+conservative loan union and move-state analysis remain separate. MIR continues
+to verify attached transport facts against independently reconstructed flow.
+If neither arm continues, unreachable syntax retains the conservative join for
+semantic diagnostics; no continuing MIR value publishes that join.
+
 Loop entry also drops the complete borrow dependency set of every writable
 binding in scope. The single body visit cannot prove an incoming alternative
 for every backedge iteration; a dominating construction inside the body can

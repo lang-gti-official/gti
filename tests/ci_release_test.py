@@ -397,7 +397,24 @@ def llvm_pin_contract(root):
         "a system LLVM of another major is refused"
     refusal = cmake.split("if(NOT LLVM_VERSION_MAJOR EQUAL GTI_PINNED_LLVM_MAJOR)", 1)[1].split("endif()\n  endif()", 1)[0]
     assert "FATAL_ERROR" in refusal and "GTI_ALLOW_UNPINNED_LLVM" in refusal
+    # ccache with empty sloppiness cannot cache a compile that consumes a PCH,
+    # so the bundled LLVM/Clang (both fetch paths) is configured without them,
+    # and the setting is restored before GTI's own targets exist.
+    assert "set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON)" in cmake and \
+        "unset(CMAKE_DISABLE_PRECOMPILE_HEADERS)" in cmake, "the bundled LLVM must not build PCH"
+    disable = cmake.index("set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON)")
+    fetches = [match.start() for match in re.finditer(r"FetchContent_Declare\(\s*llvm_project", cmake)]
+    restore = cmake.index("unset(CMAKE_DISABLE_PRECOMPILE_HEADERS)")
+    assert len(fetches) == 2 and disable < min(fetches) and max(fetches) < restore, \
+        "the bundled LLVM is configured without precompiled headers"
+    assert restore < cmake.index('set(GTI_LLVM_VERSION "${GTI_PINNED_LLVM_VERSION}")') < \
+        cmake.index("target_precompile_headers("), "GTI's own precompiled headers stay enabled"
+    assert cmake.count("CMAKE_DISABLE_PRECOMPILE_HEADERS ON") == 1
     toolchain = (root / "scripts/configure_ci_toolchain.sh").read_text()
+    # A stalled mirror must cost minutes, not the six-hour job limit.
+    assert "sudo timeout 300 apt-get" in toolchain and "Acquire::Retries=" in toolchain
+    assert not re.search(r"^\s*sudo apt-get ", toolchain, re.MULTILINE), \
+        "every apt-get call goes through the bounded, retried wrapper"
     assert 'sed -n \'s/^set(GTI_PINNED_LLVM_VERSION' in toolchain, "CI reads the pin, not its own version"
     assert not re.search(r"llvm-[0-9]{2}-dev|llvm@[0-9]{2}|clang-[0-9]{2}\b|llvm-[0-9]{2}/", toolchain), \
         "CI names LLVM only through the pinned major"
@@ -537,7 +554,7 @@ def train_contract(root):
     # suite re-run (the cut's full-CI-verified parent, or the backport's own
     # suite, is the evidence).
     beta = jobs(beta_text)
-    assert list(beta) == ["select", "package", "publish"], list(beta)
+    assert list(beta) == ["select", "status", "package", "publish"], list(beta)
     assert "merge-shards" not in beta_text and "validation_checks.py shard" not in beta_text
     assert "check_ci_sanitizers" not in beta_text and "actions/cache/save@" not in beta_text
     header = beta_text.split("\njobs:\n", 1)[0]
@@ -547,10 +564,20 @@ def train_contract(root):
     assert set(re.findall(r"secrets\.([A-Za-z0-9_]+)", beta_text)) == set()
     for job, body in beta.items():
         writes = re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE)
-        assert writes == (["contents", "id-token", "attestations"] if job == "publish" else []), (job, writes)
+        expected = {"publish": ["contents", "id-token", "attestations"], "status": ["contents"]}
+        assert writes == expected.get(job, []), (job, writes)
     assert "if: github.repository == 'lang-gti-official/gti'" in beta["select"]
     assert "python3 tests/release_train_test.py" in beta["select"] and "select-beta" in beta["select"]
+    registry = beta["status"]
+    assert "needs: select" in registry and "ref: main" in registry
+    assert "release_train.py initialize-status" in registry
+    assert "outputs.build" not in registry and "if:" not in registry, \
+        "a no-build rerun also repairs a missing registry for a published beta"
+    assert "persist-credentials: false" not in registry, "initialization needs its scoped write token"
+    assert "gh release" not in registry and "git push" not in registry, \
+        "status writes use the validated, idempotent helper without editing releases"
     package = beta["package"]
+    assert "needs: [select, status]" in package, "missing registry stops packaging/publication"
     assert re.findall(r"\{os: [^}]*platform: ([a-z0-9-]+)", package) == ["linux-x64", "darwin-arm64"]
     assert "ubuntu-24.04-arm" not in beta_text and "linux-arm64}" not in beta_text
     assert package.count(CONFIGURE_RELEASE) == 1 and "bash scripts/configure_ci_toolchain.sh" in package
@@ -572,7 +599,7 @@ def train_contract(root):
     ordered(package, ["name: Build\n", "name: Test installed toolchain", "-DGTI_CHANNEL=stable"],
             "the archive comes from the validated stage")
     publish = beta["publish"]
-    assert "needs: [select, package]" in publish
+    assert "needs: [select, status, package]" in publish
     assert "group: gti-beta-publication\n      cancel-in-progress: false" in publish
     ordered(publish, ["release_train.py verify-assets", "release_train.py admit-beta",
                       "attest-build-provenance", "refs/tags/${GTI_BETA_TAG}", "release_train.py beta-notes",

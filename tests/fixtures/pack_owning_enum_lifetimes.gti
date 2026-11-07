@@ -1,0 +1,44 @@
+import std.string;
+import std.vector;
+import std.memory;
+
+class Token {
+public:
+  int id;
+  Token(int value) : id(value) {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  ~Token() { std::println(this.id); }
+};
+enum Event { Empty, Owned(Token token) };
+
+class Holder {
+public:
+  Event first;
+  Event second;
+  int guard;
+  Holder(int divisor, Event left, Event right)
+      : first(std::move(left)), second(std::move(right)), guard(8 / divisor) {}
+  ~Holder() { std::println(10); }
+};
+class Envelope<T> {
+public:
+  T holder;
+  Envelope<Args...>(Args... args) : holder(T(args...)) {}
+};
+T construct<T, Args...>(Args... args) { return T(args...); }
+void relay<Args...>(int divisor, Args... args) {
+  auto owner = construct<Envelope<Holder>>(args...);
+  int result = 1 / divisor;
+}
+Event second(int divisor) {
+  Token token = Token(2);
+  int result = 1 / divisor;
+  return Event::Owned(std::move(token));
+}
+int main(int argc, std::vector<std::string> argv) {
+  Token caller = Token(9);
+  relay(argc == 4 ? 0 : 1, argc == 2 ? 0 : 1,
+        Event::Owned(Token(1)), second(argc == 3 ? 0 : 1));
+  return 0;
+}

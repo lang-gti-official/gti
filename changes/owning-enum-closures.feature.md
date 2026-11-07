@@ -1,0 +1,1 @@
+Allow closures to own reference-free payload enums, forward their environments through ordinary generic calls and stored callbacks, and accept or return owning enums while preserving move safety and deterministic cleanup.

@@ -5,6 +5,21 @@
 namespace lang {
 
 namespace {
+FunctionCodegenAttributes
+resolveCodegenAttributes(const std::vector<FunctionAttribute> &attributes) {
+  FunctionCodegenAttributes result;
+  for (const auto &attribute : attributes) {
+    if (attribute.name.lexeme == "cold")
+      result.cold = true;
+    else if (attribute.name.lexeme == "noinline")
+      result.inlining = FunctionInlining::Never;
+    else if (attribute.name.lexeme == "inline" &&
+             result.inlining != FunctionInlining::Never)
+      result.inlining = FunctionInlining::Hint;
+  }
+  return result;
+}
+
 std::optional<ReceiverMutability>
 signatureClassReceiver(const ClassDecl &owner) {
   const auto &patterns = owner.genericArgumentPatterns();
@@ -5319,13 +5334,8 @@ auto SemanticVisitor::Impl::registerFunctionGenericParameters(
           .requiresUnsafe = function->unsafeKeyword().has_value(),
           .neverReturns = function->hasFunctionAttribute("noreturn"),
           .tracksCaller = function->hasFunctionAttribute("track_caller"),
-          .codegenAttributes = {.inlining =
-                                    function->hasFunctionAttribute("noinline")
-                                        ? FunctionInlining::Never
-                                    : function->hasFunctionAttribute("inline")
-                                        ? FunctionInlining::Hint
-                                        : FunctionInlining::Default,
-                                .cold = function->hasFunctionAttribute("cold")},
+          .codegenAttributes =
+              resolveCodegenAttributes(function->functionAttributes()),
           .discardableResult = function->hasFunctionAttribute("discardable"),
           .macroExpansion = function->isMacro(),
           .threadConfinedCallback =
@@ -10708,13 +10718,15 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
                "GTI-S2041");
         continue;
       }
-      ConstructorInfo info{.id = nextConstructorId++,
-                           .owner = owner.id,
-                           .declaration = constructor,
-                           .access = access,
-                           .constexprConstructor = constructor->isConstexpr(),
-                           .requiresUnsafe =
-                               constructor->unsafeKeyword().has_value()};
+      ConstructorInfo info{
+          .codegenAttributes =
+              resolveCodegenAttributes(constructor->functionAttributes()),
+          .id = nextConstructorId++,
+          .owner = owner.id,
+          .declaration = constructor,
+          .access = access,
+          .constexprConstructor = constructor->isConstexpr(),
+          .requiresUnsafe = constructor->unsafeKeyword().has_value()};
       info.requiredParameterCount =
           requiredParameterCount(constructor->parameters());
       info.defaultArgumentEffectOwners =
@@ -11004,8 +11016,12 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
             "model.");
         diagnostics.emplace_back(std::move(diagnostic));
       }
-      owner.destructor = DestructorInfo{
-          .owner = owner.id, .declaration = destructor, .access = access};
+      owner.destructor =
+          DestructorInfo{.codegenAttributes = resolveCodegenAttributes(
+                             destructor->functionAttributes()),
+                         .owner = owner.id,
+                         .declaration = destructor,
+                         .access = access};
       normalizeDestructorLifetimeContract(*owner.destructor);
       continue;
     }

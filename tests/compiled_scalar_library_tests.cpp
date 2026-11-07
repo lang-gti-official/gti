@@ -4,6 +4,7 @@
 #include "../src/driver/compiled_scalar_support.h"
 #include "gti/compiled_interface_types.h"
 #include "gti/compiled_scalar_unit.h"
+#include "gti/driver/build.h"
 #include "gti/driver/compiled_scalar_library.h"
 #include "gti/driver/process.h"
 #include "gti/driver/project.h"
@@ -22,6 +23,10 @@ namespace lang {
 struct LoweredProgramTestAccess {
   static auto &bindings(LoweredProgram &p) { return p.compiledScalarBindings_; }
   static auto &units(LoweredProgram &p) { return p.compiledInterfaceUnits_; }
+  static auto &mir(LoweredProgram &p) { return p.mir_; }
+};
+struct MirProgramTestAccess {
+  static auto &steps(MirProgram &p) { return p.programInitialization.steps; }
 };
 } // namespace lang
 namespace {
@@ -123,6 +128,170 @@ public:
     return {BackendArtifactKind::Object, "captured", ".o", {}};
   }
 };
+void passiveStorageTests(const std::filesystem::path &root,
+                         const std::filesystem::path &runtime) {
+  write(root / "stdlib/prelude.gti", "");
+  const auto source = root / "producer/library.gti";
+  constexpr std::string_view library = R"(
+export module numbers;
+mut int total;
+mut int calls;
+constexpr int bias = 7;
+class Counts {
+public:
+  static constexpr int weight = 2;
+};
+int read(int& value) { return value; }
+export int choose(int x) {
+  total += x;
+  calls += 1;
+  return total + calls + read(bias) + read(Counts::weight);
+}
+)";
+  for (auto level : {OptimizationLevel::O0, OptimizationLevel::O3}) {
+    write(source, library);
+    auto producer = buildCompiledScalarLibrary(request(root, source, level),
+                                               keys(), runtime);
+    compiled(producer.compilation);
+    if (level == OptimizationLevel::O3) {
+      Capture capture;
+      compiled(compileWithBackend(
+          request(root, source, level).withApplicationBodies(), capture));
+      auto bound =
+          CompiledScalarUnitBuilder().bind(*capture.program, keys(), true);
+      expect(verifyLoweredProgram(bound).empty(),
+             "valid passive library failed verification");
+      const auto &steps = bound.mir().programInitializationPlan().steps;
+      expect(
+          steps.size() == 4 &&
+              std::count_if(steps.begin(), steps.end(),
+                            [](const auto &step) {
+                              return step.dataInitialization ==
+                                     MirProgramDataInitializationKind::Constant;
+                            }) == 2,
+          "fixture must exercise both zero and constant object storage");
+      for (int mutation = 0; mutation < 7; ++mutation) {
+        auto changed = bound;
+        auto &step =
+            MirProgramTestAccess::steps(LoweredProgramTestAccess::mir(changed))
+                .front();
+        if (mutation == 0)
+          step.role = ProgramInitializationStepRole::Initializer;
+        if (mutation == 1)
+          step.storageKind = ProgramStorageKind::FunctionLocal;
+        if (mutation == 2)
+          step.requiresActiveCleanup = true;
+        if (mutation == 3)
+          step.nativeRetirement = MirDropType{};
+        if (mutation == 4)
+          step.dataInitialization = MirProgramDataInitializationKind::None;
+        if (mutation == 5)
+          step.dataInitialization = MirProgramDataInitializationKind::Constant;
+        if (mutation == 6)
+          step.dataConstant = steps[2].dataConstant;
+        expect(!verifyCompiledScalarUnit(changed).empty() &&
+                   !verifyLoweredProgram(changed).empty(),
+               "forged passive storage plan accepted");
+      }
+    }
+    std::filesystem::remove_all(source.parent_path());
+    write(root / "consumer/main.gti", R"(
+import "api.gti";
+int main() {
+  if (choose(2) != 12) { return 1; }
+  if (choose(3) != 16) { return 2; }
+  if (choose(0) != 17) { return 3; }
+  return 0;
+}
+)");
+    linkAndRun(root, runtime,
+               compileCompiledScalarConsumer(
+                   request(root, root / "consumer/main.gti", level),
+                   producer.bundle, root / "consumer/api.gti", runtime));
+    // A new executable process starts with fresh object data, not a build-time
+    // or process-external counter shared by consumers.
+    const auto rerun = process({(root / "app").string()});
+    expect(rerun.succeeded(),
+           "passive storage did not reset per process: " + rerun.output);
+  }
+  struct Rejection {
+    std::string_view storage, code, message;
+  };
+  for (const auto &test :
+       {Rejection{"int initial() { return 1; } mut int total = initial();",
+                  "GTI-B0003", "requires passive program storage"},
+        Rejection{"thread_local mut int total;", "GTI-B0003",
+                  "requires passive program storage"},
+        // Source-owned global cleanup is rejected by semantics before
+        // compiled-unit admission. Keep that earlier safety boundary.
+        Rejection{"class Guard { public: Guard() = default; ~Guard() {} }; "
+                  "Guard guard; mut int total;",
+                  "GTI-S2061", "requires source or owning cleanup"}}) {
+    write(source, "export module numbers; " + std::string(test.storage) +
+                      " export int choose(int x) { return total + x; }");
+    const auto rejected = buildCompiledScalarLibrary(
+        request(root, source, OptimizationLevel::O3), keys(), runtime);
+    const bool storageLimitation = std::any_of(
+        rejected.compilation.diagnostics.begin(),
+        rejected.compilation.diagnostics.end(), [&](const auto &diagnostic) {
+          return diagnostic.code == test.code &&
+                 diagnostic.message.find(test.message) != std::string::npos;
+        });
+    std::string details;
+    for (const auto &diagnostic : rejected.compilation.diagnostics)
+      details += diagnostic.code + ": " + diagnostic.message + "\n";
+    expect(!rejected.compilation.succeeded() && rejected.bundle.empty() &&
+               storageLimitation,
+           "unsupported storage must fail at its owning boundary: " +
+               std::string(test.storage) + ": " + details);
+  }
+  std::cout << "passive namespace/static/constant storage and source-absent "
+               "execution passed at O0/O3\n";
+}
+void runtimeClosureTests(const std::filesystem::path &root,
+                         const std::filesystem::path &runtime) {
+  const auto target = TargetInfo::host();
+  const auto services = compiledLibrarySupportSymbols(read(runtime), target);
+  expect(!services.empty() && std::is_sorted(services.begin(), services.end()),
+         "runtime service inventory must be nonempty and canonical");
+  rejects(
+      [&] { (void)compiledLibrarySupportSymbols("not an archive", target); },
+      "malformed runtime archive");
+  rejects([&] { (void)compiledLibrarySupportSymbols("!<thin>\n", target); },
+          "external thin runtime members");
+  rejects([&] { (void)compiledLibrarySupportSymbols("!<arch>\n", target); },
+          "runtime without services");
+  // These are symbol-verifier fixtures, not calls with an invented runtime ABI:
+  // nothing links or executes them. Prefix alone must never authorize an
+  // import.
+  const auto runtimeService =
+      std::find_if(services.begin(), services.end(), [](const auto &name) {
+        return name.starts_with("gti_rt_");
+      });
+  expect(runtimeService != services.end(), "missing actual runtime C export");
+  for (const auto &dependency : {*runtimeService, std::string("memcpy"),
+                                 std::string("gti_rt_missing_service_v999"),
+                                 std::string("arbitrary_native_service")}) {
+    const auto source = root / "runtime-probe.cpp";
+    const auto object = root / "runtime-probe.o";
+    write(source, "extern \"C\" void " + dependency +
+                      "(); extern \"C\" void probe() { " + dependency +
+                      "(); }\n");
+    auto built = process({"c++", "-c", source.string(), "-o", object.string()});
+    expect(built.succeeded(), "runtime symbol fixture failed: " + built.output);
+    const auto bytes = read(object);
+    rejects([&] { verifyCompiledScalarObject(bytes, target, {"probe"}); },
+            "unselected runtime dependency");
+    if (dependency == *runtimeService || dependency == "memcpy")
+      verifyCompiledScalarObject(bytes, target, {"probe"}, services);
+    else
+      rejects(
+          [&] {
+            verifyCompiledScalarObject(bytes, target, {"probe"}, services);
+          },
+          "unprovided native dependency");
+  }
+}
 void checkAnnotationIr(const LoweredProgram &program) {
   std::vector<LoweredProgramIssue> issues;
   const auto verified = verifiedLoweredProgram(program, issues);
@@ -345,6 +514,122 @@ void projectCheckTests(const std::filesystem::path &root,
       result.status == CheckStatus::ArtifactFailure &&
           result.driverDiagnostic && !std::filesystem::exists(root / "build"),
       "compatibility input failure must return a read-only artifact failure");
+}
+void snapshotTests(const std::filesystem::path &root,
+                   const std::filesystem::path &runtime) {
+  write(root / "stdlib/prelude.gti", "");
+  const auto source = root / "producer/library.gti";
+  const auto artifact = root / "numbers.gtilib";
+  const auto consumer = root / "consumer/main.gti";
+  const auto facade = root / "consumer/api.gti";
+  const CompiledLibraryTarget target{"example/numbers", "numbers", {"choose"}};
+  for (const auto level : {OptimizationLevel::O0, OptimizationLevel::O3}) {
+    write(source,
+          "export module numbers; export int choose(int x) { return x; }");
+    const auto producerRequest = request(root, source, level);
+    const auto buildRequest = ExecutableBuildRequest(
+        producerRequest,
+        {.standardLibrary = standardLibraryLayout(root / "stdlib"),
+         .runtimeLibrary = runtime},
+        root / "producer.o", artifact, "c++", {}, false, true, true, {}, {},
+        BuildCachePolicy{.root = root / "cache"}, {}, target);
+    auto built = buildExecutable(buildRequest);
+    expect(built.succeeded() && built.compiledLibrarySnapshot &&
+               *built.compiledLibrarySnapshot == read(artifact),
+           "producer must return its exact published artifact bytes");
+    auto reused = buildExecutable(buildRequest);
+    expect(reused.succeeded() && reused.cache.status == BuildCacheStatus::Hit &&
+               reused.compiledLibrarySnapshot &&
+               *reused.compiledLibrarySnapshot ==
+                   *built.compiledLibrarySnapshot,
+           "cache hit must retain the exact validated artifact bytes");
+    CompiledLibrarySnapshots first;
+    first.retain(artifact, reused.compiledLibrarySnapshot);
+    first.retain(artifact, built.compiledLibrarySnapshot);
+    // Replace the path with another valid bundle from the same logical
+    // library, then delete all producer sources and the selected artifact.
+    write(source,
+          "export module numbers; export int choose(int x) { return x + 1; }");
+    auto replacement = buildExecutable(buildRequest);
+    expect(replacement.succeeded() && replacement.compiledLibrarySnapshot &&
+               *replacement.compiledLibrarySnapshot !=
+                   *reused.compiledLibrarySnapshot,
+           "source edit must build a different library snapshot");
+    std::vector<CompiledLibraryImport> inputs{
+        {"example/numbers", "numbers", artifact, facade}};
+    auto oldSelection = first.select(inputs);
+    CompiledLibrarySnapshots nextBuild;
+    auto newSelection = nextBuild.select(inputs);
+    expect(oldSelection.front().snapshot == reused.compiledLibrarySnapshot &&
+               *newSelection.front().snapshot ==
+                   *replacement.compiledLibrarySnapshot,
+           "each build must retain its own artifact selection");
+    std::filesystem::remove_all(source.parent_path());
+    std::filesystem::remove(artifact);
+    expect(first.select(inputs).front().snapshot ==
+                   oldSelection.front().snapshot &&
+               nextBuild.select(inputs).front().snapshot ==
+                   newSelection.front().snapshot,
+           "selected dependencies must not be reopened or recopied");
+    for (int revision = 0; revision < 2; ++revision) {
+      write(consumer, "import \"api.gti\"; int main() { return choose(7) - " +
+                          std::to_string(7 + revision) + "; }");
+      linkAndRun(root, runtime,
+                 compileCompiledScalarConsumer(
+                     request(root, consumer, level),
+                     revision ? newSelection : oldSelection, runtime));
+    }
+    rejects(
+        [&] { first.retain(artifact, replacement.compiledLibrarySnapshot); },
+        "replacing a selection within the same build");
+    auto corrupted = oldSelection;
+    corrupted.front().snapshot = std::make_shared<const std::string>("broken");
+    rejects(
+        [&] {
+          (void)compileCompiledScalarConsumer(request(root, consumer, level),
+                                              corrupted, runtime);
+        },
+        "in-memory bytes bypassing integrity checks");
+    auto incompatible = decodeLibraryBundle(*oldSelection.front().snapshot);
+    incompatible.identity.runtime = std::string(64, '0');
+    corrupted.front().snapshot =
+        std::make_shared<const std::string>(encodeLibraryBundle(incompatible));
+    rejects(
+        [&] {
+          (void)compileCompiledScalarConsumer(request(root, consumer, level),
+                                              corrupted, runtime);
+        },
+        "checksummed in-memory bytes bypassing runtime compatibility");
+    auto wrongOwner = oldSelection;
+    wrongOwner.front().package = "another/package";
+    rejects(
+        [&] {
+          (void)compileCompiledScalarConsumer(request(root, consumer, level),
+                                              wrongOwner, runtime);
+        },
+        "snapshot bypassing selected package identity");
+  }
+  CompiledLibrarySnapshots limited;
+  const auto small = std::make_shared<const std::string>("x");
+  for (int i = 0; i < 64; ++i)
+    limited.retain(root / std::to_string(i), small);
+  limited.retain(root / "0", small);
+  rejects([&] { limited.retain(root / "64", small); },
+          "more than 64 selections");
+  CompiledLibrarySnapshots byteLimited;
+  const auto block = std::make_shared<const std::string>(4 * 1024 * 1024, 'x');
+  for (int i = 0; i < 63; ++i)
+    byteLimited.retain(root / std::to_string(i), block);
+  rejects(
+      [&] {
+        byteLimited.retain(root / "63", std::make_shared<const std::string>(
+                                            8 * 1024 * 1024, 'x'));
+      },
+      "aggregate snapshot bytes exceeding the bundle limit");
+  rejects([&] { byteLimited.retain(root / "null", {}); }, "null snapshot");
+  std::cout
+      << "published/cache-hit snapshot handoff, replacement/deletion, "
+         "source-absent O0/O3 execution and bounded untrusted inputs passed\n";
 }
 void negativeTests(const std::filesystem::path &root,
                    const std::filesystem::path &runtime,
@@ -612,7 +897,10 @@ int main(int argc, char **argv) {
     expect(argc == 3, "expected runtime archive and example directory");
     TemporaryDirectory tmp;
     const std::filesystem::path examples = argv[2];
+    runtimeClosureTests(tmp.path / "runtime", argv[1]);
     projectCheckTests(tmp.path / "check-project", argv[1]);
+    snapshotTests(tmp.path / "snapshots", argv[1]);
+    passiveStorageTests(tmp.path / "passive-storage", argv[1]);
     annotationTests(tmp.path / "annotations", argv[1]);
     write(tmp.path / "stdlib/prelude.gti", "");
     for (auto level : {OptimizationLevel::O0, OptimizationLevel::O1,

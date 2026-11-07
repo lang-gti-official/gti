@@ -1210,6 +1210,8 @@ private:
         {.liftedLifetimes = canonical
              ? genericParameterIdentities(canonical->liftedLifetimes)
              : std::vector<GenericParameterIdentity>{},
+         .codegenAttributes = declaration ? declaration->codegenAttributes
+                                          : FunctionCodegenAttributes{},
          .id = id,
          .sourceUnit = output.program.classes[*owner - 1].sourceUnit,
          .declaration = identity,
@@ -1280,6 +1282,7 @@ private:
         {.liftedLifetimes = canonical
              ? genericParameterIdentities(canonical->liftedLifetimes)
              : std::vector<GenericParameterIdentity>{},
+         .codegenAttributes = lifecycle->declaredDestructor->codegenAttributes,
          .id = id,
          .sourceUnit = classInstance.sourceUnit,
          .source = lifecycle->declaredDestructor->declaration,
@@ -7294,13 +7297,11 @@ private:
                             : HirCallInputKind::ReadBorrow;
           } else if (orderedValueParameterType(element)) {
             inputKind = HirCallInputKind::Value;
-          } else if ((element.kind == SemanticType::Class || element.kind == SemanticType::Enum ||
-                      element.kind == SemanticType::Lambda) &&
+          } else if (orderedOwningParameterType(element) &&
                      (!traits.containsBorrowedState || storedEntry) &&
                      traits.copyable) {
             inputKind = HirCallInputKind::CopyValue;
-          } else if ((element.kind == SemanticType::Class || element.kind == SemanticType::Enum ||
-                      element.kind == SemanticType::Lambda) &&
+          } else if (orderedOwningParameterType(element) &&
                      (!traits.containsBorrowedState || storedEntry) &&
                      traits.movable) {
             inputKind = HirCallInputKind::MoveValue;

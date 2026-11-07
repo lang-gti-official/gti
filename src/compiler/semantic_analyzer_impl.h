@@ -779,6 +779,9 @@ public:
   void visitRangeForStmt(const RangeForStmt &stmt) override;
 
   void visitFunctionDecl(const FunctionDecl &stmt) override;
+  void
+  validateCodegenAttributes(const std::vector<FunctionAttribute> &attributes,
+                            bool sourceBody, bool lifecycle = false);
   // Trusted-body deferral; see TrustedBodyAnalysis and analyzeDeferredBodies.
   [[nodiscard]] bool deferTrustedBody(const FunctionDecl &stmt) const;
   void analyzeFunctionBody(const FunctionDecl &stmt,
@@ -7312,7 +7315,8 @@ private:
   mergedProjectedValueStates(const Symbol &left, const Symbol &right);
 
   void mergeValueStates(const ScopeStack &base, const ScopeStack &left,
-                        const ScopeStack &right);
+                        const ScopeStack &right, bool leftCanFallThrough = true,
+                        bool rightCanFallThrough = true);
 
   [[nodiscard]] ScopeStack
   mergedValueStates(const ScopeStack &base,

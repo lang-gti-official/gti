@@ -147,13 +147,26 @@ classFor(const lang::FrontendResult &frontend, std::string_view name) {
 void expectRejected(const lang::MirProgram &source, std::string_view message,
                     const std::function<void(lang::MirProgram &)> &mutate,
                     std::string_view expectedDiagnostic = {},
-                    bool moduleBodyMustVerify = false) {
+                    bool moduleBodyMustVerify = false,
+                    std::string_view expectedBodyDiagnostic = {}) {
   lang::MirProgram forged = source;
   mutate(forged);
   if (moduleBodyMustVerify) {
     expect(lang::verifyMirBody(forged.module(), 0).valid(),
            std::string(message) +
                " (mutation should remain generic-Module-valid)");
+  }
+  if (!expectedBodyDiagnostic.empty()) {
+    const auto bodyProof = lang::verifyMirBody(forged.module(), 0);
+    expect(!bodyProof.valid() &&
+               std::any_of(bodyProof.errors.begin(), bodyProof.errors.end(),
+                           [&](const auto &error) {
+                             return error.message.find(
+                                        expectedBodyDiagnostic) !=
+                                    std::string::npos;
+                           }),
+           std::string(message) +
+               " (generic Module verifier must catch missing initialization)");
   }
   const lang::MirVerificationResult verification =
       lang::verifyMirProgram(forged);
@@ -280,7 +293,7 @@ void testExactLoweringAndPrinting(const lang::FrontendResult &frontend) {
              frontend.failureMetadataValid && frontend.mirValid &&
              verification.valid() && exactSteps && sawImplicit && sawConstant &&
              sawDynamic && sawStatic && exactTags && checkedFailure &&
-             substitution && dump.starts_with("mir-v127 valid=") &&
+             substitution && dump.starts_with("mir-v128 valid=") &&
              dump.find("program-initialization units=1") != std::string::npos &&
              dump.find("data-kind=implicit-zero") != std::string::npos &&
              dump.find("program-initialization-step=") != std::string::npos,
@@ -715,7 +728,8 @@ void testPlanAndStorageMutations(const lang::FrontendResult &frontend) {
           }
         }
       },
-      "program-storage operand/receiver is not accessed strictly", true);
+      "program-storage operand/receiver is not accessed strictly", false,
+      "definitely initialized scalar place");
   expect(ownStorageRead,
          "the fixture should expose a real place read for the own-storage "
          "ordering mutation");
@@ -755,7 +769,8 @@ void testPlanAndStorageMutations(const lang::FrontendResult &frontend) {
           }
         }
       },
-      "program-storage operand/receiver is not accessed strictly", true);
+      "program-storage operand/receiver is not accessed strictly", false,
+      "definitely initialized scalar place");
   expect(laterStorageRead,
          "the fixture should expose a same-typed later storage target");
 
