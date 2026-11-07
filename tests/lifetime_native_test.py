@@ -14,6 +14,20 @@ from backend_modes import native_modes
 
 
 CASES = {
+    'composed_record_two_owners': r"""
+import std.memory;
+struct Pair<lifetime a, lifetime b> {
+  int&<a> left; int&<b> right;
+  Pair(int&<a> first,int&<b> second):left(first),right(second) {}
+};
+struct Box<T> { T value; Box(T input):value(std::move(input)) {} };
+Box<T> relay<T>(T input) { return Box<T>(std::move(input)); }
+int main() {
+  int left=4; int right=9; Pair pair{left,right};
+  auto result=relay(std::move(pair));
+  return result.value.left*10+result.value.right-49;
+}
+""",
     'generic_stored_callback_two_owners': r"""
 class Holder<F> { mut F callable; public: Holder(F f) : callable(std::move(f)) {} int run() mut { return this.callable(); } };
 Holder<F> store<F>(F f) { return Holder<F>(std::move(f)); }
@@ -40,6 +54,23 @@ int main() { int first=4; int second=7; Pair pair{first,second}; auto callback=[
 struct View<lifetime a> { int&<a> value; View(int&<a> input):value(input) {} };
 int execute<lifetime a>(View<a> view) { auto callback=[view]()->int { return view.value; }; return callback(); }
 int main(){ int value=7; return execute(View(value))-7; }
+""",
+    'copied_record_alternative_owners': r"""
+int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; } return right;
+}
+struct Reading<lifetime a> {
+  int&<a> value;
+  Reading(int&<a> input):value(input) {}
+};
+int copied_and_moved(bool first) {
+  int left=3; int right=9;
+  int& selected=choose(left,right,first);
+  Reading reading{selected}; Reading copied{reading};
+  Reading moved{std::move(copied)};
+  return moved.value;
+}
+int main() { return copied_and_moved(true)-3 + copied_and_moved(false)-9; }
 """,
     'owned_closure_relay': r"""
 F relay<F>(F callback) { return std::move(callback); }

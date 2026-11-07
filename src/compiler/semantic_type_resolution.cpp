@@ -6858,6 +6858,26 @@ auto SemanticVisitor::Impl::storedCarrierReturnProvenance(
 auto SemanticVisitor::Impl::validateStoredCarrierReturnSource(
     const FunctionInfo &function, const Parameter &source, const ExprPtr &value,
     std::string_view description) -> void {
+  // A complete typed construction map can preserve several independent
+  // external references under a different by-value result layout. Reuse the
+  // ordinary complete-return proof before the legacy single-referent test.
+  if (function.returnType.kind != SemanticType::Reference) {
+    const auto complete =
+        completeBorrowDependencySetForType(value.get(), function.returnType);
+    const auto normalized =
+        complete ? normalizedCompleteReturnBorrow(function, *complete, nullptr,
+                                                 value.get())
+                 : std::nullopt;
+    if (normalized && !normalized->dependencies.empty() &&
+        std::all_of(normalized->dependencies.begin(),
+                    normalized->dependencies.end(), [&](const auto &dependency) {
+                      return dependency.origin == BorrowOriginKind::Argument &&
+                             dependency.parameter ==
+                                 function.returnBorrowParameter &&
+                             !dependency.sourceFields.empty();
+                    }))
+      return;
+  }
   const SemanticType &sourceType =
       function.parameterTypes[function.returnBorrowParameter];
   const std::optional<SemanticType> sourceReferent =
@@ -8872,6 +8892,20 @@ auto SemanticVisitor::Impl::instantiatedAliasType(
   substitution.lifetimes.insert(instanceLifetimeSubstitution.begin(),
                                  instanceLifetimeSubstitution.end());
   substitution.callableScopes = instanceCallableScopes;
+  if (declaration.declaration) {
+    const auto recipe = catalog.callableResultProjectionRecipes.find(
+        &declaration.declaration->target());
+    if (recipe != catalog.callableResultProjectionRecipes.end() && recipe->second) {
+      auto projected = *recipe->second;
+      // Qualified member aliases have already specialized alias.type. Apply
+      // that same exact owner view to its separate unreduced query subject.
+      if (alias.specializedOwner)
+        projected.subject = substituteType(projected.subject,
+                                            classSubstitution(alias.ownerType));
+      projected.subject = substituteType(projected.subject, substitution);
+      recordCallableResultProjection(type, std::move(projected));
+    }
+  }
   return substituteType(alias.type, substitution);
 }
 
@@ -9651,7 +9685,7 @@ auto SemanticVisitor::Impl::functionSymbol(
       .declarationRecord = registered,
       .declaration = &function,
       .returnType =
-          typeOf(function.returnType(), function.returnMutability(), scope),
+          registeredProjectionType(function.returnType(), function.returnMutability(), scope),
       .requiredParameterCount = requiredParameterCount(function.parameters()),
       .requirements = resolveRequirements(
           function.requiresClause() ? &*function.requiresClause() : nullptr,

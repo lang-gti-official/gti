@@ -46,6 +46,56 @@ struct SemanticModelTestAccess {
 // Exercise the real staging key and lookup without exposing cache internals as
 // a product API or relying on a timing-sensitive number of source evaluations.
 struct SemanticLifetimeTestAccess {
+  static bool scopedProjectionCatalogCopies() {
+    SemanticVisitor analyzer(TargetInfo::host());
+    auto &catalog = analyzer.impl->catalog;
+    TypeRef syntax(Token{}), unknown(Token{}), wrapped(Token{});
+    const auto invocation = Lifetime::parameter(9001);
+    auto result = SemanticType::referenceTo(SemanticType::Int32);
+    result.referenceLifetime = invocation;
+    auto subject = SemanticType::functionSignature(result, {result});
+    subject.quantifiedLifetimes = {invocation.id};
+    catalog.compilerTypeClasses.emplace(SemanticVisitor::Impl::CompilerTypeKind::MetaCallableReturnType, 71);
+    analyzer.impl->recordCallableResultProjection(syntax, {71, subject});
+    if (!catalog.callableResultProjectionRecipes.empty())
+      return false; // An incidental type query is not a declaration recipe.
+    analyzer.impl->registeringProjectionSyntax = &syntax;
+    analyzer.impl->recordCallableResultProjection(syntax, {71, subject});
+    analyzer.impl->registeringProjectionSyntax = &unknown;
+    analyzer.impl->recordCallableResultProjection(unknown, {72, subject});
+    wrapped.reference = Token{};
+    analyzer.impl->registeringProjectionSyntax = &wrapped;
+    analyzer.impl->recordCallableResultProjection(wrapped, {71, subject});
+    if (catalog.callableResultProjectionRecipes.size() != 1 ||
+        !catalog.callableResultProjectionRecipes.at(&syntax))
+      return false;
+    catalog.normalizedNominalTypes.emplace(&syntax, result);
+    catalog.nominalLifetimeContractsReady = true;
+    catalog.seal();
+    auto copy = catalog;
+    auto instance = catalog.snapshotForInstanceAnalysis();
+    if (copy.callableResultProjectionRecipes != catalog.callableResultProjectionRecipes ||
+        instance.callableResultProjectionRecipes != catalog.callableResultProjectionRecipes ||
+        instance.normalizedNominalTypes != catalog.normalizedNominalTypes ||
+        !instance.nominalLifetimeContractsReady || instance.sealedShape != catalog.sealedShape)
+      return false;
+    analyzer.impl->registeringProjectionSyntax = &unknown;
+    analyzer.impl->recordCallableResultProjection(unknown, {71, subject});
+    if (catalog.callableResultProjectionRecipes.size() != 1)
+      return false;
+    copy.callableResultProjectionRecipes.at(&syntax).reset();
+    instance.normalizedNominalTypes.at(&syntax) = SemanticType::Bool;
+    if (!catalog.callableResultProjectionRecipes.at(&syntax) ||
+        catalog.normalizedNominalTypes.at(&syntax) != result)
+      return false;
+    catalog.sealed = false;
+    catalog.sealedShape.clear();
+    analyzer.impl->registeringProjectionSyntax = &syntax;
+    analyzer.impl->recordCallableResultProjection(syntax, {71, SemanticType::Int32});
+    analyzer.impl->recordCallableResultProjection(syntax, {71, subject});
+    return !catalog.callableResultProjectionRecipes.at(&syntax);
+  }
+
   static std::pair<bool, std::size_t> ownedTransportApplicationChecks(
       const FrontendResult &source) {
     SemanticVisitor analyzer(TargetInfo::host(), &source.sourceGraph, true,
@@ -3323,6 +3373,75 @@ int main() {
   }
 }
 
+void testScopedCallableResultProjectionContracts() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto check = [&](const std::string &source) {
+    return lang::Frontend({.stopAfter = lang::FrontendPhase::Mir,
+                           .lowerReachableOnly = true,
+                           .lowerLibraryReachableOnly = true,
+                           .trustedBodies = lang::TrustedBodyAnalysis::Reachable})
+        .analyze("scoped-callable-result.gti", "import std.meta; " + source,
+                 {root / "prelude.gti"}, {}, {root});
+  };
+  expect(lang::SemanticLifetimeTestAccess::scopedProjectionCatalogCopies(),
+         "private query recipes and normalized type facts survive independent catalog snapshots");
+  const std::string identity = "int& identity(int& value){return value;} ";
+  const std::string main = " int main(){int owner=42;auto same=identity;int& result=borrow(same,owner);return result-42;}";
+  const std::vector<std::pair<std::string, std::string>> valid{
+      {"item", identity + "[[borrowed_from(value)]] std::meta::callable_return_type<F> borrow<F>(F& fn,int& value){return fn(value);}" + main},
+      {"lambda", "[[borrowed_from(value)]] std::meta::callable_return_type<F> borrow<F>(F& fn,int& value){return fn(value);} int main(){int owner=42;auto same=[](int& value)->int&{return value;};int& result=borrow(same,owner);return result-42;}"},
+      {"literal-elided", "[[borrowed_from(value)]] std::meta::callable_return_type<int&(int&)> borrow(int& value){return value;} int main(){int owner=42;return borrow(owner)-42;}"},
+      {"literal-scoped", "[[borrowed_from(value)]] std::meta::callable_return_type<for<lifetime a> int&<a>(int&<a>)> borrow(int& value){return value;} int main(){int owner=42;return borrow(owner)-42;}"},
+      {"generic-alias", identity + "using Result<F> = std::meta::callable_return_type<F>;using Again<F> = Result<F>;[[borrowed_from(value)]] Again<F> borrow<F>(F& fn,int& value){return fn(value);}" + main},
+      {"closed-alias", "using Signature=for<lifetime a> int&<a>(int&<a>);using Result=std::meta::callable_return_type<Signature>;[[borrowed_from(value)]] Result borrow(int& value){return value;}int main(){int owner=42;return borrow(owner)-42;}"},
+      {"member-alias", identity + "struct Projection<F>{using Result=std::meta::callable_return_type<F>;};[[borrowed_from(value)]] Projection<F>::Result borrow<F>(F& fn,int& value){return fn(value);}" + main},
+      {"fixed-static", "int global=42;[[borrowed_from(value)]] std::meta::callable_return_type<int&<static>(int&)> borrow(int& value){return global;}int main(){int owner=0;int&<static> result=borrow(owner);return result-42;}"},
+      {"free-with-bound", "[[borrowed_from(value)]] std::meta::callable_return_type<int&<a>(int&<a>)> borrow<lifetime a,lifetime b>(int&<b> value) requires outlives<b,a>{return value;}int main(){int owner=42;return borrow(owner)-42;}"}};
+  for (const auto &[name, source] : valid) {
+    const auto result = check(source);
+    if (!result.semanticValid || !result.hirValid || !result.mirValid) {
+      std::cerr << "scoped result profile: " << name << '\n';
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ':' << diagnostic.primary.line << ' ' << diagnostic.message << '\n';
+    }
+    expect(result.semanticValid && result.hirValid && result.mirValid,
+           "scoped result provenance survives exact alias/instance normalization and independent executable proof");
+    if (result.hirValid && name != "fixed-static" && name != "free-with-bound") {
+      bool related = false;
+      for (const auto &instance : result.hir.functionInstances()) {
+        if (!instance.source || instance.source->name().lexeme != "borrow" ||
+            instance.parameterTypes.empty() ||
+            instance.returnType.kind != lang::SemanticType::Reference)
+          continue;
+        const lang::LifetimeBound bound{instance.parameterTypes.back().referenceLifetime,
+                                         instance.returnType.referenceLifetime};
+        related = instance.lifetimeContract.valid() &&
+            std::find(instance.lifetimeContract.bounds.begin(), instance.lifetimeContract.bounds.end(), bound) !=
+                instance.lifetimeContract.bounds.end() && instance.completeReturnBorrow &&
+            !instance.completeReturnBorrow->dependencies.empty();
+      }
+      expect(related, "the selected declared input bounds the exposed query binder before complete body proof");
+    }
+  }
+  const std::vector<std::pair<std::string, std::string>> invalid{
+      {"wrong-origin", identity + "[[borrowed_from(value)]] std::meta::callable_return_type<F> borrow<F>(F& fn,int& value,int& other){return fn(other);}int main(){int owner=42;int other=7;auto fn=identity;return borrow(fn,owner,other);}"},
+      {"local", "[[borrowed_from(value)]] std::meta::callable_return_type<int&(int&)> borrow(int& value){int local=0;return local;}int main(){int owner=0;return borrow(owner);}"},
+      {"overlap", identity + "[[borrowed_from(value)]] std::meta::callable_return_type<F> borrow<F>(F& fn,int& value){return fn(value);}int main(){mut int owner=42;auto fn=identity;int& result=borrow(fn,owner);owner=7;return result;}"},
+      {"static-strengthening", identity + "[[borrowed_from(value)]] std::meta::callable_return_type<F> borrow<F>(F& fn,int& value){return fn(value);}int main(){int owner=0;auto fn=identity;int&<static> bad=borrow(fn,owner);return bad;}"},
+      {"free-missing-bound", "[[borrowed_from(value)]] std::meta::callable_return_type<int&<a>(int&<a>)> borrow<lifetime a,lifetime b>(int&<b> value){return value;}int main(){return 0;}"},
+      {"alias-free-missing-bound", "using Result<lifetime a> = std::meta::callable_return_type<int&<a>(int&<a>)>;[[borrowed_from(value)]] Result<a> borrow<lifetime a,lifetime b>(int&<b> value){return value;}int main(){return 0;}"},
+      {"incompatible-alias", "using Result<lifetime a> = std::meta::callable_return_type<int&<a>(int&<a>)>;[[borrowed_from(value)]] Result<static> borrow(int& value){return value;}int main(){int owner=0;return borrow(owner);}"},
+      {"mutable-access", "[[borrowed_from(value)]] std::meta::callable_return_type<for<lifetime a> mut int&<a>(mut int&<a>)> borrow(int& value){return value;}int main(){int owner=0;return borrow(owner);}"},
+      {"ordinary-alias", "int global=0;using Result<T> = T;Result<T> borrow<T>(){return global;}int main(){int&<static> bad=borrow<int&<static>>();return bad;}"}};
+  for (const auto &[name, source] : invalid) {
+    const auto result = check(source);
+    if (result.semanticValid)
+      std::cerr << "unexpected scoped result acceptance: " << name << '\n';
+    expect(result.syntaxValid && !result.semanticValid,
+           "projection provenance cannot invent free/static/access/origin authority or hidden generic references");
+  }
+}
+
 void testCheckedProjectedCallableResults() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto check = [&](std::string source) {
@@ -4692,6 +4811,104 @@ int&<shorter> selected<lifetime longer, lifetime shorter>(int&<longer> input)
   expectValid(bounded, "a stored field remains usable within its explicitly declared shorter region");
 }
 
+void testComposedOwnedReturnFields() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto check = [&](const std::string &source) {
+    return lang::Frontend({.stopAfter = lang::FrontendPhase::Hir}).analyze(
+        "composed-owned-return.gti", source, {root / "prelude.gti"}, {}, {root});
+  };
+  const std::string pair = R"gti(
+import std.memory;
+struct Pair<lifetime a, lifetime b> {
+  int&<a> left; int&<b> right;
+  Pair(int&<a> first,int&<b> second):left(first),right(second) {}
+};
+)gti";
+  const std::string box = pair + R"gti(
+struct Box<T> { T value; Box(T input):value(std::move(input)) {} };
+)gti";
+  const std::string relay = R"gti(
+Box<T> relay<T>(T input) { return Box<T>(std::move(input)); }
+)gti";
+  const std::string main = R"gti(
+int main() {
+  int left=4; int right=9; Pair pair{left,right};
+  auto result=relay(std::move(pair));
+  return result.value.left*10+result.value.right-49;
+}
+)gti";
+  const std::vector<std::pair<std::string, std::string>> valid{
+      {"record", box + relay + main},
+      {"annotated", box + "[[borrowed_from(input)]] " + relay + main},
+      {"callback", R"gti(
+import std.memory;
+class Holder<F> {
+  mut F callable;
+public:
+  Holder(F input):callable(std::move(input)) {}
+  int run() mut { return this.callable(); }
+};
+Holder<F> relay<F>(F input) { return Holder<F>(std::move(input)); }
+int main() {
+  int left=4; int right=9;
+  auto callback=[&left,&right]()->int { return left*10+right; };
+  mut auto result=relay(std::move(callback));
+  return result.run()-49;
+}
+)gti"}};
+  for (const auto &[name, source] : valid) {
+    const auto result = check(source);
+    expectValid(result, "an owned result layout preserves all external fields of its selected input: " + name);
+    bool complete = false;
+    for (const auto &instance : result.hir.functionInstances())
+      if (instance.source && instance.source->name().lexeme == "relay" &&
+          instance.completeReturnBorrow &&
+          instance.completeReturnBorrow->dependencies.size() == 2)
+        complete = std::all_of(instance.completeReturnBorrow->dependencies.begin(),
+                               instance.completeReturnBorrow->dependencies.end(),
+                               [](const auto &dependency) {
+          return dependency.origin == lang::BorrowOriginKind::Argument &&
+                 dependency.parameter == 0 && !dependency.sourceFields.empty() &&
+                 !dependency.resultFields.empty() &&
+                 dependency.access == lang::AccessMode::ReadOnly;
+        });
+    expect(result.hirValid && complete,
+           "a concrete relay publishes both typed external suppliers without the consumed shell");
+  }
+  const std::vector<std::pair<std::string, std::string>> invalid{
+      {"first-owner-write", box + relay + R"gti(
+int main() { mut int left=4; mut int right=9; Pair pair{left,right};
+  auto result=relay(std::move(pair)); left=5; return result.value.left+result.value.right; }
+)gti"},
+      {"second-owner-write", box + relay + R"gti(
+int main() { mut int left=4; mut int right=9; Pair pair{left,right};
+  auto result=relay(std::move(pair)); right=5; return result.value.left+result.value.right; }
+)gti"},
+      {"local-static-escape", box + R"gti(
+Box<Pair<static,static>> invalid() { int left=4; int right=9; Pair pair{left,right};
+  return Box<Pair<static,static>>(std::move(pair)); }
+int main() { auto result=invalid(); return result.value.left+result.value.right; }
+)gti"},
+      {"consumed-shell-escape", pair + R"gti(
+struct Box<T> { T& value; Box(T& input):value(input) {} };
+Box<T> invalid<T>(T input) { return Box<T>(input); }
+int main() { int left=4; int right=9; Pair pair{left,right};
+  auto result=invalid(std::move(pair)); return result.value.left+result.value.right; }
+)gti"},
+      {"different-annotated-input", box + R"gti(
+[[borrowed_from(input)]] Box<T> invalid<T>(T input,T other) {
+  return Box<T>(std::move(other));
+}
+int main() { int left=4; int right=9; Pair first{left,right}; Pair other{left,right};
+  auto result=invalid(std::move(first),std::move(other)); return result.value.left+result.value.right; }
+)gti"}};
+  for (const auto &[name, source] : invalid) {
+    const auto result = check(source);
+    expect(result.sourceValid && result.syntaxValid && !result.semanticValid,
+           "complete owned return mapping rejects invalid source permissions: " + name);
+  }
+}
+
 void testSemanticReferenceSupplierQueries() {
   const auto source = lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
       "semantic-reference-supplier-query.gti", R"gti(
@@ -4863,9 +5080,11 @@ int main() {
   testReceiverBeforeSymbolicPack();
   testPhysicalReferenceCarrierInitializers();
   testCopiedBorrowedCaptureOwners();
+  testComposedOwnedReturnFields();
   testOwnedCallableAppliedRegions();
   testDependentCallableUseEvidence();
   testStatelessItemTemporaryBorrow();
+  testScopedCallableResultProjectionContracts();
   testCheckedProjectedCallableResults();
   testFreshCallableLifetimeArguments();
   testReferencePackReborrows();

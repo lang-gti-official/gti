@@ -1995,6 +1995,16 @@ private:
     Invalid,
   };
 
+  // The resolved type is still owned by typeOf/normalization. This private
+  // recipe retains the exact trusted query and its subject before reduction,
+  // so a projected invocation binder cannot be mistaken for a free region.
+  struct CallableResultProjectionRecipe {
+    ClassId declaration = 0;
+    SemanticType subject = SemanticType::Unknown;
+    friend bool operator==(const CallableResultProjectionRecipe &,
+                           const CallableResultProjectionRecipe &) = default;
+  };
+
   struct RegisteredTypeAlias {
     SourceUnitId sourceUnit = 0;
     const TypeAliasDecl *declaration = nullptr;
@@ -3332,6 +3342,16 @@ private:
   void prepareFunctionLifetimeContract(const FunctionDecl &function,
                                        ClassId ownerClass);
   void normalizeFunctionLifetimeContract(CallableCandidate &function);
+  [[nodiscard]] SemanticType registeredProjectionType(
+      const TypeRef &syntax, Mutability mutability,
+      const std::vector<std::string> &scope) const;
+  void recordCallableResultProjection(
+      const TypeRef &syntax, CallableResultProjectionRecipe recipe) const;
+  void addScopedCallableResultBound(
+      const FunctionDecl &syntax, const SemanticType &result,
+      std::span<const SemanticType> parameters,
+      const GenericSubstitution &substitution,
+      LifetimeSignatureContract &contract) const;
   [[nodiscard]] bool privateLifetimeInferenceEligible(const CallableCandidate &function) const;
   [[nodiscard]] bool hasExplicitLifetimeContract(const TypeRef &type) const;
   void prepareInferredLifetimeResult(SemanticType &type,
@@ -7653,6 +7673,10 @@ private:
     std::vector<RegisteredConformance> conformances;
     std::vector<EnumInfo> enums;
     std::unordered_map<const TypeRef *, SemanticType> normalizedNominalTypes;
+    // Only declaration registration writes these recipes. Conflicting
+    // observations remain unknown; concrete workers only instantiate them.
+    std::unordered_map<const TypeRef *, std::optional<CallableResultProjectionRecipe>>
+        callableResultProjectionRecipes;
     bool nominalLifetimeContractsReady = false;
     std::unordered_set<const VariableDecl *> predeclaredVariables;
     std::unordered_map<const VariableDecl *, const Token *>
@@ -7757,6 +7781,7 @@ private:
               conformances.size(),
               enums.size(),
               normalizedNominalTypes.size(),
+              callableResultProjectionRecipes.size(),
               predeclaredVariables.size(),
               mutableFieldGroupOrigins.size(),
               recursiveLayoutFields.size(),
@@ -8300,6 +8325,9 @@ private:
   // preamble reports into its own sink.
   SemanticDiagnosticReporter reporter{semanticModel, diagnostics};
   SemanticCatalog &catalog = requestSession.catalog;
+  // Transient registration scope, deliberately outside copied request/catalog
+  // state: only an authoritative declaration/alias root may publish a recipe.
+  mutable const TypeRef *registeringProjectionSyntax = nullptr;
   ValueFlowState &valueFlow = requestSession.valueFlow;
   ScopeStack &scopes = requestSession.valueFlow.scopes;
   std::unordered_set<std::string> &namespaces =

@@ -1903,7 +1903,8 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
   if (targetFormValid) {
     validateTypeAliasTarget(target, target.isNativeFunction());
   }
-  SemanticType resolved = typeOf(target, alias.lookupScope);
+  SemanticType resolved = registeredProjectionType(target, Mutability::Immutable,
+                                                  alias.lookupScope);
   for (const Lifetime lifetime : freeTypeLifetimes(resolved)) {
     if (lifetime.kind != Lifetime::Kind::Inference)
       continue;

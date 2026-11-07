@@ -533,6 +533,10 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
   auto normalized = normalizeLifetimeSignature(result.returnType, inputs,
       std::move(result.lifetimeContract), result.requirements, [] { return Lifetime{}; });
   result.lifetimeContract = std::move(normalized.contract);
+  if (function && function->declaration)
+    addScopedCallableResultBound(*function->declaration, result.returnType,
+                                result.parameterTypes, substitution,
+                                result.lifetimeContract);
   if (!result.lifetimeContract.valid())
     return std::nullopt;
   return result;

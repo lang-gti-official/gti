@@ -279,8 +279,8 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
         .name = operation->name().lexeme,
         .declaration = operation,
         .returnType =
-            typeOf(operation->returnType(), operation->returnMutability(),
-                   conceptInfo.namespaceScope)};
+            registeredProjectionType(operation->returnType(), operation->returnMutability(),
+                                     conceptInfo.namespaceScope)};
     resolved.genericParameters = std::move(operationParameters);
     if (operation->requiresClause()) {
       resolved.requirements = resolveRequirements(&*operation->requiresClause(),

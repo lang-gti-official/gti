@@ -19346,7 +19346,8 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
     }
     if (needsProof && !proveGuarded(proveGuarded, loan))
       return verificationFailure(body, owner,
-                                 "conditional loan " + std::to_string(loan.id) +
+                                 std::string(guarded(loan) ? "conditional loan " : "complete loan ") +
+                                     std::to_string(loan.id) +
                                      " lacks its exact typed entry "
                                      "or executable origin group");
   }

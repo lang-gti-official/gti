@@ -15184,10 +15184,14 @@ auto SemanticVisitor::Impl::baseTypeOf(
       const auto arguments = nominalArguments(owner.genericParameters,
                                               type.arguments, fromScope,
                                               type.name.last());
-      return arguments ? selectExactClassSpecialization(SemanticType::classType(
-                             *id, arguments->types, arguments->values,
-                             arguments->lifetimes))
-                       : SemanticType::Unknown;
+      if (!arguments)
+        return SemanticType::Unknown;
+      if (owner.compilerType == CompilerTypeKind::MetaCallableReturnType &&
+          arguments->types.size() == 1 && arguments->values.empty() &&
+          arguments->lifetimes.empty())
+        recordCallableResultProjection(type, {*id, arguments->types.front()});
+      return selectExactClassSpecialization(SemanticType::classType(
+          *id, arguments->types, arguments->values, arguments->lifetimes));
     }
     return SemanticType::Unknown;
   }

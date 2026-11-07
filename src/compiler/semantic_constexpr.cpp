@@ -516,6 +516,7 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   copy.conformances = other.conformances;
   copy.enums = other.enums;
   copy.normalizedNominalTypes = other.normalizedNominalTypes;
+  copy.callableResultProjectionRecipes = other.callableResultProjectionRecipes;
   copy.nominalLifetimeContractsReady = other.nominalLifetimeContractsReady;
   copy.predeclaredVariables = other.predeclaredVariables;
   copy.mutableFieldGroupOrigins = other.mutableFieldGroupOrigins;
@@ -574,6 +575,9 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   copy.exactClassSpecializations = exactClassSpecializations;
   copy.conformances = conformances;
   copy.enums = enums;
+  copy.normalizedNominalTypes = normalizedNominalTypes;
+  copy.callableResultProjectionRecipes = callableResultProjectionRecipes;
+  copy.nominalLifetimeContractsReady = nominalLifetimeContractsReady;
   copy.predeclaredVariables = predeclaredVariables;
   copy.mutableFieldGroupOrigins = mutableFieldGroupOrigins;
   copy.recursiveLayoutFields = recursiveLayoutFields;

@@ -566,6 +566,9 @@ their structural copy/move rules. Independent complete-value flow reconstructs
 closure captures from evaluated operands and the exact lambda recipe, prefixing
 captured field paths and enum conditions. Attached capture loans and claimed
 result summaries do not supply their own proof.
+For an independently known complete owned result, the attached `Stored` group
+must match the replayed source, parent, field, access and guard inventory even
+when no conditional tag is present. An unused result retains this obligation.
 
 Callable lifetime applications retain a universal function signature and fixed
 bindings for its free carrier regions. The trusted function-pointer capability
@@ -1401,7 +1404,13 @@ resolves a borrow through the field to its referent rather than the carrier
 shell. The path is named only while every carrier is a value of that one
 class. When a carrier of another type joins, such as a view of the referent
 copied out of the holder, the loan returns to the compact form. A named path
-is still a single origin. An input that is the inner object holding the
+is still a single origin. A targetless generated copy of an exact whole local
+carrier uses that carrier's complete stored group when its semantic copy recipe
+is compact. One reference field can have several possible owners: each row keeps
+its field path, conditions and access, reborrowed through the actual input group.
+The independent producer replay verifies every row, including the temporary
+copy publication whose binding later shares an existing endpoint.
+An input that is the inner object holding the
 reference reaches the same referent: lowering selects through the input's own
 path, and program verification accepts the input's path as the tail of the
 carrier's. A result behind one field of a mapped carrier depends only on that

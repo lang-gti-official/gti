@@ -248,6 +248,72 @@ for concept measurable<Rope> {
   }
 }
 
+void testPreambleScopedCallableProjectionParity() {
+  using namespace lang;
+  const auto stdlib = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto root = std::filesystem::current_path() / "scoped-query-preamble-fixture";
+  const auto prefix = root / "recipes.gti", entry = root / "main.gti";
+  const std::unordered_map<std::string, std::string> sources{{prefix.string(), R"GTI(
+export module recipes;
+import std.meta;
+export using Signature = for<lifetime a> int&<a>(int&<a>);
+export using Result<F> = std::meta::callable_return_type<F>;
+export using Closed = std::meta::callable_return_type<Signature>;
+export using Free<lifetime a> = std::meta::callable_return_type<int&<a>(int&<a>)>;
+export int& identity(int& value) { return value; }
+)GTI"}};
+  const Probe probes[]{
+      {"generic-alias", "", "[[borrowed_from(value)]] Result<F> relay<F>(F& fn,int& value){return fn(value);} int main(){int owner=7;auto same=identity;return relay(same,owner)-7;}", true},
+      {"closed-alias", "", "[[borrowed_from(value)]] Closed relay(int& value){return value;} int main(){int owner=7;return relay(owner)-7;}", true},
+      {"free-with-bound", "", "[[borrowed_from(value)]] Free<a> relay<lifetime a,lifetime b>(int&<b> value) requires outlives<b,a>{return value;} int main(){int owner=7;return relay(owner)-7;}", true},
+      {"free-without-bound", "", "[[borrowed_from(value)]] Free<a> relay<lifetime a,lifetime b>(int&<b> value){return value;} int main(){return 0;}", false},
+      {"fixed-static", "", "[[borrowed_from(value)]] Free<static> relay(int& value){return value;} int main(){int owner=7;return relay(owner);}", false},
+      {"reuse-after-rejection", "", "[[borrowed_from(value)]] Closed relay(int& value){return value;} int main(){int owner=9;return relay(owner)-9;}", true}};
+  FrontendOptions cached;
+  cached.stopAfter = FrontendPhase::Mir;
+  cached.lowerReachableOnly = true;
+  cached.lowerLibraryReachableOnly = true;
+  cached.trustedBodies = TrustedBodyAnalysis::Reachable;
+  cached.suggestIncludes = false;
+  cached.cache = std::make_shared<FrontendCache>();
+  cached.preambleCache = std::make_shared<SemanticPreambleCache>();
+  bool builtPrefix = false;
+  for (const auto &probe : probes) {
+    std::vector<std::string> baseline;
+    for (int mode = 0; mode != 3; ++mode) {
+      auto options = cached;
+      FrontendWorkMetrics work;
+      options.workMetrics = &work;
+      if (mode == 0)
+        options.preambleCache.reset();
+      const auto result = Frontend(options).analyze(
+          entry, "import \"recipes.gti\"; " + std::string(probe.body),
+          {stdlib / "prelude.gti", prefix}, sources, {stdlib});
+      std::vector<std::string> diagnostics;
+      for (const auto &diagnostic : result.diagnostics)
+        diagnostics.push_back(diagnostic.code + ":" + diagnostic.message);
+      std::sort(diagnostics.begin(), diagnostics.end());
+      if (mode == 0)
+        baseline = diagnostics;
+      if (result.semanticValid != probe.valid || diagnostics != baseline ||
+          (probe.valid && (!result.hirValid || !result.mirValid))) {
+        std::cerr << "scoped query preamble: " << probe.name << " mode=" << mode << '\n';
+        for (const auto &diagnostic : diagnostics)
+          std::cerr << diagnostic << '\n';
+      }
+      expect(result.semanticValid == probe.valid && diagnostics == baseline &&
+                 (!probe.valid || (result.hirValid && result.mirValid)),
+             "cold/adopted/reused query recipes preserve scoped and free result relationships");
+      if (mode != 0) {
+        expect(work.semanticPreambleAdoptions == 1 &&
+                   work.semanticPreambleBuilds == (builtPrefix ? 0U : 1U),
+               "scoped query parity must exercise immutable prefix adoption and reuse");
+        builtPrefix = true;
+      }
+    }
+  }
+}
+
 void testCancelledPreambleDoesNotPublish() {
   using namespace lang;
   const auto root =
@@ -316,6 +382,7 @@ void testCancelledPreambleDoesNotPublish() {
 } // namespace
 
 int main() {
+  testPreambleScopedCallableProjectionParity();
   testCancelledPreambleDoesNotPublish();
   testPreambleGlobalDeclarationParity();
   testPreambleGlobalOwnerParity();

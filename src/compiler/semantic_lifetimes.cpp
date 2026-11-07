@@ -183,6 +183,84 @@ auto SemanticVisitor::Impl::prepareFunctionLifetimeContract(
   }
 }
 
+auto SemanticVisitor::Impl::registeredProjectionType(
+    const TypeRef &syntax, Mutability mutability,
+    const std::vector<std::string> &scope) const -> SemanticType {
+  struct RegistrationScope {
+    const TypeRef *&current;
+    const TypeRef *previous;
+    ~RegistrationScope() { current = previous; }
+  } registration{registeringProjectionSyntax, registeringProjectionSyntax};
+  registeringProjectionSyntax = &syntax;
+  return typeOf(syntax, mutability, scope);
+}
+
+auto SemanticVisitor::Impl::recordCallableResultProjection(
+    const TypeRef &syntax, CallableResultProjectionRecipe recipe) const -> void {
+  if (registeringProjectionSyntax != &syntax || catalog.sealed ||
+      !instanceTypeSubstitution.empty() ||
+      !instanceValueSubstitution.empty() || !instanceLifetimeSubstitution.empty() ||
+      !instanceCallableScopes.empty() || syntax.reference ||
+      !syntax.pointers.empty() || !syntax.arrayExtents.empty() ||
+      syntax.isFunctionSignature() || syntax.isNativeFunction())
+    return;
+  const auto trusted = catalog.compilerTypeClasses.find(
+      CompilerTypeKind::MetaCallableReturnType);
+  if (trusted == catalog.compilerTypeClasses.end() ||
+      trusted->second != recipe.declaration || recipe.subject == SemanticType::Unknown)
+    return;
+  const auto [entry, inserted] = catalog.callableResultProjectionRecipes.try_emplace(
+      &syntax, std::move(recipe));
+  if (!inserted && entry->second && *entry->second != recipe)
+    entry->second.reset(); // Ambiguity cannot supply a lifetime relationship.
+}
+
+auto SemanticVisitor::Impl::addScopedCallableResultBound(
+    const FunctionDecl &syntax, const SemanticType &result,
+    std::span<const SemanticType> parameters,
+    const GenericSubstitution &substitution,
+    LifetimeSignatureContract &contract) const -> void {
+  const auto recipe = catalog.callableResultProjectionRecipes.find(&syntax.returnType());
+  const auto trusted = catalog.compilerTypeClasses.find(CompilerTypeKind::MetaCallableReturnType);
+  if (!substitution.valid || recipe == catalog.callableResultProjectionRecipes.end() ||
+      !recipe->second || trusted == catalog.compilerTypeClasses.end() ||
+      recipe->second->declaration != trusted->second)
+    return;
+  const auto *attribute = syntax.findFunctionAttribute("borrowed_from");
+  if (!attribute || !attribute->argument)
+    return;
+  Lifetime source;
+  if (attribute->argument->kind == TokenKind::THIS) {
+    source = contract.receiver;
+  } else {
+    std::optional<std::size_t> selected;
+    for (std::size_t index = 0; index < syntax.parameters().size(); ++index)
+      if (syntax.parameters()[index].name.lexeme == attribute->argument->lexeme) {
+        if (selected)
+          return;
+        selected = index;
+      }
+    // Grouped packs retain their own parameter identity. This rule does not
+    // guess a flattened lane or select one nested lifetime from a carrier.
+    if (!selected || *selected >= parameters.size() ||
+        syntax.parameters()[*selected].pack ||
+        parameters[*selected].kind != SemanticType::Reference ||
+        parameters[*selected].arguments.size() != 1)
+      return;
+    source = parameters[*selected].referenceLifetime;
+  }
+  const auto subject = substituteType(recipe->second->subject, substitution);
+  if (const auto bound = scopedCallableResultLifetimeBound(subject, result, source)) {
+    const auto declared = [&](Lifetime region) {
+      return region == Lifetime::staticLifetime() ||
+          std::find(contract.parameters.begin(), contract.parameters.end(), region) !=
+              contract.parameters.end();
+    };
+    if (declared(bound->longer) && declared(bound->shorter))
+      appendUnique(contract.bounds, *bound);
+  }
+}
+
 auto SemanticVisitor::Impl::normalizeFunctionLifetimeContract(
     CallableCandidate &function) -> void {
   if (!function.declaration || !function.declarationRecord)
@@ -237,6 +315,8 @@ auto SemanticVisitor::Impl::normalizeFunctionLifetimeContract(
   auto normalized = normalizeLifetimeSignature(
       function.returnType, function.parameterTypes, std::move(contract),
       function.requirements, fresh, borrowedParameter, borrowedReceiver);
+  addScopedCallableResultBound(syntax, function.returnType, function.parameterTypes,
+                              currentGenericSubstitution(), normalized.contract);
   if (normalized.contract.receiver.specified() && function.ownerClass)
     appendUnique(normalized.contract.typeBounds,
                  LifetimeTypeBound{openClassType(function.ownerClass),

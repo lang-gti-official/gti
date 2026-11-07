@@ -9603,42 +9603,37 @@ private:
             consider(previous->source, previous->access, previous->parent);
             for (const auto &extra : previous->additionalDependencies)
               consider(extra.source, extra.access, extra.parent);
-            // A parameter's entry group names its caller-owned referent only
-            // through its designated reference path. Transferring that group
-            // keeps the caller's permission, which has no MIR parent here.
-            const auto entryReferent = [&]() {
-              const MirPlace *group = output.findPlace(previous->source);
-              const MirPlace *referent = output.findPlace(selected.source);
-              if (!previous->entry || previous->kind != MirLoanKind::Stored ||
-                  previous->designatedFields.empty() || group == nullptr ||
-                  referent == nullptr || group->root != referent->root ||
-                  group->binding != referent->binding ||
-                  group->symbol != referent->symbol ||
-                  referent->projections.size() !=
-                      group->projections.size() +
-                          previous->designatedFields.size() + 1 ||
-                  referent->projections.back().kind !=
-                      MirProjectionKind::Dereference)
-                return false;
-              for (std::size_t index = 0; index < group->projections.size();
-                   ++index)
-                if (referent->projections[index].kind !=
-                        group->projections[index].kind ||
-                    referent->projections[index].field !=
-                        group->projections[index].field)
-                  return false;
-              for (std::size_t index = 0;
-                   index < previous->designatedFields.size(); ++index) {
-                const auto &projection =
-                    referent->projections[group->projections.size() + index];
-                if (projection.kind != MirProjectionKind::Field ||
-                    fieldProjection(projection.field) != previous->designatedFields[index])
-                  return false;
-              }
-              return true;
-            };
-            if (!externalParent && !ambiguous && entryReferent())
-              externalParent = previous->parent;
+            // An abstract Stored entry has one typed row per external
+            // reference. Transfer each selected row's original authority,
+            // including siblings, rather than treating the primary row as
+            // the entire parameter's permission.
+            if (previous->entry && previous->kind == MirLoanKind::Stored) {
+              const auto entryReferent = [&](MirPlaceId source,
+                                             const BorrowPath &fields,
+                                             const auto &conditions,
+                                             AccessMode access,
+                                             MirLoanId parent) {
+                if (fields.empty())
+                  return;
+                const auto projected =
+                    projectBorrowFields(source, fields, conditions);
+                const auto *actual = output.findPlace(projected);
+                const auto *expected = output.findPlace(selected.source);
+                if (!actual || !expected ||
+                    !equivalentLifetimeTypes(actual->type, expected->type))
+                  return;
+                consider(projected, access, parent);
+              };
+              entryReferent(previous->source, previous->designatedFields,
+                            previous->conditions, previous->access,
+                            previous->parent);
+              for (const auto &extra : previous->additionalDependencies)
+                // Entry source zero denotes a row relative to the proved
+                // formal root; the projected concrete place must still exist.
+                entryReferent(extra.source ? extra.source : previous->source,
+                              extra.designatedFields, extra.conditions,
+                              extra.access, extra.parent);
+            }
             if (!externalParent || ambiguous) {
               valid = false;
               return;
@@ -10563,6 +10558,29 @@ private:
         published.additionalDependencies.assign(complete.begin()+1,complete.end());
       }
       construct.loan = loan;
+      // A compact semantic copy can still contain several possible owners
+      // for one reference field. Copy the complete evaluated source group,
+      // preserving each typed path/guard and reborrowing through that exact
+      // whole-carrier input instead of rebuilding a single-origin shortcut.
+      if (!value.borrowDependencies && mir_detail::generatedCopyConstruction(construct)) {
+        const auto *input = output.findPlace(construct.operands.front().place);
+        const auto *group = output.findLoan(originLoan);
+        if (input && input->root == MirPlaceRootKind::Binding &&
+            input->projections.empty() && input->type == value.info.type &&
+            group && group->kind == MirLoanKind::Stored && !group->entry &&
+            std::find(group->carriers.begin(), group->carriers.end(), input->binding) != group->carriers.end()) {
+          auto &published = output.loans[loan - 1];
+          published.source = group->source;
+          published.parent = group->id;
+          published.storedDependency = 0;
+          published.access = group->access;
+          published.designatedFields = group->designatedFields;
+          published.conditions = group->conditions;
+          published.additionalDependencies = group->additionalDependencies;
+          for (auto &dependency : published.additionalDependencies)
+            dependency.parent = group->id;
+        }
+      }
       valueLoans.insert_or_assign(value.id, loan);
       if (!scopes.empty()) {
         scopes.back().loans.push_back(loan);

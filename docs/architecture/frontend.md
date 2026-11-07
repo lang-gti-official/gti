@@ -459,6 +459,18 @@ still prove all active dependencies; unresolved generic recipes alone cannot
 certify a complete result. Exclusive sources cannot be duplicated into fields
 whose guards can hold together.
 
+An owned return may rearrange several external fields from one by-value formal
+into a different result layout. The complete return normalizer proves every
+typed result path, source path, access, guard and lifetime; the selected formal
+must supply every dependency. This proof precedes the legacy single-referent
+adapter and does not permit a reference to the consumed formal's own storage.
+When lowering transfers a consumed Stored entry, it projects each typed entry
+row from its proved formal root, including additional relative rows, and keeps
+the unique matching external parent. Unknown projections or conflicting parents
+remain failures. The independent constructor body summary and executable input
+replay govern complete results; the instruction's legacy field map cannot
+override that authority or replace a missing canonical complete proof.
+
 Enum reference patterns form an inferred binding region. After validating the
 exact loan, a physical payload borrow records the subject storage's relationship
 to that region, just as a reference local does. Reborrowing a stored reference

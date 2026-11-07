@@ -906,7 +906,78 @@ void testStructuralConstructorPolicies() {
          "a policy cannot strengthen a nominal alternative into joint requirements");
 }
 
+void testScopedCallableResultProjection() {
+  using namespace lang;
+  const auto invocation = Lifetime::parameter(500);
+  const auto source = Lifetime::parameter(501);
+  const auto free = Lifetime::parameter(502);
+  auto subject = SemanticType::functionSignature(reference(invocation), {reference(invocation)});
+  subject.quantifiedLifetimes = {invocation.id};
+  const auto expected = LifetimeBound{source, invocation};
+  expect(scopedCallableResultLifetimeBound(subject, subject.arguments.front(), source) == expected,
+         "a checked query relates only its own exposed invocation result to the selected input");
+  expect(scopedCallableResultLifetimeBound(subject, subject.arguments.front(), Lifetime::staticLifetime()) ==
+             LifetimeBound{Lifetime::staticLifetime(), invocation},
+         "an independently static selected input can supply a scoped result");
+  auto renamed = subject;
+  renamed.quantifiedLifetimes = {503};
+  renamed.arguments = {reference(Lifetime::parameter(503)), reference(Lifetime::parameter(503))};
+  expect(scopedCallableResultLifetimeBound(renamed, renamed.arguments.front(), source) ==
+             LifetimeBound{source, Lifetime::parameter(503)},
+         "the exact substituted subject supplies the invocation identity");
+  auto fixed = subject;
+  fixed.arguments.front() = reference(Lifetime::staticLifetime());
+  expect(!scopedCallableResultLifetimeBound(fixed, fixed.arguments.front(), source),
+         "static projection results never acquire an inferred input relationship");
+  fixed.arguments.front() = reference(free);
+  expect(!scopedCallableResultLifetimeBound(fixed, fixed.arguments.front(), source),
+         "a free result keeps its declared relationship instead of borrowing the invocation scope");
+  auto nested = subject;
+  nested.quantifiedLifetimes.clear();
+  nested.arguments.push_back(subject);
+  expect(!scopedCallableResultLifetimeBound(nested, nested.arguments.front(), source),
+         "a nested binder cannot authorize the outer result");
+  nested = subject;
+  nested.arguments.push_back(subject);
+  expect(!scopedCallableResultLifetimeBound(nested, nested.arguments.front(), source),
+         "a repeated nested binder identity is ambiguous even when the outer result matches");
+  auto malformed = subject;
+  malformed.quantifiedLifetimes.push_back(invocation.id);
+  expect(!scopedCallableResultLifetimeBound(malformed, malformed.arguments.front(), source),
+         "duplicate invocation binders cannot provide projection provenance");
+  malformed = subject;
+  for (std::size_t index = 0; index < 4096; ++index)
+    malformed.quantifiedLifetimes.push_back(10000 + index);
+  expect(!scopedCallableResultLifetimeBound(malformed, malformed.arguments.front(), source),
+         "exhausting the scoped-query budget supplies no inferred relationship");
+  malformed = subject;
+  auto hidden = SemanticType::classType(77);
+  hidden.quantifiedLifetimes = {504};
+  malformed.arguments.push_back(hidden);
+  expect(!scopedCallableResultLifetimeBound(malformed, malformed.arguments.front(), source),
+         "a nominal argument cannot invent a quantifier scope");
+  expect(!scopedCallableResultLifetimeBound(subject, reference(free), source) &&
+             !scopedCallableResultLifetimeBound(subject, reference(invocation, AccessMode::Mutable), source),
+         "result region and access must match the exact projected type");
+  expect(!scopedCallableResultLifetimeBound(subject, subject.arguments.front(), {}) &&
+             !scopedCallableResultLifetimeBound(subject, subject.arguments.front(), Lifetime::inference(1)),
+         "an unresolved selected source cannot manufacture a declaration bound");
+  auto nestedFree = subject;
+  nestedFree.arguments.front() = SemanticType::referenceTo(
+      SemanticType::classType(77, {reference(free), subject}));
+  nestedFree.arguments.front().referenceLifetime = invocation;
+  // A separate nested scope is valid; a correlated free region remains exact.
+  nestedFree.arguments.front().arguments.front().arguments.back() = renamed;
+  expect(scopedCallableResultLifetimeBound(nestedFree, nestedFree.arguments.front(), source) == expected,
+         "nested callable scopes and free nominal arguments survive the outer result relationship");
+  auto wrongNested = nestedFree.arguments.front();
+  wrongNested.arguments.front().arguments.front() = reference(source);
+  expect(!scopedCallableResultLifetimeBound(nestedFree, wrongNested, source),
+         "nested free-region correlation is never erased by result provenance");
+}
+
 int main() {
+  testScopedCallableResultProjection();
   testStructuralConstructorPolicies();
   testReferenceSupplierQueries();
   testLambdaEnvironmentContracts();

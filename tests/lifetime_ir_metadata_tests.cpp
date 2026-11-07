@@ -39,6 +39,149 @@ SemanticType reference(GenericParameterId id) {
   type.referenceLifetime = Lifetime::parameter(id);
   return type;
 }
+void composedOwnedReturnFields() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  for (const bool callback : {false, true}) {
+    const std::string source = callback ? R"gti(
+import std.memory;
+class Holder<F> {
+  mut F callable;
+public:
+  Holder(F input) : callable(std::move(input)) {}
+  int run() mut { return this.callable(); }
+};
+Holder<F> relay<F>(F input, int decoy) { return Holder<F>(std::move(input)); }
+int main() {
+  int left=4; int right=9;
+  auto callback=[&left,&right]() -> int { return left*10+right; };
+  mut auto result=relay(std::move(callback), 20);
+  return result.run()-49;
+}
+)gti" : R"gti(
+import std.memory;
+struct Pair<lifetime a, lifetime b> {
+  int&<a> left; int&<b> right;
+  Pair(int&<a> first,int&<b> second):left(first),right(second) {}
+};
+struct Box<T> { T value; Box(T input):value(std::move(input)) {} };
+Box<T> relay<T>(T input, int decoy) { return Box<T>(std::move(input)); }
+int main() {
+  int left=4; int right=9; Pair pair{left,right};
+  auto result=relay(std::move(pair), 20);
+  return result.value.left*10+result.value.right-49;
+}
+)gti";
+    const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+        "composed-owned-return-fields.gti", source,
+        {root / "prelude.gti"}, {}, {root});
+    if (!checked.canGenerateCode())
+      for (const auto &diagnostic : checked.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(checked.canGenerateCode(),
+           "a different owned result layout preserves every incoming external field");
+    const auto declared = std::find_if(checked.hir.functionInstances().begin(),
+                                      checked.hir.functionInstances().end(),
+                                      [](const auto &function) {
+      return function.source && function.source->name().lexeme == "relay";
+    });
+    expect(declared != checked.hir.functionInstances().end(),
+           "composed return has one concrete source relay");
+    const auto *function = checked.mir.findFunctionInstance(declared->id);
+    expect(function, "composed return retains its exact MIR callable");
+    const auto &body = function->body;
+    const auto entry = std::find_if(body.loans.begin(), body.loans.end(), [](const auto &loan) {
+      return loan.entry && loan.kind == MirLoanKind::Stored &&
+             loan.additionalDependencies.size() == 1;
+    });
+    const auto decoy = std::find_if(body.places.begin(), body.places.end(), [](const auto &place) {
+      return place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
+             place.type == SemanticType::Int32;
+    });
+    const MirInstruction *producer = nullptr;
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Construct &&
+            instruction.constructorTarget && instruction.loan)
+          producer = &instruction;
+    expect(entry != body.loans.end() && decoy != body.places.end() && producer,
+           "composed return retains the entry row, actual constructor and unrelated same-type source");
+    const auto *result = body.findLoan(*producer->loan);
+    expect(result && !result->entry && result->kind == MirLoanKind::Stored &&
+               result->parent == 0 && !result->designatedFields.empty() &&
+               result->additionalDependencies.size() == 1 &&
+               result->additionalDependencies.front().parent == 0 &&
+               result->source && result->additionalDependencies.front().source &&
+               result->source != result->additionalDependencies.front().source &&
+               producer->borrowFields.size() == 2,
+           "both external entry rows transfer as exact independent result fields");
+    // In the complete profile the selected constructor and executable inputs
+    // own the mapping. A changed legacy annotation cannot change the separately
+    // replayed result fact or authorize a fallback when that profile is absent.
+    auto compatibility = checked.mir;
+    auto &compatibilityBody = MirProgramTestAccess::functions(compatibility)[function->id - 1].body;
+    for (auto &block : compatibilityBody.blocks)
+      for (auto &instruction : block.instructions)
+        if (instruction.id == producer->id)
+          instruction.borrowFields[1].sourceFields = instruction.borrowFields[0].sourceFields;
+    expect(compatibilityBody.values == body.values && verifyMirProgram(compatibility).valid(),
+           "legacy mapping metadata cannot override an independently replayed complete owned result");
+    for (unsigned mutation = 0; mutation != 15; ++mutation) {
+      auto forged = checked.mir;
+      auto &changed = MirProgramTestAccess::functions(forged)[function->id - 1].body;
+      auto &loan = changed.loans[result->id - 1];
+      auto &extra = loan.additionalDependencies.front();
+      switch (mutation) {
+      case 0: loan.source = decoy->id; break;
+      case 1: extra.source = decoy->id; break;
+      case 2: loan.additionalDependencies.clear(); break;
+      case 3: extra.source = loan.source; break;
+      case 4: std::swap(loan.source, extra.source); break;
+      case 5: loan.parent = entry->id; break;
+      case 6: extra.parent = entry->id; break;
+      case 7: extra.designatedFields = loan.designatedFields; break;
+      case 8: loan.access = AccessMode::Mutable; break;
+      case 9: {
+        auto &target = MirProgramTestAccess::constructors(forged)[*producer->constructorTarget - 1];
+        expect(target.completeBorrow && target.completeBorrow->dependencies.size() == 2,
+               "selected constructor has the authoritative complete mapping");
+        target.completeBorrow->dependencies[1].sourceFields = target.completeBorrow->dependencies[0].sourceFields;
+        break;
+      }
+      case 10: changed.loans[entry->id - 1].additionalDependencies.clear(); break;
+      case 11:
+        MirProgramTestAccess::constructors(forged)[*producer->constructorTarget - 1].completeBorrow.reset();
+        for (auto &block : changed.blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.id == producer->id)
+              instruction.borrowFields[1].sourceFields = instruction.borrowFields[0].sourceFields;
+        break;
+      case 12:
+        MirProgramTestAccess::constructors(forged)[*producer->constructorTarget - 1].completeBorrow->dependencies.clear();
+        break;
+      case 14:
+        MirProgramTestAccess::constructors(forged)[*producer->constructorTarget - 1].completeBorrow.reset();
+        break;
+      case 13: {
+        auto &target = MirProgramTestAccess::constructors(forged)[*producer->constructorTarget - 1];
+        target.completeBorrow->dependencies[1].sourceFields = target.completeBorrow->dependencies[0].sourceFields;
+        extra.source = loan.source;
+        for (auto &block : changed.blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.id == producer->id)
+              instruction.borrowFields[1].sourceFields = instruction.borrowFields[0].sourceFields;
+        break;
+      }
+      }
+      const auto verified = verifyMirProgram(forged);
+      if (verified.valid())
+        std::cerr << "accepted composed owned field mutation " << mutation
+                  << " callback=" << callback << '\n';
+      expect(!verified.valid(),
+             "composed owned results preserve exact sources, paths, access and external parents");
+    }
+  }
+}
+
 void physicalReferenceFieldMappings() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
@@ -1227,6 +1370,35 @@ int main() {
     if (proof.valid()) std::cerr << "accepted generated move role mutation " << mutation << '\n';
     expect(!proof.valid(), "move rejects borrowed roles, erased owners and mistyped inputs");
   }
+  const MirInstruction *copy = nullptr;
+  for (const auto &block : original.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.kind == MirInstructionKind::Construct &&
+          instruction.constructorKind == ConstructorKind::Copy)
+        copy = &instruction;
+  expect(copy && copy->loan, "copied selected reference has its own exact publication");
+  const auto &copied = original.loans[*copy->loan - 1];
+  expect(copied.additionalDependencies.size() == 1 && copied.parent &&
+             !copied.designatedFields.empty() &&
+             copied.additionalDependencies.front().parent == copied.parent &&
+             copied.additionalDependencies.front().designatedFields == copied.designatedFields,
+         "each possible owner retains the copied field and actual source-group permission");
+  for (unsigned mutation = 0; mutation != 8; ++mutation) {
+    auto forged = checked.mir;
+    auto &body = MirProgramTestAccess::functions(forged)[owner - 1].body;
+    auto &claim = body.loans[*copy->loan - 1];
+    if (mutation == 0) claim.additionalDependencies.clear();
+    if (mutation == 1) claim.source = claim.additionalDependencies.front().source;
+    if (mutation == 2) claim.additionalDependencies.front().source = claim.source;
+    if (mutation == 3) claim.parent = 0;
+    if (mutation == 4) claim.additionalDependencies.front().parent = 0;
+    if (mutation == 5) claim.designatedFields.clear();
+    if (mutation == 6) claim.additionalDependencies.front().designatedFields.clear();
+    if (mutation == 7) claim.access = AccessMode::Mutable;
+    expect(!verifyMirProgram(forged).valid(),
+           "copy publication cannot erase an alternative owner, field, parent or access contract");
+  }
+
 }
 
 void generatedRecordCopies() {
@@ -2249,6 +2421,7 @@ void quantifiedNominalLiftInventory() {
 } // namespace
 int main() {
   physicalReferenceFieldMappings();
+  composedOwnedReturnFields();
   referenceInitializerEffectOrder();
   stagedReferenceContentsMetadata();
   stagedReferenceContentsTransport();

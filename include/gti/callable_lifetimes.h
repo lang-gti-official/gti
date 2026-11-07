@@ -353,6 +353,46 @@ callableLifetimeContract(const SemanticType &signature,
   return callable_lifetime_detail::deriveContract(signature, nominalFormation, work);
 }
 
+// A checked result query may expose a binder belonging to the queried
+// callable's invocation. Selecting a declared input relates that one exposed
+// result binder to the input; free/fixed regions keep their existing meaning.
+// This is signature formation only, never body provenance or access proof.
+inline std::optional<LifetimeBound> scopedCallableResultLifetimeBound(
+    const SemanticType &subject, const SemanticType &result, Lifetime source) {
+  const auto *projected = subject.callableReturnType();
+  if (!projected || *projected != result || result.kind != SemanticType::Reference ||
+      result.arguments.size() != 1 || result.referenceLifetime.kind != Lifetime::Kind::Parameter ||
+      !source.specified() || !source.declarationRegion() ||
+      subject.quantifiedLifetimes.size() > 4096 ||
+      std::count(subject.quantifiedLifetimes.begin(), subject.quantifiedLifetimes.end(),
+                 result.referenceLifetime.id) != 1)
+    return std::nullopt;
+  std::size_t work = 0;
+  const auto scoped = [&](auto &&self, const SemanticType &type,
+                           std::vector<GenericParameterId> bound,
+                           std::size_t depth) -> bool {
+    if (++work > 4096 || depth >= 256 || type == SemanticType::Unknown ||
+        (!type.quantifiedLifetimes.empty() &&
+         type.kind != SemanticType::FunctionSignature && type.kind != SemanticType::NativeFunction &&
+         type.kind != SemanticType::FunctionItem && type.kind != SemanticType::Lambda))
+      return false;
+    for (const auto parameter : type.quantifiedLifetimes) {
+      if (++work > 4096 || !parameter ||
+          std::find(bound.begin(), bound.end(), parameter) != bound.end())
+        return false;
+      bound.push_back(parameter);
+    }
+    bool valid = true;
+    lifetime_detail::children(type, [&](const auto &child) {
+      valid = self(self, child, bound, depth + 1) && valid;
+    });
+    return valid;
+  };
+  if (!scoped(scoped, subject, {}, 0))
+    return std::nullopt;
+  return LifetimeBound{source, result.referenceLifetime};
+}
+
 // A defaulted copy/move declaration selects the structural operation; it is
 // not an invocation that may impose additional caller preconditions. The
 // owner is supplied by the declaration catalog, never inferred from the
