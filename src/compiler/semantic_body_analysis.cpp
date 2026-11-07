@@ -8831,13 +8831,6 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                               std::to_string(argumentTypes.size()) + ".",
              "GTI-S2005");
       valid = false;
-    } else if (valid && consumingResultCarriesBorrow(resolved)) {
-      // The selected signature itself is unusable: a consumed receiver
-      // cannot keep a returned borrow alive. Checking the arguments against
-      // a result that cannot exist would only report its consequences.
-      reportConsumingBorrowedResult(resolved, expr.paren());
-      currentType = SemanticType::Unknown;
-      return;
     } else {
       std::vector<std::size_t> ephemeralBorrowArguments;
       std::vector<std::size_t> literalArguments;
