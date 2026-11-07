@@ -10757,6 +10757,26 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
       for (const Parameter &parameter : constructor->parameters()) {
         info.parameterTypes.emplace_back(typeOf(parameter, memberScope));
       }
+      const SemanticType receiverType = openClassType(owner.id);
+      if (info.genericParameters.empty() && !info.parameterPack &&
+          info.parameterTypes.size() == 1 &&
+          constructor->parameters().front().type.reference) {
+        auto &parameter = info.parameterTypes.front();
+        if (parameter.kind == SemanticType::Reference && parameter.arguments.size() == 1) {
+          // An exact self policy names this declaration's owner. Resolve only
+          // its omitted nominal regions in that context before signature
+          // normalization promotes them to independent invocation binders.
+          // Written owner regions, type/value arguments and nested callable
+          // correlations still have to match exactly. The outer source
+          // reference is deliberately excluded from this contextual match.
+          auto holes = freeTypeLifetimes(parameter.arguments.front());
+          std::erase_if(holes, [](Lifetime region) {
+            return region.kind != Lifetime::Kind::Inference;
+          });
+          if (matchInferredTypeLifetimes(parameter.arguments.front(), receiverType, holes))
+            parameter.arguments.front() = receiverType;
+        }
+      }
       normalizeConstructorLifetimeContract(info);
       endTypeParameterScope();
       for (const GenericParameterInfo &parameter : info.genericParameters) {
@@ -10786,7 +10806,6 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
                          return semanticModel.isCompilerPrivateType(type);
                        }));
 
-      const SemanticType receiverType = openClassType(owner.id);
       if (info.genericParameters.empty() && info.parameterTypes.size() == 1) {
         const SemanticType &parameter = info.parameterTypes.front();
         const Parameter &syntax = constructor->parameters().front();

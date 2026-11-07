@@ -610,6 +610,10 @@ lifetime variance is conservative across all definitions in the family, so an
 open primary cannot promise a conversion that a selected layout invalidates.
 
 Defaulted copy/move policies are checked after nominal contracts settle. The
+exact-self declaration context first resolves omitted owner regions to the
+current owner; written regions remain exact and the source shell is excluded.
+Explicit and elided declaration provenance carry the same obligation proof,
+while body-inferred contracts cannot authorize a structural policy. The
 shared structural-policy predicate derives the source-reference signature
 from the exact owner declaration, retaining its fixed regions and adding one
 independent shell binder. It compares the complete normalized `All`/`Any`

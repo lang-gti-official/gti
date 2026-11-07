@@ -7178,6 +7178,10 @@ auto SemanticVisitor::Impl::resolveOperator(
       ? std::optional<SemanticLoanPlace>{loanPlace(receiverState->place)}
       : std::nullopt;
   const auto *lifetimeReceiver = lifetimeReceiverPlace ? &*lifetimeReceiverPlace : nullptr;
+  // Assignment resolution may build a temporary syntax-only receiver. Its
+  // checked physical place is the lifetime witness; the temporary expression
+  // is not an evaluated source and must not escape into the body contract.
+  const auto *lifetimeReceiverExpression = receiverState ? nullptr : receiver.get();
   struct ViableOperator {
     CallableCandidate function;
     CallReceiverMode receiverMode = CallReceiverMode::None;
@@ -7284,7 +7288,7 @@ auto SemanticVisitor::Impl::resolveOperator(
         });
     if (!deferredLifetime &&
         !applyCallLifetimeContract(candidate, lifetimeInputs, token,
-                                   receiver.get(), false, lifetimeReceiver)) {
+                                   lifetimeReceiverExpression, false, lifetimeReceiver)) {
       if (!rejectedLifetimeFunction) {
         rejectedLifetimeFunction = candidate;
         rejectedLifetimeInputs = std::move(lifetimeInputs);
@@ -7418,7 +7422,7 @@ auto SemanticVisitor::Impl::resolveOperator(
       reportConstraintFailure(token, *rejectedRequirements);
     } else if (viable.empty() && rejectedLifetimeFunction) {
       (void)applyCallLifetimeContract(*rejectedLifetimeFunction, rejectedLifetimeInputs,
-                                      token, receiver.get(), true, lifetimeReceiver);
+                                      token, lifetimeReceiverExpression, true, lifetimeReceiver);
     } else if (viable.empty()) {
       std::string received;
       if (!argumentTypes.empty()) {
@@ -7571,7 +7575,7 @@ auto SemanticVisitor::Impl::resolveOperator(
   }
   if (!selected.lifetimeApplication.complete &&
       !applyCallLifetimeContract(selected, concreteArguments, token,
-                                 receiver.get(), true, lifetimeReceiver))
+                                 lifetimeReceiverExpression, true, lifetimeReceiver))
     return std::nullopt;
   if (consumingResultCarriesBorrow(selected)) {
     consumingBorrow =

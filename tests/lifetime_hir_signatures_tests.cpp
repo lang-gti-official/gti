@@ -210,6 +210,80 @@ int main() { Flag flag{1}; return choose(flag) - 1 + unary(); }
   expect(temporaryOrigin, "unary contextual conversion must retain a temporary receiver origin");
 }
 
+void syntheticAssignmentReceiverOrigins() {
+  const auto result = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "synthetic-assignment-receiver.gti", R"gti(
+struct Counter {
+  mut int value;
+  Counter(int initial) : value(initial) {}
+  void operator=(int replacement) mut { this.value = replacement; }
+  void operator+=(int amount) mut { this.value += amount; }
+  int get() { return this.value; }
+};
+int main() {
+  mut Counter first{1};
+  mut Counter second{9};
+  first = 3;
+  second += 4;
+  return first.get() + second.get() - 16;
+}
+)gti");
+  if (!result.canGenerateCode()) {
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "assignment operators retain their exact checked physical receiver origin");
+  }
+  std::size_t checked = 0;
+  for (const auto &function : result.hir.functionInstances()) {
+    std::vector<const HirValue *> assignments;
+    for (const auto &value : function.body.values)
+      if (value.kind == HirValueKind::Call &&
+          dynamic_cast<const Assign *>(value.source) && value.receiver)
+        assignments.push_back(&value);
+    if (assignments.empty()) continue;
+    expect(assignments.size() == 2,
+           "the assignment control needs two distinct same-type receiver objects");
+    for (std::size_t index = 0; index != assignments.size(); ++index) {
+      const auto &call = *assignments[index];
+      const auto *receiver = function.body.findValue(*call.receiver);
+      const auto *other = function.body.findValue(*assignments[1 - index]->receiver);
+      expect(receiver && receiver->place && other && other->place &&
+                 receiver->info.type == other->info.type && receiver->place != other->place,
+             "synthetic assignment receivers retain distinct qualified physical places");
+      expect(call.lifetimeApplication.complete && call.lifetimeApplication.origins.size() == 1,
+             "assignment calls retain their checked receiver application");
+      const auto &origin = call.lifetimeApplication.origins.front();
+      expect(origin.source == 0 && origin.region.kind == Lifetime::Kind::Local &&
+                 origin.place == *receiver->place &&
+                 std::find(function.body.lifetimeBody.origins.begin(),
+                           function.body.lifetimeBody.origins.end(), origin) !=
+                     function.body.lifetimeBody.origins.end(),
+             "a syntax-only receiver contributes its checked place, never a temporary AST witness");
+      for (int mutation = 0; mutation != 3; ++mutation) {
+        auto forged = result.hir;
+        auto *body = const_cast<HirBody *>(&forged.findFunctionInstance(function.id)->body);
+        auto *changed = const_cast<HirValue *>(body->findValue(call.id));
+        auto applicationOrigin = std::find(changed->lifetimeApplication.origins.begin(),
+                                          changed->lifetimeApplication.origins.end(), origin);
+        auto bodyOrigin = std::find(body->lifetimeBody.origins.begin(),
+                                   body->lifetimeBody.origins.end(), origin);
+        expect(applicationOrigin != changed->lifetimeApplication.origins.end() &&
+                   bodyOrigin != body->lifetimeBody.origins.end(),
+               "the coordinated mutation selects the exact application and body witness");
+        for (auto *witness : {&*applicationOrigin, &*bodyOrigin}) {
+          if (mutation == 0) witness->place = {};
+          if (mutation == 1) { witness->place = {}; witness->source = call.id; }
+          if (mutation == 2) witness->place = *other->place;
+        }
+        expect(!MirLowerer{}.lower(forged, result.failureMetadata).valid(),
+               "assignment receiver proof rejects missing, result-valued and unrelated same-type origins");
+      }
+      ++checked;
+    }
+  }
+  expect(checked == 2, "both simple and compound assignment receiver origins are checked");
+}
+
 void defaultFieldCallableUniverse() {
   const auto result = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "default-field-callable-universe.gti", R"gti(
@@ -684,6 +758,7 @@ int main() {
   unprovedReferenceContents();
   preparedReceiverRegion();
   contextualOperatorApplication();
+  syntheticAssignmentReceiverOrigins();
   defaultFieldCallableUniverse();
   projectedOnlyCallableOwners();
   scopedClassAliases();

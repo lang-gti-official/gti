@@ -5723,9 +5723,14 @@ identities remain exact. Shape success does not prove address authorization,
 active reads, dominance or contents flow.
 A staged branch of the existing CFG loan-flow engine checks formation against
 that exact shape, observes the capabilities used by the canonical read, and
-requires a related live frontier covering every physical parent branch. An
-external stored dependency cannot stand in for permission to read the container
-shell. The separate stored-dependency checks retain its liveness obligation.
+requires a related live frontier covering every physical origin. Replacing an
+actual read capability with its parents requires each parent to independently
+permit a read of that origin's exact source place. An unparented primary shell
+cannot disappear merely because the reference also lists parented external
+lifetime witnesses. Tagged or unknown origins require their actual capability;
+ancestry alone grants no physical permission. An external stored dependency
+cannot stand in for permission to read the container shell. The separate
+stored-dependency checks retain its liveness obligation.
 The opening becomes a shared snapshot without acquiring its transient read
 capabilities as reborrow parents. This component check does not yet establish
 current-content invalidation, tagged result transport, later read authority or

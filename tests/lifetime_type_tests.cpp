@@ -826,6 +826,18 @@ void testStructuralConstructorPolicies() {
   };
   expect(structuralConstructorPolicyMatches(owner, ownerContract, std::array{input}, policy, formation),
          "defaulted scalar policies have one independent structural source lifetime");
+  auto declaredPolicy = policy;
+  declaredPolicy.origin = LifetimeContractOrigin::Declared;
+  expect(structuralConstructorPolicyMatches(owner, ownerContract, std::array{input}, declaredPolicy, formation),
+         "explicit and elided declaration provenance preserves the same exact structural obligations");
+  auto declaredOwner = ownerContract;
+  declaredOwner.origin = LifetimeContractOrigin::Declared;
+  expect(structuralConstructorPolicyMatches(owner, declaredOwner, std::array{input}, policy, formation),
+         "an elided policy retains the exact requirements of an explicitly declared owner");
+  auto inferredOwner = ownerContract;
+  inferredOwner.origin = LifetimeContractOrigin::BodyInferred;
+  expect(!structuralConstructorPolicyMatches(owner, inferredOwner, std::array{input}, declaredPolicy, formation),
+         "a body-inferred owner cannot authorize a structural policy declaration");
   auto renamedInput = input;
   renamedInput.referenceLifetime = renamed;
   auto renamedPolicy = *substituteLifetimeContract(policy, std::array{LifetimeBinding{shell, renamed}});

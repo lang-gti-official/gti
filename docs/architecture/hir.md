@@ -940,7 +940,11 @@ ordinary construction in HIR. The source literal owns the constructed value;
 lowering adds one source-less `nullptr_t` operand so MIR retains the selected
 constructor's real argument type. A selected member `operator=` is represented
 as an ordinary call with an explicit named-place receiver and exact right-hand
-argument. Neither form is inferred from a public standard-library type name.
+argument. Its lifetime application uses that exact qualified receiver place.
+A temporary syntax-only receiver created during assignment resolution is not
+an evaluated expression and cannot become a retained lifetime-origin source;
+the actual assignment remains the call's source identity. Neither form is
+inferred from a public standard-library type name.
 
 A declaration initializer or return operand with a contextual construction
 lowers as itself, and

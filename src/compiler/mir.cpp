@@ -5101,18 +5101,26 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           if (covered[id - 1])
             return covered[id - 1] == 2;
           const auto &record = body.loans[id - 1];
-          bool hasParent = false;
-          bool complete = true;
-          const auto edge = [&](MirLoanId parent) {
-            if (parent) {
-              hasParent = true;
-              complete = complete && self(self, parent);
-            }
+          // An ancestry edge may retain an external lifetime without
+          // granting access to this row's physical source. Decomposing a
+          // capability requires permission for every origin, including the
+          // primary shell when it has no parent. Otherwise the actual read
+          // capability itself must remain in the frontier.
+          const auto edge = [&](MirPlaceId source, MirLoanId parent) {
+            const auto *authority = body.findLoan(parent);
+            return body.findPlace(source) && authority &&
+                   loanPermitsPlace(
+                       body, *authority,
+                       canonicalPlace(body, source, bindingLoans, active),
+                       AccessMode::ReadOnly, bindingLoans, active) &&
+                   self(self, parent);
           };
-          edge(record.parent);
+          bool complete = !record.referenceContents &&
+                          edge(record.source, record.parent);
           for (const auto &dependency : record.additionalDependencies)
-            edge(dependency.parent);
-          covered[id - 1] = hasParent && complete ? 2 : 1;
+            complete = complete && !dependency.referenceContents &&
+                       edge(dependency.source, dependency.parent);
+          covered[id - 1] = complete ? 2 : 1;
           return covered[id - 1] == 2;
         };
         for (const auto actual : actualAuthorities)

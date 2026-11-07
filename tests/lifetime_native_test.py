@@ -14,6 +14,38 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "elided_structural_special_members": """
+struct Legacy {
+  int& value;
+  Legacy(int& input) : value(input) {}
+  Legacy(Legacy& other) = default;
+  Legacy(Legacy&& other) = default;
+};
+struct Generic<T> {
+  T& value;
+  Generic(T& input) : value(input) {}
+  Generic(Generic<T>& other) = default;
+  Generic(Generic<T>&& other) = default;
+};
+struct Named<lifetime a> {
+  int&<a> value;
+  Named(int&<a> input) : value(input) {}
+  Named(Named& other) = default;
+  Named(Named&& other) = default;
+};
+int read<lifetime a>(int&<a> input) {
+  Named<a> source{input}; Named<a> copied{source};
+  Named<a> moved{std::move(source)};
+  return copied.value + moved.value;
+}
+int main() {
+  int input = 7;
+  Legacy source{input}; auto copied = source; auto moved = std::move(source);
+  Generic<int> generic{input}; auto genericCopy = generic;
+  auto genericMove = std::move(generic);
+  return copied.value + moved.value + genericCopy.value + genericMove.value + read(input) - 42;
+}
+""",
     "explicit_structural_special_members": """
 struct Plain {
   int value;
@@ -29,10 +61,10 @@ struct Guard {
   Guard(Guard&& other) = default;
   ~Guard() { drops += this.value; }
 };
-int moveOnce() { Guard moved{Guard(5)}; return moved.value; }
+int moveOnce() { Guard source{5}; Guard moved{std::move(source)}; return moved.value; }
 int main() {
   Plain original{3}; Plain direct{original}; Plain forwarded{copy(original)};
-  Plain moved{Plain(4)};
+  Plain source{4}; Plain moved{std::move(source)};
   int guard = moveOnce();
   return original.value + direct.value + forwarded.value + moved.value + guard + drops - 23;
 }
@@ -1175,6 +1207,22 @@ int main() {
   int left = 3; int right = 8;
   if (pointer(left, right, true) != 3) { return 1; }
   return pointer(left, right, false) - 8;
+}
+""",
+    "synthetic_assignment_receiver_origins": """
+struct Counter {
+  mut int value;
+  Counter(int initial) : value(initial) {}
+  void operator=(int replacement) mut { this.value = replacement; }
+  void operator+=(int amount) mut { this.value += amount; }
+  int get() { return this.value; }
+};
+int main() {
+  mut Counter first{1};
+  mut Counter second{9};
+  first = 3;
+  second += 4;
+  return first.get() + second.get() - 16;
 }
 """,
 }

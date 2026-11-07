@@ -1,4 +1,5 @@
 #include "../src/compiler/mir_lifetimes.h"
+#include "../src/compiler/mir_storage_effects.h"
 #include "../src/compiler/mir_verification_queries.h"
 #include "gti/frontend.h"
 #include "gti/callable_lifetimes.h"
@@ -46,9 +47,13 @@ int read<lifetime a, lifetime b>(View<a,b>& input) {
 int holder(Wrapper<static,static,static>& input) { input; return 0; }
 View<a,b>&<shell> identity<lifetime a, lifetime b, lifetime shell>(
     View<a,b>&<shell> input) { return input; }
+int relay<lifetime a, lifetime b, lifetime shell>(View<a,b>&<shell> input) {
+  [[discard]] identity(input); return 0;
+}
 int main() {
   int x = 2; int y = 5; View view{x,y};
   [[discard]] identity(view);
+  [[discard]] relay(view);
   return read(view) - 7;
 }
 )gti");
@@ -237,6 +242,91 @@ int main() {
     if (mutation == 5) producer->hirValue = 0;
     expect(!shape(forged), "returned opening cannot fabricate its exact applied call/result identity");
   }
+  const auto checkFormation = [&](StagedOpening staged, bool nested, bool returned,
+                                  bool fromFormal = false) {
+    auto &body = const_cast<MirFunctionInstance *>(
+        staged.program.findFunctionInstance(staged.function))->body;
+    auto &opening = *body.loans[staged.loan - 1].contentsOpening;
+    const auto read = opening.readLoans.front();
+    auto &entry = body.blocks.front().instructions;
+    const auto old = std::find_if(entry.begin(), entry.end(),
+        [&](const auto &instruction) { return instruction.id == staged.anchor; });
+    expect(old != entry.end(), "formation retains its exact staged anchor");
+    const auto anchor = *old;
+    entry.erase(old);
+    bool placed = false;
+    for (auto &block : body.blocks) {
+      if (!returned && placed) break;
+      auto position = returned
+          ? std::find_if(block.instructions.begin(), block.instructions.end(),
+                [&](const auto &instruction) {
+                  return instruction.kind == MirInstructionKind::Call && instruction.loan == read;
+                })
+          : block.instructions.begin();
+      if (returned && position == block.instructions.end()) continue;
+      if (returned) ++position;
+      const auto index = std::distance(block.instructions.begin(), position);
+      block.instructions.insert(block.instructions.begin() + index, anchor);
+      block.instructions.insert(block.instructions.begin() + index + 1,
+          {.id = anchor.id + 1, .kind = MirInstructionKind::EndBorrow, .loan = staged.loan});
+      placed = true;
+      break;
+    }
+    expect(placed, "formation executes while the evaluated read is live");
+    const auto flow = [&] {
+      return verifyMirPersistentStorageLoanFlow(
+          body, staged.function, {}, nullptr, nullptr, {}, &staged.program);
+    };
+    if (nested) {
+      expect(!flow().valid(), "a nested reference read also requires external-field authority");
+      const auto external = body.loans[read - 1].storedDependency;
+      expect(external != 0, "nested fixture has independent external-field authority");
+      opening.readLoans.push_back(external);
+    }
+    expect(flow().valid(), "named, nested and returned formation prove every actual read capability");
+    expect(!verifyMirProgram(staged.program).valid(),
+           "formation-only proof does not bypass the closed contents publication gate");
+    const auto complete = opening.readLoans;
+    for (std::size_t index = 0; index < complete.size(); ++index) {
+      opening.readLoans = complete;
+      opening.readLoans.erase(opening.readLoans.begin() + index);
+      expect(!flow().valid(), "omitting any required formation capability is rejected");
+    }
+    opening.readLoans = complete;
+    if (returned) {
+      const auto &result = body.loans[read - 1];
+      if (fromFormal) {
+        expect(result.parent && result.parent != result.storedDependency &&
+                   result.additionalDependencies.size() == 2,
+               "a returned formal reference preserves physical and external parent roles");
+        opening.readLoans = {result.parent, result.storedDependency};
+        expect(flow().valid(),
+               "a frontier may decompose when every origin has independently authorized parents");
+        const auto parents = opening.readLoans;
+        for (std::size_t index = 0; index < parents.size(); ++index) {
+          opening.readLoans = parents;
+          opening.readLoans.erase(opening.readLoans.begin() + index);
+          expect(!flow().valid(), "returned formal decomposition retains every physical origin");
+        }
+        return;
+      }
+      expect(result.source && !result.parent && result.storedDependency &&
+                 !result.additionalDependencies.empty(),
+             "returned owned-shell reference has separate external lifetime witnesses");
+      opening.readLoans = {result.storedDependency};
+      const auto rejected = flow();
+      expect(!rejected.valid() && std::any_of(rejected.errors.begin(), rejected.errors.end(),
+          [](const auto &issue) {
+            return issue.message ==
+                "reference contents read omits part of its physical capability frontier";
+          }), "external dependency parents cannot replace an unparented physical-shell capability");
+    }
+  };
+  checkFormation(stage("read", false, false), false, false);
+  checkFormation(stage("holder", true, false), true, false);
+  checkFormation(stage("main", false, true), false, true);
+  checkFormation(stage("relay", false, true), false, true, true);
+
 }
 
 void checkReferenceReceiverProducer() {

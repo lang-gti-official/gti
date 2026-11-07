@@ -1583,6 +1583,12 @@ at the declaration with `GTI-S2020`. Redundant nominal well-formedness facts
 are permitted. These declarations do not introduce constrained copy/move
 overloads or an executable constructor call.
 
+An exact self policy can omit the owner's lifetime arguments, including
+hidden lifetimes on stored-reference fields. `View(View&) = default;` names
+the current owner application; elision does not introduce fresh owner
+regions. Explicit owner lifetime arguments still have to match that
+application, and the outer source reference keeps its independent lifetime.
+
 `T&&` is not a general GTI reference or forwarding-reference type. It is
 permitted only in the exact move constructor policy. A custom copy or move
 constructor body is not supported. GTI currently uses structural movement and

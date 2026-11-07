@@ -3478,7 +3478,12 @@ int main() { return relay(3); }
 }
 
 void testStructuralSpecialMemberPolicies() {
-  const auto scalar = analyze(R"(
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto withMove = [&](std::string source) {
+    return lang::Frontend().analyze("structural-policy.gti", std::move(source),
+                                  {root / "prelude.gti"}, {}, {root});
+  };
+  const auto scalar = withMove(R"(
 struct Plain {
   int value;
   Plain(int input) : value(input) {}
@@ -3486,7 +3491,8 @@ struct Plain {
   Plain(Plain&& other) = default;
 };
 int main() {
-  Plain original{3}; Plain copied{original}; Plain moved{Plain(4)};
+  Plain original{3}; Plain copied{original};
+  Plain source{4}; Plain moved{std::move(source)};
   return copied.value + moved.value - 7;
 }
 )");
@@ -3523,26 +3529,41 @@ int main() { int value = 7; return read(value) - 14; }
 )");
   expectValid(borrowed, "structural policy proof preserves fixed owner regions and redundant nominal formation facts");
 
+  // Auto keeps the existing hidden owner application during transfer; the
+  // explicit owner case also exercises selected constructor metadata.
+  for (const std::string source : {
+      "struct View { int& value; View(int& input):value(input){} View(View& other)=default; View(View&& other)=default; }; int main(){int input=7; View original{input}; auto copied=original; auto moved=std::move(original); return copied.value+moved.value-14;}",
+      "struct View<T> { T& value; View(T& input):value(input){} View(View<T>& other)=default; View(View<T>&& other)=default; }; int main(){int input=7; View<int> original{input}; auto copied=original; auto moved=std::move(original); return copied.value+moved.value-14;}",
+      "struct View<lifetime a> { int&<a> value; View(int&<a> input):value(input){} View(View& other)=default; View(View&& other)=default; }; int read<lifetime a>(int&<a> input){View<a> original{input}; View<a> copied{original}; View<a> moved{std::move(original)}; return copied.value+moved.value;} int main(){int value=7;return read(value)-14;}"})
+    expectValid(withMove(source),
+                "exact self policies retain hidden and omitted owner regions without requiring explicit spelling");
+  for (const std::string source : {
+      "struct View<lifetime a> { int&<a> value; View(int&<a> input):value(input){} View(View<static>& other)=default; }; int main(){return 0;}",
+      "struct View<lifetime a, lifetime b> { int&<a> first; int&<b> second; View(int&<a> x,int&<b> y):first(x),second(y){} View(View<b,a>& other)=default; }; int main(){return 0;}"})
+    expect(!analyze(source).semanticValid,
+           "contextual self elision never changes written static or differently correlated owner regions");
+
   for (const auto &[source, parameter] : std::array<std::pair<std::string_view, std::string_view>, 3>{{
-      {"struct Plain { int value; Plain(Plain&<static> other) = default; }; int main() { return 0; }", "Plain&"},
-      {"struct View<lifetime a> { int&<a> value; View(View<a>&<a> other) = default; }; int main() { return 0; }", "View<a>&"},
-      {"struct View<lifetime a> { int&<a> value; View(View<a>& other) requires outlives<a, static> = default; }; int main() { return 0; }", "View<a>&"}}}) {
+      {"struct Plain { int value; Plain(int input):value(input){} Plain(Plain&<static> other) = default; }; int main() { return 0; }", "Plain&"},
+      {"struct View<lifetime a> { int&<a> value; View(int&<a> input):value(input){} View(View<a>&<a> other) = default; }; int main() { return 0; }", "View<a>&"},
+      {"struct View<lifetime a> { int&<a> value; View(int&<a> input):value(input){} View(View<a>& other) requires outlives<a, static> = default; }; int main() { return 0; }", "View<a>&"}}}) {
     const auto rejected = analyze(source);
     const auto diagnostic = std::find_if(rejected.diagnostics.begin(), rejected.diagnostics.end(),
         [](const auto &item) {
           return item.code == "GTI-S2020" && item.message.find("structural lifetime contract") != std::string::npos;
         });
     expect(!rejected.semanticValid && diagnostic != rejected.diagnostics.end() &&
-               diagnostic->primary.source == "lifetime-resolution.gti" &&
+               std::filesystem::path(diagnostic->primary.source).filename() == "lifetime-resolution.gti" &&
                diagnostic->primary.start == source.find(parameter),
            "stronger default policies reject at their written source parameter before any invocation");
   }
   for (const auto source : {
       "struct Plain { int value; Plain(int input):value(input){} Plain(Plain& other)=delete; }; int main(){Plain source{1}; Plain copy{source}; return copy.value;}",
-      "struct Plain { int value; Plain(int input):value(input){} Plain(Plain&& other)=delete; }; int main(){Plain value{Plain(1)}; return value.value;}",
       "struct Plain { int value; Plain(Plain& other):value(other.value){} }; int main(){return 0;}"})
     expect(!analyze(source).semanticValid,
            "deleted policies and unsupported custom copy bodies retain their existing rejection");
+  expect(!withMove("struct Plain { int value; Plain(int input):value(input){} Plain(Plain&& other)=delete; }; int main(){Plain source{1}; Plain value{std::move(source)}; return value.value;}").semanticValid,
+         "a deleted move rejects actual transfer from a named source, independently of direct-result elision");
 }
 
 void testConstructorRelationsAfterFieldIdentity() {

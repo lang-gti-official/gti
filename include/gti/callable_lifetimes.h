@@ -367,7 +367,7 @@ inline bool structuralConstructorPolicyMatches(
       !ownerContract.valid() || ownerContract.receiver.specified() ||
       !policy.valid() || policy.receiver.specified() || parameters.size() != 1 ||
       ownerContract.origin == LifetimeContractOrigin::BodyInferred ||
-      policy.origin != ownerContract.origin)
+      policy.origin == LifetimeContractOrigin::BodyInferred)
     return false;
   const auto &source = parameters.front();
   const auto shell = source.referenceLifetime;
@@ -384,6 +384,10 @@ inline bool structuralConstructorPolicyMatches(
   expectedParameters.push_back(shell);
   if (policy.parameters != expectedParameters)
     return false;
+
+  // Explicit and elided declaration contracts have the same proof authority.
+  // A hidden owner slot may be collected as a named constructor parameter;
+  // its provenance label does not change the exact structural obligations.
 
   auto signature = SemanticType::functionSignature(owner, {structuralSource});
   for (const auto parameter : expectedParameters)
