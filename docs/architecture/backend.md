@@ -600,6 +600,14 @@ debug records instantiate stored child types in the actual region scope while
 layout caches retain the canonical descriptor. A missing or ambiguous enum view
 does not classify the type as an integral enum or a trivial object.
 
+Abstract `Stored` entry groups use the same metadata-only representation for
+ordinary records and hierarchy storage with an exact native layout. This applies
+to every independently retained origin, including inherited and direct fields
+of one receiver. Each supplied type and conditional enum domain must have an
+admitted representation. Executable address selection, dispatch and cleanup
+remain separately checked; admitting the dependency group neither chooses an
+address nor changes its origins, permissions or endpoints.
+
 Evidence owns a const snapshot, shared between consumer stages. Acquiring it
 copies an lvalue program or moves an rvalue program. `Backend::generate`
 accepts a value, and the driver moves its finished program into this boundary;
@@ -5980,6 +5988,14 @@ block or publish a result. Readonly and mutable unrelated user-type relays check
 selected-owner identity, write-back and exact destruction; a panic relay checks
 original attribution and local/TLS cleanup. Load and argument staging continue
 to require their same-block producer.
+
+A shared erased-reference return may instead export its original entry shell and
+stored owners through MIR's independently verified address-preserving helper
+proof. LLVM forwards the evaluated restored pointer and admits its exact native
+or dispatch-layout representation; it neither copies the object nor derives its
+address from a lifetime owner. The original supplier replay, access, liveness,
+normal/failure cleanup and outgoing lifetime conversion remain MIR obligations.
+The transient erase and restore loans keep their own witnesses.
 
 A direct fundamental text return has a distinct bounded witness: its source call
 publishes a `Stored` dependency and an SSA text value, then the return

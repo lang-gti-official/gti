@@ -481,6 +481,9 @@ A fixed `static` reference result can obtain its exact global supplier from an
 available nonvirtual GTI source definition. Declaration analysis defers only that
 missing supplier metadata: every return still proves its region and access,
 and body admission requires a complete summary naming one exact global place.
+Concrete generic reanalysis retains that checked global summary when structural
+signature derivation finds no formal or receiver supplier; its compact origin
+and complete supplier identity remain consistent.
 An unavailable definition, differing global suppliers, or an unknown/cyclic
 summary cannot acquire origin authority merely from the `static` result type.
 

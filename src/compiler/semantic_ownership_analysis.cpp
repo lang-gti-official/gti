@@ -8243,6 +8243,30 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
   function.returnBorrowPlace = summary.place;
 }
 
+auto SemanticVisitor::Impl::hasExactStaticReturnSupplier(
+    const FunctionInfo &function) -> bool {
+  if (!function.lifetimeContract.valid() ||
+      function.returnType.kind != SemanticType::Reference ||
+      function.returnType.referenceLifetime != Lifetime::staticLifetime() ||
+      function.returnBorrowOrigin != BorrowOriginKind::Global ||
+      function.returnBorrowAccess != function.returnType.referenceAccess ||
+      !function.returnBorrowPlace || !function.returnBorrowPlace->root ||
+      !function.completeReturnBorrow ||
+      function.completeReturnBorrow->dependencies.empty() ||
+      !function.completeReturnBorrow->possibleAlternatives.empty())
+    return false;
+  return std::all_of(
+      function.completeReturnBorrow->dependencies.begin(),
+      function.completeReturnBorrow->dependencies.end(), [&](const auto &supplier) {
+        return supplier.origin == BorrowOriginKind::Global &&
+               supplier.globalRoot == function.returnBorrowPlace->root &&
+               supplier.sourceFields == function.returnBorrowPlace->projections &&
+               supplier.resultFields.empty() && supplier.sourceConditions.empty() &&
+               supplier.resultConditions.empty() &&
+               supplier.access == function.returnType.referenceAccess;
+      });
+}
+
 auto SemanticVisitor::Impl::refreshDeclaredLifetimeBorrowSummary(
     FunctionInfo &function, bool includeInferred) const -> void {
   if (!function.lifetimeContract.valid() ||
@@ -8257,6 +8281,12 @@ auto SemanticVisitor::Impl::refreshDeclaredLifetimeBorrowSummary(
       &function.lifetimeContract,
       function.declaration ? function.declaration->receiverMutability()
                            : ReceiverMutability::ReadOnly);
+  // Structural signature derivation finds formal/receiver suppliers. A checked
+  // source body's exact global supplier is independent of those inputs and
+  // survives concrete generic substitution with its complete summary.
+  if (summary.origin == BorrowOriginKind::None &&
+      hasExactStaticReturnSupplier(function))
+    return;
   function.returnBorrowOrigin = summary.origin;
   function.returnBorrowParameter = summary.parameter;
   function.returnBorrowAccess = summary.access;

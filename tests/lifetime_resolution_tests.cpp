@@ -12,6 +12,10 @@ namespace lang {
 // Exercise the real staging key and lookup without exposing cache internals as
 // a product API or relying on a timing-sensitive number of source evaluations.
 struct SemanticLifetimeTestAccess {
+  static bool exactStaticReturnSupplier(const FunctionInfo &function) {
+    return SemanticVisitor::Impl::hasExactStaticReturnSupplier(function);
+  }
+
   struct ContentsChecks {
     bool selectors = false;
     bool normalized = false;
@@ -3500,6 +3504,34 @@ int main() { int value = 7; return direct(value) + inherited(value) + permanent(
              permanent->completeReturnBorrow->dependencies.size() == 1 &&
              permanent->completeReturnBorrow->dependencies.front().globalRoot == global->id,
          "a checked static return retains the exact global used by its field initializer, not another same-type global");
+  expect(permanent && lang::SemanticLifetimeTestAccess::exactStaticReturnSupplier(*permanent),
+         "the shared static supplier predicate recognizes the complete checked body summary");
+  if (permanent && permanent->completeReturnBorrow &&
+      !permanent->completeReturnBorrow->dependencies.empty()) {
+    for (int mutation = 0; mutation != 9; ++mutation) {
+      auto changed = *permanent;
+      switch (mutation) {
+      case 0: ++changed.completeReturnBorrow->dependencies.front().globalRoot; break;
+      case 1: changed.completeReturnBorrow.reset(); break;
+      case 2: changed.completeReturnBorrow->dependencies.clear(); break;
+      case 3: changed.returnBorrowPlace->root = 0; break;
+      case 4: changed.returnBorrowAccess = lang::AccessMode::Mutable; break;
+      case 5:
+        changed.completeReturnBorrow->dependencies.push_back(
+            changed.completeReturnBorrow->dependencies.front());
+        ++changed.completeReturnBorrow->dependencies.back().globalRoot;
+        break;
+      case 6:
+        changed.completeReturnBorrow->dependencies.front().sourceFields.push_back(
+            lang::fieldProjection(global ? global->id : 1));
+        break;
+      case 7: changed.returnType.referenceLifetime = {}; break;
+      case 8: changed.completeReturnBorrow->possibleAlternatives.push_back({}); break;
+      }
+      expect(!lang::SemanticLifetimeTestAccess::exactStaticReturnSupplier(changed),
+             "preserving a static supplier rejects wrong globals, unknown summaries, access/path drift, alternatives and nonstatic results");
+    }
+  }
   for (const auto name : {"direct", "inherited"}) {
     const auto *target = function(valid, name);
     const auto *body = target && target->declaration ? target->declaration->body().get() : nullptr;
@@ -3540,11 +3572,32 @@ int use() { return later(); }
 int&<static> later() { View<static> view{global}; return view.value; }
 )gti");
   expectValid(beforeDefinition, "an available source definition supplies its checked static origin through the existing body query");
+  const auto generic = lang::Frontend({.stopAfter = lang::FrontendPhase::Hir}).analyze(
+      "generic-static-reference-cleanup.gti", declarations + R"gti(
+int&<static> selected<T>(T unused) { View<static> view{global}; return view.value; }
+int main() { return selected(1) + selected(true) - 14; }
+)gti");
+  expectValid(generic, "concrete generic instances retain the complete source body's exact static global supplier");
+  expect(generic.hir.valid(), "generic static supplier contracts remain coherent through concrete HIR lowering");
+  if (const auto *selected = function(generic, "selected")) {
+    std::size_t instances = 0;
+    for (const auto &instance : generic.hir.functionInstances())
+      if (instance.declaration == selected->id) {
+        ++instances;
+        expect(instance.returnBorrowOrigin == lang::BorrowOriginKind::Global &&
+                   instance.returnBorrowPlace == selected->returnBorrowPlace &&
+                   instance.completeReturnBorrow == selected->completeReturnBorrow,
+               "each applied type preserves the same compact and complete global return identity");
+      }
+    expect(instances == 2, "both independent concrete type substitutions exercise static supplier refresh");
+  }
   for (const auto source : {
            R"gti(int&<static> unavailable();)gti",
            R"gti(int&<static> invalid(bool first) { View<static> left{global}; View<static> right{otherGlobal}; if (first) { return left.value; } return right.value; })gti",
            R"gti(int&<static> invalid() { return unknownValue; })gti",
-           R"gti(int&<static> invalid() { return invalid(); })gti"}) {
+           R"gti(int&<static> invalid() { return invalid(); })gti",
+           R"gti(int&<static> invalid<T>(T unused, bool first) { if (first) { return global; } return otherGlobal; } int main() { return invalid(1, true); })gti",
+           R"gti(int&<static> invalid<T>(T unused) { return unknownValue; } int main() { return invalid(1); })gti"}) {
     const auto rejected = check(source);
     expect(rejected.syntaxValid && !rejected.semanticValid,
            "a static result does not invent origin authority for absent definitions, differing globals, unknown bodies or recursive summaries");

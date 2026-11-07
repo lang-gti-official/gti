@@ -4060,18 +4060,31 @@ public:
            (restore && opaqueReferent(stage.parameterTypes[0].arguments[0]) &&
             representedErasureReference(stage.info.type));
   }
-  bool restoredLoanTransport(const MirBody &body,
+  bool restoredLoanTransport(const MirBody &body, const MirBlock &block,
                              const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::Borrow || !stage.loan ||
         stage.operands.size() != 1 ||
-        stage.operands[0].kind != MirOperandKind::Loan ||
-        !representedErasureReference(stage.info.type))
+        stage.operands[0].kind != MirOperandKind::Loan)
       return false;
     const auto *target = body.findLoan(*stage.loan);
     const auto *source = body.findLoan(stage.operands[0].loan);
     if (!target || !source || target->access != stage.info.access ||
-        source->access != target->access ||
-        !(target->parent == source->id ||
+        source->access != target->access)
+      return false;
+    if (target->kind == MirLoanKind::Return && this->body &&
+        target->storedDependency != source->storedDependency) {
+      // Ownership metadata may export the independently proved original
+      // entry while the executable operation forwards this exact restored
+      // pointer. Reuse MIR's address/permission proof, never reconstruct an
+      // address from the outgoing lifetime supplier.
+      const auto projection = mir_detail::verifiedSharedErasedReferenceReturn(
+          program, body, *source, this->body->owner);
+      return representedValue(stage.info.type) && projection &&
+          mir_detail::matchesSharedErasedReferenceReturn(body, block, stage, *projection);
+    }
+    if (!representedErasureReference(stage.info.type))
+      return false;
+    if (!(target->parent == source->id ||
           (target->kind == MirLoanKind::Return && target->escapes &&
            target->source == source->source &&
            target->producedBy == source->producedBy)))
@@ -5112,21 +5125,34 @@ public:
     }
     for (const auto &loan : mir.loans) {
       const auto *origin = mir.findPlace(loan.source);
+      // Abstract Stored entries carry no address or runtime object of their
+      // own. Every dependency still needs an admitted representation, including
+      // exact hierarchy storage whose fields were checked by MIR. Executable
+      // places, selections and cleanup retain their separate dispatch proofs.
+      const bool abstractStoredEntry =
+          loan.kind == MirLoanKind::Stored && loan.entry &&
+          !loan.storedDependency && loan.storedPath.empty() &&
+          !loan.referenceSelection && !loan.twoPhase &&
+          !loan.lifecycleBound && !loan.escapes;
+      const auto representedDependency = [&](const SemanticType &type) {
+        return nativeValue(type) ||
+               (abstractStoredEntry && dispatchProofs.metadata(type).has_value());
+      };
       const auto nativeConditions = [&](const auto &conditions) {
         return std::all_of(
             conditions.begin(), conditions.end(), [&](const auto &condition) {
               const auto *payload =
                   natives.representations().payloadEnum(condition.enumeration);
               return payload && condition.variant < payload->variants.size() &&
-                     nativeValue(condition.enumeration);
+                     representedDependency(condition.enumeration);
             });
       };
-      bool nativeBorrow = origin && nativeValue(origin->type) &&
+      bool nativeBorrow = origin && representedDependency(origin->type) &&
                           nativeConditions(loan.conditions);
       for (const auto &dependency : loan.additionalDependencies) {
         const auto *source = mir.findPlace(dependency.source);
         nativeBorrow &= nativeConditions(dependency.conditions) &&
-                        (source ? nativeValue(source->type)
+                        (source ? representedDependency(source->type)
                                 : !dependency.source &&
                                       !dependency.designatedFields.empty());
       }
@@ -5152,17 +5178,7 @@ public:
       // An entry record that a referenced carrier stores a borrow in its
       // fields names that external referent; like other borrow metadata it
       // has no representation beside the carrier's own layout.
-      const bool storedRecord =
-          hierarchy && loan.kind == MirLoanKind::Stored && loan.entry &&
-          !loan.storedDependency && !loan.designatedFields.empty() &&
-          !loan.referenceSelection && loan.additionalDependencies.empty() &&
-          loan.conditions.empty() && !loan.twoPhase &&
-          dispatchProofs
-              .metadata(origin->type.kind == SemanticType::Reference &&
-                                origin->type.arguments.size() == 1
-                            ? origin->type.arguments.front()
-                            : origin->type)
-              .has_value();
+      const bool storedRecord = hierarchy && abstractStoredEntry && nativeBorrow;
       // A returned view of hierarchy storage depends on its owner without
       // an address in it: borrow metadata, as for a static call's view.
       const bool viewReturn =
@@ -5747,7 +5763,7 @@ public:
                stage.unsafeOperation ==
                    UnsafeOperationKind::DeclaredUnsafeCall) &&
                     (erasedReference(stage) ||
-                     restoredLoanTransport(mir, stage))
+                     restoredLoanTransport(mir, mirBlock, stage))
                 ? std::optional(Shape::ErasedReference)
             : ((stage.unsafeOperation == UnsafeOperationKind::RawDereference &&
                 (representedTextAddress(mir, stage) ||

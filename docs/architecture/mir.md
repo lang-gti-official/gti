@@ -1013,6 +1013,9 @@ identity. Lowering proposes an outgoing group without altering the transient
 calls; program verification replays both the helper addresses and the complete
 original supplier sets, including parents, at publication. Only the incoming
 shell's local parameter parent is removed; every external Stored parent remains.
+The original full reference type proves both the applied erasure-input conversion
+and the outgoing reference contract. A helper's shorter argument region does not
+replace the still-live original permission being exported.
 The evaluated restored pointer is forwarded once. Its transient loans retire
 before scope exit, while the outgoing Stored authority stays live. This initial
 projection supports shared, unconditional suppliers; exclusive and guarded

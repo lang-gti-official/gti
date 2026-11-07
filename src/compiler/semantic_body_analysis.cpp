@@ -4394,20 +4394,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     if (deferredStaticSupplier && !loanFlow.deferredGenericFlow &&
         !containsOpenTypeParameter(currentReturnType)) {
       const auto *checked = semanticModel.findFunction(stmt);
-      const auto exactGlobal = checked && checked->returnBorrowOrigin == BorrowOriginKind::Global &&
-          checked->returnBorrowPlace && checked->completeReturnBorrow &&
-          !checked->completeReturnBorrow->dependencies.empty() &&
-          checked->completeReturnBorrow->possibleAlternatives.empty() &&
-          std::all_of(checked->completeReturnBorrow->dependencies.begin(),
-                      checked->completeReturnBorrow->dependencies.end(), [&](const auto &supplier) {
-                        return supplier.origin == BorrowOriginKind::Global &&
-                               supplier.globalRoot == checked->returnBorrowPlace->root &&
-                               supplier.sourceFields == checked->returnBorrowPlace->projections &&
-                               supplier.resultFields.empty() && supplier.sourceConditions.empty() &&
-                               supplier.resultConditions.empty() &&
-                               supplier.access == currentReturnType.referenceAccess;
-                      });
-      if (!exactGlobal)
+      if (!checked || !hasExactStaticReturnSupplier(*checked))
         reportMissingFunctionReturnBorrowSummary(stmt, *functionInfo);
     }
     if (stmt.receiverMutability() == ReceiverMutability::Consuming &&

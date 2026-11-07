@@ -911,6 +911,22 @@ int read() { return selected(); }
 int&<static> selected() { View<static> view{global}; return view.value; }
 int main() { return read() + observed - 14; }
 """,
+    "generic_static_reference_cleanup": """
+int global = 7;
+int otherGlobal = 11;
+mut int observed = 0;
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  ~View() { observed = observed + this.value; }
+};
+int&<static> selected<T>(T unused) { View<static> view{global}; return view.value; }
+int main() {
+  int first = selected(1);
+  int second = selected(true);
+  return first + second + observed - 28;
+}
+""",
     "inherited_independent_referents": """
 struct Base<lifetime a> {
   int&<a> value;

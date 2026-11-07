@@ -1125,8 +1125,12 @@ verifiedSharedErasedReferenceReturn(const MirProgram &program, const MirBody &bo
   if (!actual || actual->operand != candidate->erasureInput ||
       actual->referenceType != candidate->referenceType || !root ||
       !mirLifetimeReferenceConversion(program, body, owner, root->type, actual->referenceType) ||
-      !mirLifetimeReferenceConversion(program, body, owner, actual->referenceType, body.returnType))
+      !mirLifetimeReferenceConversion(program, body, owner, root->type, body.returnType))
     return std::nullopt;
+  // This publication exports the independently identified entry permission.
+  // An erasing helper can shorten its argument region for its own call; that
+  // transient type is not the lifetime of the still-live original reference.
+  // Exact pointer identity and full original-parent replay are both mandatory.
   return candidate;
 }
 

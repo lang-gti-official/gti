@@ -3416,6 +3416,8 @@ private:
                                                 bool diagnose = true);
   void recordReferenceLifetimeBinding(const SemanticType &reference,
                                       const ExprPtr &initializer);
+  [[nodiscard]] static bool hasExactStaticReturnSupplier(
+      const FunctionInfo &function);
   void refreshDeclaredLifetimeBorrowSummary(FunctionInfo &function,
                                             bool includeInferred = false) const;
   [[nodiscard]] Lifetime implicitFunctionLifetime(const FunctionDecl &function,

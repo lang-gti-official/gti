@@ -1566,8 +1566,6 @@ Opaque&<a> through<lifetime a>(int&<a> first, int&<a> second, bool choice) {
   return leaf(first);
 }
 Opaque& forward(Opaque& input) { return input; }
-struct Pair { int first; int second; Pair(int firstValue, int secondValue) : first(firstValue), second(secondValue) {} };
-Opaque& field(Pair& input) { return gti_internal::erase_reference(input.first); }
 [[borrowed_from(owner)]] unsafe Opaque& raw_forward(const Opaque* address, Opaque& owner) {
   unsafe { return *address; }
 }
@@ -1575,11 +1573,9 @@ int main() {
   mut int first = 3;
   mut int exclusive = 11;
   int second = 7;
-  Pair pair{3, 7};
   Opaque& erased = forward(through(first, second, first == 3));
   unsafe {
     [[discard]] raw_forward(&erased, erased);
-    [[discard]] gti_internal::restore_reference<int>(field(pair));
     [[discard]] gti_internal::restore_reference<int>(mutable_leaf(exclusive));
     return gti_internal::restore_reference<int>(erased) - 3;
   }
@@ -1601,31 +1597,28 @@ int main() {
   const auto throughId = functionId("through");
   const auto leafId = functionId("leaf");
   const auto forwardId = functionId("forward");
-  const auto fieldId = functionId("field");
   const auto rawId = functionId("raw_forward");
   const auto mutableId = functionId("mutable_leaf");
   const auto mainId = functionId("main");
-  expect(throughId && leafId && forwardId && fieldId && rawId && mutableId && mainId,
-         "address proof covers static helpers, mutable erasure, projected fields and raw owner witnesses");
+  expect(throughId && leafId && forwardId && rawId && mutableId && mainId,
+         "address proof covers static helpers, mutable erasure and raw owner witnesses");
   const auto *main = checked.mir.findFunctionInstance(mainId);
   const MirInstruction *throughCall = nullptr;
-  bool forwarded = false, mutableInput = false, rejectedField = false, rejectedRaw = false;
+  bool forwarded = false, mutableInput = false, rejectedRaw = false;
   for (const auto &block : main->body.blocks)
     for (const auto &call : block.instructions) {
       if (call.kind != MirInstructionKind::Call || !call.functionTarget || !call.loan)
         continue;
       const auto target = *call.functionTarget;
-      if (target != throughId && target != forwardId && target != fieldId &&
-          target != rawId && target != mutableId)
+      if (target != throughId && target != forwardId && target != rawId && target != mutableId)
         continue;
       const auto applied = instantiateMirLifetimeTarget(checked.mir, call);
       expect(applied.has_value(), "selected erasure fixture call has its exact lifetime application");
       const MirOperand output{.kind = MirOperandKind::Loan, .loan = *call.loan,
                               .type = applied->returnType};
       const auto identity = mir_detail::verifiedReferenceErasureSource(checked.mir, main->body, output);
-      if (target == fieldId || target == rawId) {
-        expect(!identity, "field addresses and raw owner witnesses are not whole-formal erasure identity");
-        rejectedField |= target == fieldId;
+      if (target == rawId) {
+        expect(!identity, "raw owner witnesses are not whole-formal erasure identity");
         rejectedRaw |= target == rawId;
         continue;
       }
@@ -1642,8 +1635,46 @@ int main() {
         forwarded = identity->referenceType.arguments.front() == SemanticType::Int32;
       }
     }
-  expect(throughCall && forwarded && mutableInput && rejectedField && rejectedRaw,
+  expect(throughCall && forwarded && mutableInput && rejectedRaw,
          "address queries exercise all intended source shapes");
+  // This deliberately unsealed component fixture tests the address query,
+  // not source/backend acceptance. In particular, unrelated complete-supplier
+  // publication checks must not turn a projected pointer into formal identity.
+  const std::string projectedSource = R"gti(import "../std/detail/memory_capabilities.gti";
+using Opaque = gti_internal::erased_object;
+struct Pair { int first; Pair(int input) : first(input) {} };
+Opaque& field(Pair& input) { return gti_internal::erase_reference(input.first); }
+int main() { Pair pair{3}; unsafe { return gti_internal::restore_reference<int>(field(pair)) - 3; } }
+)gti";
+  const auto projected = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      entry, projectedSource, {prelude, entry},
+      {{prelude.string(), ""}, {capability.string(), declarations},
+       {entry.string(), projectedSource}}, {root});
+  expect(projected.semanticValid && projected.hirValid,
+         "projected-field address control has checked source and concrete HIR");
+  HirFunctionInstanceId fieldId = 0;
+  for (const auto &function : projected.hir.functionInstances())
+    if (function.source && function.source->name().lexeme == "field") fieldId = function.id;
+  const auto *field = projected.mir.findFunctionInstance(fieldId);
+  expect(field && std::any_of(field->body.places.begin(), field->body.places.end(),
+             [](const auto &place) {
+               return std::any_of(place.projections.begin(), place.projections.end(),
+                   [](const auto &step) { return step.kind == MirProjectionKind::Field; });
+             }), "projected-field control retains its real typed field address");
+  bool rejectedField = false;
+  for (const auto &function : projected.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &call : block.instructions)
+        if (call.functionTarget == fieldId && call.loan) {
+          const auto applied = instantiateMirLifetimeTarget(projected.mir, call);
+          expect(applied.has_value(), "field control keeps the selected exact call contract");
+          expect(!mir_detail::verifiedReferenceErasureSource(projected.mir, function.body,
+                     {.kind = MirOperandKind::Loan, .loan = *call.loan,
+                      .type = applied->returnType}),
+                 "a helper field projection is not its whole formal pointer");
+          rejectedField = true;
+        }
+  expect(rejectedField, "field identity negative reaches its actual helper call");
   const auto query = [&](const MirProgram &program) {
     const auto *caller = program.findFunctionInstance(mainId);
     const auto applied = instantiateMirLifetimeTarget(program, *throughCall);
