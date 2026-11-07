@@ -991,6 +991,14 @@ attaching its binding identity. Its actual returned pointer and already-derived
 Stored relation stay unchanged; a missing parent, altered source or extra
 supplier cannot be repaired by recreating an address from a lifetime owner.
 
+A physical subobject borrowed through a reference formal keeps its exact typed
+address and the unique matching Parameter entry as its parent. Reverse path
+replay validates the full grouped-input lane and each inline field, base or index;
+it never crosses a stored reference or replaces a selected guard. Complete-flow
+reconstruction cannot drop that entry parent merely because the result addresses
+a field rather than the whole formal. Ordinary loan verification separately
+requires that capability to remain active at the use.
+
 Checked erased-reference operations preserve the exact origin and access while
 changing the referent type. MIR rederives each operation's lifetime rule from
 its intrinsic identity, exact opaque capability, access, and equal input/result

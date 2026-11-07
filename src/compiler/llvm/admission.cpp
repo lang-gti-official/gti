@@ -4014,7 +4014,9 @@ public:
             type.arguments.size() == 1 && opaqueReferent(type.arguments[0]));
   }
   bool representedErasureObject(const SemanticType &type) const {
-    if (!nativeValue(type))
+    // Erasing/restoring a checked reference preserves its pointer. An exact
+    // dispatch layout represents that object without requiring value copying.
+    if (!representedValue(type))
       return false;
     if (mir_detail::completeObjectType(program, type))
       return true;

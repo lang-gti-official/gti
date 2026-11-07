@@ -1,6 +1,14 @@
 // Lifetime relationships belong to reusable declarations. Ordinary callers
 // infer their arguments and keep using plain references and local types.
 
+import std.memory;
+
+// Type erasure preserves the evaluated pointer and every nested lifetime.
+// Restoration is unsafe even when this helper proves the exact round trip.
+T&<a> round_trip_reference<T, lifetime a>(T&<a> input) requires outlives<T, a> {
+  unsafe { return std::restore_ref<T>(std::erase_ref(input)); }
+}
+
 int& identity(int& value) { return value; }
 
 // A namespace function item keeps its declared reference result. A generic
@@ -90,6 +98,8 @@ int main() {
   int& selected = choose(left, right, false);
   Reading reading{selected};
   if (reading.get() != 9) { return 1; }
+  Reading& same = round_trip_reference(reading);
+  if (same.value != 9) { return 12; }
   Reading constructedChoice{left, right, false};
   if (constructedChoice.get() != 9) { return 5; }
   int& released = Reading(right).take();

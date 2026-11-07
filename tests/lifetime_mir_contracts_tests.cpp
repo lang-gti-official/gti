@@ -1637,21 +1637,30 @@ int main() {
     }
   expect(throughCall && forwarded && mutableInput && rejectedRaw,
          "address queries exercise all intended source shapes");
-  // This deliberately unsealed component fixture tests the address query,
-  // not source/backend acceptance. In particular, unrelated complete-supplier
-  // publication checks must not turn a projected pointer into formal identity.
+  // Subobject publication preserves the physical formal's capability without
+  // turning that subobject address into whole-formal pointer identity.
   const std::string projectedSource = R"gti(import "../std/detail/memory_capabilities.gti";
 using Opaque = gti_internal::erased_object;
-struct Pair { int first; Pair(int input) : first(input) {} };
-Opaque& field(Pair& input) { return gti_internal::erase_reference(input.first); }
-int main() { Pair pair{3}; unsafe { return gti_internal::restore_reference<int>(field(pair)) - 3; } }
+struct Pair { int first; int second; Pair(int input) : first(input), second(input + 1) {} };
+Opaque&<a> field<lifetime a>(Pair&<a> input, Pair&<a> other) {
+  [[discard]] gti_internal::erase_reference(input.second);
+  [[discard]] gti_internal::erase_reference(other.first);
+  return gti_internal::erase_reference(input.first);
+}
+int main() {
+  Pair pair{3}; Pair other{7};
+  unsafe { return gti_internal::restore_reference<int>(field(pair, other)) - 3; }
+}
 )gti";
   const auto projected = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       entry, projectedSource, {prelude, entry},
       {{prelude.string(), ""}, {capability.string(), declarations},
        {entry.string(), projectedSource}}, {root});
-  expect(projected.semanticValid && projected.hirValid,
-         "projected-field address control has checked source and concrete HIR");
+  if (!projected.canGenerateCode())
+    for (const auto &diagnostic : projected.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(projected.canGenerateCode(),
+         "projected-field erasure retains its exact physical reference parent through verified MIR");
   HirFunctionInstanceId fieldId = 0;
   for (const auto &function : projected.hir.functionInstances())
     if (function.source && function.source->name().lexeme == "field") fieldId = function.id;
@@ -1675,6 +1684,58 @@ int main() { Pair pair{3}; unsafe { return gti_internal::restore_reference<int>(
           rejectedField = true;
         }
   expect(rejectedField, "field identity negative reaches its actual helper call");
+  std::vector<const MirInstruction *> projections;
+  for (const auto &block : field->body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.kind == MirInstructionKind::Call &&
+          instruction.intrinsic == IntrinsicKind::EraseReference)
+        projections.push_back(&instruction);
+  expect(projections.size() == 3, "field controls retain three independently evaluated subobjects");
+  const auto &selected = *projections.back();
+  const auto *published = selected.loan ? field->body.findLoan(*selected.loan) : nullptr;
+  const auto *sameOwner = projections[0]->loan ? field->body.findLoan(*projections[0]->loan) : nullptr;
+  const auto *otherOwner = projections[1]->loan ? field->body.findLoan(*projections[1]->loan) : nullptr;
+  const auto *parent = published ? field->body.findLoan(published->parent) : nullptr;
+  expect(published && sameOwner && otherOwner && parent && parent->entry &&
+             parent->kind == MirLoanKind::Parameter &&
+             published->parent == sameOwner->parent && published->parent != otherOwner->parent &&
+             published->source != sameOwner->source && published->source != otherOwner->source &&
+             selected.result && field->body.findValue(*selected.result)->borrowDependencies,
+         "subobject controls distinguish the same owner's sibling field from another formal");
+  for (int mutation = 0; mutation != 6; ++mutation) {
+    auto forged = projected.mir;
+    auto &body = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(fieldId))->body;
+    auto &claim = body.loans[published->id - 1];
+    auto &facts = *body.values[*selected.result - 1].borrowDependencies;
+    expect(facts.dependencies.size() == 1 && facts.dependencies.front().parent == parent->id,
+           "the scalar publication carries its exact formal parent");
+    auto &fact = facts.dependencies.front();
+    if (mutation == 0) claim.parent = fact.parent = 0;
+    if (mutation == 1) claim.parent = fact.parent = otherOwner->parent;
+    if (mutation == 2) claim.source = fact.source = sameOwner->source;
+    if (mutation == 3) claim.source = fact.source = otherOwner->source;
+    if (mutation == 4) claim.access = fact.access = AccessMode::Mutable;
+    if (mutation == 5) {
+      bool reordered = false;
+      for (auto &block : body.blocks) {
+        const auto call = std::find_if(block.instructions.begin(), block.instructions.end(),
+            [&](const auto &item) { return item.id == selected.id; });
+        if (call == block.instructions.end()) continue;
+        const auto endpoint = std::find_if(call, block.instructions.end(),
+            [&](const auto &item) {
+              return item.kind == MirInstructionKind::EndBorrow && item.loan == parent->id;
+            });
+        if (endpoint == block.instructions.end()) continue;
+        std::rotate(call, endpoint, std::next(endpoint));
+        reordered = true;
+      }
+      expect(reordered, "the live formal capability has a concrete endpoint after publication");
+    }
+    const bool rejected = !verifyMirProgram(forged).valid();
+    if (!rejected) std::cerr << "physical subobject mutation " << mutation << " accepted\n";
+    expect(rejected,
+           "coordinated publication facts cannot erase or replace their exact subobject parent, source, access or endpoint");
+  }
   const auto query = [&](const MirProgram &program) {
     const auto *caller = program.findFunctionInstance(mainId);
     const auto applied = instantiateMirLifetimeTarget(program, *throughCall);

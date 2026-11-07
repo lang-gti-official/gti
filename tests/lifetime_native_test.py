@@ -365,6 +365,16 @@ int main() {
   return same.value - 7;
 }
 """,
+    "checked_erasure_subobject_inputs": """
+import std.memory;
+struct Pair { int first; int second; Pair(int value):first(value),second(value+1){} };
+std::erased_object&<a> field<lifetime a>(Pair&<a> input, Pair&<a> other) {
+  [[discard]] std::erase_ref(input.second);
+  [[discard]] std::erase_ref(other.first);
+  return std::erase_ref(input.first);
+}
+int main(){Pair pair{3};Pair other{7};unsafe{return std::restore_ref<int>(field(pair,other))-3;}}
+""",
     "independent_text_storage_regions": """
 bool same(std::string_view left, std::string_view right) { return left == right; }
 bool different(std::string_view left, std::string_view right) { return left != right; }

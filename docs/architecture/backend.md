@@ -5995,7 +5995,11 @@ proof. LLVM forwards the evaluated restored pointer and admits its exact native
 or dispatch-layout representation; it neither copies the object nor derives its
 address from a lifetime owner. The original supplier replay, access, liveness,
 normal/failure cleanup and outgoing lifetime conversion remain MIR obligations.
-The transient erase and restore loans keep their own witnesses.
+The transient erase and restore loans keep their own witnesses. Underlying
+reference erasure accepts the same exact native or dispatch-layout object;
+completeness resolves the checked lifetime-instantiated class definition rather
+than comparing declaration and call-site region identifiers. Abstract classes,
+interfaces, opaque handles and compiler capabilities retain their separate rules.
 
 A direct fundamental text return has a distinct bounded witness: its source call
 publishes a `Stored` dependency and an SSA text value, then the return

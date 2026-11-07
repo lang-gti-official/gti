@@ -764,6 +764,15 @@ int main() {
             verified.program().mir(), function.body, *input, function.id) : std::nullopt;
         projected |= proof && mir_detail::matchesSharedErasedReferenceReturn(
             function.body, block, instruction, *proof);
+        if (proof) {
+          const auto &referent = proof->referenceType.arguments.front();
+          expect(mir_detail::completeObjectType(verified.program().mir(), referent),
+                 "complete object identity instantiates its declared lifetime parameters");
+          auto malformed = referent;
+          malformed.lifetimeArguments.push_back(Lifetime::staticLifetime());
+          expect(!mir_detail::completeObjectType(verified.program().mir(), malformed),
+                 "complete object lookup rejects a forged lifetime application arity");
+        }
       }
   expect(projected, "native fixture exports original ownership at the exact restored pointer");
   const auto admission = planLlvmAdmission(verified);

@@ -2550,6 +2550,7 @@ void SemanticModel::beginSpeculativeDelta(const SemanticModel &baseModel) {
   if (sourceDebug_.tables && baseModel.sourceDebug_.tables)
     sourceDebug_.tables->instance = baseModel.sourceDebug_.tables->instance;
   retainedLoans = baseModel.retainedLoans;
+  referenceContentsLoans = baseModel.referenceContentsLoans;
   setToolingOccurrencesEnabled(baseModel.semanticDatabase.toolingOccurrences);
 }
 
@@ -3024,7 +3025,9 @@ SemanticModel::findReferenceContentsLoan(const Expr &expression) const {
   if (const auto found = referenceContentsLoans.find(&expression);
       found != referenceContentsLoans.end())
     return found->second.value_or(0);
-  return base == nullptr ? 0 : base->findReferenceContentsLoan(expression);
+  // Contents indices name this body's loan table, whose identities restart in
+  // concrete instance analysis. Speculation explicitly copies both tables.
+  return 0;
 }
 
 std::span<const SemanticLoanDependency>

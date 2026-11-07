@@ -9,11 +9,212 @@
 #include <string_view>
 
 namespace lang {
+struct SemanticModelTestAccess {
+  static bool contentsDeltaIsolation(const SemanticModel &base, const Expr &expression,
+                                    SemanticLoanId opening) {
+    if (!opening || base.findReferenceContentsLoan(expression) != opening || !base.findLoan(opening))
+      return false;
+    SemanticModel instance;
+    instance.beginInstanceDelta(base);
+    instance.recordLoan({.id = opening, .kind = SemanticLoanKind::Reference});
+    if (!instance.findLoan(opening) || instance.findReferenceContentsLoan(expression))
+      return false;
+    SemanticModel speculative;
+    speculative.beginSpeculativeDelta(base);
+    if (speculative.findReferenceContentsLoan(expression) != opening ||
+        !speculative.findLoan(opening) ||
+        speculative.findLoan(opening)->contentsOpening != base.findLoan(opening)->contentsOpening)
+      return false;
+    speculative.clearReferenceContentsLoan(expression);
+    return !speculative.findReferenceContentsLoan(expression) &&
+           base.findReferenceContentsLoan(expression) == opening;
+  }
+};
+
 // Exercise the real staging key and lookup without exposing cache internals as
 // a product API or relying on a timing-sensitive number of source evaluations.
 struct SemanticLifetimeTestAccess {
   static bool exactStaticReturnSupplier(const FunctionInfo &function) {
     return SemanticVisitor::Impl::hasExactStaticReturnSupplier(function);
+  }
+
+  struct ContentsAdapterChecks {
+    std::size_t formed = 0;
+    std::size_t normalized = 0;
+    std::size_t addressPreserved = 0;
+    std::size_t staleRejected = 0;
+    std::size_t missingReadRejected = 0;
+    std::size_t cleanupReadRejected = 0;
+    std::size_t staleCallRejected = 0;
+    std::size_t unsupportedRejected = 0;
+    std::size_t deltaIsolated = 0;
+    bool entryReused = false;
+  };
+
+  static ContentsAdapterChecks referenceContentsAdapters(const FrontendResult &source) {
+    ContentsAdapterChecks checks;
+    SemanticVisitor analyzer(TargetInfo::host(), &source.sourceGraph, true,
+                             nullptr, &source.sources);
+    if (!analyzer.check(source.program))
+      return checks;
+    auto &impl = *analyzer.impl;
+    using Impl = SemanticVisitor::Impl;
+    impl.nextSemanticLoanId = analyzer.model().loans().size() + 1;
+    for (const auto &declaration : source.program.declarations()) {
+      const auto *syntax = stmtAs<FunctionDecl>(declaration.get());
+      if (!syntax || (syntax->name().lexeme != "direct" && syntax->name().lexeme != "forwarded" &&
+                      syntax->name().lexeme != "callback" && syntax->name().lexeme != "exclusive" &&
+                      syntax->name().lexeme != "conditional"))
+        continue;
+      const auto *function = analyzer.model().findFunction(*syntax);
+      const auto *returned = syntax->body() && !syntax->body()->statements().empty()
+          ? stmtAs<ReturnStmt>(syntax->body()->statements().front().get()) : nullptr;
+      if (!function || !returned)
+        continue;
+      const auto *field = exprAs<Get>(returned->value().get());
+      const auto *call = exprAs<Call>(returned->value().get());
+      const bool unsupported = syntax->name().lexeme == "exclusive" ||
+                               syntax->name().lexeme == "conditional";
+      const ExprPtr *input = unsupported ? &returned->value() : field ? &field->object() : nullptr;
+      ResolvedCallInfo boundary;
+      if (call) {
+        if (const auto *resolved = analyzer.model().findCall(*call)) {
+          boundary = *resolved;
+          const auto *member = exprAs<Get>(call->callee().get());
+          input = member ? &member->object() : nullptr;
+        } else if (const auto *resolved = analyzer.model().findOperator(*call)) {
+          boundary = {.function = resolved->function, .declaration = resolved->declaration,
+                      .returnType = resolved->returnType, .parameterTypes = resolved->parameterTypes,
+                      .lifetimeApplication = resolved->lifetimeApplication,
+                      .borrowFields = resolved->borrowFields, .dispatch = resolved->dispatch,
+                      .dispatchOwner = resolved->dispatchOwner, .receiverMode = resolved->receiverMode};
+          input = &call->callee();
+        }
+      }
+      if (!input || !*input)
+        continue;
+      // Reestablish the checked body's lexical bindings and entry capabilities
+      // for this explicit staged operation, without a production formation hook.
+      impl.loanFlow = {};
+      impl.scopes.emplace_back();
+      for (const auto &parameter : syntax->parameters()) {
+        const auto *binding = analyzer.model().findBinding(parameter);
+        if (!binding)
+          continue;
+        auto &symbol = impl.scopes.back()[parameter.name.lexeme];
+        symbol.type = binding->type;
+        symbol.parameterDeclaration = &parameter;
+        symbol.toolingSymbol = binding->symbol;
+        symbol.retainedLoan = binding->retainedLoan;
+        const auto *physical = analyzer.model().findLoan(binding->retainedLoan);
+        const auto *stored = physical ? analyzer.model().findLoan(physical->storedDependency) : nullptr;
+        if (stored) {
+          SemanticBorrowDependencySet contents;
+          const auto append = [&](SemanticLoanDependency dependency) {
+            dependency.place.projections.insert(dependency.place.projections.end(),
+                dependency.designatedFields.begin(), dependency.designatedFields.end());
+            dependency.parent = stored->id;
+            contents.dependencies.push_back(std::move(dependency));
+          };
+          append({.place = stored->place, .designatedFields = stored->designatedFields,
+                  .access = stored->access, .protectsStorage = stored->protectsStorage,
+                  .conditions = stored->conditions});
+          for (const auto &dependency : stored->additionalDependencies)
+            append(dependency);
+          symbol.completeBorrowSet = std::move(contents);
+        }
+      }
+      for (const auto &loan : analyzer.model().loans())
+        impl.loanFlow.records.emplace(loan.id, Impl::LoanFlowRecord{.id = loan.id});
+      if (unsupported) {
+        const auto before = analyzer.model().loans().size();
+        checks.unsupportedRejected += !impl.recordReferenceContents(input->get()) &&
+            analyzer.model().loans().size() == before &&
+            !analyzer.model().findReferenceContentsLoan(**input);
+        impl.scopes.pop_back();
+        continue;
+      }
+      const auto address = impl.completeBorrowDependencySet(*input);
+      const auto reference = impl.checkedReferenceExpressionType(input->get());
+      if (!address || address->dependencies.empty() || !reference) {
+        impl.scopes.pop_back();
+        continue;
+      }
+      const auto read = address->dependencies.front().parent;
+      if (read && impl.loanFlow.records.contains(read)) {
+        impl.loanFlow.records.at(read).active = false;
+        checks.missingReadRejected += !impl.recordReferenceContents(input->get()) &&
+            !analyzer.model().findReferenceContentsLoan(**input);
+        impl.loanFlow.records.at(read).active = true;
+        const auto original = *analyzer.model().findLoan(read);
+        auto cleanup = original;
+        cleanup.lifecycleBound = true;
+        cleanup.entry = false;
+        *const_cast<SemanticLoanInfo *>(analyzer.model().findLoan(read)) = std::move(cleanup);
+        checks.cleanupReadRejected += !impl.recordReferenceContents(input->get()) &&
+            !analyzer.model().findReferenceContentsLoan(**input);
+        *const_cast<SemanticLoanInfo *>(analyzer.model().findLoan(read)) = original;
+      }
+      std::optional<SemanticBorrowDependencySet> result;
+      std::optional<FunctionBorrowDependencySummary> callSummary;
+      if (field) {
+        impl.recordMemberReferenceContents(*field);
+        if (const auto *selected = analyzer.model().findBorrowDependencySet(*field))
+          result = *selected;
+      } else {
+        const auto *target = analyzer.model().findFunction(boundary.function);
+        if (target && target->completeReturnBorrow) {
+          auto summary = *target->completeReturnBorrow;
+          if (!boundary.borrowFields.empty())
+            summary.dependencies = boundary.borrowFields;
+          callSummary = summary;
+          if (impl.recordReferenceContentsInputs(summary, {}, input))
+            result = impl.instantiateCompleteBorrowArguments(
+                boundary, summary, std::span<const Impl::AnalyzedCallArgument>{}, input);
+        }
+      }
+      const auto id = analyzer.model().findReferenceContentsLoan(**input);
+      const auto *opening = analyzer.model().findLoan(id);
+      checks.deltaIsolated += SemanticModelTestAccess::contentsDeltaIsolation(analyzer.model(), **input, id);
+      checks.formed += result && result->dependencies.size() == 1 && opening &&
+          opening->contentsOpening && opening->contentsOpening->reference == input->get() &&
+          opening->contentsOpening->referenceType == *reference &&
+          !opening->parent && !opening->storedDependency &&
+          result->dependencies.front().referenceContents &&
+          result->dependencies.front().referenceContents->openingLoan == id &&
+          result->dependencies.front().parent == id;
+      checks.addressPreserved += impl.completeBorrowDependencySet(*input) == address;
+      if (result && result->dependencies.size() == 1) {
+        const auto referenceResult = impl.checkedReferenceContentsSource(result->dependencies.front());
+        auto publication = *function;
+        if (referenceResult) {
+          publication.returnType = *referenceResult;
+          const auto normalized = impl.normalizedCompleteBorrow(publication, syntax->parameters(),
+              ReceiverMutability::ReadOnly, *result);
+          checks.normalized += normalized && normalized->dependencies.size() == 1 &&
+              normalized->dependencies.front().origin == BorrowOriginKind::Argument &&
+              normalized->dependencies.front().parameter == 0 &&
+              normalized->dependencies.front().sourceFields.size() == 2;
+        }
+      }
+      const auto saved = impl.checkedReferenceContentsOpening(id);
+      impl.invalidateReferenceContents();
+      checks.staleRejected += saved && !impl.recordReferenceContents(input->get()) &&
+          impl.checkedReferenceContentsOpening(id) == saved;
+      if (callSummary)
+        checks.staleCallRejected += !impl.instantiateCompleteBorrowArguments(
+            boundary, *callSummary, std::span<const Impl::AnalyzedCallArgument>{}, input);
+      if (const auto *member = exprAs<Get>(input->get())) {
+        const auto before = analyzer.model().loans().size();
+        const auto entry = impl.recordReferenceContents(member->object().get());
+        checks.entryReused |= entry && !entry->dependencies.empty() &&
+            analyzer.model().loans().size() == before &&
+            !analyzer.model().findReferenceContentsLoan(*member->object()) &&
+            !entry->dependencies.front().referenceContents;
+      }
+      impl.scopes.pop_back();
+    }
+    return checks;
   }
 
   struct ContentsChecks {
@@ -3687,6 +3888,67 @@ struct Holder<lifetime a, lifetime owner> {
          "the semantic adapter keeps exact declared outer-reference and inner supplier regions as separate paths");
 }
 
+void testStagedReferenceContentsAdapters() {
+  const auto source = lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+      "staged-reference-contents-adapters.gti", R"gti(
+struct Leaf<lifetime a> {
+  int&<a> external;
+  Leaf(int&<a> input) : external(input) {}
+  int&<a> get() { return this.external; }
+  int&<a> operator()() { return this.external; }
+};
+struct Holder<lifetime a, lifetime owner> {
+  Leaf<a>&<owner> value;
+  Holder(Leaf<a>&<owner> input) : value(input) {}
+};
+int direct<lifetime a, lifetime owner, lifetime shell>(Holder<a, owner>&<shell> holder) {
+  return holder.value.external;
+}
+int forwarded<lifetime a, lifetime owner, lifetime shell>(Holder<a, owner>&<shell> holder) {
+  return holder.value.get();
+}
+int callback<lifetime a, lifetime owner, lifetime shell>(Holder<a, owner>&<shell> holder) {
+  return holder.value();
+}
+struct Exclusive<lifetime a> {
+  mut int&<a> external;
+  Exclusive(mut int&<a> input) : external(input) {}
+};
+enum Choice<lifetime a> { item(int&<a> value), empty(int code) };
+struct Reference<T, lifetime owner> {
+  T&<owner> value;
+  Reference(T&<owner> input) : value(input) {}
+};
+Exclusive<a>&<owner> exclusive<lifetime a, lifetime owner, lifetime shell>(
+    Reference<Exclusive<a>, owner>&<shell> holder) { return holder.value; }
+Choice<a>&<owner> conditional<lifetime a, lifetime owner, lifetime shell>(
+    Reference<Choice<a>, owner>&<shell> holder) { return holder.value; }
+)gti");
+  expectValid(source, "staged shared contents adapters start from checked direct, forwarded and typed-callback reads");
+  const auto checks = lang::SemanticLifetimeTestAccess::referenceContentsAdapters(source);
+  if (checks.formed != 3 || checks.normalized != 3 || checks.addressPreserved != 3 ||
+      checks.staleRejected != 3 || checks.missingReadRejected != 3 || checks.cleanupReadRejected != 3 ||
+      checks.staleCallRejected != 2 ||
+      checks.unsupportedRejected != 2 || checks.deltaIsolated != 3 || !checks.entryReused)
+    std::cerr << "staged contents adapters formed=" << checks.formed
+              << " normalized=" << checks.normalized << " address=" << checks.addressPreserved
+              << " stale=" << checks.staleRejected << " inactive=" << checks.missingReadRejected
+              << " cleanup=" << checks.cleanupReadRejected << " staleCall=" << checks.staleCallRejected
+              << " unsupported=" << checks.unsupportedRejected << " delta=" << checks.deltaIsolated
+              << " entry=" << checks.entryReused << '\n';
+  expect(checks.formed == 3 && checks.normalized == 3,
+         "direct fields, method receivers and typed callback receivers share one exact opening and formal supplier normalization");
+  expect(checks.addressPreserved == 3 && checks.entryReused,
+         "contents preparation preserves scalar address facts and reuses independently checked entry Stored authority");
+  expect(checks.staleRejected == 3 && checks.missingReadRejected == 3 &&
+             checks.cleanupReadRejected == 3 && checks.staleCallRejected == 2,
+         "unavailable or cleanup-bound reads cannot form contents and invalidated calls cannot fall back to an address fact");
+  expect(checks.unsupportedRejected == 2,
+         "formation needs retained exclusive permission or evaluated conditional selection before opening those contents");
+  expect(checks.deltaIsolated == 3,
+         "concrete instances cannot inherit another body's opening IDs while speculation preserves and shadows its own exact loan index");
+}
+
 void testStagedReferenceContentsSources() {
   const auto source = lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
       "staged-reference-contents-sources.gti", R"gti(
@@ -3735,6 +3997,7 @@ int indirect<lifetime a, lifetime owner>(Leaf<a>&<owner> input) { return choose(
 
 int main() {
   testSharedStoredReferenceCleanupCopy();
+  testStagedReferenceContentsAdapters();
   testStagedReferenceContentsSources();
   testSemanticReferenceSupplierQueries();
   testStoredFieldReturnRegions();

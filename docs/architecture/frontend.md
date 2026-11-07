@@ -487,6 +487,22 @@ and complete supplier identity remain consistent.
 An unavailable definition, differing global suppliers, or an unknown/cyclic
 summary cannot acquire origin authority merely from the `static` result type.
 
+Checked-reference contents remain staged. One explicit semantic adapter reuses
+an entry reference's separately proved Stored fact or records an evaluated
+reference, its full type and active formation read loans. Direct Get projection
+and receiver/argument summary inputs share that adapter; query consumers never
+create authority. New openings currently require a complete unconditional
+shared inventory, retain tagged sources instead of lifetime-owner places, and
+keep formation reads separate from lasting external parents. Writes, joins and
+loops invalidate reuse of the current contents without revoking copied shared
+snapshots. Opening indices belong to the body's loan table: concrete instances
+start fresh, while speculative analyses copy both together. Production
+formation hooks remain disconnected and HIR/MIR reject
+opening records until independent instruction-level replay is implemented.
+Call-result address selectors, exclusive/conditional opening, and compact
+recursive supplier closure remain prerequisites; an unknown or exhausted
+query never establishes empty contents.
+
 The shared callable contract derivation obtains each nominal application's
 formation formula from the owning phase. Semantics supplies the instantiated
 declaration contract; MIR supplies its verified nominal view. Inputs and

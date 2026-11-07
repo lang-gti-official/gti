@@ -199,7 +199,9 @@ auto SemanticVisitor::Impl::checkedReferenceContentsOpening(SemanticLoanId id) c
     return std::nullopt;
   const auto inventory = referenceContentsInventory(reference->arguments.front());
   const auto alternatives = storedBorrowAlternativeInventory(reference->arguments.front());
-  if (!inventory || !alternatives ||
+  if (!inventory || !alternatives || !alternatives->empty() ||
+      std::any_of(inventory->fields.begin(), inventory->fields.end(),
+                  [](const auto &field) { return !field.conditions.empty(); }) ||
       inventory->fields.size() != 1 + loan->additionalDependencies.size())
     return std::nullopt;
   // Formation captures the read capabilities while the evaluated reference is
@@ -263,8 +265,8 @@ auto SemanticVisitor::Impl::checkedReferenceContentsOpening(SemanticLoanId id) c
   return result;
 }
 
-auto SemanticVisitor::Impl::referenceContentsSourceSelector(
-    const SemanticLoanDependency &dependency) const -> std::optional<ReferenceContentsSelector> {
+auto SemanticVisitor::Impl::checkedReferenceContentsSource(
+    const SemanticLoanDependency &dependency) const -> std::optional<SemanticType> {
   if (dependency.place != SemanticLoanPlace{} || !dependency.referenceContents ||
       dependency.protectsStorage || dependency.access != AccessMode::ReadOnly)
     return std::nullopt;
@@ -275,6 +277,25 @@ auto SemanticVisitor::Impl::referenceContentsSourceSelector(
         return field.referenceContents == dependency.referenceContents && field.access == dependency.access;
       }))
     return std::nullopt;
+  const auto *loan = semanticModel.findLoan(source.openingLoan);
+  auto type = loan->contentsOpening->referenceType;
+  for (const auto &field : source.fields) {
+    const auto selected = borrowedPathElement(type, field);
+    if (!selected)
+      return std::nullopt;
+    type = *selected;
+  }
+  return type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
+                 type.referenceAccess == dependency.access
+             ? std::optional(std::move(type)) : std::nullopt;
+}
+
+auto SemanticVisitor::Impl::referenceContentsSourceSelector(
+    const SemanticLoanDependency &dependency) const -> std::optional<ReferenceContentsSelector> {
+  const auto reference = checkedReferenceContentsSource(dependency);
+  if (!reference)
+    return std::nullopt;
+  const auto &source = *dependency.referenceContents;
   const auto *loan = semanticModel.findLoan(source.openingLoan);
   auto selector = referenceContentsSelector(loan->contentsOpening->reference);
   if (!selector || selector->type != loan->contentsOpening->referenceType ||
@@ -287,14 +308,21 @@ auto SemanticVisitor::Impl::referenceContentsSourceSelector(
     selector->fields.push_back(field);
     selector->type = *selected;
   }
-  if (selector->type.kind != SemanticType::Reference || selector->type.arguments.size() != 1 ||
-      selector->type.referenceAccess != dependency.access)
+  if (selector->type != *reference)
     return std::nullopt;
   return selector;
 }
 
 auto SemanticVisitor::Impl::referenceContentsDependencySet(
     const Expr *expression) const -> std::optional<SemanticBorrowDependencySet> {
+  if (!expression)
+    return std::nullopt;
+  const auto id = semanticModel.findReferenceContentsLoan(*expression);
+  const auto *variable = exprAs<Variable>(expression);
+  // With formation disconnected, most evaluated references have no contents
+  // authority to query. Avoid another complete inventory walk for those uses.
+  if (!id && !variable)
+    return std::nullopt;
   const auto reference = checkedReferenceExpressionType(expression);
   if (!reference)
     return std::nullopt;
@@ -306,7 +334,6 @@ auto SemanticVisitor::Impl::referenceContentsDependencySet(
     const auto flow = loanFlow.records.find(id);
     return id && flow != loanFlow.records.end() && flow->second.active;
   };
-  const auto id = semanticModel.findReferenceContentsLoan(*expression);
   if (id) {
     const auto *loan = semanticModel.findLoan(id);
     if (!loan || !active(id) || loanFlow.invalidatedReferenceContents.contains(id) ||
@@ -319,7 +346,6 @@ auto SemanticVisitor::Impl::referenceContentsDependencySet(
   // A formal Reference<T> already has a checked separate contents authority.
   // Reuse the published value fact only through that explicit edge, never by
   // treating the scalar address dependency as a T value.
-  const auto *variable = exprAs<Variable>(expression);
   const auto *carrier = variable ? resolve(variable->name()) : nullptr;
   const auto *physical = carrier ? semanticModel.findLoan(carrier->retainedLoan) : nullptr;
   const auto *stored = physical ? semanticModel.findLoan(physical->storedDependency) : nullptr;
@@ -366,50 +392,46 @@ void SemanticVisitor::Impl::invalidateReferenceContents() {
         loanFlow.invalidatedReferenceContents.insert(id);
 }
 
-void SemanticVisitor::Impl::recordMemberReferenceContents(const Get &expression) {
-  // Staged formation routine. Connect only after source tagged-origin
-  // normalization/alias checking and independent MIR opening replay exist.
-  // The caller must have completed ordinary place and loan-access validation.
+auto SemanticVisitor::Impl::recordReferenceContents(const Expr *expression)
+    -> std::optional<SemanticBorrowDependencySet> {
+  // The caller must have completed ordinary expression and access validation.
+  // This explicit producer is staged; querying inputs never invokes it.
   if (loanFlow.finalized)
-    return;
-  const auto *object = expression.object().get();
-  const auto reference = checkedReferenceExpressionType(object);
-  if (!reference || referenceContentsDependencySet(object))
-    return;
-  const auto owner = memberAccessObjectType(expression);
-  const auto *member = findMember(owner, expression.name());
-  const auto *resultInfo = semanticModel.findExpression(expression);
-  if (!member || !resultInfo || resultInfo->type == SemanticType::Unknown)
-    return;
-  const auto selected = substituteSymbol(member->symbol, owner).type;
-  if (selected.kind != SemanticType::Reference &&
-      !typeTraits(selected).containsBorrowedState)
-    return;
-  const auto prefix = memberBorrowPath(owner, member->symbol);
+    return std::nullopt;
+  const auto reference = checkedReferenceExpressionType(expression);
+  if (!reference)
+    return std::nullopt;
+  if (auto existing = referenceContentsDependencySet(expression))
+    return existing;
+  // An invalidated snapshot cannot be refreshed by reusing the same evaluated
+  // expression. A new evaluation needs its own checked source identity.
+  if (semanticModel.findReferenceContentsLoan(*expression))
+    return std::nullopt;
   const auto inventory = referenceContentsInventory(reference->arguments.front());
   const auto alternatives = storedBorrowAlternativeInventory(reference->arguments.front());
   // Mutable fields need a retained outer permission parent or an independently
   // checked transfer; an outlives relation alone must never detach them.
-  if (!prefix || !inventory || inventory->fields.empty() || !alternatives ||
+  // Conditional contents also need an evaluated alternative-selection witness.
+  if (!inventory || inventory->fields.empty() || !alternatives || !alternatives->empty() ||
       std::any_of(inventory->fields.begin(), inventory->fields.end(), [](const auto &field) {
-        return field.reference.referenceAccess != AccessMode::ReadOnly;
+        return field.reference.referenceAccess != AccessMode::ReadOnly || !field.conditions.empty();
       }))
-    return;
+    return std::nullopt;
   std::vector<SemanticLoanId> reads;
-  if (const auto *variable = exprAs<Variable>(object))
+  if (const auto *variable = exprAs<Variable>(expression))
     if (const auto *carrier = resolve(variable->name());
         carrier && carrier->valueState == ValueState::Available)
       if (const auto *physical = semanticModel.findLoan(carrier->retainedLoan);
           physical && physical->kind == SemanticLoanKind::Reference)
         appendUniqueLoan(reads, physical->id);
   if (reads.empty()) {
-    const auto address = completeBorrowDependencySet(object);
+    const auto address = completeBorrowDependencySet(expression);
     if (!address || address->dependencies.empty() || !address->possibleAlternatives.empty())
-      return;
+      return std::nullopt;
     for (const auto &dependency : address->dependencies) {
       if (!dependency.parent || !dependency.designatedFields.empty() ||
           !dependency.conditions.empty())
-        return;
+        return std::nullopt;
       appendUniqueLoan(reads, dependency.parent);
     }
   }
@@ -421,7 +443,7 @@ void SemanticVisitor::Impl::recordMemberReferenceContents(const Get &expression)
     pending.emplace_back(id, false);
   while (!pending.empty()) {
     if (!budget.consume())
-      return;
+      return std::nullopt;
     const auto [id, leaving] = pending.back();
     pending.pop_back();
     if (!id || checked.contains(id))
@@ -435,7 +457,7 @@ void SemanticVisitor::Impl::recordMemberReferenceContents(const Get &expression)
     const auto active = loanFlow.records.find(id);
     if (!visiting.insert(id).second || !loan || active == loanFlow.records.end() ||
         !active->second.active || (loan->lifecycleBound && !loan->entry))
-      return;
+      return std::nullopt;
     pending.emplace_back(id, true);
     pending.emplace_back(loan->parent, false);
     pending.emplace_back(loan->storedDependency, false);
@@ -444,27 +466,23 @@ void SemanticVisitor::Impl::recordMemberReferenceContents(const Get &expression)
   }
   const auto id = nextSemanticLoanId;
   if (!id || id == std::numeric_limits<SemanticLoanId>::max())
-    return;
+    return std::nullopt;
   SemanticBorrowDependencySet contents{.possibleAlternatives = *alternatives};
   for (const auto &field : inventory->fields)
     contents.dependencies.push_back({
         .referenceContents = SemanticReferenceContentsSource{id, field.fields},
         .designatedFields = field.fields, .access = AccessMode::ReadOnly,
         .parent = id, .conditions = field.conditions});
-  const auto projected = projectBorrowDependencySet(
-      contents, reference->arguments.front(), *prefix, resultInfo->type);
-  if (!projected)
-    return;
-  // Publish only after the complete direct inventory, access/read ancestry,
-  // guards, and exact result projection have all succeeded.
+  // Publish only after the complete direct inventory and active read ancestry
+  // are proved. This group is contents authority, never the scalar address.
   const auto &first = contents.dependencies.front();
   SemanticLoanInfo opening{.id = id, .kind = SemanticLoanKind::StoredValue,
-                           .origin = object, .referenceContents = first.referenceContents,
+                           .origin = expression, .referenceContents = first.referenceContents,
                            .access = AccessMode::ReadOnly,
                            .designatedFields = first.designatedFields,
                            .conditions = first.conditions,
                            .contentsOpening = SemanticReferenceContentsOpening{
-                               object, *reference, reads}};
+                               expression, *reference, reads}};
   for (std::size_t index = 1; index < contents.dependencies.size(); ++index) {
     auto dependency = contents.dependencies[index];
     dependency.parent = 0;
@@ -476,11 +494,55 @@ void SemanticVisitor::Impl::recordMemberReferenceContents(const Get &expression)
       .id = id, .region = loanFlow.currentRegion,
       .lastUseOrder = loanFlow.currentOrder, .lastUse = loanFlow.currentStatement});
   loanFlow.referenceContentsOpenings.push_back(id);
-  semanticModel.recordReferenceContentsLoan(*object, id);
-  semanticModel.recordBorrowDependencySet(expression, *projected);
+  semanticModel.recordReferenceContentsLoan(*expression, id);
   for (const auto read : reads)
     recordSemanticLoanAuthorityUse(read);
   recordSemanticLoanUseForLoan(id);
+  return contents;
+}
+
+auto SemanticVisitor::Impl::recordReferenceContentsInputs(
+    const FunctionBorrowDependencySummary &summary,
+    std::span<const AnalyzedCallArgument> arguments, const ExprPtr *receiver)
+    -> bool {
+  // Staged use-site adapter shared by ordinary, operator and callable receiver
+  // plans. The selected call supplies exact flat arguments and its receiver;
+  // this helper never chooses a target or changes its lifetime application.
+  std::unordered_set<const Expr *> prepared;
+  for (const auto &supplier : summary.dependencies) {
+    if (supplier.sourceFields.empty())
+      continue;
+    if (supplier.origin == BorrowOriginKind::Global)
+      continue;
+    const ExprPtr *input = supplier.origin == BorrowOriginKind::Receiver ? receiver
+        : supplier.origin == BorrowOriginKind::Argument && supplier.parameter < arguments.size()
+            ? arguments[supplier.parameter].expression : nullptr;
+    if (!input || !*input)
+      return false;
+    if (!prepared.insert(input->get()).second)
+      continue;
+    const auto reference = checkedReferenceExpressionType(input->get());
+    if (!reference)
+      continue; // Owned-value inputs retain their existing complete facts.
+    if (!recordReferenceContents(input->get()))
+      return false;
+  }
+  return true;
+}
+
+void SemanticVisitor::Impl::recordMemberReferenceContents(const Get &expression) {
+  const auto owner = memberAccessObjectType(expression);
+  const auto *member = findMember(owner, expression.name());
+  const auto *info = semanticModel.findExpression(expression);
+  const auto prefix = member ? memberBorrowPath(owner, member->symbol) : std::nullopt;
+  if (!prefix || !info || info->type == SemanticType::Unknown)
+    return;
+  const auto contents = recordReferenceContents(expression.object().get());
+  if (!contents)
+    return;
+  const auto projected = projectBorrowDependencySet(*contents, owner, *prefix, info->type);
+  if (projected)
+    semanticModel.recordBorrowDependencySet(expression, *projected);
 }
 
 } // namespace lang

@@ -6264,7 +6264,23 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
     if (!inventory && !(physical && mapping.sourceFields.empty() &&
                         mapping.sourceConditions.empty()))
       continue;
-    const auto input = completeBorrowDependencySetForType(actual, formal);
+    auto input = completeBorrowDependencySetForType(actual, formal);
+    if (!actual.forwardedPackElement && !mapping.sourceFields.empty()) {
+      const auto contents = referenceContentsDependencySet(argument->get());
+      // This query consumes an existing entry/opening fact; it never opens a
+      // reference or substitutes the scalar address's lifetime-owner place.
+      // A stale opening cannot fall back to older address/value metadata.
+      if (semanticModel.findReferenceContentsLoan(**argument) && !contents)
+        continue;
+      if (contents) {
+        const auto reference = checkedReferenceExpressionType(argument->get());
+        if (!reference)
+          continue;
+        input = transportBorrowDependencySet(*contents, reference->arguments.front(), formal);
+        if (!input)
+          continue;
+      }
+    }
     std::optional<BorrowPath> externalPrefix;
     std::vector<BorrowDependencyCondition> externalConditions;
     SemanticType externalType = SemanticType::Unknown;
@@ -6337,6 +6353,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
         if (loan && loan->kind == SemanticLoanKind::StoredValue) {
           std::vector<SemanticLoanDependency> retainedDependencies{
               {.place = loan->place,
+               .referenceContents = loan->referenceContents,
                .designatedFields = loan->designatedFields,
                .access = loan->access,
                .protectsStorage = loan->protectsStorage,
@@ -6383,6 +6400,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
                 place.projections.push_back(
                     field);
             return source.place == place &&
+                   source.referenceContents == candidate.referenceContents &&
                    source.designatedFields == candidate.designatedFields &&
                    source.conditions == candidate.conditions &&
                    source.access == candidate.access &&
@@ -6531,7 +6549,10 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
       continue;
     bool complete = true;
     for (auto dependency : sources) {
-      if (!dependency.place.valid() ||
+      const bool contentsSource = dependency.referenceContents.has_value();
+      if ((contentsSource ? !checkedReferenceContentsSource(dependency) ||
+                                prefix != mapping.sourceFields.size()
+                          : !dependency.place.valid()) ||
           (mapping.access == AccessMode::Mutable &&
            dependency.access != AccessMode::Mutable) ||
           (!externalPrefix && (!dependency.designatedFields.empty() ||
@@ -6539,10 +6560,9 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
         complete = false;
         break;
       }
-      for (std::size_t field = prefix; field < mapping.sourceFields.size();
-           ++field)
-        dependency.place.projections.push_back(
-            mapping.sourceFields[field]);
+      if (!contentsSource)
+        for (std::size_t field = prefix; field < mapping.sourceFields.size(); ++field)
+          dependency.place.projections.push_back(mapping.sourceFields[field]);
       dependency.designatedFields = mapping.resultFields;
       dependency.conditions = mapping.resultConditions;
       dependency.access = mapping.access;

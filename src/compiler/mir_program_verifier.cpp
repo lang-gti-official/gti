@@ -15177,6 +15177,31 @@ completeBorrowSourcePath(const MirProgram &program,
                           place.type == root->formal->type.arguments.front();
     return shell || referent ? root : std::nullopt;
   };
+  // A physical projection keeps the exact formal reference capability. Its
+  // addressed place is the subobject; the entry loan remains the parent that
+  // permits access through the formal. A same-type or same-origin entry is not
+  // a substitute for this exact binding and grouped-input lane.
+  const auto referenceFormalEntry = [&](const FormalPlaceRoot &root)
+      -> std::optional<MirLoanId> {
+    const MirLoan *entry = nullptr;
+    bool otherAuthority = false;
+    for (const auto &loan : body.loans) {
+      const auto *source = body.findPlace(loan.source);
+      if (!source || !mir_detail::formalInputPlace(*source, *root.formal)) continue;
+      otherAuthority = true;
+      if (!loan.entry || loan.kind != MirLoanKind::Parameter) continue;
+      if (entry || source->key != root.place->key || source->symbol != root.place->symbol ||
+          source->capture != root.place->capture || loan.parent ||
+          loan.access != root.formal->type.referenceAccess ||
+          !loan.designatedFields.empty() || !loan.conditions.empty() ||
+          !loan.additionalDependencies.empty() || loan.referenceSelection ||
+          loan.referenceContents || loan.contentsOpening)
+        return std::nullopt;
+      entry = &loan;
+    }
+    return entry ? std::optional{entry->id}
+                 : otherAuthority ? std::nullopt : std::optional<MirLoanId>{0};
+  };
   const auto unmaterializedReferenceFormal = [&](const MirPlace &place) -> Fact {
     const auto root = referenceFormalRoot(place);
     if (!root || std::any_of(body.loans.begin(), body.loans.end(), [&](const auto &loan) {
@@ -15265,12 +15290,12 @@ completeBorrowSourcePath(const MirProgram &program,
   // A physical subobject retains the exact reference formal's storage.
   // Typed reverse replay accepts Base/index paths but never crosses a stored
   // reference or invents a guard; those external owners need separate proof.
-  const auto physicalBorrowedSubobject = [&](const MirPlace &place) {
+  const auto physicalBorrowedSubobject = [&](const MirPlace &place) -> Fact {
     const auto root = formalPlaceRoot(place);
     if (!root || root->formal->type.kind != SemanticType::Reference ||
         root->formal->type.arguments.size() != 1 ||
         (place.access == AccessMode::Mutable && root->formal->type.referenceAccess != AccessMode::Mutable))
-      return false;
+      return std::nullopt;
     const auto role = mir_detail::MirBorrowPathRoot::PhysicalReference;
     const auto fields = mir_detail::borrowPathForProjections(program, root->formal->type,
         root->formal->type.referenceAccess,
@@ -15280,12 +15305,18 @@ completeBorrowSourcePath(const MirProgram &program,
     if (!view || fields->empty() || view->type != place.type ||
         std::any_of(view->referenceCrossings.begin(), view->referenceCrossings.end(),
                     [](const auto &crossing) { return !crossing.physicalRoot; }))
-      return false;
-    if (root->place->key.has_value() != place.key.has_value()) return false;
-    if (!root->place->key) return true;
-    auto key = *root->place->key;
-    key.projections.insert(key.projections.end(), fields->begin(), fields->end());
-    return *place.key == key;
+      return std::nullopt;
+    if (root->place->key.has_value() != place.key.has_value()) return std::nullopt;
+    if (root->place->key) {
+      auto key = *root->place->key;
+      key.projections.insert(key.projections.end(), fields->begin(), fields->end());
+      if (*place.key != key) return std::nullopt;
+    }
+    const auto parent = referenceFormalEntry(*root);
+    return parent ? Fact{MirBorrowDependencySet{
+                       .dependencies = {{.source = place.id, .parent = *parent,
+                                         .access = place.access}}}}
+                  : std::nullopt;
   };
   const auto referenceLoanFact = [&](const auto &self, const State &state,
                                      MirLoanId id, std::size_t depth,
@@ -15505,16 +15536,9 @@ completeBorrowSourcePath(const MirProgram &program,
           fact->possibleAlternatives.empty())
         return fact;
     if (const auto root = referenceFormalRoot(*place)) {
-      const MirLoan *entry = nullptr;
-      for (const auto &loan : body.loans) {
-        const auto *source = body.findPlace(loan.source);
-        if (!loan.entry || loan.kind != MirLoanKind::Parameter || !source ||
-            !mir_detail::formalInputPlace(*source, *root->formal)) continue;
-        if (entry || source->key != root->place->key || source->symbol != root->place->symbol)
-          return std::nullopt;
-        entry = &loan;
-      }
-      return entry ? fromReferenceLoan(state, entry->id) : unmaterializedReferenceFormal(*place);
+      const auto entry = referenceFormalEntry(*root);
+      return !entry ? Fact{} : *entry ? fromReferenceLoan(state, *entry)
+                                     : unmaterializedReferenceFormal(*place);
     }
     // A local reference binding still uses its single independently tracked
     // capability. Grouped formal leaves were resolved by exact prefix above.
@@ -15530,9 +15554,8 @@ completeBorrowSourcePath(const MirProgram &program,
       return fact;
     if (auto fact = storedLocalReferent(state, *place))
       return fact;
-    if (physicalBorrowedSubobject(*place))
-      return MirBorrowDependencySet{
-          .dependencies = {{.source = place->id, .access = place->access}}};
+    if (auto fact = physicalBorrowedSubobject(*place))
+      return fact;
     if (place->root == MirPlaceRootKind::Loan ||
         place->type.kind == SemanticType::Reference ||
         std::any_of(place->projections.begin(), place->projections.end(),

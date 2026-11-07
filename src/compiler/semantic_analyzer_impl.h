@@ -3223,10 +3223,20 @@ private:
   referenceContentsSelector(const Expr *expression) const;
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   checkedReferenceContentsOpening(SemanticLoanId opening) const;
+  [[nodiscard]] std::optional<SemanticType>
+  checkedReferenceContentsSource(const SemanticLoanDependency &dependency) const;
   [[nodiscard]] std::optional<ReferenceContentsSelector>
   referenceContentsSourceSelector(const SemanticLoanDependency &dependency) const;
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   referenceContentsDependencySet(const Expr *expression) const;
+  // Staged formation only. Production use sites remain disconnected until
+  // HIR/MIR independently replay the evaluated reference and read authority.
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  recordReferenceContents(const Expr *expression);
+  [[nodiscard]] bool recordReferenceContentsInputs(
+      const FunctionBorrowDependencySummary &summary,
+      std::span<const AnalyzedCallArgument> arguments,
+      const ExprPtr *receiver = nullptr);
   void recordMemberReferenceContents(const Get &expression);
   void invalidateReferenceContents();
 

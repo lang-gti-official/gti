@@ -1892,14 +1892,11 @@ bool completeObjectType(const MirProgram &program,
       return type.arguments.size() == 1 && type.arrayLength > 0 &&
              self(self, type.arguments.front(), depth + 1);
     case SemanticType::Class: {
-      const MirClassInstance *owner = nullptr;
-      for (const MirClassInstance &candidate : program.classInstances()) {
-        if (candidate.type == type) {
-          if (owner != nullptr)
-            return false;
-          owner = &candidate;
-        }
-      }
+      // A region application changes reference validity, not the identity of
+      // the complete object definition. Resolve its exact checked class view
+      // rather than requiring declaration-region IDs to equal call-site IDs.
+      const auto view = mirClassLifetimeView(program, type);
+      const auto *owner = view ? view->instance : nullptr;
       return owner != nullptr && owner->kind != ClassKind::Interface &&
              !owner->abstract && !owner->cOpaqueHandle &&
              owner->compilerCapability == CompilerCapabilityTypeKind::None;
