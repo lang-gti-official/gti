@@ -823,10 +823,13 @@ ScopeCarrier<Selection> selected();
 int main() { return 0; }
 )");
   expectValid(parsed, "callable pattern projections retain their invocation scope until member instantiation");
-  lang::SemanticVisitor visitor;
+  lang::SemanticVisitor visitor(lang::TargetInfo::host(), &parsed.sourceGraph,
+                                true, nullptr, &parsed.sources);
   expect(visitor.check(parsed.program), "scoped callable pattern provider accepts the symbolic recipe");
   const auto *ownerSyntax = lang::stmtAs<lang::ClassDecl>(parsed.program.declarations()[0].get());
-  const auto *selection = alias(parsed, "Selection");
+  const auto *selectionSyntax = alias(parsed, "Selection");
+  const auto *selection = selectionSyntax && selectionSyntax->declaration
+      ? visitor.model().findTypeAlias(*selectionSyntax->declaration) : nullptr;
   if (!ownerSyntax || !selection)
     return;
   const lang::FunctionInfo *method = nullptr;
@@ -952,10 +955,13 @@ using Selection = for<lifetime a> int&<a>(int&<a>);
 int main() { Local<Selection> callback{}; int value = 4; return callback.invoke(value); }
 )");
   expectValid(parsed, "a lambda projected from an invocation recipe does not capture the enclosing invocation");
-  lang::SemanticVisitor visitor;
+  lang::SemanticVisitor visitor(lang::TargetInfo::host(), &parsed.sourceGraph,
+                                true, nullptr, &parsed.sources);
   expect(visitor.check(parsed.program), "projected lambda declaration resolves through the ordinary semantic provider");
   const auto *owner = lang::stmtAs<lang::ClassDecl>(parsed.program.declarations()[0].get());
-  const auto *selection = alias(parsed, "Selection");
+  const auto *selectionSyntax = alias(parsed, "Selection");
+  const auto *selection = selectionSyntax && selectionSyntax->declaration
+      ? visitor.model().findTypeAlias(*selectionSyntax->declaration) : nullptr;
   if (!owner || !selection)
     return;
   const lang::FunctionDecl *method = nullptr;
@@ -2335,8 +2341,11 @@ public:
 struct Buffer<T> {
   Slots<T> data;
   using iterator = Cursor<T>;
+  using nested = iterator;
+  using borrow<lifetime a> = Slots<T>&<a>;
   Buffer(int input) : data(Slots<T>(input)) {}
-  iterator begin() { return iterator(this.data); }
+  nested begin() { return nested(this.data); }
+  borrow<a> access<lifetime a>(Slots<T>&<a> input) { return input; }
 };
 struct View<lifetime a> {
   int&<a> value; View(int&<a> input) : value(input) {}
@@ -2351,12 +2360,46 @@ int&<a> independent<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
   const auto valid = analyze(declarations + R"(
 int main() {
   Buffer<int> buffer{7}; auto cursor = buffer.begin();
+  Slots<int> separate{4}; int borrowed = buffer.access(separate).size();
   int first = 3; int second = 4;
-  return cursor.read() + independent(first, second) - 10;
+  return cursor.read() + independent(first, second) + borrowed - 14;
 }
 )");
   expectValid(valid,
               "alias construction instantiates anonymous regions per use while retaining the selected generic owner");
+  expect(valid.hirValid,
+         "class alias declarations retain their own lifetime parameters in the concrete owner recipe");
+  lang::SemanticVisitor visitor(lang::TargetInfo::host(), &valid.sourceGraph,
+                                true, nullptr, &valid.sources);
+  expect(visitor.check(valid.program), "class alias recipes resolve in their declaration source graph");
+  for (const auto &declaration : valid.program.declarations()) {
+    const auto *owner = lang::stmtAs<lang::ClassDecl>(declaration.get());
+    if (!owner || owner->name().lexeme != "Buffer")
+      continue;
+    const auto *info = visitor.model().findClassType(*owner);
+    if (!info) {
+      expect(false, "alias owner metadata is available");
+      continue;
+    }
+    const auto instance = visitor.analyzeClassFieldInitializers(
+        info->id, {lang::SemanticType::Int32}, {});
+    expect(instance.valid(), "concrete class alias validation retains each alias's own parameter scope");
+    for (const auto &member : owner->members()) {
+      const auto *syntax = lang::stmtAs<lang::TypeAliasDecl>(member.get());
+      if (!syntax)
+        continue;
+      const auto *alias = instance.model.findTypeAlias(*syntax);
+      const auto regions = alias ? lang::freeTypeLifetimes(alias->type)
+                                 : std::vector<lang::Lifetime>{};
+      expect(alias && regions.size() == 1 &&
+                 regions.front().kind == lang::Lifetime::Kind::Parameter &&
+                 std::any_of(alias->genericParameters.begin(), alias->genericParameters.end(),
+                             [&](const auto &parameter) {
+                               return parameter.lifetime && parameter.id == regions.front().id;
+                             }),
+             "owner instantiation preserves anonymous, alias-to-alias, and explicit alias lifetime binders");
+    }
+  }
   const auto fixed = analyze(declarations + R"(
 Fixed invalid<lifetime a>(int&<a> input) { return Fixed(input); }
 int main() { return 0; }
@@ -2369,6 +2412,12 @@ int main() { return 0; }
 )");
   expect(escaped.syntaxValid && !escaped.semanticValid,
          "an inferred alias application still proves the result's escape boundary");
+  const auto explicitEscape = analyze(declarations + R"(
+Buffer<int>::borrow<static> invalid<lifetime a>(Slots<int>&<a> input) { return input; }
+int main() { return 0; }
+)");
+  expect(explicitEscape.syntaxValid && !explicitEscape.semanticValid,
+         "an explicit alias lifetime argument cannot be freshened to match a shorter input");
 }
 
 void testReceiverBeforeSymbolicPack() {
@@ -2421,7 +2470,13 @@ int main() { Box box{3}; return box.get(); }
 }
 
 void testDependentCallableUseEvidence() {
-  const auto valid = analyze(R"(
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto callable = [&](std::string source) {
+    return lang::Frontend().analyze(
+        "callable-copy-lifetimes.gti", std::move(source),
+        {root / "prelude.gti"}, {}, {root});
+  };
+  const auto valid = callable(R"(
 T duplicate<T>(T& value) {
   if constexpr (std::copy_constructible<T>) { return value; }
   else { return value.clone(); }
@@ -2439,7 +2494,7 @@ int main() { auto copy = duplicate(identity); return copy(7) + ignore(copy) - 14
   expect(ignore && ignore->callableParameters.size() == 1 &&
              ignore->callableParameters.front().boundary == lang::CallableBoundary::Confined,
          "a fully checked unused parameter retains its confined contract");
-  const auto invalid = analyze(R"(
+  const auto invalid = callable(R"(
 int invoke<F>(F& callback) {
   if constexpr (std::copy_constructible<F>) { return callback(7); }
   else { return 0; }
@@ -2449,6 +2504,54 @@ int main() { auto callback = booleanOnly; return invoke(callback); }
 )");
   expect(invalid.syntaxValid && !invalid.semanticValid,
          "a selected dependent branch still checks the concrete callable's argument contract");
+}
+
+void testStatelessItemTemporaryBorrow() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto callable = [&](std::string source) {
+    return lang::Frontend().analyze(
+        "stateless-item-borrow.gti", std::move(source),
+        {root / "prelude.gti"}, {}, {root});
+  };
+  const std::string declarations = R"(
+int identity(int input) { return input; }
+int&<a> referenceIdentity<lifetime a>(int&<a> input) { return input; }
+int global = 9;
+int&<static> fixedReference(int ignored) { return global; }
+F duplicate<F>(F& value) {
+  if constexpr (std::copy_constructible<F>) { return value; }
+  else { return value.clone(); }
+}
+)";
+  const auto copied = callable(declarations + R"(
+int main() {
+  auto value = duplicate(identity); auto reference = duplicate(referenceIdentity);
+  auto fixed = duplicate(fixedReference); int&<static> globalReference = fixed(0);
+  int first = 3; int second = 7;
+  return value(2) + reference(first) + reference(second) + globalReference - 21;
+}
+)");
+  expectValid(copied,
+              "a checked readonly temporary borrow may copy an exact stateless item without a confined callable contract");
+  const auto *duplicate = function(copied, "duplicate");
+  expect(duplicate && duplicate->callableParameters.empty(),
+         "copying a function item does not fabricate a confined invocation-only parameter");
+  for (const auto &[source, reason] : std::vector<std::pair<std::string, std::string>>{
+           {"F& escape<F>(F& value) { return value; } int main() { escape(identity); return 0; }",
+            "a copied item value does not permit returning its borrowed temporary shell"},
+           {"F* address<F>(F& value) { unsafe { return &value; } } int main() { address(identity); return 0; }",
+            "a raw pointer result cannot hide a reference to the temporary item"},
+           {"F unknown<F>(F& value); int main() { unknown(identity); return 0; }",
+            "a bodyless callable target cannot prove an ordinary temporary borrow"},
+           {"void edit<F>(mut F& value) {} int main() { edit(identity); return 0; }",
+            "a fresh stateless item does not acquire mutable temporary access"},
+           {"int main() { int local = 7; auto copy = duplicate([&local](int ignored) -> int { return local; }); return copy(0); }",
+            "a capturing lambda does not inherit the stateless function-item borrow proof"},
+           {"int main() { int local = 7; auto copy = duplicate(referenceIdentity); int&<static> invalid = copy(local); return invalid; }",
+            "copied invocation quantifiers cannot become a fixed static result"}}) {
+    const auto invalid = callable(declarations + source);
+    expect(invalid.syntaxValid && !invalid.semanticValid, reason);
+  }
 }
 
 void testFreshCallableLifetimeArguments() {
@@ -3231,6 +3334,7 @@ int main() {
   testAliasConstructionLifetimeApplications();
   testReceiverBeforeSymbolicPack();
   testDependentCallableUseEvidence();
+  testStatelessItemTemporaryBorrow();
   testFreshCallableLifetimeArguments();
   testReferencePackReborrows();
   testSymbolicCallablePackReturns();

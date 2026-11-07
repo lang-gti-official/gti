@@ -435,6 +435,32 @@ void need<T>() requires outlives<T, static> {}
 void relay<T>(Cell<T>&<static> input) { need<T>(); }
 int main() { return 0; }
 )gti", false, "GTI-S2127");
+  check("owned-field-owned-field-reference", R"gti(
+struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> input) : external(input) {} int& read() { return this.local; } }; int main() { int value = 3; View view{value}; return view.read() - 7; }
+)gti", true);
+  check("owned-field-mutable-owned-field-reference", R"gti(
+struct View<lifetime a> {
+ int&<a> external; mut int local = 7;
+ View(int&<a> input) : external(input) {}
+ int& read() { return this.local; }
+ mut int& edit() mut { return this.local; }
+};
+int main() { int value = 3; mut View view{value}; view.edit() = 11; return view.read() - 11; }
+)gti", true);
+  check("owned-field-formal-owned-field-reference", R"gti(
+struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> input) : external(input) {} };
+int&<owner> read<lifetime a, lifetime owner>(View<a>&<owner> view) { return view.local; }
+int main() { int value = 3; View view{value}; return read(view) - 7; }
+)gti", true);
+  check("owned-field-reject-static-owner", R"gti(
+struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> input) : external(input) {} int&<static> read() { return this.local; } }; int main() { return 0; }
+)gti", false, "GTI-S2127");
+  check("owned-field-reject-local-owner", R"gti(
+struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> input) : external(input) {} }; int stored = 3; int&<static> invalid() { View view{stored}; return view.local; } int main() { return 0; }
+)gti", false, "GTI-S2127");
+  check("owned-field-reject-value-owner", R"gti(
+struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> input) : external(input) {} }; int&<static> invalid(View<static> view) { return view.local; } int main() { return 0; }
+)gti", false, "GTI-S2127");
   check("owner-witness-generic-owner-read", R"gti(
 [[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
 struct Box<T> { T extra; int local = 7; int& read() { unsafe { return borrow(&this.local, this); } } }; int main() { return 0; }

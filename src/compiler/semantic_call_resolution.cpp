@@ -4567,9 +4567,9 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
       argumentDiagnostics.emplace_back(std::move(diagnostic));
     }
   }
-  // A fresh function item borrowed for one call may be matched before the
-  // target's contract is final, as a lambda is; the target must then prove
-  // the parameter confined.
+  // A fresh function item has no captured environment. Its ordinary temporary
+  // borrow may use the source target's checked nonescaping-result contract;
+  // a confined callable contract is not needed to copy that stateless value.
   for (const auto &[call, resolved] : semanticModel.calls) {
     if (call == nullptr || resolved.ephemeralBorrowArguments.empty() ||
         !finalizesCall(call)) {
@@ -4592,12 +4592,50 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
           contract->boundary == CallableBoundary::Confined) {
         continue;
       }
+      const auto *item = semanticModel.findFunction(info->type.functionId);
+      if (!item && instanceBaseModel)
+        item = instanceBaseModel->findFunction(info->type.functionId);
+      const auto itemType = item
+          ? functionItemLifetimeType(item->id, item->returnType,
+                                     item->parameterTypes, item->lifetimeContract)
+          : std::nullopt;
+      const auto *declaration = target && target->declaration
+          ? catalog.callable(*target->declaration) : nullptr;
+      if (item && item->ownerClass == 0 && item->linkage == LanguageLinkage::Gti &&
+          itemType && equivalentLifetimeTypes(*itemType, info->type) &&
+          declaration && resolved.lifetimeApplication.complete &&
+          index < resolved.parameterTypes.size()) {
+        const auto &parameter = resolved.parameterTypes[index];
+        CallableCandidate applied{
+            .declarationRecord = declaration,
+            .id = target->id,
+            .declaration = target->declaration,
+            .returnType = resolved.returnType,
+            .parameterTypes = resolved.parameterTypes,
+            .lifetimeContract = target->lifetimeContract,
+            .lifetimeApplication = resolved.lifetimeApplication,
+            .ownerClass = target->ownerClass,
+            .receiverMutability = target->declaration->receiverMutability(),
+            .staticMember = target->staticMember,
+            .returnBorrowOrigin = resolved.borrowOrigin,
+            .returnBorrowParameter = resolved.borrowArgument,
+            .returnBorrowAccess = resolved.borrowAccess,
+            .returnBorrowParameters = resolved.borrowArguments,
+            .returnBorrowFields = resolved.borrowFields,
+            .returnBorrowPlace = resolved.borrowPlace};
+        if (parameter.kind == SemanticType::Reference &&
+            parameter.referenceAccess == AccessMode::ReadOnly &&
+            parameter.arguments.size() == 1 &&
+            equivalentLifetimeTypes(parameter.arguments.front(), info->type) &&
+            ephemeralBorrowTargetSupported(applied, index))
+          continue;
+      }
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2046", DiagnosticPhase::Semantics,
           expressionToken(call->arguments()[index]),
           "Function item argument " + std::to_string(index + 1) +
               " cannot be borrowed for the call because the selected target "
-              "parameter is not proven confined.");
+              "does not prove a confined parameter or a nonescaping temporary borrow.");
       if (target != nullptr && target->declaration != nullptr &&
           index < target->bodyDeclaration()->parameters().size()) {
         diagnostic.related.push_back(
@@ -4605,8 +4643,8 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
              "Selected generic parameter declared here."});
       }
       diagnostic.hints.emplace_back(
-          "Pass the function to a generic reference parameter that it only "
-          "invokes or forwards to another confined parameter.");
+          "Use a checked GTI definition that confines the parameter or whose "
+          "result cannot retain this temporary argument's storage.");
       argumentDiagnostics.emplace_back(std::move(diagnostic));
     }
   }

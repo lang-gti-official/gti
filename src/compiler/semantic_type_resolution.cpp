@@ -6221,7 +6221,13 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       return;
     auto dependencies = completeResult ? completeResult->dependencies
                                        : storedBorrowDependencies(value);
-    if (isBorrowedCarrierReference(function->returnType)) {
+    if (isBorrowedCarrierReference(function->returnType) ||
+        (completeResult && completeResult->dependencies.empty() &&
+         completeResult->possibleAlternatives.empty())) {
+      // A known-empty contents set says that this place stores no references.
+      // Returning its address still retains its exact physical owner. Reuse
+      // the checked place/reference-origin proof rather than treating empty
+      // contents as an ownerless reference or guessing from an outer carrier.
       const auto physical = physicalReferenceReturnBorrow(
           value, function->returnType.referenceAccess);
       dependencies = physical ? physical->dependencies : std::vector<SemanticLoanDependency>{};

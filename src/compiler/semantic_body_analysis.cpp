@@ -939,13 +939,21 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
           self(self, *branch);
         }
       } else if (const auto *alias = stmtAs<TypeAliasDecl>(member.get())) {
-        validateTypeAliasTarget(alias->target());
         if (const TypeAliasInfo *primary =
                 semanticModel.findTypeAlias(*alias)) {
           TypeAliasInfo concrete = *primary;
-          concrete.type = typeOf(alias->target());
+          beginTypeParameterScope(concrete.genericParameters);
+          validateTypeAliasTarget(alias->target());
+          // This publishes the declaration recipe in its concrete owner.
+          // Resolving the syntax as a use would instantiate the alias's own
+          // anonymous regions, which must remain binders until an alias use.
+          concrete.type = substituteType(concrete.type,
+                                         currentGenericSubstitution());
           validateTypeAliasReference(alias->target(), concrete.type);
+          endTypeParameterScope();
           semanticModel.record(*alias, std::move(concrete));
+        } else {
+          validateTypeAliasTarget(alias->target());
         }
       } else if (const auto *function = stmtAs<FunctionDecl>(member.get());
                  function != nullptr && !function->parameters().empty() &&

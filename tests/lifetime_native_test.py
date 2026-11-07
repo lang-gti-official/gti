@@ -21,9 +21,15 @@ T duplicate<T>(T& value) {
   else { return value.clone(); }
 }
 int identity(int input) { return input; }
+int&<a> referenceIdentity<lifetime a>(int&<a> input) { return input; }
+int global = 9;
+int&<static> fixedReference(int ignored) { return global; }
 int main() {
   auto first = duplicate(identity); auto second = std::clone(identity);
-  return first(3) + second(7) - 10;
+  auto reference = duplicate(referenceIdentity);
+  auto fixed = duplicate(fixedReference); int&<static> globalReference = fixed(0);
+  int left = 3; int right = 7;
+  return first(3) + second(7) + reference(left) + reference(right) + globalReference - 29;
 }
 """,
     "receiver_pack_alias_regions": """
@@ -40,8 +46,11 @@ public:
 struct Buffer<T> {
   Slots<T> data;
   using iterator = Cursor<T>;
+  using nested = iterator;
+  using borrow<lifetime a> = Slots<T>&<a>;
   Buffer(int input) : data(Slots<T>(input)) {}
-  iterator begin() { return iterator(this.data); }
+  nested begin() { return nested(this.data); }
+  borrow<a> access<lifetime a>(Slots<T>&<a> input) { return input; }
 };
 struct Box {
   mut int value; Box(int input) : value(input) {}
@@ -49,8 +58,9 @@ struct Box {
 };
 int main() {
   Buffer<int> buffer{7}; auto cursor = buffer.begin();
+  Slots<int> separate{4}; int borrowed = buffer.access(separate).size();
   mut Box box{3}; box.get() = 5; box.get(false) = 7;
-  return cursor.read() + box.get(true, 2) - 14;
+  return cursor.read() + box.get(true, 2) + borrowed - 18;
 }
 """,
     "symbolic_callable_pack_results": """
@@ -103,6 +113,23 @@ int main() {
   Wrapper wrapper{first};
   return read(first, second) + wrapper.read() + copied(first, second) - 21;
 }
+""",
+    "owned_field_reference": """
+struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> input) : external(input) {} int& read() { return this.local; } }; int main() { int value = 3; View view{value}; return view.read() - 7; }
+""",
+    "mutable_owned_field_reference": """
+struct View<lifetime a> {
+ int&<a> external; mut int local = 7;
+ View(int&<a> input) : external(input) {}
+ int& read() { return this.local; }
+ mut int& edit() mut { return this.local; }
+};
+int main() { int value = 3; mut View view{value}; view.edit() = 11; return view.read() - 11; }
+""",
+    "formal_owned_field_reference": """
+struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> input) : external(input) {} };
+int&<owner> read<lifetime a, lifetime owner>(View<a>&<owner> view) { return view.local; }
+int main() { int value = 3; View view{value}; return read(view) - 7; }
 """,
     "checked_physical_carrier_owner": """
 [[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }

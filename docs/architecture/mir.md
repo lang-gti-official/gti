@@ -5195,6 +5195,11 @@ published loans separately from ordinary scope loans and retires them only
 after armed subobject obligations are inactive. Independent verification rejects
 early retirement, missing failure retirement, and retirement on the successful
 constructor path, which must export the dependency to its caller.
+A failing base-initialization invocation has not activated its success-only
+rollback obligation. Its exact failure continuation releases the unpublished
+base dependency without a drop; the called constructor owns cleanup of its
+partial object. This does not permit release after a later initializer fails:
+a successfully completed base must still be dropped first.
 Non-lifecycle-bound constructor entry loans also remain live until rollback
 finishes. A later initializer can publish such a reference into a field and
 change its final loan classification after earlier failure edges were built.
@@ -5279,8 +5284,12 @@ dependency group. Its `CallArgument` shell retains that exact group as
 identity, selected origin, access and parent dependency. The shell loan ends
 after the call, while captured dependencies survive until the full-expression
 closure cleanup finishes. Missing, substituted or prematurely ended capture
-dependencies are invalid MIR. The ordinary confined callable contract and
-invocation capability checks remain required independently of materialization.
+dependencies are invalid MIR. A closure's ordinary confined callable contract
+and invocation capability checks remain required independently of materialization.
+An exact namespace function item may instead use the ordinary read-only
+value-borrow rule, including a stateless value copy. The verifier still proves
+its producer, applied parameter and result, source-defined target, temporary
+loan and cleanup; a borrowed or raw address of that temporary cannot escape.
 A function item's complete type is derived from its exact target signature and
 lifetime contract, including every declared invocation binder. HIR and MIR
 compare that closed type by bound alpha equivalence; fixed and free regions,

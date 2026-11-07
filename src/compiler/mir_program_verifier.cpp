@@ -2443,8 +2443,14 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             argumentPlace &&
             (argumentPlace->type.kind == SemanticType::Lambda ||
              argumentPlace->type.kind == SemanticType::FunctionItem);
+        // A namespace function item has no environment or borrowed capture.
+        // Its exact producer above permits the ordinary readonly temporary
+        // value borrow, including a checked value copy. Capturing callables
+        // still require the independently checked confinement contract.
+        const bool statelessItem = argumentPlace && exactProducer &&
+            argumentPlace->type.kind == SemanticType::FunctionItem;
         const bool confined =
-            !callable ||
+            !callable || statelessItem ||
             (functionTarget &&
              std::any_of(functionTarget->callableParameters.begin(),
                          functionTarget->callableParameters.end(),
@@ -18632,7 +18638,23 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
                                   event.failureCleanup && !event.conditional;
                          });
             });
-        if (!afterRollback)
+        // A failing InitializeBase never activates its success-only rollback
+        // obligation. The callee owns cleanup of its partial object, so this
+        // exact failure continuation may release the unpublished dependency.
+        // A later failure must still retain the completed base through Drop.
+        const auto &invoke = producer->block->terminator;
+        const auto *failure = body.findFailureRecord(invoke.failureRecord);
+        const bool failedConstruction =
+            invoke.kind == MirTerminatorKind::Invoke &&
+            invoke.invokeInstruction == basePublication->id &&
+            invoke.elseTarget == end.block->id && failure &&
+            failure->kind == MirFailureRecordKind::Producer &&
+            failure->producerBlock == producer->block->id &&
+            failure->producerInstruction == basePublication->id &&
+            failure->parameterBlock == end.block->id &&
+            end.block->failureParameter == failure->id &&
+            end.block->activeFailure == failure->id;
+        if (!failedConstruction && !afterRollback)
           return verificationFailure(body, owner,
               "cleanup-bound base dependency ends before its exact rollback drop",
               end.block->id, end.instruction->id);

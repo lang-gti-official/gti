@@ -6824,6 +6824,13 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     auto complete = cleared.returnType.kind == SemanticType::Reference
         ? completeBorrowDependencySet(returned->value())
         : completeBorrowDependencySetForType(returned->value().get(), cleared.returnType);
+    if (cleared.returnType.kind == SemanticType::Reference && complete &&
+        complete->dependencies.empty() && complete->possibleAlternatives.empty())
+      // The expression's value contents and its returned address have distinct
+      // domains. Preserve the independently checked physical owner without
+      // overwriting the expression's known-empty copied-value fact.
+      complete = physicalReferenceReturnBorrow(returned->value(),
+                                                cleared.returnType.referenceAccess);
     if (!complete && cleared.returnType.kind == SemanticType::Reference)
       complete = initializerBorrowDependencies(returned->value(), cleared.returnType);
     const auto *contextual =

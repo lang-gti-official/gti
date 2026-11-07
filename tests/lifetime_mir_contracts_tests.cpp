@@ -527,6 +527,84 @@ int main() { return observeFixed(fixed) + observePair(choose) - 10; }
   expect(appliedDescriptor, "item fixture publishes a concrete callable invocation lifetime application");
 }
 
+void checkStatelessItemTemporaryBorrow() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "stateless-item-temporary-borrow.gti", R"gti(
+int identity(int input) { return input; }
+int&<a> referenceIdentity<lifetime a>(int&<a> input) { return input; }
+int global = 9;
+int&<static> fixedReference(int ignored) { return global; }
+F duplicate<F>(F& value) { return value; }
+int main() {
+  auto value = duplicate(identity); auto reference = duplicate(referenceIdentity);
+  auto fixed = duplicate(fixedReference); int&<static> globalReference = fixed(0);
+  int first = 3; int second = 7;
+  return value(2) + reference(first) + reference(second) + globalReference - 21;
+}
+)gti");
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(),
+         "ordinary temporary borrowing copies exact stateless item values without a confined invocation contract");
+  std::size_t copied = 0;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &call : block.instructions) {
+        if (call.kind != MirInstructionKind::Call || !call.functionTarget ||
+            call.operands.size() != 1 || call.operands.front().kind != MirOperandKind::Value)
+          continue;
+        const auto *target = checked.mir.findFunctionInstance(*call.functionTarget);
+        const auto *input = mir_detail::definitionFor(function.body, call.operands.front().value);
+        if (!target || target->returnType.kind != SemanticType::FunctionItem ||
+            !target->callableParameters.empty() || !input ||
+            input->kind != MirInstructionKind::CallInput ||
+            input->callInputKind != HirCallInputKind::ReadTemporaryBorrow ||
+            input->operands.size() != 1 || !input->loan)
+          continue;
+        const auto *place = function.body.findPlace(input->operands.front().place);
+        const auto materialized = place
+            ? findMirTemporaryMaterialization(function.body, *place, input->hirValue)
+            : MirTemporaryMaterialization{};
+        expect(place && place->type.kind == SemanticType::FunctionItem && materialized &&
+                   materialized.producer->operation == MirOperation::FunctionItem &&
+                   call.lifetimeApplication.complete,
+               "stateless copying retains the exact materialized item, temporary loan and applied target");
+        ++copied;
+        for (int mutation = 0; mutation != 8; ++mutation) {
+          auto forged = checked.mir;
+          auto *owner = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+          auto *callee = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(*call.functionTarget));
+          const auto instruction = [&](MirInstructionId id) -> MirInstruction * {
+            for (auto &changedBlock : owner->body.blocks)
+              for (auto &candidate : changedBlock.instructions)
+                if (candidate.id == id) return &candidate;
+            return nullptr;
+          };
+          auto *changedInput = instruction(input->id);
+          auto *changedCall = instruction(call.id);
+          auto *producer = instruction(materialized.producer->id);
+          expect(changedInput && changedCall && producer,
+                 "stateless copy mutations retain their exact executable identities");
+          if (mutation == 0) producer->functionTarget = call.functionTarget;
+          if (mutation == 1) changedInput->loan.reset();
+          if (mutation == 2) {
+            changedInput->info.type.referenceAccess = AccessMode::Mutable;
+            owner->body.values[*changedInput->result - 1].info = changedInput->info;
+            changedCall->operands.front().type = changedInput->info.type;
+          }
+          if (mutation == 3) callee->definitionKind = MirDefinitionKind::Declaration;
+          if (mutation == 4) callee->requiresUnsafe = true;
+          if (mutation == 5) changedCall->lifetimeApplication.complete = false;
+          if (mutation == 6) callee->returnType = SemanticType::referenceTo(callee->returnType);
+          if (mutation == 7) callee->returnType = SemanticType::rawPointerTo(callee->returnType);
+          expect(!verifyMirProgram(forged).valid(),
+                 "stateless temporary copying cannot forge item identity, authority, access, target safety, application or escaping address results");
+        }
+      }
+  expect(copied == 3, "stateless copy proof covers ordinary, quantified and fixed-region item types");
+}
+
 void checkScalarLoadDependencyDomain() {
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "scalar-load-dependency-domain.gti", R"gti(
@@ -871,6 +949,75 @@ int main() { int input = 7; Leaf value{input}; return read(value) + value.get() 
       }
     }
   expect(produced, "nested Base fixture has an independently replayed stored-reference return producer");
+}
+
+void checkFailedBasePublicationRelease() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "failed-base-publication-release.gti", R"gti(
+mut int observed = 0;
+interface Marker { int mark(); };
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+  ~Base() { observed = observed + value; }
+};
+struct Derived<lifetime a> : public Marker, public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+  int mark() override { return 0; }
+  int&<a> get() { return value; }
+};
+int&<a> read<lifetime a>(Derived<a>& view) { return view.value; }
+int main() {
+  int value = 7;
+  { Derived view{value}; if (read(view) + view.get() != 14) { return 1; } }
+  return observed - 7;
+}
+)gti");
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(),
+         "a failed base construction releases its unpublished dependency without dropping an unconstructed base");
+  HirConstructorInstanceId owner = 0;
+  MirBlockId failureBlock = 0;
+  MirBlockId successBlock = 0;
+  MirLoanId publication = 0;
+  for (const auto &constructor : checked.mir.constructorInstances())
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *loan = instruction.loan
+            ? constructor.body.findLoan(*instruction.loan) : nullptr;
+        if (instruction.kind == MirInstructionKind::InitializeBase && loan &&
+            loan->lifecycleBound) {
+          expect(owner == 0 && block.terminator.kind == MirTerminatorKind::Invoke,
+                 "fixture needs one exact fallible cleanup-bound base publication");
+          owner = constructor.id;
+          publication = loan->id;
+          failureBlock = block.terminator.elseTarget;
+          successBlock = block.terminator.target;
+        }
+      }
+  expect(owner && failureBlock && successBlock,
+         "fixture must distinguish the failed initialization from its successful publication");
+  for (int mutation = 0; mutation != 2; ++mutation) {
+    auto broken = checked.mir;
+    auto *constructor = const_cast<MirConstructorInstance *>(
+        broken.findConstructorInstance(owner));
+    auto *failed = const_cast<MirBlock *>(constructor->body.findBlock(failureBlock));
+    auto *succeeded = const_cast<MirBlock *>(constructor->body.findBlock(successBlock));
+    const auto end = std::find_if(failed->instructions.begin(), failed->instructions.end(),
+        [&](const auto &instruction) {
+          return instruction.kind == MirInstructionKind::EndBorrow &&
+                 instruction.loan == publication;
+        });
+    expect(end != failed->instructions.end(),
+           "failed initialization must retire its own unpublished dependency");
+    if (mutation == 0)
+      succeeded->instructions.insert(succeeded->instructions.begin(), *end);
+    failed->instructions.erase(end);
+    expect(!verifyMirProgram(broken).valid(),
+           "base dependency release must neither occur on success nor disappear on failure");
+  }
 }
 
 void checkBorrowedBasePublication() {
@@ -2601,11 +2748,13 @@ int main() {
   checkScopedReceiverOwner();
   checkAppliedBorrowFieldSummary();
   checkScopedFunctionItemIdentity();
+  checkStatelessItemTemporaryBorrow();
   checkScalarLoadDependencyDomain();
   checkForwardedCarrierPackLifetimeStage();
   checkPatternedResultScope();
   checkProgramBasePathAuthority();
   checkNestedBaseLifetimeViews();
+  checkFailedBasePublicationRelease();
   checkBorrowedBasePublication();
   std::cout << "lifetime MIR contracts passed\n";
 }

@@ -244,6 +244,14 @@ field dependencies do not replace that loan. Mapping the exact unprojected
 reference requires no enumeration of an opaque referent's contents. Mapping
 an external stored field still requires a complete typed path and guards.
 
+Returning the address of a field is checked independently from copying its
+value. An ordinary owned field can have a known-empty stored-reference set
+while its address still borrows the containing object. Reference-return
+validation and complete-return publication derive that exact physical owner
+without replacing the expression's empty copied-value fact. The result
+retains the owner's access and lifetime; an external reference stored in the
+same object cannot extend its owned field to a longer lifetime.
+
 Complete return normalization identifies a checked lifetime supplier separately
 from the produced referent's type. An owner-relative result may be governed by
 an owner containing other references or opaque fields, including an owner
@@ -2761,6 +2769,15 @@ The expression records a function occurrence for hover and definition, the
 exact target, and read-callable capability. Its zero-state type is trivial,
 transfer-capable, and share-capable. Ordinary value rules allow storage,
 copy-capture, generic fields, and exact results without closure cleanup.
+An exact stateless item can also use the ordinary read-only temporary-value
+borrow rule when the selected source definition and its applied lifetime
+contract prove that the result cannot retain the temporary's storage. This
+permits a generic copy function to return the item value without claiming a
+confined invocation-only parameter. The selected namespace declaration and
+full quantified signature remain authoritative; reference or raw-pointer
+results into that temporary, mutable borrows, bodyless targets, and capturing
+closures do not gain permission from this rule. MIR independently checks the
+same producer, application, result, loan, and cleanup facts.
 Function-item calls expand concrete value/read-only/mutable-reference packs
 under ordinary argument matching. A callee-producing expression still evaluates
 before the arguments even though its selected function identity is static.
@@ -2772,6 +2789,13 @@ reanalysis; an expression entry inherited from another analysis does not prove
 the argument was analyzed here. Contextual array tails retain their selected
 constructor parameter context. Ordinary direct function calls and the separate
 named-native-callback conversion retain their existing resolution paths.
+
+Concrete class analysis substitutes only owner bindings into a member alias's
+normalized declaration recipe. The alias keeps its own type, value, and lifetime
+parameters, including anonymous regions and parameters used through another
+alias. Alias use-site resolution supplies explicit arguments or fresh inference
+regions. Re-resolving declaration syntax as an alias use would incorrectly store
+those inference regions in the class metadata.
 
 ### Fixed Lambda Environment Premises
 
