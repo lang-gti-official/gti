@@ -2848,10 +2848,17 @@ The query neither invokes the callable nor changes its calling contract.
 Native invocations still need `unsafe`, and projected reference results still
 need the same origin, access and lifetime proof as an explicitly spelled
 reference. It does not provide a reference origin or authorize capture escape.
-A projected reference may be used directly as a contracted function result;
-it cannot be hidden behind an ordinary `using` alias. Alias validation checks
-the resolved target, so reflected results and associated type families obey
-the same reference-alias restriction.
+A projected reference may be used as a contracted function result, directly
+or through a transparent alias of the callable-result recipe. Formation uses
+the resolved declaration's compiler query identity and its exact concrete
+result; an ordinary type parameter, including an alias of that parameter,
+does not gain hidden-reference substitution permission. The function body
+must still prove its complete result suppliers. A fresh readonly callable
+input is accepted only when the exact completed target contract excludes its
+temporary storage from every result alternative, alongside the normal input
+and result lifetime application. A visible body returning a global does not
+strengthen a result lifetime tied to an input. Explicit reference aliases
+retain their target's access and regions under the ordinary alias rules.
 See `examples/167-callable-result-types.gti` for an unrelated source-defined
 container using the projection.
 

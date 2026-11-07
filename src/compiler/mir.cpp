@@ -13640,8 +13640,64 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
     }
     if (loan.parent != 0) {
       const MirLoan &parent = body.loans[loan.parent - 1];
+      // A result field may store the physical input reference while that
+      // reference separately carries the input object's external contents.
+      // The result's Stored group has its own typed field domain; it is not
+      // a scalar alias of the input's contents group. Keep the address parent
+      // and require the exact checked argument stage and result mapping.
+      const bool mappedPhysicalInput = [&] {
+        if (loan.kind != MirLoanKind::Stored || loan.entry || loan.escapes ||
+            loan.storedDependency || !loan.storedPath.empty() ||
+            loan.designatedFields.empty() || !loan.conditions.empty() ||
+            loan.source != parent.source || !loan.producedBy ||
+            loan.access != AccessMode::ReadOnly || parent.access != AccessMode::ReadOnly)
+          return false;
+        const MirInstruction *producer = nullptr;
+        for (const auto &block : body.blocks)
+          for (const auto &instruction : block.instructions)
+            if (!instruction.tombstone && instruction.loan == loan.id &&
+                instruction.hirValue == loan.producedBy &&
+                (instruction.kind == MirInstructionKind::Construct ||
+                 instruction.kind == MirInstructionKind::Call)) {
+              if (producer)
+                return false;
+              producer = &instruction;
+            }
+        if (!producer || !producer->result)
+          return false;
+        for (const auto &mapping : producer->borrowFields) {
+          if (mapping.resultFields != loan.designatedFields ||
+              !mapping.resultConditions.empty() || !mapping.sourceConditions.empty() ||
+              mapping.access != loan.access || mapping.origin != BorrowOriginKind::Argument ||
+              !mapping.sourceFields.empty() || mapping.parameter >= producer->parameterTypes.size() ||
+              mapping.parameter >= producer->operands.size())
+            continue;
+          const auto &parameter = producer->parameterTypes[mapping.parameter];
+          const auto &input = producer->operands[mapping.parameter];
+          const auto *value = input.kind == MirOperandKind::Value
+              ? body.findValue(input.value) : nullptr;
+          const auto *block = value ? body.findBlock(value->definitionBlock) : nullptr;
+          if (parameter.kind != SemanticType::Reference || parameter.arguments.size() != 1 ||
+              parameter.referenceAccess != AccessMode::ReadOnly || !block)
+            continue;
+          for (const auto &stage : block->instructions)
+            if (stage.id == value->definition && stage.result == value->id &&
+                stage.kind == MirInstructionKind::CallInput && !stage.tombstone &&
+                stage.callSite == producer->callSite &&
+                stage.callInputRole == MirCallInputRole::Argument &&
+                stage.callInputIndex == mapping.parameter &&
+                stage.callInputKind == HirCallInputKind::ReadBorrow &&
+                stage.info.type == parameter && stage.operands.size() == 1 &&
+                stage.operands.front().kind == MirOperandKind::Loan &&
+                stage.operands.front().loan == parent.id &&
+                stage.operands.front().type == parameter)
+              return true;
+        }
+        return false;
+      }();
       if (parent.storedDependency != 0 &&
           loan.storedDependency != parent.storedDependency &&
+          !mappedPhysicalInput &&
           !(loan.storedDependency == parent.id &&
             mir_detail::restoredBorrowAuthority(body, loan))) {
         return failure(body, owner,

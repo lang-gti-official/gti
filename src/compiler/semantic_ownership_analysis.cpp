@@ -5593,8 +5593,10 @@ auto SemanticVisitor::Impl::physicalReferenceReturnBorrow(
           .access = access, .protectsStorage = true};
       if (!dependency.place.root && !dependency.place.receiver)
         dependency.place.root = symbolForDeclaration(place.root->declaration);
-      if (const auto source = retainedLoanSource(value))
-        dependency.parent = source->loan;
+      // An owned object's address is independent of its Stored dependency
+      // group. That group protects external referents held by the object;
+      // it is not physical permission to address the object's own storage.
+      // The Reference branch above retains actual address-capability parents.
       result.dependencies.push_back(std::move(dependency));
     }
   } else {

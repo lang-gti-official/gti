@@ -14,6 +14,17 @@ from backend_modes import native_modes
 
 
 CASES = {
+    'generic_stored_callback_two_owners': r"""
+class Holder<F> { mut F callable; public: Holder(F f) : callable(std::move(f)) {} int run() mut { return this.callable(); } };
+Holder<F> store<F>(F f) { return Holder<F>(std::move(f)); }
+int main() { int left = 4; int right = 9; auto callback = [&left, &right]() -> int { return left + right; }; mut auto stored = store(std::move(callback)); return stored.run() - 13; }
+""",
+    'callback_with_owned_reference_carrier': r"""
+class Holder<F> { mut F callable; public: Holder(F f) : callable(std::move(f)) {} int run() mut { return this.callable(); } };
+Holder<F> store<F>(F f) { return Holder<F>(std::move(f)); }
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+int main() { int value = 7; View view{value}; auto callback = [view]() -> int { return view.value; }; mut auto stored = store(std::move(callback)); return stored.run() - 7; }
+""",
     'owned_closure_relay': r"""
 F relay<F>(F callback) { return std::move(callback); }
 int main() {

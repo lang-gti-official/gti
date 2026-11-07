@@ -39,6 +39,86 @@ SemanticType reference(GenericParameterId id) {
   type.referenceLifetime = Lifetime::parameter(id);
   return type;
 }
+void physicalReferenceFieldMappings() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "physical-reference-field-mapping.gti", R"gti(
+struct ViewRef<lifetime data, lifetime shell> {
+  std::string_view<data>&<shell> value;
+  ViewRef(std::string_view<data>&<shell> source) : value(source) {}
+};
+ViewRef<data,shell> borrowed<lifetime data,lifetime shell>(
+    std::string_view<data>&<shell> source, std::string_view<data>&<shell> other) {
+  return ViewRef<data,shell>(source);
+}
+int main() {
+  std::string_view text = "word"; std::string_view other = "other";
+  auto reference = borrowed(text, other);
+  return reference.value.size() == 4 ? 0 : 1;
+}
+)gti", {root / "prelude.gti"}, {}, {root});
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(),
+         "a mapped result field retains the physical input and keeps its contents identity separate");
+  HirFunctionInstanceId owner = 0;
+  MirLoanId selected = 0;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &loan : function.body.loans) {
+      const auto *parent = function.body.findLoan(loan.parent);
+      if (loan.kind == MirLoanKind::Stored && !loan.entry && !loan.escapes &&
+          !loan.storedDependency && !loan.designatedFields.empty() &&
+          parent && parent->kind == MirLoanKind::Parameter && parent->storedDependency) {
+        expect(!selected, "fixture has one physical input mapped into a result field");
+        owner = function.id;
+        selected = loan.id;
+      }
+    }
+  expect(selected != 0, "fixture retains the mapped result field and its physical parent");
+  const auto &body = checked.mir.functionInstances()[owner - 1].body;
+  const auto *parent = body.findLoan(body.findLoan(selected)->parent);
+  const auto decoy = std::find_if(body.loans.begin(), body.loans.end(), [&](const auto &loan) {
+    return loan.id != parent->id && loan.kind == MirLoanKind::Parameter &&
+           loan.storedDependency && loan.access == parent->access;
+  });
+  expect(decoy != body.loans.end(), "fixture has a distinct same-typed physical input");
+  for (unsigned mutation = 0; mutation != 9; ++mutation) {
+    auto forged = checked.mir;
+    auto &changedBody = MirProgramTestAccess::functions(forged)[owner - 1].body;
+    auto &loan = changedBody.loans[selected - 1];
+    MirInstruction *producer = nullptr;
+    MirInstruction *stage = nullptr;
+    for (auto &block : changedBody.blocks)
+      for (auto &instruction : block.instructions) {
+        if (instruction.loan == selected && instruction.hirValue == loan.producedBy)
+          producer = &instruction;
+        if (instruction.kind == MirInstructionKind::CallInput &&
+            instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == MirOperandKind::Loan &&
+            instruction.operands.front().loan == parent->id)
+          stage = &instruction;
+      }
+    expect(producer && stage && producer->borrowFields.size() == 1,
+           "mutation retains the exact producer, field map and physical argument stage");
+    switch (mutation) {
+    case 0: loan.designatedFields.clear(); break;
+    case 1: producer->borrowFields.front().resultFields.clear(); break;
+    case 2: producer->borrowFields.front().sourceFields = loan.designatedFields; break;
+    case 3: producer->borrowFields.front().access = AccessMode::Mutable; break;
+    case 4: loan.source = decoy->source; break;
+    case 5: loan.parent = decoy->id; break;
+    case 6: stage->operands.front().loan = decoy->id; break;
+    case 7: ++stage->callInputIndex; break;
+    case 8: producer->borrowFields.clear(); break;
+    }
+    expect(rebuildMirValueUses(changedBody), "field mapping mutation rebuilds exact value uses");
+    const auto proof = verifyMirProgram(forged);
+    if (proof.valid()) std::cerr << "accepted physical field mapping mutation " << mutation << '\n';
+    expect(!proof.valid(),
+           "a scalar alias or forged field, access, parent or argument stage cannot bypass contents identity");
+  }
+}
 void stagedReferenceContentsMetadata() {
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "staged-reference-contents.gti", R"gti(
@@ -530,6 +610,337 @@ int main() {
   }
 }
 
+void physicalReferenceInitializerSnapshots() {
+  const auto checked =
+      Frontend({.stopAfter = FrontendPhase::Mir})
+          .analyze("physical-reference-initializer-snapshots.gti", R"gti(
+struct View<lifetime a> {
+  int&<a> data;
+  View(int&<a> input, int&<a> other) : data(input) {}
+};
+int main() { int first = 4; int other = 7; View view{first, other}; return view.data - 4; }
+)gti");
+  if (!checked.canGenerateCode())
+    for (const auto &d : checked.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+  expect(checked.canGenerateCode(), "address-only reference initialization "
+                                    "preserves its exact physical snapshot");
+  const auto constructor = std::find_if(
+      checked.mir.constructorInstances().begin(),
+      checked.mir.constructorInstances().end(), [](const auto &candidate) {
+        return candidate.parameterBindings.size() == 2 &&
+               candidate.initializers.size() == 1 &&
+               candidate.initializers.front().completeBorrow;
+      });
+  expect(constructor != checked.mir.constructorInstances().end(),
+         "snapshot fixture has two distinct same-typed formal addresses");
+  const auto &initial = *constructor->initializers.front().completeBorrow;
+  expect(initial.dependencies.size() == 1,
+         "reference field captures one evaluated formal address");
+  const auto *source =
+      constructor->body.findPlace(initial.dependencies.front().source);
+  const auto other = std::find_if(
+      constructor->body.places.begin(), constructor->body.places.end(),
+      [&](const auto &place) {
+        return place.root == MirPlaceRootKind::Binding &&
+               place.binding == constructor->parameterBindings[1] &&
+               place.projections.empty();
+      });
+  expect(source && other != constructor->body.places.end(),
+         "snapshot fixture retains the addressed source and alternate formal");
+  // Repeated place records may decorate the same physical formal with another
+  // source expression. This does not permit selecting the other formal or
+  // changing any permission/result metadata in the captured snapshot.
+  auto duplicate = checked.mir;
+  auto &same =
+      MirProgramTestAccess::constructors(duplicate)[constructor->id - 1];
+  auto alias = *source;
+  alias.id = same.body.places.size() + 1;
+  alias.sourceValue = 0;
+  same.body.places.push_back(alias);
+  same.initializers.front().completeBorrow->dependencies.front().source =
+      alias.id;
+  expect(verifyMirProgram(duplicate).valid(),
+         "an exact same-binding typed address record preserves initialization "
+         "proof");
+  for (unsigned mutation = 0; mutation != 5; ++mutation) {
+    auto forged = duplicate;
+    auto &changed =
+        MirProgramTestAccess::constructors(forged)[constructor->id - 1];
+    auto &place = changed.body.places.back();
+    auto &dependency =
+        changed.initializers.front().completeBorrow->dependencies.front();
+    switch (mutation) {
+    case 0:
+      place.binding = other->binding;
+      place.symbol = other->symbol;
+      expect(place.key && other->key,
+             "formal address roots retain checked keys");
+      place.key->root = other->key->root;
+      break;
+    case 1:
+      place.type = SemanticType::UInt32;
+      break;
+    case 2:
+      dependency.access = AccessMode::Mutable;
+      break;
+    case 3:
+      dependency.parent =
+          changed.body.loans.empty() ? 999999 : changed.body.loans.back().id;
+      break;
+    case 4:
+      dependency.designatedFields = {
+          fieldProjection(constructor->initializers.front().field)};
+      break;
+    }
+    const auto proof = verifyMirProgram(forged);
+    if (proof.valid())
+      std::cerr << "accepted physical initializer snapshot mutation "
+                << mutation << '\n';
+    expect(!proof.valid(), "snapshot address normalization preserves source, "
+                           "type, loan, access and result path");
+  }
+}
+void storedCallableClosureFacts() {
+  const auto root =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto checked =
+      Frontend({.stopAfter = FrontendPhase::Mir})
+          .analyze(root.parent_path() /
+                       "tests/fixtures/stored-callable-closure-facts.gti",
+                   R"gti(
+class Holder<F> {
+  mut F callable;
+public:
+  Holder(F input) : callable(std::move(input)) {}
+  int run() mut { return this.callable(); }
+};
+Holder<F> store<F>(F callback) { return Holder<F>(std::move(callback)); }
+int main() {
+  mut int value = 4;
+  mut int decoy = 20;
+  mut auto callback = [mut &value]() -> int { value += 1; return value; };
+  mut auto stored = store(std::move(callback));
+  return stored.run() - 5 + decoy - 20;
+}
+)gti",
+                   {root / "prelude.gti"}, {}, {root});
+  if (!checked.canGenerateCode())
+    for (const auto &d : checked.diagnostics)
+      std::cerr << d.code << ": " << d.message << '\n';
+  expect(checked.canGenerateCode(),
+         "generic stored callable reconstructs capture suppliers from "
+         "executable formation");
+  const MirInstruction *closure = nullptr;
+  const MirInstruction *publication = nullptr;
+  HirFunctionInstanceId owner = 0;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Compute &&
+            instruction.operation == MirOperation::Closure) {
+          expect(!closure,
+                 "stored closure fixture has one environment producer");
+          closure = &instruction;
+          owner = function.id;
+        }
+  expect(closure && closure->loan && closure->operands.size() == 1,
+         "closure records its actual capture and separate retained claim");
+  const auto &body = checked.mir.functionInstances()[owner - 1].body;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.kind == MirInstructionKind::Call &&
+          instruction.info.type.kind == SemanticType::Class &&
+          instruction.loan && !instruction.callableArguments.empty())
+        publication = &instruction;
+  expect(publication,
+         "stored closure fixture has a complete caller publication");
+  const auto decoy = std::find_if(
+      body.places.begin(), body.places.end(), [&](const auto &place) {
+        return place.root == MirPlaceRootKind::Binding &&
+               place.projections.empty() && place.type == SemanticType::Int32 &&
+               place.id != closure->operands.front().place &&
+               place.access == AccessMode::Mutable;
+      });
+  expect(decoy != body.places.end(),
+         "negative controls include a different same-typed physical owner");
+  for (unsigned mutation = 0; mutation != 8; ++mutation) {
+    auto forged = checked.mir;
+    auto &changedBody = MirProgramTestAccess::functions(forged)[owner - 1].body;
+    MirInstruction *changed = nullptr;
+    MirInstruction *returned = nullptr;
+    for (auto &block : changedBody.blocks)
+      for (auto &instruction : block.instructions) {
+        if (instruction.id == closure->id)
+          changed = &instruction;
+        if (instruction.id == publication->id)
+          returned = &instruction;
+      }
+    expect(changed && returned,
+           "capture mutation retains exact producer and publication");
+    switch (mutation) {
+    case 0:
+      changed->closureCaptureTypes.clear();
+      break;
+    case 1:
+      changed->closureCaptureModes.clear();
+      break;
+    case 2:
+      changed->operands.front().place = decoy->id;
+      break;
+    case 3:
+      changedBody.loans[*changed->loan - 1].source = decoy->id;
+      break;
+    case 4:
+      changedBody.loans[*returned->loan - 1].source = decoy->id;
+      break;
+    case 5:
+      changedBody.loans[*changed->loan - 1].designatedFields.clear();
+      break;
+    case 6:
+      changed->loan.reset();
+      for (auto &value : changedBody.values)
+        value.borrowDependencies.reset();
+      break;
+    case 7:
+      changed->operands.front().kind = MirOperandKind::BorrowRead;
+      changed->operands.front().type.referenceAccess = AccessMode::ReadOnly;
+      break;
+    }
+    expect(rebuildMirValueUses(changedBody),
+           "capture mutation rebuilds exact executable uses");
+    const auto proof = verifyMirProgram(forged);
+    if (proof.valid())
+      std::cerr << "accepted stored closure fact mutation " << mutation << '\n';
+    expect(!proof.valid(), "closure facts cannot manufacture capture identity, "
+                           "access or result suppliers");
+  }
+}
+
+void ownedCallableLifetimeTransport() {
+  const auto root =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto checked =
+      Frontend({.stopAfter = FrontendPhase::Mir})
+          .analyze(root.parent_path() /
+                       "tests/fixtures/owned-callable-lifetime-transport.gti",
+                   R"gti(
+F relay<F>(F callback) { return std::move(callback); }
+int main() {
+  mut int value = 4;
+  mut auto callback = [mut &value]() -> int { value += 1; return value; };
+  mut auto moved = relay(std::move(callback));
+  return moved() - 5;
+}
+)gti",
+                   {root / "prelude.gti"}, {}, {root});
+  expect(checked.canGenerateCode(),
+         "owned callable transport preserves distinct applied lifetime scopes");
+  const MirInstruction *call = nullptr;
+  const MirInstruction *move = nullptr;
+  HirFunctionInstanceId owner = 0;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Call &&
+            instruction.functionTarget &&
+            !instruction.callableArguments.empty()) {
+          expect(!call,
+                 "owned relay fixture has one callable argument invocation");
+          call = &instruction;
+          owner = function.id;
+        }
+  expect(call && call->operands.size() == 1 &&
+             call->operands.front().kind == MirOperandKind::Value,
+         "owned relay consumes one executable closure value");
+  const auto &body = checked.mir.functionInstances()[owner - 1].body;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.result == call->operands.front().value)
+        move = &instruction;
+  expect(move && move->kind == MirInstructionKind::Move && move->ownership,
+         "closure's explicit move owns the by-value input");
+  const auto applied = instantiateMirLifetimeTarget(checked.mir, *call);
+  expect(applied && applied->parameterTypes.size() == 1 &&
+             applied->parameterTypes.front() != call->operands.front().type &&
+             mirLifetimeValueConversion(checked.mir, body, owner,
+                                        call->operands.front().type,
+                                        applied->parameterTypes.front()),
+         "exact caller constraints prove conversion instead of comparing "
+         "declaration region IDs");
+  auto missingBounds = body;
+  missingBounds.lifetimeBody.obligations.clear();
+  expect(!mirLifetimeValueConversion(checked.mir, missingBounds, owner,
+                                     call->operands.front().type,
+                                     applied->parameterTypes.front()),
+         "closure representation equality cannot replace the missing lifetime "
+         "relation");
+  auto staticTarget = applied->parameterTypes.front();
+  expect(!staticTarget.lifetimeArguments.empty(),
+         "callback fixture retains a captured region");
+  const auto originalRegion = staticTarget.lifetimeArguments.front();
+  staticTarget.lifetimeArguments.front() = Lifetime::staticLifetime();
+  for (auto &argument : staticTarget.arguments)
+    if (argument.kind == SemanticType::Reference &&
+        argument.referenceLifetime == originalRegion)
+      argument.referenceLifetime = Lifetime::staticLifetime();
+  expect(!mirLifetimeValueConversion(checked.mir, body, owner,
+                                     call->operands.front().type, staticTarget),
+         "a local captured reference cannot acquire static lifetime through "
+         "owned transport");
+  for (unsigned mutation = 0; mutation != 8; ++mutation) {
+    auto forged = checked.mir;
+    auto &changedBody = MirProgramTestAccess::functions(forged)[owner - 1].body;
+    MirInstruction *changedCall = nullptr;
+    MirInstruction *changedMove = nullptr;
+    for (auto &block : changedBody.blocks)
+      for (auto &instruction : block.instructions) {
+        if (instruction.id == call->id)
+          changedCall = &instruction;
+        if (instruction.id == move->id)
+          changedMove = &instruction;
+      }
+    expect(changedCall && changedMove,
+           "mutation retains the exact callable ownership path");
+    switch (mutation) {
+    case 0:
+      changedCall->lifetimeApplication.complete = false;
+      break;
+    case 1:
+      changedCall->lifetimeApplication.bindings.clear();
+      break;
+    case 2:
+      changedBody.lifetimeBody.obligations.clear();
+      break;
+    case 3:
+      changedMove->ownership.reset();
+      break;
+    case 4:
+      changedMove->ownership->after = OwnershipStateSet::Available;
+      break;
+    case 5:
+      changedCall->callableArguments.clear();
+      break;
+    case 6:
+      changedCall->parameterTypes.front() = SemanticType::Int32;
+      changedCall->operands.front().type = SemanticType::Int32;
+      break;
+    case 7:
+      changedCall->operands.front().kind = MirOperandKind::Copy;
+      changedCall->operands.front().place = changedMove->operands.front().place;
+      changedCall->operands.front().value = 0;
+      break;
+    }
+    expect(rebuildMirValueUses(changedBody),
+           "owned callable mutation rebuilds executable use records");
+    const auto proof = verifyMirProgram(forged);
+    if (proof.valid())
+      std::cerr << "accepted owned callable scope mutation " << mutation
+                << '\n';
+    expect(!proof.valid(), "owned callable conversion cannot erase lifetime, "
+                           "ownership or signature evidence");
+  }
+}
 void lifetimeConvertingObjectInitialization() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
@@ -1716,10 +2127,14 @@ void quantifiedNominalLiftInventory() {
 }
 } // namespace
 int main() {
+  physicalReferenceFieldMappings();
   stagedReferenceContentsMetadata();
   stagedReferenceContentsTransport();
   nestedCarrierPublication();
   erasedCarrierReturnPublication();
+  physicalReferenceInitializerSnapshots();
+  storedCallableClosureFacts();
+  ownedCallableLifetimeTransport();
   lifetimeConvertingObjectInitialization();
   generatedMoveValueRoles();
   generatedRecordCopies();

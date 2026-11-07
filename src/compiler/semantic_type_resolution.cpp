@@ -1162,6 +1162,13 @@ auto SemanticVisitor::Impl::callArgumentMatches(const SemanticType &parameter,
 auto SemanticVisitor::Impl::ephemeralBorrowResultSupported(
     const CallableCandidate &function,
     std::optional<std::size_t> temporaryParameter) const -> bool {
+  return ephemeralBorrowResultSupported(function, temporaryParameter, nullptr);
+}
+
+auto SemanticVisitor::Impl::ephemeralBorrowResultSupported(
+    const CallableCandidate &function,
+    std::optional<std::size_t> temporaryParameter,
+    const FunctionBorrowDependencySummary *completeResult) const -> bool {
   // Untracked addresses never establish a safe escape boundary.
   if (function.returnType.kind == SemanticType::RawPointer ||
       function.returnType.kind == SemanticType::NativeFunction ||
@@ -1175,6 +1182,30 @@ auto SemanticVisitor::Impl::ephemeralBorrowResultSupported(
     return true;
   if (!temporaryParameter)
     return false;
+  if (completeResult) {
+    // This is the exact completed instance query supplied by argument
+    // selection, not a promise inferred from the result's lifetime spelling.
+    // Every alternative's suppliers must exclude this temporary's storage.
+    if (!function.lifetimeApplication.complete ||
+        (function.returnType.kind == SemanticType::Reference &&
+         completeResult->dependencies.empty()))
+      return false;
+    return std::all_of(completeResult->dependencies.begin(),
+                       completeResult->dependencies.end(), [&](const auto &source) {
+      switch (source.origin) {
+      case BorrowOriginKind::Global:
+        return source.globalRoot != 0;
+      case BorrowOriginKind::Receiver:
+        return function.ownerClass != 0 && !function.staticMember;
+      case BorrowOriginKind::Argument:
+        return source.parameter < function.parameterTypes.size() &&
+               source.parameter != *temporaryParameter;
+      case BorrowOriginKind::None:
+        return false;
+      }
+      return false;
+    });
+  }
   if (function.returnBorrowOrigin == BorrowOriginKind::None) {
     const FunctionInfo *declaration = semanticModel.findFunction(function.id);
     if (!declaration && instanceBaseModel)
@@ -1218,12 +1249,19 @@ auto SemanticVisitor::Impl::ephemeralBorrowResultSupported(
 auto SemanticVisitor::Impl::ephemeralBorrowTargetSupported(
     const CallableCandidate &function,
     std::optional<std::size_t> temporaryParameter) const -> bool {
+  return ephemeralBorrowTargetSupported(function, temporaryParameter, nullptr);
+}
+
+auto SemanticVisitor::Impl::ephemeralBorrowTargetSupported(
+    const CallableCandidate &function,
+    std::optional<std::size_t> temporaryParameter,
+    const FunctionBorrowDependencySummary *completeResult) const -> bool {
   if (function.id == 0 || function.declaration == nullptr ||
       function.bodyDeclaration()->body() == nullptr ||
       function.declaration->runtimeBinding() ||
       function.declaration->hasCLinkage() ||
       function.record().intrinsic != IntrinsicKind::None ||
-      !ephemeralBorrowResultSupported(function, temporaryParameter)) {
+      !ephemeralBorrowResultSupported(function, temporaryParameter, completeResult)) {
     return false;
   }
   const FunctionInfo *target = semanticModel.findFunction(function.id);
@@ -1239,6 +1277,15 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
     const CallableCandidate &function, const SemanticType &parameter,
     const SemanticType &argument, const ExprPtr &expression,
     std::size_t parameterIndex) -> bool {
+  return ephemeralTemporaryArgumentMatches(function, parameter, argument,
+                                            expression, parameterIndex, nullptr);
+}
+
+auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
+    const CallableCandidate &function, const SemanticType &parameter,
+    const SemanticType &argument, const ExprPtr &expression,
+    std::size_t parameterIndex,
+    const FunctionBorrowDependencySummary *completeResult) -> bool {
   // Borrowed generic results may transport a moved by-value parameter.
   // Resolve its body before asking the shared return-contract query, just
   // as selected-call publication does, so import and call order cannot
@@ -1251,7 +1298,7 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
     if (target)
       ensureBodyAnalyzed(*target);
   }
-  if (!ephemeralBorrowTargetSupported(function, parameterIndex))
+  if (!ephemeralBorrowTargetSupported(function, parameterIndex, completeResult))
     return false;
   if (temporaryReadBorrowArgumentMatches(parameter, argument, expression))
     return true;
@@ -1328,6 +1375,13 @@ auto SemanticVisitor::Impl::functionCallArgumentMatch(
     const CallableCandidate &function, std::size_t index,
     const SemanticType &argument, const ExprPtr &expression, bool deferred)
     -> CallArgumentMatchKind {
+  return functionCallArgumentMatch(function, index, argument, expression, deferred, nullptr);
+}
+
+auto SemanticVisitor::Impl::functionCallArgumentMatch(
+    const CallableCandidate &function, std::size_t index,
+    const SemanticType &argument, const ExprPtr &expression, bool deferred,
+    const FunctionBorrowDependencySummary *completeResult) -> CallArgumentMatchKind {
   if (index >= function.parameterTypes.size()) {
     return CallArgumentMatchKind::Mismatch;
   }
@@ -1366,7 +1420,7 @@ auto SemanticVisitor::Impl::functionCallArgumentMatch(
       (argument.kind != SemanticType::FunctionItem || itemContract == nullptr ||
        itemContract->boundary == CallableBoundary::Confined) &&
       ephemeralTemporaryArgumentMatches(function, parameter, argument,
-                                        expression, index)) {
+                                        expression, index, completeResult)) {
     return CallArgumentMatchKind::EphemeralReadBorrow;
   }
   if (!deferred &&
@@ -1395,17 +1449,58 @@ auto SemanticVisitor::Impl::contextualIntegerLiteralArgumentFits(
 auto SemanticVisitor::Impl::functionCallArgumentMatch(
     const CallableCandidate &function, std::size_t index,
     const AnalyzedCallArgument &argument) -> CallArgumentMatchKind {
+  return functionCallArgumentMatch(function, index, argument, nullptr);
+}
+
+auto SemanticVisitor::Impl::functionCallArgumentMatch(
+    const CallableCandidate &function, std::size_t index,
+    const AnalyzedCallArgument &argument,
+    const FunctionBorrowDependencySummary *completeResult) -> CallArgumentMatchKind {
   if (!argument.expression || index >= function.parameterTypes.size())
     return CallArgumentMatchKind::Mismatch;
   if (!argument.forwardedPackElement)
     return functionCallArgumentMatch(function, index, argument.type,
-                                      *argument.expression, argument.deferred);
+                                      *argument.expression, argument.deferred, completeResult);
   const auto &parameter = function.parameterTypes[index];
   if (forwardedPackArgumentMatches(parameter, argument.type))
     return CallArgumentMatchKind::Exact;
   const auto adjusted = callLifetimeArgumentType(function, argument.type, parameter);
   return adjusted && forwardedPackArgumentMatches(parameter, *adjusted)
              ? CallArgumentMatchKind::Exact : CallArgumentMatchKind::Mismatch;
+}
+
+auto SemanticVisitor::Impl::completedFunctionCallArgumentMatch(
+    const CallableCandidate &function, std::size_t index,
+    const AnalyzedCallArgument &argument,
+    const std::vector<SemanticType> &typeArguments,
+    const std::vector<CompileTimeValue> &valueArguments, const SourceSpan &site)
+    -> CallArgumentMatchKind {
+  const auto ordinary = functionCallArgumentMatch(function, index, argument);
+  if (ordinary != CallArgumentMatchKind::Mismatch ||
+      !function.lifetimeApplication.complete || argument.forwardedPackElement ||
+      !argument.expression || !*argument.expression ||
+      (argument.deferred && argument.type.kind != SemanticType::FunctionItem) ||
+      index >= function.parameterTypes.size())
+    return ordinary;
+  const auto &parameter = function.parameterTypes[index];
+  if (parameter.kind != SemanticType::Reference ||
+      parameter.referenceAccess != AccessMode::ReadOnly ||
+      parameter.arguments.size() != 1)
+    return ordinary;
+  // Reuse the exact producer query, including context-selected function items
+  // that are not published into expression metadata until overload selection.
+  auto sourceParameter = parameter;
+  sourceParameter.arguments.front() = argument.type;
+  if (!temporaryReadBorrowArgumentMatches(sourceParameter, argument.type,
+                                          *argument.expression))
+    return ordinary;
+  // Demand a body only when ordinary matching could not prove a fresh
+  // reference input nonescaping. The query owns exact generic arguments,
+  // applied regions, all return alternatives and cyclic-query rejection.
+  const auto complete = completeFunctionReturnBorrow(function, typeArguments,
+                                                     valueArguments, site);
+  return complete ? functionCallArgumentMatch(function, index, argument, &*complete)
+                  : ordinary;
 }
 
 auto SemanticVisitor::Impl::adoptContextualIntegerLiteralArgument(
@@ -5446,8 +5541,9 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
   // A checked projected reference result is the resolved referent, not a
   // container for the syntactic projection operands. A callable operand may
   // itself mention reference parameters/results without storing any of them.
-  // The ordinary referent validation above and exact borrowed_from proof
-  // still apply; uncontracted bindings and parameters retain their rules.
+  // The ordinary referent validation above and exact resolved result contract
+  // still apply; body suppliers are proved separately, and uncontracted
+  // bindings and parameters retain their rules.
   const bool projectedReferenceResult =
       contractedReferenceResult && resolved.kind == SemanticType::Reference &&
       !type.reference;

@@ -348,7 +348,9 @@ public:
             // The initializer reads each argument after all of them run, so
             // a class assignment's result is copied at its own commit.
             const HirValue *input = findValue(argument);
-            if (input != nullptr && hasAssignmentResultCopy(*input))
+            if (initializer.storesReference)
+              emitPlaceDependencies(argument);
+            else if (input != nullptr && hasAssignmentResultCopy(*input))
               (void)assignmentResultValue(*input);
             else
               (void)emitValue(argument);
@@ -7491,10 +7493,12 @@ private:
     return true;
   }
 
-  // The one stored reference field path of a class without bases, through
-  // its owned class fields, with that reference's referent type.
+  // The one stored reference field path through owned class fields, with
+  // that reference's referent type. Interface bases contribute no storage;
+  // callers that already permit them may retain that structural policy.
   [[nodiscard]] std::optional<std::pair<BorrowPath, SemanticType>>
-  soleStoredReferencePath(const SemanticType &type) const {
+  soleStoredReferencePath(const SemanticType &type,
+                          bool allowInterfaceBases = false) const {
     std::vector<std::pair<BorrowPath, SemanticType>> paths;
     BorrowPath prefix;
     std::vector<SemanticType> visiting;
@@ -7506,7 +7510,10 @@ private:
         return;
       }
       const auto view = hirLifetimeInstanceView(program.classInstances(), current);
-      if (!view || !view->instance->bases.empty()) {
+      if (!view || view->instance->kind == ClassKind::Union ||
+          view->instance->cAbiRecord ||
+          std::any_of(view->instance->bases.begin(), view->instance->bases.end(),
+                      [&](const auto &base) { return !allowInterfaceBases || !base.interface; })) {
         exact = false;
         return;
       }
@@ -7706,7 +7713,12 @@ private:
         value.info.category != ValueCategory::Value ||
         value.info.type.kind != SemanticType::Class ||
         !value.info.traits.containsBorrowedState ||
-        !value.borrowArguments.empty())
+        (!value.borrowArguments.empty() &&
+         (value.borrowOrigin != BorrowOriginKind::Argument ||
+          value.borrowArguments != std::vector<std::size_t>{value.borrowArgument} ||
+          value.borrowFields.size() != 1 ||
+          !value.borrowFields.front().sourceConditions.empty() ||
+          !value.borrowFields.front().resultConditions.empty())))
       return false;
     const bool receiverResult =
         value.borrowOrigin == BorrowOriginKind::Receiver;
@@ -7736,46 +7748,16 @@ private:
                     value.borrowFields.front().parameter !=
                         value.borrowArgument)))
       return false;
-    // The compact receiver contract represents one stored reference. A
-    // multi-origin carrier instead forwards its existing external dependencies
-    // (for example a subview of two independent buffers), not its own shell.
-    std::vector<SemanticType> visiting;
-    std::optional<SemanticType> reference;
-    const auto references = [&](const auto &self,
-                                const SemanticType &type) -> unsigned {
-      if (type.kind == SemanticType::Reference) {
-        reference = type;
-        return 1;
-      }
-      if (std::find(visiting.begin(), visiting.end(), type) != visiting.end())
-        return 2;
-      const auto owner = std::find_if(
-          program.classInstances().begin(), program.classInstances().end(),
-          [&](const auto &candidate) { return candidate.type == type; });
-      if (owner == program.classInstances().end())
-        return 2;
-      if (owner->kind == ClassKind::Union || owner->cAbiRecord ||
-          std::any_of(owner->bases.begin(), owner->bases.end(),
-                      [](const auto &base) { return !base.interface; }))
-        return 2;
-      visiting.push_back(type);
-      unsigned count = 0;
-      for (const auto &field : owner->fields) {
-        if (field.info.type.kind != SemanticType::Reference &&
-            !field.info.traits.containsBorrowedState)
-          continue;
-        count += self(self, field.info.type);
-        if (count > 1)
-          break;
-      }
-      visiting.pop_back();
-      return count;
-    };
-    return references(references, value.info.type) == 1 &&
-           (receiverResult ||
-            (reference &&
-             reference->arguments ==
-                 value.parameterTypes[value.borrowArgument].arguments));
+    // Both compact and complete single-field mappings can store the input
+    // object's address. Derive that exact result path in its applied owner
+    // view; a multi-supplier or projected input still uses its full contents.
+    const auto path = soleStoredReferencePath(value.info.type, true);
+    if (!path || (!value.borrowFields.empty() &&
+                  value.borrowFields.front().resultFields != path->first))
+      return false;
+    return receiverResult ||
+           (value.parameterTypes[value.borrowArgument].arguments.size() == 1 &&
+            path->second == value.parameterTypes[value.borrowArgument].arguments.front());
   }
 
   // Whether a reference argument names exactly the referent an accessor call
@@ -10296,7 +10278,8 @@ private:
   }
 
   void emitConstruct(const HirValue &value) {
-    if (value.callPlan && value.constructorKind == ConstructorKind::Ordinary) {
+    if (value.constructorKind == ConstructorKind::Ordinary &&
+        (value.callPlan || value.constructorTarget)) {
       // Ordinary constructors own their parameters just like functions.
       // Prepare each argument before evaluating its successor, retain its
       // rollback obligation, then transfer only at the invocation boundary.

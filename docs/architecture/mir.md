@@ -526,6 +526,11 @@ may transfer its exact entry capability. These facts remain separate from SSA
 carrier initialization, are checked against the captured initializer set and
 must be present at every normal exit; stored referent and region conversion
 are independently checked against the callable owner's field recipe.
+Captured initializer and publication records may use distinct place IDs for the
+same typed binding and exact projection. Snapshot comparison permits that
+representation difference only with unambiguous physical identity, retaining
+type, access, parent loan, guards and result path. It never equates an external
+lifetime supplier with the object whose address is stored.
 
 Payload operations instantiate the selected enum's sealed variant recipe with
 its exact actual region bindings. Construction reconstructs each source type
@@ -555,6 +560,12 @@ in caller and constructor-body scope; declaration region IDs are not compared
 across those scopes. Closure cleanup queries use the exact lambda lifetime view.
 When a constructor consumes a carrier, its result retains the external supplier
 permissions without becoming a child of the consumed local carrier group.
+This uses the same call preparation and transfer path for selected ordinary
+constructors with or without a call plan; targetless generated members retain
+their structural copy/move rules. Independent complete-value flow reconstructs
+closure captures from evaluated operands and the exact lambda recipe, prefixing
+captured field paths and enum conditions. Attached capture loans and claimed
+result summaries do not supply their own proof.
 
 Callable lifetime applications retain a universal function signature and fixed
 bindings for its free carrier regions. The trusted function-pointer capability

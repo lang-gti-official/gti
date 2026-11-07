@@ -4769,15 +4769,28 @@ private:
   [[nodiscard]] bool ephemeralBorrowResultSupported(
       const CallableCandidate &function,
       std::optional<std::size_t> temporaryParameter = std::nullopt) const;
+  [[nodiscard]] bool ephemeralBorrowResultSupported(
+      const CallableCandidate &function,
+      std::optional<std::size_t> temporaryParameter,
+      const FunctionBorrowDependencySummary *completeResult) const;
 
   [[nodiscard]] bool ephemeralBorrowTargetSupported(
       const CallableCandidate &function,
       std::optional<std::size_t> temporaryParameter = std::nullopt) const;
+  [[nodiscard]] bool ephemeralBorrowTargetSupported(
+      const CallableCandidate &function,
+      std::optional<std::size_t> temporaryParameter,
+      const FunctionBorrowDependencySummary *completeResult) const;
 
   [[nodiscard]] bool ephemeralTemporaryArgumentMatches(
       const CallableCandidate &function, const SemanticType &parameter,
       const SemanticType &argument, const ExprPtr &expression,
       std::size_t parameterIndex);
+  [[nodiscard]] bool ephemeralTemporaryArgumentMatches(
+      const CallableCandidate &function, const SemanticType &parameter,
+      const SemanticType &argument, const ExprPtr &expression,
+      std::size_t parameterIndex,
+      const FunctionBorrowDependencySummary *completeResult);
 
   [[nodiscard]] bool
   temporaryReadBorrowArgumentMatches(const SemanticType &parameter,
@@ -4790,7 +4803,21 @@ private:
                             const ExprPtr &expression, bool deferred);
   [[nodiscard]] CallArgumentMatchKind
   functionCallArgumentMatch(const CallableCandidate &function,
+                            std::size_t index, const SemanticType &argument,
+                            const ExprPtr &expression, bool deferred,
+                            const FunctionBorrowDependencySummary *completeResult);
+  [[nodiscard]] CallArgumentMatchKind
+  functionCallArgumentMatch(const CallableCandidate &function,
                             std::size_t index, const AnalyzedCallArgument &argument);
+  [[nodiscard]] CallArgumentMatchKind
+  functionCallArgumentMatch(const CallableCandidate &function,
+                            std::size_t index, const AnalyzedCallArgument &argument,
+                            const FunctionBorrowDependencySummary *completeResult);
+  [[nodiscard]] CallArgumentMatchKind completedFunctionCallArgumentMatch(
+      const CallableCandidate &function, std::size_t index,
+      const AnalyzedCallArgument &argument,
+      const std::vector<SemanticType> &typeArguments,
+      const std::vector<CompileTimeValue> &valueArguments, const SourceSpan &site);
 
   void reportCallArgumentMismatch(std::size_t index,
                                   const SemanticType &parameter,

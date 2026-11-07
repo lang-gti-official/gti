@@ -1227,7 +1227,8 @@ auto SemanticVisitor::Impl::analyzeFunctionItemCall(
     const auto &argument = (*arguments)[index];
     const auto &expression = *argument.expression;
     const auto &parameter = selected.parameterTypes[index];
-    const auto match = functionCallArgumentMatch(selected, index, argument);
+    const auto match = completedFunctionCallArgumentMatch(
+        selected, index, argument, typeArguments, valueArguments, tokenSpan(call.paren()));
     const bool matches = match != CallArgumentMatchKind::Mismatch;
     if (match == CallArgumentMatchKind::EphemeralReadBorrow)
       ephemeralBorrowArguments.push_back(index);
@@ -8845,6 +8846,23 @@ auto SemanticVisitor::Impl::recordResolvedCall(
         complete ? instantiateCompleteCallBorrow(call, resolved, *complete,
                                                  &noNormalResult)
                  : std::nullopt;
+    // Materialize a namespace function's sole proved global supplier before
+    // choosing the compact call representation. The concrete executable publishes the same empty
+    // field list plus exact global place; its full dependency set is retained
+    // independently below. An open projected result had no compact origin yet.
+    if (instantiated && function.returnType.kind == SemanticType::Reference &&
+        function.ownerClass == 0 &&
+        resolved.borrowOrigin == BorrowOriginKind::None &&
+        complete->dependencies.size() == 1) {
+      const auto &source = complete->dependencies.front();
+      if (source.origin == BorrowOriginKind::Global && source.globalRoot) {
+        resolved.borrowOrigin = BorrowOriginKind::Global;
+        resolved.borrowArgument = source.parameter;
+        resolved.borrowAccess = source.access;
+        resolved.borrowPlace = BorrowOriginPlace{
+            .root = source.globalRoot, .projections = source.sourceFields};
+      }
+    }
     // Complete dependency metadata represents even a sole whole-reference
     // supplier explicitly. The callable summary retains its canonical compact
     // representation for that case; adapting a call must not turn an empty

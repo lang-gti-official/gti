@@ -4000,13 +4000,34 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   validateOwningPayloadEnumByValueBoundary(
       declaredReturnType, stmt.returnType().name.last(), "function return",
       directOwningPayloadTransport);
+  // A callable-result query is a type recipe, not storage for its operand.
+  // Inspect the resolved declaration recipe before concrete substitution: an
+  // ordinary type parameter (including an alias of it) has no such authority.
+  // Formation only checks the result type here; every return and consuming
+  // publication must still finish the independent complete supplier proof.
+  const bool checkedCallableReferenceResult = [&] {
+    if (!primaryFunctionInfo || !functionInfo ||
+        !functionInfo->lifetimeContract.valid() ||
+        declaredReturnType.kind != SemanticType::Reference)
+      return false;
+    const auto &recipe = primaryFunctionInfo->returnType;
+    if (recipe.kind != SemanticType::Class || !recipe.classId ||
+        recipe.classId > classes.size() || recipe.arguments.size() != 1 ||
+        !recipe.valueArguments.empty() || !recipe.lifetimeArguments.empty() ||
+        classInfo(recipe.classId).compilerType !=
+            CompilerTypeKind::MetaCallableReturnType)
+      return false;
+    return equivalentLifetimeTypes(
+        substituteType(recipe, currentGenericSubstitution()), declaredReturnType);
+  }();
   validateReferencePlacement(
       stmt.returnType(),
       methodDeclaration || intrinsicDeclaration || hasReturnBorrowSummary ||
           isBorrowReturningType(declaredReturnType),
       methodDeclaration ? "method return type" : "function return type", false,
       false,
-      hasReturnBorrowSummary && stmt.hasFunctionAttribute("borrowed_from"));
+      checkedCallableReferenceResult ||
+          (hasReturnBorrowSummary && stmt.hasFunctionAttribute("borrowed_from")));
   if (nestsBorrowedState(declaredReturnType) &&
       !isBorrowedCarrierReference(declaredReturnType)) {
     report(stmt.name(),
@@ -8869,8 +8890,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       std::vector<std::size_t> literalArguments;
       const auto matchedArguments = argumentsFor(argumentAnalysis);
       for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
-        const CallArgumentMatchKind match = functionCallArgumentMatch(
-            resolved, index, matchedArguments[index]);
+        const CallArgumentMatchKind match = completedFunctionCallArgumentMatch(
+            resolved, index, matchedArguments[index], resolvedTypeArguments,
+            resolvedValueArguments, tokenSpan(expr.paren()));
         if (match == CallArgumentMatchKind::EphemeralReadBorrow) {
           ephemeralBorrowArguments.push_back(index);
         } else if (match == CallArgumentMatchKind::ContextualIntegerLiteral) {
@@ -9043,8 +9065,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       const auto matchedArguments = argumentsFor(candidateArguments);
       for (std::size_t index = 0; index < candidateArguments.types.size();
            ++index) {
-        const CallArgumentMatchKind match = functionCallArgumentMatch(
-            resolved, index, matchedArguments[index]);
+        const CallArgumentMatchKind match = completedFunctionCallArgumentMatch(
+            resolved, index, matchedArguments[index], resolvedTypeArguments,
+            resolvedValueArguments, tokenSpan(expr.paren()));
         if (match == CallArgumentMatchKind::Mismatch) {
           const bool copyFailure =
               !matchedArguments[index].forwardedPackElement &&

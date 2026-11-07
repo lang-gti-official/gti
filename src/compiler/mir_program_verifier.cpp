@@ -14718,20 +14718,59 @@ completeReferenceInitializer(const MirProgram &program,
   const auto &captured = publication.initializer->completeBorrow;
   if (!captured || !observed)
     return false;
-  if (!publication.loan->entry) {
-    if (equalCompleteBorrowSets(captured, observed))
+  std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindings;
+  for (const auto &loan : constructor.body.loans)
+    for (const auto binding : loan.carriers)
+      bindings[binding].push_back(loan.id);
+  const auto sameAddress = [&](MirPlaceId left, MirPlaceId right) {
+    if (left == right)
       return true;
-    std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindings;
-    for (const auto &loan : constructor.body.loans)
-      for (const auto binding : loan.carriers)
-        bindings[binding].push_back(loan.id);
+    const auto *a = constructor.body.findPlace(left);
+    const auto *b = constructor.body.findPlace(right);
+    // Address-only evaluation can preserve two records for one formal's
+    // exact subobject, with different source-expression decoration. Do not
+    // generalize this into a stored-owner/address or evaluated-value alias.
+    if (!a || !b || a->root != MirPlaceRootKind::Binding ||
+        b->root != MirPlaceRootKind::Binding || a->binding != b->binding ||
+        a->symbol != b->symbol || a->projections != b->projections ||
+        a->type != b->type || a->access != b->access ||
+        a->foreignStorage != b->foreignStorage)
+      return false;
+    const auto first =
+        canonicalBorrowOrigin(constructor.body, left, bindings, true);
+    const auto second =
+        canonicalBorrowOrigin(constructor.body, right, bindings, true);
+    return !first.ambiguous && !second.ambiguous &&
+           sameCanonicalPlace(first, second);
+  };
+  const auto matches = [&](MirBorrowDependencySet candidate) {
+    for (auto &dependency : candidate.dependencies) {
+      const MirLoanDependency *match = nullptr;
+      for (const auto &actual : observed->dependencies) {
+        auto exact = dependency;
+        exact.source = actual.source;
+        if (exact != actual || !sameAddress(dependency.source, actual.source))
+          continue;
+        if (match)
+          return false;
+        match = &actual;
+      }
+      if (!match)
+        return false;
+      dependency.source = match->source;
+    }
+    return equalCompleteBorrowSets(candidate, observed);
+  };
+  if (!publication.loan->entry) {
+    if (matches(*captured))
+      return true;
     auto published = *captured;
     for (auto &dependency : published.dependencies)
       if (readOnlyFormalReferencePublication(
               constructor.body, constructor.parameterTypes,
               constructor.parameterBindings, bindings, dependency))
         dependency.parent = 0;
-    return equalCompleteBorrowSets(published, observed);
+    return matches(std::move(published));
   }
   const auto &entry = *publication.loan;
   if (captured->dependencies.size() != 1 ||
@@ -14745,9 +14784,8 @@ completeReferenceInitializer(const MirProgram &program,
     return false;
   auto published = *captured;
   published.dependencies.front().parent = 0;
-  return equalCompleteBorrowSets(published, observed);
+  return matches(std::move(published));
 }
-
 // A result-domain view deliberately contains no body-local place or loan IDs.
 // Local facts and declaration-relative summaries share this structural proof;
 // their independent origin/availability proofs remain with their consumers.
@@ -15089,6 +15127,90 @@ constructedCompleteBorrowFact(const MirProgram &program, const MirBody &body,
              : std::nullopt;
 }
 
+// Capture formation is an executable aggregate producer. Reconstruct every
+// captured reference from the operand facts; its attached loan is a claim,
+// never a source of the closure's complete contents.
+[[nodiscard]] CompleteBorrowFact
+constructedClosureBorrowFact(const MirProgram &program, const MirBody &body,
+                             const MirInstruction &instruction,
+                             std::span<const CompleteBorrowFact> inputs) {
+  if (instruction.kind != MirInstructionKind::Compute ||
+      instruction.operation != MirOperation::Closure ||
+      !instruction.lambdaTarget)
+    return std::nullopt;
+  const auto *lambda = program.findLambda(*instruction.lambdaTarget);
+  const auto view = lambda
+                        ? mirLambdaLifetimeView(*lambda, instruction.info.type)
+                        : std::nullopt;
+  if (!lambda || !view || instruction.info.type.kind != SemanticType::Lambda)
+    return std::nullopt;
+  const auto captures = instruction.info.type.lambdaCaptureTypes();
+  if (captures.size() != lambda->captureSymbols.size() ||
+      captures.size() != lambda->captureModes.size() ||
+      captures.size() != inputs.size() ||
+      captures.size() != instruction.operands.size() ||
+      instruction.closureCaptureModes != lambda->captureModes ||
+      instruction.closureCaptureTypes !=
+          std::vector<SemanticType>(captures.begin(), captures.end()))
+    return std::nullopt;
+  MirBorrowDependencySet result;
+  for (std::size_t index = 0; index < captures.size(); ++index) {
+    const auto &type = captures[index];
+    const auto &operand = instruction.operands[index];
+    const auto mode = lambda->captureModes[index];
+    const auto field = fieldProjection(lambda->captureSymbols[index]);
+    if (!field.field || operand.type != type)
+      return std::nullopt;
+    if (isBorrowingCapture(mode)) {
+      const auto access = mode == LambdaCaptureMode::BorrowMut
+                              ? AccessMode::Mutable
+                              : AccessMode::ReadOnly;
+      if (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
+          type.referenceAccess != access ||
+          (operand.kind != MirOperandKind::Loan &&
+           operand.kind != (access == AccessMode::Mutable
+                                ? MirOperandKind::BorrowWrite
+                                : MirOperandKind::BorrowRead)))
+        return std::nullopt;
+    } else if ((mode == LambdaCaptureMode::Copy &&
+                operand.kind != MirOperandKind::Copy) ||
+               (mode == LambdaCaptureMode::Move &&
+                !movedValueInto(body, operand, instruction.id, index)) ||
+               (mode != LambdaCaptureMode::Copy &&
+                mode != LambdaCaptureMode::Move)) {
+      return std::nullopt;
+    }
+    const auto inventory = completeBorrowResultReferenceInventory(
+        program, type, type.kind == SemanticType::Reference);
+    const auto alternatives =
+        findStoredCarrierAlternativeInventory(program, type);
+    if (!inventory || (!isBorrowingCapture(mode) && !alternatives))
+      return std::nullopt;
+    if (inventory->empty() && alternatives && alternatives->empty())
+      continue;
+    if (!inputs[index] ||
+        !completeBorrowSetHasTypedShape(program, type, *inputs[index]))
+      return std::nullopt;
+    for (auto dependency : inputs[index]->dependencies) {
+      dependency.designatedFields.insert(dependency.designatedFields.begin(),
+                                         field);
+      for (auto &condition : dependency.conditions)
+        condition.subobject.insert(condition.subobject.begin(), field);
+      result.dependencies.push_back(std::move(dependency));
+    }
+    for (auto alternative : inputs[index]->possibleAlternatives) {
+      for (auto &condition : alternative.conditions)
+        condition.subobject.insert(condition.subobject.begin(), field);
+      if (std::find(result.possibleAlternatives.begin(),
+                    result.possibleAlternatives.end(),
+                    alternative) == result.possibleAlternatives.end())
+        result.possibleAlternatives.push_back(std::move(alternative));
+    }
+  }
+  return completeBorrowSetHasTypedShape(program, instruction.info.type, result)
+             ? std::optional{std::move(result)}
+             : std::nullopt;
+}
 struct CompleteBorrowReturnFact {
   MirBlockId block = 0;
   CompleteBorrowFact dependencies;
@@ -16697,6 +16819,12 @@ completeBorrowSourcePath(const MirProgram &program,
       // value-annotation verifier. Establish the typed producer independently.
       const auto inputs = payloadInputs(state, instruction);
       result = constructedCompleteBorrowFact(program, body, instruction, inputs);
+    } else if (instruction.kind == MirInstructionKind::Compute &&
+               instruction.operation == MirOperation::Closure) {
+      std::vector<Fact> captures;
+      for (const auto &operand : instruction.operands)
+        captures.push_back(fromOperand(state, operand));
+      result = constructedClosureBorrowFact(program, body, instruction, captures);
     } else if (const auto copy = generatedCopySource(program, body, instruction)) {
       // Generated same-type copy reads the actual object's complete contents.
       // Its physical reference capability is not a new owner for those fields.

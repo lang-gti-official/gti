@@ -436,6 +436,17 @@ path alone does not identify the object's address. Ordinary untracked shared
 parameters retain their exact checked parameter place; missing local or exclusive
 loans cannot use that fallback. Projected contents still require the complete
 typed inventory, and the ordinary region, access and cleanup checks remain.
+An owned local object's physical reference has no artificial parent in the
+object's external Stored group. Its checked place and availability protect the
+object itself; borrowing through an existing Reference retains that reference's
+actual capability parent. Lowering evaluates a reference initializer's address
+dependencies without materializing an unused copy of its referent. A complete
+single-field result mapping may retain that physical input parent while keeping
+the result's own Stored field domain separate from the input's contents group.
+The exact argument stage, target mapping and independent constructor/result
+publication proofs remain required. Constructor snapshots that use different
+place IDs for the same checked address and deeper reference-to-record lowering
+remain integration prerequisites; this does not open transitive contents.
 Conditional nominal wrappers publish each initialized field's exact paths and
 alternative domains, including fields nested through other ordinary records.
 The shared coverage check requires a selected alternative for every active

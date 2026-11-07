@@ -3118,6 +3118,38 @@ int main() { return 0; }
 )gti");
   expect(exclusive.syntaxValid && !exclusive.semanticValid,
          "physical initializer selection cannot upgrade a shared reference to exclusive access");
+  const std::string localRecord = R"gti(
+import std.memory;
+struct View<lifetime data> {
+  int&<data> external; mut int local = 1;
+  View(int&<data> source) : external(source) {}
+};
+struct Reference<T, lifetime shell> {
+  T&<shell> value;
+  Reference(T&<shell> source) : value(source) {}
+};
+void consume<T>(T input) {}
+)gti";
+  for (const auto operation : {
+           "auto moved = std::move(view);",
+           "consume(std::move(view));",
+           "view.local = 9;"}) {
+    const auto invalid = check(localRecord +
+        "int main(){int data=4;mut View view{data};Reference reference{view};" +
+        operation + "return reference.value.local;}");
+    expect(invalid.syntaxValid && !invalid.semanticValid,
+           "an independent physical object borrow still prevents move, consumption and mutation while its wrapper is used");
+  }
+  const auto reassigned = check(declarations + R"gti(
+int main() {
+  mut std::string_view text = "word";
+  ViewRef reference{text};
+  text = "other";
+  return reference.value.size();
+}
+)gti");
+  expect(reassigned.syntaxValid && !reassigned.semanticValid,
+         "separating physical and contents parents does not permit reassignment of the borrowed object");
 }
 
 void testOwnedCallableAppliedRegions() {
@@ -3251,6 +3283,87 @@ int main() {
            {"int main() { int local = 7; auto copy = duplicate(referenceIdentity); int&<static> invalid = copy(local); return invalid; }",
             "copied invocation quantifiers cannot become a fixed static result"}}) {
     const auto invalid = callable(declarations + source);
+    expect(invalid.syntaxValid && !invalid.semanticValid, reason);
+  }
+}
+
+void testCheckedProjectedCallableResults() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto check = [&](std::string source) {
+    return lang::Frontend({.stopAfter = lang::FrontendPhase::Mir,
+                           .lowerReachableOnly = true,
+                           .lowerLibraryReachableOnly = true,
+                           .trustedBodies = lang::TrustedBodyAnalysis::Reachable})
+        .analyze("checked-callable-result.gti", std::move(source),
+                 {root / "prelude.gti"}, {}, {root});
+  };
+  const std::string declarations = R"(
+import std.meta;
+int stored = 7;
+int&<static> map(int ignored) { return stored; }
+)";
+  const std::string projected = "std::meta::callable_return_type<F> run<F>(F& mapper)";
+  for (const auto &[definition, invocation] :
+       std::vector<std::pair<std::string, std::string>>{
+           {projected + " { return mapper(1); }", "run(fn)"},
+           {projected + " { return mapper(1); }", "run(map)"},
+           {"using Result<F> = std::meta::callable_return_type<F>; "
+            "Result<F> run<F>(F& mapper) { return mapper(1); }", "run(map)"},
+           {"struct Worker { Worker() = default; " + projected +
+                " && { return mapper(1); } };", "Worker().run(map)"},
+           {projected + " { return mapper(1); } int run(bool other) { return 0; }",
+            "run(map)"}}) {
+    const auto valid = check(declarations + definition +
+        " int main() { auto fn = map; int&<static> result = " + invocation +
+        "; return result - 7; }");
+    expectValid(valid, "a resolved callable result recipe forms its exact checked reference result");
+    expect(valid.hirValid && valid.mirValid,
+           "named, fresh, aliased, overloaded and consuming projected results retain exact executable contracts");
+    bool checked = false;
+    for (const auto &instance : valid.hir.functionInstances()) {
+      if (!instance.source || instance.source->name().lexeme != "run" ||
+          instance.typeArguments.empty())
+        continue;
+      checked = instance.returnType.kind == lang::SemanticType::Reference &&
+          instance.returnType.referenceLifetime == lang::Lifetime::staticLifetime() &&
+          instance.lifetimeContract.valid() && instance.completeReturnBorrow &&
+          instance.completeReturnBorrow->dependencies.size() == 1 &&
+          instance.completeReturnBorrow->dependencies.front().origin == lang::BorrowOriginKind::Global &&
+          instance.completeReturnBorrow->dependencies.front().globalRoot != 0 &&
+          instance.returnBorrowOrigin == lang::BorrowOriginKind::Global &&
+          instance.returnBorrowPlace &&
+          (instance.owner ? instance.returnBorrowFields == instance.completeReturnBorrow->dependencies
+                          : instance.returnBorrowFields.empty()) &&
+          instance.returnBorrowPlace->root ==
+              instance.completeReturnBorrow->dependencies.front().globalRoot;
+    }
+    expect(checked, "complete body proof owns the exact global supplier independently of the projected static result");
+  }
+  for (const auto &[source, reason] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"T wrong<T>() { return stored; } int main() { int&<static> result = wrong<int&<static>>(); return result; }",
+            "an ordinary generic parameter cannot acquire a hidden reference result"},
+           {"using Identity<T> = T; Identity<T> wrong<T>() { return stored; } int main() { int&<static> result = wrong<int&<static>>(); return result; }",
+            "an ordinary generic parameter alias cannot impersonate a callable result projection"},
+           {projected + " { int local = 7; return local; } int main() { auto fn = map; int&<static> result = run(fn); return result; }",
+            "a projected static result cannot publish local storage"},
+           {"struct Worker { int value; Worker(int input) : value(input) {} " + projected +
+                " && { return this.value; } }; int main() { auto fn = map; int&<static> result = Worker(7).run(fn); return result; }",
+            "a projected result cannot publish a consumed receiver field"},
+           {projected + " { return mapper(1); } int main() { mut int&<static> result = run(map); return result; }",
+            "a projected readonly reference cannot become mutable"},
+           {projected + "; int main() { int&<static> result = run(map); return result; }",
+            "a bodyless projected result supplies no nonescaping temporary proof"},
+           {"int&<a> tied<F, lifetime a>(F&<a> mapper) { return stored; } int main() { int&<static> result = tied(map); return result; }",
+            "a global body supplier cannot strengthen an explicit result lifetime tied to a temporary input"},
+           {"int& tied<F>(F& mapper) { return stored; } int main() { int&<static> result = tied(map); return result; }",
+            "a global body supplier cannot strengthen an elided result lifetime tied to a temporary input"},
+           {"F& expose<F>(F& mapper) { return mapper; } int main() { expose(map); return 0; }",
+            "a complete result tied to the fresh callable shell remains rejected"},
+           {"int* address(int ignored) { unsafe { return &stored; } } " + projected +
+                " { return mapper(1); } int main() { run(address); return 0; }",
+            "an untracked raw result cannot authorize a fresh callable reference input"}}) {
+    const auto invalid = check(declarations + source);
     expect(invalid.syntaxValid && !invalid.semanticValid, reason);
   }
 }
@@ -4712,6 +4825,7 @@ int main() {
   testOwnedCallableAppliedRegions();
   testDependentCallableUseEvidence();
   testStatelessItemTemporaryBorrow();
+  testCheckedProjectedCallableResults();
   testFreshCallableLifetimeArguments();
   testReferencePackReborrows();
   testSymbolicCallablePackReturns();
