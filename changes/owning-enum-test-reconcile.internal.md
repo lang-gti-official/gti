@@ -1,0 +1,1 @@
+Reconcile two tests with owning-enum packs (#301) and owning-enum arrays (#305): the backend test now expects an owning-enum pack argument to compile, and the case-jobs harness test stubs the new enum-array cases like the harness's other compiler calls.
