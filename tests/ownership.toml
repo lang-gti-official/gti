@@ -624,6 +624,7 @@ consumers = [
   "llvm_coverage_evidence",
   "llvm_scalar_execution",
   "llvm_class_execution",
+  "llvm_dispatch_plans",
   "language_coverage_corpus",
 ]
 

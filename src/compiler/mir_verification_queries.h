@@ -215,6 +215,14 @@ generatedUniqueConstruction(const MirInstruction &instruction);
 [[nodiscard]] bool
 generatedDefaultConstruction(const MirInstruction &instruction);
 
+// Structural same-type copy has no selected constructor body. This proves
+// only the exact instruction and identity field-map shape; program checks
+// independently prove the generated policy, typed field inventory and source
+// contents. A lifetime supplier is not an executable source address.
+[[nodiscard]] bool
+generatedCopyConstruction(const MirInstruction &instruction);
+
+
 // A passive union's one-input first-field initialization is independent of
 // generated default construction. Prove its exact concrete owner, overlapping
 // field layout, first field type and neutral construction metadata. This does

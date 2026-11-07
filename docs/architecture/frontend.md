@@ -541,6 +541,16 @@ and imported invocation choices exact. Declaration refresh restores the owning
 pattern context; concrete reconstruction still must resolve elision and prove
 nominal formation before publication.
 
+Structural default construction keeps those nested invocation scopes closed.
+After exact owner substitution, a projected declaration formal captured only
+inside a closed callable is removed from the constructor parameter inventory
+only when no free use remains in its types, contract, requirements or existing
+application facts. Unknown substitution results and exhausted type walks do
+not establish that absence. This prevents an unused projected name from
+inventing a constructor invocation argument, while retaining all actual
+formation obligations and fixed owner choices. MIR continues to reject a
+targetless structural construction carrying invocation application facts.
+
 Native function-pointer signatures use this same invocation scope. Elided
 regions in their inputs become invocation quantifiers, rather than stored
 borrows of the pointer value. GTI target adaptation records the requested

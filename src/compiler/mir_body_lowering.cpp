@@ -5674,6 +5674,36 @@ private:
         return valueOperand(id);
       }
       const MirPlaceId place = placeForValue(id);
+      if (value->info.type.kind == SemanticType::Class &&
+          value->info.traits.copyable && value->info.traits.containsBorrowedState &&
+          value->borrowDependencies && retainedInitializerLoans.contains(id)) {
+        HirValue copied = *value;
+        copied.kind = HirValueKind::DirectInitializer;
+        copied.info.category = ValueCategory::Value;
+        copied.constructorKind = ConstructorKind::Copy;
+        copied.constructorTarget.reset();
+        copied.functionTarget.reset();
+        copied.callPlan.reset();
+        copied.operands = {id};
+        copied.parameterTypes = {SemanticType::referenceTo(value->info.type)};
+        copied.borrowOrigin = BorrowOriginKind::Argument;
+        copied.borrowArgument = 0;
+        copied.borrowArguments.clear();
+        copied.borrowFields.clear();
+        for (const auto &dependency : value->borrowDependencies->dependencies)
+          copied.borrowFields.push_back({
+              .resultFields = dependency.designatedFields,
+              .origin = BorrowOriginKind::Argument, .parameter = 0,
+              .sourceFields = dependency.designatedFields,
+              .access = dependency.access,
+              .resultConditions = dependency.conditions,
+              .sourceConditions = dependency.conditions});
+        copied.borrowAccess = AccessMode::ReadOnly;
+        emitConstruct(copied);
+        emittedValues.insert(id);
+        return {.kind = MirOperandKind::Value,
+                .value = mirValueFor(copied), .type = copied.info.type};
+      }
       (void)appendInstruction({.kind = MirInstructionKind::Load,
                                .hirValue = value->id,
                                .result = resultFor(*value),
@@ -10519,6 +10549,24 @@ private:
             transferredLoan->designatedFields;
         output.loans[loan - 1].additionalDependencies =
             transferredLoan->additionalDependencies;
+      }
+      if (value.constructorKind == ConstructorKind::Copy &&
+          value.borrowDependencies && !value.borrowDependencies->dependencies.empty()) {
+        std::vector<MirLoanDependency> complete;
+        for (const auto &dependency : value.borrowDependencies->dependencies) {
+          const auto lowered = lowerCompleteBorrowDependency(dependency);
+          if (!lowered) { valid = false; return; }
+          complete.push_back(*lowered);
+        }
+        const auto &first = complete.front();
+        auto &published = output.loans[loan - 1];
+        published.source = first.source;
+        published.parent = first.parent;
+        published.storedDependency = 0;
+        published.access = first.access;
+        published.designatedFields = first.designatedFields;
+        published.conditions = first.conditions;
+        published.additionalDependencies.assign(complete.begin()+1,complete.end());
       }
       construct.loan = loan;
       valueLoans.insert_or_assign(value.id, loan);

@@ -30,6 +30,70 @@ MirInstruction *firstLifetimeCall(MirBody &body) {
         return &instruction;
   return nullptr;
 }
+void checkClosedProjectedDefaultContract() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "closed-projected-default.gti", R"gti(
+class Projected<R&<result>(R&<result>)> { public: Projected() = default; };
+using Selection = for<lifetime a> int&<a>(int&<a>);
+int main() { Projected<Selection> value{}; return 0; }
+)gti");
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(), "closed projected default construction has no invocation application");
+  bool examined = false;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Construct || instruction.constructorTarget ||
+            instruction.info.type.arguments.size() != 1 ||
+            instruction.info.type.arguments.front().quantifiedLifetimes.empty())
+          continue;
+        examined = true;
+        expect(instruction.lifetimeApplication.bindings.empty() &&
+                   instruction.lifetimeApplication.variables.empty() &&
+                   instruction.lifetimeApplication.obligations.empty() &&
+                   instruction.lifetimeApplication.typeObligations.empty(),
+               "a nested invocation binder remains in its owner signature rather than becoming a constructor argument");
+        for (unsigned mutation = 0; mutation < 7; ++mutation) {
+          auto forged = checked.mir;
+          auto *owner = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+          auto *construct = const_cast<MirInstruction *>(mir_detail::definitionFor(owner->body, *instruction.result));
+          expect(construct != nullptr, "closed default mutation retains its exact producer");
+          auto &application = construct->lifetimeApplication;
+          const auto variable = Lifetime::inference(900001);
+          if (mutation == 0) {
+            application.bindings.push_back({Lifetime::parameter(900002), variable});
+            application.variables.push_back(variable);
+            owner->body.lifetimeBody.variables.push_back(variable);
+          } else if (mutation == 1) {
+            application.variables.push_back(variable);
+            owner->body.lifetimeBody.variables.push_back(variable);
+          } else if (mutation == 2) {
+            application.obligations.push_back({Lifetime::staticLifetime(), Lifetime::staticLifetime()});
+          } else if (mutation == 3) {
+            application.typeObligations.push_back({SemanticType::Int32, Lifetime::staticLifetime()});
+          } else {
+            auto &signature = construct->info.type.arguments.front();
+            if (mutation == 4)
+              signature.quantifiedLifetimes.clear();
+            if (mutation == 5) {
+              signature.quantifiedLifetimes.clear();
+              signature.arguments[0].referenceLifetime = Lifetime::staticLifetime();
+              signature.arguments[1].referenceLifetime = Lifetime::staticLifetime();
+            }
+            if (mutation == 6) {
+              signature.quantifiedLifetimes.push_back(900003);
+              signature.arguments[1].referenceLifetime = Lifetime::parameter(900003);
+            }
+            owner->body.values[*construct->result - 1].info = construct->info;
+          }
+          expect(!verifyMirProgram(forged).valid(),
+                 "targetless defaults reject invented application facts, opened/fixed scopes and broken binder correlations");
+        }
+      }
+  expect(examined, "the closed projected default reaches an independently verified structural Construct");
+}
 void checkReferenceContentsOpeningShape() {
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "reference-contents-shape.gti", R"gti(
@@ -2795,9 +2859,9 @@ struct ReferenceHolder<T, lifetime a> {
   int touch() { return 0; }
 };
 int inspect<lifetime a, lifetime b>(View<a>&<b> input) {
-  Phantom<View<a>> phantom{};
-  ReferenceHolder<View<a>, b> external{input};
-  return phantom.touch() + external.touch();
+  Phantom<View<a>>* phantom = nullptr;
+  ReferenceHolder<View<a>, b>* external = nullptr;
+  return 0;
 }
 int main() { int value = 7; View view{value}; return inspect(view); }
 )gti");
@@ -2807,28 +2871,43 @@ int main() { int value = 7; View view{value}; return inspect(view); }
     expect(false, "local storage-bound controls must reach independently checked MIR");
   }
   bool checkedPhantom = false, checkedExternal = false;
-  for (const auto &function : frontend.mir.functionInstances()) {
-    for (const auto &origin : function.body.lifetimeBody.origins) {
-      const auto *place = function.body.findPlace(origin.place);
-      if (!place || place->type.kind != SemanticType::Class ||
-          place->type.arguments.size() != 1) continue;
-      const auto *declaration = frontend.semantics.findClassType(place->type.classId);
-      if (!declaration || (declaration->qualifiedName != "Phantom" &&
-                           declaration->qualifiedName != "ReferenceHolder")) continue;
-      auto forged = function.body;
-      forged.lifetimeBody.typeObligations.push_back({place->type.arguments.front(), origin.region});
-      expect(!verifyMirLifetimeBodyFacts(frontend.mir, forged,
-                  function.lifetimeContract, function.id).valid(),
-             "a local object cannot prove a phantom argument or an external reference target outlives its shell");
-      if (declaration->qualifiedName == "Phantom") checkedPhantom = true;
-      else {
-        checkedExternal = true;
-        forged = function.body;
-        forged.lifetimeBody.typeObligations.push_back({place->type, Lifetime::staticLifetime()});
-        expect(!verifyMirLifetimeBodyFacts(frontend.mir, forged,
-                    function.lifetimeContract, function.id).valid(),
-               "local inline storage facts cannot be retagged as a static lifetime guarantee");
-      }
+  // The catalog is source-checked, but these are independent local type-fact
+  // queries. Avoid depending on constructing or borrowing either wrapper.
+  for (const auto &instance : frontend.mir.classInstances()) {
+    const auto &type = instance.type;
+    if (type.arguments.size() != 1) continue;
+    const auto *declaration = frontend.semantics.findClassType(type.classId);
+    if (!declaration || (declaration->qualifiedName != "Phantom" &&
+                         declaration->qualifiedName != "ReferenceHolder")) continue;
+    MirBody local;
+    local.placeDomain = {1, 2, 0};
+    local.lifetimeBody.complete = true;
+    MirPlace place;
+    place.id = 1;
+    place.root = MirPlaceRootKind::Binding;
+    place.binding = 1;
+    place.type = type;
+    place.key = PlaceKey{.domain = local.placeDomain, .root = 1};
+    local.places.push_back(place);
+    local.lifetimeBody.origins.push_back(
+        {.region = Lifetime::local(1), .place = 1, .key = *place.key});
+    LifetimeSignatureContract scope{.complete = true};
+    for (const auto region : freeTypeLifetimes(type)) {
+      expect(region.kind == Lifetime::Kind::Parameter,
+             "the source-checked local inventory retains a canonical region scope");
+      scope.parameters.push_back(region);
+    }
+    expect(verifyMirLifetimeBodyFacts(frontend.mir, local, scope).valid(),
+           "an exact mapped origin of the source-checked wrapper is independently valid");
+    local.lifetimeBody.typeObligations.push_back({type.arguments.front(), Lifetime::local(1)});
+    expect(!verifyMirLifetimeBodyFacts(frontend.mir, local, scope).valid(),
+           "a local object cannot prove a phantom argument or an external reference target outlives its shell");
+    if (declaration->qualifiedName == "Phantom") checkedPhantom = true;
+    else {
+      checkedExternal = true;
+      local.lifetimeBody.typeObligations = {{type, Lifetime::staticLifetime()}};
+      expect(!verifyMirLifetimeBodyFacts(frontend.mir, local, scope).valid(),
+             "local inline storage facts cannot be retagged as a static lifetime guarantee");
     }
   }
   expect(checkedPhantom && checkedExternal,
@@ -3901,6 +3980,7 @@ int main() {
              failure->primary.end == targetOffset + std::string("constrained").size() &&
              failure->fixes.empty(),
          "an invocation pointer cannot discard a target outlives requirement or invent a repair");
+  checkClosedProjectedDefaultContract();
   checkReferenceContentsOpeningShape();
   checkReferenceReceiverProducer();
   checkLocalInlineStorageBounds();

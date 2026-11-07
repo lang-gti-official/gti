@@ -54,9 +54,14 @@ llvm::Value *projectBase(Session &session, llvm::IRBuilder<> &ir,
                          llvm::Value *receiver, SemanticType source,
                          const BaseSubobjectLayout &path) {
   for (const auto index : path.indices) {
+    const auto &base = session.layouts().instance(source).bases.at(index);
+    const HirClassInstanceId identity[] = {base.instance};
+    const auto actual = session.layouts().basePath(source, identity);
+    if (actual.indices.size() != 1 || actual.indices.front() != index)
+      throw std::logic_error("LLVM receiver projection changed its exact base index");
     receiver = ir.CreateStructGEP(session.layouts().get(source).storage,
                                   receiver, index);
-    source = session.layouts().instance(source).bases.at(index).type;
+    source = actual.type;
   }
   if (source != path.type)
     throw std::logic_error("LLVM receiver projection lost its physical owner");
@@ -336,7 +341,10 @@ void Dispatch::preflightState(HirClassInstanceId activeClass) {
     if (!llvm::isUIntN(indexBits - 1, physical.offset))
       throw BackendUnsupportedError(
           "LLVM dispatch owner offset exceeds its target address-index range");
-    if (!owner || view.activeClass != activeClass || path.type != owner->type ||
+    const auto actual = classHierarchyPathView(session.program().mir(), activeClass,
+                                               active.type, view.path);
+    if (!owner || !actual || actual->instance != owner ||
+        view.activeClass != activeClass || path.type != actual->type ||
         path.offset != view.offset || physical != view.location.owner)
       throw std::logic_error(
           "LLVM dispatch state lost its exact physical view path");
@@ -582,18 +590,10 @@ void Dispatch::install(llvm::IRBuilder<> &ir, llvm::Value *completeObject,
   for (const auto &[key, entry] : selected) {
     (void)key;
     const auto &[location, table] = entry;
-    auto type = active->type;
-    auto *address = completeObject;
-    for (const auto index : location.owner.indices) {
-      address = ir.CreateStructGEP(session.layouts().get(type).storage, address,
-                                   index);
-      type = session.layouts().instance(type).bases.at(index).type;
-    }
-    if (type != location.owner.type)
-      throw std::logic_error(
-          "LLVM dispatch installation lost its physical owner");
-    address = ir.CreateStructGEP(session.layouts().get(type).storage, address,
-                                 location.index);
+    auto *address = projectBase(session, ir, completeObject, active->type,
+                                location.owner);
+    address = ir.CreateStructGEP(session.layouts().get(location.owner.type).storage,
+                                 address, location.index);
     ir.CreateStore(table, address);
   }
 }

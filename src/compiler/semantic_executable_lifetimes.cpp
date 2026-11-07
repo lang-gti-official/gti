@@ -25,6 +25,65 @@ void appendExecutableRegionShape(const SemanticType &type,
     region(value);
   lifetime_detail::children(type, [&](const auto &child) { appendExecutableRegionShape(child, result, bound); });
 }
+
+bool hasFreeExecutableLifetime(const SemanticExecutableInstantiation &instance,
+                               Lifetime region) {
+  const auto typeUses = [&](const SemanticType &type) {
+    // Failed scoped substitution is unknown, never evidence that the captured
+    // region disappeared. A finite typed walk must prove this role resolved.
+    std::size_t work = 0;
+    const auto unknown = [&](auto &&self, const SemanticType &value, std::size_t depth) -> bool {
+      if (++work > 4096 || depth >= 256 || value == SemanticType::Unknown)
+        return true;
+      bool unresolved = false;
+      lifetime_detail::children(value, [&](const auto &child) {
+        unresolved = unresolved || self(self, child, depth + 1);
+      });
+      return unresolved;
+    };
+    if (unknown(unknown, type, 0))
+      return true;
+    const auto free = freeTypeLifetimes(type);
+    return std::find(free.begin(), free.end(), region) != free.end();
+  };
+  const auto typesUse = [&](const auto &types) {
+    return std::any_of(types.begin(), types.end(), typeUses);
+  };
+  const auto boundUses = [&](LifetimeBound bound) {
+    return bound.longer == region || bound.shorter == region;
+  };
+  const auto typeBoundUses = [&](const LifetimeTypeBound &bound) {
+    return bound.region == region || typeUses(bound.type);
+  };
+  const auto &contract = instance.lifetimeContract;
+  if (typeUses(instance.ownerType) || typeUses(instance.returnType) ||
+      typesUse(instance.classTypes) || typesUse(instance.types) ||
+      typesUse(instance.parameterTypes) || contract.receiver == region ||
+      std::any_of(contract.bounds.begin(), contract.bounds.end(), boundUses) ||
+      std::any_of(contract.typeBounds.begin(), contract.typeBounds.end(), typeBoundUses) ||
+      std::any_of(contract.requirements.nodes.begin(), contract.requirements.nodes.end(),
+                  [&](const auto &node) {
+                    return boundUses(node.bound) ||
+                        (node.kind == LifetimeRequirementNode::Kind::Type && typeUses(node.type));
+                  }))
+    return true;
+  for (const auto &requirement : instance.requirements)
+    if (typesUse(requirement.arguments) ||
+        std::find(requirement.lifetimeArguments.begin(), requirement.lifetimeArguments.end(), region) !=
+            requirement.lifetimeArguments.end() ||
+        (requirement.lifetimeBound && boundUses(*requirement.lifetimeBound)) ||
+        (requirement.outlivesType && typeUses(*requirement.outlivesType)))
+      return true;
+  const auto &application = instance.lifetimeApplication;
+  return std::any_of(application.bindings.begin(), application.bindings.end(),
+                    [&](const auto &binding) { return binding.first == region || binding.second == region; }) ||
+      std::find(application.variables.begin(), application.variables.end(), region) != application.variables.end() ||
+      std::any_of(application.obligations.begin(), application.obligations.end(), boundUses) ||
+      std::any_of(application.typeObligations.begin(), application.typeObligations.end(), typeBoundUses) ||
+      std::any_of(application.origins.begin(), application.origins.end(),
+                  [&](const auto &origin) { return origin.region == region; }) ||
+      application.callableSignature.has_value();
+}
 }
 
 auto SemanticVisitor::Impl::importMemberCallableScopes(
@@ -435,8 +494,21 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
               return std::any_of(scope.regionBindings.begin(), scope.regionBindings.end(),
                   [&](const auto &binding) { return binding.first == Lifetime::parameter(parameter.id); });
             });
-        if (scoped && !memberInvocation)
+        if (scoped && !memberInvocation) {
+          if (constructor) {
+            const auto region = Lifetime::parameter(parameter.id);
+            // A structural default keeps the actual callable scope closed.
+            // Its declaration may still list this projected name as a formal,
+            // but it is not a construction invocation parameter. Remove only
+            // that unused formal; a free use or existing application fact
+            // requires proof and must never be silently erased.
+            if (hasFreeExecutableLifetime(result, region))
+              return std::nullopt;
+            auto &parameters = result.lifetimeContract.parameters;
+            parameters.erase(std::remove(parameters.begin(), parameters.end(), region), parameters.end());
+          }
           continue;
+        }
         return std::nullopt;
       }
       projectedRegions.emplace_back(Lifetime::parameter(parameter.id), selected->second);

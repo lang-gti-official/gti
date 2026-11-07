@@ -14,6 +14,43 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "generated_record_copy_owners": """
+mut int retired = 0;
+struct Owner {
+  int value;
+  Owner(int input) : value(input) {}
+  ~Owner() { retired += value; }
+};
+struct View<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  View(int&<a> x, int&<b> y) : first(x), second(y) {}
+  ~View() = default;
+};
+int typed<lifetime a, lifetime b>(View<a,b>& input) {
+  View<a,b> copied = input; return copied.first + copied.second;
+}
+int inferred<lifetime a, lifetime b>(View<a,b>& input) {
+  auto copied = input; return copied.first + copied.second;
+}
+int braced<lifetime a, lifetime b>(View<a,b>& input) {
+  View<a,b> copied{input}; return copied.first + copied.second;
+}
+int called<lifetime a, lifetime b>(View<a,b>& input) {
+  auto copied = View<a,b>(input); return copied.first + copied.second;
+}
+int main() {
+  {
+    Owner x{2}; Owner y{5};
+    View source{x.value,y.value};
+    if (typed(source) != 7 || retired != 0) { return 1; }
+    if (inferred(source) != 7 || retired != 0) { return 2; }
+    if (braced(source) != 7 || retired != 0) { return 3; }
+    if (called(source) != 7 || retired != 0) { return 4; }
+  }
+  return retired - 7;
+}
+""",
     "anonymous_typed_destination": "struct View { int& value; View(int& input):value(input){} }; int main(){int input=7;View original{input};View copied{original};View moved{std::move(original)};auto called=View(copied);return copied.value+moved.value+called.value-21;}",
     "anonymous_policy_destination": "struct View<T> { T& value; View(T& input):value(input){} View(View<T>&)=default; View(View<T>&&)=default; }; int main(){int input=7;View<int> original{input};View<int> copied{original};View<int> moved{std::move(original)};auto called=View<int>(copied);return copied.value+moved.value+called.value-21;}",
     "anonymous_repeated_destination": "struct Pair<lifetime a,lifetime b>{int&<a> first;int&<b> second;Pair(int&<a>x,int&<b>y):first(x),second(y){}}; using Equal<lifetime a> = Pair<a,a>; int read<lifetime a>(int&<a> input){Pair<a,a> source{input,input};Equal copy{source};return copy.first+copy.second;}int main(){int input=7;return read(input)-14;}",

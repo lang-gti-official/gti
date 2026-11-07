@@ -104,6 +104,9 @@ findStoredCarrierAlternativeInventory(const MirProgram &program,
 findStoredCarrierReferences(const MirProgram &program,
                             const SemanticType &type);
 
+[[nodiscard]] bool exactGeneratedCopyConstruction(
+    const MirProgram &program, const MirInstruction &instruction);
+
 [[nodiscard]] bool
 exactRestoredBorrowFields(const MirProgram &program, const SemanticType &type,
                           const std::vector<RestoredBorrowField> &fields) {
@@ -4389,6 +4392,14 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                     "policy",
               block.id, instruction.id);
       }
+      if (instruction.kind == MirInstructionKind::Construct &&
+          !instruction.constructorTarget &&
+          instruction.constructorKind == ConstructorKind::Copy &&
+          !instruction.borrowFields.empty() &&
+          !exactGeneratedCopyConstruction(program, instruction))
+        return verificationFailure(body, owner,
+            "generated copy lacks its exact policy and identity field mapping",
+            block.id, instruction.id);
       std::optional<std::size_t> inPlaceArgumentOffset;
       SemanticType::Kind inPlaceStorageKind = SemanticType::Unknown;
       if (instruction.kind == MirInstructionKind::Call) {
@@ -6301,6 +6312,90 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
 // An entry's carrier list records lifetime users, not evidence that those
 // users received its references. Prove each local publication independently
 // before accepting value copies of a receiver/reference-formal carrier.
+[[nodiscard]] bool exactGeneratedCopyConstruction(
+    const MirProgram &program, const MirInstruction &instruction) {
+  if (!mir_detail::generatedCopyConstruction(instruction))
+    return false;
+  const auto owner = mirClassLifetimeView(program, instruction.info.type);
+  if (!owner || owner->instance->copyConstructor != SpecialMemberStatus::Generated ||
+      !owner->instance->traits.copyable)
+    return false;
+  const auto paths = findStoredCarrierReferenceInventory(program, instruction.info.type);
+  if (!paths)
+    return false;
+  // Compact copies may have no field mapping. When one is published, every
+  // declared reference path must be copied unchanged, including its guard.
+  if (instruction.borrowFields.empty())
+    return true;
+  std::vector<BorrowedFieldOrigin> expected;
+  for (const auto &path : *paths)
+    expected.push_back({.resultFields = path.fields,
+                        .origin = BorrowOriginKind::Argument,
+                        .parameter = 0,
+                        .sourceFields = path.fields,
+                        .access = path.reference.referenceAccess,
+                        .resultConditions = path.conditions,
+                        .sourceConditions = path.conditions});
+  return instruction.borrowFields == expected;
+}
+
+struct GeneratedCopySource {
+  MirPlaceId contents = 0;
+  MirPlace value;
+};
+
+[[nodiscard]] std::optional<GeneratedCopySource> generatedCopySource(
+    const MirProgram &program, const MirBody &body,
+    const MirInstruction &instruction) {
+  if (!exactGeneratedCopyConstruction(program, instruction))
+    return std::nullopt;
+  const auto &input = instruction.operands.front();
+  const MirPlace *source = nullptr;
+  const MirLoan *loan = nullptr;
+  if (input.kind == MirOperandKind::BorrowRead) {
+    source = body.findPlace(input.place);
+  } else if (input.kind == MirOperandKind::Loan) {
+    loan = body.findLoan(input.loan);
+    // These loans designate an exact evaluated place. A call-result/return
+    // lifetime supplier, selected reference or stored owner is not an address.
+    if (!loan || (loan->kind != MirLoanKind::Local &&
+                  loan->kind != MirLoanKind::Parameter &&
+                  loan->kind != MirLoanKind::CallArgument) ||
+        loan->referenceSelection || !loan->additionalDependencies.empty())
+      return std::nullopt;
+    source = body.findPlace(loan->source);
+  }
+  if (!source)
+    return std::nullopt;
+  GeneratedCopySource result{source->id, *source};
+  if (source->type == instruction.info.type)
+    return !input.place || input.place == source->id
+        ? std::optional{result} : std::nullopt;
+  if (!loan || !loan->entry || loan->kind != MirLoanKind::Parameter ||
+      source->root != MirPlaceRootKind::Binding || !source->projections.empty() ||
+      source->type.kind != SemanticType::Reference ||
+      source->type.arguments != std::vector<SemanticType>{instruction.info.type})
+    return std::nullopt;
+  if (input.place && input.place != source->id) {
+    const auto *address = body.findPlace(input.place);
+    const std::vector<MirPlaceProjection> dereference{{.kind = MirProjectionKind::Dereference}};
+    if (!address || address->root != source->root ||
+        address->binding != source->binding || address->symbol != source->symbol ||
+        address->projections != dereference || address->type != instruction.info.type)
+      return std::nullopt;
+    // The operand's concrete runtime address is the formal's exact referent.
+    result.value = *address;
+    return result;
+  }
+  // A typed comparison view of the actual reference formal's referent. No
+  // executable place, storage identity or lifetime-owner address is invented.
+  result.value.id = 0;
+  result.value.type = instruction.info.type;
+  result.value.projections.push_back({.kind = MirProjectionKind::Dereference});
+  result.value.access = source->type.referenceAccess;
+  return result;
+}
+
 [[nodiscard]] bool exactAbstractStoredCarrierPublications(
     const MirProgram &program, const MirBody &body,
     const std::vector<HirBindingId> &parameterBindings, const MirLoan &entry,
@@ -6457,18 +6552,22 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
       proven.insert(carrier);
       return true;
     }
-    if (producerBlock != publication.block || producer->operands.size() != 1 ||
-        (producer->kind != MirInstructionKind::Load &&
-         producer->kind != MirInstructionKind::Move))
-      return false;
-    const MirOperand &operand = producer->operands.front();
-    const MirPlace *source = body.findPlace(operand.place);
-    const bool moved = producer->kind == MirInstructionKind::Move;
-    if (operand.type != publishedType || source == nullptr ||
-        source->type != publishedType ||
-        operand.kind != (moved ? MirOperandKind::Move : MirOperandKind::Copy) ||
-        !(moved ? source->traits.movable : source->traits.copyable))
-      return false;
+    const auto copied = generatedCopySource(program, body, *producer);
+    const MirPlace *source = copied ? &copied->value : nullptr;
+    if (!copied) {
+      if (producerBlock != publication.block || producer->operands.size() != 1 ||
+          (producer->kind != MirInstructionKind::Load &&
+           producer->kind != MirInstructionKind::Move))
+        return false;
+      const MirOperand &operand = producer->operands.front();
+      source = body.findPlace(operand.place);
+      const bool moved = producer->kind == MirInstructionKind::Move;
+      if (operand.type != publishedType || source == nullptr ||
+          source->type != publishedType ||
+          operand.kind != (moved ? MirOperandKind::Move : MirOperandKind::Copy) ||
+          !(moved ? source->traits.movable : source->traits.copyable))
+        return false;
+    }
     const auto origin =
         storedCarrierValueOrigin(program, body, entry, *source, publishedType);
     bool received = origin && *origin == 0;
@@ -15922,16 +16021,10 @@ completeBorrowSourcePath(const MirProgram &program,
     }
     return fromOperand(state, operand);
   };
-  const auto disjointRecordFields = [&](const CanonicalPlace &left,
+  const auto disjointRecordSubobjects = [&](const CanonicalPlace &left,
                                         const CanonicalPlace &right) {
     if (left.ambiguous || right.ambiguous || !sameRoot(left, right) ||
         left.projections.empty() || right.projections.empty())
-      return false;
-    const auto &a = left.projections.front();
-    const auto &b = right.projections.front();
-    if (a.kind != MirProjectionKind::Field ||
-        b.kind != MirProjectionKind::Field || !a.field || !b.field ||
-        a.field == b.field)
       return false;
     // Prove distinct storage from the concrete record, not just distinct
     // projection labels. Union fields, unknown roots, and indirect paths
@@ -15939,13 +16032,14 @@ completeBorrowSourcePath(const MirProgram &program,
     // every field. A borrowed field's external owner is not its storage root.
     SemanticType rootType = SemanticType::Unknown;
     if (left.root == MirPlaceRootKind::This) {
-      const auto *record = constructor
-                               ? program.findClassInstance(constructor->owner)
-                           : function && function->owner
-                               ? program.findClassInstance(*function->owner)
-                               : nullptr;
-      if (record)
-        rootType = record->type;
+      const auto exact = constructor
+          ? checkedMirCallableOwnerType(program, constructor->owner,
+                                        constructor->ownerType, constructor->lifetimeContract)
+          : function && function->owner
+              ? checkedMirCallableOwnerType(program, *function->owner,
+                                            function->ownerType, function->lifetimeContract)
+              : std::nullopt;
+      if (exact) rootType = *exact;
     } else {
       for (std::size_t index = 0; index < identities.size(); ++index) {
         if (!identities[index].projections.empty() ||
@@ -15957,7 +16051,21 @@ completeBorrowSourcePath(const MirProgram &program,
         rootType = body.places[index].type;
       }
     }
-    const auto *record = uniqueMirClassInstanceForType(program, rootType);
+    // Initializing a sibling field cannot replace the checked contents of
+    // an inline state base. Replay both full paths against the exact physical
+    // root; a lifetime supplier, unknown root or reference crossing grants no
+    // disjointness. Whole-object writes remain overlapping above.
+    if (mir_detail::inlineBorrowProjectionsDisjoint(
+            program, rootType, left.projections, right.projections))
+      return true;
+    const auto &a = left.projections.front();
+    const auto &b = right.projections.front();
+    if (a.kind != MirProjectionKind::Field ||
+        b.kind != MirProjectionKind::Field || !a.field || !b.field ||
+        a.field == b.field)
+      return false;
+    const auto view = mirClassLifetimeView(program, rootType);
+    const auto *record = view ? view->instance : nullptr;
     if (!record || record->kind == ClassKind::Union || record->unionLayout ||
         record->cOpaqueHandle)
       return false;
@@ -15976,7 +16084,7 @@ completeBorrowSourcePath(const MirProgram &program,
     const auto &key = identities[id - 1];
     for (std::size_t index = 0; index < identities.size(); ++index)
       if (key.ambiguous || (sameRoot(key, identities[index]) &&
-                            !disjointRecordFields(key, identities[index])))
+                            !disjointRecordSubobjects(key, identities[index])))
         state.places[index].reset();
     if (key.ambiguous) {
       for (auto &fact : state.values)
@@ -16544,6 +16652,12 @@ completeBorrowSourcePath(const MirProgram &program,
       // value-annotation verifier. Establish the typed producer independently.
       const auto inputs = payloadInputs(state, instruction);
       result = constructedCompleteBorrowFact(program, body, instruction, inputs);
+    } else if (const auto copy = generatedCopySource(program, body, instruction)) {
+      // Generated same-type copy reads the actual object's complete contents.
+      // Its physical reference capability is not a new owner for those fields.
+      result = retainedCarrierInput(state, copy->contents);
+      if (result && !completeBorrowSetHasTypedShape(program, instruction.info.type, *result))
+        result.reset();
     } else if ((instruction.kind == MirInstructionKind::Construct ||
                 instruction.kind == MirInstructionKind::InitializeBase) &&
                instruction.constructorTarget &&
@@ -18793,7 +18907,8 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
            !(instruction.constructorTarget &&
              callSummary(*instruction.constructorTarget, MirBodyKind::Constructor)) &&
            !(instruction.lambdaTarget &&
-             callSummary(*instruction.lambdaTarget, MirBodyKind::Lambda))))
+             callSummary(*instruction.lambdaTarget, MirBodyKind::Lambda)) &&
+           !exactGeneratedCopyConstruction(program, instruction)))
         return verificationFailure(body, owner,
                                    "conditional call dependencies require an "
                                    "independent complete-set contract proof");
@@ -18856,6 +18971,7 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
                found != loanProducers.end() && found->second) {
       const auto &producer = *found->second;
       if ((producer.kind == MirInstructionKind::Call ||
+           exactGeneratedCopyConstruction(program, producer) ||
            (producer.kind == MirInstructionKind::Construct &&
             producer.constructorTarget &&
             callSummary(*producer.constructorTarget, MirBodyKind::Constructor)) ||

@@ -1694,6 +1694,64 @@ bool generatedDefaultConstruction(const MirInstruction &instruction) {
          instruction.operands.empty() && instruction.parameterTypes.empty();
 }
 
+bool generatedCopyConstruction(const MirInstruction &instruction) {
+  if (instruction.kind != MirInstructionKind::Construct ||
+      instruction.constructorKind != ConstructorKind::Copy ||
+      !instruction.result || instruction.info.type.kind != SemanticType::Class ||
+      instruction.info.category != ValueCategory::Value ||
+      !instruction.info.traits.copyable || instruction.operands.size() != 1 ||
+      instruction.parameterTypes.size() != 1)
+    return false;
+  if (instruction.ownership &&
+      (instruction.ownership->kind != OwnershipEventKind::Read ||
+       instruction.ownership->before != OwnershipStateSet::Available ||
+       instruction.ownership->after != OwnershipStateSet::Available ||
+       !instruction.ownership->reachable))
+    return false;
+  const auto &parameter = instruction.parameterTypes.front();
+  if (parameter.kind != SemanticType::Reference ||
+      parameter.referenceAccess != AccessMode::ReadOnly ||
+      parameter.arguments != std::vector<SemanticType>{instruction.info.type} ||
+      instruction.operands.front().type != parameter ||
+      (instruction.borrowOrigin != BorrowOriginKind::None &&
+       instruction.borrowOrigin != BorrowOriginKind::Argument) ||
+      instruction.borrowArgument != 0 ||
+      instruction.borrowAccess != AccessMode::ReadOnly ||
+      (instruction.loan && instruction.borrowOrigin != BorrowOriginKind::Argument) ||
+      (!instruction.borrowFields.empty() && !instruction.loan))
+    return false;
+  for (std::size_t index = 0; index < instruction.borrowFields.size(); ++index) {
+    const auto &field = instruction.borrowFields[index];
+    if (field.origin != BorrowOriginKind::Argument || field.parameter != 0 ||
+        field.globalRoot != 0 ||
+        field.resultFields != field.sourceFields ||
+        field.resultConditions != field.sourceConditions ||
+        field.access != AccessMode::ReadOnly ||
+        std::find(instruction.borrowFields.begin(),
+                  instruction.borrowFields.begin() + index, field) !=
+            instruction.borrowFields.begin() + index)
+      return false;
+  }
+  const MirInstruction exact{.id = instruction.id,
+                             .kind = MirInstructionKind::Construct,
+                             .hirValue = instruction.hirValue,
+                             .hirStatement = instruction.hirStatement,
+                             .result = instruction.result,
+                             .operands = instruction.operands,
+                             .parameterTypes = instruction.parameterTypes,
+                             .loan = instruction.loan,
+                             .borrowOrigin = instruction.borrowOrigin,
+                             .borrowArgument = 0,
+                             .borrowAccess = AccessMode::ReadOnly,
+                             .borrowFields = instruction.borrowFields,
+                             .sourceLocation = instruction.sourceLocation,
+                             .constructorKind = ConstructorKind::Copy,
+                             .info = instruction.info,
+                             .ownership = instruction.ownership,
+                             .lifecycle = instruction.lifecycle};
+  return instruction == exact;
+}
+
 bool passiveUnionFieldConstruction(const MirProgram &program,
                                    const MirInstruction &instruction) {
   if (!neutralTargetlessConstruction(instruction) ||

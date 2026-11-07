@@ -5649,43 +5649,48 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   active[aliasId - 1] != MirLoanFlowState::Active ||
                   active[parent - 1] != MirLoanFlowState::Active ||
                   dependency.kind != MirLoanKind::Stored ||
-                  instruction.kind != MirInstructionKind::Call ||
-                  instruction.borrowFields.size() != 1)
+                  (instruction.kind != MirInstructionKind::Call &&
+                   !mir_detail::generatedCopyConstruction(instruction)))
                 return false;
-              const auto &mapping = instruction.borrowFields.front();
-              const bool referenceResult =
-                  result.kind == MirLoanKind::CallResult &&
-                  mapping.resultFields.empty();
-              const bool carrierResult =
-                  result.kind == MirLoanKind::Stored &&
-                  instruction.info.category == ValueCategory::Value &&
-                  instruction.info.type.kind == SemanticType::Class &&
-                  instruction.info.traits.containsBorrowedState &&
-                  !mapping.resultFields.empty() &&
-                  result.additionalDependencies.empty() &&
-                  (result.designatedFields.empty() ||
-                   result.designatedFields == mapping.resultFields);
-              if ((!referenceResult && !carrierResult) ||
-                  mapping.sourceFields.empty() ||
-                  mapping.origin != instruction.borrowOrigin ||
-                  mapping.access != result.access ||
-                  (mapping.origin == BorrowOriginKind::Argument &&
-                   mapping.parameter != instruction.borrowArgument))
+              // A complete result can contain several independently retained
+              // fields. Select the mapping for this primary source; additional
+              // sources keep their own parent, path and liveness proofs.
+              const bool mapped = std::any_of(
+                  instruction.borrowFields.begin(), instruction.borrowFields.end(),
+                  [&](const BorrowedFieldOrigin &mapping) {
+                    const bool referenceResult =
+                        result.kind == MirLoanKind::CallResult &&
+                        mapping.resultFields.empty();
+                    const bool carrierResult =
+                        result.kind == MirLoanKind::Stored &&
+                        instruction.info.category == ValueCategory::Value &&
+                        instruction.info.type.kind == SemanticType::Class &&
+                        instruction.info.traits.containsBorrowedState &&
+                        !mapping.resultFields.empty() &&
+                        (result.designatedFields == mapping.resultFields ||
+                         (instruction.borrowFields.size() == 1 &&
+                          result.additionalDependencies.empty() &&
+                          result.designatedFields.empty()));
+                    return (referenceResult || carrierResult) &&
+                           !mapping.sourceFields.empty() &&
+                           mapping.origin == instruction.borrowOrigin &&
+                           mapping.access == result.access &&
+                           mapping.resultConditions == result.conditions &&
+                           (mapping.origin != BorrowOriginKind::Argument ||
+                            mapping.parameter == instruction.borrowArgument);
+                  });
+              if (!mapped)
                 return false;
               // The selected alias explicitly retains this exact dependency;
-              // unrelated overlapping owners are not interchangeable. The
-              // field map names the referent path, and the independent program
-              // check substitutes that path against the selected input type.
-              // This body check also verifies active access to the published
-              // referent rather than accepting the alias link by itself.
+              // unrelated overlapping owners are not interchangeable. Program
+              // verification independently reconstructs every mapped source
+              // from its actual input, including structural copies. This body
+              // check also requires active permission for the primary source.
               const bool permitted = loanPermitsPlace(
                   body, dependency,
                   canonicalPlace(body, result.source, bindingLoans, active),
                   result.access, bindingLoans, active);
               if (permitted)
-                // This exact input alias authorizes the reborrow; it is not
-                // an independent overlapping sibling. No other alias is
-                // exempted merely for retaining the same external owner.
                 selectedAlias = aliasId;
               return permitted;
             };
@@ -12065,7 +12070,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         instruction.lifetimeApplication.callableSignature.has_value();
     if (!instruction.borrowFields.empty() &&
         (!callable || instruction.borrowOrigin == BorrowOriginKind::None ||
-         (!selectedBorrowTarget && !signatureBorrowTarget)))
+         (!selectedBorrowTarget && !signatureBorrowTarget &&
+          !mir_detail::generatedCopyConstruction(instruction))))
       return false;
     const bool callInput = instruction.kind == MirInstructionKind::CallInput;
     const bool baseCallInput =

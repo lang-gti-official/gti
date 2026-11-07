@@ -615,9 +615,18 @@ Class records also preserve semantic-selected virtual root/target declarations.
 HIR binds each selection to exact concrete function and owner identities plus
 successive direct-base paths; MIR verifies complete root coverage, signatures,
 final target coherence and paths independently. Each path composes exact
-canonical-to-actual owner bindings before comparing a method signature. LLVM
-uses that same verified instantiated base view for layout and receiver offsets;
+canonical-to-actual owner bindings before comparing a method signature. The
+Lowered verifier independently instantiates the selected declaration recipe
+before comparing that view. LLVM uses the same verified instantiated base view
+for layout, dispatch-state checks and receiver offsets;
 canonical declaration region identities do not replace the active view.
+
+Complete stored-content flow uses the same exact physical projection proof
+when a direct field is initialized beside a state-bearing base. That write
+preserves the base's current contents; whole-object, unknown and external
+reference writes retain conservative invalidation. Initializer publication,
+failure-edge retirement and the final constructor summary remain independent
+requirements.
 Abstract classes may retain pure
 targets. Lowered declaration and instance records seal and serialize the same
 selection. These are backend-neutral facts; this metadata alone does not admit
@@ -5715,6 +5724,19 @@ return cannot reread field storage after destruction. Typed projection and
 current storage flow prove the selection independently of its attached loan
 metadata. This mechanism does not grant an exclusive reborrow permission or
 waive the semantic cleanup-bound carrier checks.
+
+Generated same-type record copying uses the existing targetless `Construct`
+with `Copy` policy. An implicit local copy that needs a fresh retained group
+publishes the complete identity mapping of its stored reference fields; named
+and inferred declarations use the same operation. Verification independently
+checks the generated policy and typed field inventory, then reconstructs the
+copied contents from the actual input storage. The physical reference used to
+read that storage remains separate from the retained external dependencies.
+A reference formal can supply its exact dereferenced operand; a call result's
+lifetime supplier cannot substitute for its runtime address. Local carrier
+publication and returning a copied field reuse the independently reconstructed
+contents. Ordinary ownership, availability and cleanup checks remain mandatory;
+a source destructor still makes its class noncopyable.
 
 The staged checked-reference contents vocabulary keeps a
 `MirReferenceContentsSource` (opening identity plus typed field selector)

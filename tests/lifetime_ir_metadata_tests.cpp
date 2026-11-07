@@ -530,6 +530,114 @@ int main() {
   }
 }
 
+void generatedRecordCopies() {
+  const std::array initializers{
+      "View<a,b> copied = input;", "auto copied = input;",
+      "View<a,b> copied{input};", "auto copied = View<a,b>(input);"};
+  for (std::size_t form = 0; form < initializers.size(); ++form) {
+    const std::string source = R"gti(
+struct View<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  View(int&<a> x, int&<b> y) : first(x), second(y) {}
+};
+int read<lifetime a, lifetime b>(View<a,b>& input) {
+)gti" + std::string(initializers[form]) + R"gti(
+  return copied.first + copied.second;
+}
+int main() { int x = 2; int y = 5; View view{x,y}; return read(view)-7; }
+)gti";
+    const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+        "generated-record-copy.gti", source);
+    if (!checked.canGenerateCode())
+      for (const auto &diagnostic : checked.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(checked.canGenerateCode(),
+           "all ordinary copy spellings preserve two independent stored references");
+    const MirInstruction *copy = nullptr;
+    HirFunctionInstanceId owner = 0;
+    for (const auto &function : checked.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::Construct &&
+              instruction.constructorKind == ConstructorKind::Copy) {
+            expect(!copy, "copy fixture contains one structural copy");
+            copy = &instruction;
+            owner = function.id;
+          }
+    expect(copy && mir_detail::generatedCopyConstruction(*copy),
+           "copy has exact structural policy shape without a fictional callable");
+    std::string cleanupSource = source;
+    cleanupSource.insert(cleanupSource.find("};"), "~View() {}\n");
+    const auto noncopyable = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+        "generated-record-copy-cleanup.gti", cleanupSource);
+    expect(!noncopyable.canGenerateCode() &&
+               std::any_of(noncopyable.diagnostics.begin(), noncopyable.diagnostics.end(),
+                           [&](const auto &diagnostic) {
+                             return diagnostic.code == (form < 2 ? "GTI-S2003" : "GTI-S2020");
+                           }),
+           "structural copying cannot duplicate a source destructor's cleanup obligation");
+    if (form != 0)
+      continue;
+    expect(copy->loan && copy->ownership && copy->borrowFields.size() == 2,
+           "implicit copy preserves its fresh complete two-field dependency group");
+    for (unsigned mutation = 0; mutation != 17; ++mutation) {
+      auto forged = checked.mir;
+      auto &body = MirProgramTestAccess::functions(forged)[owner - 1].body;
+      MirInstruction *changed = nullptr;
+      for (auto &block : body.blocks)
+        for (auto &instruction : block.instructions)
+          if (instruction.id == copy->id)
+            changed = &instruction;
+      expect(changed, "copy mutation locates its exact producer");
+      switch (mutation) {
+      case 0: changed->constructorKind = ConstructorKind::Move; break;
+      case 1: changed->functionTarget = 999999; break;
+      case 2: changed->constructorTarget = 999999; break;
+      case 3:
+        changed->parameterTypes.front().referenceAccess = AccessMode::Mutable;
+        changed->operands.front().type = changed->parameterTypes.front();
+        break;
+      case 4:
+        changed->parameterTypes.front().arguments.front() = SemanticType::Int32;
+        changed->operands.front().type = changed->parameterTypes.front();
+        break;
+      case 5:
+        changed->lifetimeApplication.bindings.push_back(
+            {Lifetime::parameter(999999), Lifetime::staticLifetime()});
+        break;
+      case 6: changed->callSite = 999999; break;
+      case 7: changed->ownership->kind = OwnershipEventKind::Move; break;
+      case 8: changed->borrowFields.front().sourceFields.clear(); break;
+      case 9: changed->borrowFields.front().globalRoot = 999999; break;
+      case 10: changed->borrowFields.pop_back(); break;
+      case 11: changed->borrowFields.clear(); break;
+      case 12:
+        std::reverse(changed->borrowFields.begin(), changed->borrowFields.end());
+        break;
+      case 13:
+        body.loans[*changed->loan - 1].source =
+            body.loans[*changed->loan - 1].additionalDependencies.front().source;
+        break;
+      case 14:
+        body.loans[*changed->loan - 1].parent = changed->operands.front().loan;
+        break;
+      case 15: body.loans[*changed->loan - 1].additionalDependencies.clear(); break;
+      case 16:
+        for (auto &instance : MirProgramTestAccess::classes(forged))
+          if (instance.declaration == changed->info.type.classId)
+            instance.copyConstructor = SpecialMemberStatus::Deleted;
+        break;
+      }
+      if (mutation < 10)
+        expect(!mir_detail::generatedCopyConstruction(*changed),
+               "copy shape rejects forged targets, roles, effects and field mappings");
+      expect(!verifyMirProgram(forged).valid(),
+             "copy verification independently rejects lost origins and forged policies");
+    }
+  }
+}
+
 void inPlaceConstructorLifetimeApplication() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto entry = root.parent_path() / "tests/fixtures/llvm_memory_lifetimes.gti";
@@ -1445,6 +1553,7 @@ int main() {
   stagedReferenceContentsTransport();
   nestedCarrierPublication();
   erasedCarrierReturnPublication();
+  generatedRecordCopies();
   inPlaceConstructorLifetimeApplication();
   closureEnvironmentReplay();
   rawPointerStorageOutlives();

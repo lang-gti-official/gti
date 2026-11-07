@@ -46,6 +46,65 @@ struct SemanticModelTestAccess {
 // Exercise the real staging key and lookup without exposing cache internals as
 // a product API or relying on a timing-sensitive number of source evaluations.
 struct SemanticLifetimeTestAccess {
+  static std::pair<bool, std::size_t> closedDefaultContractChecks(const FrontendResult &source) {
+    SemanticVisitor analyzer(TargetInfo::host(), &source.sourceGraph, true, nullptr, &source.sources);
+    if (!analyzer.check(source.program))
+      return {};
+    const ClassTypeInfo *record = nullptr;
+    const TypeAliasInfo *selection = nullptr;
+    for (const auto &declaration : source.program.declarations()) {
+      if (const auto *syntax = stmtAs<ClassDecl>(declaration.get()); syntax && syntax->name().lexeme == "Projected")
+        record = analyzer.model().findClassType(*syntax);
+      if (const auto *syntax = stmtAs<TypeAliasDecl>(declaration.get()); syntax && syntax->name().lexeme == "Selection")
+        selection = analyzer.model().findTypeAlias(*syntax);
+    }
+    if (!record || !selection)
+      return {};
+    auto &owner = analyzer.impl->classInfo(record->id);
+    if (owner.constructors.size() != 1 || owner.genericArgumentPatternLifetimes.size() != 1)
+      return {};
+    auto &constructor = owner.constructors.front();
+    const auto original = constructor;
+    const auto region = Lifetime::parameter(owner.genericArgumentPatternLifetimes.front().id);
+    const InstanceAnalysisKey key{.kind = InstanceAnalysisKind::Constructor,
+        .declaration = constructor.id, .classTypes = {selection->type}};
+    const auto canonical = analyzer.canonicalizeExecutableInstance(key);
+    const bool closed = canonical && canonical->lifetimeContract.valid() &&
+        canonical->lifetimeApplication.bindings.empty() && !canonical->callableScopes.empty() &&
+        std::find(canonical->lifetimeContract.parameters.begin(), canonical->lifetimeContract.parameters.end(), region) ==
+            canonical->lifetimeContract.parameters.end() &&
+        freeTypeLifetimes(canonical->ownerType).empty() &&
+        !canonical->ownerType.arguments.front().quantifiedLifetimes.empty();
+    std::size_t rejected = 0;
+    const auto escaped = SemanticType::referenceTo(SemanticType::Int32, AccessMode::ReadOnly, region);
+    for (unsigned mutation = 0; mutation < 11; ++mutation) {
+      constructor = original;
+      auto &contract = constructor.lifetimeContract;
+      switch (mutation) {
+      case 0: contract.bounds.push_back({region, Lifetime::staticLifetime()}); break;
+      case 1: contract.typeBounds.push_back({SemanticType::Int32, region}); break;
+      case 2: contract.typeBounds.push_back({escaped, Lifetime::staticLifetime()}); break;
+      case 3:
+        contract.requirements = {.nodes = {{.kind = LifetimeRequirementNode::Kind::Region,
+            .bound = {region, Lifetime::staticLifetime()}}}, .root = 0};
+        break;
+      case 4:
+        contract.requirements = {.nodes = {{.kind = LifetimeRequirementNode::Kind::Type,
+            .bound = {{}, Lifetime::staticLifetime()}, .type = escaped}}, .root = 0};
+        break;
+      case 5: constructor.requirements.push_back({.lifetimeArguments = {region}}); break;
+      case 6: constructor.requirements.push_back({.lifetimeBound = LifetimeBound{region, Lifetime::staticLifetime()}}); break;
+      case 7: constructor.requirements.push_back({.outlivesType = escaped}); break;
+      case 8: constructor.requirements.push_back({.arguments = {escaped}}); break;
+      case 9: contract.receiver = region; break;
+      case 10: constructor.parameterTypes.push_back(escaped); break;
+      }
+      rejected += !analyzer.canonicalizeExecutableInstance(key).has_value();
+    }
+    constructor = original;
+    return {closed, rejected};
+  }
+
   static bool exactStaticReturnSupplier(const FunctionInfo &function) {
     return SemanticVisitor::Impl::hasExactStaticReturnSupplier(function);
   }
@@ -1310,10 +1369,18 @@ public:
   Nested() = default;
 };
 class Opened<R(A)> { public: Opened(A input) {} };
+class Projected<R&<result>(R&<result>)> { public: Projected() = default; };
+class ProjectedStorage<R&<result>(R&<result>)> {
+  Storage<R&<result>(R&<result>)> field;
+public:
+  ProjectedStorage() = default;
+};
 using Selection = for<lifetime a> int&<a>(int&<a>);
 int main() {
   Captured<Selection> closed{};
   Nested<Selection> nested{};
+  Projected<Selection> projected{};
+  ProjectedStorage<Selection> projectedStorage{};
   int value = 7;
   Opened<Selection> opened{value};
   return 0;
@@ -1337,10 +1404,14 @@ int main() {
              "only an actual member invocation imports nested callable binders into its lifetime application");
       ++checked;
     }
-  expect(checked == 3, "both structural defaults and the explicit constructor retain exact construction metadata");
+  expect(checked == 5, "all closed structural defaults and the explicit constructor retain exact construction metadata");
+  const auto [closed, rejected] = lang::SemanticLifetimeTestAccess::closedDefaultContractChecks(result);
+  expect(closed && rejected == 11,
+         "only unused captured projected formals disappear; every free contract, type and requirement use remains checked");
   for (const std::string source : {
            "class Escape<R(A)> { R field; public: Escape() = default; }; using Selection = for<lifetime a> int&<a>(int&<a>); int main() { Escape<Selection> value{}; return 0; }",
-           "class Fixed<R(A)> { public: Fixed() = default; int&<static> invoke(A value) { return value; } }; using Selection = for<lifetime a> int&<a>(int&<a>); int main() { Fixed<Selection> callback{}; int value = 7; return callback.invoke(value); }"}) {
+           "class Fixed<R(A)> { public: Fixed() = default; int&<static> invoke(A value) { return value; } }; using Selection = for<lifetime a> int&<a>(int&<a>); int main() { Fixed<Selection> callback{}; int value = 7; return callback.invoke(value); }",
+           "class Projected<R&<result>(R&<result>)> { int&<result> value; public: Projected() = default; }; using Selection = for<lifetime a> int&<a>(int&<a>); int main() { Projected<Selection> callback{}; return 0; }"}) {
     const auto invalid = analyze(source);
     expect(invalid.syntaxValid && !invalid.semanticValid,
            "closed default construction cannot expose an invocation binder in storage or promote it to static");
@@ -3479,8 +3550,9 @@ int main() { return relay(3); }
 
 void testAnonymousStructuralDestinationRegions() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
-  const auto check = [&](std::string source) {
-    return lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+  const auto check = [&](std::string source,
+                         lang::FrontendPhase phase = lang::FrontendPhase::Semantics) {
+    return lang::Frontend({.stopAfter = phase}).analyze(
         "anonymous-destination.gti", std::move(source), {root / "prelude.gti"}, {}, {root});
   };
   const auto hidden = check(R"gti(
@@ -3563,23 +3635,28 @@ int main() { int input = 7; return read(input) - 14; }
                            [](const auto &diagnostic) { return diagnostic.code == "GTI-S2012"; }),
            "destination inference preserves fixed, repeated and unrelated structural identities");
   }
-  const std::string fixedGeneric = cell + R"gti(
+  const std::string fixedGeneric = R"gti(
 int construct_fixed<T, Args...>(Args... values) { auto copy = T(values...); return 0; }
 )gti";
-  expectValid(check(fixedGeneric + R"gti(
-int same<lifetime a>(Cell<a>& source) { return construct_fixed<Cell<a>>(source); }
-int main() { int input = 7; Cell source{input}; return same(source); }
-)gti"), "a concrete generic construction accepts its unchanged exact target");
-  const auto fixed = check(fixedGeneric + R"gti(
-int reject<lifetime a, lifetime b>(Cell<b>& source) { return construct_fixed<Cell<a>>(source); }
-int main() { return 0; }
-)gti");
-  expect(fixed.syntaxValid && !fixed.semanticValid &&
-             std::any_of(fixed.diagnostics.begin(), fixed.diagnostics.end(),
-                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2012"; }) &&
-             std::none_of(fixed.diagnostics.begin(), fixed.diagnostics.end(),
-                          [](const auto &diagnostic) { return diagnostic.code == "GTI-S2029"; }),
-         "a substituted generic target does not acquire inference authority from the source application");
+  const auto exact = check(fixedGeneric + R"gti(
+struct Plain { int value; Plain(int input) : value(input) {} };
+int main() { Plain source{7}; return construct_fixed<Plain>(source); }
+)gti", lang::FrontendPhase::Hir);
+  expect(exact.semanticValid && exact.hirValid,
+         "a concrete value-only generic construction accepts its unchanged exact target");
+  // These calls demand the concrete body: stopping at declarations would not
+  // exercise the construction hidden behind an unresolved source pack.
+  for (const auto target : {"Cell<static>", "Cell<_>"}) {
+    const auto fixed = check(cell + fixedGeneric +
+        "int main(){int input=7;Cell source{input};return construct_fixed<" + target +
+        ">(source);}", lang::FrontendPhase::Hir);
+    expect(fixed.syntaxValid && !fixed.hirValid &&
+               std::any_of(fixed.diagnostics.begin(), fixed.diagnostics.end(),
+                           [](const auto &diagnostic) { return diagnostic.code == "GTI-S2012"; }) &&
+               std::none_of(fixed.diagnostics.begin(), fixed.diagnostics.end(),
+                            [](const auto &diagnostic) { return diagnostic.code == "GTI-S2029"; }),
+           "a substituted generic target does not acquire inference authority from the source application");
+  }
   const auto deleted = check("struct View{int& value;View(int& input):value(input){}View(View&)=delete;};int main(){int input=7;View source{input};View copy{source};return 0;}");
   expect(!deleted.semanticValid &&
              std::any_of(deleted.diagnostics.begin(), deleted.diagnostics.end(),

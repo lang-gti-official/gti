@@ -3,6 +3,7 @@
 #include "gti/mir_verifier.h"
 #include "gti/lifetime_types.h"
 #include "structural_constructor_policy.h"
+#include "class_hierarchy_lifetimes.h"
 
 #include "gti/failure_metadata.h"
 #include "gti/lowered_program_printer.h"
@@ -1359,6 +1360,36 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
       }
       return type;
     };
+    // The sealed semantic selection is in the declaration's owner scope;
+    // the MIR path names an actual view through exact direct base edges.
+    // Re-derive the complete recipe rather than comparing either canonical
+    // layout's region names or a projected type leaf in isolation.
+    std::optional<GenericSubstitution> dispatchContext;
+    if (!owner->virtualDispatch.empty()) {
+      const auto declared = structural_policy_detail::openClassType(*owner);
+      if (declared) {
+        GenericSubstitution seed;
+        seed.values = substitution.values;
+        seed.lifetimes = substitution.lifetimes;
+        GenericSubstitution values;
+        values.values = seed.values;
+        const auto pattern = resolveExact(resolveExact, substituteSemanticType(*declared, values));
+        dispatchContext = deriveGenericArgumentPatternSubstitution(
+            std::span(&pattern, 1), std::span(&instance.type, 1),
+            structural_policy_detail::identities(owner->genericParameters),
+            structural_policy_detail::identities(owner->genericArgumentPatternLifetimes), seed);
+      }
+    }
+    const auto selectedOwnerType = [&](const SemanticType &type) -> std::optional<SemanticType> {
+      if (!dispatchContext) return std::nullopt;
+      std::vector<LifetimeBinding> bindings;
+      for (const auto &[id, region] : dispatchContext->lifetimes)
+        bindings.emplace_back(Lifetime::parameter(id), region);
+      const auto actual = substituteTypeLifetimes(
+          substituteSemanticType(type, *dispatchContext), bindings);
+      return actual && actual->kind != SemanticType::Unknown
+          ? std::optional(resolveExact(resolveExact, *actual)) : std::nullopt;
+    };
     if (owner->virtualDispatch.size() != instance.virtualDispatch.size())
       addIssue(issues, LoweredProgramIssueKind::InvalidInstanceInventory,
                "lowered semantic dispatch inventory differs from MIR");
@@ -1371,12 +1402,14 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
       const auto *selected = slot < owner->virtualDispatch.size()
                                  ? &owner->virtualDispatch[slot]
                                  : nullptr;
-      if (!selected || !root || !target || !targetOwner ||
+      const auto view = classHierarchyPathView(program.mir_, instance.id,
+                                                instance.type, dispatch.targetPath);
+      const auto expected = selected ? selectedOwnerType(selected->targetOwner) : std::nullopt;
+      if (!selected || !root || !target || !targetOwner || !view ||
+          view->instance != targetOwner || !expected ||
           selected->root != root->declaration ||
           selected->target != target->declaration ||
-          resolveExact(resolveExact, substituteSemanticType(
-                                         selected->targetOwner,
-                                         substitution)) != targetOwner->type)
+          !equivalentLifetimeTypes(*expected, view->type))
         addIssue(issues, LoweredProgramIssueKind::InvalidInstanceInventory,
                  "lowered dispatch differs from its exact semantic selection");
     }
