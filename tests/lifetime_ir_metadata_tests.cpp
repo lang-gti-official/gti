@@ -2,6 +2,7 @@
 #include "../src/compiler/mir_verification_queries.h"
 #include "../src/compiler/mir_verification_support.h"
 #include "gti/mir_printer.h"
+#include "gti/frontend.h"
 #include "gti/mir_effects.h"
 #include "gti/callable_lifetimes.h"
 #include "gti/nominal_variance.h"
@@ -31,6 +32,97 @@ SemanticType reference(GenericParameterId id) {
   auto type = SemanticType::referenceTo(SemanticType(SemanticType::Int32));
   type.referenceLifetime = Lifetime::parameter(id);
   return type;
+}
+void stagedReferenceContentsMetadata() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "staged-reference-contents.gti", R"gti(
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Pair<lifetime a, lifetime b> : public Base<a> {
+  int&<b> other;
+  Pair(int&<a> first, int&<b> second) : Base<a>(first), other(second) {}
+};
+int&<a> external<lifetime a>(int&<a> input) {
+  int local = 9;
+  Pair pair{input, local};
+  return pair.value;
+}
+int main() { int value = 7; return external(value) - 7; }
+)gti");
+  expect(checked.canGenerateCode(), "ordinary references remain valid without contents metadata");
+  const auto original = MirPrinter().print(checked.mir);
+  const auto composite = std::find_if(checked.mir.classInstances().begin(),
+      checked.mir.classInstances().end(), [](const auto &candidate) {
+        return !candidate.structuralBases.empty();
+      });
+  expect(composite != checked.mir.classInstances().end(), "fixture needs its concrete inherited carrier");
+  const auto suppliers = mir_detail::referenceSupplierPaths(checked.mir, composite->type);
+  expect(suppliers.status == ReferenceSupplierQueryStatus::Complete &&
+             suppliers.paths.size() == 2 &&
+             std::all_of(suppliers.paths.begin(), suppliers.paths.end(), [](const auto &path) {
+               return !path.fields.empty() && path.crossings.empty() &&
+                      path.reference.kind == SemanticType::Reference &&
+                      path.reference.referenceLifetime.specified();
+             }) && suppliers.paths[0].reference.referenceLifetime !=
+                       suppliers.paths[1].reference.referenceLifetime,
+         "the MIR selector query preserves the independent instantiated regions of inherited and direct fields");
+  expect(mir_detail::referenceSupplierPaths(checked.mir, SemanticType::Unknown).status ==
+             ReferenceSupplierQueryStatus::Unknown,
+         "unknown MIR type inventory cannot become a known empty supplier set");
+  const auto stagedFailure = [](const MirVerificationResult &result) {
+    return !result.valid() && std::any_of(result.errors.begin(), result.errors.end(),
+        [](const auto &error) {
+          return error.message ==
+              "MIR reference contents require checked opening replay before publication";
+        });
+  };
+  for (int mutation = 0; mutation != 5; ++mutation) {
+    auto forged = checked.mir;
+    const auto function = std::find_if(forged.functionInstances().begin(),
+        forged.functionInstances().end(), [](const auto &candidate) {
+          return !candidate.body.loans.empty() && !candidate.body.values.empty();
+        });
+    expect(function != forged.functionInstances().end(), "fixture needs executable reference authority");
+    auto &body = const_cast<MirFunctionInstance &>(*function).body;
+    auto &loan = body.loans.front();
+    const MirReferenceContentsSource selected{
+        .openingLoan = loan.id,
+        .fields = {{.kind = PlaceProjectionKind::Field, .field = 1}}};
+    if (mutation == 0)
+      loan.referenceContents = selected;
+    if (mutation == 1)
+      loan.contentsOpening = MirReferenceContentsOpening{
+          .reference = {.kind = MirOperandKind::Loan, .loan = loan.id,
+                        .type = SemanticType::Int32},
+          .referenceType = reference(991), .readLoans = {loan.id}};
+    if (mutation == 2)
+      loan.additionalDependencies.push_back({.referenceContents = selected});
+    if (mutation == 3)
+      body.values.front().borrowDependencies = MirBorrowDependencySet{
+          .dependencies = {{.referenceContents = selected}}};
+    if (mutation == 4) {
+      const auto constructor = std::find_if(forged.constructorInstances().begin(),
+          forged.constructorInstances().end(), [](const auto &candidate) {
+            return !candidate.initializers.empty();
+          });
+      expect(constructor != forged.constructorInstances().end(), "fixture needs initializer metadata");
+      const_cast<MirConstructorInstance &>(*constructor).initializers.front().completeBorrow =
+          MirBorrowDependencySet{.dependencies = {{.referenceContents = selected}}};
+    }
+    expect(stagedFailure(verifyMirProgram(forged)),
+           "unproved contents identity cannot reach place-only program proofs, including unused metadata");
+    if (mutation != 4) {
+      expect(stagedFailure(verifyMirBody(forged, body, function->id)) &&
+                 stagedFailure(verifyMirBodyStructure(body)),
+             "contents metadata stays closed in full and structural body verification");
+    }
+    const auto serialized = MirPrinter().print(forged);
+    expect(serialized != original && serialized == MirPrinter().print(forged) &&
+               serialized.starts_with("mir-v127 "),
+           "contents proof identity survives deterministic versioned MIR serialization");
+  }
 }
 void closureEnvironmentReplay() {
   const auto first = Lifetime::parameter(841), second = Lifetime::parameter(842);
@@ -851,6 +943,7 @@ void quantifiedNominalLiftInventory() {
 }
 } // namespace
 int main() {
+  stagedReferenceContentsMetadata();
   closureEnvironmentReplay();
   rawPointerStorageOutlives();
   packEntrySourceIdentity();

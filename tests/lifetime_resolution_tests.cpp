@@ -12,9 +12,127 @@ namespace lang {
 // Exercise the real staging key and lookup without exposing cache internals as
 // a product API or relying on a timing-sensitive number of source evaluations.
 struct SemanticLifetimeTestAccess {
+  struct ContentsChecks {
+    bool selectors = false;
+    bool normalized = false;
+    bool immutableSnapshot = false;
+    bool aliasing = false;
+    bool malformed = false;
+    bool callOwnerRejected = false;
+  };
+
+  static ContentsChecks referenceContentsChecks(const FrontendResult &source) {
+    ContentsChecks checks;
+    SemanticVisitor analyzer(TargetInfo::host(), &source.sourceGraph, true,
+                             nullptr, &source.sources);
+    if (!analyzer.check(source.program))
+      return checks;
+    auto &impl = *analyzer.impl;
+    const FunctionDecl *syntax = nullptr;
+    const Get *indirect = nullptr;
+    for (const auto &declaration : source.program.declarations())
+      if (const auto *function = stmtAs<FunctionDecl>(declaration.get())) {
+        if (function->name().lexeme == "read")
+          syntax = function;
+        if (function->name().lexeme == "indirect" && function->body() &&
+            !function->body()->statements().empty())
+          if (const auto *returned = stmtAs<ReturnStmt>(function->body()->statements().front().get()))
+            indirect = exprAs<Get>(returned->value().get());
+      }
+    const auto *function = syntax ? analyzer.model().findFunction(*syntax) : nullptr;
+    const auto *returned = syntax && syntax->body() && !syntax->body()->statements().empty()
+        ? stmtAs<ReturnStmt>(syntax->body()->statements().front().get()) : nullptr;
+    const auto *sum = returned ? exprAs<Binary>(returned->value().get()) : nullptr;
+    const auto *left = sum ? exprAs<Get>(sum->left().get()) : nullptr;
+    const auto *right = sum ? exprAs<Get>(sum->right().get()) : nullptr;
+    if (!function || !left || !right)
+      return checks;
+    const auto first = impl.referenceContentsSelector(left->object().get());
+    const auto second = impl.referenceContentsSelector(right->object().get());
+    checks.selectors = first && second && left->object().get() != right->object().get() &&
+        first->root == second->root && first->receiver == second->receiver &&
+        first->fields == second->fields && first->type == second->type &&
+        first->fields.size() == 1 && first->type.kind == SemanticType::Reference;
+    checks.callOwnerRejected = indirect &&
+        !impl.referenceContentsSelector(indirect->object().get());
+    if (!checks.selectors)
+      return checks;
+    const auto inventory = impl.referenceContentsInventory(first->type.arguments.front());
+    const auto address = impl.completeBorrowDependencySet(left->object());
+    if (!inventory || inventory->fields.size() != 1 || !address ||
+        address->dependencies.empty())
+      return checks;
+    std::vector<SemanticLoanId> reads;
+    for (const auto &dependency : address->dependencies)
+      if (dependency.parent && dependency.designatedFields.empty() && dependency.conditions.empty())
+        if (std::find(reads.begin(), reads.end(), dependency.parent) == reads.end())
+          reads.push_back(dependency.parent);
+    if (reads.empty())
+      return checks;
+    // Supply the staged producer shape to its semantic validators without
+    // enabling production formation or bypassing the independent HIR guard.
+    auto &loans = const_cast<std::vector<SemanticLoanInfo> &>(analyzer.model().loans());
+    const auto makeOpening = [&](const Expr *expression) {
+      const SemanticLoanId id = loans.size() + 1;
+      const auto &field = inventory->fields.front();
+      loans.push_back({.id = id, .kind = SemanticLoanKind::StoredValue,
+                       .origin = expression,
+                       .referenceContents = SemanticReferenceContentsSource{id, field.fields},
+                       .access = AccessMode::ReadOnly, .designatedFields = field.fields,
+                       .conditions = field.conditions,
+                       .contentsOpening = SemanticReferenceContentsOpening{expression, first->type, reads}});
+      impl.loanFlow.records.emplace(id, SemanticVisitor::Impl::LoanFlowRecord{.id = id});
+      impl.loanFlow.referenceContentsOpenings.push_back(id);
+      return id;
+    };
+    const auto id = makeOpening(left->object().get());
+    const auto other = makeOpening(right->object().get());
+    const auto &field = inventory->fields.front();
+    SemanticLoanDependency dependency{.referenceContents = SemanticReferenceContentsSource{id, field.fields},
+                                      .access = AccessMode::ReadOnly, .parent = id};
+    auto publication = *function;
+    publication.returnType = field.reference;
+    const auto summary = impl.normalizedCompleteBorrow(publication, syntax->parameters(),
+        ReceiverMutability::ReadOnly, SemanticBorrowDependencySet{.dependencies = {dependency}});
+    BorrowPath expected = first->fields;
+    expected.insert(expected.end(), field.fields.begin(), field.fields.end());
+    checks.normalized = summary && summary->dependencies.size() == 1 &&
+        summary->dependencies.front().origin == BorrowOriginKind::Argument &&
+        summary->dependencies.front().parameter == 0 &&
+        summary->dependencies.front().sourceFields == expected;
+    const auto mutableConflicts = impl.conflictingLoans({}, AccessMode::Mutable, id, dependency.referenceContents);
+    const auto sharedConflicts = impl.conflictingLoans({}, AccessMode::ReadOnly, id, dependency.referenceContents);
+    checks.aliasing = std::find(mutableConflicts.begin(), mutableConflicts.end(), other) != mutableConflicts.end() &&
+        std::find(sharedConflicts.begin(), sharedConflicts.end(), other) == sharedConflicts.end();
+    impl.invalidateReferenceContents();
+    checks.immutableSnapshot = impl.loanFlow.invalidatedReferenceContents.contains(id) &&
+        impl.loanFlow.invalidatedReferenceContents.contains(other) &&
+        impl.loanFlow.records.at(id).active && impl.checkedReferenceContentsOpening(id).has_value();
+    auto bad = dependency;
+    bad.place.root = first->root;
+    const bool mixed = !impl.referenceContentsSourceSelector(bad);
+    bad = dependency;
+    bad.referenceContents->fields.clear();
+    const bool wrongField = !impl.referenceContentsSourceSelector(bad);
+    bad = dependency;
+    bad.access = AccessMode::Mutable;
+    const bool exclusive = !impl.referenceContentsSourceSelector(bad);
+    const auto original = loans[id - 1];
+    loans[id - 1].contentsOpening->readLoans = {id};
+    const bool forgedRead = !impl.checkedReferenceContentsOpening(id);
+    loans[id - 1] = original;
+    loans[id - 1].lifecycleBound = true;
+    const bool cleanup = !impl.checkedReferenceContentsOpening(id);
+    loans[id - 1] = original;
+    checks.malformed = mixed && wrongField && exclusive && forgedRead && cleanup;
+    return checks;
+  }
+
   static std::optional<ReferenceSupplierQuery>
-  referenceSuppliers(const Program &program, std::string_view name) {
-    SemanticVisitor analyzer;
+  referenceSuppliers(const FrontendResult &source, std::string_view name) {
+    const auto &program = source.program;
+    SemanticVisitor analyzer(TargetInfo::host(), &source.sourceGraph, true,
+                             nullptr, &source.sources);
     if (!analyzer.check(program))
       return std::nullopt;
     for (const auto &declaration : program.declarations())
@@ -3409,7 +3527,7 @@ struct Holder<lifetime a, lifetime owner> {
 };
 )gti");
   expectValid(source, "direct reference storage remains valid independently of transitive supplier queries");
-  const auto query = lang::SemanticLifetimeTestAccess::referenceSuppliers(source.program, "Holder");
+  const auto query = lang::SemanticLifetimeTestAccess::referenceSuppliers(source, "Holder");
   expect(query && query->status == lang::ReferenceSupplierQueryStatus::Complete &&
              query->paths.size() == 2 && query->paths[0].fields.size() == 1 &&
              query->paths[0].crossings.empty() && query->paths[1].fields.size() == 2 &&
@@ -3419,9 +3537,34 @@ struct Holder<lifetime a, lifetime owner> {
              query->paths[0].reference.referenceLifetime != query->paths[1].reference.referenceLifetime,
          "the semantic adapter keeps exact declared outer-reference and inner supplier regions as separate paths");
 }
+
+void testStagedReferenceContentsSources() {
+  const auto source = lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+      "staged-reference-contents-sources.gti", R"gti(
+struct Leaf<lifetime a> { int&<a> external; Leaf(int&<a> input) : external(input) {} };
+struct Holder<lifetime a, lifetime owner> {
+  Leaf<a>&<owner> value;
+  Holder(Leaf<a>&<owner> input) : value(input) {}
+};
+int read<lifetime a, lifetime owner, lifetime shell>(Holder<a, owner>&<shell> holder) {
+  return holder.value.external + holder.value.external;
+}
+Leaf<a>&<owner> choose<lifetime a, lifetime owner>(Leaf<a>&<owner> input) { return input; }
+int indirect<lifetime a, lifetime owner>(Leaf<a>&<owner> input) { return choose(input).external; }
+)gti");
+  expectValid(source, "staged contents checks use already checked ordinary reference reads");
+  const auto checks = lang::SemanticLifetimeTestAccess::referenceContentsChecks(source);
+  expect(checks.selectors, "separate reads of one checked reference slot derive the same exact selector");
+  expect(checks.normalized, "a tagged contents supplier normalizes through its actual formal selector");
+  expect(checks.aliasing, "different opening IDs never prove shared external referents disjoint");
+  expect(checks.immutableSnapshot, "slot invalidation forgets current contents while preserving copied shared authority");
+  expect(checks.malformed, "mixed sources, wrong fields, exclusive copies and forged read/cleanup authority reject");
+  expect(checks.callOwnerRejected, "a call's lifetime owner is not fabricated into its actual reference selector");
+}
 } // namespace
 
 int main() {
+  testStagedReferenceContentsSources();
   testSemanticReferenceSupplierQueries();
   testStoredFieldReturnRegions();
   testForwardedPackBorrowPaths();

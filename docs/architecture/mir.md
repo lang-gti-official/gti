@@ -980,7 +980,12 @@ reconstructed producer set, including every additional supplier's parent, access
 path and guard. This check also runs for unused results and does not rely on an
 attached result annotation. Passing a scalar reference onward reborrows all its
 suppliers through that exact input loan; the earlier parents are not substituted
-for the evaluated input capability.
+for the evaluated input capability. A returned carrier reference selects its
+retained Stored group from the evaluated input address and loan. The carrier's
+physical supplier may be the primary source while its external owners remain
+additional suppliers; changing that order preserves every original source,
+parent, access, path and guard. An external lifetime supplier is never used as
+the carrier's runtime address.
 
 Checked erased-reference operations preserve the exact origin and access while
 changing the referent type. MIR rederives each operation's lifetime rule from
@@ -5635,6 +5640,23 @@ return cannot reread field storage after destruction. Typed projection and
 current storage flow prove the selection independently of its attached loan
 metadata. This mechanism does not grant an exclusive reborrow permission or
 waive the semantic cleanup-bound carrier checks.
+
+The staged checked-reference contents vocabulary keeps a
+`MirReferenceContentsSource` (opening identity plus typed field selector)
+separate from a physical source place. Its `MirReferenceContentsOpening`
+records the actual evaluated operand, full reference type and formation read
+loans. Formation reads are not external reborrow parents, and opening IDs do
+not establish disjointness. MIR version 127 serializes these facts explicitly,
+including value dependencies and constructor initializer metadata. The MIR
+supplier selector query uses the shared bounded traversal with MIR's own exact
+concrete field inventory; it does not extend that finite storage inventory
+across references. Unknown, cyclic and exhausted queries remain explicit.
+All body verification profiles and program verification currently reject populated
+contents metadata before legacy place-only consumers run. The source/HIR
+staging guard remains in place; this representation does not enable nested
+reference opening yet. Admission requires independent evaluation, read
+permission, exact inventory/guard, alias and lifecycle replay, including
+separate authority for every later runtime field read.
 
 Cleanup blocks forward the same record through supported initialized and
 partially initialized shapes to the selected hosted, callback, or managed-task

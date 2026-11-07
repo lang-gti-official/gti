@@ -9670,6 +9670,22 @@ private:
 
 } // namespace
 
+ReferenceSupplierQuery mir_detail::referenceSupplierPaths(
+    const MirProgram &program, const SemanticType &type) {
+  return collectReferenceSupplierPaths(type, [&](const SemanticType &selected)
+      -> std::optional<ReferenceContentsInventory> {
+    const auto direct = findStoredCarrierReferenceInventory(program, selected);
+    if (!direct)
+      return std::nullopt;
+    ReferenceContentsInventory inventory;
+    inventory.fields.reserve(direct->size());
+    for (const auto &field : *direct)
+      inventory.fields.push_back({.fields = field.fields, .reference = field.reference,
+                                   .conditions = field.conditions});
+    return inventory;
+  });
+}
+
 mir_detail::MirDebugEntryPlaces
 mir_detail::debugEntryPlaces(const MirProgram &program,
                              MirBodyAddress address) {
@@ -23964,6 +23980,20 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
          .message = "MIR verification component set is incomplete or invalid"});
     return result;
   }
+
+  // The staged vocabulary cannot pass into any old place-only proof, even
+  // for unused values or constructor metadata outside the executable body.
+  for (const auto address : enumerateMirBodyAddresses(program))
+    if (const auto *body = findMirBody(program, address);
+        body && mir_detail::hasReferenceContents(*body))
+      return verificationFailure(*body, address.owner,
+          "MIR reference contents require checked opening replay before publication");
+  for (const auto &constructor : program.constructorInstances())
+    for (const auto &initializer : constructor.initializers)
+      if (initializer.completeBorrow &&
+          mir_detail::hasReferenceContents(*initializer.completeBorrow))
+        return verificationFailure(constructor.body, constructor.id,
+            "MIR reference contents require checked opening replay before publication");
 
   // Prove inline sum containment finite before any recursive lifecycle query.
   // Type arguments alone are not storage edges: follow exact variant fields,

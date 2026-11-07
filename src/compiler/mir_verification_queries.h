@@ -4,6 +4,7 @@
 
 #include "gti/mir.h"
 #include "gti/mir_verifier.h"
+#include "gti/reference_contents.h"
 
 #include <cstddef>
 #include <memory>
@@ -365,6 +366,16 @@ textAddressResultLoan(const MirBody &body, const MirInstruction &instruction,
 // A scalar result selects one exact unconditional stored-reference path
 // from an input/receiver entry group, preserving its evaluated field pointer.
 // Program verification separately replays the declaration's typed path.
+// Declaration reachability is separate from the finite inventory stored in
+// one value. Crossings prove typed selectors only, never runtime read access.
+[[nodiscard]] ReferenceSupplierQuery referenceSupplierPaths(
+    const MirProgram &program, const SemanticType &type);
+
+// Detect the staged checked-reference contents vocabulary before legacy
+// physical-place consumers can mistake an absent place for absent provenance.
+[[nodiscard]] bool hasReferenceContents(const MirBorrowDependencySet &dependencies);
+[[nodiscard]] bool hasReferenceContents(const MirBody &body);
+
 [[nodiscard]] bool storedReferenceReturnPublication(const MirBody &body,
                                                     const MirBlock &block,
                                                     const MirInstruction &instruction);

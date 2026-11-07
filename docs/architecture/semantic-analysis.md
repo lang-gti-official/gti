@@ -253,12 +253,18 @@ guard. Unknown, cyclic and exhausted queries publish no partial path inventory.
 The semantic adapter derives direct inventories from checked storage paths and
 can prepare a complete shared-reference opening only after validating its exact
 reference type, read ancestry, guards and result projection. These routines are
-not yet connected to ordinary expression analysis. Activation still requires
-tagged-source return normalization, alias and mutation handling, and independent
-MIR formation, access and cleanup replay; HIR rejects populated contents facts
-until those checks exist. Mutable contents and cleanup-bound reads retain their
-separate permission obligations. Recursive supplier graphs and compact selectors
-remain required work; existing direct recursive storage queries are unchanged.
+not yet connected to ordinary expression analysis. Tagged return normalization
+uses the evaluated binding/receiver and exact member, base or constant-index
+selector; it never projects through a call's lifetime-owner promise. Distinct
+opening IDs and distinct reference slots do not prove their external referents
+disjoint. Writes, loop entries and joins invalidate reuse of current contents,
+while copied shared snapshots retain their immutable authority. Activation still
+requires complete tagged-source transport, declaration/call supplier composition
+and independent MIR formation, access and cleanup replay; HIR rejects populated
+contents facts until those checks exist. Mutable contents and cleanup-bound reads
+retain their separate permission obligations. Recursive supplier graphs and
+compact selectors remain required work; existing direct recursive storage
+queries are unchanged.
 
 A stored-reference field return also checks the field's exact instantiated
 region against the declared result region. Its constructor's original input

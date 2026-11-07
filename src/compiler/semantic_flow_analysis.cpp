@@ -10367,6 +10367,9 @@ auto SemanticVisitor::Impl::mergedProjectedValueStates(const Symbol &left,
 auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
                                              const ScopeStack &left,
                                              const ScopeStack &right) -> void {
+  // A branch-local opening does not establish the slot's current contents on
+  // every incoming path. Copied shared snapshots retain their own loan facts.
+  invalidateReferenceContents();
   const std::size_t depth =
       std::min({scopes.size(), base.size(), left.size(), right.size()});
   for (std::size_t scopeIndex = 0; scopeIndex < depth; ++scopeIndex) {

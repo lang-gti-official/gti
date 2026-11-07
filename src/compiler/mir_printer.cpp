@@ -284,7 +284,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v126 valid=" << program.valid() << '\n';
+    output << "mir-v127 valid=" << program.valid() << '\n';
     if (program.requiresNativeObjectLayout())
       output << "native-object-layout\n";
     for (const auto &recipe : program.nominalVarianceRecipes()) {
@@ -1837,12 +1837,24 @@ private:
     output << " initially-available=" << value.initiallyAvailable << '\n';
   }
 
+  void referenceContents(const std::optional<MirReferenceContentsSource> &value) {
+    if (!value) {
+      output << "absent";
+      return;
+    }
+    output << "{opening=l" << value->openingLoan << ";fields=[";
+    list(value->fields);
+    output << "]}";
+  }
+
   void loan(const MirLoan &value) {
     output << "  loan" << value.id << " kind=" << number(value.kind)
            << " semantic=" << value.semanticLoan << " parent=loan"
            << value.parent << " stored-dependency=loan"
            << value.storedDependency << " source=p" << value.source
-           << " access=" << number(value.access) << " produced=v"
+           << " reference-contents=";
+    referenceContents(value.referenceContents);
+    output << " access=" << number(value.access) << " produced=v"
            << value.producedBy << " carriers=[";
     for (std::size_t index = 0; index < value.carriers.size(); ++index) {
       separator(index);
@@ -1878,6 +1890,21 @@ private:
     } else {
       output << "absent";
     }
+    output << " contents-opening=";
+    if (value.contentsOpening) {
+      output << "{reference=";
+      operand(value.contentsOpening->reference);
+      output << ";type=";
+      type(value.contentsOpening->referenceType);
+      output << ";read-loans=[";
+      for (std::size_t index = 0; index != value.contentsOpening->readLoans.size(); ++index) {
+        separator(index);
+        output << value.contentsOpening->readLoans[index];
+      }
+      output << "]}";
+    } else {
+      output << "absent";
+    }
     output << " lifecycle-bound=" << value.lifecycleBound
            << " additional-dependencies=[";
     for (std::size_t index = 0; index < value.additionalDependencies.size();
@@ -1885,8 +1912,9 @@ private:
       separator(index);
       const auto &dependency = value.additionalDependencies[index];
       output << "{source=p" << dependency.source << " parent=l"
-             << dependency.parent << " access=" << number(dependency.access)
-             << " fields=[";
+             << dependency.parent << " reference-contents=";
+      referenceContents(dependency.referenceContents);
+      output << " access=" << number(dependency.access) << " fields=[";
       for (std::size_t field = 0; field < dependency.designatedFields.size();
            ++field) {
         separator(field);
@@ -1913,7 +1941,9 @@ private:
       output << "complete[";
       for (const auto &dependency : value.borrowDependencies->dependencies) {
         output << "p" << dependency.source << ":loan" << dependency.parent
-               << ":fields=";
+               << ":reference-contents=";
+        referenceContents(dependency.referenceContents);
+        output << ":fields=";
         list(dependency.designatedFields);
         output << ":conditions=";
         borrowConditions(dependency.conditions);
@@ -2535,7 +2565,9 @@ private:
       output << '[';
       for (const auto &dependency : value.completeBorrow->dependencies) {
         output << "p" << dependency.source << ":loan" << dependency.parent
-               << ":access=" << number(dependency.access) << ":path=";
+               << ":reference-contents=";
+        referenceContents(dependency.referenceContents);
+        output << ":access=" << number(dependency.access) << ":path=";
         list(dependency.designatedFields);
         borrowConditions(dependency.conditions);
       }

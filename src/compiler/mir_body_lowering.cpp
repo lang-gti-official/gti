@@ -9177,6 +9177,7 @@ private:
           reserveBorrowResult && stableReservationOrigin(origin);
       const MirLoanId loan = createLoan(kind, origin, value.borrowAccess,
                                         value.id, 0, {}, parent, twoPhase);
+      MirPlaceId retainedShellInput = 0;
       if (shellContract != nullptr) {
         recordLoanIdentity(loan, *shellContract);
       } else if (textShellOwner != 0) {
@@ -9220,9 +9221,41 @@ private:
         // Restoration opens the requested inventory through the exact opaque
         // input reference. That witness retains its earlier authority; a
         // coincident underlying supplier cannot replace the input loan.
+        const MirOperand *input = nullptr;
+        if (value.borrowOrigin == BorrowOriginKind::Receiver)
+          input = sourceReceiver ? &*sourceReceiver
+                  : call.receiver ? &*call.receiver : nullptr;
+        else if (value.borrowOrigin == BorrowOriginKind::Argument &&
+                 value.borrowArgument < call.operands.size())
+          input = value.borrowArgument < sourceArguments.size()
+              ? &sourceArguments[value.borrowArgument]
+              : &call.operands[value.borrowArgument];
+        MirLoanId retained = 0;
+        if (input) {
+          // The returned reference's lifetime supplier can be an external
+          // field of this carrier. Its retained contents belong to the exact
+          // evaluated input address/loan, never that supplier's storage.
+          const auto *actualLoan = output.findLoan(operandLoan(*input));
+          const auto loanDependency =
+              actualLoan ? (actualLoan->kind == MirLoanKind::Stored
+                                ? actualLoan->id
+                                : actualLoan->storedDependency)
+                         : MirLoanId{0};
+          const auto placeDependency =
+              input->place ? storedDependencyForPlace(input->place)
+                           : MirLoanId{0};
+          if (!loanDependency || !placeDependency ||
+              loanDependency == placeDependency) {
+            retained = loanDependency ? loanDependency : placeDependency;
+            if (retained && retained == placeDependency)
+              retainedShellInput = input->place;
+          }
+        } else {
+          retained = storedDependencyForPlace(origin);
+        }
         output.loans[loan - 1].storedDependency =
             value.restoresReferenceResult && !value.restoredBorrowFields.empty()
-                ? originLoan : storedDependencyForPlace(origin);
+                ? originLoan : retained;
         // A text reference may select a literal-backed local. The program
         // verifier independently proves that case from its initialization;
         // every dynamic text source still requires its exact owner witness.
@@ -9561,8 +9594,33 @@ private:
                         dependency.source) == argumentPlaces.end())
             dependency.source = selected;
         }
-        const auto &primary = complete.front();
         auto &published = output.loans[loan - 1];
+        if (shellReference && value.info.traits.containsBorrowedState &&
+            !value.restoresReferenceResult && published.storedDependency &&
+            complete.front().parent == published.storedDependency) {
+          // This complete set can name both a carrier's physical shell and
+          // its stored external owners. Retain the exact shell supplier as
+          // primary; the separate Stored group remains an independent
+          // contents dependency. Reordering never changes any source fact.
+          auto physical = complete.end();
+          bool ambiguous = false;
+          for (auto candidate = complete.begin(); candidate != complete.end();
+               ++candidate)
+            if (retainedShellInput && candidate->source == retainedShellInput &&
+                candidate->parent != published.storedDependency &&
+                candidate->access == value.borrowAccess &&
+                candidate->designatedFields.empty() &&
+                candidate->conditions.empty()) {
+              ambiguous |= physical != complete.end();
+              physical = candidate;
+            }
+          if (ambiguous || physical == complete.end()) {
+            valid = false;
+            return;
+          }
+          std::rotate(complete.begin(), physical, physical + 1);
+        }
+        const auto &primary = complete.front();
         published.source = primary.source;
         published.access = primary.access;
         published.parent = primary.parent;

@@ -5815,14 +5815,27 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
     BorrowedFieldOrigin normalized{.resultFields = dependency.designatedFields,
                                    .access = dependency.access,
                                    .resultConditions = dependency.conditions};
+    // A contents source names an actual evaluated reference selector. Never
+    // append its fields to a lifetime-supplier place: an unsafe owner promise
+    // may keep a different address alive. Ordinary physical sources retain
+    // their existing place authority and source-path proof below.
+    ReferenceContentsSelector selector{.root = dependency.place.root,
+                                        .receiver = dependency.place.receiver,
+                                        .fields = dependency.place.projections};
+    if (dependency.referenceContents) {
+      const auto selected = referenceContentsSourceSelector(dependency);
+      if (!selected)
+        return std::nullopt;
+      selector = *selected;
+    }
     SemanticType sourceType = SemanticType::Unknown;
     BorrowPath sourcePrefix;
     Lifetime sourceRegion;
     bool physicalCallerStorage = false;
     bool sourceThroughExternalReference = false;
     AccessMode sourceAccess = AccessMode::ReadOnly;
-    if (dependency.place.receiver) {
-      if (dependency.place.root != 0 || function.ownerClass == 0 ||
+    if (selector.receiver) {
+      if (selector.root != 0 || function.ownerClass == 0 ||
           function.staticMember)
         return std::nullopt;
       normalized.origin = BorrowOriginKind::Receiver;
@@ -5835,10 +5848,10 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
                          : AccessMode::ReadOnly;
     } else {
       for (const auto &formal : *formals) {
-        if (formal.binding != dependency.place.root ||
-            formal.bindingPrefix.size() > dependency.place.projections.size() ||
+        if (formal.binding != selector.root ||
+            formal.bindingPrefix.size() > selector.fields.size() ||
             !std::equal(formal.bindingPrefix.begin(), formal.bindingPrefix.end(),
-                        dependency.place.projections.begin()))
+                        selector.fields.begin()))
           continue;
         if (normalized.origin != BorrowOriginKind::None)
           return std::nullopt;
@@ -5856,7 +5869,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
       }
       if (normalized.origin == BorrowOriginKind::None)
         for (const auto &capture : captures) {
-          if (!capture.bindingSymbol || capture.bindingSymbol != dependency.place.root)
+          if (!capture.bindingSymbol || capture.bindingSymbol != selector.root)
             continue;
           if (normalized.origin != BorrowOriginKind::None)
             return std::nullopt;
@@ -5882,12 +5895,12 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
       // on that exact static place, as a legacy Global origin does.
       if (normalized.origin == BorrowOriginKind::None)
         if (const auto *global =
-                semanticModel.database().findSymbol(dependency.place.root);
+                semanticModel.database().findSymbol(selector.root);
             global != nullptr && !global->threadLocal &&
             (global->kind == SymbolKind::GlobalVariable ||
              (global->kind == SymbolKind::Field && global->staticMember))) {
           normalized.origin = BorrowOriginKind::Global;
-          normalized.globalRoot = dependency.place.root;
+          normalized.globalRoot = selector.root;
           sourceRegion = Lifetime::staticLifetime();
           sourceType = global->type;
           physicalCallerStorage = true;
@@ -5898,7 +5911,7 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
         return std::nullopt;
     }
 
-    auto selectedPlace = dependency.place;
+    auto selectedFields = selector.fields;
     std::unordered_set<SemanticLoanId> selectedAncestors;
     std::unordered_set<const Expr *> physicalSelections;
     for (auto parent = dependency.parent; parent != 0;) {
@@ -5910,27 +5923,27 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
       if (loan->referenceSelection &&
           loan->referenceSelection->kind == ReferenceSelectionKind::PhysicalPayload) {
         const auto &selection = *loan->referenceSelection;
-        if (!selection.source || !selection.carrier || selection.transferredFrom ||
+        if (dependency.referenceContents || !selection.source || !selection.carrier || selection.transferredFrom ||
             selection.fields.size() != 1 || selection.conditions.size() != 1 ||
             !loan->additionalDependencies.empty() ||
-            loan->place.root != selectedPlace.root ||
-            loan->place.receiver != selectedPlace.receiver ||
-            loan->place.projections.size() > selectedPlace.projections.size() ||
+            loan->place.root != selector.root ||
+            loan->place.receiver != selector.receiver ||
+            loan->place.projections.size() > selectedFields.size() ||
             !std::equal(loan->place.projections.begin(), loan->place.projections.end(),
-                        selectedPlace.projections.begin()))
+                        selectedFields.begin()))
           return std::nullopt;
         if (physicalSelections.insert(selection.source).second)
-          selectedPlace.projections.insert(
-              selectedPlace.projections.begin() + loan->place.projections.size(),
+          selectedFields.insert(
+              selectedFields.begin() + loan->place.projections.size(),
               selection.fields.front());
       }
       parent = loan->parent;
     }
     bool externalReferent = sourceThroughExternalReference;
-    if (sourcePrefix.size() > selectedPlace.projections.size() ||
-        !std::equal(sourcePrefix.begin(), sourcePrefix.end(), selectedPlace.projections.begin()))
+    if (sourcePrefix.size() > selectedFields.size() ||
+        !std::equal(sourcePrefix.begin(), sourcePrefix.end(), selectedFields.begin()))
       return std::nullopt;
-    for (const auto &projection : std::span(selectedPlace.projections).subspan(sourcePrefix.size())) {
+    for (const auto &projection : std::span(selectedFields).subspan(sourcePrefix.size())) {
       // A class's checked pointee accessor (an owning handle's operator*)
       // reaches storage that class owns: the path ends at the handle, whose
       // storage then contains the referent.
@@ -7160,6 +7173,9 @@ auto SemanticVisitor::Impl::joinedBorrowDependencySets(
 
 auto SemanticVisitor::Impl::invalidateBorrowDependencySet(
     const SemanticPlace &place) -> void {
+  // A write may change the value held in an aliased reference slot. A copied
+  // shared reference remains a snapshot; only reuse of current contents ends.
+  invalidateReferenceContents();
   if (place.root == nullptr)
     return;
   place.root->completeBorrowSet.reset();
@@ -10707,6 +10723,14 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
                                              AccessMode requested,
                                              SemanticLoanId throughLoan) const
     -> std::vector<SemanticLoanId> {
+  return conflictingLoans(place, requested, throughLoan, std::nullopt);
+}
+
+auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
+                                             AccessMode requested,
+                                             SemanticLoanId throughLoan,
+                                             const std::optional<SemanticReferenceContentsSource> &contents) const
+    -> std::vector<SemanticLoanId> {
   std::vector<SemanticLoanId> result;
   const auto *accessParent = semanticModel.findLoan(throughLoan);
   const bool carrierAccess =
@@ -10718,6 +10742,8 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
               accessParent->storedDependency != 0
           ? semanticModel.findLoan(accessParent->storedDependency)
           : accessParent;
+  const bool requestedContents = contents.has_value() ||
+      (!carrierAccess && accessParent && accessParent->referenceContents);
   // A call through the exact named carrier uses its external capability as
   // well as its physical shell. An exclusive parent stays suspended while a
   // child is live even when the child's source is the external referent.
@@ -10747,12 +10773,14 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
                 projectedStoredDependency(*parent, place.projections))
           return dependency->access == AccessMode::Mutable;
       return (parent->access == AccessMode::Mutable &&
-              loanPlacesOverlap(parent->place, place)) ||
+              (requestedContents || parent->referenceContents ||
+               loanPlacesOverlap(parent->place, place))) ||
              std::any_of(parent->additionalDependencies.begin(),
                          parent->additionalDependencies.end(),
                          [&](const auto &dependency) {
                            return dependency.access == AccessMode::Mutable &&
-                                  loanPlacesOverlap(dependency.place, place);
+                                  (requestedContents || dependency.referenceContents ||
+                                   loanPlacesOverlap(dependency.place, place));
                          });
     };
     const bool suspendedParentUse = parent != nullptr &&
@@ -10772,9 +10800,14 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
     // shared first field cannot hide an exclusive later field, and an
     // exclusive first field cannot prohibit reads of unrelated shared owners.
     const auto conflicts = [&](const SemanticLoanPlace &source,
+                               const std::optional<SemanticReferenceContentsSource> &sourceContents,
                                AccessMode access, bool protectsStorage) {
+      // These paths identify reference slots, not disjoint pointee addresses.
+      // Different openings of the same slot, distinct slots, and an opaque
+      // contents source versus a place remain possibly aliasing. Formation
+      // never fabricates a lifetime-owner PlaceKey to prove disjointness.
       const bool overlaps =
-          loanPlacesOverlap(place, source) ||
+          requestedContents || sourceContents || loanPlacesOverlap(place, source) ||
           (carrierAccess && suspendedParentUse &&
            (loanPlacesOverlap(parent->place, source) ||
             std::any_of(parent->additionalDependencies.begin(),
@@ -10818,16 +10851,16 @@ auto SemanticVisitor::Impl::conflictingLoans(const SemanticLoanPlace &place,
                                            ReferenceSelectionKind::StoredExternalReference &&
            suspendedParentUse) ||
           abstractStoredChild || publishedExternalExclusion;
-      return (protectsStorage || protectsPermission) && overlaps &&
+      return (protectsStorage || protectsPermission || sourceContents) && overlaps &&
              ((suspendedParentUse && !sharedReferenceAccess) ||
               requested == AccessMode::Mutable ||
               access == AccessMode::Mutable);
     };
-    if (conflicts(loan->place, loan->access, loan->protectsStorage) ||
+    if (conflicts(loan->place, loan->referenceContents, loan->access, loan->protectsStorage) ||
         std::any_of(loan->additionalDependencies.begin(),
                     loan->additionalDependencies.end(),
                     [&](const SemanticLoanDependency &dependency) {
-                      return conflicts(dependency.place, dependency.access,
+                      return conflicts(dependency.place, dependency.referenceContents, dependency.access,
                                        dependency.protectsStorage);
                     })) {
       result.push_back(id);
@@ -12137,6 +12170,7 @@ auto SemanticVisitor::Impl::recordLoanFlowBreak(
 }
 
 auto SemanticVisitor::Impl::beginLoanFlowLoop(const Stmt &statement) -> void {
+  invalidateReferenceContents();
   // The semantic loop body is visited once. An incoming exact alternative is
   // not a proof for every backedge iteration of a binding the body can write.
   // Until conditional sets join the existing loop fixed-point contract, keep
@@ -12763,7 +12797,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
         reportBorrowConflict(
             sourceToken,
             conflictingLoans(dependency.place, dependency.access,
-                             dependency.parent),
+                             dependency.parent, dependency.referenceContents),
             "Cannot retain this value while an overlapping borrow may still "
             "be live.");
       const auto &primary = dependencies.front();
@@ -12822,7 +12856,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
         reportBorrowConflict(
             sourceToken,
             conflictingLoans(dependency.place, carrierAccess,
-                             dependency.parent),
+                             dependency.parent, dependency.referenceContents),
             "Cannot retain this reference while an overlapping borrow may "
             "still be live.");
         dependency.access = carrierAccess;
@@ -13207,7 +13241,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           return; // Ordinary reference binding owns the access diagnostic.
         reportBorrowConflict(
             sourceToken,
-            conflictingLoans(dependency.place, carrierAccess, origin.id),
+            conflictingLoans(dependency.place, carrierAccess, origin.id,
+                             dependency.referenceContents),
             "Cannot reborrow this selected reference while an overlapping "
             "child borrow may still be live.");
         dependency.access = carrierAccess;

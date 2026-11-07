@@ -14,6 +14,7 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "carrier_reference_shell_inputs": 'int shared = 7;\nint independent = 9;\nstruct Borrowed<lifetime storage> {\n  int&<storage> value;\n  Borrowed(int&<storage> input) : value(input) {}\n};\nBorrowed<storage>&<shell> relay<lifetime storage, lifetime shell>(\n    Borrowed<storage>&<shell> input) { return input; }\nint main() {\n  Borrowed<static> first{shared};\n  Borrowed<static> second{shared};\n  Borrowed<static> third{independent};\n  Borrowed<static>& firstRef = relay(first);\n  Borrowed<static>& secondRef = relay(second);\n  Borrowed<static>& thirdRef = relay(third);\n  return firstRef.value + secondRef.value + thirdRef.value - 23;\n}\n',
     "deferred_callable_copy_evidence": """
 import std.utility;
 T duplicate<T>(T& value) {

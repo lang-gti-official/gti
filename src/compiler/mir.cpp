@@ -11261,6 +11261,11 @@ static MirVerificationResult
 verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                   MirPlaceObservationSink *observations,
                   const MirProgram *catalog = nullptr, bool provisional = false) {
+  // No source producer enables this staged vocabulary yet. Keep it closed in
+  // every verification profile until independent opening/address replay lands.
+  if (mir_detail::hasReferenceContents(body))
+    return failure(body, owner,
+                   "MIR reference contents require checked opening replay before publication");
   if (!catalog && !provisional) {
     const auto dependent = [](const BorrowPath &path) {
       return std::any_of(path.begin(), path.end(), [](const auto &step) {

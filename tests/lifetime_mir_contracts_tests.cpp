@@ -1306,7 +1306,7 @@ int inspect<lifetime storage, lifetime shell>(Borrowed<storage>&<shell> source) 
   unsafe { return recover<storage, shell>(erase(source)).value; }
 }
 void inspect_unused<lifetime storage, lifetime shell>(Borrowed<storage>&<shell> source) {
-  unsafe { recover<storage, shell>(erase(source)); }
+  unsafe { [[discard]] recover<storage, shell>(erase(source)); }
 }
 int main() {
   mut int number = 3;
@@ -1541,6 +1541,98 @@ int main() {
   expect(opaqueWitness && convertedInput && repeatedReferent &&
              reborrowedAdditionalInput && unusedPublication,
          "erasure controls cover opaque identity, used/unused suppliers, conversion types and repeated exact referents");
+}
+
+void checkCarrierReferenceShellInputs() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "carrier-reference-shell-inputs.gti", R"gti(int shared = 7;
+int independent = 9;
+struct Borrowed<lifetime storage> {
+  int&<storage> value;
+  Borrowed(int&<storage> input) : value(input) {}
+};
+Borrowed<storage>&<shell> relay<lifetime storage, lifetime shell>(
+    Borrowed<storage>&<shell> input) { return input; }
+int main() {
+  Borrowed<static> first{shared};
+  Borrowed<static> second{shared};
+  Borrowed<static> third{independent};
+  Borrowed<static>& firstRef = relay(first);
+  Borrowed<static>& secondRef = relay(second);
+  Borrowed<static>& thirdRef = relay(third);
+  return firstRef.value + secondRef.value + thirdRef.value - 23;
+}
+)gti");
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(),
+         "reference results retain the actual carrier shell and its separate stored owners");
+  bool sameOwner = false, differentOwner = false;
+  for (const auto address : enumerateMirBodyAddresses(checked.mir)) {
+    const auto *body = findMirBody(checked.mir, address);
+    if (!body) continue;
+    for (const auto &block : body->blocks)
+      for (const auto &call : block.instructions) {
+        const auto *loan = call.loan ? body->findLoan(*call.loan) : nullptr;
+        if (call.kind != MirInstructionKind::Call || !call.functionTarget ||
+            call.info.type.kind != SemanticType::Class || call.operands.size() != 1 ||
+            call.operands.front().kind != MirOperandKind::Value ||
+            !loan || loan->kind != MirLoanKind::CallResult || !loan->storedDependency)
+          continue;
+        const auto *group = body->findLoan(loan->storedDependency);
+        const auto *stage = mir_detail::definitionFor(*body, call.operands.front().value);
+        expect(group && group->kind == MirLoanKind::Stored && stage &&
+                   stage->kind == MirInstructionKind::CallInput &&
+                   stage->operands.size() == 1 &&
+                   stage->operands.front().kind == MirOperandKind::BorrowRead,
+               "carrier shell result has one exact read-only prepared input and stored group");
+        const auto *input = body->findPlace(stage->operands.front().place);
+        expect(input && input->type == call.info.type && loan->source == input->id &&
+                   std::find(group->carriers.begin(), group->carriers.end(), input->binding) !=
+                       group->carriers.end() && loan->parent != group->id &&
+                   std::any_of(loan->additionalDependencies.begin(), loan->additionalDependencies.end(),
+                       [&](const auto &dependency) {
+                         return dependency.source == group->source && dependency.parent == group->id;
+                       }),
+               "the primary input shell and every original external parent retain distinct roles");
+        for (const auto &other : body->loans) {
+          if (other.id == group->id || other.kind != MirLoanKind::Stored ||
+              other.carriers.size() != 1 || other.designatedFields != group->designatedFields)
+            continue;
+          const auto unrelated = std::find_if(body->places.begin(), body->places.end(),
+              [&](const auto &place) {
+                return place.root == MirPlaceRootKind::Binding &&
+                       place.binding == other.carriers.front() && place.projections.empty() &&
+                       place.type == input->type && place.binding != input->binding;
+              });
+          if (unrelated == body->places.end()) continue;
+          const auto *owner = body->findPlace(group->source);
+          const auto *otherOwner = body->findPlace(other.source);
+          expect(owner && otherOwner, "stored groups retain concrete owner identities");
+          const bool sharesOwner = owner->root == otherOwner->root &&
+              owner->symbol == otherOwner->symbol && owner->binding == otherOwner->binding &&
+              owner->projections == otherOwner->projections;
+          sameOwner |= sharesOwner;
+          differentOwner |= !sharesOwner;
+          for (int mutation = 0; mutation != 3; ++mutation) {
+            auto forged = checked.mir;
+            auto *changed = findMirBody(forged, address);
+            if (mutation == 0) changed->loans[loan->id - 1].storedDependency = other.id;
+            if (mutation == 1)
+              for (auto &changedBlock : changed->blocks)
+                for (auto &instruction : changedBlock.instructions)
+                  if (instruction.id == stage->id)
+                    instruction.operands.front().place = unrelated->id;
+            if (mutation == 2) changed->loans[loan->id - 1].source = unrelated->id;
+            expect(!verifyMirProgram(forged).valid(),
+                   "same-typed unrelated carriers cannot replace input address, shell source or stored group");
+          }
+        }
+      }
+  }
+  expect(sameOwner && differentOwner,
+         "shell mutations distinguish different carriers sharing an owner from different external owners");
 }
 
 bool checkRawOwnerLifetimeFacts() {
@@ -2977,6 +3069,7 @@ int main() {
              failure->fixes.empty(),
          "an invocation pointer cannot discard a target outlives requirement or invent a repair");
   checkReferenceErasureLifetimeAuthority();
+  checkCarrierReferenceShellInputs();
   checkScopedReceiverOwner();
   checkAppliedBorrowFieldSummary();
   checkScopedFunctionItemIdentity();

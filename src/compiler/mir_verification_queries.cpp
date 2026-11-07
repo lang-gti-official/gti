@@ -909,6 +909,21 @@ referenceInitializerCall(const MirProgram &program,
   return call;
 }
 
+bool hasReferenceContents(const MirBorrowDependencySet &dependencies) {
+  return std::any_of(dependencies.dependencies.begin(), dependencies.dependencies.end(),
+      [](const auto &dependency) { return dependency.referenceContents.has_value(); });
+}
+
+bool hasReferenceContents(const MirBody &body) {
+  return std::any_of(body.loans.begin(), body.loans.end(), [](const auto &loan) {
+      return loan.referenceContents || loan.contentsOpening ||
+          std::any_of(loan.additionalDependencies.begin(), loan.additionalDependencies.end(),
+              [](const auto &dependency) { return dependency.referenceContents.has_value(); });
+    }) || std::any_of(body.values.begin(), body.values.end(), [](const auto &value) {
+      return value.borrowDependencies && hasReferenceContents(*value.borrowDependencies);
+    });
+}
+
 bool storedReferenceReturnPublication(const MirBody &body,
                                        const MirBlock &block,
                                        const MirInstruction &instruction) {

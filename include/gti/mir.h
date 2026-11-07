@@ -365,9 +365,33 @@ enum class MirLoanKind {
   CallArgument,
 };
 
+// An origin stored in the direct referent of one evaluated checked reference.
+// This is not a physical projection of that reference's lifetime-owner place.
+struct MirReferenceContentsSource {
+  MirLoanId openingLoan = 0;
+  BorrowPath fields;
+
+  friend bool operator==(const MirReferenceContentsSource &,
+                         const MirReferenceContentsSource &) = default;
+};
+
+// Formation reads this exact evaluated reference under active capabilities.
+// Those read loans do not become external reborrow parents of a copied shared
+// field. Each later runtime field read still needs its own address authority.
+struct MirReferenceContentsOpening {
+  MirOperand reference;
+  SemanticType referenceType = SemanticType::Unknown;
+  std::vector<MirLoanId> readLoans;
+
+  friend bool operator==(const MirReferenceContentsOpening &,
+                         const MirReferenceContentsOpening &) = default;
+};
+
 struct MirLoanDependency {
   MirPlaceId source = 0;
   MirLoanId parent = 0;
+  // Exactly one origin form: a physical place or a checked contents selector.
+  std::optional<MirReferenceContentsSource> referenceContents;
   BorrowPath designatedFields;
   AccessMode access = AccessMode::ReadOnly;
   std::vector<BorrowDependencyCondition> conditions;
@@ -416,11 +440,13 @@ struct MirLoan {
   MirLoanId storedDependency = 0;
   MirLoanKind kind = MirLoanKind::Local;
   MirPlaceId source = 0;
+  std::optional<MirReferenceContentsSource> referenceContents;
   // Each extra stored dependency retains its own provenance and permission.
   // Abstract entry dependencies designate a field rather than a concrete
   // caller place; concrete dependencies name their body-local source place.
   std::vector<MirLoanDependency> additionalDependencies;
   std::optional<MirReferenceSelection> referenceSelection;
+  std::optional<MirReferenceContentsOpening> contentsOpening;
   AccessMode access = AccessMode::ReadOnly;
   HirValueId producedBy = 0;
   std::vector<HirBindingId> carriers;

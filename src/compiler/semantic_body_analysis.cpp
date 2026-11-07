@@ -6160,7 +6160,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
               reportBorrowConflict(
                   *payload.name,
                   conflictingLoans(dependency.place, dependency.access,
-                                   dependency.parent),
+                                   dependency.parent, dependency.referenceContents),
                   "Cannot select this reference while an overlapping "
                   "external borrow may still be live.");
             const auto &primary = dependencies->dependencies.front();

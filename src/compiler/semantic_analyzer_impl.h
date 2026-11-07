@@ -1446,6 +1446,9 @@ private:
     std::vector<SemanticBorrowDependencySet> implicitResultReturns;
     std::size_t rawConditionalExpressionDepth = 0;
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
+    // Index only; every query still checks the ordinary loan and flow record.
+    // Programs without openings pay no scan of unrelated loans on each write.
+    std::vector<SemanticLoanId> referenceContentsOpenings;
     // A contents read is a snapshot. Writes invalidate reuse of its source
     // reference's current contents, not shared references already copied out.
     std::unordered_set<SemanticLoanId> invalidatedReferenceContents;
@@ -3188,6 +3191,20 @@ private:
   // expose as its referent. This is a type query, not liveness/owner proof.
   [[nodiscard]] std::optional<SemanticType>
   checkedReferenceExpressionType(const Expr *expression) const;
+  // A declaration selector follows the evaluated source syntax. It is not a
+  // lifetime-owner PlaceKey and never follows a call's borrowed-from origin.
+  struct ReferenceContentsSelector {
+    SymbolId root = 0;
+    bool receiver = false;
+    BorrowPath fields;
+    SemanticType type = SemanticType::Unknown;
+  };
+  [[nodiscard]] std::optional<ReferenceContentsSelector>
+  referenceContentsSelector(const Expr *expression) const;
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  checkedReferenceContentsOpening(SemanticLoanId opening) const;
+  [[nodiscard]] std::optional<ReferenceContentsSelector>
+  referenceContentsSourceSelector(const SemanticLoanDependency &dependency) const;
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   referenceContentsDependencySet(const Expr *expression) const;
   void recordMemberReferenceContents(const Get &expression);
@@ -3556,6 +3573,10 @@ private:
   [[nodiscard]] std::vector<SemanticLoanId>
   conflictingLoans(const SemanticLoanPlace &place, AccessMode requested,
                    SemanticLoanId throughLoan = 0) const;
+  [[nodiscard]] std::vector<SemanticLoanId>
+  conflictingLoans(const SemanticLoanPlace &place, AccessMode requested,
+                   SemanticLoanId throughLoan,
+                   const std::optional<SemanticReferenceContentsSource> &contents) const;
 
   void reportLoanPlaceConflict(const Token &token,
                                const SemanticLoanPlace &stable,
