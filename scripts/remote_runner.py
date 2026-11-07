@@ -207,6 +207,18 @@ def window_slots():
     return {"build": 1 if platform.system() == "Linux" else 2, "suite": 1}
 
 
+def sibling_llvm_pin():
+    """The llvm_pin module beside this file, as an ordinary import, or None."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import llvm_pin
+    except ImportError:
+        return None
+    finally:
+        sys.path.pop(0)
+    return llvm_pin
+
+
 def load_llvm_pin(scripts):
     """scripts/llvm_pin.py loaded from one directory, or None when absent."""
     path = Path(scripts) / "llvm_pin.py"
@@ -225,12 +237,12 @@ def llvm_directory(source=None):
     snapshot it is about to build. Only without either does it fall back to
     the host's default llvm-config, which on Ubuntu is often an older major
     (CMake then refuses it)."""
-    for scripts, root in ((Path(__file__).resolve().parent, None),
-                          (Path(source) / "scripts" if source else None, source)):
-        pin = load_llvm_pin(scripts) if scripts else None
-        if pin is not None:
-            found = pin.discover() if root is None else pin.discover(Path(root))
-            return str(found) if found else None
+    pin, root = sibling_llvm_pin(), None
+    if pin is None and source:
+        pin, root = load_llvm_pin(Path(source) / "scripts"), Path(source)
+    if pin is not None:
+        found = pin.discover() if root is None else pin.discover(root)
+        return str(found) if found else None
     executable = shutil.which("llvm-config")
     if executable:
         result = subprocess.run([executable, "--cmakedir"], capture_output=True, text=True)

@@ -591,6 +591,9 @@ class RunnerConnections(unittest.TestCase):
         sys.path.insert(0, str(Path(runner.__file__).resolve().parent))
         import llvm_pin as pin
         sys.path.pop(0)
+        # The runner must use this very module, so these patches reach it;
+        # a separately loaded copy would discover the host's real LLVM.
+        self.assertIs(runner.sibling_llvm_pin(), pin)
         major = pin.pinned_major()
         configs = {f"llvm-config-{major}": f"/usr/bin/llvm-config-{major}"}
         for found, expected in ((f"{major}.1.0", str(llvm.resolve())), (f"{major - 1}.1.8", None)):
@@ -610,10 +613,7 @@ class RunnerConnections(unittest.TestCase):
             "import pathlib\n"
             "def discover(root=None):\n"
             "    return pathlib.Path(root) / 'pinned-llvm' if root else None\n")
-        sibling = runner.load_llvm_pin
-        with mock.patch.object(runner, "load_llvm_pin",
-                               side_effect=lambda scripts: None if Path(scripts) == Path(runner.__file__).resolve().parent
-                               else sibling(scripts)), \
+        with mock.patch.object(runner, "sibling_llvm_pin", return_value=None), \
                 mock.patch.object(runner.shutil, "which", return_value=None):
             self.assertEqual(runner.llvm_directory(str(snapshot)), str(snapshot / "pinned-llvm"))
             self.assertIsNone(runner.llvm_directory(str(self.local / "no-snapshot")))
