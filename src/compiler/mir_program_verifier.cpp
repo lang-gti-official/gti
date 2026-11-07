@@ -19204,7 +19204,8 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
             producer.constructorTarget &&
             callSummary(*producer.constructorTarget, MirBodyKind::Constructor)) ||
            (producer.kind == MirInstructionKind::Compute &&
-            producer.operation == MirOperation::PayloadConstruct)) &&
+            (producer.operation == MirOperation::PayloadConstruct ||
+             producer.operation == MirOperation::Closure))) &&
           producer.result && *producer.result <= flow.values.size()) {
         const auto &fact = flow.values[*producer.result - 1];
         valid = loan.kind == MirLoanKind::Stored && !loan.escapes &&
@@ -19325,6 +19326,17 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
       }
       if (producer.result && *producer.result <= flow.values.size()) {
         const auto &fact = flow.values[*producer.result - 1];
+        // A known complete result owns the whole published permission group,
+        // even without a conditional tag. Claims on its attached Stored loan
+        // must agree with independently replayed input/capture contents.
+        needsProof |= fact && loan.kind == MirLoanKind::Stored && !loan.escapes &&
+            (producer.kind == MirInstructionKind::Call ||
+             exactGeneratedCopyConstruction(program, producer) ||
+             (producer.kind == MirInstructionKind::Construct && producer.constructorTarget &&
+              callSummary(*producer.constructorTarget, MirBodyKind::Constructor)) ||
+             (producer.kind == MirInstructionKind::Compute &&
+              (producer.operation == MirOperation::PayloadConstruct ||
+               producer.operation == MirOperation::Closure)));
         needsProof |=
             fact && std::any_of(fact->dependencies.begin(),
                                 fact->dependencies.end(), [](const auto &item) {

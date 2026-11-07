@@ -25,6 +25,22 @@ Holder<F> store<F>(F f) { return Holder<F>(std::move(f)); }
 struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
 int main() { int value = 7; View view{value}; auto callback = [view]() -> int { return view.value; }; mut auto stored = store(std::move(callback)); return stored.run() - 7; }
 """,
+    'copied_callback_after_source_consumption': r"""
+void consume<T>(T value) {}
+class Holder<F> { mut F callable; public: Holder(F f):callable(std::move(f)) {} int run() mut { return this.callable(); } };
+Holder<F> store<F>(F f) { return Holder<F>(std::move(f)); }
+struct View<lifetime a> { int&<a> value; View(int&<a> input):value(input) {} };
+int main() { int value=7; View view{value}; auto callback=[view]()->int { return view.value; }; consume(std::move(view)); mut auto stored=store(std::move(callback)); return stored.run()-7; }
+""",
+    'copied_callback_multiple_owners': r"""
+struct Pair<lifetime a, lifetime b> { int&<a> first; int&<b> second; Pair(int&<a> left,int&<b> right):first(left),second(right) {} };
+int main() { int first=4; int second=7; Pair pair{first,second}; auto callback=[pair]()->int { return pair.first+pair.second; }; return callback()-11; }
+""",
+    'copied_callback_parameter_owner': r"""
+struct View<lifetime a> { int&<a> value; View(int&<a> input):value(input) {} };
+int execute<lifetime a>(View<a> view) { auto callback=[view]()->int { return view.value; }; return callback(); }
+int main(){ int value=7; return execute(View(value))-7; }
+""",
     'owned_closure_relay': r"""
 F relay<F>(F callback) { return std::move(callback); }
 int main() {

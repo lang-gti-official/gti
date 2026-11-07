@@ -3152,6 +3152,42 @@ int main() {
          "separating physical and contents parents does not permit reassignment of the borrowed object");
 }
 
+void testCopiedBorrowedCaptureOwners() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  for (const bool consumeSource : {false, true}) {
+    for (const bool writeReferent : {false, true}) {
+      std::string source = R"gti(
+void consume<T>(T value) {}
+class Holder<F> { mut F callable; public: Holder(F f):callable(std::move(f)) {} int run() mut { return this.callable(); } };
+Holder<F> store<F>(F f) { return Holder<F>(std::move(f)); }
+struct View<lifetime a> { int&<a> value; View(int&<a> input):value(input) {} };
+int main() {
+  mut int value=7;
+  View view{value};
+  auto callback=[view]()->int { return view.value; };
+)gti";
+      if (consumeSource)
+        source += "consume(std::move(view));\n";
+      source += "mut auto stored=store(std::move(callback));\n";
+      if (writeReferent)
+        source += "value=9;\n";
+      source += "return stored.run()-7; }\n";
+      const auto checked = lang::Frontend({.stopAfter = lang::FrontendPhase::Mir}).analyze(
+          root.parent_path() / "tests/fixtures/copied-callback-owner.gti", source,
+          {root / "prelude.gti"}, {}, {root});
+      if (writeReferent) {
+        expect(!checked.semanticValid && std::any_of(checked.diagnostics.begin(), checked.diagnostics.end(),
+                   [](const auto &diagnostic) {
+                     return diagnostic.code == "GTI-S2017" &&
+                            diagnostic.message.find("Cannot assign to storage") != std::string::npos;
+                   }), "copied callback protects the external owner after the source carrier is consumed");
+      } else {
+        expectValid(checked, "copied callback retains its own external reference dependencies");
+        expect(checked.canGenerateCode(), "copied borrowed state survives complete MIR replay and source consumption");
+      }
+    }
+  }
+}
 void testOwnedCallableAppliedRegions() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto check = [&](std::string source) {
@@ -4826,6 +4862,7 @@ int main() {
   testAliasConstructionLifetimeApplications();
   testReceiverBeforeSymbolicPack();
   testPhysicalReferenceCarrierInitializers();
+  testCopiedBorrowedCaptureOwners();
   testOwnedCallableAppliedRegions();
   testDependentCallableUseEvidence();
   testStatelessItemTemporaryBorrow();

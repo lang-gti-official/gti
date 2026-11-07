@@ -168,33 +168,47 @@ int main() { int first = 4; int second = 7; Pair pair{first, second}; return pai
       auto forged = checked.mir;
       auto &changed = *const_cast<MirConstructorInstance *>(
           forged.findConstructorInstance(constructor->id));
-      bool changedOrder = false;
-      for (auto &block : changed.body.blocks) {
-        auto &instructions = block.instructions;
-        const auto base = std::find_if(instructions.begin(), instructions.end(), [](const auto &item) {
-          return item.kind == MirInstructionKind::InitializeBase;
-        });
-        const auto borrow = std::find_if(instructions.begin(), instructions.end(), [&](const auto &item) {
-          return item.kind == MirInstructionKind::Borrow && item.loan == loan->id;
-        });
-        if (base == instructions.end() || borrow == instructions.end())
-          continue;
-        expect(base < borrow, "field publication originally follows its completed base");
-        if (mutation == 0) {
-          std::rotate(base, borrow, std::next(borrow));
-        } else if (mutation == 1) {
-          instructions.erase(borrow);
-        } else {
-          expect(std::any_of(std::next(base), borrow, [](const auto &item) {
-                   return item.kind == MirInstructionKind::Call;
-                 }), "address initializer retains its real call evaluation");
-          // Keep the publication after the base, but evaluate its address first.
-          std::rotate(base, std::next(base), borrow);
-        }
-        changedOrder = true;
-        break;
+      const auto isBase = [](const auto &item) {
+        return item.kind == MirInstructionKind::InitializeBase;
+      };
+      const auto isPublication = [&](const auto &item) {
+        return item.kind == MirInstructionKind::Borrow && item.loan == loan->id;
+      };
+      const auto baseBlock = std::find_if(changed.body.blocks.begin(), changed.body.blocks.end(),
+          [&](const auto &block) { return std::any_of(block.instructions.begin(), block.instructions.end(), isBase); });
+      const auto fieldBlock = std::find_if(changed.body.blocks.begin(), changed.body.blocks.end(),
+          [&](const auto &block) { return std::any_of(block.instructions.begin(), block.instructions.end(), isPublication); });
+      expect(baseBlock != changed.body.blocks.end() && fieldBlock != changed.body.blocks.end(),
+             "order mutation reaches the base and its exact reference publication");
+      auto &fieldInstructions = fieldBlock->instructions;
+      auto &baseInstructions = baseBlock->instructions;
+      const auto publication = std::find_if(fieldInstructions.begin(), fieldInstructions.end(), isPublication);
+      if (mutation == 0) {
+        auto moved = *publication;
+        fieldInstructions.erase(publication);
+        baseInstructions.insert(std::find_if(baseInstructions.begin(), baseInstructions.end(), isBase),
+                                std::move(moved));
+      } else if (mutation == 1) {
+        fieldInstructions.erase(publication);
+      } else {
+        const auto first = baseBlock == fieldBlock
+            ? std::next(std::find_if(fieldInstructions.begin(), fieldInstructions.end(), isBase))
+            : fieldInstructions.begin();
+        expect(std::any_of(first, publication, [](const auto &item) {
+                 return item.kind == MirInstructionKind::Call;
+               }), "address initializer retains its real call evaluation");
+        // Keep the publication on the success path, but evaluate its address
+        // before the base invocation. Keep SSA definition blocks truthful.
+        const std::vector<MirInstruction> moved(first, publication);
+        fieldInstructions.erase(first, publication);
+        baseInstructions.insert(std::find_if(baseInstructions.begin(), baseInstructions.end(), isBase),
+                                moved.begin(), moved.end());
+        for (auto &value : changed.body.values)
+          if (std::any_of(moved.begin(), moved.end(), [&](const auto &item) {
+                return item.id == value.definition;
+              }))
+            value.definitionBlock = baseBlock->id;
       }
-      expect(changedOrder, "order mutation reaches the exact reference publication");
       const auto verified = verifyMirProgram(forged);
       expect(!verified.valid() && std::any_of(verified.errors.begin(), verified.errors.end(),
                  [](const auto &error) {
@@ -788,11 +802,8 @@ int main() { int first = 4; int other = 7; View view{first, other}; return view.
 void storedCallableClosureFacts() {
   const auto root =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
-  const auto checked =
-      Frontend({.stopAfter = FrontendPhase::Mir})
-          .analyze(root.parent_path() /
-                       "tests/fixtures/stored-callable-closure-facts.gti",
-                   R"gti(
+  for (const bool copied : {false, true}) {
+    std::string source = R"gti(
 class Holder<F> {
   mut F callable;
 public:
@@ -807,8 +818,17 @@ int main() {
   mut auto stored = store(std::move(callback));
   return stored.run() - 5 + decoy - 20;
 }
-)gti",
-                   {root / "prelude.gti"}, {}, {root});
+)gti";
+    if (copied) {
+      source.insert(0, "struct View<lifetime a> { int&<a> value; View(int&<a> input):value(input) {} };\n");
+      const std::string capture = "mut auto callback = [mut &value]() -> int { value += 1; return value; };";
+      source.replace(source.find(capture), capture.size(),
+                     "View view{value}; auto callback = [view]() -> int { return view.value; };");
+      source.replace(source.find("stored.run() - 5"), std::string("stored.run() - 5").size(), "stored.run() - 4");
+    }
+    const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+        root.parent_path() / "tests/fixtures/stored-callable-closure-facts.gti",
+        source, {root / "prelude.gti"}, {}, {root});
   if (!checked.canGenerateCode())
     for (const auto &d : checked.diagnostics)
       std::cerr << d.code << ": " << d.message << '\n';
@@ -844,11 +864,12 @@ int main() {
         return place.root == MirPlaceRootKind::Binding &&
                place.projections.empty() && place.type == SemanticType::Int32 &&
                place.id != closure->operands.front().place &&
+               place.binding != body.findPlace(body.findLoan(*closure->loan)->source)->binding &&
                place.access == AccessMode::Mutable;
       });
   expect(decoy != body.places.end(),
          "negative controls include a different same-typed physical owner");
-  for (unsigned mutation = 0; mutation != 8; ++mutation) {
+  for (unsigned mutation = 0; mutation != (copied ? 9U : 8U); ++mutation) {
     auto forged = checked.mir;
     auto &changedBody = MirProgramTestAccess::functions(forged)[owner - 1].body;
     MirInstruction *changed = nullptr;
@@ -890,14 +911,30 @@ int main() {
       changed->operands.front().kind = MirOperandKind::BorrowRead;
       changed->operands.front().type.referenceAccess = AccessMode::ReadOnly;
       break;
+    case 8: {
+      const auto *capturePlace = changedBody.findPlace(changed->operands.front().place);
+      expect(capturePlace, "copied environment reads its original carrier place");
+      const auto previous = std::find_if(changedBody.loans.begin(), changedBody.loans.end(), [&](const auto &loan) {
+        return loan.id != *changed->loan && loan.kind == MirLoanKind::Stored &&
+               std::find(loan.carriers.begin(), loan.carriers.end(), capturePlace->binding) != loan.carriers.end();
+      });
+      expect(previous != changedBody.loans.end(), "copied capture has a distinct original carrier group");
+      changedBody.loans[*changed->loan - 1].parent = previous->id;
+      for (auto &value : changedBody.values)
+        if (value.sourceValue == changed->hirValue && value.borrowDependencies)
+          for (auto &dependency : value.borrowDependencies->dependencies)
+            dependency.parent = previous->id;
+      break;
+    }
     }
     expect(rebuildMirValueUses(changedBody),
            "capture mutation rebuilds exact executable uses");
     const auto proof = verifyMirProgram(forged);
     if (proof.valid())
-      std::cerr << "accepted stored closure fact mutation " << mutation << '\n';
+      std::cerr << "accepted stored closure fact mutation copied=" << copied << " mutation=" << mutation << '\n';
     expect(!proof.valid(), "closure facts cannot manufacture capture identity, "
                            "access or result suppliers");
+  }
   }
 }
 

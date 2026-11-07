@@ -11422,6 +11422,45 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       captureDependencies.push_back(std::move(dependency));
     } else if (typeTraits(captureType).containsBorrowedState) {
       auto dependencies = storedBorrowDependencies(capture.initializer);
+      // A value copy owns its copied references. Borrowing the source's
+      // contents instead would make the closure depend on the old container.
+      // Preserve every external source, path, guard and access mode, replacing
+      // only a uniquely matched read-only source group's lending parent.
+      if (mode == LambdaCaptureMode::Copy && traits.copyable) {
+        const auto *group = semanticModel.findLoan(sourceBinding.retainedLoan);
+        if (group && group->kind == SemanticLoanKind::StoredValue &&
+            !group->entry && !group->lifecycleBound &&
+            group->access == AccessMode::ReadOnly) {
+          std::vector<SemanticLoanDependency> owners{
+              {.place = group->place, .referenceContents = group->referenceContents,
+               .designatedFields = group->designatedFields, .access = group->access,
+               .protectsStorage = group->protectsStorage, .parent = group->parent,
+               .conditions = group->conditions}};
+          owners.insert(owners.end(), group->additionalDependencies.begin(),
+                        group->additionalDependencies.end());
+          const auto sameCopiedField = [&](const auto &dependency, auto owner) {
+            if (owner.access != AccessMode::ReadOnly)
+              return false;
+            owner.parent = group->id;
+            return owner == dependency;
+          };
+          const bool exact = dependencies.size() == owners.size() &&
+              std::all_of(dependencies.begin(), dependencies.end(), [&](const auto &dependency) {
+                return std::count_if(owners.begin(), owners.end(), [&](const auto &owner) {
+                  return sameCopiedField(dependency, owner);
+                }) == 1;
+              }) && std::all_of(owners.begin(), owners.end(), [&](const auto &owner) {
+                return std::count_if(dependencies.begin(), dependencies.end(), [&](const auto &dependency) {
+                  return sameCopiedField(dependency, owner);
+                }) == 1;
+              });
+          if (exact)
+            for (auto &dependency : dependencies)
+              dependency.parent = std::find_if(owners.begin(), owners.end(), [&](const auto &owner) {
+                return sameCopiedField(dependency, owner);
+              })->parent;
+        }
+      }
       const auto paths = storedReferencePaths(captureType);
       // Expand the legacy single-reference abbreviation before composing it
       // with the environment field. The exact source type owns that path.

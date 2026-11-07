@@ -574,6 +574,16 @@ plain value transport already comes from the applied parameter inventory and
 is not substituted a second time. This is transport checking, not a new origin
 or permission to discard captured borrow dependencies.
 
+Copying a local reference-bearing value into a closure retains its external
+reference owners, not a borrow of the original container. For a copyable,
+read-only, non-entry dependency group without lifecycle coupling, capture
+formation matches the complete source, field, condition and access inventory
+in both directions before replacing the group's lending identity with each
+field's existing external parent. Mutable or unmatched dependencies retain
+their original obligations. The copied environment protects its referents even
+if the source container is consumed; MIR independently replays the actual
+capture operand's contents rather than trusting the attached group.
+
 Structural default construction keeps those nested invocation scopes closed.
 After exact owner substitution, a projected declaration formal captured only
 inside a closed callable is removed from the constructor parameter inventory
