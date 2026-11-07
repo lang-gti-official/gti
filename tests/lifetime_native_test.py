@@ -14,6 +14,28 @@ from backend_modes import native_modes
 
 
 CASES = {
+    'owned_closure_relay': r"""
+F relay<F>(F callback) { return std::move(callback); }
+int main() {
+  mut int value = 4;
+  mut auto callback = [mut &value]() -> int { value += 1; return value; };
+  mut auto moved = relay(std::move(callback));
+  return moved() - 5;
+}
+""",
+    'generic_stored_callback': r"""
+import std.memory;
+class Holder<F> { mut F callable; public:
+ Holder(F callable) : callable(std::move(callable)) {}
+ int run() mut { return this.callable(); }
+};
+Holder<F> store<F>(F callable) { return Holder<F>(std::move(callable)); }
+int main() { mut int value=4;
+ mut auto update=[mut &value]() -> int { value+=1; return value; };
+ mut auto stored=store(std::move(update));
+ return stored.run()-5;
+}
+""",
     "generated_record_move_failure": r"""
 struct Outer {
   Outer() = default;
@@ -300,6 +322,33 @@ struct View<lifetime a> {
   int& read() { unsafe { return borrow(&this.local, this); } }
 };
 int main() { int value = 3; View view{value}; return view.read() - 7; }
+""",
+    "physical_reference_primitive_carrier": """
+struct ViewRef<lifetime data, lifetime shell> {
+  std::string_view<data>&<shell> value;
+  ViewRef(std::string_view<data>&<shell> source) : value(source) {}
+};
+ViewRef<data, shell> borrowed<lifetime data, lifetime shell>(std::string_view<data>&<shell> source) {
+  return ViewRef<data, shell>(source);
+}
+int main() {
+  std::string_view text = "word";
+  ViewRef direct{text};
+  auto forwarded = borrowed(text);
+  return direct.value.size() == 4 && forwarded.value.size() == 4 ? 0 : 1;
+}
+""",
+    "physical_reference_record_carrier": """
+struct View<lifetime data> { int&<data> value; View(int&<data> source) : value(source) {} };
+struct Reference<T, lifetime shell> { T&<shell> value; Reference(T&<shell> source) : value(source) {} };
+Reference<View<data>, shell> borrowed<lifetime data, lifetime shell>(View<data>&<shell> source) {
+  return Reference<View<data>, shell>(source);
+}
+int main() {
+  int data = 4; View view{data};
+  auto reference = borrowed(view);
+  return reference.value.value - 4;
+}
 """,
     "stored_reference_carrier_constructor": """
 struct View<lifetime a> {

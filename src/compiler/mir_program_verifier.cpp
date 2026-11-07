@@ -1336,46 +1336,67 @@ exactReturnedDefinition(const MirFunctionInstance &instance,
   return definitionFor(instance.body, block.terminator.value->value);
 }
 
-[[nodiscard]] bool constructorOwnsExactParameter(
-    const MirProgram &program, HirConstructorInstanceId target, SymbolId field,
-    const SemanticType &callableType, const SemanticType &ownerType) {
-  const MirConstructorInstance *constructor =
-      program.findConstructorInstance(target);
-  const MirClassInstance *owner =
-      constructor == nullptr ? nullptr
-                             : program.findClassInstance(constructor->owner);
-  const auto ownedField =
-      owner == nullptr ? std::vector<MirClassFieldInfo>::const_iterator{}
-                       : std::find_if(owner->declaredFields.begin(),
-                                      owner->declaredFields.end(),
-                                      [&](const MirClassFieldInfo &candidate) {
-                                        return candidate.symbol == field &&
-                                               candidate.type == callableType;
-                                      });
-  if (constructor == nullptr || constructor->parameterTypes.size() != 1 ||
+[[nodiscard]] bool
+constructorOwnsExactParameter(const MirProgram &program,
+                              const MirInstruction &construction,
+                              SymbolId field, const SemanticType &callableType,
+                              const SemanticType &ownerType) {
+  if (!construction.constructorTarget || construction.functionTarget ||
+      construction.lambdaTarget ||
+      construction.kind != MirInstructionKind::Construct)
+    return false;
+  const auto *constructor =
+      program.findConstructorInstance(*construction.constructorTarget);
+  const auto applied = instantiateMirLifetimeTarget(program, construction);
+  const auto ownerView = mirClassLifetimeView(program, ownerType);
+  const auto declaredOwner =
+      constructor ? checkedMirCallableOwnerType(program, constructor->owner,
+                                                constructor->ownerType,
+                                                constructor->lifetimeContract)
+                  : std::nullopt;
+  const auto bodyView = declaredOwner
+                            ? mirClassLifetimeView(program, *declaredOwner)
+                            : std::nullopt;
+  if (!constructor || !applied || !ownerView || !bodyView ||
+      ownerView->instance != bodyView->instance ||
+      ownerView->instance->id != constructor->owner ||
+      constructor->parameterTypes.size() != 1 ||
       constructor->parameterBindings.size() != 1 ||
-      constructor->parameterTypes.front() != callableType || owner == nullptr ||
-      owner->type != ownerType || ownedField == owner->declaredFields.end() ||
+      applied->parameterTypes.size() != 1 ||
+      !equivalentLifetimeTypes(applied->parameterTypes.front(), callableType) ||
+      !equivalentLifetimeTypes(applied->returnType, ownerType))
+    return false;
+  const auto &parameter = constructor->parameterTypes.front();
+  const auto *owner = ownerView->instance;
+  const auto ownedField = std::find_if(
+      owner->declaredFields.begin(), owner->declaredFields.end(),
+      [&](const MirClassFieldInfo &candidate) {
+        const auto callerType = ownerView->instantiate(candidate.type);
+        const auto bodyType = bodyView->instantiate(candidate.type);
+        return candidate.symbol == field && callerType && bodyType &&
+               equivalentLifetimeTypes(*callerType, callableType) &&
+               equivalentLifetimeTypes(*bodyType, parameter);
+      });
+  if (ownedField == owner->declaredFields.end() ||
       (ownedField->dropKind == DropKind::Lexical &&
        std::none_of(owner->fieldDropOrder.begin(), owner->fieldDropOrder.end(),
                     [&](const MirFieldDrop &candidate) {
-                      return candidate.symbol == field &&
-                             candidate.type == callableType;
-                    }))) {
+                      const auto type = ownerView->instantiate(candidate.type);
+                      return candidate.symbol == field && type &&
+                             equivalentLifetimeTypes(*type, callableType);
+                    })))
     return false;
-  }
   const auto initializer = std::find_if(
       constructor->initializers.begin(), constructor->initializers.end(),
       [&](const MirConstructorInitializer &candidate) {
         return candidate.kind == ConstructorInitializerTargetKind::Field &&
                candidate.field == field &&
-               candidate.targetType == callableType &&
+               equivalentLifetimeTypes(candidate.targetType, parameter) &&
                candidate.ownedParameter == std::optional<std::size_t>{0} &&
                candidate.arguments.size() == 1;
       });
-  if (initializer == constructor->initializers.end()) {
+  if (initializer == constructor->initializers.end())
     return false;
-  }
   const auto value = std::find_if(
       constructor->body.values.begin(), constructor->body.values.end(),
       [&](const MirValue &candidate) {
@@ -1836,7 +1857,7 @@ ownedTransportFailure(const MirProgram &program,
         !movedValueInto(instance.body, construction->operands.front(),
                         construction->id, 0) ||
         !constructorOwnsExactParameter(
-            program, *construction->constructorTarget, transport.field,
+            program, *construction, transport.field,
             callableType, instance.returnType)) {
       return "exact-field transport does not match its constructor and field";
     }
@@ -3049,6 +3070,7 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                 block.id, instruction.id);
           }
           if (expected[index].ownedTransport) {
+            const auto applied = instantiateMirLifetimeTarget(program, instruction);
             const std::size_t operandIndex = expected[index].parameterIndex;
             const MirInstruction *input =
                 operandIndex < instruction.operands.size() &&
@@ -3079,9 +3101,10 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                 input->callSite == instruction.callSite &&
                 input->callInputIndex == operandIndex;
             if (operandIndex >= instruction.operands.size() ||
-                operandIndex >= functionTarget->parameterTypes.size() ||
-                instruction.operands[operandIndex].type !=
-                    functionTarget->parameterTypes[operandIndex] ||
+                !applied || operandIndex >= applied->parameterTypes.size() ||
+                !mirLifetimeValueConversion(program, body, owner,
+                    instruction.operands[operandIndex].type,
+                    applied->parameterTypes[operandIndex]) ||
                 (!movedValueInto(body, instruction.operands[operandIndex],
                                  instruction.id, operandIndex) &&
                  !receiverIsConsumed(body, instruction.operands[operandIndex],
@@ -8914,6 +8937,26 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
   return {};
 }
 
+[[nodiscard]] std::optional<bool>
+lambdaRequiresActiveCleanup(const MirProgram &program,
+                            const SemanticType &type) {
+  std::optional<bool> result;
+  for (const auto &lambda : program.lambdaInstances()) {
+    if (!mirLambdaLifetimeView(lambda, type))
+      continue;
+    if (lambda.captureTypes.size() !=
+        lambda.captureRequiresActiveCleanup.size())
+      return std::nullopt;
+    const bool active = std::any_of(lambda.captureRequiresActiveCleanup.begin(),
+                                    lambda.captureRequiresActiveCleanup.end(),
+                                    [](bool capture) { return capture; });
+    if (result && *result != active)
+      return std::nullopt;
+    result = active;
+  }
+  return result;
+}
+
 [[nodiscard]] MirVerificationResult
 verifyMirPayloadEnums(const MirProgram &program) {
   MirVerificationResult result;
@@ -8938,17 +8981,8 @@ verifyMirPayloadEnums(const MirProgram &program) {
         return std::nullopt;
       return view->payload ? view->payload->requiresActiveCleanup : false;
     }
-    case SemanticType::Lambda: {
-      const MirLambdaInstance *lambda = program.findLambdaForType(type);
-      if (lambda == nullptr ||
-          lambda->captureTypes.size() !=
-              lambda->captureRequiresActiveCleanup.size()) {
-        return std::nullopt;
-      }
-      return std::any_of(lambda->captureRequiresActiveCleanup.begin(),
-                         lambda->captureRequiresActiveCleanup.end(),
-                         [](bool active) { return active; });
-    }
+    case SemanticType::Lambda:
+      return lambdaRequiresActiveCleanup(program, type);
     default:
       return false;
     }
@@ -17647,6 +17681,47 @@ normalizedCompleteReturnBorrow(const MirProgram &program,
                                const MirBorrowDependencySet &complete,
                                const MirBody *execution = nullptr) {
   const auto &body = execution ? *execution : function.body;
+  // Runtime indexing retains its evaluated SSA operand. A structural borrow
+  // path may omit that operand only when its unique, typed literal definition
+  // proves the same constant index; no value/owner metadata substitutes for
+  // the executable producer. Evaluation and bounds checks remain in the body.
+  const auto sameProjection = [&](const MirPlaceProjection &typed,
+                                  const MirPlaceProjection &actual) {
+    if (typed == actual)
+      return true;
+    if (typed.kind != MirProjectionKind::Index || typed.index ||
+        !typed.constantIndex || actual.kind != MirProjectionKind::Index ||
+        !actual.index)
+      return false;
+    auto structural = actual;
+    structural.index = 0;
+    if (structural != typed)
+      return false;
+    const auto *value = body.findValue(actual.index);
+    const auto domain = value ? constantIntegerDomain(value->info.type) : std::nullopt;
+    if (!value || !domain || value->info.category != ValueCategory::Value ||
+        std::count_if(body.values.begin(), body.values.end(), [&](const auto &candidate) {
+          return candidate.id == actual.index;
+        }) != 1)
+      return false;
+    const MirInstruction *definition = nullptr;
+    for (const auto &block : body.blocks)
+      for (const auto &candidate : block.instructions)
+        if (candidate.result == actual.index) {
+          if (definition || block.id != value->definitionBlock ||
+              candidate.id != value->definition)
+            return false;
+          definition = &candidate;
+        }
+    const auto *literal = definition && definition->literal
+        ? std::get_if<std::uint64_t>(&*definition->literal) : nullptr;
+    return definition && !definition->tombstone &&
+        definition->kind == MirInstructionKind::Compute &&
+        definition->operation == MirOperation::Literal &&
+        definition->info == value->info && definition->operands.empty() &&
+        literal && *literal == *typed.constantIndex &&
+        checkedIntegerFits({.magnitude = *literal}, *domain);
+  };
   FunctionBorrowDependencySummary result{.possibleAlternatives =
                                              complete.possibleAlternatives};
   std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
@@ -17767,7 +17842,7 @@ normalizedCompleteReturnBorrow(const MirProgram &program,
         return std::nullopt;
       const auto next = currentPath();
       if (!next || next->projections.size() <= prefix->projections.size() ||
-          next->projections[prefix->projections.size()] != projection)
+          !sameProjection(next->projections[prefix->projections.size()], projection))
         return std::nullopt;
     }
     if (payloadIndex != source.payloadSelections.size())
@@ -21908,30 +21983,7 @@ verifyMirProgramContracts(const MirProgram &program) {
                   : std::nullopt;
     }
     case SemanticType::Lambda:
-      if (type.lambdaId == 0) {
-        return std::nullopt;
-      }
-      {
-        std::optional<bool> result;
-        for (const MirLambdaInstance &lambda : program.lambdaInstances()) {
-          if (lambda.type != type) {
-            continue;
-          }
-          if (lambda.captureTypes.size() !=
-              lambda.captureRequiresActiveCleanup.size()) {
-            return std::nullopt;
-          }
-          const bool active =
-              std::any_of(lambda.captureRequiresActiveCleanup.begin(),
-                          lambda.captureRequiresActiveCleanup.end(),
-                          [](bool capture) { return capture; });
-          if (result && *result != active) {
-            return std::nullopt;
-          }
-          result = active;
-        }
-        return result;
-      }
+      return lambdaRequiresActiveCleanup(program, type);
     default:
       return false;
     }
@@ -24514,7 +24566,7 @@ verifyMirProgramContracts(const MirProgram &program) {
       }
       const std::size_t parameter = *initializer.ownedParameter;
       const bool exactField =
-          constructorOwner != nullptr &&
+          exactCallableOwner &&
           initializer.kind == ConstructorInitializerTargetKind::Field &&
           initializer.field != 0 && initializer.arguments.size() == 1 &&
           parameter < instance.parameterTypes.size() &&
@@ -24524,8 +24576,9 @@ verifyMirProgramContracts(const MirProgram &program) {
               constructorOwner->declaredFields.begin(),
               constructorOwner->declaredFields.end(),
               [&](const MirClassFieldInfo &field) {
-                return field.symbol == initializer.field &&
-                       field.type == initializer.targetType;
+                const auto type = callableOwnerView->instantiate(field.type);
+                return field.symbol == initializer.field && type &&
+                       equivalentLifetimeTypes(*type, initializer.targetType);
               });
       const HirValueId ownedSource =
           exactField ? initializer.arguments.front() : 0;

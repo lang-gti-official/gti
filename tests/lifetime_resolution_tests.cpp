@@ -3042,6 +3042,84 @@ int main() { Box box{3}; return box.get(); }
          "a known receiver cannot authorize a sibling local return origin");
 }
 
+void testPhysicalReferenceCarrierInitializers() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto check = [&](std::string source) {
+    return lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+        "physical-reference-carrier.gti", std::move(source),
+        {root / "prelude.gti"}, {}, {root});
+  };
+  const std::string declarations = R"gti(
+struct ViewRef<lifetime data, lifetime shell> {
+  std::string_view<data>&<shell> value;
+  ViewRef(std::string_view<data>&<shell> source) : value(source) {}
+};
+)gti";
+  const auto result = check(declarations + R"gti(
+ViewRef<data, shell> borrowed<lifetime data, lifetime shell>(std::string_view<data>&<shell> source) {
+  return ViewRef<data, shell>(source);
+}
+int main() { std::string_view text = "word"; return borrowed(text).value.size() == 4 ? 0 : 1; }
+)gti");
+  expectValid(result, "a reference field stores the checked view object independently of the view's contents");
+  const auto *owner = record(result, "ViewRef");
+  const auto *lifecycle = owner && owner->declaration
+      ? result.semantics.findClassLifecycle(*owner->declaration) : nullptr;
+  bool checked = false;
+  if (lifecycle)
+    for (const auto &constructor : lifecycle->constructors) {
+      if (!constructor.declaration || constructor.declaration->initializers().size() != 1)
+        continue;
+      const auto *initializer = result.semantics.findConstructorInitializer(
+          constructor.declaration->initializers().front());
+      if (!initializer || !initializer->completeBorrow ||
+          initializer->completeBorrow->dependencies.size() != 1)
+        continue;
+      const auto &dependency = initializer->completeBorrow->dependencies.front();
+      const auto *address = result.semantics.findLoan(dependency.parent);
+      const auto *contents = address ? result.semantics.findLoan(address->storedDependency) : nullptr;
+      checked = dependency.designatedFields.empty() && dependency.protectsStorage &&
+          address && address->kind == lang::SemanticLoanKind::Reference && address->entry &&
+          contents && contents->kind == lang::SemanticLoanKind::StoredValue && contents->entry &&
+          address->id != contents->id && !contents->protectsStorage &&
+          constructor.completeBorrow && constructor.completeBorrow->dependencies.size() == 1 &&
+          constructor.completeBorrow->dependencies.front().origin == lang::BorrowOriginKind::Argument &&
+          constructor.completeBorrow->dependencies.front().parameter == 0 &&
+          constructor.completeBorrow->dependencies.front().sourceFields.empty();
+    }
+  expect(checked, "the initializer retains the physical Reference entry while preserving its separate Stored contents entry");
+  const auto recordReference = check(R"gti(
+struct View<lifetime data> { int&<data> value; View(int&<data> source) : value(source) {} };
+struct Reference<T, lifetime shell> { T&<shell> value; Reference(T&<shell> source) : value(source) {} };
+Reference<View<data>, shell> borrowed<lifetime data, lifetime shell>(View<data>&<shell> source) {
+  return Reference<View<data>, shell>(source);
+}
+int main() { int data = 4; View value{data}; auto reference = borrowed(value); return reference.value.value - 4; }
+)gti");
+  expectValid(recordReference, "the same physical initializer rule preserves a reference to an unrelated borrowed record");
+  for (const auto source : {
+           "ViewRef<data,data> invalid<lifetime data,lifetime shell>(std::string_view<data>&<shell> source){return ViewRef<data,data>(source);}int main(){return 0;}",
+           "ViewRef<static,static> invalid(){std::string_view<static> text=\"word\";return ViewRef<static,static>(text);}int main(){return 0;}",
+           "int main(){ViewRef<static,static> value{\"word\"};return 0;}",
+           "ViewRef<static,shell> invalid<lifetime data,lifetime shell>(std::string_view<data>&<shell> source){return ViewRef<static,shell>(source);}int main(){return 0;}"}) {
+    const auto invalid = check(declarations + source);
+    expect(invalid.syntaxValid && !invalid.semanticValid,
+           "stored contents cannot lengthen the physical shell or create static, local, temporary or unrelated reference authority");
+  }
+  const auto exclusive = check(R"gti(
+struct Exclusive<lifetime data, lifetime shell> {
+  mut std::string_view<data>&<shell> value;
+  Exclusive(mut std::string_view<data>&<shell> source) : value(source) {}
+};
+Exclusive<data,shell> invalid<lifetime data,lifetime shell>(std::string_view<data>&<shell> source) {
+  return Exclusive<data,shell>(source);
+}
+int main() { return 0; }
+)gti");
+  expect(exclusive.syntaxValid && !exclusive.semanticValid,
+         "physical initializer selection cannot upgrade a shared reference to exclusive access");
+}
+
 void testOwnedCallableAppliedRegions() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto check = [&](std::string source) {
@@ -4630,6 +4708,7 @@ int main() {
   testReferencePackReturnContracts();
   testAliasConstructionLifetimeApplications();
   testReceiverBeforeSymbolicPack();
+  testPhysicalReferenceCarrierInitializers();
   testOwnedCallableAppliedRegions();
   testDependentCallableUseEvidence();
   testStatelessItemTemporaryBorrow();

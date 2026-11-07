@@ -9099,8 +9099,10 @@ private:
                       }))
         sharedMovedCarriers.emplace(loan, moved);
     };
+    // A constructor can consume a borrowed carrier just as an ordinary
+    // function can. Its returned object inherits the external authority,
+    // not the body-local group of the consumed argument.
     for (std::size_t index = 0;
-         !construction && !value.constructorTarget &&
          (!value.borrowFields.empty() || exactCarrierRelay ||
           value.borrowDependencies.has_value()) &&
          index < arguments.size() && index < call.parameterTypes.size();

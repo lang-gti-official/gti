@@ -429,6 +429,13 @@ the class field identities are reserved, before contract validation and
 publication. This pass preserves explicit bounds and exact class/constructor
 generic scopes; it does not allocate symbols from read-only path queries or
 recreate normalized input lifetimes.
+Reference-field initialization and unprojected physical argument summaries use
+the evaluated object's Reference authority, separately from its Stored contents.
+A primitive carrier can describe its contents with an empty path, so an empty
+path alone does not identify the object's address. Ordinary untracked shared
+parameters retain their exact checked parameter place; missing local or exclusive
+loans cannot use that fallback. Projected contents still require the complete
+typed inventory, and the ordinary region, access and cleanup checks remain.
 Conditional nominal wrappers publish each initialized field's exact paths and
 alternative domains, including fields nested through other ordinary records.
 The shared coverage check requires a selected alternative for every active

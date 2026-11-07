@@ -5559,20 +5559,30 @@ auto SemanticVisitor::Impl::physicalReferenceReturnBorrow(
       result.dependencies = *selected;
     } else if (place.root->type.kind == SemanticType::Reference) {
       const auto *loan = semanticModel.findLoan(place.root->retainedLoan);
-      if (!loan || loan->kind != SemanticLoanKind::Reference)
+      if (!loan && place.root->retainedLoan == 0 &&
+          place.root->parameterDeclaration &&
+          place.root->type.referenceAccess == AccessMode::ReadOnly) {
+        // An ordinary shared formal can remain untracked until a summary
+        // needs its address. Its checked parameter place is physical input
+        // storage; a missing local or exclusive loan is not such evidence.
+        result.dependencies.push_back({.place = loanPlace(place),
+            .access = AccessMode::ReadOnly, .protectsStorage = true});
+      } else if (!loan || loan->kind != SemanticLoanKind::Reference) {
         return std::nullopt;
-      auto physical = loan->place;
-      physical.projections.insert(physical.projections.end(), place.projections.begin(),
-                                  place.projections.end());
-      result.dependencies.push_back({.place = std::move(physical),
-          .designatedFields = loan->designatedFields, .access = loan->access,
-          .protectsStorage = loan->protectsStorage, .parent = loan->id,
-          .conditions = loan->conditions});
-      for (auto dependency : loan->additionalDependencies) {
-        dependency.place.projections.insert(dependency.place.projections.end(),
-                                             place.projections.begin(), place.projections.end());
-        dependency.parent = loan->id;
-        result.dependencies.push_back(std::move(dependency));
+      } else {
+        auto physical = loan->place;
+        physical.projections.insert(physical.projections.end(), place.projections.begin(),
+                                    place.projections.end());
+        result.dependencies.push_back({.place = std::move(physical),
+            .designatedFields = loan->designatedFields, .access = loan->access,
+            .protectsStorage = loan->protectsStorage, .parent = loan->id,
+            .conditions = loan->conditions});
+        for (auto dependency : loan->additionalDependencies) {
+          dependency.place.projections.insert(dependency.place.projections.end(),
+                                               place.projections.begin(), place.projections.end());
+          dependency.parent = loan->id;
+          result.dependencies.push_back(std::move(dependency));
+        }
       }
     } else {
       // A stored field group describes external referents. It cannot replace
@@ -6285,8 +6295,14 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
     std::vector<BorrowDependencyCondition> externalConditions;
     SemanticType externalType = SemanticType::Unknown;
     bool ambiguous = false;
-    for (const auto &path : inventory ? std::span<const StoredReferencePath>(*inventory)
-                                      : std::span<const StoredReferencePath>{}) {
+    // An unprojected physical input selects the argument object itself. A
+    // primitive carrier may also describe its contents with an empty path;
+    // that is a different domain, not an ambiguous reference crossing.
+    const bool physicalObject = physical && mapping.sourceFields.empty() &&
+                                mapping.sourceConditions.empty();
+    for (const auto &path : inventory && !physicalObject
+                               ? std::span<const StoredReferencePath>(*inventory)
+                               : std::span<const StoredReferencePath>{}) {
       const auto fields = storedBorrowPath(formal, path.fields);
       if (fields.size() != path.fields.size() || fields.empty()) {
         ambiguous = true;
@@ -6437,6 +6453,12 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
                            .access = info->access,
                            .protectsStorage = true});
       }
+    } else if (physicalObject) {
+      const auto physicalSource =
+          physicalReferenceReturnBorrow(*argument, mapping.access);
+      if (!physicalSource)
+        continue;
+      sources = physicalSource->dependencies;
     } else if (!hasStableBorrowStorage(*argument)) {
       // A relayed reference value, such as ?carrier through a checked
       // borrowed_from contract, has no stable place of its own; its complete
@@ -7005,44 +7027,23 @@ auto SemanticVisitor::Impl::initializerBorrowDependencies(
         (target.referenceAccess == AccessMode::Mutable &&
          info->access != AccessMode::Mutable))
       return std::nullopt;
-    std::optional<std::vector<SemanticLoanDependency>> origins;
-    if (const auto complete = completeBorrowDependencySet(expression);
-        complete && !complete->dependencies.empty() &&
-        complete->possibleAlternatives.empty() &&
-        std::all_of(complete->dependencies.begin(), complete->dependencies.end(),
-                    [](const auto &dependency) {
-                      return dependency.designatedFields.empty() &&
-                             dependency.conditions.empty();
-                    }))
-      origins = complete->dependencies;
-    if (!origins)
-      origins = selectedReferenceDependencies(semanticPlace(expression));
-    if (origins) {
-      for (auto dependency : *origins) {
-        if ((dependency.place.root == 0 && !dependency.place.receiver) ||
-            (!dependency.protectsStorage &&
-             !hasCheckedExternalBorrowOrigin(dependency)) ||
-            semanticModel.findForeignStorage(dependency.place.root) !=
-                nullptr ||
-            (target.referenceAccess == AccessMode::Mutable &&
-             dependency.access != AccessMode::Mutable))
-          return std::nullopt;
-        dependency.access = target.referenceAccess;
-        input.dependencies.push_back(std::move(dependency));
-      }
-      if (input.dependencies.empty())
+    // Reference initialization borrows the evaluated object/address, not the
+    // value's external contents. Both domains can have an empty path (for
+    // example a counted view), so path shape alone cannot select the source.
+    const auto physical =
+        physicalReferenceReturnBorrow(expression, target.referenceAccess);
+    if (!physical)
+      return std::nullopt;
+    for (auto dependency : physical->dependencies) {
+      if ((dependency.place.root == 0 && !dependency.place.receiver) ||
+          (!dependency.protectsStorage &&
+           !hasCheckedExternalBorrowOrigin(dependency)) ||
+          semanticModel.findForeignStorage(dependency.place.root) != nullptr ||
+          (target.referenceAccess == AccessMode::Mutable &&
+           dependency.access != AccessMode::Mutable))
         return std::nullopt;
-    } else {
-      const auto place = retainedLoanPlace(expression);
-      const auto source = retainedLoanSource(expression);
-      if ((place.root == 0 && !place.receiver) ||
-          semanticModel.findForeignStorage(place.root) != nullptr)
-        return std::nullopt;
-      input.dependencies.push_back(
-          {.place = place,
-           .access = target.referenceAccess,
-           .protectsStorage = hasStableBorrowStorage(expression),
-           .parent = source ? source->loan : SemanticLoanId{0}});
+      dependency.access = target.referenceAccess;
+      input.dependencies.push_back(std::move(dependency));
     }
   } else {
     const auto inventory = storedReferenceInventory(target);

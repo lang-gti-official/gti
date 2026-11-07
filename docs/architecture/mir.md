@@ -547,6 +547,15 @@ it does not accept an arbitrary supplied type bound. The premise stays local
 to the body, cannot extend the origin to a universal or static region, and
 does not replace availability, loan endpoint or cleanup verification.
 
+Owned callable transport uses those same instantiated signatures. The call's
+actual by-value operand must convert under the caller body's proved lifetime
+constraints, and its ownership still comes from an exact move, fresh value or
+checked copy. A generic constructor's field recipe is instantiated separately
+in caller and constructor-body scope; declaration region IDs are not compared
+across those scopes. Closure cleanup queries use the exact lambda lifetime view.
+When a constructor consumes a carrier, its result retains the external supplier
+permissions without becoming a child of the consumed local carrier group.
+
 Callable lifetime applications retain a universal function signature and fixed
 bindings for its free carrier regions. The trusted function-pointer capability
 selects the actual carrier signature. MIR reconstructs it by capture-avoiding
@@ -699,6 +708,11 @@ payload layout, then reconstructs facts at every reachable normal return.
 A by-value return retains its producer's applied type. The summary query proves
 its conversion to the declared result with the body's lifetime contract and
 constraints, preserving nominal shape, access and every nested region relation.
+A physical reference result may retain an evaluated constant array index in its
+MIR address. Normalizing that address to a structural dependency path requires
+one exact, uniquely defined integral literal with the same index. The runtime
+SSA operand, evaluation and bounds checks remain intact; a different,
+nonconstant or ambiguous producer cannot supply the structural identity.
 The actual alternatives must be covered by the declaration contract; additional
 well-typed dependency-free cases are conservative, so optimizer narrowing does
 not change caller lifetime obligations. For a declared or elided scalar reference
@@ -1269,6 +1283,11 @@ function/lambda receiver) and checks field access against
 the concrete class layout. Concrete parameter packs retain a separate entry for
 each opaque checked reference, including read-only references: the verified
 element index, referent type, access, source, and entry identity must all agree.
+A borrowed by-value pack lane retains its contents through the grouped formal
+binding. Its complete pack-index prefix selects the exact leaf, including
+opaque text contents whose dependency has no nominal field path. Body checks
+validate that structural lane and capability; the program check binds it to the
+unique flattened formal and complete stored inventory.
 A constructor reference initializer may execute a checked reference-returning
 helper, then publish its result while retaining the original caller-owned
 `Stored` dependency. The helper's body-derived origin, exact call result, and

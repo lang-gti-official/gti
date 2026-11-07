@@ -2974,6 +2974,95 @@ int main() {
   return true;
 }
 
+void checkEvaluatedConstantIndexReturn() {
+  const auto checked = Frontend().analyze("evaluated-constant-index-return.gti", R"gti(
+struct Samples {
+  int values[3];
+  Samples(int input[3]) : values(input) {}
+  int& first() { return this.values[0]; }
+};
+int main() { int values[3]={3,4,5}; Samples samples{values}; return samples.first()-3; }
+)gti");
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(),
+         "a physical constant-index reference return retains its exact evaluated index and owner");
+  if (!checked.canGenerateCode())
+    return;
+  bool observed = false;
+  for (const auto &function : checked.mir.functionInstances()) {
+    if (function.returnType.kind != SemanticType::Reference)
+      continue;
+    for (const auto &place : function.body.places) {
+      if (place.root != MirPlaceRootKind::This || place.projections.empty())
+        continue;
+      const auto &projection = place.projections.back();
+      if (projection.kind != MirProjectionKind::Index ||
+          !projection.index || !projection.constantIndex)
+        continue;
+      const auto *value = function.body.findValue(projection.index);
+      expect(value != nullptr, "constant-index return retains its SSA definition");
+      if (!value)
+        continue;
+      for (int mutation = 0; mutation != 8; ++mutation) {
+        auto forged = checked.mir;
+        auto *changed = const_cast<MirFunctionInstance *>(
+            forged.findFunctionInstance(function.id));
+        auto *source = const_cast<MirPlace *>(changed->body.findPlace(place.id));
+        auto *index = const_cast<MirValue *>(changed->body.findValue(value->id));
+        auto *block = const_cast<MirBlock *>(changed->body.findBlock(value->definitionBlock));
+        auto definition = std::find_if(block->instructions.begin(), block->instructions.end(),
+            [&](const auto &instruction) { return instruction.id == value->definition; });
+        expect(definition != block->instructions.end(), "constant index is executable");
+        if (definition == block->instructions.end())
+          continue;
+        if (mutation == 0) source->projections.back().constantIndex = 1;
+        if (mutation == 1) definition->literal = std::uint64_t{1};
+        if (mutation == 2) {
+          definition->operation = MirOperation::Identity;
+          definition->literal.reset();
+        }
+        if (mutation == 3) {
+          auto duplicate = *definition;
+          duplicate.id = changed->body.instructionCount() + 1;
+          block->instructions.push_back(std::move(duplicate));
+        }
+        if (mutation == 4) index->definitionBlock = 900001;
+        if (mutation == 5) {
+          index->info.type = SemanticType::Double;
+          definition->info = index->info;
+        }
+        if (mutation == 6) {
+          source->access = AccessMode::Mutable;
+          changed->returnType.referenceAccess = AccessMode::Mutable;
+          changed->body.returnType = changed->returnType;
+          for (auto &loan : changed->body.loans)
+            if (loan.kind == MirLoanKind::Return && loan.source == source->id)
+              loan.access = AccessMode::Mutable;
+          for (auto &returnBlock : changed->body.blocks)
+            for (auto &instruction : returnBlock.instructions)
+              if (instruction.kind == MirInstructionKind::Borrow &&
+                  instruction.operands.size() == 1 &&
+                  instruction.operands.front().place == source->id)
+                instruction.operands.front().kind = MirOperandKind::BorrowWrite;
+        }
+        if (mutation == 7) source->projections.back().selection = 900002;
+        const auto proof = verifyMirProgram(forged);
+        if (proof.valid())
+          std::cerr << "accepted constant-index mutation " << mutation << '\n';
+        expect(!proof.valid(),
+               "constant-index return rejects different/nonconstant/ambiguous producers, "
+               "foreign definitions, wrong types, access or guard metadata");
+      }
+      observed = true;
+      break;
+    }
+    if (observed) break;
+  }
+  expect(observed, "constant-index fixture exercises both structural and SSA index identities");
+}
+
 void checkLifetimeConvertedCarrierReturn() {
   const auto checked = Frontend().analyze("lifetime-converted-carrier-return.gti", R"gti(
 struct Cell { int value; Cell(int input) : value(input) {} };
@@ -4222,6 +4311,7 @@ int main() {
   checkReferenceContentsOpeningShape();
   checkReferenceReceiverProducer();
   checkLocalInlineStorageBounds();
+  checkEvaluatedConstantIndexReturn();
   checkLifetimeConvertedCarrierReturn();
   checkReferenceErasureLifetimeAuthority();
   checkReferenceErasureAddressIdentity();

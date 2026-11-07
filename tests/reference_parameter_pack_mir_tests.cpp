@@ -159,9 +159,74 @@ void checkConvertedFoldInputs(const lang::FrontendResult &result) {
   }
   expect(checked, "carrier folds exercise an applied owner region and its exact staged reference input");
 }
+void checkByValuePackEntries() {
+  using namespace lang;
+  const auto result = Frontend().analyze("by-value-pack-entries.gti", R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+void take<Args...>(Args... values) {}
+void relay<Args...>(Args... values) { take(values...); }
+void inspect<lifetime a>(int&<a> input) {
+  View<a> view{input};
+  relay(1, "first", true, "second", view);
+}
+int main() { int value=3; inspect(value); return 0; }
+)gti");
+  if (!result.canGenerateCode())
+    for (const auto &diagnostic : result.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(result.canGenerateCode(),
+         "by-value packs retain opaque text and nominal record contents at exact lanes");
+  if (!result.canGenerateCode())
+    return;
+  bool checked = false;
+  for (const auto &function : result.mir.functionInstances()) {
+    const MirLoan *first = nullptr;
+    const MirLoan *second = nullptr;
+    for (const auto &loan : function.body.loans) {
+      const auto *source = function.body.findPlace(loan.source);
+      if (!loan.entry || loan.kind != MirLoanKind::Stored || !source ||
+          source->type.kind != SemanticType::StringView ||
+          source->projections.size() != 1 ||
+          source->projections[0].kind != MirProjectionKind::PackElement)
+        continue;
+      if (!first) first = &loan;
+      else if (source->binding == function.body.findPlace(first->source)->binding) {
+        second = &loan;
+        break;
+      }
+    }
+    if (!first || !second)
+      continue;
+    for (int mutation = 0; mutation != 7; ++mutation) {
+      auto forged = result.mir;
+      auto *changed = const_cast<MirFunctionInstance *>(
+          forged.findFunctionInstance(function.id));
+      auto &entry = changed->body.loans[first->id - 1];
+      auto *place = const_cast<MirPlace *>(changed->body.findPlace(entry.source));
+      if (mutation == 0) entry.source = second->source;
+      if (mutation == 1) entry.carriers.clear();
+      if (mutation == 2) entry.access = AccessMode::Mutable;
+      if (mutation == 3) entry.designatedFields = {fieldProjection(900001)};
+      if (mutation == 4) entry.kind = MirLoanKind::Parameter;
+      if (mutation == 5)
+        place->projections.push_back({.kind = MirProjectionKind::Field, .field = 900002});
+      if (mutation == 6) place->projections[0].constantIndex = 99;
+      expect(!verifyMirProgram(forged).valid(),
+             "by-value pack entry rejects a same-typed sibling, absent carrier, "
+             "stronger access, fabricated field/reference, or wrong structural lane");
+    }
+    checked = true;
+    break;
+  }
+  expect(checked, "by-value fixture has two independent equal-typed text lanes");
+}
 } // namespace
 
 int main() {
+  checkByValuePackEntries();
   const auto result = lang::Frontend().analyze(
       "reference-pack-loans.gti", R"gti(
 class Ticket {

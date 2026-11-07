@@ -13811,17 +13811,32 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       const bool seededReferenceEntry =
           loan.kind == MirLoanKind::Parameter && loan.producedBy == 0 &&
           loan.parent == 0 && !loan.carriers.empty();
-      const bool packElement =
-          source != nullptr && source->projections.size() == 1 &&
-          source->projections.front().kind == MirProjectionKind::PackElement &&
+      // A by-value pack leaf retains its contents through the owning grouped
+      // binding. Its full structural prefix must identify that exact leaf;
+      // text contents have an opaque empty path, unlike nominal fields. The
+      // program verifier separately proves the flattened formal inventory.
+      const bool exactPackLeaf = source && !source->projections.empty() &&
+          std::all_of(source->projections.begin(), source->projections.end(),
+                      [](const auto &step) {
+                        return step.kind == MirProjectionKind::PackElement;
+                      }) && mirConcretePackElementType(body, *source);
+      const bool textPackContents = exactPackLeaf &&
+          (source->type.kind == SemanticType::StringView ||
+           source->type.kind == SemanticType::CString) &&
+          loan.access == AccessMode::ReadOnly && loan.designatedFields.empty() &&
+          loan.conditions.empty() && loan.additionalDependencies.empty();
+      const bool nominalPackContents = exactPackLeaf &&
+          (source->type.kind == SemanticType::Class ||
+           source->type.kind == SemanticType::Lambda ||
+           source->type.kind == SemanticType::Enum) &&
+          source->traits.containsBorrowedState && !loan.designatedFields.empty();
+      const bool packElement = exactPackLeaf &&
           (loan.semanticLoan != 0 || seededReferenceEntry) &&
           ((source->type.kind == SemanticType::Reference &&
             source->type.referenceAccess == loan.access &&
             loan.kind == MirLoanKind::Parameter) ||
-           (source->type.kind == SemanticType::Class &&
-            source->traits.containsBorrowedState &&
-            loan.kind == MirLoanKind::Stored &&
-            !loan.designatedFields.empty()));
+           (loan.kind == MirLoanKind::Stored &&
+            (textPackContents || nominalPackContents)));
       if (!abstractStoredEntry(body, loan) && !capturedReference &&
           (loan.producedBy != 0 || source == nullptr ||
            source->root != MirPlaceRootKind::Binding ||
