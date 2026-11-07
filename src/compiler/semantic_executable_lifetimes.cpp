@@ -1,6 +1,7 @@
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
 #include "gti/generic_type_patterns.h"
+#include "gti/callable_lifetimes.h"
 
 namespace lang {
 namespace {
@@ -220,6 +221,23 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
                         std::vector<LifetimeBinding> bound,
                         std::vector<GenericParameterId> &free,
                         const SemanticType *pattern) -> void {
+    if (type.kind == SemanticType::FunctionItem) {
+      const auto *target = semanticModel.findFunction(type.functionId);
+      if (!target && instanceBaseModel)
+        target = instanceBaseModel->findFunction(type.functionId);
+      const auto declared = target
+          ? functionItemLifetimeType(target->id, target->returnType,
+                                     target->parameterTypes, target->lifetimeContract)
+          : std::nullopt;
+      if (!declared || !equivalentLifetimeTypes(*declared, type)) {
+        valid = false;
+        return;
+      }
+      // Item identity fixes its namespace signature. Only the declaration's
+      // quantified invocation slots are renamed below; static is not an
+      // independently inferred environment parameter of the enclosing call.
+      bound.emplace_back(Lifetime::staticLifetime(), Lifetime::staticLifetime());
+    }
     // A projected type is an opaque argument: equal actual regions inside it
     // do not establish a declaration-level relationship with the owner.
     if (pattern && (pattern->kind == SemanticType::TypeParameter ||

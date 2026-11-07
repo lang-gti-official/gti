@@ -1,5 +1,6 @@
 #include "gti/mir.h"
 #include "gti/borrow_conditions.h"
+#include "gti/callable_lifetimes.h"
 #include "gti/compiled_scalar_signature.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
@@ -2429,12 +2430,12 @@ uniqueMirClassInstanceForType(const MirProgram &program,
               producer->functionTarget
                   ? program.findFunctionInstance(*producer->functionTarget)
                   : nullptr;
+          const auto itemType = target ? functionItemLifetimeType(
+              target->declaration, target->returnType, target->parameterTypes,
+              target->lifetimeContract) : std::nullopt;
           exactProducer = target && !target->owner &&
-                          target->linkage == LanguageLinkage::Gti &&
-                          argumentPlace->type == SemanticType::functionItemType(
-                                                     target->declaration,
-                                                     target->returnType,
-                                                     target->parameterTypes);
+                          target->linkage == LanguageLinkage::Gti && itemType &&
+                          equivalentLifetimeTypes(argumentPlace->type, *itemType);
         }
         const bool callable =
             argumentPlace &&
@@ -2497,7 +2498,10 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             argumentInput->info.type.referenceAccess != AccessMode::ReadOnly ||
             argumentInput->info.type.arguments.size() != 1 ||
             argumentPlace == nullptr ||
-            argumentInput->info.type.arguments.front() != argumentPlace->type ||
+            (argumentInput->info.type.arguments.front() != argumentPlace->type &&
+             !(argumentPlace->type.kind == SemanticType::FunctionItem &&
+               equivalentLifetimeTypes(argumentInput->info.type.arguments.front(),
+                                       argumentPlace->type))) ||
             loan == nullptr || loan->kind != MirLoanKind::CallArgument ||
             loan->source != argumentPlace->id ||
             loan->producedBy != instruction.hirValue || !exactProducer ||
@@ -20320,18 +20324,14 @@ verifyMirProgramContracts(const MirProgram &program) {
               instruction.functionTarget
                   ? program.findFunctionInstance(*instruction.functionTarget)
                   : nullptr;
-          const SemanticType *returnType =
-              instruction.info.type.functionItemReturnType();
-          const std::span<const SemanticType> parameters =
-              instruction.info.type.functionItemParameterTypes();
+          const auto itemType = target ? functionItemLifetimeType(
+              target->declaration, target->returnType, target->parameterTypes,
+              target->lifetimeContract) : std::nullopt;
           if (target == nullptr || target->owner || target->requiresUnsafe ||
               target->definitionKind != MirDefinitionKind::Source ||
               target->linkage != LanguageLinkage::Gti ||
               instruction.info.type.functionId != target->declaration ||
-              returnType == nullptr || *returnType != target->returnType ||
-              parameters.size() != target->parameterTypes.size() ||
-              !std::equal(parameters.begin(), parameters.end(),
-                          target->parameterTypes.begin())) {
+              !itemType || !equivalentLifetimeTypes(instruction.info.type, *itemType)) {
             result.errors.push_back(
                 {.bodyKind = body.kind,
                  .owner = owner,

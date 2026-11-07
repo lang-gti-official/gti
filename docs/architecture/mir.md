@@ -821,7 +821,11 @@ opaque field types do not invalidate an otherwise checked owner. Independent
 return replay must still reach the typed borrow or unsafe owner-witness
 operation that produced the result. A by-value or consuming shell cannot become
 physical caller storage, and changing the source owner or adding a reference
-crossing cannot substitute another supplier. A dereference through a class ends
+crossing cannot substitute another supplier. A call result with multiple
+permitted suppliers retains each source's own checked authority or physical
+owned input. An additional source need not lie inside the first parent's
+storage; unique call production, staged inputs, access/liveness and independent
+complete-result replay still prove the exact set. A dereference through a class ends
 that path. Published dependencies keep a `CallResult` accessor as their parent
 together with its exact source, as reference loan facts do; a parentless
 referent names the exact input place, either the reference argument's place or
@@ -1806,8 +1810,13 @@ Concrete pack flattening uses the same bounded `CallInput` type-compatibility
 predicate as independent MIR verification. It retains the source operand type
 and exact selected parameter type for existing null-pointer and pointee-const
 conversions, rather than rejecting a valid conversion or changing the selected
-constructor signature. Removing pointee constness and changing pointee types
-remain invalid.
+constructor signature. A whole-value null initializer carries no pointee
+storage: its already well-formed raw-pointer destination may contain scoped
+pointee regions without requiring those regions to be static. MIR reconstructs
+the actual null source before accepting the conversion. Non-null pointer
+arguments remain invariant in their nested regions; null conversion cannot be
+used recursively to rewrite a pointer's type argument. Removing pointee
+constness and changing pointee types remain invalid.
 
 Generated same-type raw copy/move construction has no source-constructor target.
 Direct
@@ -5240,6 +5249,12 @@ after the call, while captured dependencies survive until the full-expression
 closure cleanup finishes. Missing, substituted or prematurely ended capture
 dependencies are invalid MIR. The ordinary confined callable contract and
 invocation capability checks remain required independently of materialization.
+A function item's complete type is derived from its exact target signature and
+lifetime contract, including every declared invocation binder. HIR and MIR
+compare that closed type by bound alpha equivalence; fixed and free regions,
+unused binders, and repeated-region relationships remain exact. A temporary
+parameter may rename the item's bound scope, while its materialized value,
+place, producer and cleanup obligation retain one identical storage type.
 
 An ordinary enum observer and the generated `has_value` observation for
 source-defined propagation use the same schedule. Their materialization may be the

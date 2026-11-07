@@ -3,6 +3,12 @@
 
 int& identity(int& value) { return value; }
 
+// A namespace function item keeps its declared reference result. A generic
+// caller can load that result while each identity invocation chooses its region.
+int observe<F>(F& callback, int& value) { return callback(value); }
+int permanent_value = 11;
+int&<static> permanent(int ignored) { return permanent_value; }
+
 void add_one<lifetime a>(mut int&<a> value) { value += 1; }
 
 int&<shared> choose<lifetime shared>(
@@ -67,5 +73,6 @@ int main() {
   if (projected.get() != 9) { return 3; }
   Environment<int(int)> environment{right};
   if (environment.read() != 9) { return 6; }
+  if (observe(identity, left) != 4 || observe(permanent, left) != 11) { return 8; }
   return identity(left) - 4;
 }

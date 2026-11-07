@@ -447,6 +447,33 @@ void testScopedCallableFormation() {
   expect(!appendLifetimeRequirementFormula(destination, malformed) && destination == either,
          "formula composition rejects dangling nodes without changing checked facts");
 }
+void testFunctionItemLifetimeScopes() {
+  using namespace lang;
+  const auto a = Lifetime::parameter(41);
+  const auto b = Lifetime::parameter(42);
+  LifetimeSignatureContract contract{.parameters = {a},
+      .origin = LifetimeContractOrigin::Declared, .complete = true};
+  const auto item = functionItemLifetimeType(17, reference(a),
+                                            std::array{reference(a)}, contract);
+  expect(item && item->quantifiedLifetimes == std::vector<GenericParameterId>{a.id} &&
+             freeTypeLifetimes(*item).empty(),
+         "function items quantify exactly their declaration invocation regions");
+  contract.parameters = {b};
+  const auto renamed = functionItemLifetimeType(17, reference(b),
+                                               std::array{reference(b)}, contract);
+  expect(renamed && equivalentLifetimeTypes(*item, *renamed),
+         "item invocation quantifiers compare by capture-safe alpha identity");
+  const auto fixed = functionItemLifetimeType(17, reference(Lifetime::staticLifetime()),
+                                             std::array{reference(b)}, contract);
+  expect(fixed && fixed->functionItemReturnType()->referenceLifetime == Lifetime::staticLifetime() &&
+             !equivalentLifetimeTypes(*item, *fixed),
+         "an item's fixed static result remains distinct from an invocation result");
+  expect(!functionItemLifetimeType(17, reference(a), std::array{reference(b)}, contract),
+         "an item cannot capture a free region absent from its declaration contract");
+  contract.receiver = b;
+  expect(!functionItemLifetimeType(17, reference(b), std::array{reference(b)}, contract),
+         "namespace function items cannot acquire receiver lifetime state");
+}
 } // namespace
 
 void testContextualLifetimeInference() {
@@ -586,6 +613,7 @@ int main() {
   testLifetimeConversionShapes();
   using namespace lang;
   testScopedCallableFormation();
+  testFunctionItemLifetimeScopes();
   testContextualLifetimeInference();
   testNativeInvocationScopes();
   testReferenceErasureContracts();

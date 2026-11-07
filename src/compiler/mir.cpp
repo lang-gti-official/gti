@@ -3478,8 +3478,13 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
               // loan: its exact source-call mapping and ordinary ownership
               // checks establish that authority instead. The stored loan
               // still protects this additional source for its entire lifetime.
-              if (loan.kind == MirLoanKind::Stored && !loan.entry &&
-                  !loan.escapes && child != loan.source &&
+              // A scalar call result has the same independently sourced
+              // suppliers. Its unique call producer, staged input mappings and
+              // complete result set are verified below and at program scope;
+              // its first parent cannot contain another checked input owner.
+              if ((loan.kind == MirLoanKind::Stored ||
+                   (loan.kind == MirLoanKind::CallResult && loan.producedBy != 0)) &&
+                  !loan.entry && !loan.escapes && child != loan.source &&
                   ((authority != 0 && authority != loan.parent) ||
                    independentOwnedInput))
                 return false;
@@ -12548,6 +12553,13 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       }
       const SemanticType &referent = input.info.type.arguments.front();
       const MirPlace *place = body.findPlace(operand.place);
+      // An item retains its declaration's closed invocation scope while the
+      // concrete parameter may alpha-rename that scope. Only this boundary
+      // admits bound renaming; all materialized storage below stays exact.
+      const bool exactReferent = place &&
+          (place->type == referent ||
+           (referent.kind == SemanticType::FunctionItem &&
+            equivalentLifetimeTypes(place->type, referent)));
       // The value-rooted place of a linear temporary, or the hidden slot of a
       // branch-only one; the ordinary producer below excludes a join's Move.
       // An explicitly moved local materializes its temporary the same way.
@@ -12633,9 +12645,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           loan->entry || loan->escapes || loan->parent != 0 ||
           loan->producedBy != input.callSite || !place->projections.empty() ||
           place->access != AccessMode::Mutable ||
-          place->sourceValue != input.hirValue || place->type != referent ||
+          place->sourceValue != input.hirValue || !exactReferent ||
           source->sourceValue != input.hirValue ||
-          source->info.type != referent ||
+          source->info.type != place->type ||
           source->info.category != ValueCategory::Value ||
           source->info.traits.containsBorrowedState !=
               bool(captureDependency) ||
@@ -12644,7 +12656,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           !sameCallInputTraits(place->traits, source->info.traits) ||
           !producer->result || *producer->result != source->id ||
           producer->hirValue != input.hirValue ||
-          producer->info.type != referent ||
+          producer->info.type != place->type ||
           producer->info.category != ValueCategory::Value ||
           producer->info.traits.containsBorrowedState !=
               bool(captureDependency) ||
@@ -12659,7 +12671,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       const auto obligations = dropsForValue(input.hirValue);
       if (obligations.size() != 1 ||
           obligations.front()->place != operand.place ||
-          obligations.front()->dropType.type != referent ||
+          obligations.front()->dropType.type != place->type ||
           obligations.front()->hirFullExpression == 0 ||
           obligations.front()->fullExpression == 0) {
         return false;

@@ -11,6 +11,7 @@
 namespace lang {
 struct MirProgramTestAccess {
   static auto &classes(MirProgram &program) { return program.classes; }
+  static auto &functions(MirProgram &program) { return program.functions; }
   static auto &payloads(MirProgram &program) { return program.payloadEnums_; }
   static auto &integrals(MirProgram &program) { return program.integralEnums_; }
   static auto &lambdas(MirProgram &program) { return program.lambdas; }
@@ -86,6 +87,49 @@ void rawPointerStorageOutlives() {
     expect(!verifyMirLifetimeBodyFacts(program, body, assumptions).valid(),
            "a malformed pointer premise cannot bypass independent type validation");
   }
+  MirFunctionInstance context;
+  context.id = 1;
+  context.lifetimeContract = {.parameters = {shorter}, .complete = true};
+  MirProgramTestAccess::functions(program) = {context};
+  MirBody conversion;
+  conversion.kind = MirBodyKind::Function;
+  conversion.lifetimeBody.complete = true;
+  expect(mirLifetimeValueConversion(program, conversion, 1, SemanticType::NullPtr, nominalPointer),
+         "null initializes a named-region nominal pointer without a pointee outlives premise");
+  expect(mirLifetimeValueConversion(program, conversion, 1, SemanticType::NullPtr, pointer),
+         "null initializes an opaque generic pointer without opening its pointee");
+  auto fixedPointer = nominalPointer;
+  fixedPointer.arguments.front().lifetimeArguments.front() = forever;
+  expect(!mirLifetimeValueConversion(program, conversion, 1, nominalPointer, fixedPointer) &&
+             !mirLifetimeValueConversion(program, conversion, 1, fixedPointer, nominalPointer),
+         "non-null pointer conversion keeps checked pointee regions invariant");
+  auto foreignPointer = nominalPointer;
+  foreignPointer.arguments.front().lifetimeArguments.front() = Lifetime::parameter(999);
+  expect(!mirLifetimeValueConversion(program, conversion, 1, SemanticType::NullPtr, foreignPointer),
+         "null cannot introduce an undeclared destination region");
+  auto malformedPointer = pointer;
+  malformedPointer.arguments.front() = SemanticType::Unknown;
+  expect(!mirLifetimeValueConversion(program, conversion, 1, SemanticType::NullPtr, malformedPointer),
+         "null cannot authorize a malformed destination pointee");
+  expect(!mirLifetimeValueConversion(program, conversion, 1,
+             SemanticType::rawPointerTo(SemanticType::NullPtr),
+             SemanticType::rawPointerTo(nominalPointer)),
+         "whole-value null conversion never rewrites nested pointer argument types");
+  conversion.places = {{.id = 1, .root = MirPlaceRootKind::Binding, .binding = 1,
+                        .type = nominalPointer}};
+  conversion.values = {{.id = 1, .info = {.type = SemanticType::NullPtr}}};
+  MirInstruction initialize;
+  initialize.id = 1;
+  initialize.kind = MirInstructionKind::Initialize;
+  initialize.destination = 1;
+  initialize.operands = {{.kind = MirOperandKind::Value, .value = 1, .type = SemanticType::NullPtr}};
+  conversion.blocks = {{.id = 1, .instructions = {initialize}}};
+  expect(verifyMirLifetimeApplications(program, conversion, 1).valid(),
+         "stored null replay derives the exact source type before accepting its scoped pointer destination");
+  conversion.values.front().info.type = fixedPointer;
+  conversion.blocks.front().instructions.front().operands.front().type = SemanticType::NullPtr;
+  expect(!verifyMirLifetimeApplications(program, conversion, 1).valid(),
+         "a forged null operand tag cannot hide a non-null pointer source with different nested regions");
 }
 void cleanupLifetimeRecipes() {
   const auto region = Lifetime::parameter(801);

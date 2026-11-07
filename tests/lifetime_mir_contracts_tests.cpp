@@ -304,6 +304,60 @@ int main() {
   return true;
 }
 
+void checkScopedFunctionItemIdentity() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "scoped-function-item-identity.gti", R"gti(
+int global = 7;
+int&<static> fixed(int ignored) { return global; }
+int&<a> choose<lifetime a, lifetime b>(int&<a> first, int&<b> second) { return first; }
+int observeFixed<F>(F& callback) { return callback(0); }
+int observePair<F>(F& callback) { int first = 3; int second = 8; return callback(first, second); }
+int main() { return observeFixed(fixed) + observePair(choose) - 10; }
+)gti");
+  if (!checked.canGenerateCode()) {
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "fresh function items retain exact fixed regions and declared invocation binders");
+  }
+  bool fixed = false;
+  bool quantified = false;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.operation != MirOperation::FunctionItem || !instruction.functionTarget || !instruction.result)
+          continue;
+        const auto *target = checked.mir.findFunctionInstance(*instruction.functionTarget);
+        const auto expected = target ? functionItemLifetimeType(target->declaration, target->returnType,
+            target->parameterTypes, target->lifetimeContract) : std::nullopt;
+        expect(expected && equivalentLifetimeTypes(instruction.info.type, *expected),
+               "each executable item independently matches its target's complete scoped type");
+        if (instruction.info.type.arguments.front().kind != SemanticType::Reference) continue;
+        const bool isFixed = instruction.info.type.arguments.front().referenceLifetime == Lifetime::staticLifetime();
+        const bool isQuantified = instruction.info.type.quantifiedLifetimes.size() == 2;
+        if (!isFixed && !isQuantified) continue;
+        fixed |= isFixed;
+        quantified |= isQuantified;
+        for (int mutation = 0; mutation != (isQuantified ? 2 : 1); ++mutation) {
+          auto forged = checked.mir;
+          auto *changed = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+          auto *item = const_cast<MirInstruction *>(mir_detail::definitionFor(changed->body, *instruction.result));
+          expect(item != nullptr, "function item mutation keeps its exact executable producer");
+          if (isFixed) {
+            item->info.type.quantifiedLifetimes.push_back(900001);
+            item->info.type.arguments.front().referenceLifetime = Lifetime::parameter(900001);
+          } else if (mutation == 0) {
+            item->info.type.quantifiedLifetimes.pop_back();
+          } else {
+            item->info.type.arguments.back().referenceLifetime = item->info.type.arguments.front().referenceLifetime;
+          }
+          changed->body.values[*instruction.result - 1].info = item->info;
+          expect(!equivalentLifetimeTypes(item->info.type, *expected) && !verifyMirProgram(forged).valid(),
+                 "function items cannot turn fixed storage into a binder, erase a binder or change repeated-region relationships");
+        }
+      }
+  expect(fixed && quantified, "function item fixture contrasts fixed storage and two independent invocation slots");
+}
+
 void checkScalarLoadDependencyDomain() {
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "scalar-load-dependency-domain.gti", R"gti(
@@ -315,9 +369,9 @@ struct View<lifetime a> {
   int&<a> get() { return this.value; }
 };
 struct Cleanup<lifetime a> {
-  View<a> view;
-  Cleanup(int&<a> input) : view(input) {}
-  ~Cleanup() { cleanup_trace += this.view.value; }
+  int&<a> value;
+  Cleanup(int&<a> input) : value(input) {}
+  ~Cleanup() { cleanup_trace += this.value; }
 };
 void observe<lifetime a>(int&<a> input) { Cleanup<a> cleanup{input}; }
 int main() {
@@ -358,8 +412,12 @@ int main() {
           expect(!verifyMirProgram(forged).valid(),
                  "a scalar Load cannot claim that it stores the source address capability");
         }
-        if (load.info.type.kind == SemanticType::Class && value->borrowDependencies &&
-            !value->borrowDependencies->dependencies.empty()) {
+        const auto carrierView = load.info.type.kind == SemanticType::Class
+            ? mirClassLifetimeView(checked.mir, load.info.type) : std::nullopt;
+        if (carrierView && std::any_of(carrierView->instance->declaredFields.begin(),
+                                      carrierView->instance->declaredFields.end(), [](const auto &field) {
+              return field.type.kind == SemanticType::Reference;
+            })) {
           carrier = true;
           auto forged = checked.mir;
           auto *changed = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
@@ -575,6 +633,20 @@ int main() { int input = 7; Leaf value{input}; return read(value) + value.get() 
     }
   }
   expect(examined, "nested Base fixture retains a structural base inventory");
+  bool ordinaryPublication = false;
+  for (const auto &constructor : checked.mir.constructorInstances())
+    for (const auto &loan : constructor.body.loans)
+      if (mir_detail::baseConstructorPublicationStage(constructor.body, loan)) {
+        ordinaryPublication = true;
+        expect(!loan.lifecycleBound,
+               "a generated base cleanup does not invent destructor-bound borrow retention");
+        auto forged = checked.mir;
+        auto *changed = const_cast<MirConstructorInstance *>(forged.findConstructorInstance(constructor.id));
+        changed->body.loans[loan.id - 1].lifecycleBound = true;
+        expect(!verifyMirProgram(forged).valid(),
+               "base publication must retain its exact destructor-observation policy");
+      }
+  expect(ordinaryPublication, "nested Base fixture retains non-cleanup-bound borrowed publication");
   bool returned = false;
   for (const auto &function : checked.mir.functionInstances()) {
     if (!function.completeReturnBorrow || function.completeReturnBorrow->dependencies.size() != 1)
@@ -928,11 +1000,14 @@ struct Wrapper<lifetime a, lifetime owner> {
 int&<shell> read<lifetime a, lifetime shell>(View<a>&<shell> first, View<a>&<shell> second) {
   return first.read();
 }
+int copied<lifetime a, lifetime shell>(View<a>&<shell> first, View<a>&<shell> second) {
+  return first.read();
+}
 int main() {
   int value = 3;
   View first{value}; View second{value};
   Wrapper wrapper{first};
-  return read(first, second) + wrapper.read() - 14;
+  return read(first, second) + wrapper.read() + copied(first, second) - 21;
 }
 )gti");
   if (!checked.canGenerateCode()) {
@@ -947,27 +1022,69 @@ int main() {
     if (function.owner || function.parameterTypes.size() != 2 ||
         function.parameterTypes.front().kind != SemanticType::Reference ||
         function.parameterTypes.front() != function.parameterTypes.back() ||
-        !function.completeReturnBorrow || function.completeReturnBorrow->dependencies.size() != 1)
+        !function.completeReturnBorrow || function.completeReturnBorrow->dependencies.size() < 2)
       continue;
-    const auto &mapping = function.completeReturnBorrow->dependencies.front();
-    if (mapping.origin != BorrowOriginKind::Argument || mapping.parameter != 0)
+    const auto mapping = std::find_if(
+        function.completeReturnBorrow->dependencies.begin(),
+        function.completeReturnBorrow->dependencies.end(), [](const auto &source) {
+          return source.origin == BorrowOriginKind::Argument && source.parameter == 0 &&
+                 source.sourceFields.empty();
+        });
+    if (mapping == function.completeReturnBorrow->dependencies.end())
       continue;
     sameTypeOwners = true;
     for (int mutation = 0; mutation != 3; ++mutation) {
       auto forged = checked.mir;
       auto *target = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
       if (mutation == 0) {
-        target->completeReturnBorrow->dependencies.front().parameter = 1;
+        std::erase_if(target->completeReturnBorrow->dependencies, [](const auto &source) {
+          return source.origin == BorrowOriginKind::Argument && source.parameter == 0;
+        });
       } else if (mutation == 1) {
         target->returnType.referenceLifetime = Lifetime::staticLifetime();
       } else {
         target->completeReturnBorrow->dependencies.front().access = AccessMode::Mutable;
       }
       expect(!verifyMirProgram(forged).valid(),
-             "owner supplier proof rejects another same-typed owner, static strengthening and exclusive access");
+             "owner supplier proof retains every permitted same-typed input and rejects static strengthening and exclusive access");
     }
   }
   expect(sameTypeOwners, "owner supplier controls must reach two identical checked owner inputs");
+  bool rejectedOtherOwner = false;
+  for (const auto &function : checked.mir.functionInstances()) {
+    if (function.owner || function.returnType.kind != SemanticType::Int32 ||
+        function.parameterTypes.size() != 2 || function.parameterBindings.size() != 2 ||
+        function.parameterTypes.front() != function.parameterTypes.back())
+      continue;
+    const auto entry = [&](std::size_t index) -> const MirLoan * {
+      for (const auto &loan : function.body.loans) {
+        const auto *place = function.body.findPlace(loan.source);
+        if (loan.entry && loan.kind == MirLoanKind::Parameter && place &&
+            place->root == MirPlaceRootKind::Binding && place->projections.empty() &&
+            place->binding == function.parameterBindings[index])
+          return &loan;
+      }
+      return nullptr;
+    };
+    const auto *first = entry(0);
+    const auto *second = entry(1);
+    if (!first || !second) continue;
+    for (const auto &loan : function.body.loans) {
+      if (loan.kind != MirLoanKind::CallResult || loan.source != first->source ||
+          loan.parent != first->id)
+        continue;
+      auto forged = checked.mir;
+      auto *target = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+      auto &changed = target->body.loans[loan.id - 1];
+      changed.source = second->source;
+      changed.parent = second->id;
+      changed.storedDependency = second->storedDependency;
+      expect(!verifyMirProgram(forged).valid(),
+             "a call result cannot replace its evaluated owner with another identically typed input");
+      rejectedOtherOwner = true;
+    }
+  }
+  expect(rejectedOtherOwner, "owner producer mutation must reach two exact checked input capabilities");
   SymbolId externalField = 0;
   for (const auto &owner : checked.mir.classInstances())
     for (const auto &field : owner.declaredFields)
@@ -976,15 +1093,27 @@ int main() {
         externalField = field.symbol;
   bool rejectedCrossing = false;
   for (const auto &function : checked.mir.functionInstances()) {
-    if (!function.owner || !function.completeReturnBorrow ||
-        function.completeReturnBorrow->dependencies.size() != 1)
+    if (!function.owner || !function.completeReturnBorrow || !externalField)
       continue;
-    const auto &mapping = function.completeReturnBorrow->dependencies.front();
-    if (mapping.origin != BorrowOriginKind::Receiver || mapping.sourceFields.empty() || !externalField)
-      continue;
+    const auto *owner = checked.mir.findClassInstance(*function.owner);
+    if (!owner) continue;
+    const auto mapping = std::find_if(
+        function.completeReturnBorrow->dependencies.begin(),
+        function.completeReturnBorrow->dependencies.end(), [&](const auto &source) {
+          return source.origin == BorrowOriginKind::Receiver && source.sourceFields.size() == 1 &&
+                 std::any_of(owner->declaredFields.begin(), owner->declaredFields.end(),
+                             [&](const auto &field) {
+                   return field.symbol == source.sourceFields.front().field &&
+                          field.type.kind == SemanticType::Reference &&
+                          field.type.arguments.size() == 1 &&
+                          field.type.arguments.front().kind == SemanticType::Class;
+                 });
+        });
+    if (mapping == function.completeReturnBorrow->dependencies.end()) continue;
+    const auto index = static_cast<std::size_t>(mapping - function.completeReturnBorrow->dependencies.begin());
     auto forged = checked.mir;
     auto *target = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
-    target->completeReturnBorrow->dependencies.front().sourceFields.push_back(fieldProjection(externalField));
+    target->completeReturnBorrow->dependencies[index].sourceFields.push_back(fieldProjection(externalField));
     expect(!verifyMirProgram(forged).valid(),
            "an owner-relative result cannot acquire an extra stored-reference crossing");
     rejectedCrossing = true;
@@ -2057,6 +2186,7 @@ int main() {
              failure->fixes.empty(),
          "an invocation pointer cannot discard a target outlives requirement or invent a repair");
   checkReferenceErasureLifetimeAuthority();
+  checkScopedFunctionItemIdentity();
   checkScalarLoadDependencyDomain();
   checkForwardedCarrierPackLifetimeStage();
   checkPatternedResultScope();

@@ -466,7 +466,7 @@ struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> source) 
   check("owner-witness-mutable-physical-input", R"gti(
 [[borrowed_from(owner)]] unsafe mut T& borrow_mut<T, Owner>(T* address, mut Owner& owner) { unsafe { return *address; } }
 struct View<lifetime a> {
-  int&<a> external; int local = 7;
+  int&<a> external; mut int local = 7;
   View(int&<a> source) : external(source) {}
   mut int& edit() mut { unsafe { return borrow_mut(&this.local, this); } }
   [[borrowed_from(this)]] int& read() { unsafe { return *(&this.local); } }

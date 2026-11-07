@@ -2252,6 +2252,49 @@ int main() { return observe(map) - 7; }
 )");
   expectValid(valid,
               "a fresh function item's fixed result region survives its checked call-local reference adaptation");
+  const auto *main = function(valid, "main");
+  const auto *returned = main && main->declaration && main->declaration->body()
+      ? lang::stmtAs<lang::ReturnStmt>(main->declaration->body()->statements().front().get())
+      : nullptr;
+  const auto *difference = returned ? lang::exprAs<lang::Binary>(returned->value().get()) : nullptr;
+  const auto *call = difference ? lang::exprAs<lang::Call>(difference->left().get()) : nullptr;
+  const auto *item = call && call->arguments().size() == 1
+      ? valid.semantics.findFunctionItemSelection(*call->arguments().front()) : nullptr;
+  const auto *resultType = item ? item->type.functionItemReturnType() : nullptr;
+  expect(item && item->declaration && item->declaration->name().lexeme == "map" &&
+             resultType && resultType->kind == lang::SemanticType::Reference &&
+             resultType->referenceLifetime == lang::Lifetime::staticLifetime(),
+         "a callable value-load context preserves the selected reference result and its static region");
+  const auto incompatible = analyze(declarations + R"(
+struct Token { Token() = default; };
+Token observeToken<F>(F& callback) { return callback(0); }
+int main() { Token value = observeToken(map); return 0; }
+)");
+  expect(incompatible.syntaxValid && !incompatible.semanticValid &&
+             std::any_of(incompatible.diagnostics.begin(), incompatible.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2090"; }),
+         "contextual function-item selection cannot load an incompatible reference referent");
+  const auto missingReference = analyze(R"(
+int value(int ignored) { return 7; }
+int observe<F>(F& callback) { int& selected = callback(0); return selected; }
+int main() { return observe(value); }
+)");
+  expect(missingReference.syntaxValid && !missingReference.semanticValid,
+         "a callable reference-result requirement cannot borrow a returned temporary value");
+  const auto polymorphic = analyze(R"(
+int&<a> identity<lifetime a>(int&<a> value) { return value; }
+int invoke<F>(F& callback, int& value) { return callback(value); }
+int main() { int first = 3; int second = 8; return invoke(identity, first) + invoke(identity, second) - 11; }
+)");
+  expectValid(polymorphic,
+              "a function item's quantified signature is instantiated independently for each checked invocation");
+  const auto extends = analyze(R"(
+int&<a> identity<lifetime a>(int&<a> value) { return value; }
+int&<static> invoke<F>(F& callback, int& value) { return callback(value); }
+int main() { int value = 7; return invoke(identity, value); }
+)");
+  expect(extends.syntaxValid && !extends.semanticValid,
+         "an invocation-polymorphic item cannot promote a caller's local input to fixed static storage");
   for (const std::string &source : {
            "F& escape<F>(F& callback) { return callback; } int main() { escape(map); return 0; }",
            "void edit<F>(mut F& callback) {} int main() { edit(map); return 0; }"}) {
@@ -2352,6 +2395,46 @@ int main() {
 )");
   expectValid(valid,
               "consuming methods and call operators retain only complete external suppliers, including empty carrier alternatives");
+  const auto sharedOperator = analyze(R"(
+struct Shared<lifetime a> {
+  int&<a> value;
+  Shared(int&<a> input) : value(input) {}
+  int&<a> operator()(int&<a> input) && { return input; }
+};
+int main() {
+  int value = 7; int& retained = value;
+  int& selected = Shared(value)(retained);
+  return retained + selected - 14;
+}
+)");
+  expectValid(sharedOperator,
+              "consuming a fresh operator receiver preserves shared access to its external supplier");
+  const auto emptyAlternatives = analyze(R"(
+enum Result<lifetime a> { present(int&<a> value), empty(int code) };
+Result<static> makeEmpty() { return Result<static>::empty(0); }
+struct Empty {
+  Empty() = default;
+  Result<static> take() && { return Result<static>::empty(0); }
+};
+int main() {
+  Result direct = Result<static>::empty(0);
+  Result free = makeEmpty();
+  Result consumed = Empty().take();
+  return 0;
+}
+)");
+  expectValid(emptyAlternatives,
+              "checked alternative transport preserves ownerless results across inferred binding regions");
+  const auto borrowedAlternative = analyze(R"(
+enum Result<lifetime a> { present(int&<a> value), empty(int code) };
+Result<static> invalid<lifetime a>(int&<a> value, bool present) {
+  if (present) { return Result<a>::present(value); }
+  return Result<static>::empty(0);
+}
+int main() { int value = 7; Result result = invalid(value, true); return 0; }
+)");
+  expect(borrowedAlternative.syntaxValid && !borrowedAlternative.semanticValid,
+         "an empty alternative cannot erase another possible result's shorter external owner");
   for (const std::string &source : {
            "struct Owned { int value; Owned() : value(1) {} int&<this> bad() && { return this.value; } }; int main() { return 0; }",
            "struct Owned { int value; Owned() : value(1) {} int&<this> operator()() && { return this.value; } }; int main() { return 0; }",

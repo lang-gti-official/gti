@@ -234,17 +234,12 @@ auto SemanticVisitor::Impl::analyzeFunctionItem(
   }
   const CallableCandidate *selected = nullptr;
   for (const CallableCandidate &candidate : symbol.overloads) {
+    const auto item = functionItemLifetimeType(candidate.id, candidate.returnType,
+                                               candidate.parameterTypes,
+                                               candidate.lifetimeContract);
     const bool exactContext =
-        candidate.id == expectedType.functionId &&
-        expectedType.hasFunctionItemShape() &&
-        expectedType.functionItemReturnType() != nullptr &&
-        candidate.returnType == *expectedType.functionItemReturnType() &&
-        candidate.parameterTypes.size() ==
-            expectedType.functionItemParameterTypes().size() &&
-        std::equal(candidate.parameterTypes.begin(),
-                   candidate.parameterTypes.end(),
-                   expectedType.functionItemParameterTypes().begin());
-    if (functionItemCandidateIsEligible(candidate) &&
+        item && equivalentLifetimeTypes(*item, expectedType);
+    if (item && functionItemCandidateIsEligible(candidate) &&
         (expectedType == SemanticType::Unknown || exactContext)) {
       if (selected != nullptr) {
         Diagnostic diagnostic =
@@ -287,20 +282,19 @@ auto SemanticVisitor::Impl::analyzeFunctionItem(
     diagnostics.emplace_back(std::move(diagnostic));
     return SemanticType::Unknown;
   }
-  SemanticType itemType = SemanticType::functionItemType(
-      selected->id, selected->returnType, selected->parameterTypes);
-  for (const auto parameter : selected->lifetimeContract.parameters)
-    if (parameter.kind == Lifetime::Kind::Parameter)
-      itemType.quantifiedLifetimes.push_back(parameter.id);
+  const auto itemType = functionItemLifetimeType(
+      selected->id, selected->returnType, selected->parameterTypes,
+      selected->lifetimeContract);
+  assert(itemType);
   semanticModel.recordFunctionItemSelection(
       expression, FunctionItemSelectionInfo{
                       .function = selected->id,
                       .declaration = selected->declaration,
-                      .type = itemType,
+                      .type = *itemType,
                       .capability = CallableInvocationCapability::Read});
   requestSession.ownerlessTextCallableUses.push_back(
       {.target = selected->id, .location = location});
-  return itemType;
+  return *itemType;
 }
 
 auto SemanticVisitor::Impl::isContextualNativeFunctionArgument(
@@ -539,6 +533,28 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
     return true;
   };
 
+  const auto matchesInvocationResult = [&](const SemanticType &expected,
+                                           const SemanticType &actual,
+                                           GenericSubstitution &substitution) {
+    auto exact = substitution;
+    if (exactMatch(exactMatch, expected, actual, exact)) {
+      substitution = std::move(exact);
+      return true;
+    }
+    // This is the enclosing invocation's value context, not the item type.
+    // Mirror validateCallableReturn's ordinary checked-reference load while
+    // retaining the selected reference signature and its supplier contract.
+    if (expected.kind != SemanticType::Reference &&
+        actual.kind == SemanticType::Reference) {
+      auto loaded = substitution;
+      if (exactMatch(exactMatch, expected, callExpressionType(actual), loaded)) {
+        substitution = std::move(loaded);
+        return true;
+      }
+    }
+    return false;
+  };
+
   // Disjoint definitions of one class name form a family; concrete
   // arguments select one definition, whose members are its own.
   const auto selectsOtherClassDefinition = [&](const SemanticType &owner,
@@ -712,10 +728,13 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         // projection which may itself depend on that callable parameter.
         // Bind it first, then compare the fully substituted contract. This
         // does not infer a callable from its desired return type.
-        const SemanticType candidateItem = SemanticType::functionItemType(
-            candidate.id, candidate.returnType, candidate.parameterTypes);
+        const auto candidateItem = functionItemLifetimeType(
+            candidate.id, candidate.returnType, candidate.parameterTypes,
+            candidate.lifetimeContract);
+        if (!candidateItem)
+          continue;
         if (!target.parameterPack && index < target.parameterTypes.size() &&
-            !inferOuter(inferOuter, target.parameterTypes[index], candidateItem,
+            !inferOuter(inferOuter, target.parameterTypes[index], *candidateItem,
                         substitution)) {
           continue;
         }
@@ -732,9 +751,9 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
             if (!callableCapabilitySatisfies(CallableInvocationCapability::Read,
                                              signature.capability) ||
                 (!signature.inferResultFromInstantiation &&
-                 !exactMatch(exactMatch,
-                             substituteType(signature.returnType, substitution),
-                             candidate.returnType, substitution))) {
+                 !matchesInvocationResult(
+                     substituteType(signature.returnType, substitution),
+                     candidate.returnType, substitution))) {
               matchesContract = false;
               break;
             }
@@ -788,8 +807,7 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         if (!matchesContract) {
           continue;
         }
-        const SemanticType item = SemanticType::functionItemType(
-            candidate.id, candidate.returnType, candidate.parameterTypes);
+        const SemanticType &item = *candidateItem;
         if (target.parameterPack && index >= fixedParameterCount(target)) {
           // A contextual name supplies one concrete pack element, not a new
           // formal parameter. Preserve the other independently deduced items
@@ -854,8 +872,9 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
     }
     const CallableCandidate &selected = *matches.front().first;
     baseSubstitution = std::move(matches.front().second);
-    analysis.types[index] = SemanticType::functionItemType(
-        selected.id, selected.returnType, selected.parameterTypes);
+    analysis.types[index] = *functionItemLifetimeType(
+        selected.id, selected.returnType, selected.parameterTypes,
+        selected.lifetimeContract);
   }
   return valid;
 }
@@ -1005,7 +1024,7 @@ auto SemanticVisitor::Impl::finishContextualCallArguments(
         parameter.referenceAccess == AccessMode::ReadOnly &&
         parameter.arguments.size() == 1 &&
         parameter.arguments.front().kind == SemanticType::FunctionItem &&
-        parameter.arguments.front() == analysis.types[index] &&
+        equivalentLifetimeTypes(parameter.arguments.front(), analysis.types[index]) &&
         isContextualNativeFunctionArgument(arguments[index]);
     if (isContextualArrayArgument(arguments[index])) {
       if (parameter.kind != SemanticType::Array ||
@@ -1052,7 +1071,7 @@ auto SemanticVisitor::Impl::finishContextualCallArguments(
         !callArgumentMatches(parameter, analysis.types[index],
                              arguments[index]) &&
         !(freshFunctionItem &&
-          analysis.types[index] == parameter.arguments.front() &&
+          equivalentLifetimeTypes(analysis.types[index], parameter.arguments.front()) &&
           freshTemporaryValue(arguments[index]).eligible)) {
       reportCallArgumentMismatch(index, parameter, analysis.types[index],
                                  arguments[index], callable);
@@ -1257,7 +1276,9 @@ auto SemanticVisitor::Impl::temporaryReadBorrowArgumentMatches(
   if (parameter.kind != SemanticType::Reference ||
       parameter.referenceAccess != AccessMode::ReadOnly ||
       parameter.arguments.size() != 1 ||
-      parameter.arguments.front() != argument ||
+      (parameter.arguments.front() != argument &&
+       !(argument.kind == SemanticType::FunctionItem &&
+         equivalentLifetimeTypes(parameter.arguments.front(), argument))) ||
       !isTemporaryBorrowReferentType(argument) || !expression) {
     return false;
   }
@@ -1272,10 +1293,11 @@ auto SemanticVisitor::Impl::temporaryReadBorrowArgumentMatches(
       return false;
     return std::any_of(source->overloads.begin(), source->overloads.end(),
                        [&](const CallableCandidate &candidate) {
-                         return functionItemCandidateIsEligible(candidate) &&
-                                SemanticType::functionItemType(
-                                    candidate.id, candidate.returnType,
-                                    candidate.parameterTypes) == argument;
+                         const auto item = functionItemLifetimeType(
+                             candidate.id, candidate.returnType,
+                             candidate.parameterTypes, candidate.lifetimeContract);
+                         return functionItemCandidateIsEligible(candidate) && item &&
+                                equivalentLifetimeTypes(*item, argument);
                        });
   }
   // An explicit move transfers a whole local into a temporary owned by the
@@ -5570,7 +5592,7 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
   // owners even when other alternatives of its type store several borrows.
   // Absence of evidence is not an empty set: check the concrete alternative
   // inventory and every applicable reference path before accepting it.
-  if (const auto complete = completeBorrowDependencySet(initializer);
+  if (const auto complete = completeBorrowDependencySetForType(initializer.get(), type);
       complete && complete->dependencies.empty() &&
       !complete->possibleAlternatives.empty()) {
     const auto inventory = storedReferenceInventory(type);

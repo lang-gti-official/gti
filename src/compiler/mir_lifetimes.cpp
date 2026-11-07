@@ -1650,6 +1650,13 @@ public:
              bool exactShape = false) const {
     if (depth >= 256)
       return false;
+    if (depth == 0 && actual == SemanticType::NullPtr &&
+        expected.kind == SemanticType::RawPointer)
+      // Null initializes the already-scoped pointer type without supplying
+      // pointee storage or any region relationship. This is only a whole
+      // value conversion; nested pointer/type arguments remain invariant.
+      return variance > 0 && rawPointerStorageShape(expected) &&
+             isImplicitScalarInitializationConversion(expected, actual);
     if (actual == expected)
       return true;
     if (!actual.quantifiedLifetimes.empty() ||

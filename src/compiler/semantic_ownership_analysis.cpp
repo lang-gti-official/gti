@@ -8360,6 +8360,12 @@ auto SemanticVisitor::Impl::resolveGenericReturnBorrowContract(
                  "single-dependency carrier with sufficient access in this "
                  "instance.",
            "GTI-S2017");
+  } else {
+    // The annotation selects its owner in the common lifetime contract.
+    // Concrete fields can reveal additional permitted suppliers in that
+    // region, so retain the full declaration inventory at the call boundary.
+    // An unsafe raw assertion separately resolves its written owner.
+    refreshDeclaredLifetimeBorrowSummary(instance);
   }
 }
 

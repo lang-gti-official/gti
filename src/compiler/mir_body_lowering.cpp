@@ -1065,7 +1065,9 @@ private:
         loan.additionalDependencies.assign(complete->dependencies.begin() + 1,
                                            complete->dependencies.end());
         loan.escapes = true;
-        loan.lifecycleBound = traits.drop == DropKind::Lexical;
+        // Lexical object cleanup alone does not retain a borrowed origin.
+        // Use the exact base view's checked destructor-observation policy.
+        loan.lifecycleBound = isLifecycleBoundBorrowCarrier(initializer.targetType);
         stage.loan = publication;
         constructorPublishedLoans.push_back(publication);
       }

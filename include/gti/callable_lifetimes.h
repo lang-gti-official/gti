@@ -12,6 +12,31 @@ namespace lang {
 using CallableNominalFormation = std::function<
     std::optional<LifetimeRequirementFormula>(const SemanticType &)>;
 
+// A namespace function item has no captured lifetime environment. Its exact
+// declaration supplies invocation binders; static storage remains a fixed
+// signature choice. This builds the scoped type, not a new target contract.
+inline std::optional<SemanticType> functionItemLifetimeType(
+    FunctionId function, const SemanticType &result,
+    std::span<const SemanticType> parameters,
+    const LifetimeSignatureContract &contract) {
+  if (!function || result == SemanticType::Unknown || !contract.valid() ||
+      contract.receiver.specified())
+    return std::nullopt;
+  auto item = SemanticType::functionItemType(
+      function, result, std::vector<SemanticType>(parameters.begin(), parameters.end()));
+  for (const auto parameter : contract.parameters) {
+    if (parameter.kind != Lifetime::Kind::Parameter || !parameter.id ||
+        std::find(item.quantifiedLifetimes.begin(), item.quantifiedLifetimes.end(),
+                  parameter.id) != item.quantifiedLifetimes.end())
+      return std::nullopt;
+    item.quantifiedLifetimes.push_back(parameter.id);
+  }
+  for (const auto region : freeTypeLifetimes(item))
+    if (region.kind != Lifetime::Kind::Static)
+      return std::nullopt;
+  return item;
+}
+
 // Both callable kinds own invocation binders. NativeFunction additionally
 // denotes a nullable ABI pointer; its boundary/unsafe rules remain separate.
 inline bool isLifetimeInvocationSignature(const SemanticType &type) {

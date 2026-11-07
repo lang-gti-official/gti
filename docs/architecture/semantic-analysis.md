@@ -257,6 +257,9 @@ An explicit unsafe raw-reference return publishes the same exact checked owner
 to its complete producer fact and its raw-borrow lowering. It retains an active
 physical reference entry when present; stored external fields never replace
 that entry, and the declared result lifetime and access still require proof.
+Generic instantiation rebuilds the full region-permitted supplier inventory
+after substituting concrete stored fields. The unsafe assertion's written owner
+remains exact and is not selected by taking the first supplier in that inventory.
 
 Anonymous stored regions remain determined by field structure. A constructor's
 checked initializer-list summary may relate its inputs to those anonymous
@@ -2548,6 +2551,16 @@ type, required receiver access, and selected concrete lambda or `operator()`
 target. A call used as a `void` operation has a `void` result requirement. A
 condition supplies exact `bool`; an explicitly typed initializer, assignment,
 or enclosing return supplies an exact non-reference value type. A direct
+value context may load that exact referent from a checked-reference invocation
+result. Contextual function-item selection and concrete invocation use the
+same rule; the item retains its reference result, storage region and supplier
+contract, and ordinary copying and escape checks still apply. A reference
+requirement cannot obtain a reference from a returned value. Namespace function
+items retain their exact declaration identity, fixed static choices and
+quantified invocation regions. Executable type canonicalization renames only
+those bound regions; it does not infer a captured environment for the item.
+Each invocation uses the ordinary selected lifetime application and complete
+result publication before HIR consumes it. A direct
 generic-parameter or generic-field invocation used as a call argument can also
 take its result requirement from the uniquely selected outer parameter. The
 contextual-argument pass inspects declaration types without evaluating the

@@ -2856,9 +2856,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const FunctionInfo *declaration =
           target == nullptr ? nullptr
                             : semantics.findFunction(target->declaration);
-      const SemanticType *returnType = value.info.type.functionItemReturnType();
-      const std::span<const SemanticType> parameters =
-          value.info.type.functionItemParameterTypes();
+      const auto itemType = target ? functionItemLifetimeType(
+          target->declaration, target->returnType, target->parameterTypes,
+          target->lifetimeContract) : std::nullopt;
       if (selection == nullptr || target == nullptr || declaration == nullptr ||
           !value.operands.empty() ||
           value.info.category != ValueCategory::Value ||
@@ -2868,10 +2868,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           selection->function != target->declaration ||
           selection->declaration != target->source || target->owner ||
           target->linkage != LanguageLinkage::Gti || target->requiresUnsafe ||
-          returnType == nullptr || *returnType != target->returnType ||
-          parameters.size() != target->parameterTypes.size() ||
-          !std::equal(parameters.begin(), parameters.end(),
-                      target->parameterTypes.begin())) {
+          !itemType || !equivalentLifetimeTypes(value.info.type, *itemType)) {
         result.errors.emplace_back(
             "function-item HIR value has no exact free-function identity");
       }

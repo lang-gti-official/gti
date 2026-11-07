@@ -29,17 +29,20 @@ struct Wrapper<lifetime a, lifetime owner> {
 int&<shell> read<lifetime a, lifetime shell>(View<a>&<shell> first, View<a>&<shell> second) {
   return first.read();
 }
+int copied<lifetime a, lifetime shell>(View<a>&<shell> first, View<a>&<shell> second) {
+  return first.read();
+}
 int main() {
   int value = 3;
   View first{value}; View second{value};
   Wrapper wrapper{first};
-  return read(first, second) + wrapper.read() - 14;
+  return read(first, second) + wrapper.read() + copied(first, second) - 21;
 }
 """,
     "checked_mutable_owner_witness": """
 [[borrowed_from(owner)]] unsafe mut T& borrow_mut<T, Owner>(T* address, mut Owner& owner) { unsafe { return *address; } }
 struct View<lifetime a> {
-  int&<a> external; int local = 7;
+  int&<a> external; mut int local = 7;
   View(int&<a> source) : external(source) {}
   mut int& edit() mut { unsafe { return borrow_mut(&this.local, this); } }
   [[borrowed_from(this)]] int& read() { unsafe { return *(&this.local); } }
@@ -357,6 +360,16 @@ int global = 7;
 int&<static> map(int ignored) { return global; }
 int observe<F>(F& callback) { return callback(0); }
 int main() { return observe(map) - 7; }
+""",
+    "polymorphic_function_item_regions": """
+int&<a> identity<lifetime a>(int&<a> value) { return value; }
+int invoke<F>(F& callback, int& value) { return callback(value); }
+int main() {
+  int first = 3; int second = 8;
+  auto callback = identity;
+  if (callback(first) != 3 || callback(second) != 8) { return 1; }
+  return invoke(identity, first) + invoke(identity, second) - 11;
+}
 """,
     "reference_pack_results": """
 int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
