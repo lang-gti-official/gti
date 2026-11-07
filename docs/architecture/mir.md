@@ -975,6 +975,13 @@ proof is implemented, the verifier rejects conditional primary and additional
 loans symmetrically rather than silently treating the first field as
 unconditional.
 
+A complete reference call's published loan is compared with its independently
+reconstructed producer set, including every additional supplier's parent, access,
+path and guard. This check also runs for unused results and does not rely on an
+attached result annotation. Passing a scalar reference onward reborrows all its
+suppliers through that exact input loan; the earlier parents are not substituted
+for the evaluated input capability.
+
 Checked erased-reference operations preserve the exact origin and access while
 changing the referent type. MIR rederives each operation's lifetime rule from
 its intrinsic identity, exact opaque capability, access, and equal input/result
@@ -5618,6 +5625,16 @@ If that cleanup fails, no reference is published: its failure edge ends the
 pending return loan before draining the remaining locals. Ordinary successful
 cleanup leaves the loan available to the Return terminator. Loan dataflow
 verification rejects an abandoned return loan that survives a failure exit.
+For an admitted shared-reference copy from a local carrier, the publication
+retains only the selected field's independently proved external sources. The
+carrier keeps its own complete dependency group through ordinary cleanup.
+The verifier captures the result fact at the exact `Borrow` instruction and
+carries it through control-flow joins; ending the loan clears that fact.
+Consumers read the captured loan pointer without a place override, so the
+return cannot reread field storage after destruction. Typed projection and
+current storage flow prove the selection independently of its attached loan
+metadata. This mechanism does not grant an exclusive reborrow permission or
+waive the semantic cleanup-bound carrier checks.
 
 Cleanup blocks forward the same record through supported initialized and
 partially initialized shapes to the selected hosted, callback, or managed-task

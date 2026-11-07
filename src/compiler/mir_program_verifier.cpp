@@ -14433,7 +14433,21 @@ completeBorrowSourcePath(const MirProgram &program,
     std::vector<Fact> values;
     std::vector<Fact> places;
     std::vector<Fact> referenceInitializers;
+    // A reference publication copies an evaluated address before lexical
+    // cleanup. Retain that independently replayed fact, rather than rereading
+    // the carrier's storage after its ordinary destruction or replacement.
+    std::vector<Fact> referencePublications;
   };
+  // Most loans are unrelated to returns. Keep per-CFG-state snapshots only
+  // for actual publications, rather than a dependency-set cell for every
+  // transient call/entry loan in every block.
+  std::vector<std::size_t> publicationSlots(body.loans.size(),
+                                           std::numeric_limits<std::size_t>::max());
+  std::size_t publicationCount = 0;
+  for (const auto &loan : body.loans)
+    if (loan.kind == MirLoanKind::Return && !loan.entry && loan.id &&
+        loan.id <= publicationSlots.size())
+      publicationSlots[loan.id - 1] = publicationCount++;
   std::vector<std::optional<CompleteReferenceInitializer>> referenceInitializers;
   if (constructor)
     for (std::size_t index = 0; index < constructor->initializers.size(); ++index)
@@ -14894,7 +14908,8 @@ completeBorrowSourcePath(const MirProgram &program,
     return *place.key == key;
   };
   const auto referenceLoanFact = [&](const auto &self, const State &state,
-                                     MirLoanId id, std::size_t depth) -> Fact {
+                                     MirLoanId id, std::size_t depth,
+                                     MirLoanId publishing = 0) -> Fact {
     const auto *loan = body.findLoan(id);
     if (!loan || depth > body.loans.size())
       return std::nullopt;
@@ -14935,6 +14950,11 @@ completeBorrowSourcePath(const MirProgram &program,
       }
     }
     if (loan->kind == MirLoanKind::Return && !loan->entry) {
+      if (publishing != id) {
+        const auto slot = publicationSlots[id - 1];
+        return slot < state.referencePublications.size()
+            ? state.referencePublications[slot] : Fact{};
+      }
       const auto found = loanDefinitions.find(id);
       const MirInstruction *producer =
           found != loanDefinitions.end() ? found->second : nullptr;
@@ -15802,6 +15822,21 @@ completeBorrowSourcePath(const MirProgram &program,
   std::vector<Fact> *referenceInitializerObservations = nullptr;
   const auto execute = [&](State &state, const MirInstruction &instruction) {
     Fact result;
+    if (!instruction.tombstone && instruction.loan && *instruction.loan != 0 &&
+        *instruction.loan <= publicationSlots.size()) {
+      const auto slot = publicationSlots[*instruction.loan - 1];
+      const auto *loan = body.findLoan(*instruction.loan);
+      const auto definition = loanDefinitions.find(*instruction.loan);
+      if (slot < state.referencePublications.size()) {
+        if (loan && loan->kind == MirLoanKind::Return && !loan->entry &&
+            instruction.kind == MirInstructionKind::Borrow &&
+            definition != loanDefinitions.end() && definition->second == &instruction)
+          state.referencePublications[slot] =
+              referenceLoanFact(referenceLoanFact, state, loan->id, 0, loan->id);
+        else if (instruction.kind == MirInstructionKind::EndBorrow)
+          state.referencePublications[slot].reset();
+      }
+    }
     const bool payload =
         instruction.kind == MirInstructionKind::Compute &&
         instruction.operation == MirOperation::PayloadConstruct;
@@ -16312,7 +16347,8 @@ completeBorrowSourcePath(const MirProgram &program,
   };
   State initial{.values = std::vector<Fact>(body.values.size()),
                 .places = std::vector<Fact>(body.places.size()),
-                .referenceInitializers = std::vector<Fact>(referenceInitializers.size())};
+                .referenceInitializers = std::vector<Fact>(referenceInitializers.size()),
+                .referencePublications = std::vector<Fact>(publicationCount)};
   for (std::size_t index = 0; index < referenceInitializers.size(); ++index)
     if (referenceInitializers[index] && referenceInitializers[index]->loan->entry)
       initial.referenceInitializers[index] = referencePublicationFact(initial, *referenceInitializers[index]);
@@ -16341,6 +16377,8 @@ completeBorrowSourcePath(const MirProgram &program,
           changed |= join(target.places[index], incoming.places[index]);
         for (std::size_t index = 0; index < target.referenceInitializers.size(); ++index)
           changed |= join(target.referenceInitializers[index], incoming.referenceInitializers[index]);
+        for (std::size_t index = 0; index < target.referencePublications.size(); ++index)
+          changed |= join(target.referencePublications[index], incoming.referencePublications[index]);
         return changed;
       });
   if (!flow.converged())
@@ -16398,7 +16436,8 @@ completeBorrowSourcePath(const MirProgram &program,
     State state = flow.incoming[block.id - 1].value_or(
         State{.values = std::vector<Fact>(body.values.size()),
               .places = std::vector<Fact>(body.places.size()),
-              .referenceInitializers = std::vector<Fact>(referenceInitializers.size())});
+              .referenceInitializers = std::vector<Fact>(referenceInitializers.size()),
+              .referencePublications = std::vector<Fact>(publicationCount)});
     for (const auto &parameter : block.parameters)
       observations.values[parameter.value - 1] =
           state.values[parameter.value - 1];
@@ -17819,6 +17858,36 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
   return true;
 }
 
+// A complete reference producer proves its source set independently of the
+// loan that will retain it. Reusing that result reborrows through the new loan,
+// but the publication itself must still retain every original source/parent.
+// Check this even when the result is unused or its optional annotation is gone.
+[[nodiscard]] bool hasCompleteReferenceCallPublication(
+    const MirProgram &program, const MirBody &body,
+    const MirInstruction &instruction) {
+  if (instruction.tombstone || instruction.kind != MirInstructionKind::Call ||
+      !instruction.result || instruction.info.category != ValueCategory::Place ||
+      !instruction.loan)
+    return false;
+  const auto *loan = body.findLoan(*instruction.loan);
+  const auto *value = body.findValue(*instruction.result);
+  if (!loan || loan->kind != MirLoanKind::CallResult || !value)
+    return false;
+  const auto *function = instruction.functionTarget
+      ? program.findFunctionInstance(*instruction.functionTarget) : nullptr;
+  const auto *lambda = instruction.lambdaTarget
+      ? program.findLambda(*instruction.lambdaTarget) : nullptr;
+  return value->borrowDependencies.has_value() ||
+         (function && function->completeReturnBorrow &&
+          function->returnType.kind == SemanticType::Reference) ||
+         (lambda && lambda->completeReturnBorrow &&
+          lambda->returnType.kind == SemanticType::Reference) ||
+         mir_detail::rawBorrowResultLoan(body, instruction) ||
+         mir_detail::erasedReferenceResultLoan(program, body, instruction) ||
+         (instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke &&
+          mir_detail::functionPointerOperation(program, instruction));
+}
+
 [[nodiscard]] MirVerificationResult verifyBorrowDependencySetTransport(
     const MirProgram &program, const MirBody &body, std::size_t owner,
     const CompleteBorrowCallSummaryLookup &callSummary,
@@ -17834,6 +17903,61 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
           verifySelectedReferenceOrigins(program, body, owner, flow);
       !selected.valid())
     return selected;
+  std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
+  for (const auto &loan : body.loans)
+    for (const auto binding : loan.carriers)
+      bindingLoans[binding].push_back(loan.id);
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions) {
+      if (!hasCompleteReferenceCallPublication(program, body, instruction))
+        continue;
+      const auto &loan = *body.findLoan(*instruction.loan);
+      const CompleteBorrowFact observed =
+          *instruction.result <= flow.values.size()
+              ? flow.values[*instruction.result - 1] : std::nullopt;
+      MirBorrowDependencySet published{
+          .dependencies = {{.source = loan.source, .parent = loan.parent,
+                            .designatedFields = loan.designatedFields,
+                            .access = loan.access, .conditions = loan.conditions}}};
+      published.dependencies.insert(published.dependencies.end(),
+          loan.additionalDependencies.begin(), loan.additionalDependencies.end());
+      bool exact = observed && !observed->dependencies.empty() &&
+          observed->possibleAlternatives.empty() &&
+          published.dependencies.size() == observed->dependencies.size();
+      std::vector<bool> matched(exact ? observed->dependencies.size() : 0);
+      if (exact)
+        for (const auto &claim : published.dependencies) {
+          bool found = false;
+          for (std::size_t index = 0; index < observed->dependencies.size(); ++index) {
+            const auto &source = observed->dependencies[index];
+            if (matched[index] || claim.parent != source.parent ||
+                claim.access != source.access ||
+                claim.designatedFields != source.designatedFields ||
+                claim.conditions != source.conditions)
+              continue;
+            // Formal roots and their exact referent projections can be two
+            // representations of the same lifetime supplier. This is only an
+            // origin comparison: the input stage separately proves the actual
+            // pointer, and neither parent identity nor access is normalized.
+            const auto actual = canonicalBorrowOrigin(body, source.source,
+                                                       bindingLoans, true);
+            const auto asserted = canonicalBorrowOrigin(body, claim.source,
+                                                         bindingLoans, true);
+            if (actual.ambiguous || asserted.ambiguous ||
+                !sameCanonicalPlace(actual, asserted))
+              continue;
+            matched[index] = found = true;
+            break;
+          }
+          if (!found) { exact = false; break; }
+        }
+      if (!exact)
+        return verificationFailure(body, owner,
+            "complete reference call loan differs from its independently "
+            "reconstructed publication: claimed " + describeCompleteBorrowFact(published) +
+            "; reconstructed " + describeCompleteBorrowFact(observed),
+            block.id, instruction.id);
+    }
   for (const auto &value : body.values) {
     if (!value.borrowDependencies ||
         equalCompleteBorrowSetsInBody(body, value.borrowDependencies,
@@ -18267,7 +18391,13 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
   }
   bool needsTransportProof = std::any_of(
       body.loans.begin(), body.loans.end(),
-      [](const MirLoan &loan) { return loan.referenceSelection.has_value(); });
+      [](const MirLoan &loan) { return loan.referenceSelection.has_value(); }) ||
+      std::any_of(body.blocks.begin(), body.blocks.end(), [&](const auto &block) {
+        return std::any_of(block.instructions.begin(), block.instructions.end(),
+            [&](const auto &instruction) {
+              return hasCompleteReferenceCallPublication(program, body, instruction);
+            });
+      });
   for (const auto &value : body.values) {
     const auto found = producers.find(value.id);
     const auto *producer = found == producers.end() ? nullptr : found->second;

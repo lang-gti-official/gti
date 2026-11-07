@@ -990,13 +990,19 @@ int main() { int value = 7; return external(value) - 7; }
           expect(owner == 0, "fixture needs one selected local-carrier reference publication");
           owner = function.id;
           publication = instruction.id;
+          expect(block.terminator.kind == MirTerminatorKind::Return &&
+                     block.terminator.value &&
+                     block.terminator.value->kind == MirOperandKind::Loan &&
+                     block.terminator.value->loan == result->id &&
+                     !block.terminator.value->place,
+                 "return must consume the captured pointer after carrier cleanup");
           expect(result->additionalDependencies.empty() && result->designatedFields.empty() &&
                      carrier->additionalDependencies.size() == 1,
                  "selected reference and containing dependency inventory remain distinct");
         }
       }
   expect(owner && publication, "fixture must retain the exact field address independently of its owner");
-  for (int mutation = 0; mutation != 5; ++mutation) {
+  for (int mutation = 0; mutation != 7; ++mutation) {
     auto broken = checked.mir;
     auto *function = const_cast<MirFunctionInstance *>(broken.findFunctionInstance(owner));
     MirInstruction *publish = nullptr;
@@ -1024,8 +1030,25 @@ int main() { int value = 7; return external(value) - 7; }
       runtime.key = function->body.findPlace(unrelated.source)->key;
       result.source = unrelated.source;
     }
+    if (mutation == 5) {
+      for (auto &block : function->body.blocks)
+        if (block.terminator.returnLoan == result.id && block.terminator.value)
+          block.terminator.value->place = publish->operands.front().place;
+    }
+    if (mutation == 6) {
+      for (auto &block : function->body.blocks) {
+        const auto found = std::find_if(block.instructions.begin(), block.instructions.end(),
+            [&](const auto &item) { return item.id == publication; });
+        if (found != block.instructions.end()) {
+          const auto moved = *found;
+          block.instructions.erase(found);
+          block.instructions.push_back(moved);
+          break;
+        }
+      }
+    }
     expect(!verifyMirProgram(broken).valid(),
-           "selected reference rejects missing address, wrong or extra owners, access upgrades and coordinated local escape");
+           "selected reference rejects forged owners, access, local escape and reads after carrier cleanup");
   }
 }
 
@@ -1282,10 +1305,14 @@ unsafe Borrowed<storage>&<shell> recover<lifetime storage, lifetime shell>(Opaqu
 int inspect<lifetime storage, lifetime shell>(Borrowed<storage>&<shell> source) {
   unsafe { return recover<storage, shell>(erase(source)).value; }
 }
+void inspect_unused<lifetime storage, lifetime shell>(Borrowed<storage>&<shell> source) {
+  unsafe { recover<storage, shell>(erase(source)); }
+}
 int main() {
   mut int number = 3;
   unsafe { restore_mut<int>(erase_mut(number)) = 7; }
   Borrowed view{number};
+  inspect_unused(view);
   unsafe { return restore<int>(erase(number)) + inspect(view) - 14; }
 }
 )gti";
@@ -1388,6 +1415,7 @@ int main() {
   }
   expect(borrowedRestoration, "restoration fixture exercises a concrete borrowed type obligation");
   bool opaqueWitness = false, convertedInput = false, repeatedReferent = false;
+  bool reborrowedAdditionalInput = false, unusedPublication = false;
   for (const auto address : enumerateMirBodyAddresses(checked.mir)) {
     const auto *body = findMirBody(checked.mir, address);
     if (!body) continue;
@@ -1426,6 +1454,43 @@ int main() {
                    mir_detail::restoredBorrowAuthority(*body, *loan) == &call,
                "restored fields retain the exact evaluated opaque input capability");
         opaqueWitness = true;
+        for (const auto &inputSource : witness->additionalDependencies) {
+          if (!inputSource.designatedFields.empty() || !inputSource.conditions.empty())
+            continue;
+          const auto outputSource = std::find_if(loan->additionalDependencies.begin(),
+              loan->additionalDependencies.end(), [&](const auto &candidate) {
+                return candidate.source == inputSource.source &&
+                       candidate.designatedFields.empty() && candidate.conditions.empty();
+              });
+          if (outputSource == loan->additionalDependencies.end() ||
+              inputSource.parent == witness->id)
+            continue;
+          expect(outputSource->parent == witness->id,
+                 "each scalar input supplier retains the exact evaluated input loan as its parent");
+          reborrowedAdditionalInput = true;
+          unusedPublication |= call.result && body->usesOf(*call.result).empty();
+          const auto index = static_cast<std::size_t>(
+              outputSource - loan->additionalDependencies.begin());
+          for (int mutation = 0; mutation != 4; ++mutation) {
+            auto forged = checked.mir;
+            auto *changedBody = findMirBody(forged, address);
+            auto &changed = changedBody->loans[loan->id - 1].additionalDependencies[index];
+            if (mutation == 0) changed.parent = inputSource.parent;
+            if (mutation == 1) changed.source = stage->operands.front().place;
+            if (mutation == 2) changed.access = AccessMode::Mutable;
+            if (mutation == 3) {
+              changed.parent = inputSource.parent;
+              changedBody->values[*call.result - 1].borrowDependencies.reset();
+            }
+            const bool rejected = !verifyMirProgram(forged).valid();
+            if (!rejected)
+              std::cerr << "additional restored supplier mutation " << mutation
+                        << " accepted at owner " << address.owner << " loan "
+                        << loan->id << " input " << witness->id << '\n';
+            expect(rejected,
+                   "an additional restored supplier cannot bypass its input loan or forge source/access");
+          }
+        }
         for (int mutation = 0; mutation != 5; ++mutation) {
           auto forged = checked.mir;
           auto *changedBody = findMirBody(forged, address);
@@ -1473,8 +1538,9 @@ int main() {
                "retagging the physical input cannot replace the checked lifetime conversion");
       }
   }
-  expect(opaqueWitness && convertedInput && repeatedReferent,
-         "erasure controls cover opaque identity, original conversion types and repeated exact referents");
+  expect(opaqueWitness && convertedInput && repeatedReferent &&
+             reborrowedAdditionalInput && unusedPublication,
+         "erasure controls cover opaque identity, used/unused suppliers, conversion types and repeated exact referents");
 }
 
 bool checkRawOwnerLifetimeFacts() {

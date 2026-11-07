@@ -250,10 +250,20 @@ evaluated reference and its read capabilities; a contents source names that
 opening and an exact structural field path, with no lifetime-supplier place.
 The finite structural supplier query retains each crossed reference and enum
 guard. Unknown, cyclic and exhausted queries publish no partial path inventory.
-This groundwork does not yet enable source openings: HIR rejects populated
-contents facts until independent MIR formation, access, mutation and cleanup
-replay is implemented. Recursive supplier graphs and compact selectors remain
-required work; existing direct recursive storage queries are unchanged.
+The semantic adapter derives direct inventories from checked storage paths and
+can prepare a complete shared-reference opening only after validating its exact
+reference type, read ancestry, guards and result projection. These routines are
+not yet connected to ordinary expression analysis. Activation still requires
+tagged-source return normalization, alias and mutation handling, and independent
+MIR formation, access and cleanup replay; HIR rejects populated contents facts
+until those checks exist. Mutable contents and cleanup-bound reads retain their
+separate permission obligations. Recursive supplier graphs and compact selectors
+remain required work; existing direct recursive storage queries are unchanged.
+
+A stored-reference field return also checks the field's exact instantiated
+region against the declared result region. Its constructor's original input
+does not bypass an explicitly shorter field contract. Inferred direct and
+inherited field regions record this same relationship in the body proof.
 
 Returning the address of a field is checked independently from copying its
 value. An ordinary owned field can have a known-empty stored-reference set

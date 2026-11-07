@@ -550,6 +550,7 @@ add_library(
   "src/compiler/semantic_embedding.cpp"
   "src/compiler/semantic_flow_analysis.cpp"
   "src/compiler/semantic_ownership_analysis.cpp"
+  "src/compiler/semantic_reference_contents.cpp"
   "src/compiler/semantic_lifetimes.cpp"
   "src/compiler/semantic_lifetime_requirements.cpp"
   "src/compiler/semantic_private_lifetimes.cpp"

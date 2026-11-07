@@ -971,6 +971,27 @@ bool storedReferenceReturnPublication(const MirBody &body,
       if (!found)
         return false;
     }
+    // This publication captures its pointer before local carrier cleanup.
+    // Consumers must read that pointer; an operand-level place override would
+    // evaluate the old field again, potentially after its object was dropped.
+    const auto rereadsAddress = [&](const MirOperand &use) {
+      return use.kind == MirOperandKind::Loan && use.loan == published->id && use.place;
+    };
+    for (const auto &consumerBlock : body.blocks) {
+      const auto &end = consumerBlock.terminator;
+      if ((end.value && rereadsAddress(*end.value)) ||
+          std::any_of(end.targetArguments.begin(), end.targetArguments.end(), rereadsAddress) ||
+          std::any_of(end.elseArguments.begin(), end.elseArguments.end(), rereadsAddress) ||
+          std::any_of(end.switchTargets.begin(), end.switchTargets.end(), [&](const auto &edge) {
+            return std::any_of(edge.arguments.begin(), edge.arguments.end(), rereadsAddress);
+          }))
+        return false;
+      for (const auto &consumer : consumerBlock.instructions)
+        if (!consumer.tombstone &&
+            ((consumer.receiver && rereadsAddress(*consumer.receiver)) ||
+             std::any_of(consumer.operands.begin(), consumer.operands.end(), rereadsAddress)))
+          return false;
+    }
     // This is a shape proof only. Program verification independently derives
     // the selected sources from current storage flow and the exact typed path.
     return true;

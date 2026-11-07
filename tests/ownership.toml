@@ -370,6 +370,7 @@ paths = [
   "src/compiler/semantic_nominal_lifetimes.cpp",
   "src/compiler/semantic_executable_lifetimes.cpp",
   "src/compiler/semantic_private_lifetimes.cpp",
+  "src/compiler/semantic_reference_contents.cpp",
   "src/compiler/semantic_type*",
 ]
 owners = [

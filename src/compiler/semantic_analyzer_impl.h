@@ -10,6 +10,7 @@
 #include "gti/generic_instantiation_limits.h"
 #include "gti/instance_analysis_cache.h"
 #include "gti/object_layout.h"
+#include "gti/reference_contents.h"
 #include "gti/standard_library.h"
 #include "gti/support.h"
 #include "semantic_declaration_index.h"
@@ -1445,6 +1446,9 @@ private:
     std::vector<SemanticBorrowDependencySet> implicitResultReturns;
     std::size_t rawConditionalExpressionDepth = 0;
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
+    // A contents read is a snapshot. Writes invalidate reuse of its source
+    // reference's current contents, not shared references already copied out.
+    std::unordered_set<SemanticLoanId> invalidatedReferenceContents;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
     std::vector<SemanticLoanId> receiverStorageLoans;
     std::vector<PendingBorrowConflict> conflicts;
@@ -3173,6 +3177,21 @@ private:
 
   [[nodiscard]] std::optional<std::vector<BorrowAlternativePath>>
   storedBorrowAlternativeInventory(const SemanticType &type) const;
+
+  // Direct typed contents and transitive lifetime suppliers are distinct
+  // queries. Neither query alone grants an evaluated reference access.
+  [[nodiscard]] std::optional<ReferenceContentsInventory>
+  referenceContentsInventory(const SemanticType &type) const;
+  [[nodiscard]] ReferenceSupplierQuery
+  referenceSupplierPaths(const SemanticType &type) const;
+  // Recover the full checked reference spelling that expression categories
+  // expose as its referent. This is a type query, not liveness/owner proof.
+  [[nodiscard]] std::optional<SemanticType>
+  checkedReferenceExpressionType(const Expr *expression) const;
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  referenceContentsDependencySet(const Expr *expression) const;
+  void recordMemberReferenceContents(const Get &expression);
+  void invalidateReferenceContents();
 
   enum class StoredReferenceQuery { SymbolicPaths, CompleteInventory };
   [[nodiscard]] std::optional<std::vector<StoredReferencePath>>

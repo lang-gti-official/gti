@@ -833,6 +833,17 @@ auto SemanticVisitor::Impl::borrowedExpressionLifetime(const Expr *expression) c
         type = &resolved->returnType;
     if (type && type->kind == SemanticType::Reference)
       return type->referenceLifetime;
+    if (const auto *field = exprAs<Get>(expression)) {
+      const auto owner = memberAccessObjectType(*field);
+      if (const auto *member = findMember(owner, field->name())) {
+        const auto selected = substituteSymbol(member->symbol, owner).type;
+        // The field's declared region is the boundary visible to its user.
+        // Its constructor may have received a longer-lived input, but that
+        // provenance cannot replace an explicitly shortened field contract.
+        if (selected.kind == SemanticType::Reference && selected.arguments.size() == 1)
+          return selected.referenceLifetime;
+      }
+    }
     if (const auto *variable = exprAs<Variable>(expression))
       if (const auto *symbol = resolve(variable->name());
           symbol && symbol->type.kind == SemanticType::Reference &&

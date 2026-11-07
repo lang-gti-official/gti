@@ -12,6 +12,19 @@ namespace lang {
 // Exercise the real staging key and lookup without exposing cache internals as
 // a product API or relying on a timing-sensitive number of source evaluations.
 struct SemanticLifetimeTestAccess {
+  static std::optional<ReferenceSupplierQuery>
+  referenceSuppliers(const Program &program, std::string_view name) {
+    SemanticVisitor analyzer;
+    if (!analyzer.check(program))
+      return std::nullopt;
+    for (const auto &declaration : program.declarations())
+      if (const auto *syntax = stmtAs<ClassDecl>(declaration.get());
+          syntax && syntax->name().lexeme == name)
+        if (const auto *owner = analyzer.model().findClassType(*syntax))
+          return analyzer.impl->referenceSupplierPaths(analyzer.impl->openClassType(owner->id));
+    return std::nullopt;
+  }
+
   struct BorrowedFromPackChecks {
     bool laterLane = false;
     bool ambiguous = false;
@@ -3324,9 +3337,93 @@ int main() { return 0; }
   expect(consumedPointee.syntaxValid && !consumedPointee.semanticValid,
          "a consuming checked owner cannot return storage destroyed with its owned pointee");
 }
+void testStoredFieldReturnRegions() {
+  const std::string declarations = R"gti(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public View<a> {
+  Derived(int&<a> input) : View<a>(input) {}
+};
+)gti";
+  const auto check = [&](std::string body) {
+    return lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+        "stored-field-return-regions.gti", declarations + body);
+  };
+  const auto inferred = check(R"gti(
+int&<a> external<lifetime a>(int&<a> input) {
+  View view{input};
+  return view.value;
+}
+int&<a> inherited<lifetime a>(int&<a> input) {
+  Derived view{input};
+  return view.value;
+}
+int main() { int input = 7; return external(input) + inherited(input) - 14; }
+)gti");
+  expectValid(inferred, "inferred direct and inherited stored-field regions satisfy the exact returned region");
+  for (const auto name : {"external", "inherited"}) {
+    const auto *target = function(inferred, name);
+    const auto *body = target && target->declaration ? target->declaration->body().get() : nullptr;
+    const auto *local = body && !body->statements().empty()
+        ? lang::stmtAs<lang::VariableDecl>(body->statements().front().get()) : nullptr;
+    const auto *binding = local ? inferred.semantics.findBinding(*local) : nullptr;
+    const auto *lifetimes = body ? inferred.semantics.findLifetimeBody(*body) : nullptr;
+    const auto field = binding && binding->type.lifetimeArguments.size() == 1
+        ? binding->type.lifetimeArguments.front() : lang::Lifetime{};
+    const auto result = target ? target->returnType.referenceLifetime : lang::Lifetime{};
+    expect(field.specified() && result.specified() && lifetimes &&
+               std::find(lifetimes->obligations.begin(), lifetimes->obligations.end(),
+                         lang::LifetimeBound{field, result}) != lifetimes->obligations.end(),
+           "a stored-field return publishes its instantiated field region edge, not only its original constructor owner");
+  }
+  for (const auto type : {"View", "Derived"}) {
+    const auto shortened = check(std::string(R"gti(
+int&<longer> invalid<lifetime longer, lifetime shorter>(int&<longer> input)
+    requires outlives<longer, shorter> {
+  )gti") + type + R"gti(<shorter> view{input};
+  return view.value;
+}
+)gti");
+    expect(!shortened.semanticValid,
+           "an explicitly shortened direct or inherited field cannot recover its constructor input's longer region");
+  }
+  const auto bounded = check(R"gti(
+int&<shorter> selected<lifetime longer, lifetime shorter>(int&<longer> input)
+    requires outlives<longer, shorter> {
+  View<shorter> view{input};
+  return view.value;
+}
+)gti");
+  expectValid(bounded, "a stored field remains usable within its explicitly declared shorter region");
+}
+
+void testSemanticReferenceSupplierQueries() {
+  const auto source = lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+      "semantic-reference-supplier-query.gti", R"gti(
+struct Leaf<lifetime a> { int&<a> external; Leaf(int&<a> input) : external(input) {} };
+struct Holder<lifetime a, lifetime owner> {
+  Leaf<a>&<owner> value;
+  Holder(Leaf<a>&<owner> input) : value(input) {}
+};
+)gti");
+  expectValid(source, "direct reference storage remains valid independently of transitive supplier queries");
+  const auto query = lang::SemanticLifetimeTestAccess::referenceSuppliers(source.program, "Holder");
+  expect(query && query->status == lang::ReferenceSupplierQueryStatus::Complete &&
+             query->paths.size() == 2 && query->paths[0].fields.size() == 1 &&
+             query->paths[0].crossings.empty() && query->paths[1].fields.size() == 2 &&
+             query->paths[1].crossings.size() == 1 &&
+             query->paths[1].crossings.front().fields == query->paths[0].fields &&
+             query->paths[1].crossings.front().reference == query->paths[0].reference &&
+             query->paths[0].reference.referenceLifetime != query->paths[1].reference.referenceLifetime,
+         "the semantic adapter keeps exact declared outer-reference and inner supplier regions as separate paths");
+}
 } // namespace
 
 int main() {
+  testSemanticReferenceSupplierQueries();
+  testStoredFieldReturnRegions();
   testForwardedPackBorrowPaths();
   testBorrowedFromPackOrdinals();
   testScopedFunctionBorrowQuery();

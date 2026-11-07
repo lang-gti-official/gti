@@ -9439,17 +9439,40 @@ private:
         }
         for (auto &dependency : complete) {
           const MirLoan *selected = nullptr;
+          MirPlaceId selectedSource = 0;
           bool ambiguous = false;
-          for (const auto *accessor : accessors)
-            if (accessor->id != dependency.parent &&
-                accessor->parent == dependency.parent &&
-                sameBorrowSource(accessor->source, dependency.source)) {
-              ambiguous |= selected && selected != accessor;
+          for (const auto *accessor : accessors) {
+            if (accessor->id == dependency.parent ||
+                (dependency.access == AccessMode::Mutable &&
+                 accessor->access != AccessMode::Mutable))
+              continue;
+            const auto consider = [&](MirPlaceId source, MirLoanId parent,
+                                       AccessMode access, const BorrowPath &fields,
+                                       const auto &conditions) {
+              if (parent != dependency.parent || !fields.empty() ||
+                  !conditions.empty() ||
+                  (dependency.access == AccessMode::Mutable && access != AccessMode::Mutable) ||
+                  !sameBorrowSource(source, dependency.source))
+                return;
+              ambiguous |= selected &&
+                  (selected != accessor || selectedSource != source);
               selected = accessor;
-            }
+              selectedSource = source;
+            };
+            consider(accessor->source, accessor->parent, accessor->access,
+                     accessor->designatedFields, accessor->conditions);
+            // A scalar reference can retain several independent suppliers.
+            // Passing that evaluated reference reborrows every selected
+            // supplier through its exact input capability, not only the
+            // primary source. This never opens carrier contents or changes
+            // a selected field/guard into an address supplier.
+            for (const auto &extra : accessor->additionalDependencies)
+              consider(extra.source, extra.parent, extra.access,
+                       extra.designatedFields, extra.conditions);
+          }
           if (selected && !ambiguous) {
             dependency.parent = selected->id;
-            dependency.source = selected->source;
+            dependency.source = selectedSource;
           }
         }
         // A parentless referent is named by the exact place through which
@@ -16417,7 +16440,10 @@ private:
                 .operands = {{.kind = MirOperandKind::Loan, .place = runtime,
                               .loan = carrierId, .type = returned->info.type}},
                 .loan = published, .info = returned->info});
-            borrow = {.kind = MirOperandKind::Loan, .place = runtime,
+            // The Borrow above already captured the evaluated field pointer.
+            // Read that published address after cleanup, never the old field
+            // storage of a carrier that may have been destroyed meanwhile.
+            borrow = {.kind = MirOperandKind::Loan,
                       .loan = published, .type = returned->info.type};
           }
         }
