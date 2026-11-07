@@ -13645,13 +13645,13 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       // The result's Stored group has its own typed field domain; it is not
       // a scalar alias of the input's contents group. Keep the address parent
       // and require the exact checked argument stage and result mapping.
-      const bool mappedPhysicalInput = [&] {
+      const auto mappedPhysicalInput = [&]() -> std::optional<bool> {
         if (loan.kind != MirLoanKind::Stored || loan.entry || loan.escapes ||
             loan.storedDependency || !loan.storedPath.empty() ||
             loan.designatedFields.empty() || !loan.conditions.empty() ||
-            loan.source != parent.source || !loan.producedBy ||
+            !loan.producedBy ||
             loan.access != AccessMode::ReadOnly || parent.access != AccessMode::ReadOnly)
-          return false;
+          return std::nullopt;
         const MirInstruction *producer = nullptr;
         for (const auto &block : body.blocks)
           for (const auto &instruction : block.instructions)
@@ -13660,11 +13660,11 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                 (instruction.kind == MirInstructionKind::Construct ||
                  instruction.kind == MirInstructionKind::Call)) {
               if (producer)
-                return false;
+                return std::nullopt;
               producer = &instruction;
             }
         if (!producer || !producer->result)
-          return false;
+          return std::nullopt;
         for (const auto &mapping : producer->borrowFields) {
           if (mapping.resultFields != loan.designatedFields ||
               !mapping.resultConditions.empty() || !mapping.sourceConditions.empty() ||
@@ -13689,15 +13689,31 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                 stage.callInputKind == HirCallInputKind::ReadBorrow &&
                 stage.info.type == parameter && stage.operands.size() == 1 &&
                 stage.operands.front().kind == MirOperandKind::Loan &&
-                stage.operands.front().loan == parent.id &&
-                stage.operands.front().type == parameter)
-              return true;
+                stage.operands.front().type == parameter) {
+              const auto &operand = stage.operands.front();
+              const auto *read = body.findLoan(operand.loan);
+              const auto *root = read ? body.findPlace(read->source) : nullptr;
+              const auto *address = body.findPlace(operand.place);
+              // An abstract contents entry can share its formal's source ID,
+              // but cannot supply permission to read the whole reference.
+              // A selected field of that entry is a different, typed input.
+              if (read && abstractStoredEntry(body, *read) &&
+                  (!root || !address ||
+                   mir_detail::wholeEntryPlaceMatches(body, *root, *address)))
+                return false;
+              if (read && read->storedDependency)
+                return read->id == parent.id && read->source == loan.source &&
+                       read->access == AccessMode::ReadOnly;
+            }
         }
-        return false;
+        return std::nullopt;
       }();
+      if (mappedPhysicalInput == false)
+        return failure(body, owner,
+                       "mapped reference field must retain its exact physical input authority");
       if (parent.storedDependency != 0 &&
           loan.storedDependency != parent.storedDependency &&
-          !mappedPhysicalInput &&
+          !mappedPhysicalInput.value_or(false) &&
           !(loan.storedDependency == parent.id &&
             mir_detail::restoredBorrowAuthority(body, loan))) {
         return failure(body, owner,

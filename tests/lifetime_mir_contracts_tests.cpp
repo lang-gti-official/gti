@@ -1241,6 +1241,93 @@ int main() {
   expect(copied == 3, "stateless copy proof covers ordinary, quantified and fixed-region item types");
 }
 
+void checkFreshInputReferenceResult() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir,
+                                 .lowerReachableOnly = true,
+                                 .lowerLibraryReachableOnly = true,
+                                 .trustedBodies = TrustedBodyAnalysis::Reachable}).analyze(
+      "fresh-input-reference-result.gti", R"gti(
+import std.meta;
+int global = 7;
+int&<static> mapped(int ignored) { return global; }
+std::meta::callable_return_type<F> relay<F>(F& callback) { return callback(0); }
+int&<a> select<lifetime a>(int& temporary, int&<a> source) { return source; }
+int main() {
+  int owner = 9;
+  int&<static> first = relay(mapped);
+  int& second = select(1, owner);
+  return first + second - 16;
+}
+)gti", {root / "prelude.gti"}, {}, {root});
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(),
+         "an exact fresh input can return an independently owned checked reference");
+  std::size_t proved = 0;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &call : block.instructions) {
+        if (call.kind != MirInstructionKind::Call || !call.functionTarget ||
+            call.operands.empty() || call.operands.front().kind != MirOperandKind::Value)
+          continue;
+        const auto *target = checked.mir.findFunctionInstance(*call.functionTarget);
+        const auto *input = mir_detail::definitionFor(function.body, call.operands.front().value);
+        if (!target || target->returnType.kind != SemanticType::Reference ||
+            !input || input->kind != MirInstructionKind::CallInput ||
+            input->callInputKind != HirCallInputKind::ReadTemporaryBorrow)
+          continue;
+        expect(call.info.category == ValueCategory::Place &&
+                   call.info.type == target->returnType.arguments.front() &&
+                   call.info.access == target->returnType.referenceAccess &&
+                   call.lifetimeApplication.complete &&
+                   !call.lifetimeApplication.bindings.empty(),
+               "the full applied reference result is represented by its exact place-valued referent");
+        ++proved;
+        for (int mutation = 0; mutation != 8; ++mutation) {
+          auto forged = checked.mir;
+          auto *caller = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+          auto *callee = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(*call.functionTarget));
+          MirInstruction *changed = nullptr;
+          MirInstruction *stage = nullptr;
+          for (auto &changedBlock : caller->body.blocks)
+            for (auto &instruction : changedBlock.instructions) {
+              if (instruction.id == call.id) changed = &instruction;
+              if (instruction.id == input->id) stage = &instruction;
+            }
+          expect(changed && stage, "fresh-reference mutations retain exact call and stage identities");
+          if (mutation == 0) changed->info.category = ValueCategory::Value;
+          if (mutation == 1) changed->info.access = AccessMode::Mutable;
+          if (mutation == 2) changed->info.type = SemanticType::Bool;
+          if (mutation < 3 && changed->result)
+            caller->body.values[*changed->result - 1].info = changed->info;
+          if (mutation == 3) stage->callInputIndex = 1;
+          if (mutation == 4) changed->lifetimeApplication.complete = false;
+          if (mutation == 5) changed->lifetimeApplication.bindings.front().second = Lifetime::staticLifetime();
+          if (mutation == 6) callee->definitionKind = MirDefinitionKind::Declaration;
+          if (mutation == 7) {
+            callee->returnBorrowOrigin = BorrowOriginKind::Argument;
+            callee->returnBorrowParameter = 0;
+            callee->returnBorrowPlace.reset();
+            if (callee->completeReturnBorrow)
+              for (auto &supplier : callee->completeReturnBorrow->dependencies) {
+                supplier.origin = BorrowOriginKind::Argument;
+                supplier.parameter = 0;
+                supplier.globalRoot = 0;
+              }
+            changed->borrowOrigin = BorrowOriginKind::Argument;
+            changed->borrowArgument = 0;
+            changed->borrowPlace.reset();
+          }
+          expect(!verifyMirProgram(forged).valid(),
+                 "fresh inputs cannot forge reference result shape, applied regions, source target or temporary escape suppliers");
+        }
+      }
+  expect(proved == 2,
+         "fresh-reference proof covers static mapper results and a different caller-owned reference input");
+}
+
 void checkScalarLoadDependencyDomain() {
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "scalar-load-dependency-domain.gti", R"gti(
@@ -4320,6 +4407,7 @@ int main() {
   checkAppliedBorrowFieldSummary();
   checkScopedFunctionItemIdentity();
   checkStatelessItemTemporaryBorrow();
+  checkFreshInputReferenceResult();
   checkScalarLoadDependencyDomain();
   checkForwardedCarrierPackLifetimeStage();
   checkPatternedResultScope();

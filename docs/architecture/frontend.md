@@ -444,9 +444,12 @@ dependencies without materializing an unused copy of its referent. A complete
 single-field result mapping may retain that physical input parent while keeping
 the result's own Stored field domain separate from the input's contents group.
 The exact argument stage, target mapping and independent constructor/result
-publication proofs remain required. Constructor snapshots that use different
-place IDs for the same checked address and deeper reference-to-record lowering
-remain integration prerequisites; this does not open transitive contents.
+publication proofs remain required. For a whole reference input, the result
+retains the evaluated argument's physical capability. Its external Stored
+entry cannot replace that capability even when both name the same source place
+or when a forged stage and parent make the same substitution. Typed projected
+inputs keep their separate field proof. Deeper reference-to-record lowering
+remains an integration prerequisite; this does not open transitive contents.
 Conditional nominal wrappers publish each initialized field's exact paths and
 alternative domains, including fields nested through other ordinary records.
 The shared coverage check requires a selected alternative for every active

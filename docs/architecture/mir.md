@@ -4464,7 +4464,11 @@ value/borrow uses of the base place. Base success must dominate both derived
 field publication and observable field-argument evaluation. The verifier follows
 SSA and place dependencies, including scalar joins and their controlling
 conditions, using existing MIR effects to allow only harmless preparation before
-the base. Selected generated base constructors retain their exact executable
+the base. Reference fields seed this walk from their checked address publication,
+including real call, index and control dependencies; they do not require a load
+of the referent. Their escaping `Borrow` must follow base success. Only an exact
+transferred mutable formal can use its entry address without a new `Borrow`.
+Selected generated base constructors retain their exact executable
 target; targetless native defaults cannot satisfy a required generated schedule.
 Every selected base initializer's generated-default flag must match the selected
 constructor, including when the derived constructor is explicitly declared.
@@ -5447,6 +5451,10 @@ An exact namespace function item may instead use the ordinary read-only
 value-borrow rule, including a stateless value copy. The verifier still proves
 its producer, applied parameter and result, source-defined target, temporary
 loan and cleanup; a borrowed or raw address of that temporary cannot escape.
+A checked reference result exposes a referent place in expression metadata.
+The shared result-shape check compares its category, referent type and access
+with the full applied reference result; the complete supplier set and lifetime
+application independently prove that the temporary input is not exported.
 A function item's complete type is derived from its exact target signature and
 lifetime contract, including every declared invocation binder. HIR and MIR
 compare that closed type by bound alpha equivalence; fixed and free regions,

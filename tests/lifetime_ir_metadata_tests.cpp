@@ -48,12 +48,12 @@ struct ViewRef<lifetime data, lifetime shell> {
   ViewRef(std::string_view<data>&<shell> source) : value(source) {}
 };
 ViewRef<data,shell> borrowed<lifetime data,lifetime shell>(
-    std::string_view<data>&<shell> source, std::string_view<data>&<shell> other) {
+    std::string_view<data>&<shell> source, int other) {
   return ViewRef<data,shell>(source);
 }
 int main() {
-  std::string_view text = "word"; std::string_view other = "other";
-  auto reference = borrowed(text, other);
+  std::string_view text = "word";
+  auto reference = borrowed(text, 0);
   return reference.value.size() == 4 ? 0 : 1;
 }
 )gti", {root / "prelude.gti"}, {}, {root});
@@ -78,12 +78,13 @@ int main() {
   expect(selected != 0, "fixture retains the mapped result field and its physical parent");
   const auto &body = checked.mir.functionInstances()[owner - 1].body;
   const auto *parent = body.findLoan(body.findLoan(selected)->parent);
-  const auto decoy = std::find_if(body.loans.begin(), body.loans.end(), [&](const auto &loan) {
-    return loan.id != parent->id && loan.kind == MirLoanKind::Parameter &&
-           loan.storedDependency && loan.access == parent->access;
+  const auto decoy = std::find_if(body.places.begin(), body.places.end(), [&](const auto &place) {
+    return place.root == MirPlaceRootKind::Binding && place.projections.empty() &&
+           place.type == SemanticType::Int32 && place.id != parent->source;
   });
-  expect(decoy != body.loans.end(), "fixture has a distinct same-typed physical input");
-  for (unsigned mutation = 0; mutation != 9; ++mutation) {
+  expect(decoy != body.places.end() && body.findLoan(parent->storedDependency),
+         "fixture has unrelated physical storage and separate contents authority");
+  for (unsigned mutation = 0; mutation != 10; ++mutation) {
     auto forged = checked.mir;
     auto &changedBody = MirProgramTestAccess::functions(forged)[owner - 1].body;
     auto &loan = changedBody.loans[selected - 1];
@@ -91,7 +92,9 @@ int main() {
     MirInstruction *stage = nullptr;
     for (auto &block : changedBody.blocks)
       for (auto &instruction : block.instructions) {
-        if (instruction.loan == selected && instruction.hirValue == loan.producedBy)
+        if (instruction.loan == selected && instruction.hirValue == loan.producedBy &&
+            (instruction.kind == MirInstructionKind::Construct ||
+             instruction.kind == MirInstructionKind::Call))
           producer = &instruction;
         if (instruction.kind == MirInstructionKind::CallInput &&
             instruction.operands.size() == 1 &&
@@ -106,17 +109,99 @@ int main() {
     case 1: producer->borrowFields.front().resultFields.clear(); break;
     case 2: producer->borrowFields.front().sourceFields = loan.designatedFields; break;
     case 3: producer->borrowFields.front().access = AccessMode::Mutable; break;
-    case 4: loan.source = decoy->source; break;
-    case 5: loan.parent = decoy->id; break;
-    case 6: stage->operands.front().loan = decoy->id; break;
+    case 4: loan.source = decoy->id; break;
+    case 5: loan.parent = parent->storedDependency; break;
+    case 6: stage->operands.front().loan = parent->storedDependency; break;
     case 7: ++stage->callInputIndex; break;
     case 8: producer->borrowFields.clear(); break;
+    case 9:
+      loan.parent = parent->storedDependency;
+      stage->operands.front().loan = parent->storedDependency;
+      break;
     }
     expect(rebuildMirValueUses(changedBody), "field mapping mutation rebuilds exact value uses");
     const auto proof = verifyMirProgram(forged);
     if (proof.valid()) std::cerr << "accepted physical field mapping mutation " << mutation << '\n';
     expect(!proof.valid(),
            "a scalar alias or forged field, access, parent or argument stage cannot bypass contents identity");
+  }
+}
+void referenceInitializerEffectOrder() {
+  for (const bool calledAddress : {false, true}) {
+    std::string source = R"gti(
+int&<a> address<lifetime a>(int&<a> value) { return value; }
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Pair<lifetime a, lifetime b> : public Base<a> {
+  int&<b> other;
+  Pair(int&<a> first, int&<b> second) : Base<a>(first), other(second) {}
+};
+int main() { int first = 4; int second = 7; Pair pair{first, second}; return pair.other - 7; }
+)gti";
+    if (calledAddress)
+      source.replace(source.find("other(second)"), std::string("other(second)").size(),
+                     "other(address(second))");
+    const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+        "reference-initializer-effect-order.gti", source);
+    if (!checked.canGenerateCode())
+      for (const auto &diagnostic : checked.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(checked.canGenerateCode(),
+           "reference field addresses and address-producing calls follow base construction");
+    const auto constructor = std::find_if(checked.mir.constructorInstances().begin(),
+        checked.mir.constructorInstances().end(), [](const auto &candidate) {
+          return candidate.initializers.size() == 2 &&
+                 candidate.initializers.back().storesReference;
+        });
+    expect(constructor != checked.mir.constructorInstances().end(),
+           "reference order fixture retains the base and direct field stages");
+    const auto &initializer = constructor->initializers.back();
+    const auto loan = std::find_if(constructor->body.loans.begin(), constructor->body.loans.end(),
+        [&](const auto &candidate) {
+          return candidate.escapes &&
+                 candidate.storedPath == BorrowPath{fieldProjection(initializer.field)};
+        });
+    expect(loan != constructor->body.loans.end(), "reference field has its escaping publication");
+    for (int mutation = 0; mutation != (calledAddress ? 3 : 2); ++mutation) {
+      auto forged = checked.mir;
+      auto &changed = *const_cast<MirConstructorInstance *>(
+          forged.findConstructorInstance(constructor->id));
+      bool changedOrder = false;
+      for (auto &block : changed.body.blocks) {
+        auto &instructions = block.instructions;
+        const auto base = std::find_if(instructions.begin(), instructions.end(), [](const auto &item) {
+          return item.kind == MirInstructionKind::InitializeBase;
+        });
+        const auto borrow = std::find_if(instructions.begin(), instructions.end(), [&](const auto &item) {
+          return item.kind == MirInstructionKind::Borrow && item.loan == loan->id;
+        });
+        if (base == instructions.end() || borrow == instructions.end())
+          continue;
+        expect(base < borrow, "field publication originally follows its completed base");
+        if (mutation == 0) {
+          std::rotate(base, borrow, std::next(borrow));
+        } else if (mutation == 1) {
+          instructions.erase(borrow);
+        } else {
+          expect(std::any_of(std::next(base), borrow, [](const auto &item) {
+                   return item.kind == MirInstructionKind::Call;
+                 }), "address initializer retains its real call evaluation");
+          // Keep the publication after the base, but evaluate its address first.
+          std::rotate(base, std::next(base), borrow);
+        }
+        changedOrder = true;
+        break;
+      }
+      expect(changedOrder, "order mutation reaches the exact reference publication");
+      const auto verified = verifyMirProgram(forged);
+      expect(!verified.valid() && std::any_of(verified.errors.begin(), verified.errors.end(),
+                 [](const auto &error) {
+                   return error.message ==
+                       "constructor initializer stages do not exactly cover their cleanup-free or owning field initializers";
+                 }), "missing or premature reference address evaluation fails constructor coverage");
+    }
   }
 }
 void stagedReferenceContentsMetadata() {
@@ -616,7 +701,7 @@ void physicalReferenceInitializerSnapshots() {
           .analyze("physical-reference-initializer-snapshots.gti", R"gti(
 struct View<lifetime a> {
   int&<a> data;
-  View(int&<a> input, int&<a> other) : data(input) {}
+  View(int&<a> input, int other) : data(input) {}
 };
 int main() { int first = 4; int other = 7; View view{first, other}; return view.data - 4; }
 )gti");
@@ -674,9 +759,8 @@ int main() { int first = 4; int other = 7; View view{first, other}; return view.
     case 0:
       place.binding = other->binding;
       place.symbol = other->symbol;
-      expect(place.key && other->key,
-             "formal address roots retain checked keys");
-      place.key->root = other->key->root;
+      place.projections = other->projections;
+      place.key = other->key;
       break;
     case 1:
       place.type = SemanticType::UInt32;
@@ -2128,6 +2212,7 @@ void quantifiedNominalLiftInventory() {
 } // namespace
 int main() {
   physicalReferenceFieldMappings();
+  referenceInitializerEffectOrder();
   stagedReferenceContentsMetadata();
   stagedReferenceContentsTransport();
   nestedCarrierPublication();

@@ -1952,8 +1952,8 @@ exactInPlaceConstructionRoles(const std::vector<SemanticType> &arguments,
 [[nodiscard]] bool hasExternalConsumingResultSuppliers(
     const MirProgram &, const MirFunctionInstance &);
 
-// Temporary argument borrows and borrowed-carrier receivers cannot export
-// reference-like results, including untracked raw/native address values.
+// A temporary argument cannot supply any result reference. Independently
+// retained suppliers remain eligible; untracked raw/native addresses do not.
 [[nodiscard]] bool supportsEphemeralBorrowResult(
     const MirFunctionInstance *target, const ExpressionInfo &result,
     std::optional<std::size_t> parameter = std::nullopt) {
@@ -2865,8 +2865,10 @@ uniqueMirClassInstanceForType(const MirProgram &program,
                 : supportsEphemeralBorrowResult(functionTarget,
                                                 instruction.info, index);
         const auto appliedTarget = instantiateMirLifetimeTarget(program, instruction);
+        // Reference-return expressions expose a referent place; retain the
+        // applied reference's exact category and access through the shared check.
         const bool exactAppliedParameter = appliedTarget &&
-            appliedTarget->returnType == instruction.info.type &&
+            callResultMatches(instruction.info, appliedTarget->returnType) &&
             appliedTarget->parameterTypes == instruction.parameterTypes &&
             index < appliedTarget->parameterTypes.size() &&
             appliedTarget->parameterTypes[index] == argumentInput->info.type;
@@ -24352,12 +24354,46 @@ verifyMirProgramContracts(const MirProgram &program) {
           pendingValues.push_back(operand.value);
         if (operand.place != 0)
           pendingPlaces.push_back(operand.place);
+        if (operand.kind == MirOperandKind::Loan) {
+          const auto *loan = instance.body.findLoan(operand.loan);
+          if (loan != nullptr)
+            pendingPlaces.push_back(loan->source);
+          else
+            exactInitializerStages = false;
+        }
       };
-      for (const auto &initializer : instance.initializers) {
+      for (std::size_t index = 0; index < instance.initializers.size(); ++index) {
+        const auto &initializer = instance.initializers[index];
         if (initializer.kind != ConstructorInitializerTargetKind::Field)
           continue;
+        // A reference argument evaluates an address, not its referent's value.
+        // Seed the same effect walk from its independently checked publication;
+        // keep any real SSA producers below (calls, indices and control joins).
+        // The escaping Borrow itself must also follow successful base setup.
+        bool addressedReference = false;
+        if (initializer.storesReference) {
+          const auto publication = completeReferenceInitializer(program, instance, index);
+          if (publication) {
+            addressedReference = true;
+            if (publication->borrow != nullptr) {
+              fieldArgumentDefinitions.insert(publication->borrow->id);
+              enqueueOperand(publication->borrow->operands.front());
+              for (const auto &block : instance.body.blocks)
+                if (std::any_of(block.instructions.begin(), block.instructions.end(),
+                                [&](const auto &instruction) {
+                                  return &instruction == publication->borrow;
+                                }))
+                  pendingControls.push_back(block.id);
+            } else {
+              // Only a checked direct mutable-formal transfer has no Borrow.
+              pendingPlaces.push_back(publication->loan->source);
+            }
+          } else {
+            exactInitializerStages = false;
+          }
+        }
         for (const auto argument : initializer.arguments) {
-          bool found = false;
+          bool found = addressedReference;
           for (const auto &value : instance.body.values)
             if (value.sourceValue == argument) {
               pendingValues.push_back(value.id);

@@ -3316,6 +3316,10 @@ int&<static> map(int ignored) { return stored; }
     const auto valid = check(declarations + definition +
         " int main() { auto fn = map; int&<static> result = " + invocation +
         "; return result - 7; }");
+    if (valid.semanticValid && (!valid.hirValid || !valid.mirValid))
+      for (const auto &diagnostic : valid.diagnostics)
+        std::cerr << diagnostic.code << " at " << diagnostic.primary.source
+                  << ':' << diagnostic.primary.line << ": " << diagnostic.message << '\n';
     expectValid(valid, "a resolved callable result recipe forms its exact checked reference result");
     expect(valid.hirValid && valid.mirValid,
            "named, fresh, aliased, overloaded and consuming projected results retain exact executable contracts");
