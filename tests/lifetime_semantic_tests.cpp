@@ -435,6 +435,55 @@ void need<T>() requires outlives<T, static> {}
 void relay<T>(Cell<T>&<static> input) { need<T>(); }
 int main() { return 0; }
 )gti", false, "GTI-S2127");
+  check("owner-witness-generic-owner-read", R"gti(
+[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
+struct Box<T> { T extra; int local = 7; int& read() { unsafe { return borrow(&this.local, this); } } }; int main() { return 0; }
+)gti", true);
+  check("owner-witness-borrowed-owner-read", R"gti(
+[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
+struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> source) : external(source) {} int& read() { unsafe { return borrow(&this.local, this); } } }; int main() { int value = 3; View view{value}; return view.read() - 7; }
+)gti", true);
+  check("owner-witness-nested-generic-owner-read", R"gti(
+[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
+struct Box<T> { T extra; int local = 7; int& read() { unsafe { return borrow(&this.local, this); } } }; struct Outer<T> { Box<T> inner; int& read() { return this.inner.read(); } }; int main() { return 0; }
+)gti", true);
+  check("owner-witness-local-witness-cannot-escape", R"gti(
+[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
+struct Box { int value = 7; Box() = default; }; int&<static> invalid() { Box local{}; unsafe { return borrow(&local.value, local); } } int main() { return 0; }
+)gti", false, "GTI-S2127");
+  check("owner-witness-by-value-witness-cannot-escape", R"gti(
+[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
+struct Box { int value = 7; Box() = default; }; int&<static> invalid(Box local) { unsafe { return borrow(&local.value, local); } } int main() { return 0; }
+)gti", false, "GTI-S2127");
+  check("owner-witness-caller-witness-cannot-invent-static", R"gti(
+[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
+struct Box { int value = 7; Box() = default; }; int&<static> invalid(Box& source) { unsafe { return borrow(&source.value, source); } } int main() { return 0; }
+)gti", false, "GTI-S2127");
+  check("owner-witness-stored-owner-reference-read", R"gti(
+[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
+struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> source) : external(source) {} int& read() { unsafe { return borrow(&this.local, this); } } }; struct Wrapper<lifetime a, lifetime owner> { View<a>&<owner> value; Wrapper(View<a>&<owner> input) : value(input) {} int& read() { return this.value.read(); } }; int main() { int value = 3; View view{value}; Wrapper wrapper{view}; return wrapper.read() - 7; }
+)gti", true);
+  check("owner-witness-mutable-physical-input", R"gti(
+[[borrowed_from(owner)]] unsafe mut T& borrow_mut<T, Owner>(T* address, mut Owner& owner) { unsafe { return *address; } }
+struct View<lifetime a> {
+  int&<a> external; int local = 7;
+  View(int&<a> source) : external(source) {}
+  mut int& edit() mut { unsafe { return borrow_mut(&this.local, this); } }
+  [[borrowed_from(this)]] int& read() { unsafe { return *(&this.local); } }
+};
+int main() {
+  int external = 3; mut View view{external};
+  view.edit() = 11;
+  return view.read() - 11;
+}
+)gti", true);
+  check("owner-witness-consuming-shell-cannot-escape", R"gti(
+struct View {
+  int local = 7;
+  [[borrowed_from(this)]] int& take() && { unsafe { return *(&this.local); } }
+};
+int main() { return 0; }
+)gti", false);
   check("constructor-reports-unproved-lifetime-for-matching-type", R"gti(
 struct StaticInput { StaticInput(int&<static> input) {} };
 int main() { int value = 7; StaticInput invalid{value}; return 0; }

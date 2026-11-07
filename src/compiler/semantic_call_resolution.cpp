@@ -5329,6 +5329,40 @@ auto SemanticVisitor::Impl::analyzeRawReferenceReturn(const ExprPtr &expression)
     return false;
   }
   witness.place = assertion.owner;
+  SemanticLoanDependency dependency{
+      .place = {.root = assertion.owner.root,
+                .receiver = assertion.owner.receiver,
+                .projections = assertion.owner.projections},
+      .access = access,
+      .protectsStorage = true};
+  // The unsafe assertion supplies the exact checked owner, not the pointer's
+  // dereference place or the references stored inside that owner. Retain an
+  // existing physical parameter capability, especially for mutable inputs.
+  // A receiver's physical entry has no Reference loan; its Stored group is
+  // unrelated external storage and must not be substituted here.
+  if (!assertion.owner.receiver) {
+    for (const auto &[id, flow] : loanFlow.records) {
+      const auto *loan = semanticModel.findLoan(id);
+      if (!loan || !loan->entry || loan->kind != SemanticLoanKind::Reference ||
+          loan->place != dependency.place)
+        continue;
+      if (dependency.parent || !flow.active || !loan->protectsStorage ||
+          !loan->designatedFields.empty() || !loan->conditions.empty() ||
+          !loan->additionalDependencies.empty() ||
+          (access == AccessMode::Mutable && loan->access != AccessMode::Mutable))
+        return false;
+      dependency.parent = id;
+    }
+    if (access == AccessMode::Mutable && !dependency.parent)
+      return false;
+  }
+  const auto physicalParent = dependency.parent;
+  SemanticBorrowDependencySet complete{.dependencies = {std::move(dependency)}};
+  if (!normalizedCompleteReturnBorrow(*function, complete))
+    return false;
+  if (physicalParent)
+    recordSemanticLoanAuthorityUse(physicalParent);
+  semanticModel.recordBorrowDependencySet(*source, std::move(complete));
   // The programmer asserts raw validity/owner association. Optional auditing
   // checks available evidence, while the checked reference fact below is
   // always recorded and remains subject to ordinary lifetime verification.

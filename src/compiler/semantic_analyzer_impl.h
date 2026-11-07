@@ -2534,6 +2534,8 @@ private:
   [[nodiscard]] bool validateKnownLeadingReturnBorrow(
       const FunctionInfo &function,
       const SemanticBorrowDependencySet &complete) const;
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  physicalReferenceReturnBorrow(const ExprPtr &value, AccessMode access);
   [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
   normalizedCompleteReturnBorrow(const FunctionInfo &function,
                                  const SemanticBorrowDependencySet &complete,
@@ -7446,6 +7448,8 @@ private:
   [[nodiscard]] SemanticType typeOf(const Parameter &parameter) const;
   [[nodiscard]] SemanticType
   parameterBindingType(const Parameter &parameter) const;
+  [[nodiscard]] static SemanticType
+  parameterBindingType(const Parameter &parameter, SemanticType declaredType);
 
   [[nodiscard]] static SemanticType literalType(const Literal &literal);
 

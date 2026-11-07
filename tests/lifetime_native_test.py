@@ -14,6 +14,42 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "checked_owner_witness_suppliers": """
+[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
+struct View<lifetime a> {
+  int&<a> external; int local = 7;
+  View(int&<a> source) : external(source) {}
+  int& read() { unsafe { return borrow(&this.local, this); } }
+};
+struct Wrapper<lifetime a, lifetime owner> {
+  View<a>&<owner> value;
+  Wrapper(View<a>&<owner> input) : value(input) {}
+  int& read() { return this.value.read(); }
+};
+int&<shell> read<lifetime a, lifetime shell>(View<a>&<shell> first, View<a>&<shell> second) {
+  return first.read();
+}
+int main() {
+  int value = 3;
+  View first{value}; View second{value};
+  Wrapper wrapper{first};
+  return read(first, second) + wrapper.read() - 14;
+}
+""",
+    "checked_mutable_owner_witness": """
+[[borrowed_from(owner)]] unsafe mut T& borrow_mut<T, Owner>(T* address, mut Owner& owner) { unsafe { return *address; } }
+struct View<lifetime a> {
+  int&<a> external; int local = 7;
+  View(int&<a> source) : external(source) {}
+  mut int& edit() mut { unsafe { return borrow_mut(&this.local, this); } }
+  [[borrowed_from(this)]] int& read() { unsafe { return *(&this.local); } }
+};
+int main() {
+  int external = 3; mut View view{external};
+  view.edit() = 11;
+  return view.read() - 11;
+}
+""",
     "opaque_stored_type_implications": """
 struct Cell<T> {
   T value;
@@ -22,7 +58,7 @@ struct Cell<T> {
 };
 struct Outer<T> {
   Cell<T> cell;
-  Outer(T input) : cell(input) {}
+  Outer(T input) : cell(Cell<T>(input)) {}
   int size() { return this.cell.size(); }
 };
 void need<T>() requires outlives<T, static> {}

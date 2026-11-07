@@ -466,7 +466,10 @@ place's outer and nested region relationships. Pointee shape, mutable access and
 argument tags remain exact. Result and constructor-owner comparisons permit
 alpha-renaming only inside closed callable quantifier scopes. Fixed outer
 regions, binder counts and relationships remain exact; runtime representation
-erasure is not a type proof. Lambda and
+erasure is not a type proof. Targetless generated defaults likewise select one
+exact nominal lifetime view and retain the generated/no-schedule policy check;
+that structural view does not authorize an unattached lifetime application.
+Lambda and
 destructor instances retain normalized contracts just as functions and
 constructors do. Authoritative nominal variance is preserved alongside the
 concrete field/base inventory; lowering never derives it from names.
@@ -700,7 +703,12 @@ matches the exact destination, sources, parents, permissions and guards. An
 absent set is never a known-empty result. Rollback and cleanup remain separate
 mandatory proofs. Borrowed-base source admission uses these structural records;
 the mandatory program and native gates continue to reject incomplete proof. The
-one state-bearing base rule is unchanged.
+one state-bearing base rule is unchanged. Loan production accepts an
+`InitializeBase` only when the unique publication query binds that exact stage
+and destination; retirement endpoints are not producers. Each structural base
+row selects its exact class instance through the actual lifetime view, preserving
+the declaring owner's region substitution instead of requiring layout-universe
+names to be equal.
 
 Reference and alternative inventories use one bounded work budget per query
 (4096 structural/leaf or emitted-alternative steps, depth 256). Arrays and
@@ -723,7 +731,11 @@ binding. Derived lanes address one neutral variable root through their full
 constant-index paths; HIR verifies that binding and index sequence independently
 before MIR prepares the selected inputs. A same-typed lane is not interchangeable.
 The nontrivial owning-input lifecycle policy is checked independently of this
-structural expansion.
+structural expansion. Complete reference-flow replay uses that same lane
+inventory to distinguish a grouped reference leaf from its enclosing pack.
+Physical subobjects and stored-reference paths reverse-replay through the exact
+typed Base/field/index walker; entry source, access and reference crossings remain
+separate checks. Unproved enum guards still cannot supply an unconditional fact.
 
 Body lowering runs `verifyMirBodyStructure`, a provisional structural check.
 Only the unconditional final `verifyMirProgram` runs the complete body loan,
@@ -800,10 +812,16 @@ skip `Global` mappings, which have no call input; the global-origin check and
 the complete-set flow verify them. A member function may return that same exact
 static storage; its receiver does not own it. The returned place and complete
 supplier set must still match the independently reconstructed global origin.
-A mapping may also name caller storage that
-contains the referent, such as an accessor receiver, an owned element buffer or
-an owning handle's checked pointee, provided that storage is reached without a
-stored reference and stores none itself. A dereference through a class ends
+A mapping may also name checked owner storage that governs the referent, such
+as an accessor receiver, an owned element buffer or an owning handle's checked
+pointee. This is a lifetime supplier, not a claim that the owner's type equals
+the referent's type. The exact typed path retains every stored-reference
+crossing, region, guard and access permission; unrelated stored references or
+opaque field types do not invalidate an otherwise checked owner. Independent
+return replay must still reach the typed borrow or unsafe owner-witness
+operation that produced the result. A by-value or consuming shell cannot become
+physical caller storage, and changing the source owner or adding a reference
+crossing cannot substitute another supplier. A dereference through a class ends
 that path. Published dependencies keep a `CallResult` accessor as their parent
 together with its exact source, as reference loan facts do; a parentless
 referent names the exact input place, either the reference argument's place or
@@ -886,6 +904,13 @@ annotation. This distinction prepares conditional complete-result contracts to
 retain explicit restrictions without inventing a dependency for an empty
 alternative; nonempty conditional call transport is not yet enabled by this
 metadata increment. Body serialization remains version 90.
+
+A primitive `Load` copies scalar contents even when its source expression keeps
+the `Place` category. Lowering retains the address fact on the source and its
+loans, but does not attach that fact as scalar SSA contents. Independent MIR
+flow derives empty copied contents only when both the exact reference inventory
+and alternative inventory are known empty; an opaque type cannot use a negative
+borrowed-state trait as proof. Borrowed carrier loads retain their complete sets.
 
 Version 105/body 86 additionally distinguishes absent borrow-set evidence
 from a complete producer-attached set, including a proven empty set. An empty

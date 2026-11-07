@@ -891,6 +891,53 @@ int main() { return 0; }
               "mutable and consuming invocation recipes remain well formed at declaration refresh");
 }
 
+void testStructuralDefaultCallableScopes() {
+  const auto result = analyze(R"(
+class Captured<R(A)> { public: Captured() = default; };
+struct Storage<Signature> { Storage() = default; };
+class Nested<R(Args...)> {
+  Storage<R(Args...)> field;
+public:
+  Nested() = default;
+};
+class Opened<R(A)> { public: Opened(A input) {} };
+using Selection = for<lifetime a> int&<a>(int&<a>);
+int main() {
+  Captured<Selection> closed{};
+  Nested<Selection> nested{};
+  int value = 7;
+  Opened<Selection> opened{value};
+  return 0;
+}
+)");
+  expectValid(result, "structural defaults keep owner callable scopes closed, including nested stored signatures");
+  const auto *main = function(result, "main");
+  std::size_t checked = 0;
+  if (main && main->declaration && main->declaration->body())
+    for (const auto &statement : main->declaration->body()->statements()) {
+      const auto *binding = lang::stmtAs<lang::VariableDecl>(statement.get());
+      if (!binding || !binding->initializer())
+        continue;
+      const auto *construction = result.semantics.findConstruction(*binding->initializer());
+      if (!construction)
+        continue;
+      const bool closed = binding->name().lexeme != "opened";
+      expect(construction->lifetimeApplication.complete &&
+                 construction->lifetimeApplication.bindings.empty() == closed &&
+                 construction->lifetimeApplication.variables.empty() == closed,
+             "only an actual member invocation imports nested callable binders into its lifetime application");
+      ++checked;
+    }
+  expect(checked == 3, "both structural defaults and the explicit constructor retain exact construction metadata");
+  for (const std::string source : {
+           "class Escape<R(A)> { R field; public: Escape() = default; }; using Selection = for<lifetime a> int&<a>(int&<a>); int main() { Escape<Selection> value{}; return 0; }",
+           "class Fixed<R(A)> { public: Fixed() = default; int&<static> invoke(A value) { return value; } }; using Selection = for<lifetime a> int&<a>(int&<a>); int main() { Fixed<Selection> callback{}; int value = 7; return callback.invoke(value); }"}) {
+    const auto invalid = analyze(source);
+    expect(invalid.syntaxValid && !invalid.semanticValid,
+           "closed default construction cannot expose an invocation binder in storage or promote it to static");
+  }
+}
+
 void testCallablePatternLambdaScopes() {
   const auto parsed = analyze(R"(
 class Local<R&<result>(R&<result>)> {
@@ -1966,6 +2013,19 @@ int main() {
 )");
   expectValid(leading,
               "known leading carrier references validate shell and external paths before concrete trailing-pack replay");
+  for (const auto name : {"fixedShell", "fixedExternal"}) {
+    const auto *info = function(leading, name);
+    const auto *binding = info && info->declaration
+        ? leading.semantics.findBinding(info->declaration->parameters().back()) : nullptr;
+    expect(info && info->parameterTypes.size() == 2 &&
+               info->parameterTypes.back().kind == lang::SemanticType::Reference &&
+               binding && binding->type.kind == lang::SemanticType::TypePack &&
+               !binding->type.concretePack &&
+               info->parameterTypes.back().arguments.size() == 1 &&
+               binding->type.genericParameterId ==
+                   info->parameterTypes.back().arguments.front().genericParameterId,
+           "source reference-pack binding metadata names the same symbolic group as its body scope");
+  }
   const auto leadingEscape = analyze(leadingCarrier + R"(
 int global = 7;
 View<static>&<static> invalid() {
@@ -1976,6 +2036,27 @@ int main() { return 0; }
 )");
   expect(leadingEscape.syntaxValid && !leadingEscape.semanticValid,
          "known leading carrier staging cannot turn a local physical shell into its static stored owner");
+  const std::string selectedShell = R"(
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+View<a>&<shell> choose<lifetime a, lifetime shell>(View<a>&<shell> first, View<a>&<shell> second, bool left) {
+  if (left) { return first; } return second;
+}
+View<a>&<shell> alias<lifetime a, lifetime shell>(View<a>&<shell> first, View<a>&<shell> second, bool left) {
+  View<a>&<shell> selected = choose(first, second, left); return selected;
+}
+)";
+  const auto aliases = analyze(selectedShell + R"(
+int main() { int first = 3; int second = 8; View left{first}; View right{second}; return alias(left, right, false).value - 8; }
+)");
+  expectValid(aliases, "a retained carrier reference preserves all physical shell suppliers separately from stored fields");
+  const auto wrongShell = analyze(selectedShell + R"(
+View<a>&<left> wrong<lifetime a, lifetime left, lifetime right>(View<a>&<left> first, View<a>&<right> second, bool leftValue) {
+  View<a>& selected = choose(first, second, leftValue); return selected;
+}
+int main() { int value = 7; View first{value}; View second{value}; return wrong(first, second, false).value; }
+)");
+  expect(wrongShell.syntaxValid && !wrongShell.semanticValid,
+         "a multi-supplier carrier reference cannot use one shell lifetime for its independent other supplier");
   const auto conditional = analyze(R"(
 enum Reading<lifetime owner> { present(int&<owner> value), missing(int code) };
 Reading<a> keep<lifetime a>(Reading<a> value) { return value; }
@@ -2136,7 +2217,7 @@ int main() { int value = 1; invalid(value); return 0; }
 int&<a> choose<lifetime a>(int&<a> value) { return value; }
 int choose(bool& value) { return 1; }
 int&<a> relay<lifetime a, Args...>(Args&<a>... values) { return (choose(values...)); }
-int main() { int first = 1; bool second = false; relay(first); relay(second); return 0; }
+int main() { int first = 1; bool second = false; int one = relay(first); int two = relay(second); return one + two; }
 )");
   expect(concreteTemporary.syntaxValid && !concreteTemporary.semanticValid &&
              std::any_of(concreteTemporary.diagnostics.begin(),
@@ -2152,7 +2233,7 @@ int&<a> trailing<lifetime a, lifetime b, Args...>(int&<a> first, Args&<b>... val
 int&<a> invalid<lifetime a, lifetime b>(int&<a> first, int&<b> other) {
   return trailing<a, b>(first, other);
 }
-int main() { return 0; }
+int main() { int first = 1; int other = 2; return invalid(first, other); }
 )");
   expect(trailingOrigin.syntaxValid && !trailingOrigin.semanticValid &&
              std::any_of(trailingOrigin.diagnostics.begin(), trailingOrigin.diagnostics.end(),
@@ -2767,6 +2848,7 @@ int main() {
   testExecutableLifetimeIdentity();
   testCallablePatternScopes();
   testCallablePatternLambdaScopes();
+  testStructuralDefaultCallableScopes();
   testInferredCarrierRegions();
   testProjectedPatternLifetimes();
   testEnumInitializerLifetimeComposition();

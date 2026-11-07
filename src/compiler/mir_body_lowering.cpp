@@ -3437,6 +3437,29 @@ private:
     if (block == nullptr || terminated()) {
       return 0;
     }
+    if (instruction.kind == MirInstructionKind::Load && instruction.result &&
+        instruction.operands.size() == 1 &&
+        instruction.operands.front().kind == MirOperandKind::Copy &&
+        isPassiveScalarValueType(instruction.info.type)) {
+      const auto *place = output.findPlace(instruction.operands.front().place);
+      auto *result = *instruction.result && *instruction.result <= output.values.size()
+          ? &output.values[*instruction.result - 1] : nullptr;
+      if (place && result && result->info == instruction.info &&
+          instruction.operands.front().type == place->type &&
+          place->type == instruction.info.type && result->borrowDependencies &&
+          result->borrowDependencies->possibleAlternatives.empty() &&
+          std::all_of(result->borrowDependencies->dependencies.begin(),
+                      result->borrowDependencies->dependencies.end(), [](const auto &dependency) {
+                        return dependency.designatedFields.empty() && dependency.conditions.empty();
+                      })) {
+        // The source expression can remain a Place while this instruction
+        // copies its primitive value. Its address loan still governs the
+        // read, but is not stored content of the resulting scalar SSA value.
+        // Nominal/opaque types and conditional carrier inventories are not
+        // admitted by a negative borrowed-state trait.
+        result->borrowDependencies.reset();
+      }
+    }
     if (inheritSourceMetadata && instruction.hirValue != 0) {
       if (const HirValue *source = findValue(instruction.hirValue)) {
         if (instruction.kind == MirInstructionKind::Call ||
@@ -8537,9 +8560,9 @@ private:
                  (parameter.kind == SemanticType::Reference &&
                   parameter.referenceAccess == AccessMode::ReadOnly &&
                   parameter.arguments.size() == 1 &&
-                  (parameter.arguments.front() == element ||
-                   (element.kind == SemanticType::Reference &&
-                    parameter.arguments == element.arguments)));
+                  (sameLifetimeConversionShape(parameter.arguments.front(), element) ||
+                   (element.kind == SemanticType::Reference && element.arguments.size() == 1 &&
+                    sameLifetimeConversionShape(parameter.arguments.front(), element.arguments.front()))));
         };
         std::vector<SemanticType> concreteParameters;
         for (const auto &type : value.parameterTypes)
@@ -8574,6 +8597,9 @@ private:
           const bool borrowed = parameter.kind == SemanticType::Reference;
           const HirPackExpansionElement &expansion =
               input->packExpansionElements[elementIndex];
+          // The exact original element place remains below. This is the same
+          // structural stage admission as an ordinary argument; final program
+          // replay must prove its actual region conversion and permissions.
           if (expansion.type != element ||
               (expansion.kind != HirCallInputKind::Value &&
                expansion.kind != HirCallInputKind::CopyValue &&
@@ -8583,10 +8609,12 @@ private:
                  element.kind == SemanticType::Reference &&
                  (expansion.kind == HirCallInputKind::MutableBorrow) ==
                      (element.referenceAccess == AccessMode::Mutable) &&
-                 (parameter == element ||
+                 (mir_detail::validCallInputType(element, parameter, expansion.kind) ||
                   (parameter.kind == SemanticType::Reference &&
                    parameter.referenceAccess == AccessMode::ReadOnly &&
-                   parameter.arguments == element.arguments))))) {
+                   parameter.arguments.size() == 1 && element.arguments.size() == 1 &&
+                   sameLifetimeConversionShape(parameter.arguments.front(),
+                                               element.arguments.front())))))) {
             valid = false;
             continue;
           }

@@ -3971,18 +3971,12 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
       if (instruction.kind == MirInstructionKind::Construct &&
           !instruction.constructorTarget &&
           instruction.constructorKind == ConstructorKind::Ordinary) {
-        const MirClassInstance *constructed = nullptr;
-        bool unique = true;
-        for (const auto &candidate : program.classInstances()) {
-          if (candidate.type != instruction.info.type)
-            continue;
-          if (constructed != nullptr)
-            unique = false;
-          constructed = &candidate;
-        }
+        const auto constructedView =
+            mirClassLifetimeView(program, instruction.info.type);
+        const auto *constructed = constructedView ? constructedView->instance : nullptr;
         const bool generatedDefault =
             mir_detail::generatedDefaultConstruction(instruction) &&
-            constructed != nullptr && unique &&
+            constructed != nullptr &&
             constructed->defaultConstructor == SpecialMemberStatus::Generated &&
             !constructed->generatedDefaultRequiresSchedule;
         const bool unionField =
@@ -14541,73 +14535,124 @@ completeBorrowSourcePath(const MirProgram &program,
     }
     return fact;
   };
-  const auto unmaterializedReferenceFormal = [&](const MirPlace &place) -> Fact {
-    // No claim or body-local alias may manufacture caller-owned storage.
-    // A reference formal without an entry loan still names its exact referent.
-    if (place.root != MirPlaceRootKind::Binding ||
-        bindingLoans.contains(place.binding) || !parameters || !parameterTypes ||
-        parameters->size() != parameterTypes->size() ||
-        std::count(parameters->begin(), parameters->end(), place.binding) != 1)
+  const auto formalInputs = parameters && parameterTypes
+      ? mir_detail::concreteFormalInputs(body, *parameterTypes, *parameters) : std::nullopt;
+  struct FormalPlaceRoot {
+    const ConcreteFormalInput *formal = nullptr;
+    const MirPlace *place = nullptr;
+  };
+  const auto formalPlaceRoot = [&](const MirPlace &place) -> std::optional<FormalPlaceRoot> {
+    if (!formalInputs || place.root != MirPlaceRootKind::Binding ||
+        !place.initiallyAvailable || place.foreignStorage)
       return std::nullopt;
-    const auto index = std::find(parameters->begin(), parameters->end(), place.binding) -
-                       parameters->begin();
-    const auto &formal = (*parameterTypes)[index];
-    const auto shell = std::find_if(body.places.begin(), body.places.end(),
-        [&](const auto &candidate) {
-          return candidate.root == MirPlaceRootKind::Binding &&
-                 candidate.binding == place.binding && candidate.projections.empty() &&
-                 candidate.type == formal && candidate.initiallyAvailable &&
-                 !candidate.foreignStorage;
-        });
-    if (formal.kind != SemanticType::Reference || formal.arguments.size() != 1 ||
-        shell == body.places.end() || place.projections.size() != 1 ||
-        place.projections.front().kind != MirProjectionKind::Dereference ||
-        place.type != formal.arguments.front() || !place.initiallyAvailable ||
-        place.foreignStorage || place.symbol != shell->symbol || place.key != shell->key ||
-        (place.access == AccessMode::Mutable && formal.referenceAccess != AccessMode::Mutable))
+    const ConcreteFormalInput *formal = nullptr;
+    for (const auto &input : *formalInputs) {
+      if (input.binding != place.binding || input.bindingPrefix.size() > place.projections.size())
+        continue;
+      bool matches = true;
+      for (std::size_t index = 0; index < input.bindingPrefix.size(); ++index) {
+        const auto &step = place.projections[index];
+        matches &= step.kind == MirProjectionKind::PackElement &&
+                   step.constantIndex == input.bindingPrefix[index].index &&
+                   !step.field && !step.index && !step.selection;
+      }
+      if (!matches) continue;
+      if (formal) return std::nullopt;
+      formal = &input;
+    }
+    if (!formal) return std::nullopt;
+    const MirPlace *root = nullptr;
+    for (const auto &candidate : body.places) {
+      if (!mir_detail::formalInputPlace(candidate, *formal)) continue;
+      if (!candidate.initiallyAvailable || candidate.foreignStorage ||
+          candidate.symbol != place.symbol ||
+          (root && (candidate.key != root->key || candidate.symbol != root->symbol ||
+                    candidate.type != root->type || candidate.capture != root->capture)))
+        return std::nullopt;
+      root = &candidate;
+    }
+    return root ? std::optional{FormalPlaceRoot{formal, root}} : std::nullopt;
+  };
+  const auto referenceFormalRoot = [&](const MirPlace &place) -> std::optional<FormalPlaceRoot> {
+    const auto root = formalPlaceRoot(place);
+    if (!root || root->formal->type.kind != SemanticType::Reference ||
+        root->formal->type.arguments.size() != 1 || place.key != root->place->key ||
+        (place.access == AccessMode::Mutable && root->formal->type.referenceAccess != AccessMode::Mutable))
+      return std::nullopt;
+    const auto suffix = std::span(place.projections).subspan(root->formal->bindingPrefix.size());
+    const bool shell = suffix.empty() && place.type == root->formal->type;
+    const bool referent = suffix.size() == 1 && suffix.front() == MirPlaceProjection{.kind = MirProjectionKind::Dereference} &&
+                          place.type == root->formal->type.arguments.front();
+    return shell || referent ? root : std::nullopt;
+  };
+  const auto unmaterializedReferenceFormal = [&](const MirPlace &place) -> Fact {
+    const auto root = referenceFormalRoot(place);
+    if (!root || std::any_of(body.loans.begin(), body.loans.end(), [&](const auto &loan) {
+          const auto *source = body.findPlace(loan.source);
+          return source && mir_detail::formalInputPlace(*source, *root->formal);
+        }))
       return std::nullopt;
     return MirBorrowDependencySet{
         .dependencies = {{.source = place.id, .access = place.access}}};
   };
   const auto storedFormalReferent = [&](const MirPlace &place,
                                          const MirLoan *authority = nullptr) -> Fact {
-    if (!callableFormal || place.foreignStorage || place.projections.size() < 2 ||
-        place.projections.back().kind != MirProjectionKind::Dereference ||
-        !std::all_of(place.projections.begin(), std::prev(place.projections.end()),
-                     [](const auto &part) { return part.kind == MirProjectionKind::Field && part.field; }))
+    if (!callableFormal || place.foreignStorage || place.projections.empty() ||
+        place.projections.back().kind != MirProjectionKind::Dereference)
       return std::nullopt;
     BorrowedFieldOrigin mapping{.access = place.access};
+    const MirPlace *root = nullptr;
+    std::size_t prefix = 0;
+    SemanticType rootType;
+    AccessMode rootAccess = AccessMode::ReadOnly;
     if (place.root == MirPlaceRootKind::This) {
-      if (!callableFormal->owner || callableFormal->staticMember)
+      const auto type = checkedMirCallableOwnerType(program, callableFormal->owner,
+          callableFormal->ownerType, callableFormal->lifetimeContract);
+      if (!callableFormal->owner || callableFormal->staticMember || !type)
         return std::nullopt;
       mapping.origin = BorrowOriginKind::Receiver;
-    } else if (place.root == MirPlaceRootKind::Binding && place.initiallyAvailable &&
-               parameters && parameterTypes && parameters->size() == parameterTypes->size() &&
-               std::count(parameters->begin(), parameters->end(), place.binding) == 1) {
+      rootType = *type;
+      rootAccess = receiverAllowsMutation(callableFormal->receiverMutability)
+          ? AccessMode::Mutable : AccessMode::ReadOnly;
+      for (const auto &candidate : body.places) {
+        if (candidate.root != MirPlaceRootKind::This || !candidate.projections.empty()) continue;
+        if (candidate.type != rootType || candidate.foreignStorage ||
+            (root && candidate.key != root->key))
+          return std::nullopt;
+        root = &candidate;
+      }
+    } else if (const auto selected = formalPlaceRoot(place)) {
       mapping.origin = BorrowOriginKind::Argument;
-      mapping.parameter = std::find(parameters->begin(), parameters->end(), place.binding) -
-                          parameters->begin();
-      const auto &type = (*parameterTypes)[mapping.parameter];
-      if (type.kind == SemanticType::Reference ||
-          std::none_of(body.places.begin(), body.places.end(), [&](const auto &shell) {
-            return shell.root == MirPlaceRootKind::Binding && shell.binding == place.binding &&
-                   shell.symbol == place.symbol && shell.projections.empty() && shell.type == type &&
-                   shell.initiallyAvailable && !shell.foreignStorage;
-          }))
-        return std::nullopt;
+      mapping.parameter = selected->formal->argument;
+      root = selected->place;
+      rootType = selected->formal->type;
+      prefix = selected->formal->bindingPrefix.size();
+      rootAccess = rootType.kind == SemanticType::Reference ? rootType.referenceAccess : root->access;
     } else
       return std::nullopt;
-    for (auto part = place.projections.begin(); part != std::prev(place.projections.end()); ++part)
-      mapping.sourceFields.push_back(fieldProjection(part->field));
+    if (!root) return std::nullopt;
+    const auto role = rootType.kind == SemanticType::Reference
+        ? mir_detail::MirBorrowPathRoot::PhysicalReference : mir_detail::MirBorrowPathRoot::Value;
+    const auto fields = mir_detail::borrowPathForProjections(program, rootType, rootAccess,
+        std::span(place.projections).subspan(prefix), {}, {}, role);
+    if (!fields || fields->empty()) return std::nullopt;
+    mapping.sourceFields = *fields;
+    if (root->key.has_value() != place.key.has_value()) return std::nullopt;
+    if (root->key) {
+      auto key = *root->key;
+      key.projections.insert(key.projections.end(), fields->begin(), fields->end());
+      if (*place.key != key) return std::nullopt;
+    }
     const auto path = completeBorrowSourcePath(program, *callableFormal, mapping);
     if (!path || !path->externalPrefix || path->externalReferences != 1 ||
         !path->conditions.empty() || path->referent != place.type ||
         (place.access == AccessMode::Mutable && path->access != AccessMode::Mutable))
       return std::nullopt;
     if (authority) {
-      const auto *root = body.findPlace(authority->source);
-      const bool exactRoot = root && root->root == place.root &&
-          (place.root == MirPlaceRootKind::This || root->binding == place.binding);
+      const auto *source = body.findPlace(authority->source);
+      const bool exactRoot = source && source->root == root->root && source->binding == root->binding &&
+          source->symbol == root->symbol && source->capture == root->capture && source->type == root->type &&
+          source->projections == root->projections && source->key == root->key;
       const auto matches = [&](const auto &fields, const auto &conditions, AccessMode access) {
         return fields == mapping.sourceFields && conditions.empty() &&
                (place.access == AccessMode::ReadOnly || access == AccessMode::Mutable);
@@ -14617,59 +14662,38 @@ completeBorrowSourcePath(const MirProgram &program,
           (!matches(authority->designatedFields, authority->conditions, authority->access) &&
            std::none_of(authority->additionalDependencies.begin(), authority->additionalDependencies.end(),
                         [&](const auto &dependency) {
-                          return matches(dependency.designatedFields, dependency.conditions, dependency.access);
+                          return (dependency.source == authority->source || (!dependency.source && !dependency.parent)) &&
+                              matches(dependency.designatedFields, dependency.conditions, dependency.access);
                         })))
         return std::nullopt;
     }
     return MirBorrowDependencySet{
         .dependencies = {{.source = place.id, .access = place.access}}};
   };
-  // A checked direct field below a borrowed formal remains physical caller
-  // storage. Prove that path from the exact formal type; a dereference of a
-  // stored reference is a different external owner and is not flattened here.
+  // A physical subobject retains the exact reference formal's storage.
+  // Typed reverse replay accepts Base/index paths but never crosses a stored
+  // reference or invents a guard; those external owners need separate proof.
   const auto physicalBorrowedSubobject = [&](const MirPlace &place) {
-    if (place.foreignStorage || !place.initiallyAvailable || place.projections.empty() ||
-        place.root != MirPlaceRootKind::Binding || !parameters || !parameterTypes ||
-        parameters->size() != parameterTypes->size() ||
-        std::count(parameters->begin(), parameters->end(), place.binding) != 1)
+    const auto root = formalPlaceRoot(place);
+    if (!root || root->formal->type.kind != SemanticType::Reference ||
+        root->formal->type.arguments.size() != 1 ||
+        (place.access == AccessMode::Mutable && root->formal->type.referenceAccess != AccessMode::Mutable))
       return false;
-    const auto index = std::find(parameters->begin(), parameters->end(), place.binding) -
-                       parameters->begin();
-    const auto &formal = (*parameterTypes)[index];
-    if (formal.kind != SemanticType::Reference || formal.arguments.size() != 1 ||
-        (place.access == AccessMode::Mutable && formal.referenceAccess != AccessMode::Mutable))
+    const auto role = mir_detail::MirBorrowPathRoot::PhysicalReference;
+    const auto fields = mir_detail::borrowPathForProjections(program, root->formal->type,
+        root->formal->type.referenceAccess,
+        std::span(place.projections).subspan(root->formal->bindingPrefix.size()), {}, {}, role);
+    const auto view = fields ? mir_detail::walkBorrowPath(program, root->formal->type,
+        root->formal->type.referenceAccess, *fields, {}, role) : std::nullopt;
+    if (!view || fields->empty() || view->type != place.type ||
+        std::any_of(view->referenceCrossings.begin(), view->referenceCrossings.end(),
+                    [](const auto &crossing) { return !crossing.physicalRoot; }))
       return false;
-    const auto shell = std::find_if(body.places.begin(), body.places.end(), [&](const auto &candidate) {
-      return candidate.root == MirPlaceRootKind::Binding && candidate.binding == place.binding &&
-             candidate.projections.empty() && candidate.type == formal &&
-             candidate.initiallyAvailable && !candidate.foreignStorage;
-    });
-    if (shell == body.places.end() || shell->symbol != place.symbol)
-      return false;
-    SemanticType selected = formal.arguments.front();
-    bool field = false;
-    for (std::size_t index = 0; index < place.projections.size(); ++index) {
-      const auto &projection = place.projections[index];
-      if (index == 0 && projection.kind == MirProjectionKind::Dereference)
-        continue;
-      if (projection.kind != MirProjectionKind::Field || !projection.field)
-        return false;
-      const auto view = mirClassLifetimeView(program, selected);
-      if (!view)
-        return false;
-      const auto member = std::find_if(view->instance->declaredFields.begin(),
-          view->instance->declaredFields.end(), [&](const auto &candidate) {
-            return candidate.symbol == projection.field;
-          });
-      if (member == view->instance->declaredFields.end())
-        return false;
-      const auto actual = view->instantiate(member->type);
-      if (!actual || actual->kind == SemanticType::Reference)
-        return false;
-      selected = *actual;
-      field = true;
-    }
-    return field && selected == place.type;
+    if (root->place->key.has_value() != place.key.has_value()) return false;
+    if (!root->place->key) return true;
+    auto key = *root->place->key;
+    key.projections.insert(key.projections.end(), fields->begin(), fields->end());
+    return *place.key == key;
   };
   const auto referenceLoanFact = [&](const auto &self, const State &state,
                                      MirLoanId id, std::size_t depth) -> Fact {
@@ -14827,15 +14851,27 @@ completeBorrowSourcePath(const MirProgram &program,
           fact && !fact->dependencies.empty() &&
           fact->possibleAlternatives.empty())
         return fact;
+    if (const auto root = referenceFormalRoot(*place)) {
+      const MirLoan *entry = nullptr;
+      for (const auto &loan : body.loans) {
+        const auto *source = body.findPlace(loan.source);
+        if (!loan.entry || loan.kind != MirLoanKind::Parameter || !source ||
+            !mir_detail::formalInputPlace(*source, *root->formal)) continue;
+        if (entry || source->key != root->place->key || source->symbol != root->place->symbol)
+          return std::nullopt;
+        entry = &loan;
+      }
+      return entry ? fromReferenceLoan(state, entry->id) : unmaterializedReferenceFormal(*place);
+    }
+    // A local reference binding still uses its single independently tracked
+    // capability. Grouped formal leaves were resolved by exact prefix above.
     if (place->root == MirPlaceRootKind::Binding &&
-        ((place->projections.empty() &&
-          place->type.kind == SemanticType::Reference) ||
-         (place->projections.size() == 1 &&
-          place->projections.front().kind == MirProjectionKind::Dereference))) {
+        (!parameters || std::find(parameters->begin(), parameters->end(), place->binding) == parameters->end()) &&
+        ((place->projections.empty() && place->type.kind == SemanticType::Reference) ||
+         (place->projections.size() == 1 && place->projections.front().kind == MirProjectionKind::Dereference))) {
       const auto loans = bindingLoans.find(place->binding);
-      if (loans != bindingLoans.end() && loans->second.size() == 1)
-        return fromReferenceLoan(state, loans->second.front());
-      return unmaterializedReferenceFormal(*place);
+      return loans != bindingLoans.end() && loans->second.size() == 1
+          ? fromReferenceLoan(state, loans->second.front()) : Fact{};
     }
     if (auto fact = storedFormalReferent(*place))
       return fact;
@@ -15793,6 +15829,19 @@ completeBorrowSourcePath(const MirProgram &program,
         }
       }
     }
+    if (instruction.kind == MirInstructionKind::Load && instruction.result &&
+        instruction.operands.size() == 1 &&
+        instruction.operands.front().kind == MirOperandKind::Copy) {
+      const auto *source = body.findPlace(instruction.operands.front().place);
+      const auto inventory = findStoredCarrierReferenceInventory(program, instruction.info.type);
+      const auto alternatives = findStoredCarrierAlternativeInventory(program, instruction.info.type);
+      if (source && source->type == instruction.operands.front().type &&
+          source->type == instruction.info.type && inventory && inventory->empty() &&
+          alternatives && alternatives->empty())
+        // Load copies contents even when ExpressionInfo retains the source's
+        // Place category. A proven empty layout stores no source address loan.
+        result = MirBorrowDependencySet{};
+    }
     if (!result && instruction.result &&
         instruction.info.category == ValueCategory::Value) {
       // A concrete value with no reference paths and no conditional
@@ -16439,21 +16488,13 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
   }
   if (lifetimeRootSupplier(program, function, mapping))
     return true;
-  // Caller storage reached without crossing a stored reference, and holding
-  // no stored reference itself, may contain the referent anywhere inside it;
-  // an external referent is exact. The trusted opaque object capability may
-  // view either exact source without claiming that its stored inventory is
-  // empty. Producer replay must still reach the checked erasure intrinsic.
+  // This is the lifetime supplier, not a substitute for typing the produced
+  // referent. The exact path distinguishes physical owner storage from every
+  // external-reference crossing. Independent return replay must still reach
+  // the typed borrow or checked unsafe owner-witness operation that produced
+  // the result. Other references stored by that owner add no restriction here.
   const auto source = completeBorrowSourcePath(program, function, mapping);
-  const auto contained =
-      source && !source->externalPrefix
-          ? findStoredCarrierReferenceInventory(program, source->referent)
-          : std::nullopt;
-  return source &&
-         (source->referent == result->reference.arguments.front() ||
-          exactMirCapabilityClass(program, result->reference.arguments.front(),
-                                  CompilerCapabilityTypeKind::ErasedObject) ||
-          (contained && contained->empty())) &&
+  return source && source->referent.kind != SemanticType::Unknown &&
          (mapping.access == AccessMode::ReadOnly ||
           source->access == AccessMode::Mutable) &&
          source->conditions == mapping.sourceConditions;
@@ -21191,8 +21232,9 @@ verifyMirProgramContracts(const MirProgram &program) {
     for (const HirBaseInstance &base : instance.structuralBases) {
       const MirClassInstance *baseInstance =
           program.findClassInstance(base.instance);
+      const auto baseView = mirClassLifetimeView(program, base.type);
       if (base.instance == instance.id || baseInstance == nullptr ||
-          baseInstance->type != base.type ||
+          !baseView || baseView->instance != baseInstance ||
           base.interface != (baseInstance->kind == ClassKind::Interface)) {
         result.errors.push_back(
             {.bodyKind = MirBodyKind::FieldInitializers,

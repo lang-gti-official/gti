@@ -244,6 +244,20 @@ field dependencies do not replace that loan. Mapping the exact unprojected
 reference requires no enumeration of an opaque referent's contents. Mapping
 an external stored field still requires a complete typed path and guards.
 
+Complete return normalization identifies a checked lifetime supplier separately
+from the produced referent's type. An owner-relative result may be governed by
+an owner containing other references or opaque fields, including an owner
+reached through a stored checked reference. The actual typed expression or
+unsafe owner-witness operation establishes the referent. Exact source paths,
+reference crossings, access, result-region requirements and cleanup ancestry
+remain mandatory; a local or consumed carrier shell supplies no caller storage.
+This general rule subsumes the previous empty-inventory and private
+owned-pointee admission exceptions without changing their operation proofs.
+An explicit unsafe raw-reference return publishes the same exact checked owner
+to its complete producer fact and its raw-borrow lowering. It retains an active
+physical reference entry when present; stored external fields never replace
+that entry, and the declared result lifetime and access still require proof.
+
 Anonymous stored regions remain determined by field structure. A constructor's
 checked initializer-list summary may relate its inputs to those anonymous
 output slots. Those relations become its published declaration contract before
@@ -1530,8 +1544,12 @@ defer an unknown reference-result category. The body-local marker is cleared on
 each visit, and does not authorize sibling returns or create a provisional place.
 A known leading reference may be checked before an unresolved trailing pack by
 running the ordinary formal-input derivation and return normalizer on that exact
-leading slice. This validates only those known origins; it publishes no complete
-summary and leaves the body pending concrete replay. This applies separately to
+leading slice. Published parameter binding metadata and the active body symbol
+use the same symbolic group for an explicit source reference pack, while the
+callable signature retains its reference-pack recipe. An ordinary reference to
+a pack remains one reference. This validates only those known origins; it
+publishes no complete summary and leaves the body pending concrete replay. This
+applies separately to
 a referenced carrier's physical shell and its stored external paths. Return
 supplier ordinals and completed-call comparisons expand concrete pack leaves,
 while body bindings, canonical instances and summary-query keys retain their
@@ -1818,6 +1836,12 @@ with `classCanUseStructuralDefaultConstruction`. Default-availability queries,
 factory calls, and omitted subobjects consume the same selection facts. An
 otherwise eligible struct can retain designated construction alongside a
 structural default declaration. Copy, move, and destruction inference is unchanged.
+Structural defaults do not open an owner's nested callable invocation scopes:
+the existing structural-default predicate excludes constructor parameters,
+generics, requirements and initializer lists. Nested quantified signature slots
+remain closed storage metadata, while nominal formation obligations and free
+owner regions retain their ordinary checks. A source constructor invocation
+continues to import the member scopes it needs.
 This revises the earlier implicit-default policy: source must opt in even when
 all fields have declaration initializers. Existing generated HIR/MIR schedules
 execute the explicit default, with no additional runtime operation. Constant

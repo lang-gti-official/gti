@@ -5983,15 +5983,9 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
     }
     if (const auto *function = currentFunctionInfo();
         function && !currentLambdaReturn && function->lifetimeContract.valid()) {
-      SemanticLoanDependency dependency{.place = shell,
-                                         .access = reference.referenceAccess,
-                                         .protectsStorage = true};
-      if (const auto source = retainedLoanSource(value))
-        dependency.parent = source->loan;
-      const SemanticBorrowDependencySet checked{
-          .dependencies = {std::move(dependency)}};
-      validShell = normalizedCompleteReturnBorrow(*function, checked).has_value();
-      if (!validShell && validateKnownLeadingReturnBorrow(*function, checked)) {
+      const auto checked = physicalReferenceReturnBorrow(value, reference.referenceAccess);
+      validShell = checked && normalizedCompleteReturnBorrow(*function, *checked).has_value();
+      if (!validShell && checked && validateKnownLeadingReturnBorrow(*function, *checked)) {
         loanFlow.deferredGenericFlow = true;
         requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
         validShell = true;
@@ -6205,7 +6199,13 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       return;
     auto dependencies = completeResult ? completeResult->dependencies
                                        : storedBorrowDependencies(value);
-    if (dependencies.empty() && !completeResult) {
+    if (isBorrowedCarrierReference(function->returnType)) {
+      const auto physical = physicalReferenceReturnBorrow(
+          value, function->returnType.referenceAccess);
+      dependencies = physical ? physical->dependencies : std::vector<SemanticLoanDependency>{};
+    }
+    if (dependencies.empty() && !completeResult &&
+        !isBorrowedCarrierReference(function->returnType)) {
       const auto place = retainedLoanPlace(value);
       if (place.valid()) {
         SemanticLoanDependency dependency{

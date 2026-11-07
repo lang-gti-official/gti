@@ -15275,7 +15275,16 @@ auto SemanticVisitor::Impl::parameterBindingType(
       }
     }
   }
-  // A symbolic binding names a group, never a reference to the group itself.
+  return parameterBindingType(parameter, std::move(type));
+}
+
+auto SemanticVisitor::Impl::parameterBindingType(
+    const Parameter &parameter, SemanticType type) -> SemanticType {
+  if (parameter.pack && type.kind == SemanticType::TypeParameter)
+    return SemanticType::typePack(type.genericParameterId);
+  // A symbolic source-pack binding names a group, never a reference to the
+  // group itself. Use the same view for BindingInfo and the active Symbol;
+  // the normalized callable signature retains its reference-pack recipe.
   // Concrete reanalysis materializes its separately checked reference elements.
   if (parameter.pack && type.kind == SemanticType::Reference &&
       type.arguments.size() == 1 &&

@@ -2339,10 +2339,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
             ? substituteType(constructorInfo->parameterTypes[parameterIndex],
                              currentGenericSubstitution(false))
             : parameterBindingType(parameter);
-    const SemanticType parameterType =
-        parameter.pack && declaredType.kind == SemanticType::TypeParameter
-            ? SemanticType::typePack(declaredType.genericParameterId)
-            : declaredType;
+    const SemanticType parameterType = parameterBindingType(parameter, declaredType);
     validateOwningPayloadEnumByValueBoundary(
         parameterType, parameter.type.name.last(), "constructor parameter",
         directOwningPayloadTransport);
@@ -2520,10 +2517,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
               ? substituteType(constructorInfo->parameterTypes[parameterIndex],
                                currentGenericSubstitution(false))
               : parameterBindingType(parameter);
-      const SemanticType parameterType =
-          parameter.pack && declaredType.kind == SemanticType::TypeParameter
-              ? SemanticType::typePack(declaredType.genericParameterId)
-              : declaredType;
+      const SemanticType parameterType = parameterBindingType(parameter, declaredType);
       recordProgramCleanupEffects(parameterType, tokenSpan(parameter.name));
       declare(parameter.name, parameterType,
               parameter.mutability == Mutability::Mutable,
@@ -4038,10 +4032,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
             ? substituteType(functionInfo->parameterTypes[parameterIndex],
                              currentGenericSubstitution(false))
             : parameterBindingType(parameter);
-    const SemanticType parameterType =
-        parameter.pack && declaredType.kind == SemanticType::TypeParameter
-            ? SemanticType::typePack(declaredType.genericParameterId)
-            : declaredType;
+    const SemanticType parameterType = parameterBindingType(parameter, declaredType);
     validateOwningPayloadEnumByValueBoundary(
         parameterType, parameter.type.name.last(), "function parameter",
         directOwningPayloadTransport);
@@ -4314,10 +4305,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     if (!parameter.name.lexeme.empty()) {
       const SemanticType declaredType = parameterBindingType(parameter);
       recordProgramCleanupEffects(declaredType, tokenSpan(parameter.name));
-      declare(parameter.name,
-              parameter.pack && declaredType.kind == SemanticType::TypeParameter
-                  ? SemanticType::typePack(declaredType.genericParameterId)
-                  : declaredType,
+      declare(parameter.name, declaredType,
               parameter.mutability == Mutability::Mutable,
               SemanticBindingKind::Parameter, nullptr, &parameter);
       recordParameterEntryLoan(parameter);
@@ -10918,10 +10906,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     allowPackTypeReference = previousAllowPack;
     validateReferencePlacement(parameter.type, true, "lambda parameter");
     const SemanticType declaredType = parameterBindingType(parameter);
-    const SemanticType parameterType =
-        parameter.pack && declaredType.kind == SemanticType::TypeParameter
-            ? SemanticType::typePack(declaredType.genericParameterId)
-            : declaredType;
+    const SemanticType parameterType = declaredType;
     validateOwningPayloadEnumByValueBoundary(
         parameterType, parameter.type.name.last(), "lambda parameter",
         directOwningPayloadTransport);

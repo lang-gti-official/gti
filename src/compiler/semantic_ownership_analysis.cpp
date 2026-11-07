@@ -5541,6 +5541,87 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   return entry->result;
 }
 
+auto SemanticVisitor::Impl::physicalReferenceReturnBorrow(
+    const ExprPtr &value, AccessMode access)
+    -> std::optional<SemanticBorrowDependencySet> {
+  const auto scalar = [](const SemanticBorrowDependencySet &complete) {
+    return complete.possibleAlternatives.empty() && !complete.dependencies.empty() &&
+           std::all_of(complete.dependencies.begin(), complete.dependencies.end(),
+                       [](const auto &dependency) {
+                         return dependency.place.valid() && dependency.designatedFields.empty() &&
+                                dependency.conditions.empty();
+                       });
+  };
+  SemanticBorrowDependencySet result;
+  const auto place = semanticPlace(value);
+  if (place.root) {
+    if (const auto selected = selectedReferenceDependencies(place)) {
+      result.dependencies = *selected;
+    } else if (place.root->type.kind == SemanticType::Reference) {
+      const auto *loan = semanticModel.findLoan(place.root->retainedLoan);
+      if (!loan || loan->kind != SemanticLoanKind::Reference)
+        return std::nullopt;
+      auto physical = loan->place;
+      physical.projections.insert(physical.projections.end(), place.projections.begin(),
+                                  place.projections.end());
+      result.dependencies.push_back({.place = std::move(physical),
+          .designatedFields = loan->designatedFields, .access = loan->access,
+          .protectsStorage = loan->protectsStorage, .parent = loan->id,
+          .conditions = loan->conditions});
+      for (auto dependency : loan->additionalDependencies) {
+        dependency.place.projections.insert(dependency.place.projections.end(),
+                                             place.projections.begin(), place.projections.end());
+        dependency.parent = loan->id;
+        result.dependencies.push_back(std::move(dependency));
+      }
+    } else {
+      // A stored field group describes external referents. It cannot replace
+      // the actual object root when a reference to the object's shell escapes.
+      SemanticLoanDependency dependency{
+          .place = {.root = place.receiver ? 0 : place.rootIdentity,
+                    .receiver = place.receiver, .projections = place.projections},
+          .access = access, .protectsStorage = true};
+      if (!dependency.place.root && !dependency.place.receiver)
+        dependency.place.root = symbolForDeclaration(place.root->declaration);
+      if (const auto source = retainedLoanSource(value))
+        dependency.parent = source->loan;
+      result.dependencies.push_back(std::move(dependency));
+    }
+  } else {
+    const Expr *producer = value.get();
+    while (producer) {
+      if (const auto *alias = semanticModel.findExpressionAlias(*producer))
+        producer = alias;
+      else if (const auto *group = exprAs<Grouping>(producer))
+        producer = group->expression().get();
+      else if (const auto *comma = exprAs<Binary>(producer);
+               comma && comma->oper().kind == TokenKind::COMMA)
+        producer = comma->right().get();
+      else
+        break;
+    }
+    bool referenceProducer = borrowedExpressionLifetime(producer).specified();
+    if (const auto *member = exprAs<Get>(producer))
+      if (const auto *resolved = findMember(memberAccessObjectType(*member), member->name()))
+        referenceProducer = resolved->symbol.type.kind == SemanticType::Reference;
+    const auto complete = completeBorrowDependencySet(value);
+    // An unqualified scalar field set can also describe a primitive carrier's
+    // contents. Only an actual reference producer may use it as physical
+    // storage when there is no addressable binding to inspect.
+    if (!referenceProducer || !complete || !scalar(*complete))
+      return std::nullopt;
+    result = *complete;
+  }
+  if (!scalar(result))
+    return std::nullopt;
+  for (auto &dependency : result.dependencies) {
+    if (access == AccessMode::Mutable && dependency.access != AccessMode::Mutable)
+      return std::nullopt;
+    dependency.access = access;
+  }
+  return result;
+}
+
 auto SemanticVisitor::Impl::formalBorrowInputs(
     std::span<const Parameter> parameters,
     std::span<const SemanticType> signature) const
@@ -5895,53 +5976,14 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
       }
       sourceType = std::move(fieldType);
     }
-    // Caller storage reached without crossing a stored reference may hold
-    // the referent anywhere inside it, as an accessor's receiver or an owned
-    // element buffer does. The result then depends on that whole storage,
-    // exactly as an ordinary receiver or argument borrow origin does. Storage
-    // that itself stores references needs an exact path instead, so that an
-    // external referent is never confused with the carrier's own storage.
-    const auto containedInventory = storedReferenceInventory(sourceType);
-    // A checked owning accessor supplies a different proof: its exact trusted
-    // operation returns the pointee stored by this owning field. Opaque T may
-    // prevent a complete inventory of T's external references, but that does
-    // not invalidate the independently owned physical T object. Nested type
-    // formation/outlives obligations and the cleanup/parent checks below stay
-    // separate; an unknown inventory is never treated as empty.
-    bool checkedOwnedPointee = false;
-    if (physicalCallerStorage && !externalReferent &&
-        normalized.origin == BorrowOriginKind::Receiver &&
-        function.ownedPointeeProjection &&
-        function.ownedPointeeProjection->fields == normalized.sourceFields &&
-        sourceType.arguments.size() == 1 &&
-        sourceType.arguments.front() == resultPath->reference.arguments.front()) {
-      const auto intrinsic = function.ownedPointeeProjection->borrowIntrinsic;
-      const bool mutableProjection = intrinsic == IntrinsicKind::UniqueOwnerBorrowMut ||
-                                     intrinsic == IntrinsicKind::PolymorphicStorageReadMut;
-      const auto *storage = classInfo(sourceType);
-      checkedOwnedPointee =
-          ((sourceType.kind == SemanticType::UniqueOwner &&
-            (intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
-             intrinsic == IntrinsicKind::UniqueOwnerBorrowMut)) ||
-           (storage && storage->compilerCapability == CompilerCapabilityTypeKind::PolymorphicStorage &&
-            (intrinsic == IntrinsicKind::PolymorphicStorageRead ||
-             intrinsic == IntrinsicKind::PolymorphicStorageReadMut))) &&
-          (dependency.access != AccessMode::Mutable || mutableProjection);
-    }
-    const bool containedReferent = physicalCallerStorage && !externalReferent &&
-                                   (checkedOwnedPointee ||
-                                    (containedInventory && containedInventory->empty()));
-    // The trusted opaque referent is a view of the selected object's physical
-    // storage, not a claim about that object's hidden external dependencies.
-    // Checked erasure typechecks the exact transformation. Keep the complete
-    // source path and all ownership/access/region checks here even when an
-    // open referent prevents enumerating its stored references.
-    const auto *resultOwner = classInfo(resultPath->reference.arguments.front());
-    const bool erasedReferent = resultOwner &&
-        resultOwner->compilerCapability == CompilerCapabilityTypeKind::ErasedObject;
+    // This summary identifies the checked lifetime supplier, not the result's
+    // pointee type. A physical owner (including one reached through a checked
+    // reference) may govern a differently typed object inside its storage.
+    // Typed expression checking and the exact borrow/unsafe-owner producer
+    // prove that referent; this path preserves its owner, access and region.
+    // Unrelated fields or opaque stored types do not invalidate that proof.
     if ((!physicalCallerStorage && !externalReferent) ||
-        (sourceType != resultPath->reference.arguments.front() &&
-         !containedReferent && !erasedReferent) ||
+        sourceType.kind == SemanticType::Unknown ||
         (dependency.access == AccessMode::Mutable &&
          sourceAccess != AccessMode::Mutable))
       return std::nullopt;

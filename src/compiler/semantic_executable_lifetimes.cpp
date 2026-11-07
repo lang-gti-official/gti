@@ -377,7 +377,12 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
   }
   if (!substitution.valid)
     return std::nullopt;
-  if (ownerId && (function || constructor || destructor)) {
+  // Structural default construction has no member invocation signature or
+  // source body. Its nested callable scopes stay closed, just as in layout;
+  // opening them would invent construction arguments for invocation binders.
+  const bool memberInvocation = function || destructor ||
+      (constructor && !requestsStructuralDefaultConstruction(*constructor));
+  if (ownerId && memberInvocation) {
     if (!importMemberCallableScopes(substitution, key.kind, key.declaration, result.ownerType, site))
       return std::nullopt;
     for (const auto &scope : substitution.callableScopes)
@@ -412,7 +417,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
               return std::any_of(scope.regionBindings.begin(), scope.regionBindings.end(),
                   [&](const auto &binding) { return binding.first == Lifetime::parameter(parameter.id); });
             });
-        if (scoped && !function && !constructor && !destructor)
+        if (scoped && !memberInvocation)
           continue;
         return std::nullopt;
       }

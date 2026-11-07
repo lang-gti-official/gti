@@ -3514,12 +3514,15 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           instruction.kind != MirInstructionKind::Call &&
           instruction.kind != MirInstructionKind::Construct &&
           instruction.kind != MirInstructionKind::CallInput &&
+          !(instruction.kind == MirInstructionKind::InitializeBase &&
+            mir_detail::baseConstructorPublicationStage(
+                body, body.loans[*instruction.loan - 1]) == &instruction) &&
           !(instruction.kind == MirInstructionKind::Compute &&
             (instruction.operation == MirOperation::Closure ||
              stagedPayloadConstruction(instruction)))) {
         return failure(body, owner,
-                       "only borrow, call, construct, and call-input "
-                       "instructions may produce a loan",
+                       "loan producer is not an exact borrow, call, construction, "
+                       "call input or base publication",
                        block.id, instruction.id);
       }
       if (body.loans[*instruction.loan - 1].twoPhase &&
