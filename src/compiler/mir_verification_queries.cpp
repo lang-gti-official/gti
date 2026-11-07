@@ -1,6 +1,7 @@
 #include "mir_verification_queries.h"
 #include "gti/mir_dominance.h"
 #include "gti/borrow_conditions.h"
+#include "gti/lifetime_types.h"
 #include "gti/mir_effects.h"
 #include "mir_verification_support.h"
 #include "mir_lifetimes.h"
@@ -2107,6 +2108,25 @@ std::optional<std::size_t> entryProjectionPrefix(
       !std::equal(entry.projections.begin(), entry.projections.end(), selected.begin()))
     return std::nullopt;
   return entry.projections.size();
+}
+
+bool wholeEntryPlaceMatches(const MirBody &body, const MirPlace &entry,
+                            const MirPlace &selected) {
+  if ((entry.root != MirPlaceRootKind::Binding &&
+       entry.root != MirPlaceRootKind::This) ||
+      entry.root != selected.root || entry.binding != selected.binding ||
+      entry.symbol != selected.symbol)
+    return false;
+  const auto prefix = entryProjectionPrefix(body, entry, selected.projections);
+  if (!prefix)
+    return false;
+  const auto suffix = std::span(selected.projections).subspan(*prefix);
+  if (suffix.empty())
+    return equivalentLifetimeTypes(entry.type, selected.type);
+  return suffix.size() == 1 &&
+         suffix.front() == MirPlaceProjection{.kind = MirProjectionKind::Dereference} &&
+         entry.type.kind == SemanticType::Reference && entry.type.arguments.size() == 1 &&
+         equivalentLifetimeTypes(entry.type.arguments.front(), selected.type);
 }
 
 std::optional<MirPlaceId> borrowSourceForPlace(const MirBody &body,

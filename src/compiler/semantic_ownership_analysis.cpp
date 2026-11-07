@@ -5676,12 +5676,14 @@ auto SemanticVisitor::Impl::validateKnownLeadingReturnBorrow(
     leadingBindings.push_back(binding->symbol);
     ++parameterCount;
   }
-  if (unresolvedBinding.kind == SemanticType::Unknown || leadingBindings.empty() ||
+  if (unresolvedBinding.kind == SemanticType::Unknown ||
       function.parameterTypes.size() != syntax->parameters().size() ||
       std::any_of(complete.dependencies.begin(), complete.dependencies.end(),
                   [&](const auto &dependency) {
-                    return dependency.place.receiver ||
-                           std::find(leadingBindings.begin(), leadingBindings.end(),
+                    if (dependency.place.receiver)
+                      return function.ownerClass == 0 || function.staticMember ||
+                             !function.lifetimeContract.receiver.specified();
+                    return std::find(leadingBindings.begin(), leadingBindings.end(),
                                      dependency.place.root) == leadingBindings.end();
                   }))
     return false;
@@ -5704,6 +5706,7 @@ auto SemanticVisitor::Impl::validateKnownLeadingReturnBorrow(
   leading.parameterTypes.erase(
       leading.parameterTypes.begin() + parameterCount,
       leading.parameterTypes.end());
+  // The receiver is also a known root independent of the unresolved suffix.
   // Only the existing normalizer may validate the known roots, paths, access,
   // parents and regions. Its result is deliberately not published: the unknown
   // suffix has no complete inventory until concrete instance reanalysis.

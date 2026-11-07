@@ -279,13 +279,45 @@ void packEntrySourceIdentity() {
   body.places.push_back(referent);
   expect(mir_detail::borrowSourceForPlace(body, 5, 0) == 5,
          "a deeper stored field keeps its exact projection instead of the physical pack shell");
+  expect(mir_detail::wholeEntryPlaceMatches(body, body.places[2], body.places[2]) &&
+             mir_detail::wholeEntryPlaceMatches(body, body.places[2], body.places[3]) &&
+             !mir_detail::wholeEntryPlaceMatches(body, body.places[1], body.places[3]) &&
+             !mir_detail::wholeEntryPlaceMatches(body, body.places[2], body.places[4]),
+         "carrier dependency selection keeps a whole reference-pack referent but rejects another lane or stored field");
+  MirBody ordinary;
+  MirPlace referenceEntry{.id = 1, .root = MirPlaceRootKind::Binding, .binding = 8,
+      .symbol = 808, .type = reference, .initiallyAvailable = true};
+  auto selected = referenceEntry;
+  selected.id = 2;
+  selected.type = reference.arguments.front();
+  selected.projections = {{.kind = MirProjectionKind::Dereference}};
+  expect(mir_detail::wholeEntryPlaceMatches(ordinary, referenceEntry, selected),
+         "an ordinary carrier reference preserves the dependency of its exact whole referent");
+  auto wrong = selected;
+  wrong.type = SemanticType::classType(89);
+  expect(!mir_detail::wholeEntryPlaceMatches(ordinary, referenceEntry, wrong),
+         "the physical crossing must retain the exact referent type");
+  wrong = selected;
+  wrong.projections.push_back({.kind = MirProjectionKind::Field, .field = 880});
+  expect(!mir_detail::wholeEntryPlaceMatches(ordinary, referenceEntry, wrong),
+         "an equal-typed field is not the whole physical referent");
+  wrong = selected;
+  wrong.projections.push_back({.kind = MirProjectionKind::Dereference});
+  expect(!mir_detail::wholeEntryPlaceMatches(ordinary, referenceEntry, wrong),
+         "a second reference crossing cannot inherit the physical shell dependency");
+  wrong = selected;
+  wrong.binding = 9;
+  expect(!mir_detail::wholeEntryPlaceMatches(ordinary, referenceEntry, wrong),
+         "another binding cannot substitute an equal-typed reference entry");
   auto forged = body;
   forged.places[2].projections.back().constantIndex = 1;
-  expect(!mir_detail::borrowSourceForPlace(forged, 3, 0),
+  expect(!mir_detail::borrowSourceForPlace(forged, 3, 0) &&
+             !mir_detail::wholeEntryPlaceMatches(forged, forged.places[2], body.places[3]),
          "a wrong nested index cannot select an equal-typed entry loan");
   forged = body;
   forged.places.front().type = SemanticType::referenceTo(grouped);
-  expect(!mir_detail::borrowSourceForPlace(forged, 2, 0),
+  expect(!mir_detail::borrowSourceForPlace(forged, 2, 0) &&
+             !mir_detail::wholeEntryPlaceMatches(forged, forged.places[2], body.places[3]),
          "reference-to-pack storage remains atomic during entry origin selection");
   forged = body;
   forged.loans.back().source = 2;

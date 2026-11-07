@@ -120,25 +120,28 @@ auto SemanticVisitor::Impl::uniqueOwnerIntrinsicName(IntrinsicKind intrinsic)
 
 auto SemanticVisitor::Impl::typeAliasForCallee(const ExprPtr &callee) const
     -> std::optional<ResolvedTypeAlias> {
-  const auto substituteCurrentInstance =
-      [&](std::optional<ResolvedTypeAlias> alias)
+  const auto instantiate =
+      [&](const TypeRef &type)
       -> std::optional<ResolvedTypeAlias> {
-    if (alias) {
-      alias->type = substituteType(
-          alias->type,
-          currentGenericSubstitution(false));
-    }
+    auto alias = resolveTypeAliasPath(type, currentNamespace);
+    if (alias && alias->id != 0 && alias->id <= typeAliases.size() &&
+        typeAliases[alias->id - 1].resolution == TypeAliasResolution::Resolved)
+      // A callee names the same alias application as ordinary type syntax.
+      // Its anonymous slots belong to this use; the alias declaration's
+      // universal slots are not caller assumptions.
+      alias->type = instantiatedAliasType(*alias, type, currentNamespace);
     return alias;
   };
   if (callee && callee->exprKind() == ExprKind::Variable) {
     const auto *variable = static_cast<const Variable *>(callee.get());
-    return substituteCurrentInstance(
-        resolveTypeAliasPath(NamePath(variable->name()), currentNamespace));
+    return instantiate(TypeRef(NamePath(variable->name())));
   }
   if (callee && callee->exprKind() == ExprKind::QualifiedName) {
     const auto *qualified = static_cast<const QualifiedName *>(callee.get());
-    return substituteCurrentInstance(
-        resolveTypeAliasPath(qualified->name(), currentNamespace));
+    TypeRef type(qualified->name());
+    if (qualified->ownerType())
+      type.qualifiedOwner = std::make_shared<TypeRef>(*qualified->ownerType());
+    return instantiate(type);
   }
   return std::nullopt;
 }
@@ -302,6 +305,25 @@ auto SemanticVisitor::Impl::callableSignatureRequirement(const Call &call) const
           .inferResultFromInstantiation = stored->inferResultFromInstantiation};
       for (SemanticType &type : result.parameterTypes) {
         type = substituteType(type, currentGenericSubstitution());
+      }
+      if (currentLambdaReturn && currentLambdaReturn->declaration &&
+          contextualCallableResult && contextualCallableResult->call == &call) {
+        const auto *variable = directCallableParameterVariable(call.callee());
+        const auto *symbol = variable ? resolve(variable->name()) : nullptr;
+        if (symbol && symbol->parameterDeclaration &&
+            std::any_of(currentLambdaReturn->declaration->parameters().begin(),
+                        currentLambdaReturn->declaration->parameters().end(),
+                        [&](const auto &parameter) {
+                          return &parameter == symbol->parameterDeclaration;
+                        })) {
+          // This requirement came from this call's source context, not an
+          // independently declared callable signature. Reanalysis owns that
+          // context in the lambda's current invocation/environment scope;
+          // the primary body's environment IDs may no longer exist here.
+          result.returnType = contextualCallableResult->type;
+          result.inferResultFromInstantiation =
+              contextualCallableResult->inferResultFromInstantiation;
+        }
       }
       return result;
     }
@@ -4254,9 +4276,12 @@ auto SemanticVisitor::Impl::discoverOwnedCallableValueParameters() -> void {
           type.arguments.front().kind == SemanticType::TypeParameter &&
           !parameter.pack && callableParameterContract(function.id, index) == nullptr &&
           semanticModel.analyzedFunctionBodies.contains(function.bodyDeclaration()) &&
-          !bodiesInProgress.contains(function.bodyDeclaration())) {
+          !bodiesInProgress.contains(function.bodyDeclaration()) &&
+          !requestSession.deferredFlowOwners.contains(
+              {.kind = ProgramEffectOwnerKind::Function, .id = function.id})) {
         // Absence of a use is evidence only for a completed body owned by
-        // this model. Inherited bodies may have uses in the base overlay.
+        // this model. Inherited bodies may have uses in the base overlay;
+        // deferred bodies may not have visited their dependent branches.
         const auto *binding = semanticModel.findBinding(parameter);
         const bool unused = binding && binding->symbol &&
             std::none_of(semanticModel.resolvedSymbols.begin(), semanticModel.resolvedSymbols.end(),

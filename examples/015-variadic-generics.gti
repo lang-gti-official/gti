@@ -15,6 +15,8 @@ class Samples {
 public:
   Samples(int initial[3]) : values(initial) {}
   int sum() { return this.values[0] + this.values[1] + this.values[2]; }
+  // The receiver remains a known owner while the argument pack is symbolic.
+  int& first<Args...>(Args... ignored) { return this.values[0]; }
 };
 
 T construct<T, Args...>(Args... values) {
@@ -66,6 +68,7 @@ int main() {
   auto selector = select_second;
 
   if (inferred == 7 and explicit_types == 9 and copied.sum() == 6 and
+      copied.first() == 1 and copied.first(false, 7) == 1 and
       add_forwarded(3) == 8 and inherited.sum() == 6 and
       select_forwarded(first, second) == 8 and
       call_forwarded(selector, first, second) == 8) {

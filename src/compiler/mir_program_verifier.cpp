@@ -4273,15 +4273,17 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
 
       const auto *resultValue =
           instruction.result ? body.findValue(*instruction.result) : nullptr;
-      // A value's complete conditional contract carries permissions per
-      // dependency. The declaration's legacy scalar access remains unchanged.
+      // A value's complete contract carries permissions per dependency,
+      // including a scalar reference with several possible lifetime suppliers.
+      // The declaration's legacy scalar access remains unchanged.
       // Its independently reconstructed callee summary and caller value-flow
       // proof are both mandatory; an attached empty set alone proves nothing.
       const bool completeFunction =
           target && instruction.kind == MirInstructionKind::Call &&
           instruction.intrinsic == IntrinsicKind::None &&
           (target->returnType.kind == SemanticType::Enum ||
-           target->returnType.kind == SemanticType::Class) &&
+           target->returnType.kind == SemanticType::Class ||
+           target->returnType.kind == SemanticType::Reference) &&
           completeReturnProof(target->id);
       const bool completeConstructor =
           instruction.kind == MirInstructionKind::Construct &&
@@ -4506,18 +4508,16 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             block.id, instruction.id);
       }
 
-      // A conditional complete result can exclude the declaration's first
-      // compact supplier (for example, an empty first enum field). Its exact
-      // active sources are proved by verifyCompleteBorrowDependencySets from
-      // executable inputs and the independently reconstructed callee summary.
-      // That mandatory gate also matches the entire Stored loan, including
-      // parents, guards and paths; an attached result set is never evidence.
-      // Keep the scalar mapper below for results without that guarded domain.
-      if (completeResult &&
-          std::any_of(completeResult->dependencies.begin(),
-                      completeResult->dependencies.end(), [](const auto &item) {
-                        return !item.conditions.empty();
-                      }))
+      // Complete results use one origin authority: executable input replay
+      // against the independently reconstructed callee summary. That mandatory
+      // gate matches every supplier, parent, permission, path and guard against
+      // the whole published loan. It also distinguishes a reference input's
+      // physical storage from the external references stored inside it.
+      // The legacy scalar mapper below cannot express that distinction (or a
+      // conditional result excluding its first declared supplier). Use it only
+      // when no independently proved complete contract and result fact exist;
+      // an attached result annotation by itself never selects this path.
+      if (completeResult)
         continue;
 
       std::vector<MirLoanDependency> mappedCallSources;
@@ -6362,17 +6362,12 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
         const bool abstractEntry =
             candidate.entry && candidate.kind == MirLoanKind::Stored &&
             entrySource != nullptr &&
-            entrySource->root == dependencySource->root &&
-            entrySource->binding == dependencySource->binding &&
-            mir_detail::entryProjectionPrefix(body, *entrySource, dependencySource->projections) ==
-                std::optional<std::size_t>{dependencySource->projections.size()} &&
+            mir_detail::wholeEntryPlaceMatches(body, *entrySource, *dependencySource) &&
             (entrySource->root == MirPlaceRootKind::This ||
              entrySource->type.kind == SemanticType::Reference);
         const bool exactEntryLane = !candidate.entry ||
-            (entrySource && entrySource->root == dependencySource->root &&
-             entrySource->binding == dependencySource->binding &&
-             mir_detail::entryProjectionPrefix(body, *entrySource, dependencySource->projections) ==
-                 std::optional<std::size_t>{dependencySource->projections.size()});
+            (entrySource &&
+             mir_detail::wholeEntryPlaceMatches(body, *entrySource, *dependencySource));
         const bool carried =
             exactEntryLane && dependencySource->root == MirPlaceRootKind::Binding &&
             (std::find(candidate.carriers.begin(), candidate.carriers.end(),

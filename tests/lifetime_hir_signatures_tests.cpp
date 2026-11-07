@@ -369,6 +369,54 @@ int main() {
                    "construction body has ambiguous instance arguments") != rejected.errors.end(),
          "a lambda construction body cannot inherit unequal lifetime contexts");
 }
+void scopedClassAliases() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "scoped-class-aliases.gti", R"gti(
+class Mutable<R(Args...) mut> {
+public:
+  using Signature = R(Args...) mut;
+  Mutable() = default;
+  R invoke(Args... args) mut;
+};
+class Consuming<R&<result>(Args...) &&> {
+public:
+  using Signature = R&<result>(Args...) &&;
+  Consuming() = default;
+  R&<result> invoke(Args... args) &&;
+};
+using MutableSelection = for<lifetime a, lifetime b> int&<a>(int&<a>, int&<b>) mut;
+using ConsumingSelection = for<lifetime a, lifetime b> int&<a>(int&<a>, int&<b>) &&;
+Mutable<MutableSelection> mutableCallback();
+Consuming<ConsumingSelection> consumingCallback();
+int main() { return 0; }
+)gti");
+  if (!checked.canGenerateCode())
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(checked.canGenerateCode(), "qualified callable aliases reconstruct the exact closed owner recipe");
+  std::size_t examined = 0;
+  for (const auto &owner : checked.hir.classInstances())
+    for (std::size_t index = 0; index < owner.typeAliases.size(); ++index) {
+      const auto &alias = owner.typeAliases[index];
+      if (alias.type.kind != SemanticType::FunctionSignature ||
+          alias.type.signatureReceiver == ReceiverMutability::ReadOnly)
+        continue;
+      ++examined;
+      expect(alias.type.quantifiedLifetimes.size() == 2,
+             "alias reconstruction preserves every invocation binder");
+      for (int mutation = 0; mutation != 4; ++mutation) {
+        auto forged = checked.hir;
+        auto &type = const_cast<HirClassInstance &>(forged.classInstances()[owner.id - 1]).typeAliases[index].type;
+        if (mutation == 0) type.signatureReceiver = ReceiverMutability::ReadOnly;
+        if (mutation == 1) type.quantifiedLifetimes.clear();
+        if (mutation == 2) type.arguments.front().referenceLifetime = Lifetime::staticLifetime();
+        if (mutation == 3) type.arguments.back().referenceLifetime = type.arguments[1].referenceLifetime;
+        expect(!verifyHirProgramPlans(checked.semantics, forged).valid(),
+               "alias verification rejects changed receiver kind, binder scope, fixed region and correlation");
+      }
+    }
+  expect(examined == 2, "alias fixture verifies both qualified owner recipes");
+}
 void projectedOnlyCallableOwners() {
   const auto result = Frontend({.stopAfter = FrontendPhase::Mir})
       .analyze("projected-only-callable-owner-scopes.gti", R"gti(
@@ -514,6 +562,7 @@ int main() {
   contextualOperatorApplication();
   defaultFieldCallableUniverse();
   projectedOnlyCallableOwners();
+  scopedClassAliases();
   nativeInvocationContexts();
   constructionLifetimeContexts();
   selectedBaseInputs();

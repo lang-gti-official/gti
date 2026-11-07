@@ -1237,6 +1237,74 @@ int main() {
   return true;
 }
 
+bool checkCompletePhysicalReferenceSources() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "complete-physical-reference-sources.gti", R"gti(
+[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) {
+  unsafe { return *address; }
+}
+struct View<lifetime a> {
+  int&<a> external; int local = 7;
+  View(int&<a> input) : external(input) {}
+  int& read() { unsafe { return borrow(&this.local, this); } }
+};
+int main() { int value = 3; View view{value}; return view.read() - 7; }
+)gti");
+  if (!checked.canGenerateCode()) {
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return false;
+  }
+  bool exercised = false;
+  for (const auto &function : checked.mir.functionInstances()) {
+    if (function.owner || !function.parameterTypes.empty())
+      continue;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *loan = instruction.loan ? function.body.findLoan(*instruction.loan) : nullptr;
+        const auto *value = instruction.result ? function.body.findValue(*instruction.result) : nullptr;
+        if (instruction.kind != MirInstructionKind::Call || !instruction.functionTarget ||
+            !loan || loan->kind != MirLoanKind::CallResult || loan->additionalDependencies.size() != 1 ||
+            !value || !value->borrowDependencies || value->borrowDependencies->dependencies.size() != 2)
+          continue;
+        expect(loan->source != loan->additionalDependencies.front().source,
+               "complete reference result separates carrier storage and its stored external source");
+        for (int mutation = 0; mutation != 4; ++mutation) {
+          auto forged = checked.mir;
+          auto *changed = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+          auto &group = changed->body.loans[loan->id - 1];
+          auto &facts = changed->body.values[value->id - 1].borrowDependencies->dependencies;
+          if (mutation == 0) {
+            const auto omitted = group.additionalDependencies.front().source;
+            group.additionalDependencies.clear();
+            std::erase_if(facts, [&](const auto &fact) { return fact.source == omitted; });
+          } else if (mutation == 1) {
+            const auto old = group.source;
+            group.source = group.additionalDependencies.front().source;
+            for (auto &fact : facts)
+              if (fact.source == old) fact.source = group.source;
+          } else if (mutation == 2) {
+            group.access = AccessMode::Mutable;
+            for (auto &dependency : group.additionalDependencies)
+              dependency.access = AccessMode::Mutable;
+            for (auto &fact : facts)
+              fact.access = AccessMode::Mutable;
+          } else {
+            auto &call = *std::find_if(changed->body.blocks[block.id - 1].instructions.begin(),
+                changed->body.blocks[block.id - 1].instructions.end(),
+                [&](const auto &candidate) { return candidate.id == instruction.id; });
+            call.borrowFields.clear();
+          }
+          expect(!verifyMirProgram(forged).valid(),
+                 "complete replay rejects coordinated missing, collapsed, upgraded and unsummarized sources");
+        }
+        exercised = true;
+      }
+  }
+  expect(exercised, "physical-reference regression exercises both independently required sources");
+  return true;
+}
+
 bool checkReferencedCarrierInitializer() {
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "referenced-carrier-initializer.gti", R"gti(
@@ -1466,12 +1534,13 @@ int main() {
 } // namespace
 
 int main() {
+  const bool physicalReferences = checkCompletePhysicalReferenceSources();
   const bool referencedInitializer = checkReferencedCarrierInitializer();
   const bool rawOwnerFacts = checkRawOwnerLifetimeFacts();
   const bool ownerSuppliers = checkPhysicalOwnerSuppliers();
   const bool referenceInitializers = checkCompleteReferenceInitializers();
   const bool consumingResults = checkConsumingExternalBorrowResults();
-  expect(referencedInitializer && rawOwnerFacts && ownerSuppliers && referenceInitializers && consumingResults,
+  expect(physicalReferences && referencedInitializer && rawOwnerFacts && ownerSuppliers && referenceInitializers && consumingResults,
          "reference publication and consuming result fixtures must both reach independently verified MIR");
   const auto frontend = Frontend({.stopAfter = FrontendPhase::Mir})
                             .analyze("lifetime-mir-contracts.gti", R"gti(

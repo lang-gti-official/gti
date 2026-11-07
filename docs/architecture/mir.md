@@ -772,8 +772,12 @@ contents must match before the copied value adopts the stored group's parent.
 The body-flow replay retains those normalized inputs for the independent
 payload and cleanup-handoff checks; no attached result claim supplies them.
 Value-annotation and return-contract checks share the same producer/storage
-dataflow reconstruction. A conditional complete call or constructor result
-can exclude the declaration's first compact supplier, such as an empty first
+dataflow reconstruction. Independently proved complete direct-call and constructor results use that
+replay, including scalar references whose lifetime suppliers
+include both an object's storage and its stored external references. The legacy
+single-origin mapper handles results without a complete contract; it cannot
+substitute a stored referent for the containing object's storage. A conditional
+complete call or constructor result can exclude the declaration's first compact supplier, such as an empty first
 enum field. Its exact active sources therefore use this mandatory complete-set
 replay instead of the scalar first-origin mapper. The reconstructed sources
 must equal the entire published Stored group, including parents, access,

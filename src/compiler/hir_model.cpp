@@ -1133,6 +1133,135 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     verifyConcreteBindings(instance.body);
   for (const auto &instance : program.lambdaInstances())
     verifyConcreteBindings(instance.body);
+  const auto bindConstructionArguments =
+      [&](GenericSubstitution &substitution,
+          const std::vector<GenericParameterInfo> &parameters,
+          const std::vector<SemanticType> &types,
+          const std::vector<CompileTimeValue> &values,
+          const std::vector<Lifetime> &lifetimes) {
+        std::size_t typeIndex = 0, valueIndex = 0, lifetimeIndex = 0;
+        for (const auto &parameter : parameters) {
+          if (parameter.lifetime) {
+            if (lifetimeIndex >= lifetimes.size()) {
+              result.errors.emplace_back("construction lifetime arguments are incomplete");
+              continue;
+            }
+            const auto argument = lifetimes[lifetimeIndex++];
+            if (!argument.specified())
+              result.errors.emplace_back("construction lifetime argument is unspecified");
+            else if (const auto [found, inserted] =
+                         substitution.lifetimes.emplace(parameter.id, argument);
+                     !inserted && found->second != argument)
+              result.errors.emplace_back("construction lifetime arguments conflict");
+          } else if (!parameter.typeArgumentPath.empty()) {
+            if (auto type = projectGenericTypeArgument(
+                    types, parameter.typeArgumentPath, parameter.id,
+                    parameter.pack))
+              if (const auto [found, inserted] =
+                      substitution.types.emplace(parameter.id, *type);
+                  !inserted && found->second != *type)
+                result.errors.emplace_back(
+                    "construction type arguments conflict");
+          } else if (parameter.pack) {
+            if (typeIndex <= types.size()) {
+              std::vector<SemanticType> elements(types.begin() + typeIndex,
+                                                 types.end());
+              const auto pack = SemanticType::concreteTypePack(
+                  parameter.id, std::move(elements));
+              if (const auto [found, inserted] =
+                      substitution.types.emplace(parameter.id, pack);
+                  !inserted && found->second != pack)
+                result.errors.emplace_back(
+                    "construction pack arguments conflict");
+              typeIndex = types.size();
+            }
+          } else if (parameter.value) {
+            if (valueIndex < values.size()) {
+              const auto &argument = values[valueIndex++];
+              if (const auto [found, inserted] =
+                      substitution.values.emplace(parameter.id, argument);
+                  !inserted && found->second != argument)
+                result.errors.emplace_back(
+                    "construction value arguments conflict");
+            }
+          } else if (typeIndex < types.size()) {
+            const auto &argument = types[typeIndex++];
+            if (const auto [found, inserted] =
+                    substitution.types.emplace(parameter.id, argument);
+                !inserted && found->second != argument)
+              result.errors.emplace_back(
+                  "construction type arguments conflict");
+          }
+        }
+        if (lifetimeIndex != lifetimes.size())
+          result.errors.emplace_back("construction lifetime arguments exceed their declaration");
+      };
+  const auto declaredConstructionLifetimes = [&](const auto &parameters,
+                                                  const LifetimeSignatureContract &contract) {
+    std::vector<Lifetime> lifetimes;
+    for (const auto &parameter : parameters)
+      if (parameter.lifetime) {
+        const auto region = Lifetime::parameter(parameter.id);
+        if (std::find(contract.parameters.begin(), contract.parameters.end(), region) ==
+            contract.parameters.end())
+          result.errors.emplace_back("construction context lacks its callable lifetime binder");
+        lifetimes.push_back(region);
+      }
+    return lifetimes;
+  };
+  const auto constructionClassContext = [&](HirClassInstanceId identity,
+                                             const SemanticType *callableOwner = nullptr) {
+    GenericSubstitution substitution;
+    const auto *instance =
+        identity != 0 && identity <= program.classInstances().size() &&
+                program.classInstances()[identity - 1].id == identity
+            ? &program.classInstances()[identity - 1]
+            : nullptr;
+    const auto *declaration =
+        instance ? semantics.findClassType(instance->declaration) : nullptr;
+    if (!declaration)
+      return substitution;
+    if (callableOwner && callableOwner->kind == SemanticType::Unknown &&
+        (!instance->lifetimeContract.parameters.empty() || !instance->liftedLifetimes.empty())) {
+      result.errors.emplace_back("construction context lacks its callable owner lifetime scope");
+      return substitution;
+    }
+    const SemanticType &ownerType = callableOwner && callableOwner->kind != SemanticType::Unknown
+        ? *callableOwner : instance->type;
+    if (!matchUniversalTypeLifetimes(instance->type, ownerType,
+                                    instance->lifetimeContract.parameters)) {
+      result.errors.emplace_back("construction context lost its exact callable owner type");
+      return substitution;
+    }
+    const auto *publicDeclaration = semantics.findPublicClassType(instance->declaration);
+    if (!publicDeclaration) {
+      result.errors.emplace_back("construction context lacks its public class arguments");
+      return substitution;
+    }
+    bindConstructionArguments(substitution, publicDeclaration->genericParameters,
+                              ownerType.arguments, ownerType.valueArguments,
+                              ownerType.lifetimeArguments);
+    if (!declaration->genericArgumentPatterns.empty()) {
+      GenericSubstitution valuesOnly;
+      valuesOnly.values = substitution.values;
+      valuesOnly.lifetimes = substitution.lifetimes;
+      std::vector<SemanticType> patterns;
+      for (const auto &pattern : declaration->genericArgumentPatterns)
+        patterns.push_back(substituteHirSemanticType(pattern, valuesOnly, &semantics));
+      const auto matched = deriveGenericArgumentPatternSubstitution(
+          patterns, ownerType.arguments,
+          genericParameterIdentities(publicDeclaration->genericParameters),
+          genericParameterIdentities(declaration->genericArgumentPatternLifetimes),
+          substitution);
+      if (!matched) {
+        result.errors.emplace_back("construction context lost its exact projected lifetime arguments");
+        substitution.valid = false;
+      } else {
+        substitution = *matched;
+      }
+    }
+    return substitution;
+  };
   for (const auto &instance : program.classInstances()) {
     verifyConcreteBindings(instance.fieldInitializers);
     verifyConcreteBindings(instance.staticFieldInitializers);
@@ -1143,32 +1272,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           "HIR class alias inventory differs from semantics");
       continue;
     }
-    GenericSubstitution substitution;
-    std::size_t typeIndex = 0, valueIndex = 0;
-    for (const auto &parameter : owner->genericParameters) {
-      if (!parameter.typeArgumentPath.empty()) {
-        if (auto type = projectGenericTypeArgument(
-                instance.typeArguments, parameter.typeArgumentPath,
-                parameter.id, parameter.pack))
-          substitution.types.emplace(parameter.id, std::move(*type));
-      } else if (parameter.value) {
-        if (valueIndex < instance.valueArguments.size())
-          substitution.values.emplace(parameter.id,
-                                      instance.valueArguments[valueIndex++]);
-      } else if (parameter.pack) {
-        std::vector<SemanticType> elements(
-            instance.typeArguments.begin() +
-                static_cast<std::ptrdiff_t>(typeIndex),
-            instance.typeArguments.end());
-        substitution.types.emplace(
-            parameter.id,
-            SemanticType::concreteTypePack(parameter.id, std::move(elements)));
-        typeIndex = instance.typeArguments.size();
-      } else if (typeIndex < instance.typeArguments.size()) {
-        substitution.types.emplace(parameter.id,
-                                   instance.typeArguments[typeIndex++]);
-      }
-    }
+    // Aliases and dispatch views use the same exact selected owner recipe as
+    // construction contexts, including compact lifetime and scoped callable
+    // arguments. Raw projected type leaves are not an independent authority.
+    const auto substitution = constructionClassContext(instance.id);
     if (instance.virtualDispatch.size() != owner->virtualDispatch.size())
       result.errors.emplace_back(
           "HIR virtual dispatch inventory differs from semantic selection");
@@ -1701,135 +1808,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       result.errors.emplace_back(
           "construction body has ambiguous instance arguments");
     }
-  };
-  const auto bindConstructionArguments =
-      [&](GenericSubstitution &substitution,
-          const std::vector<GenericParameterInfo> &parameters,
-          const std::vector<SemanticType> &types,
-          const std::vector<CompileTimeValue> &values,
-          const std::vector<Lifetime> &lifetimes) {
-        std::size_t typeIndex = 0, valueIndex = 0, lifetimeIndex = 0;
-        for (const auto &parameter : parameters) {
-          if (parameter.lifetime) {
-            if (lifetimeIndex >= lifetimes.size()) {
-              result.errors.emplace_back("construction lifetime arguments are incomplete");
-              continue;
-            }
-            const auto argument = lifetimes[lifetimeIndex++];
-            if (!argument.specified())
-              result.errors.emplace_back("construction lifetime argument is unspecified");
-            else if (const auto [found, inserted] =
-                         substitution.lifetimes.emplace(parameter.id, argument);
-                     !inserted && found->second != argument)
-              result.errors.emplace_back("construction lifetime arguments conflict");
-          } else if (!parameter.typeArgumentPath.empty()) {
-            if (auto type = projectGenericTypeArgument(
-                    types, parameter.typeArgumentPath, parameter.id,
-                    parameter.pack))
-              if (const auto [found, inserted] =
-                      substitution.types.emplace(parameter.id, *type);
-                  !inserted && found->second != *type)
-                result.errors.emplace_back(
-                    "construction type arguments conflict");
-          } else if (parameter.pack) {
-            if (typeIndex <= types.size()) {
-              std::vector<SemanticType> elements(types.begin() + typeIndex,
-                                                 types.end());
-              const auto pack = SemanticType::concreteTypePack(
-                  parameter.id, std::move(elements));
-              if (const auto [found, inserted] =
-                      substitution.types.emplace(parameter.id, pack);
-                  !inserted && found->second != pack)
-                result.errors.emplace_back(
-                    "construction pack arguments conflict");
-              typeIndex = types.size();
-            }
-          } else if (parameter.value) {
-            if (valueIndex < values.size()) {
-              const auto &argument = values[valueIndex++];
-              if (const auto [found, inserted] =
-                      substitution.values.emplace(parameter.id, argument);
-                  !inserted && found->second != argument)
-                result.errors.emplace_back(
-                    "construction value arguments conflict");
-            }
-          } else if (typeIndex < types.size()) {
-            const auto &argument = types[typeIndex++];
-            if (const auto [found, inserted] =
-                    substitution.types.emplace(parameter.id, argument);
-                !inserted && found->second != argument)
-              result.errors.emplace_back(
-                  "construction type arguments conflict");
-          }
-        }
-        if (lifetimeIndex != lifetimes.size())
-          result.errors.emplace_back("construction lifetime arguments exceed their declaration");
-      };
-  const auto declaredConstructionLifetimes = [&](const auto &parameters,
-                                                  const LifetimeSignatureContract &contract) {
-    std::vector<Lifetime> lifetimes;
-    for (const auto &parameter : parameters)
-      if (parameter.lifetime) {
-        const auto region = Lifetime::parameter(parameter.id);
-        if (std::find(contract.parameters.begin(), contract.parameters.end(), region) ==
-            contract.parameters.end())
-          result.errors.emplace_back("construction context lacks its callable lifetime binder");
-        lifetimes.push_back(region);
-      }
-    return lifetimes;
-  };
-  const auto constructionClassContext = [&](HirClassInstanceId identity,
-                                             const SemanticType *callableOwner = nullptr) {
-    GenericSubstitution substitution;
-    const auto *instance =
-        identity != 0 && identity <= program.classInstances().size() &&
-                program.classInstances()[identity - 1].id == identity
-            ? &program.classInstances()[identity - 1]
-            : nullptr;
-    const auto *declaration =
-        instance ? semantics.findClassType(instance->declaration) : nullptr;
-    if (!declaration)
-      return substitution;
-    if (callableOwner && callableOwner->kind == SemanticType::Unknown &&
-        (!instance->lifetimeContract.parameters.empty() || !instance->liftedLifetimes.empty())) {
-      result.errors.emplace_back("construction context lacks its callable owner lifetime scope");
-      return substitution;
-    }
-    const SemanticType &ownerType = callableOwner && callableOwner->kind != SemanticType::Unknown
-        ? *callableOwner : instance->type;
-    if (!matchUniversalTypeLifetimes(instance->type, ownerType,
-                                    instance->lifetimeContract.parameters)) {
-      result.errors.emplace_back("construction context lost its exact callable owner type");
-      return substitution;
-    }
-    const auto *publicDeclaration = semantics.findPublicClassType(instance->declaration);
-    if (!publicDeclaration) {
-      result.errors.emplace_back("construction context lacks its public class arguments");
-      return substitution;
-    }
-    bindConstructionArguments(substitution, publicDeclaration->genericParameters,
-                              ownerType.arguments, ownerType.valueArguments,
-                              ownerType.lifetimeArguments);
-    if (!declaration->genericArgumentPatterns.empty()) {
-      GenericSubstitution valuesOnly;
-      valuesOnly.values = substitution.values;
-      valuesOnly.lifetimes = substitution.lifetimes;
-      std::vector<SemanticType> patterns;
-      for (const auto &pattern : declaration->genericArgumentPatterns)
-        patterns.push_back(substituteHirSemanticType(pattern, valuesOnly, &semantics));
-      const auto matched = deriveGenericArgumentPatternSubstitution(
-          patterns, ownerType.arguments,
-          genericParameterIdentities(publicDeclaration->genericParameters),
-          genericParameterIdentities(declaration->genericArgumentPatternLifetimes),
-          substitution);
-      if (!matched) {
-        result.errors.emplace_back("construction context lost its exact projected lifetime arguments");
-        substitution.valid = false;
-      } else {
-        substitution = *matched;
-      }
-    }
-    return substitution;
   };
   addConstructionContext(program.module(), {});
   for (const auto &storage : program.threadLocalStorage())

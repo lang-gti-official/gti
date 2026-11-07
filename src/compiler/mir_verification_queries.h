@@ -395,6 +395,11 @@ fusedSignedMinimumNegation(const MirBody &body, const MirInstruction &carrier);
 [[nodiscard]] std::optional<std::size_t> entryProjectionPrefix(
     const MirBody &, const MirPlace &entry,
     std::span<const MirPlaceProjection> selected);
+// Match a whole entry lane or its exact physical reference referent. The
+// complete pack prefix and type remain exact; no field, payload or second
+// reference crossing is implied. Access, guards and liveness remain separate.
+[[nodiscard]] bool wholeEntryPlaceMatches(const MirBody &, const MirPlace &entry,
+                                          const MirPlace &selected);
 [[nodiscard]] std::optional<MirPlaceId>
 borrowSourceForPlace(const MirBody &body, MirPlaceId place, std::size_t depth);
 [[nodiscard]] std::optional<MirPlaceId>

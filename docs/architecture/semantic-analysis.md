@@ -1199,7 +1199,10 @@ inherit them with base value/function members. Type lookup, concrete generic
 reanalysis, and tooling all consume the same resolved target. Type lookup
 through a concrete type alias substitutes the containing specialization
 at every member step, preserving access checks on the qualifier chain and
-source identities for both qualifiers and selected members. Written specialized
+source identities for both qualifiers and selected members. Calling an alias as
+a constructor uses that same type application: anonymous alias regions are
+inferred at each use, while explicitly fixed regions remain exact.
+Written specialized
 type qualifiers use `TypeRef::qualifiedOwner` to retain each segment's generic
 arguments (`Box<T>::nested::value_type`), rather than appending them to the final
 alias. The ordinary class selection and substitution path resolves each owner;
@@ -1554,14 +1557,19 @@ Named calls, invocation pointers, function items, lambdas and deferred callable
 parameters use this same staging boundary. Target, access, unsafe and declared
 call requirements remain checked; a lambda parameter's deferred requirement is
 attached to its own binding, not an enclosing function's parameter ordinal.
+During concrete lambda reanalysis, that call's contextual result is resolved in
+the current lambda scope; primary-body environment names are not reused as
+independent lifetime requirements.
 After selection, a contextual reference result is checked with the completed
 pending lifetime application and the ordinary type-conversion constraints.
 Its existential invocation region may meet the requested result region only
 when every resulting fixed-region obligation is proved. The selected result
 type and complete supplier proof remain unchanged; this adds no runtime state.
-A known leading reference may be checked before an unresolved trailing pack by
-running the ordinary formal-input derivation and return normalizer on that exact
-leading slice. Published parameter binding metadata and the active body symbol
+A known leading reference or method receiver may be checked before an unresolved
+trailing pack by running the ordinary formal-input derivation and return
+normalizer on that exact leading slice and receiver. A consumed receiver still
+permits only proven external reference paths, never its physical shell.
+Published parameter binding metadata and the active body symbol
 use the same symbolic group for an explicit source reference pack, while the
 callable signature retains its reference-pack recipe. An ordinary reference to
 a pack remains one reference. This validates only those known origins; it
@@ -2573,6 +2581,9 @@ requirement cannot obtain a reference from a returned value. Namespace function
 items retain their exact declaration identity, fixed static choices and
 quantified invocation regions. Executable type canonicalization renames only
 those bound regions; it does not infer a captured environment for the item.
+An unused reference parameter is proven only from a fully checked body owned by
+the current semantic model. Skipped dependent branches provide no unused-parameter
+evidence; their concrete instances still perform ordinary value and call checks.
 Each invocation uses the ordinary selected lifetime application and complete
 result publication before HIR consumes it. A direct
 generic-parameter or generic-field invocation used as a call argument can also

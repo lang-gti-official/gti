@@ -316,7 +316,10 @@ Class instances retain an ordered type-alias catalog pairing the primary
 semantic `TypeAliasId` with the exact owner-substituted type. Semantic instance
 analysis resolves aliases, including checked value-generic expressions and
 exact nominal specializations; HIR verifies the declaration order and closed
-types against the primary semantic catalog. MIR preserves these rows without
+types against the primary semantic catalog. This check derives the same exact
+selected class context used by construction plans, including explicit lifetime
+arguments and closed callable-pattern scopes. It preserves receiver qualifiers,
+fixed regions, and correlations between invocation binders. MIR preserves these rows without
 source pointers. Detached lowering checks them independently against the
 resolved declaration inventory. Retaining this catalog does not itself enqueue
 class layouts; executable fields, calls and signatures discover the concrete

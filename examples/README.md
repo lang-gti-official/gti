@@ -259,7 +259,7 @@ is a teaching helper, not a production server.
 | `012-fixed-arrays.gti` | bounded arrays, signed literals, passive records/unions, checked raw record array fields, receiver element-field projections, and indexing fresh call and move results |
 | `013-ownership.gti` | non-null borrows, unique allocation, moves, and cleanup |
 | `014-operators.gti` | restricted member operators; self-read dereference stores, named mutable-reference assignment, nested subscripts and once-formed compound targets |
-| `015-variadic-generics.gti` | confined type packs, reference-result callable forwarding, fixed-arity and base-constructor forwarding, defaults, and exact passive fixed-array arguments |
+| `015-variadic-generics.gti` | confined type packs, reference-result callable forwarding, receiver borrows with trailing packs, fixed-arity and base-constructor forwarding, defaults, and exact passive fixed-array arguments |
 | `016-move-generics.gti` | ownership-aware concrete generic instances |
 | `017-standard-array.gti` | standard imports and source-defined `std::array<T, N>` |
 | `018-lambdas.gti` | typed lambdas with explicit immutable value captures |

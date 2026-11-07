@@ -14,6 +14,45 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "deferred_callable_copy_evidence": """
+import std.utility;
+T duplicate<T>(T& value) {
+  if constexpr (std::copy_constructible<T>) { return value; }
+  else { return value.clone(); }
+}
+int identity(int input) { return input; }
+int main() {
+  auto first = duplicate(identity); auto second = std::clone(identity);
+  return first(3) + second(7) - 10;
+}
+""",
+    "receiver_pack_alias_regions": """
+struct Slots<T> {
+  int count; Slots(int input) : count(input) {}
+  int size() { return this.count; }
+};
+class Cursor<T> {
+  Slots<T>& slots;
+public:
+  Cursor(Slots<T>& input) : slots(input) {}
+  int read() { return this.slots.size(); }
+};
+struct Buffer<T> {
+  Slots<T> data;
+  using iterator = Cursor<T>;
+  Buffer(int input) : data(Slots<T>(input)) {}
+  iterator begin() { return iterator(this.data); }
+};
+struct Box {
+  mut int value; Box(int input) : value(input) {}
+  mut int& get<Args...>(Args... ignored) mut { return this.value; }
+};
+int main() {
+  Buffer<int> buffer{7}; auto cursor = buffer.begin();
+  mut Box box{3}; box.get() = 5; box.get(false) = 7;
+  return cursor.read() + box.get(true, 2) - 14;
+}
+""",
     "symbolic_callable_pack_results": """
 class Forward<R&<result>(Args...)> {
 public:
@@ -64,6 +103,15 @@ int main() {
   Wrapper wrapper{first};
   return read(first, second) + wrapper.read() + copied(first, second) - 21;
 }
+""",
+    "checked_physical_carrier_owner": """
+[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
+struct View<lifetime a> {
+  int&<a> external; int local = 7;
+  View(int&<a> input) : external(input) {}
+  int& read() { unsafe { return borrow(&this.local, this); } }
+};
+int main() { int value = 3; View view{value}; return view.read() - 7; }
 """,
     "stored_reference_carrier_constructor": """
 struct View<lifetime a> {

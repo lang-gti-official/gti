@@ -2320,6 +2320,137 @@ int main() { int first = 1; int other = 2; return invalid(first, other); }
          "known leading formals cannot authorize an independent trailing pack supplier");
 }
 
+void testAliasConstructionLifetimeApplications() {
+  const std::string declarations = R"(
+struct Slots<T> {
+  int count; Slots(int input) : count(input) {}
+  int size() { return this.count; }
+};
+class Cursor<T> {
+  Slots<T>& slots;
+public:
+  Cursor(Slots<T>& input) : slots(input) {}
+  int read() { return this.slots.size(); }
+};
+struct Buffer<T> {
+  Slots<T> data;
+  using iterator = Cursor<T>;
+  Buffer(int input) : data(Slots<T>(input)) {}
+  iterator begin() { return iterator(this.data); }
+};
+struct View<lifetime a> {
+  int&<a> value; View(int&<a> input) : value(input) {}
+};
+using Inferred = View;
+using Fixed = View<static>;
+int&<a> independent<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
+  Inferred left = Inferred(first); Inferred right = Inferred(second);
+  return left.value;
+}
+)";
+  const auto valid = analyze(declarations + R"(
+int main() {
+  Buffer<int> buffer{7}; auto cursor = buffer.begin();
+  int first = 3; int second = 4;
+  return cursor.read() + independent(first, second) - 10;
+}
+)");
+  expectValid(valid,
+              "alias construction instantiates anonymous regions per use while retaining the selected generic owner");
+  const auto fixed = analyze(declarations + R"(
+Fixed invalid<lifetime a>(int&<a> input) { return Fixed(input); }
+int main() { return 0; }
+)");
+  expect(fixed.syntaxValid && !fixed.semanticValid,
+         "alias construction cannot freshen an explicitly fixed static region");
+  const auto escaped = analyze(declarations + R"(
+View<static> invalid() { int local = 3; return Inferred(local); }
+int main() { return 0; }
+)");
+  expect(escaped.syntaxValid && !escaped.semanticValid,
+         "an inferred alias application still proves the result's escape boundary");
+}
+
+void testReceiverBeforeSymbolicPack() {
+  const auto valid = analyze(R"(
+struct Box {
+  mut int value;
+  Box(int input) : value(input) {}
+  mut int& get<Args...>(Args... ignored) mut { return this.value; }
+};
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+  int&<a> take<Args...>(Args... ignored) && { return this.value; }
+};
+int main() {
+  mut Box box{3}; box.get() = 5; box.get(false) = 7;
+  int external = 11;
+  return box.get(true, 2) + View(external).take(false) - 18;
+}
+)");
+  expectValid(valid,
+              "receiver storage and external reference paths remain known before an unresolved trailing pack");
+  const auto staticEscape = analyze(R"(
+struct Box {
+  int value; Box(int input) : value(input) {}
+  int&<static> get<Args...>(Args... ignored) { return this.value; }
+};
+int main() { Box box{7}; return box.get(); }
+)");
+  expect(staticEscape.syntaxValid && !staticEscape.semanticValid,
+         "known receiver staging cannot extend its physical storage to static");
+  const auto consumedShell = analyze(R"(
+struct Box {
+  int value; Box(int input) : value(input) {}
+  int& take<Args...>(Args... ignored) && { return this.value; }
+};
+int main() { return Box(7).take(false); }
+)");
+  expect(consumedShell.syntaxValid && !consumedShell.semanticValid,
+         "a consumed receiver shell remains invalid before a trailing pack is resolved");
+  const auto localSibling = analyze(R"(
+struct Box {
+  int value; Box(int input) : value(input) {}
+  int& get<Args...>(Args... ignored) { int local = 7; return local; }
+};
+int main() { Box box{3}; return box.get(); }
+)");
+  expect(localSibling.syntaxValid && !localSibling.semanticValid,
+         "a known receiver cannot authorize a sibling local return origin");
+}
+
+void testDependentCallableUseEvidence() {
+  const auto valid = analyze(R"(
+T duplicate<T>(T& value) {
+  if constexpr (std::copy_constructible<T>) { return value; }
+  else { return value.clone(); }
+}
+int ignore<F>(F& callback) { return 7; }
+int identity(int input) { return input; }
+int main() { auto copy = duplicate(identity); return copy(7) + ignore(copy) - 14; }
+)");
+  expectValid(valid,
+              "a deferred constexpr body does not fabricate an unused callable-parameter contract");
+  const auto *duplicate = function(valid, "duplicate");
+  expect(duplicate && duplicate->callableParameters.empty(),
+         "unvisited dependent branches provide no proof that a callable parameter is unused");
+  const auto *ignore = function(valid, "ignore");
+  expect(ignore && ignore->callableParameters.size() == 1 &&
+             ignore->callableParameters.front().boundary == lang::CallableBoundary::Confined,
+         "a fully checked unused parameter retains its confined contract");
+  const auto invalid = analyze(R"(
+int invoke<F>(F& callback) {
+  if constexpr (std::copy_constructible<F>) { return callback(7); }
+  else { return 0; }
+}
+int booleanOnly(bool value) { return 1; }
+int main() { auto callback = booleanOnly; return invoke(callback); }
+)");
+  expect(invalid.syntaxValid && !invalid.semanticValid,
+         "a selected dependent branch still checks the concrete callable's argument contract");
+}
+
 void testFreshCallableLifetimeArguments() {
   const std::string declarations = R"(
 int global = 7;
@@ -3097,6 +3228,9 @@ int main() {
   testBorrowedFromPackOrdinals();
   testScopedFunctionBorrowQuery();
   testReferencePackReturnContracts();
+  testAliasConstructionLifetimeApplications();
+  testReceiverBeforeSymbolicPack();
+  testDependentCallableUseEvidence();
   testFreshCallableLifetimeArguments();
   testReferencePackReborrows();
   testSymbolicCallablePackReturns();
