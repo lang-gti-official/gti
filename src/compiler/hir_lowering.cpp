@@ -3133,18 +3133,37 @@ private:
               const std::array<ConcreteFormalRoot, 1> roots{{{.binding = pack.symbol, .type = pack.info.type}}};
               const std::array<SemanticType, 1> signature{pack.info.type};
               const auto leaves = deriveConcreteFormalInputs(roots, signature);
-              if (!leaves || pack.operands.size() != 1 ||
+              const HirBinding *binding = nullptr;
+              for (const auto &candidate : body.bindings)
+                if (candidate.info.symbol == pack.symbol) {
+                  if (binding) {
+                    lifecycleValid = false;
+                    return;
+                  }
+                  binding = &candidate;
+                }
+              if (!leaves || !pack.operands.empty() || !binding ||
+                  !binding->parameter || !binding->parameter->pack ||
+                  binding->info.type != pack.info.type ||
                   leaves->size() != pack.packExpansionElements.size()) {
                 lifecycleValid = false;
                 return;
               }
+              // PackExpansion records the checked grouped binding, not an
+              // evaluated operand. A neutral Variable root addresses that
+              // same binding; each leaf below retains its exact index path.
+              const auto root = nextValueId++;
+              body.values.push_back({.id = root, .kind = HirValueKind::Variable,
+                  .info = {.type = binding->info.type, .category = ValueCategory::Place,
+                           .access = AccessMode::ReadOnly, .traits = binding->info.traits},
+                  .symbol = pack.symbol});
               for (std::size_t lane = 0; lane < leaves->size(); ++lane) {
                 const auto &leaf = (*leaves)[lane];
                 if (pack.packExpansionElements[lane].type != leaf.type) {
                   lifecycleValid = false;
                   return;
                 }
-                auto projected = pack.operands.front();
+                auto projected = root;
                 for (const auto &step : leaf.bindingPrefix) {
                   const auto *parent = body.findValue(projected);
                   if (!parent || step.kind != PlaceProjectionKind::ConstantIndex ||

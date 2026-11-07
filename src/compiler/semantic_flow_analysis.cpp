@@ -9071,7 +9071,12 @@ auto SemanticVisitor::Impl::memberReceiverIsMutable(const Get &member) const
 
 auto SemanticVisitor::Impl::transparentTemporaryProducer(
     const ExprPtr &expression) const -> const Expr * {
-  const Expr *producer = expression.get();
+  return transparentTemporaryProducer(expression.get());
+}
+
+auto SemanticVisitor::Impl::transparentTemporaryProducer(
+    const Expr *expression) const -> const Expr * {
+  const Expr *producer = expression;
   while (producer != nullptr) {
     const Expr *source = semanticModel.directInitializationSource(*producer);
     if (source == nullptr) {
@@ -9092,6 +9097,11 @@ auto SemanticVisitor::Impl::payloadEnumType(const SemanticType &type) const
 }
 
 auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
+    -> FreshTemporaryValueAssessment {
+  return freshTemporaryValue(expression.get());
+}
+
+auto SemanticVisitor::Impl::freshTemporaryValue(const Expr *expression) const
     -> FreshTemporaryValueAssessment {
   FreshTemporaryValueAssessment result;
   if (!expression) {
@@ -9116,7 +9126,7 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
     return result;
   }
   result.type = info->type;
-  if (isExplicitMoveReceiver(expression)) {
+  if (explicitMoveSource(expression) != nullptr) {
     result.failure = FreshTemporaryValueFailure::ExplicitMove;
     return result;
   }
@@ -9288,6 +9298,11 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
 }
 
 auto SemanticVisitor::Impl::freshTemporaryBorrowValue(const ExprPtr &expression)
+    -> FreshTemporaryValueAssessment {
+  return freshTemporaryBorrowValue(expression.get());
+}
+
+auto SemanticVisitor::Impl::freshTemporaryBorrowValue(const Expr *expression)
     -> FreshTemporaryValueAssessment {
   FreshTemporaryValueAssessment result = freshTemporaryValue(expression);
   if (result.failure != FreshTemporaryValueFailure::BorrowedState) {

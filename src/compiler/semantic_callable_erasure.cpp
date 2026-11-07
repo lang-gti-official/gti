@@ -275,23 +275,37 @@ auto SemanticVisitor::Impl::analyzeReferenceErasureCall(const Call &expr,
     return;
   }
   selected.lifetimeApplication.callableSignature = std::move(callable);
-  commitLifetimeApplication(selected.lifetimeApplication);
-  currentType = selected.returnType.arguments.front();
-  semanticModel.record(
-      expr, ResolvedCallInfo{
-                .returnType = std::move(selected.returnType),
-                .parameterTypes = std::move(selected.parameterTypes),
-                .typeArguments = std::move(typeArguments),
-                .valueArguments = std::move(valueArguments),
-                .lifetimeArguments = std::move(selected.lifetimeArguments),
-                .lifetimeApplication = std::move(selected.lifetimeApplication),
-                .requirements = std::move(selected.requirements),
-                .intrinsic = intrinsic,
-                .restoresReferenceResult = restoring,
-                .restoredBorrowFields = std::move(restoredFields),
-                .borrowOrigin = BorrowOriginKind::Argument,
-                .borrowArgument = 0,
-                .borrowAccess = access});
+  ResolvedCallInfo resolved{
+      .returnType = std::move(selected.returnType),
+      .parameterTypes = std::move(selected.parameterTypes),
+      .typeArguments = std::move(typeArguments),
+      .valueArguments = std::move(valueArguments),
+      .lifetimeArguments = std::move(selected.lifetimeArguments),
+      .lifetimeApplication = std::move(selected.lifetimeApplication),
+      .requirements = std::move(selected.requirements),
+      .intrinsic = intrinsic,
+      .restoresReferenceResult = restoring,
+      .restoredBorrowFields = std::move(restoredFields),
+      .borrowOrigin = BorrowOriginKind::Argument,
+      .borrowArgument = 0,
+      .borrowAccess = access};
+  const FunctionBorrowDependencySummary physicalInput{
+      .dependencies = {{.origin = BorrowOriginKind::Argument,
+                         .parameter = 0, .access = access}}};
+  auto complete = instantiateCompleteCallBorrow(expr, resolved, physicalInput);
+  if (!complete) {
+    report(expr.paren(), "Checked reference erasure must preserve the complete "
+                         "physical input borrow and its access permission.", "GTI-S2045");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  // Erasure changes the referent type, not which physical object is borrowed.
+  // In particular a reference to a carrier keeps its shell loan rather than
+  // substituting the separate external references stored inside that carrier.
+  commitLifetimeApplication(resolved.lifetimeApplication);
+  currentType = resolved.returnType.arguments.front();
+  semanticModel.record(expr, std::move(resolved));
+  semanticModel.recordBorrowDependencySet(expr, std::move(*complete));
 }
 
 auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,

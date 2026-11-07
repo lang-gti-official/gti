@@ -14,10 +14,30 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "opaque_stored_type_implications": """
+struct Cell<T> {
+  T value;
+  Cell(T input) : value(input) {}
+  int size() { return 1; }
+};
+struct Outer<T> {
+  Cell<T> cell;
+  Outer(T input) : cell(input) {}
+  int size() { return this.cell.size(); }
+};
+void need<T>() requires outlives<T, static> {}
+void relay<T>(Cell<T>&<static> input) { need<T>(); }
+Cell<int> stored{3};
+int main() {
+  Outer<int> value{7};
+  relay(stored);
+  return value.size() - 1;
+}
+""",
     "raw_pointer_storage_outlives": """
 void needs_static<T>(T* pointer) requires outlives<T*, static> {}
 void relay<T>(T* pointer) { needs_static(pointer); }
-struct Borrowed<lifetime a> { int&<a> value; };
+struct Borrowed<lifetime a> { int&<a> value; Borrowed(int&<a> source) : value(source) {} };
 void exercise<lifetime a>(int&<a> value) {
   Borrowed<a>* pointer = nullptr;
   relay(pointer);
@@ -57,7 +77,7 @@ int main() {
 }
 """,
     "reference_pack_reborrow": """
-void bump<T>(mut T& value) { value++; }
+void bump<T>(mut T& value) requires std::numeric<T> { value++; }
 void update<Args...>(mut Args&... values) { (bump(values), ...); }
 int main() {
   mut int left = 3; mut int right = 4;
@@ -113,6 +133,27 @@ int main() {
   View copy = Consumer(value).carrier();
   if (drops != 3 || copy.value != 7) { return 3; }
   return 0;
+}
+""",
+    "fresh_receiver_storage_regions": """
+mut int drops = 0;
+struct External<lifetime a> {
+  int&<a> value;
+  External(int&<a> input) : value(input) {}
+  ~External() { drops++; }
+  int&<a> release() && { return this.value; }
+};
+External<a> makeExternal<lifetime a>(int&<a> input) { return External<a>(input); }
+int&<a> direct<lifetime a>(int&<a> input) { return External<a>(input).release(); }
+int&<a> factory<lifetime a>(int&<a> input) { return makeExternal(input).release(); }
+int&<a> grouped<lifetime a>(int&<a> input) { return (External<a>(input)).release(); }
+int&<a> sequenced<lifetime a>(int&<a> input) { return (0, External<a>(input)).release(); }
+int main() {
+  int value = 7;
+  int& first = direct(value); int& second = factory(value);
+  int& third = grouped(value); int& fourth = sequenced(value);
+  if (drops != 4) { return 1; }
+  return first + second + third + fourth - 28;
 }
 """,
     "complete_scalar_constructor_inputs": """
@@ -275,11 +316,17 @@ int main() {
   return selected - 7;
 }
 """,
+    "fresh_function_item_regions": """
+int global = 7;
+int&<static> map(int ignored) { return global; }
+int observe<F>(F& callback) { return callback(0); }
+int main() { return observe(map) - 7; }
+""",
     "reference_pack_results": """
 int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
 int&<a> relay<lifetime a, Args...>(Args&<a>... values) { return second(values...); }
 int&<a> fixed<lifetime a, Args...>(int&<a> first, Args&... ignored) { return first; }
-void increment<T>(mut T& value) { value++; }
+void increment<T>(mut T& value) requires std::numeric<T> { value++; }
 void update<Args...>(mut Args&... values) { (increment(values), ...); }
 int main() {
   mut int first = 3; mut int selected = 8;

@@ -2320,10 +2320,10 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
         if (instruction.kind != MirInstructionKind::InitializeBase &&
             (returned.kind == SemanticType::Reference
                  ? returned.arguments.size() != 1 ||
-                       instruction.info.type != returned.arguments.front() ||
+                       !equivalentLifetimeTypes(instruction.info.type, returned.arguments.front()) ||
                        instruction.info.category != ValueCategory::Place ||
                        instruction.info.access != returned.referenceAccess
-                 : instruction.info.type != returned))
+                 : !equivalentLifetimeTypes(instruction.info.type, returned)))
           reject("MIR result differs from its lifetime-instantiated signature",
                  block.id, instruction.id);
       }

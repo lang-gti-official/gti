@@ -1,4 +1,5 @@
 #include "gti/hir.h"
+#include "gti/concrete_formals.h"
 #include "gti/instance_analysis_cache.h"
 #include "gti/generic_type_patterns.h"
 #include "gti/lifetime_types.h"
@@ -777,7 +778,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   }
   const auto verifyConcreteBindings = [&](const HirBody &body,
                                           const std::vector<HirValueId>
-                                              &initializerValues = {}) {
+                                              &initializerValues = {},
+                                          const HirConstructorInstance *constructor = nullptr) {
     std::unordered_set<HirValueId> expandedCalls;
     std::unordered_set<HirValueId> expandedInputs;
     std::unordered_set<HirValueId> expandedElements;
@@ -922,6 +924,82 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             "HIR fold lost its exact ordered call, named input or concrete "
             "pack-element projection");
     }
+    if (constructor)
+      for (const auto &initializer : constructor->initializers) {
+        if (initializer.kind != ConstructorInitializerTargetKind::Base || !initializer.source)
+          continue;
+        std::size_t input = 0;
+        bool exact = true;
+        for (const auto &written : initializer.source->arguments) {
+          const auto *pack = written ? body.valueForSource(*written) : nullptr;
+          if (!pack || pack->kind != HirValueKind::PackExpansion) {
+            if (input >= initializer.explicitArgumentCount) exact = false;
+            ++input;
+            continue;
+          }
+          const HirBinding *binding = nullptr;
+          for (const auto &candidate : body.bindings)
+            if (candidate.info.symbol == pack->symbol) {
+              if (binding) exact = false;
+              binding = &candidate;
+            }
+          const std::array<ConcreteFormalRoot, 1> roots{{
+              {.binding = binding ? binding->id : 0, .type = pack->info.type}}};
+          const std::array<SemanticType, 1> signature{pack->info.type};
+          const auto leaves = deriveConcreteFormalInputs(roots, signature);
+          if (!binding || !binding->parameter || !binding->parameter->pack ||
+              binding->info.type != pack->info.type || !pack->operands.empty() ||
+              !leaves || leaves->size() != pack->packExpansionElements.size()) {
+            exact = false;
+            break;
+          }
+          HirValueId sharedRoot = 0;
+          for (const auto &leaf : *leaves) {
+            if (input >= initializer.explicitArgumentCount || input >= initializer.arguments.size()) {
+              exact = false;
+              break;
+            }
+            const auto *value = body.findValue(initializer.arguments[input++]);
+            auto expected = leaf.type;
+            for (auto step = leaf.bindingPrefix.rbegin(); step != leaf.bindingPrefix.rend(); ++step) {
+              if (!value || step->kind != PlaceProjectionKind::ConstantIndex ||
+                  value->kind != HirValueKind::PackElement || value->packElement != step->index ||
+                  value->symbol != pack->symbol || value->source || value->operands.size() != 1 ||
+                  value->info.type != expected || value->info.category != ValueCategory::Place ||
+                  value->info.access != AccessMode::ReadOnly || value->place || value->ownership ||
+                  value->unsafeOperation != UnsafeOperationKind::None || !value->definedFailure.empty() ||
+                  value->functionTarget || value->constructorTarget || value->lambdaTarget || value->callPlan ||
+                  !value->sequencedInputs.empty() || !expandedElements.insert(value->id).second) {
+                exact = false;
+                break;
+              }
+              const auto *parent = body.findValue(value->operands.front());
+              if (!parent || parent->info.type.kind != SemanticType::TypePack ||
+                  !parent->info.type.concretePack || step->index >= parent->info.type.arguments.size() ||
+                  parent->info.type.arguments[step->index] != expected) {
+                exact = false;
+                break;
+              }
+              value = parent;
+              expected = parent->info.type;
+            }
+            if (!exact || !value || value->kind != HirValueKind::Variable || value->source ||
+                value->symbol != pack->symbol || value->info.type != binding->info.type ||
+                value->info.category != ValueCategory::Place || value->info.access != AccessMode::ReadOnly ||
+                value->info.traits != binding->info.traits || !value->operands.empty() ||
+                value->place || value->ownership || value->functionTarget || value->constructorTarget ||
+                value->unsafeOperation != UnsafeOperationKind::None || !value->definedFailure.empty() ||
+                value->lambdaTarget || value->callPlan || !value->sequencedInputs.empty() ||
+                (sharedRoot && sharedRoot != value->id)) {
+              exact = false;
+              break;
+            }
+            sharedRoot = value->id;
+          }
+        }
+        if (!exact || input != initializer.explicitArgumentCount)
+          result.errors.emplace_back("HIR Base pack inputs lost their exact grouped binding or index sequence");
+      }
     for (const auto &value : body.values)
       if ((value.kind == HirValueKind::PackElement) !=
               value.packElement.has_value() ||
@@ -1050,7 +1128,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   for (const auto &instance : program.functionInstances())
     verifyConcreteBindings(instance.body);
   for (const auto &instance : program.constructorInstances())
-    verifyConcreteBindings(instance.body, instance.initializerValues);
+    verifyConcreteBindings(instance.body, instance.initializerValues, &instance);
   for (const auto &instance : program.destructorInstances())
     verifyConcreteBindings(instance.body);
   for (const auto &instance : program.lambdaInstances())

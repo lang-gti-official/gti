@@ -7417,9 +7417,13 @@ auto SemanticVisitor::Impl::resolveOperator(
                               receiverProduction->place)}
                         : loanPlace(receiver);
   }
+  // Match ordinary calls: consuming a fresh carrier owns its shell, but does
+  // not strengthen a shared stored dependency into exclusive owner access.
   const AccessMode callReceiverAccess =
-      receiverProduction && receiverProduction->access == AccessMode::Mutable
-          ? AccessMode::Mutable
+      receiverProduction &&
+              (selected.receiverMutability == ReceiverMutability::Consuming ||
+               receiverProduction->access == AccessMode::Mutable)
+          ? receiverProduction->access
           : selectedReceiverAccess;
   const auto receiverOrigins = receiverState ? loanPlaces(receiverState->place)
                                : !temporaryReceiver

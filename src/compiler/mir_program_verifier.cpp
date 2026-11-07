@@ -4119,7 +4119,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             (constructorOwner == nullptr || !constructedOwner ||
              constructedOwner->instance != constructorOwner ||
              !constructedSignature ||
-             constructedSignature->returnType != instruction.info.type)) {
+             !equivalentLifetimeTypes(constructedSignature->returnType, instruction.info.type))) {
           return verificationFailure(
               body, owner,
               "construction result type differs from its exact constructor "
@@ -7134,13 +7134,13 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
     break;
   }
   case BorrowOriginKind::Global:
-    if ((instance.owner && !instance.staticMember) ||
-        instance.returnBorrowParameter != 0 || !instance.returnBorrowPlace ||
+    if (instance.returnBorrowParameter != 0 || !instance.returnBorrowPlace ||
         !instance.returnBorrowPlace->valid()) {
       return invalidSummary(
-          "global return dependency requires a free or static function and "
-          "one exact static storage place");
+          "global return dependency requires one exact static storage place");
     }
+    // A member's receiver mode does not own global storage. Every return
+    // still independently matches its executable origin to this static place.
     break;
   }
 
@@ -15571,7 +15571,7 @@ completeBorrowSourcePath(const MirProgram &program,
           instruction.operands.size() == instruction.parameterTypes.size()) {
         const auto publication = constructorPublication(program, *target);
         const auto signature = instantiateMirLifetimeTarget(program, instruction);
-        if (signature && signature->returnType == instruction.info.type)
+        if (signature && equivalentLifetimeTypes(signature->returnType, instruction.info.type))
           result = callResult(state, instruction, publication, *summary);
       }
     } else if (instruction.kind == MirInstructionKind::Construct &&
@@ -15588,7 +15588,7 @@ completeBorrowSourcePath(const MirProgram &program,
       bool exact =
           constructor && ownerClass && paths && !paths->empty() &&
           actualOwner && actualOwner->instance == ownerClass && signature &&
-          signature->returnType == instruction.info.type &&
+          equivalentLifetimeTypes(signature->returnType, instruction.info.type) &&
           mirLifetimeParameterTypesMatch(
               instruction.parameterTypes, constructor->parameterTypes,
               constructor->lifetimeContract, instruction.lifetimeApplication) &&

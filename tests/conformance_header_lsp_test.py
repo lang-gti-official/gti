@@ -113,7 +113,22 @@ def main():
             session.send({"jsonrpc": "2.0", "id": 5, "method": "textDocument/documentSymbol",
                           "params": {"textDocument": {"uri": uri}}})
             symbols = session.receive_until(lambda item: item.get("id") == 5)
-            assert "error" not in symbols and "lifetime environment" in str(symbols), symbols
+            assert "error" not in symbols, symbols
+            # This client requests flat SymbolInformation. Its names remain
+            # source identifiers; rendered signatures belong to hover (above)
+            # or hierarchical DocumentSymbol.detail, not SymbolInformation.
+            outline = symbols.get("result")
+            assert isinstance(outline, list) and [
+                (item["name"], item["kind"], item.get("containerName"))
+                for item in outline
+            ] == [("Callback", 5, None), ("value", 8, "Callback"),
+                  ("Callback", 9, "Callback")], symbols
+            assert outline[0]["location"] == {
+                "uri": uri,
+                "range": {"start": lsp_position(pattern_source, 0),
+                          "end": lsp_position(pattern_source, pattern_source.index("};") + 2)}
+            }, symbols
+            assert "$lifetime" not in str(symbols), symbols
         finally:
             session.close()
     return 0

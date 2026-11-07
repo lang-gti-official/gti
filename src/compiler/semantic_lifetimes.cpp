@@ -626,39 +626,31 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
   return {.contract = std::move(contract), .ambiguousResult = ambiguousResult};
 }
 
-auto SemanticVisitor::Impl::lifetimeBoundsForContract(
-    const LifetimeSignatureContract &contract) const -> LifetimeBounds {
-  LifetimeBounds result;
-  for (const auto bound : contract.bounds)
-    (void)result.assume(bound.longer, bound.shorter);
-  std::vector<LifetimeTypeBound> pending = contract.typeBounds;
-  std::vector<LifetimeTypeBound> visited;
-  for (std::size_t index = 0; index < pending.size() && visited.size() < 256; ++index) {
-    const auto bound = pending[index];
-    if (std::find(visited.begin(), visited.end(), bound) != visited.end())
-      continue;
-    visited.push_back(bound);
+auto SemanticVisitor::Impl::expandedLifetimeTypeBounds(
+    const LifetimeSignatureContract &contract) const
+    -> std::vector<LifetimeTypeBound> {
+  auto result = contract.typeBounds;
+  for (std::size_t index = 0; index < result.size() && index < 256; ++index) {
+    // Adding a member may reallocate result; retain this exact premise.
+    const auto bound = result[index];
     const auto &type = bound.type;
     const auto add = [&](const SemanticType &child) {
-      appendUnique(pending, LifetimeTypeBound{child, bound.region});
+      appendUnique(result, LifetimeTypeBound{child, bound.region});
     };
     if (type.kind == SemanticType::TypeParameter ||
+        (type.kind == SemanticType::TypePack && !type.concretePack) ||
         type.kind == SemanticType::RawPointer ||
+        type.kind == SemanticType::FunctionItem ||
         isLifetimeInvocationSignature(type))
-      continue; // Opaque types and raw pointees imply no checked storage facts.
-    if (type.kind == SemanticType::Reference) {
-      (void)result.assume(type.referenceLifetime, bound.region);
-      // A well-formed incoming reference also establishes its referent's
-      // validity for the borrow. Do not infer this from an unchecked pointer.
-      if (type.arguments.size() == 1)
-        add(type.arguments.front());
-    } else if (type.kind == SemanticType::StringView || type.kind == SemanticType::CString) {
-      for (const auto region : type.lifetimeArguments)
-        (void)result.assume(region, bound.region);
-    } else if (type.kind == SemanticType::Class) {
+      continue; // No checked stored constituents can be inferred here.
+    if (type.kind == SemanticType::Class) {
       if (const auto *owner = classInfo(type)) {
         const auto substitution = classSubstitution(type);
+        if (!substitution.valid)
+          continue;
         for (const auto &field : owner->fields) {
+          if (!field.declaration)
+            continue;
           const auto member = owner->members.find(field.declaration->name().lexeme);
           if (member != owner->members.end())
             add(substituteType(member->second.symbol.type, substitution));
@@ -672,12 +664,35 @@ auto SemanticVisitor::Impl::lifetimeBoundsForContract(
         for (const auto &variant : enumeration->enumerators)
           for (const auto &field : variant.payloadTypes)
             add(field);
+    } else if (type.kind == SemanticType::Lambda) {
+      const auto *lambda = semanticModel.findLambda(type.lambdaId);
+      if (type.hasLambdaShape() && lambda &&
+          lambda->captures.size() == type.lambdaCaptureTypes().size())
+        for (const auto &capture : type.lambdaCaptureTypes())
+          add(capture);
+      // Invocation arguments and results are not closure storage.
     } else {
       lifetime_detail::children(type, add);
     }
   }
-  // Expansion is only an implication aid. Exhaustion contributes no guessed
-  // facts; exact opaque type bounds remain available to the outlives checker.
+  // This is a bounded implication aid. Exhaustion adds no guessed facts;
+  // every retained premise follows from an exact checked storage component.
+  return result;
+}
+
+auto SemanticVisitor::Impl::lifetimeBoundsForContract(
+    const LifetimeSignatureContract &contract) const -> LifetimeBounds {
+  LifetimeBounds result;
+  for (const auto bound : contract.bounds)
+    (void)result.assume(bound.longer, bound.shorter);
+  for (const auto &bound : expandedLifetimeTypeBounds(contract)) {
+    const auto &type = bound.type;
+    if (type.kind == SemanticType::Reference)
+      (void)result.assume(type.referenceLifetime, bound.region);
+    else if (type.kind == SemanticType::StringView || type.kind == SemanticType::CString)
+      for (const auto region : type.lifetimeArguments)
+        (void)result.assume(region, bound.region);
+  }
   return result;
 }
 
@@ -1297,7 +1312,15 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
     }
   }
   if (function.lifetimeContract.receiver.specified()) {
+    // A checked fresh carrier has its own physical shell. Its stored external
+    // owner is a separate dependency, not the receiver's storage identity.
+    // Keep the exact evaluated expression as the HIR materialization witness;
+    // retained places and explicitly supplied receiver places keep their roots.
+    const bool freshReceiver = !receiverPlace && receiver &&
+                               semanticPlace(receiver).root == nullptr &&
+                               freshTemporaryBorrowValue(receiver).eligible;
     const auto place = receiverPlace ? *receiverPlace
+                     : freshReceiver ? SemanticLoanPlace{}
                      : receiver ? loanPlace(receiver)
                                 : SemanticLoanPlace{.receiver = true};
     if (!require(actualRegion(place, receiver),
@@ -1429,9 +1452,10 @@ auto SemanticVisitor::Impl::proveLifetimeTypeOutlives(
     const LifetimeInferenceConstraints &constraints) const -> bool {
   if (!region.specified() || constraints.failure())
     return false;
+  const auto storedBounds = expandedLifetimeTypeBounds(assumptionCase);
   std::vector<SemanticType> pending;
   const auto check = [&](auto &&self, const SemanticType &type) -> bool {
-    for (const auto &known : assumptionCase.typeBounds)
+    for (const auto &known : storedBounds)
       if (equivalentLifetimeTypes(type, known.type) &&
           constraints.proves(known.region, region))
         return true;

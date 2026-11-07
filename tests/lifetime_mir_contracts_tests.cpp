@@ -1,4 +1,5 @@
 #include "../src/compiler/mir_lifetimes.h"
+#include "../src/compiler/mir_verification_queries.h"
 #include "gti/frontend.h"
 #include "gti/callable_lifetimes.h"
 #include "gti/mir_verifier.h"
@@ -88,6 +89,27 @@ int main() {
       argument |= dependency.origin == BorrowOriginKind::Argument;
       global |= dependency.origin == BorrowOriginKind::Global;
     }
+    if (function.returnBorrowOrigin == BorrowOriginKind::Global) {
+      expect(function.owner && function.returnBorrowPlace &&
+                 summary.dependencies.size() == 1 &&
+                 summary.dependencies.front().origin == BorrowOriginKind::Global,
+             "a consuming global supplier remains an exact independent static place");
+      for (int mutation = 0; mutation != 2; ++mutation) {
+        auto forged = checked.mir;
+        auto *target = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+        if (mutation == 0) {
+          target->returnBorrowPlace.reset();
+        } else {
+          ++target->returnBorrowPlace->root;
+          target->completeReturnBorrow->dependencies.front().globalRoot = target->returnBorrowPlace->root;
+          for (auto &mapping : target->returnBorrowFields)
+            if (mapping.origin == BorrowOriginKind::Global)
+              mapping.globalRoot = target->returnBorrowPlace->root;
+        }
+        expect(!verifyMirProgram(forged).valid(),
+               "member global returns still require the exact executable static root");
+      }
+    }
     if (function.returnType.kind != SemanticType::Reference || summary.dependencies.size() != 1 ||
         summary.dependencies.front().origin != BorrowOriginKind::Receiver)
       continue;
@@ -123,6 +145,40 @@ int main() {
   }
   expect(receiver && argument && global && empty && mutableResult,
          "consuming result fixture covers stored readonly/mutable, argument, global and checked empty suppliers");
+  bool carrierRelay = false;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &call : block.instructions) {
+        const auto *result = call.loan ? function.body.findLoan(*call.loan) : nullptr;
+        const auto *stage = call.receiver && call.receiver->kind == MirOperandKind::Value
+            ? mir_detail::definitionFor(function.body, call.receiver->value) : nullptr;
+        const auto *shell = stage && stage->loan ? function.body.findLoan(*stage->loan) : nullptr;
+        const auto *stored = shell ? function.body.findLoan(shell->storedDependency) : nullptr;
+        if (call.kind != MirInstructionKind::Call || !call.result || !result || result->kind != MirLoanKind::Stored ||
+            !result->parent || !stage || stage->callInputRole != MirCallInputRole::Receiver ||
+            !shell || shell->kind != MirLoanKind::CallArgument || !stored ||
+            stored->parent != result->parent || call.borrowFields.size() != 1)
+          continue;
+        carrierRelay = true;
+        for (int mutation = 0; mutation != 7; ++mutation) {
+          auto forged = checked.mir;
+          auto *owner = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+          auto &body = owner->body;
+          auto *changedCall = const_cast<MirInstruction *>(mir_detail::definitionFor(body, *call.result));
+          auto *changedStage = const_cast<MirInstruction *>(mir_detail::definitionFor(body, call.receiver->value));
+          expect(changedCall && changedStage, "carrier relay control keeps exact executed call and receiver input");
+          if (mutation == 0) body.loans[shell->id - 1].storedDependency = 0;
+          if (mutation == 1) body.loans[stored->id - 1].parent = 0;
+          if (mutation == 2) body.loans[result->id - 1].designatedFields.clear();
+          if (mutation == 3) body.loans[result->id - 1].source = shell->source;
+          if (mutation == 4) changedStage->callInputRole = MirCallInputRole::Argument;
+          if (mutation == 5) body.loans[result->id - 1].access = AccessMode::Mutable;
+          if (mutation == 6) changedCall->borrowFields.front().sourceFields.clear();
+          expect(!verifyMirProgram(forged).valid(),
+                 "fresh consuming carrier results retain exact staged shell, external parent, field map and permission");
+        }
+      }
+  expect(carrierRelay, "consuming fixture includes a fresh receiver's checked carrier result");
   return true;
 }
 
@@ -246,6 +302,53 @@ int main() {
   }
   expect(selected && exclusive, "constructor fixture exercises both selected suppliers and entry transfer");
   return true;
+}
+
+void checkPatternedResultScope() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "patterned-result-scope.gti", R"gti(
+struct Environment<R&<environment>(Args...), lifetime environment> {
+  R&<environment> value;
+  Environment(R&<environment> input) : value(input) {}
+};
+int read<lifetime a>(int&<a> input) {
+  Environment<int&<a>(int&), a> value{input};
+  return value.value;
+}
+int main() { int value = 7; return read(value) - 7; }
+)gti");
+  if (!checked.canGenerateCode()) {
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "closed callable result scopes preserve fixed environments through exact constructor replay");
+  }
+  bool examined = false;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Construct ||
+            instruction.info.type.arguments.size() != 1 ||
+            instruction.info.type.arguments.front().kind != SemanticType::FunctionSignature)
+          continue;
+        const auto &signature = instruction.info.type.arguments.front();
+        expect(signature.quantifiedLifetimes.size() == 1 && signature.arguments.size() == 2,
+               "patterned result fixture has one invocation binder and an independent fixed result region");
+        examined = true;
+        for (int mutation = 0; mutation != 4; ++mutation) {
+          auto forged = checked.mir;
+          auto *owner = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
+          auto *call = const_cast<MirInstruction *>(mir_detail::definitionFor(owner->body, *instruction.result));
+          expect(call != nullptr, "patterned constructor control uses the exact SSA producer");
+          auto &changed = call->info.type.arguments.front();
+          if (mutation == 0) changed.arguments.front().referenceLifetime = Lifetime::staticLifetime();
+          if (mutation == 1) changed.arguments[1].referenceLifetime = changed.arguments.front().referenceLifetime;
+          if (mutation == 2) changed.quantifiedLifetimes.clear();
+          if (mutation == 3) changed.quantifiedLifetimes.push_back(900001);
+          expect(!verifyMirLifetimeApplications(forged, owner->body, owner->id).valid(),
+                 "alpha comparison preserves fixed regions, invocation correlation and the full binder inventory");
+        }
+      }
+  expect(examined, "patterned scope fixture reaches the independent constructor result gate");
 }
 
 void checkProgramBasePathAuthority() {
@@ -1648,6 +1751,7 @@ int main() {
              failure->fixes.empty(),
          "an invocation pointer cannot discard a target outlives requirement or invent a repair");
   checkReferenceErasureLifetimeAuthority();
+  checkPatternedResultScope();
   checkProgramBasePathAuthority();
   checkBorrowedBasePublication();
   std::cout << "lifetime MIR contracts passed\n";

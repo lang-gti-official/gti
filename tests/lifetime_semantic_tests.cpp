@@ -371,7 +371,7 @@ int main() { StaticView<int&<static>()> value{stored}; return value.value - 7; }
   check("raw-pointer-storage-outlives-without-pointee-obligation", R"gti(
 void needs_static<T>(T* pointer) requires outlives<T*, static> {}
 void relay<T>(T* pointer) { needs_static(pointer); }
-struct Borrowed<lifetime a> { int&<a> value; };
+struct Borrowed<lifetime a> { int&<a> value; Borrowed(int&<a> source) : value(source) {} };
 void exercise<lifetime a>(int&<a> value) {
   Borrowed<a>* pointer = nullptr;
   relay(pointer);
@@ -391,6 +391,48 @@ int main() { return 0; }
   check("checked-reference-storage-still-requires-its-region", R"gti(
 void needs_static<lifetime a>(int&<a> value) requires outlives<int&<a>, static> {}
 void relay<lifetime a>(int&<a> value) { needs_static(value); }
+int main() { return 0; }
+)gti", false, "GTI-S2127");
+  check("stored-opaque-field-allows-generic-receiver-borrow", R"gti(
+struct Cell<T> { T value; int size() { return 1; } };
+struct Outer<T> { Cell<T> cell; int size() { return this.cell.size(); } };
+int main() { return 0; }
+)gti", true);
+  check("stored-opaque-field-bound-follows-checked-container", R"gti(
+struct Cell<T> { T value; };
+void need<T>() requires outlives<T, static> {}
+void relay<T>(Cell<T>&<static> input) { need<T>(); }
+int main() { return 0; }
+)gti", true);
+  check("stored-base-field-bound-follows-checked-container", R"gti(
+struct Cell<T> { T value; };
+struct Derived<T> : public Cell<T> {};
+void need<T>() requires outlives<T, static> {}
+void relay<T>(Derived<T>&<static> input) { need<T>(); }
+int main() { return 0; }
+)gti", true);
+  check("stored-enum-payload-bound-follows-checked-container", R"gti(
+enum Cell<T> { empty, value(T item) };
+void need<T>() requires outlives<T, static> {}
+void relay<T>(Cell<T>&<static> input) { need<T>(); }
+int main() { return 0; }
+)gti", true);
+  check("stored-field-bound-cannot-outlive-container", R"gti(
+struct Cell<T> { T value; };
+void need<T>() requires outlives<T, static> {}
+void relay<T, lifetime a>(Cell<T>&<a> input) { need<T>(); }
+int main() { return 0; }
+)gti", false, "GTI-S2127");
+  check("stored-field-bound-does-not-reach-phantom-argument", R"gti(
+struct Cell<T> { int value; };
+void need<T>() requires outlives<T, static> {}
+void relay<T>(Cell<T>&<static> input) { need<T>(); }
+int main() { return 0; }
+)gti", false, "GTI-S2127");
+  check("stored-field-bound-does-not-reach-raw-pointee", R"gti(
+struct Cell<T> { T* value = nullptr; };
+void need<T>() requires outlives<T, static> {}
+void relay<T>(Cell<T>&<static> input) { need<T>(); }
 int main() { return 0; }
 )gti", false, "GTI-S2127");
   check("constructor-reports-unproved-lifetime-for-matching-type", R"gti(

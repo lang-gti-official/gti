@@ -1232,8 +1232,23 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
     if (target)
       ensureBodyAnalyzed(*target);
   }
-  return ephemeralBorrowTargetSupported(function, parameterIndex) &&
-         temporaryReadBorrowArgumentMatches(parameter, argument, expression);
+  if (!ephemeralBorrowTargetSupported(function, parameterIndex))
+    return false;
+  if (temporaryReadBorrowArgumentMatches(parameter, argument, expression))
+    return true;
+  if (parameter.kind != SemanticType::Reference ||
+      parameter.referenceAccess != AccessMode::ReadOnly ||
+      parameter.arguments.size() != 1)
+    return false;
+  const auto adjusted = callLifetimeArgumentType(function, argument, parameter);
+  if (!adjusted || *adjusted != parameter.arguments.front())
+    return false;
+  // The completed application proves the conversion. Freshness, source
+  // identity and cleanup still belong to the original producer type; do not
+  // retag its expression merely to match the target's applied regions.
+  auto producerParameter = parameter;
+  producerParameter.arguments.front() = argument;
+  return temporaryReadBorrowArgumentMatches(producerParameter, argument, expression);
 }
 
 auto SemanticVisitor::Impl::temporaryReadBorrowArgumentMatches(

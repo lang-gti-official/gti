@@ -2676,6 +2676,8 @@ private:
 
   [[nodiscard]] bool
   isOwnerDependentTextExpression(const ExprPtr &expression) const;
+  [[nodiscard]] bool
+  isOwnerDependentTextExpression(const Expr *expression) const;
   // Where text an expression yields may come from: a lambda capture, and
   // the local views it reads that held no such text when it was checked.
   struct TextValueSources {
@@ -3322,6 +3324,8 @@ private:
   [[nodiscard]] bool validateLifetimeConstraints(
       std::span<const LifetimeBound> additional = {},
       std::span<const LifetimeBound> prove = {}) const;
+  [[nodiscard]] std::vector<LifetimeTypeBound> expandedLifetimeTypeBounds(
+      const LifetimeSignatureContract &contract) const;
   [[nodiscard]] LifetimeBounds lifetimeBoundsForContract(
       const LifetimeSignatureContract &contract) const;
   [[nodiscard]] bool declaredLifetimeRelationship(
@@ -6931,6 +6935,8 @@ private:
 
   [[nodiscard]] const Expr *
   transparentTemporaryProducer(const ExprPtr &expression) const;
+  [[nodiscard]] const Expr *
+  transparentTemporaryProducer(const Expr *expression) const;
 
   // Whether `type` is an enum with payload alternatives: a self-contained
   // aggregate value like a class or struct, unlike a scalar-backed enum.
@@ -6941,11 +6947,15 @@ private:
   // carries borrowed state.
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryValue(const ExprPtr &expression) const;
+  [[nodiscard]] FreshTemporaryValueAssessment
+  freshTemporaryValue(const Expr *expression) const;
 
   // A temporary carrier may retain only proven stable external dependencies.
   // Shared by receivers and call-scoped reference arguments.
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryBorrowValue(const ExprPtr &expression);
+  [[nodiscard]] FreshTemporaryValueAssessment
+  freshTemporaryBorrowValue(const Expr *expression);
 
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryReceiverValue(const ExprPtr &expression);

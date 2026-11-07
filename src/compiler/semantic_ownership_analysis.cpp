@@ -3238,6 +3238,11 @@ auto SemanticVisitor::Impl::publishTextDependency(
 
 auto SemanticVisitor::Impl::isOwnerDependentTextExpression(
     const ExprPtr &expression) const -> bool {
+  return isOwnerDependentTextExpression(expression.get());
+}
+
+auto SemanticVisitor::Impl::isOwnerDependentTextExpression(
+    const Expr *expression) const -> bool {
   const ExpressionInfo *info =
       expression ? semanticModel.findExpression(*expression) : nullptr;
   return info != nullptr &&
@@ -6091,13 +6096,17 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
     bool *noNormalResult) -> std::optional<SemanticBorrowDependencySet> {
   if (noNormalResult)
     *noNormalResult = false;
-  const bool checkedCallableInvocation =
-      resolved.intrinsic == IntrinsicKind::FunctionPointerInvoke &&
+  const bool checkedReferenceIntrinsic =
+      (resolved.intrinsic == IntrinsicKind::FunctionPointerInvoke ||
+       resolved.intrinsic == IntrinsicKind::EraseReference ||
+       resolved.intrinsic == IntrinsicKind::EraseReferenceMut ||
+       resolved.intrinsic == IntrinsicKind::RestoreReference ||
+       resolved.intrinsic == IntrinsicKind::RestoreReferenceMut) &&
       resolved.lifetimeApplication.complete &&
       resolved.lifetimeApplication.callableSignature.has_value() &&
       resolved.lifetimeApplication.callableSignature->contract.valid();
   if (resolved.dispatch != CallDispatch::Static ||
-      (resolved.intrinsic != IntrinsicKind::None && !checkedCallableInvocation) ||
+      (resolved.intrinsic != IntrinsicKind::None && !checkedReferenceIntrinsic) ||
       resolved.neverReturns)
     return std::nullopt;
   std::vector<SemanticType> parameterTypes;
@@ -6161,14 +6170,19 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
     if (actual.forwardedPackElement && !entry)
       continue;
     const auto inventory = storedReferenceInventory(formal);
-    if (!inventory)
+    // Borrowing the exact physical input object needs no inventory of the
+    // references that object stores. A projection into those references still
+    // requires its complete typed path; unknown is never an empty inventory.
+    if (!inventory && !(physical && mapping.sourceFields.empty() &&
+                        mapping.sourceConditions.empty()))
       continue;
     const auto input = completeBorrowDependencySetForType(actual, formal);
     std::optional<BorrowPath> externalPrefix;
     std::vector<BorrowDependencyCondition> externalConditions;
     SemanticType externalType = SemanticType::Unknown;
     bool ambiguous = false;
-    for (const auto &path : *inventory) {
+    for (const auto &path : inventory ? std::span<const StoredReferencePath>(*inventory)
+                                      : std::span<const StoredReferencePath>{}) {
       const auto fields = storedBorrowPath(formal, path.fields);
       if (fields.size() != path.fields.size() || fields.empty()) {
         ambiguous = true;
@@ -12271,9 +12285,12 @@ auto SemanticVisitor::Impl::recordStoredEntryDependency(
                  : nullptr;
   }
   semanticModel.recordLoan(std::move(loan));
-  if (inventory && alternatives &&
-      (element || std::any_of(inventory->begin(), inventory->end(),
-                  [](const auto &path) { return !path.conditions.empty(); }))) {
+  // Complete value facts come from this exact entry group, including ordinary
+  // unconditional carriers. Their field paths describe external storage;
+  // the separate physical Reference/receiver shell is never substituted here.
+  // Unknown inventories stay unknown, and every parent/access/lifecycle fact
+  // remains owned by the entry loan checked again at use and return boundaries.
+  if (inventory && alternatives) {
     SemanticBorrowDependencySet complete{.possibleAlternatives =
                                              std::move(*alternatives)};
     const auto *entry = semanticModel.findLoan(id);

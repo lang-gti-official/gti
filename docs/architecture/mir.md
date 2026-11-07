@@ -463,7 +463,10 @@ completion flag alone is not proof of any outlives relation. Direct reference
 arguments may differ in free region annotations only when their exact target is
 independently instantiated; mandatory body replay then proves the original
 place's outer and nested region relationships. Pointee shape, mutable access and
-argument tags remain exact. Lambda and
+argument tags remain exact. Result and constructor-owner comparisons permit
+alpha-renaming only inside closed callable quantifier scopes. Fixed outer
+regions, binder counts and relationships remain exact; runtime representation
+erasure is not a type proof. Lambda and
 destructor instances retain normalized contracts just as functions and
 constructors do. Authoritative nominal variance is preserved alongside the
 concrete field/base inventory; lowering never derives it from names.
@@ -715,6 +718,10 @@ stored external-reference group. MIR checks both entries and their exact link,
 including copied or forwarded carrier lanes. Written base-initializer pack
 expansions produce prepared lanes in that same order, before trailing defaults;
 selected constructor type/value arguments and lifetime applications remain exact.
+An operandless HIR pack expansion still names its exact grouped parameter
+binding. Derived lanes address one neutral variable root through their full
+constant-index paths; HIR verifies that binding and index sequence independently
+before MIR prepares the selected inputs. A same-typed lane is not interchangeable.
 The nontrivial owning-input lifecycle policy is checked independently of this
 structural expansion.
 
@@ -790,7 +797,10 @@ the final lowering rounds.
 A carrier whose contract names a global borrows the global's storage-typed
 place, not a place typed as the carrier. The per-input returned-field checks
 skip `Global` mappings, which have no call input; the global-origin check and
-the complete-set flow verify them. A mapping may also name caller storage that
+the complete-set flow verify them. A member function may return that same exact
+static storage; its receiver does not own it. The returned place and complete
+supplier set must still match the independently reconstructed global origin.
+A mapping may also name caller storage that
 contains the referent, such as an accessor receiver, an owned element buffer or
 an owning handle's checked pointee, provided that storage is reached without a
 stored reference and stores none itself. A dereference through a class ends
@@ -839,7 +849,12 @@ captures even if their region appears to satisfy the result bound. Exact
 receiver entry identity and access, selected alternative proof, group transfer
 and retirement remain separate requirements; a receiver-owned origin cannot
 escape its destroyed shell. Retained owned-pointee invocation keeps its
-separate non-borrowing-result policy.
+separate non-borrowing-result policy. A fresh receiver's shared stored supplier
+may become a reference result or a designated field of a returned carrier. Body
+replay follows the exact prepared receiver, physical shell loan and retained
+external group to the active original parent; the result path and permissions
+must match the checked mapping. This does not grant mutable extraction or make
+the physical shell an external supplier.
 Initializing a distinct direct field of the same exact non-union record does
 not erase the retained field's complete fact. This separation is proved from
 the concrete record and its declared field identities, not merely unequal

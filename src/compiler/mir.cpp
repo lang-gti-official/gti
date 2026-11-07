@@ -5536,6 +5536,16 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                         : MirTemporaryCarrierDependency{};
               const auto &result = body.loans[loan - 1];
               const auto &mapping = instruction.borrowFields.front();
+              const bool referenceResult = result.kind == MirLoanKind::CallResult &&
+                  mapping.resultFields.empty() && result.designatedFields.empty();
+              const bool carrierResult = result.kind == MirLoanKind::Stored &&
+                  instruction.info.category == ValueCategory::Value &&
+                  (instruction.info.type.kind == SemanticType::Class ||
+                   instruction.info.type.kind == SemanticType::Enum) &&
+                  instruction.info.traits.containsBorrowedState &&
+                  !mapping.resultFields.empty() &&
+                  result.designatedFields == mapping.resultFields &&
+                  result.conditions == mapping.resultConditions;
               // A fresh carrier's physical shell and external stored group
               // are distinct authorities. Follow their exact staged identity
               // to the original parameter, not an overlapping owner. Shared
@@ -5553,13 +5563,12 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   carrier.loan->parent == parent &&
                   carrier.loan->additionalDependencies.empty() &&
                   carrier.loan->access == AccessMode::ReadOnly &&
-                  result.kind == MirLoanKind::CallResult &&
+                  (referenceResult || carrierResult) &&
                   result.access == AccessMode::ReadOnly &&
                   result.additionalDependencies.empty() &&
                   carrier.loan->source == result.source &&
                   mapping.origin == BorrowOriginKind::Receiver &&
                   mapping.access == AccessMode::ReadOnly &&
-                  mapping.resultFields.empty() &&
                   mapping.resultConditions.empty() &&
                   mapping.sourceFields == carrier.loan->designatedFields &&
                   mapping.sourceConditions == carrier.loan->conditions &&

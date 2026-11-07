@@ -229,6 +229,21 @@ attempt to prove universal lifetime requirements without the caller's bindings.
 Conjunction preserves all premises, while disjunction supplies only premises
 guaranteed by every feasible alternative.
 
+Type-outlives proof retains the exact stored-type implications of each assumption
+case. A checked borrow of an aggregate establishes its instantiated fields,
+payloads and non-interface bases for that borrow, including opaque generic field
+types. The same bounded storage walk supplies region implications and type
+premises. Unused generic arguments, raw pointees and callable invocation types
+contribute no stored components; closures contribute only checked captures.
+These are derived proof facts, not new public requirements or stronger regions.
+
+Checked erasure and restoration publish a complete scalar borrow through the
+same physical-input mapper as checked callable results. A reference to a
+borrowed aggregate retains its physical reference loan; its separate stored
+field dependencies do not replace that loan. Mapping the exact unprojected
+reference requires no enumeration of an opaque referent's contents. Mapping
+an external stored field still requires a complete typed path and guards.
+
 Anonymous stored regions remain determined by field structure. A constructor's
 checked initializer-list summary may relate its inputs to those anonymous
 output slots. Those relations become its published declaration contract before
@@ -3366,6 +3381,21 @@ retains the exact resolved `SymbolId` of the class's designated reference
 field. HIR and MIR carry that fact directionally so MIR verification can bind a
 returned runtime place or carrier value to the same formal dependency; later
 phases do not infer the field from its type or emitted representation.
+When the exact stored entry inventory is finite and complete, semantics also
+publishes its full dependency set for unconditional carriers, including receiver
+entries. Each dependency retains its typed external path, access and entry
+parent; it does not replace the separate physical reference or receiver shell.
+Conditional alternatives and lifecycle obligations remain part of that same
+checked group, while an unknown inventory remains unknown.
+
+A checked fresh receiver production supplies a distinct expression-local
+physical lifetime, even when its stored references point to static or caller
+storage. The lifetime application retains the exact evaluated receiver
+expression as its materialization witness; HIR and MIR map that witness to the
+receiver's temporary place. Ordinary retained receivers keep their existing
+place identity. A completed call application may shorten a fresh callable
+argument's regions before its exact producer is matched, while its access,
+escape and cleanup checks still use the original source value.
 
 Stored carriers generalize this to a set of reference-bearing field
 paths and checked owner places. `SemanticLoanInfo.additionalDependencies`

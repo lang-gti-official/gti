@@ -2160,15 +2160,60 @@ int main() { return 0; }
          "known leading formals cannot authorize an independent trailing pack supplier");
 }
 
+void testFreshCallableLifetimeArguments() {
+  const std::string declarations = R"(
+int global = 7;
+int&<static> map(int ignored) { return global; }
+int observe<F>(F& callback) { return callback(0); }
+)";
+  const auto valid = analyze(declarations + R"(
+int main() { return observe(map) - 7; }
+)");
+  expectValid(valid,
+              "a fresh function item's fixed result region survives its checked call-local reference adaptation");
+  for (const std::string &source : {
+           "F& escape<F>(F& callback) { return callback; } int main() { escape(map); return 0; }",
+           "void edit<F>(mut F& callback) {} int main() { edit(map); return 0; }"}) {
+    const auto invalid = analyze(declarations + source);
+    expect(invalid.syntaxValid && !invalid.semanticValid,
+           "checked region adaptation does not let a fresh callable shell escape or acquire mutable access");
+  }
+  const auto stronger = analyze(R"(
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+void needsStatic(View<static>& value) {}
+int main() { int local = 7; needsStatic(View(local)); return 0; }
+)");
+  expect(stronger.syntaxValid && !stronger.semanticValid &&
+             std::any_of(stronger.diagnostics.begin(), stronger.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
+         "fresh producer classification cannot supply an unproved stronger nested storage region");
+}
+
 void testReferencePackReborrows() {
   expect(lang::SemanticLifetimeTestAccess::mutableReferenceReborrowChecks(),
          "a checked mutable reborrow shortens only the outer region and retains invariant referent proof");
-  const auto valid = analyze(R"(
-void bump<T>(mut T& value) { value++; }
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto numeric = [&](std::string source) {
+    return lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics}).analyze(
+        "numeric-reference-pack.gti", std::move(source), {root / "prelude.gti"}, {}, {root});
+  };
+  const auto valid = numeric(R"(
+void bump<T>(mut T& value) requires std::numeric<T> { value++; }
 void update<Args...>(mut Args&... values) { (bump(values), ...); }
 int main() { mut int left = 3; mut int right = 4; update(left, right); return left + right - 9; }
 )");
   expectValid(valid, "mutable reference pack elements reborrow into each exact call region");
+  const auto unsupported = numeric(R"(
+void bump<T>(mut T& value) requires std::numeric<T> { value++; }
+void update<Args...>(mut Args&... values) { (bump(values), ...); }
+int main() { mut bool value = false; update(value); return 0; }
+)");
+  expect(unsupported.syntaxValid && !unsupported.semanticValid,
+         "concrete fold expansion retains the increment helper's numeric requirement");
+  const auto unconstrained = analyze(
+      "void bump<T>(mut T& value) { value++; } int main() { return 0; }");
+  expect(unconstrained.syntaxValid && !unconstrained.semanticValid,
+         "an unconstrained generic reference does not establish a numeric mutation capability");
   const auto invariant = analyze(R"(
 struct Cell<lifetime a> { int&<a> value; Cell(int&<a> input) : value(input) {} };
 void use<lifetime b>(mut Cell<b>& value) {}
@@ -2232,11 +2277,93 @@ int main() {
            "struct Owned { int value; Owned() : value(1) {} }; struct Outer { Owned value; Outer() : value() {} int&<this> bad() && { return this.value.value; } }; int main() { return 0; }",
            "struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} }; struct Owned { int value; Owned() : value(1) {} View<this> bad() && { return View<this>(this.value); } }; int main() { return 0; }",
            "struct Local { Local() = default; int&<static> bad() && { int value = 1; return value; } }; int main() { return 0; }",
+           "struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} }; struct Mixed<lifetime a> { View<a> external; int owned; Mixed(int&<a> input) : external(input), owned(1) {} View<a> bad(bool first) && requires outlives<this, a> { if (first) { return this.external; } return View<a>(this.owned); } }; int main() { return 0; }",
            "struct Mixed<lifetime a> { int&<a> external; int owned; Mixed(int&<a> input) : external(input), owned(1) {} int&<a> bad(bool first) && requires outlives<this, a> { if (first) { return this.external; } return this.owned; } }; int main() { return 0; }"}) {
     const auto invalid = analyze(source);
     expect(invalid.syntaxValid && !invalid.semanticValid,
            "consuming borrowed results reject receiver shells, owned fields and mixed external/owned return paths");
   }
+  const auto exclusive = analyze(R"(
+struct Exclusive<lifetime a> {
+  mut int&<a> value;
+  Exclusive(mut int&<a> input) : value(input) {}
+  int&<a> operator()(int&<a> input) && { return input; }
+};
+int main() { mut int value = 1; int& result = Exclusive(value)(value); return result; }
+)");
+  expect(exclusive.syntaxValid && !exclusive.semanticValid &&
+             std::any_of(exclusive.diagnostics.begin(), exclusive.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2017" &&
+                                  diagnostic.message.find("overlap") != std::string::npos;
+                         }),
+         "consuming a fresh carrier preserves an exclusive external dependency's alias restrictions");
+  const auto ordinary = analyze(R"(
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+View<a> keep<lifetime a>(View<a> input) { return input; }
+int main() { int value = 7; View view{value}; View result = keep(view); return result.value - 7; }
+)");
+  expectValid(ordinary, "unconditional by-value carrier entries retain their complete external paths");
+  const auto *keep = function(ordinary, "keep");
+  expect(keep && keep->completeReturnBorrow &&
+             keep->completeReturnBorrow->dependencies.size() == 1 &&
+             keep->completeReturnBorrow->dependencies.front().origin == lang::BorrowOriginKind::Argument &&
+             !keep->completeReturnBorrow->dependencies.front().sourceFields.empty(),
+         "ordinary carrier return metadata reuses the checked entry group instead of inferring an empty owner");
+}
+
+void testFreshReceiverStorageRegions() {
+  const auto result = analyze(R"(
+struct External<lifetime a> {
+  int&<a> value;
+  External(int&<a> input) : value(input) {}
+  int&<a> release() && { return this.value; }
+  int read() { return this.value; }
+};
+External<a> makeExternal<lifetime a>(int&<a> input) { return External<a>(input); }
+int&<a> direct<lifetime a>(int&<a> input) { return External<a>(input).release(); }
+int&<a> factory<lifetime a>(int&<a> input) { return makeExternal(input).release(); }
+int&<a> grouped<lifetime a>(int&<a> input) { return (External<a>(input)).release(); }
+int&<a> sequenced<lifetime a>(int&<a> input) { return (0, External<a>(input)).release(); }
+int retained<lifetime a, lifetime shell>(External<a>&<shell> input) { return input.read(); }
+int main() {
+  int value = 7; External held{value};
+  return direct(value) + factory(value) + grouped(value) + sequenced(value) + retained(held) - 35;
+}
+)");
+  expectValid(result, "fresh receiver shells have physical origins independent of their external suppliers");
+  for (const auto name : {"direct", "factory", "grouped", "sequenced", "retained"}) {
+    const auto *info = function(result, name);
+    const auto *returned = info && info->declaration && info->declaration->body()
+        ? lang::stmtAs<lang::ReturnStmt>(info->declaration->body()->statements().front().get())
+        : nullptr;
+    const auto *call = returned ? lang::exprAs<lang::Call>(returned->value().get()) : nullptr;
+    const auto *member = call ? lang::exprAs<lang::Get>(call->callee().get()) : nullptr;
+    const auto *selected = call ? result.semantics.findCall(*call) : nullptr;
+    const bool fresh = std::string_view(name) != "retained";
+    const bool exactFreshOrigin = selected && member &&
+        std::any_of(selected->lifetimeApplication.origins.begin(),
+                    selected->lifetimeApplication.origins.end(), [&](const auto &origin) {
+                      return origin.source == member->object().get() && !origin.place.valid() &&
+                             origin.region.kind == lang::Lifetime::Kind::Local &&
+                             origin.region != selected->returnType.referenceLifetime;
+                    });
+    expect(selected && selected->lifetimeApplication.complete && exactFreshOrigin == fresh,
+           "only checked fresh receiver expressions publish a separate expression-local shell witness");
+  }
+  const auto stronger = analyze(R"(
+int global = 7;
+struct External<lifetime a> {
+  int&<a> value;
+  External(int&<a> input) : value(input) {}
+  int requireStaticShell() requires outlives<this, static> { return this.value; }
+};
+int main() { return External<static>(global).requireStaticShell(); }
+)");
+  expect(stronger.syntaxValid && !stronger.semanticValid &&
+             std::any_of(stronger.diagnostics.begin(), stronger.diagnostics.end(),
+                         [](const auto &diagnostic) { return diagnostic.code == "GTI-S2127"; }),
+         "a static external referent does not make a fresh receiver's physical shell static");
 }
 
 void testFixedArityPackCallSelection() {
@@ -2500,6 +2627,27 @@ struct Borrowed<lifetime storage> {
   Borrowed(int&<storage> source) : value(source) {}
 };
 )";
+  const auto roundTripCarrier = check(wrappers + R"(
+struct Pair<lifetime a, lifetime b> {
+  int&<a> left; int&<b> right;
+  Pair(int&<a> first, int&<b> second) : left(first), right(second) {}
+};
+T&<shell> round_trip<T, lifetime shell>(T&<shell> source) {
+  unsafe { return restore<T, shell>(erase(source)); }
+}
+mut T&<shell> round_trip_mut<T, lifetime shell>(mut T&<shell> source) {
+  unsafe { return restore_mut<T, shell>(erase_mut(source)); }
+}
+int main() {
+  int left = 3; int right = 7;
+  mut Pair carrier{left, right};
+  mut Pair& changed = round_trip_mut(carrier);
+  Pair& same = round_trip(changed);
+  return same.left + same.right - 10;
+}
+)");
+  expectValid(roundTripCarrier,
+              "checked erasure maps the physical carrier reference instead of its independent stored fields");
   const auto validBorrowed = check(wrappers + borrowed + R"(
 unsafe Borrowed<storage>&<shell> recover<lifetime storage, lifetime shell>(Opaque&<shell> source)
     requires outlives<storage, shell> {
@@ -2595,8 +2743,10 @@ int main() {
   testBorrowedFromPackOrdinals();
   testScopedFunctionBorrowQuery();
   testReferencePackReturnContracts();
+  testFreshCallableLifetimeArguments();
   testReferencePackReborrows();
   testConsumingExternalResults();
+  testFreshReceiverStorageRegions();
   testFixedArityPackCallSelection();
   testSelectedBaseConstructorInputs();
   testCompleteOrdinaryConstructorInputs();

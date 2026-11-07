@@ -251,7 +251,7 @@ int main() {
   return sum.value + view.value + view.marker - 50;
 }
 )gti");
-  if (!result.semanticValid || !result.mir.valid()) {
+  if (!result.semanticValid || !result.hirValid || !result.mirValid || !result.mir.valid()) {
     for (const auto &diagnostic : result.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     for (const auto &error : verifyMirProgram(result.mir).errors)
@@ -269,6 +269,16 @@ int main() {
       const auto *value = constructor.body.findValue(constructor.initializers.front().arguments[index]);
       expect(value && value->kind == HirValueKind::PackElement && value->packElement == index,
              "Base input order is the exact selected source pack projection");
+    }
+    for (int mutation = 0; mutation != 2; ++mutation) {
+      auto changed = result.hir;
+      auto *owner = const_cast<HirConstructorInstance *>(changed.findConstructorInstance(constructor.id));
+      auto *lane = const_cast<HirValue *>(owner->body.findValue(owner->initializers.front().arguments.front()));
+      expect(lane && lane->operands.size() == 1, "Base pack control selects a real projected input");
+      if (mutation == 0) lane->packElement = 1;
+      if (mutation == 1) ++lane->symbol;
+      expect(!verifyHirProgramPlans(result.semantics, changed).valid(),
+             "HIR rejects equal-typed wrong Base pack index or foreign grouped binding");
     }
     auto forged = result.mir;
     auto *instance = const_cast<MirConstructorInstance *>(forged.findConstructorInstance(constructor.id));

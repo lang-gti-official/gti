@@ -516,6 +516,13 @@ promoting a pointee reference to `static`; those retain their separate
 [raw-pointer and unsafe obligations](raw-pointers.md). Checked references and
 owned fields continue to carry their stored borrowing relationships.
 
+A checked borrow of a container also establishes the validity of its stored
+fields for that borrow. For example, borrowing `Cell<T>` containing a `T value`
+field for `a` implies `outlives<T, a>`. This applies through nested fields, base
+subobjects and enum payloads. A type parameter that is not stored, or appears
+only behind a raw pointer, supplies no such implication. The derived bound
+cannot extend beyond the container's proven borrow region.
+
 Callable signatures can quantify a fresh region for each invocation:
 
 ```gti
