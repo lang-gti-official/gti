@@ -14,6 +14,50 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "generated_record_move_cleanup": r"""
+mut int trace = 0;
+int&<a> choose<lifetime a>(int&<a> left,int&<a> right,bool first) {
+  if (first) { return left; } return right;
+}
+struct Observed<lifetime a> {
+  int&<a> value;
+  Observed(int&<a> input) : value(input) {}
+  ~Observed() { trace += this.value; }
+};
+int observe(bool first) {
+  int left = 3; int right = 9;
+  int& selected = choose(left,right,first);
+  Observed original{selected};
+  Observed moved{std::move(original)};
+  if (trace != 0) { return 1; }
+  if (first) { return moved.value - 3; }
+  return moved.value - 9;
+}
+int main() {
+  if (observe(true) != 0 || trace != 3) { return 1; }
+  trace = 0;
+  if (observe(false) != 0 || trace != 9) { return 2; }
+  return 0;
+}
+""",
+    "generated_record_move_suppliers": """
+int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; } return right;
+}
+struct Reading<lifetime a> {
+  int&<a> value;
+  Reading(int&<a> input) : value(input) {}
+};
+int observe(bool first) {
+  int left = 3; int right = 9;
+  int& selected = choose(left, right, first);
+  Reading reading{selected}; Reading copied{reading};
+  Reading moved{std::move(copied)};
+  if (first) { return moved.value - 3; }
+  return moved.value - 9;
+}
+int main() { return observe(true) + observe(false); }
+""",
     "generated_record_copy_owners": """
 mut int retired = 0;
 struct Owner {
@@ -1249,6 +1293,20 @@ int main() {
   int left = 3; int right = 8;
   if (pointer(left, right, true) != 3) { return 1; }
   return pointer(left, right, false) - 8;
+}
+""",
+    "closed_signature_field_projection": """
+struct Badge<S> { int value; Badge(int input) : value(input) {} };
+struct Envelope<S> {
+  Badge<S> value;
+  Envelope(int input) : value(Badge<S>(input)) {}
+  Badge<S> get() { return this.value; }
+};
+using Bound = for<lifetime a> int&<a>(int&<a>);
+int main() {
+  Envelope<Bound> envelope{7};
+  auto value = envelope.get();
+  return value.value - 7;
 }
 """,
     "synthetic_assignment_receiver_origins": """

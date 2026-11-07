@@ -1094,12 +1094,20 @@ side metadata.
 `HirValueKind::PackFold` is a separate bounded schedule, not a request for HIR
 to interpret a general fold expression. Semantics has already selected one
 non-overloaded free generic `void` target and proved that the source
-pack occurs once in the target's read-only element position. The concrete HIR
+pack occurs once in the target's final reference position, with the selected
+read-only or mutable access. The concrete HIR
 value retains that declaration identity, the source pack and argument
 position, its fixed named-place operands, and one exact resolved element-call
 record per substituted pack type in source order. Each element record carries
 its concrete type, selected function-instance identity, and a unique ordinary
-`Call` value with the usual invocation-input plan. The fold's operand prefix
+`Call` value with the usual invocation-input plan. Semantic finalization visits
+each concrete call and retains its selected callable-argument boundaries, just
+as it does for the symbolic pattern and ordinary calls. HIR checks the complete
+lifetime-binding inventory and applies it once to the target's universal
+parameter and generic argument types before comparing the selected lane. Fixed
+regions, exact free-region correlations and callable boundaries remain checked;
+MIR independently proves the invocation's actual lifetime obligations.
+The fold's operand prefix
 retains its fixed source inputs and pack; its suffix lists these calls in
 execution order. Each call has fresh copies of the resolved named-input values,
 so a scalar load or TLS first-use check is evaluated again for the next element

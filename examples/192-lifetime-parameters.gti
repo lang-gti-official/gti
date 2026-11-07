@@ -2,6 +2,7 @@
 // infer their arguments and keep using plain references and local types.
 
 import std.memory;
+import std.functional;
 
 // Type erasure preserves the evaluated pointer and every nested lifetime.
 // Restoration is unsafe even when this helper proves the exact round trip.
@@ -24,6 +25,10 @@ int&<shared> choose<lifetime shared>(
   if (first) { return left; }
   return right;
 }
+
+// A stored callable chooses a fresh invocation region without changing its
+// code carrier's lifetime or losing either possible result supplier.
+using Selection = for<lifetime a> int&<a>(int&<a>, int&<a>, bool);
 
 struct Reading<lifetime data> {
   int&<data> value;
@@ -120,5 +125,7 @@ int main() {
   if (read_in_environment(right, right) != 9) { return 9; }
   if (copy_before_cleanup(right) != 9 || cleaned_reading != 9) { return 10; }
   if (copy_global_before_cleanup() != 11 || cleaned_reading != 20) { return 11; }
+  std::function_ptr<Selection> pointer{choose};
+  if (pointer(left, right, false) != 9) { return 14; }
   return identity(left) - 4;
 }

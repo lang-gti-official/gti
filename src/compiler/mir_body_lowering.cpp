@@ -5013,8 +5013,8 @@ private:
                              const std::vector<MirPlaceProjection> &suffix) {
       if ((value.storedReferenceAccess &&
            (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
-            type.arguments.front() != value.info.type)) ||
-          (!value.storedReferenceAccess && type != value.info.type))
+            !equivalentLifetimeTypes(type.arguments.front(), value.info.type))) ||
+          (!value.storedReferenceAccess && !equivalentLifetimeTypes(type, value.info.type)))
         return false;
       auto &projections = output.places[place - 1].projections;
       projections.insert(projections.end(), suffix.begin(), suffix.end());
@@ -10360,11 +10360,16 @@ private:
                 : (findValue(arguments[index]) == nullptr
                        ? SemanticType::Unknown
                        : findValue(arguments[index])->info.type);
-        construct.parameterTypes.push_back(parameter);
-        construct.operands.push_back(
-            value.constructorKind != ConstructorKind::Move
-                ? argumentOperand(arguments[index], parameter)
-                : valueOperand(arguments[index]));
+        const auto operand = value.constructorKind != ConstructorKind::Move
+            ? argumentOperand(arguments[index], parameter)
+            : valueOperand(arguments[index]);
+        // A generated move selects its policy with the source-level T&&
+        // declaration, but executes as an owned value transfer. Keep the MIR
+        // role consistent with that evaluated value, not a new shell borrow.
+        construct.parameterTypes.push_back(
+            value.constructorKind == ConstructorKind::Move && !value.constructorTarget
+                ? operand.type : parameter);
+        construct.operands.push_back(operand);
       }
     }
     MirInstruction originConstruct = construct;

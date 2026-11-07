@@ -3786,6 +3786,13 @@ void SemanticModel::finalizeCallableArguments(
     if (const auto found = calls.find(call); found != calls.end())
       finalizeCallableArguments(found->second);
   }
+  // Concrete fold lanes are ordinary selected calls with their own applied
+  // parameter types. Refresh their boundaries with the same final target
+  // contracts as the recorded symbolic pattern call.
+  for (auto &[_, fold] : packFolds)
+    if (fold.pattern && batchCalls.contains(fold.pattern))
+      for (auto &element : fold.elements)
+        finalizeCallableArguments(element.call);
   for (const SourceUnitId unit : units) {
     const auto found = semanticDatabase.occurrencesByUnit.find(unit);
     if (found == semanticDatabase.occurrencesByUnit.end())
@@ -3802,6 +3809,9 @@ void SemanticModel::finalizeCallableArguments() {
   for (auto &[_, call] : calls) {
     finalizeCallableArguments(call);
   }
+  for (auto &[_, fold] : packFolds)
+    for (auto &element : fold.elements)
+      finalizeCallableArguments(element.call);
   for (auto &[_, occurrences] : semanticDatabase.occurrencesByUnit) {
     for (SemanticOccurrence &occurrence : occurrences) {
       if (occurrence.selectedCall) {

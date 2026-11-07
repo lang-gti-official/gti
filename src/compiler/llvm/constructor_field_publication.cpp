@@ -1,5 +1,6 @@
 #include "constructor_field_publication.h"
 #include "placement.h"
+#include "gti/lifetime_types.h"
 
 #include "../mir_verification_queries.h"
 #include "../mir_lifetimes.h"
@@ -40,7 +41,7 @@ UnstagedConstructorFieldPublicationTransport
 publicationTransport(const MirProgram &program,
                      const MirInstruction &instruction,
                      const SemanticType &targetType) {
-  if (instruction.info.type == targetType)
+  if (equivalentLifetimeTypes(instruction.info.type, targetType))
     return UnstagedConstructorFieldPublicationTransport::ExactValue;
 
   MirInstruction exactSourceNull;
@@ -105,7 +106,7 @@ UnstagedConstructorFieldPublicationPlan unstagedConstructorFieldPublication(
                    [&](const MirClassFieldInfo &candidate) {
                      const auto actual = view->instantiate(candidate.type);
                      return candidate.symbol == initializer.field && actual &&
-                            *actual == initializer.targetType;
+                            equivalentLifetimeTypes(*actual, initializer.targetType);
                    });
   if (initializer.kind != ConstructorInitializerTargetKind::Field ||
       initializer.field == 0 || initializer.storesReference ||

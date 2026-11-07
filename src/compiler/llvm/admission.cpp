@@ -1,6 +1,7 @@
 #include "representation.h"
 #include "atomic_types.h"
 #include "gti/llvm_admission.h"
+#include "gti/lifetime_types.h"
 #include "gti/mir_effects.h"
 
 #include "../mir_verification_queries.h"
@@ -4668,7 +4669,7 @@ public:
       return std::nullopt;
     if (plan.transport ==
         native_llvm::UnstagedConstructorFieldPublicationTransport::ExactValue) {
-      if (plan.targetType != plan.sourceType)
+      if (!equivalentLifetimeTypes(plan.targetType, plan.sourceType))
         return std::nullopt;
       if (isPassiveScalarValueType(plan.targetType))
         return Shape::SuccessResultPublication;

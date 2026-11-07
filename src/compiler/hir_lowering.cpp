@@ -7832,7 +7832,8 @@ private:
                .dispatch = CallDispatch::Static,
                .dispatchOwner = element.call.dispatchOwner,
                .callPlan = HirCallPlan{.arguments = *plan},
-               .functionTarget = functionTarget});
+               .functionTarget = functionTarget,
+               .callableArguments = element.call.callableArguments});
           output.program.sourceValueIds[resolved->pattern].push_back(call);
           value.packFoldElements.push_back(
               {.elementType = element.elementType,

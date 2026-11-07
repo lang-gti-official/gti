@@ -6,6 +6,7 @@
 #include "gti/borrow_conditions.h"
 #include "gti/mir_verifier.h"
 #include "gti/mir_lowering.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
 
 #include <algorithm>
@@ -30,6 +31,165 @@ MirInstruction *firstLifetimeCall(MirBody &body) {
         return &instruction;
   return nullptr;
 }
+void checkScopedCallableFieldTransport() {
+  const auto fields = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "closed-signature-field.gti", R"gti(
+struct Badge<S> { int value; Badge(int input) : value(input) {} };
+struct Envelope<S> {
+  Badge<S> value;
+  Envelope(int input) : value(Badge<S>(input)) {}
+  Badge<S> get() { return this.value; }
+};
+using Bound = for<lifetime a> int&<a>(int&<a>);
+int main() { Envelope<Bound> envelope{7}; auto value = envelope.get(); return value.value - 7; }
+)gti");
+  expect(fields.canGenerateCode(),
+         "unrelated nominal fields preserve closed callable scopes through construction and selection");
+  bool catalogChecked = false;
+  bool constructorChecked = false;
+  for (const auto &owner : fields.mir.classInstances()) {
+    if (owner.type.arguments.size() != 1 ||
+        owner.type.arguments.front().quantifiedLifetimes.size() != 1)
+      continue;
+    auto renamed = owner.type;
+    auto &signature = renamed.arguments.front();
+    const auto before = Lifetime::parameter(signature.quantifiedLifetimes.front());
+    const auto after = Lifetime::parameter(900041);
+    signature.quantifiedLifetimes.front() = after.id;
+    for (auto &argument : signature.arguments)
+      if (argument.referenceLifetime == before)
+        argument.referenceLifetime = after;
+    expect(mirTypeRelocationKind(fields.mir, renamed) == owner.traits.relocation &&
+               owner.traits.relocation != RelocationKind::Unavailable,
+           "relocation selects a unique alpha-equivalent closed nominal type");
+    for (unsigned mutation = 0; mutation < 3; ++mutation) {
+      auto wrong = renamed;
+      auto &changed = wrong.arguments.front();
+      if (mutation == 0) changed.quantifiedLifetimes.clear();
+      if (mutation == 1) changed.arguments.front().referenceLifetime = Lifetime::staticLifetime();
+      if (mutation == 2) changed.arguments.back().referenceLifetime = Lifetime::parameter(900042);
+      expect(mirTypeRelocationKind(fields.mir, wrong) == RelocationKind::Unavailable,
+             "relocation does not match open, fixed or foreign callable regions");
+    }
+    catalogChecked = true;
+  }
+  for (const auto &constructor : fields.mir.constructorInstances())
+    for (std::size_t index = 0; index < constructor.initializers.size(); ++index) {
+      const auto &selected = constructor.initializers[index];
+      if (selected.targetType.arguments.size() != 1 ||
+          selected.targetType.arguments.front().quantifiedLifetimes.size() != 1)
+        continue;
+      for (unsigned mutation = 0; mutation < 3; ++mutation) {
+        auto forged = fields.mir;
+        auto &target = const_cast<MirConstructorInstance *>(
+            forged.findConstructorInstance(constructor.id))->initializers[index].targetType;
+        auto &signature = target.arguments.front();
+        if (mutation == 0) signature.quantifiedLifetimes.clear();
+        if (mutation == 1) signature.arguments.front().referenceLifetime = Lifetime::staticLifetime();
+        if (mutation == 2) signature.arguments.back().referenceLifetime = Lifetime::parameter(900042);
+        expect(!verifyMirProgram(forged).valid(),
+               "selected fields cannot substitute a free, fixed or uncorrelated callable scope");
+      }
+      constructorChecked = true;
+    }
+  expect(catalogChecked && constructorChecked,
+         "closed-field controls exercise both relocation lookup and selected constructor types");
+
+  const auto library = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto path = std::filesystem::weakly_canonical(library / "scoped-carrier-stage.gti");
+  const std::string source = R"gti(
+import std.detail_function_pointer_impl;
+using Selection = for<lifetime a> int&<a>(int&<a>, int&<a>, bool);
+int&<a> select<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; } return right;
+}
+struct Dispatch {
+  gti_internal::function_pointer<Selection> target;
+  Dispatch() : target(gti_internal::function_pointer_from_item<Selection>(select)) {}
+  int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+    return gti_internal::function_pointer_invoke(this.target, left, right, first);
+  }
+};
+int main() { Dispatch dispatch{}; int left = 3; int right = 8;
+  return dispatch.choose(left, right, false) - 8; }
+)gti";
+  const PackageSourceRoot modules{
+      .identity = "toolchain:std", .name = "std", .packageRoot = library, .sourceRoot = library,
+      .modules = {{"meta", library / "std/meta.gti"},
+                  {"detail_function_pointer_impl", library / "std/detail/function_pointer.gti"}},
+      .kind = SourceOwnerKind::Toolchain, .implicitAlias = "std", .defaultModule = "meta"};
+  const auto pointer = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      path, source, {library / "prelude.gti", path}, {{path.string(), source}}, {library}, {modules});
+  if (!pointer.canGenerateCode())
+    for (const auto &diagnostic : pointer.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(pointer.canGenerateCode(),
+         "an evaluated higher-ranked pointer field lends its carrier only to one checked invocation");
+  bool stageChecked = false;
+  for (const auto address : enumerateMirBodyAddresses(pointer.mir)) {
+    const auto *body = findMirBody(pointer.mir, address);
+    for (const auto &block : body->blocks)
+      for (const auto &call : block.instructions) {
+        if (call.intrinsic != IntrinsicKind::FunctionPointerInvoke || call.operands.empty() ||
+            call.operands.front().kind != MirOperandKind::Value)
+          continue;
+        const auto *stage = mir_detail::definitionFor(*body, call.operands.front().value);
+        expect(stage && stage->kind == MirInstructionKind::CallInput && stage->result &&
+                   stage->callInputIndex == 0 && !stage->info.type.referenceLifetime.specified(),
+               "the private operation shell stays separate from signature-bound inputs");
+        for (unsigned mutation = 0; mutation < 12; ++mutation) {
+          auto forged = pointer.mir;
+          auto *changed = findMirBody(forged, address);
+          auto *input = const_cast<MirInstruction *>(mir_detail::definitionFor(*changed, *stage->result));
+          auto *invocation = [&]() -> MirInstruction * {
+            for (auto &changedBlock : changed->blocks)
+              for (auto &instruction : changedBlock.instructions)
+                if (instruction.id == call.id) return &instruction;
+            return nullptr;
+          }();
+          expect(invocation != nullptr, "carrier mutation retains its exact consumer");
+          if (mutation == 0) input->callInputIndex = 1;
+          if (mutation == 1) input->callInputRole = MirCallInputRole::Receiver;
+          if (mutation == 2) ++input->callSite;
+          if (mutation == 3) invocation->intrinsic = IntrinsicKind::None;
+          if (mutation == 4) invocation->lifetimeApplication.callableSignature.reset();
+          if (mutation == 5) { invocation->borrowOrigin = BorrowOriginKind::Argument; invocation->borrowArgument = 0; }
+          if (mutation == 6) input->info.type.referenceAccess = AccessMode::Mutable;
+          if (mutation >= 7 && mutation <= 9) {
+            auto &signature = input->info.type.arguments.front().arguments.front();
+            if (mutation == 7) signature.quantifiedLifetimes.clear();
+            if (mutation == 8) signature.arguments.front().referenceLifetime = Lifetime::staticLifetime();
+            if (mutation == 9) signature.arguments[1].referenceLifetime = Lifetime::parameter(900042);
+            invocation->parameterTypes.front() = input->info.type;
+            invocation->operands.front().type = input->info.type;
+            changed->values[*input->result - 1].info = input->info;
+          }
+          if (mutation == 10) input->operands.front().place = 0;
+          if (mutation == 11) {
+            bool escaped = false;
+            for (auto &exit : changed->blocks)
+              if (exit.terminator.kind == MirTerminatorKind::Return) {
+                exit.terminator.value = MirOperand{.kind = MirOperandKind::Value,
+                    .value = *input->result, .type = input->info.type};
+                escaped = true;
+                break;
+              }
+            expect(escaped && rebuildMirValueUses(*changed),
+                   "the escaped operation shell has an independently rebuilt second use");
+            const auto lifetimes = verifyMirLifetimeApplications(forged, *changed, address.owner);
+            expect(std::any_of(lifetimes.errors.begin(), lifetimes.errors.end(), [&](const auto &error) {
+                     return error.instruction == input->id && error.message.find("original source lifetime") != std::string::npos;
+                   }), "the carrier stage itself rejects an added non-invocation escape");
+          }
+          expect(!verifyMirProgram(forged).valid(),
+                 "carrier stages reject forged scope, role, endpoint, consumer, access and physical source");
+        }
+        stageChecked = true;
+      }
+  }
+  expect(stageChecked, "closed callable field controls include the actual carrier input stage");
+}
+
 void checkClosedProjectedDefaultContract() {
   const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
       "closed-projected-default.gti", R"gti(
@@ -3980,6 +4140,7 @@ int main() {
              failure->primary.end == targetOffset + std::string("constrained").size() &&
              failure->fixes.empty(),
          "an invocation pointer cannot discard a target outlives requirement or invent a repair");
+  checkScopedCallableFieldTransport();
   checkClosedProjectedDefaultContract();
   checkReferenceContentsOpeningShape();
   checkReferenceReceiverProducer();

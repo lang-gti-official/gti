@@ -4400,6 +4400,17 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         return verificationFailure(body, owner,
             "generated copy lacks its exact policy and identity field mapping",
             block.id, instruction.id);
+      if (instruction.kind == MirInstructionKind::Construct &&
+          !instruction.constructorTarget &&
+          instruction.constructorKind == ConstructorKind::Move &&
+          (instruction.operands.size() != 1 ||
+           instruction.operands.front().kind != MirOperandKind::Value ||
+           instruction.operands.front().type != instruction.info.type ||
+           instruction.parameterTypes !=
+               std::vector<SemanticType>{instruction.info.type}))
+        return verificationFailure(body, owner,
+            "generated move lacks its exact owned value transfer role",
+            block.id, instruction.id);
       std::optional<std::size_t> inPlaceArgumentOffset;
       SemanticType::Kind inPlaceStorageKind = SemanticType::Unknown;
       if (instruction.kind == MirInstructionKind::Call) {
@@ -20189,10 +20200,7 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
                 call.operands.size() == 1 &&
                 call.operands.front().kind == MirOperandKind::Value &&
                 call.operands.front().type == carrierType &&
-                call.parameterTypes.size() == 1 &&
-                call.parameterTypes.front().kind == SemanticType::Reference &&
-                call.parameterTypes.front().arguments ==
-                    std::vector<SemanticType>{carrierType} &&
+                call.parameterTypes == std::vector<SemanticType>{carrierType} &&
                 movedClass &&
                 movedClass->moveConstructor == SpecialMemberStatus::Generated &&
                 call.loan && *call.loan != loan.id &&
@@ -23479,7 +23487,7 @@ verifyMirProgramContracts(const MirProgram &program) {
                                          field != constructorOwner->declaredFields.end()
                                      ? substituteTypeLifetimes(field->type, callableOwnerView->bindings)
                                      : std::nullopt;
-          if (!fieldType || *fieldType != initializer.targetType ||
+          if (!fieldType || !equivalentLifetimeTypes(*fieldType, initializer.targetType) ||
               order <= previousFieldOrder)
             exactSelectedFieldOrder = false;
           previousFieldOrder = order;

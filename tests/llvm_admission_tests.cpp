@@ -1008,6 +1008,58 @@ int main() {
              byCopy.limitation());
 }
 
+void testClosedScopeFieldPublication() {
+  using namespace lang;
+  const auto verified = lower(R"gti(
+struct Badge<S> { int value; Badge(int input) : value(input) {} };
+struct Envelope<S> {
+  Badge<S> value;
+  Envelope(int input) : value(Badge<S>(input)) {}
+  Badge<S> get() { return this.value; }
+};
+using Bound = for<lifetime a> int&<a>(int&<a>);
+int main() { Envelope<Bound> envelope{7}; auto value = envelope.get(); return value.value - 7; }
+)gti");
+  expect(planLlvmAdmission(verified).admitted(),
+         "closed callable names do not change exact constructor field storage");
+  const auto &mir = verified.program().mir();
+  bool checked = false;
+  for (const auto &constructor : mir.constructorInstances())
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto plan = native_llvm::unstagedConstructorFieldPublication(
+            mir, constructor.body, constructor.id, instruction);
+        if (!plan.exact || plan.targetType.arguments.size() != 1 ||
+            plan.targetType.arguments.front().quantifiedLifetimes.size() != 1)
+          continue;
+        const auto index = static_cast<std::size_t>(plan.initializer - constructor.initializers.data());
+        for (unsigned mutation = 0; mutation < 4; ++mutation) {
+          auto copy = mir;
+          auto *owner = const_cast<MirConstructorInstance *>(copy.findConstructorInstance(constructor.id));
+          auto &target = owner->initializers[index].targetType.arguments.front();
+          if (mutation == 0) {
+            const auto before = Lifetime::parameter(target.quantifiedLifetimes.front());
+            const auto after = Lifetime::parameter(900081);
+            target.quantifiedLifetimes.front() = after.id;
+            for (auto &argument : target.arguments)
+              if (argument.referenceLifetime == before) argument.referenceLifetime = after;
+          }
+          if (mutation == 1) target.quantifiedLifetimes.clear();
+          if (mutation == 2) target.arguments.front().referenceLifetime = Lifetime::staticLifetime();
+          if (mutation == 3) target.arguments.back().referenceLifetime = Lifetime::parameter(900082);
+          const auto *producer = owner->body.findBlock(block.id);
+          const auto found = std::find_if(producer->instructions.begin(), producer->instructions.end(),
+              [&](const auto &candidate) { return candidate.id == instruction.id; });
+          const auto changed = native_llvm::unstagedConstructorFieldPublication(
+              copy, owner->body, owner->id, *found);
+          expect(changed.exact == (mutation == 0),
+                 "field publication renames only closed binders and preserves free, fixed and correlated regions");
+        }
+        checked = true;
+      }
+  expect(checked, "closed-field LLVM controls reach an actual record publication");
+}
+
 void testUnstagedConstructorFieldPublicationPlan() {
   using namespace lang;
   using native_llvm::UnstagedConstructorFieldPublicationTransport;
@@ -4120,6 +4172,7 @@ int main() {
     testHierarchyCapturePlan();
     testVerifiedRestorationRelay();
     testSharedErasedReturnPublication();
+    testClosedScopeFieldPublication();
     testUnstagedConstructorFieldPublicationPlan();
     testStoredFieldPublicationPlan();
     testLedger();

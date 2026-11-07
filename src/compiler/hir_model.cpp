@@ -936,6 +936,48 @@ verifyHirProgramPlans(const SemanticModel &semantics,
              !copy.lambdaTarget && !copy.nativeCalleeType && !copy.callPlan &&
              !copy.packElement;
     };
+    const auto appliedFoldSignatureMatches = [](
+        const HirFunctionInstance &target, const HirValue &call,
+        const std::vector<SemanticType> &parameters,
+        const SemanticType &argument) {
+      const auto &application = call.lifetimeApplication;
+      const auto &contract = target.lifetimeContract;
+      if (!contract.valid() || !application.complete ||
+          application.callableSignature ||
+          application.bindings.size() != contract.parameters.size() ||
+          target.parameterTypes.size() != parameters.size() ||
+          target.typeArguments.size() != 1 ||
+          call.callableArguments.size() != target.callableParameters.size())
+        return false;
+      for (std::size_t index = 0; index < target.callableParameters.size(); ++index)
+        if (call.callableArguments[index].parameterIndex !=
+                target.callableParameters[index].parameterIndex ||
+            call.callableArguments[index].boundary !=
+                target.callableParameters[index].boundary)
+          return false;
+      for (const auto parameter : contract.parameters)
+        if (std::count_if(application.bindings.begin(),
+                          application.bindings.end(), [&](const auto binding) {
+                            return binding.first == parameter &&
+                                   binding.second.specified();
+                          }) != 1)
+          return false;
+      const auto appliedArgument = substituteTypeLifetimes(
+          target.typeArguments.front(), application.bindings);
+      if (!appliedArgument ||
+          !equivalentLifetimeTypes(*appliedArgument, argument))
+        return false;
+      // The selected lane uses this invocation's applied signature. The
+      // concrete target retains its universal declaration regions; MIR
+      // independently proves this exact application's argument obligations.
+      for (std::size_t index = 0; index < parameters.size(); ++index) {
+        const auto applied = substituteTypeLifetimes(
+            target.parameterTypes[index], application.bindings);
+        if (!applied || !equivalentLifetimeTypes(*applied, parameters[index]))
+          return false;
+      }
+      return true;
+    };
     for (const auto &fold : body.values) {
       if (fold.kind != HirValueKind::PackFold)
         continue;
@@ -982,8 +1024,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             element.parameterTypes.size() == fold.packFoldArgument + 1 &&
             target->declaration == fold.packFoldFunction && !target->owner &&
             target->returnType == SemanticType::Void &&
-            target->parameterTypes == element.parameterTypes &&
-            target->typeArguments == std::vector<SemanticType>{referent} &&
+            appliedFoldSignatureMatches(*target, *call, element.parameterTypes,
+                                        referent) &&
             target->valueArguments.empty() &&
             call->kind == HirValueKind::Call && call->source == pattern &&
             call->info == fold.info && call->dispatch == CallDispatch::Static &&

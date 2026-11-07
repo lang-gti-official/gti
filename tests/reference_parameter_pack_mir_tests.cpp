@@ -1,5 +1,83 @@
 #include "compiler_test_fixture.h"
 
+namespace {
+void checkFoldLifetimeApplication(const lang::FrontendResult &result) {
+  using namespace lang;
+  bool checked = false;
+  for (const auto &function : result.hir.functionInstances()) {
+    for (const auto &fold : function.body.values) {
+      if (fold.kind != HirValueKind::PackFold ||
+          fold.packFoldElements.size() != 2)
+        continue;
+      const auto *original = function.body.findValue(fold.packFoldElements[0].call);
+      if (!original || original->lifetimeApplication.bindings.empty() ||
+          !original->callPlan || original->callPlan->arguments.size() != 1 ||
+          original->callableArguments.size() != 1)
+        continue;
+      for (int mutation = 0; mutation != 14; ++mutation) {
+        auto forged = result.hir;
+        auto *changed = const_cast<HirFunctionInstance *>(
+            forged.findFunctionInstance(function.id));
+        auto *changedFold = const_cast<HirValue *>(changed->body.findValue(fold.id));
+        auto &element = changedFold->packFoldElements[0];
+        auto *call = const_cast<HirValue *>(changed->body.findValue(element.call));
+        auto &application = call->lifetimeApplication;
+        if (mutation == 0) application.complete = false;
+        if (mutation == 1) application.bindings.clear();
+        if (mutation == 2)
+          application.bindings.push_back({Lifetime::parameter(900001),
+                                          application.bindings[0].second});
+        if (mutation == 3)
+          application.bindings[0].first = Lifetime::parameter(900002);
+        if (mutation == 4)
+          application.bindings[0].second = Lifetime::staticLifetime();
+        if (mutation == 5) {
+          element.parameterTypes[0].referenceLifetime = Lifetime::staticLifetime();
+          call->parameterTypes = element.parameterTypes;
+          call->callPlan->arguments[0].parameterType = element.parameterTypes[0];
+        }
+        if (mutation == 6) {
+          auto *input = const_cast<HirValue *>(
+              changed->body.findValue(call->operands[0]));
+          input->packElement = 1;
+        }
+        if (mutation == 7)
+          changedFold->packFoldElements[1].call = element.call;
+        if (mutation == 8) call->callableArguments.clear();
+        if (mutation == 9)
+          call->callableArguments[0].boundary = CallableBoundary::Owned;
+        if (mutation == 10) call->callableArguments[0].parameterIndex = 1;
+        if (mutation == 11)
+          call->callableArguments.push_back(call->callableArguments[0]);
+        if (mutation == 12 || mutation == 13) {
+          auto *target = const_cast<HirFunctionInstance *>(
+              forged.findFunctionInstance(element.functionTarget));
+          if (mutation == 12)
+            target->typeArguments[0] = SemanticType::Unknown;
+          else if (!target->typeArguments[0].lifetimeArguments.empty())
+            target->typeArguments[0].lifetimeArguments[0] = Lifetime::staticLifetime();
+          else
+            target->typeArguments[0].classId = 900003;
+        }
+        const auto proof = verifyHirProgramPlans(result.semantics, forged);
+        expect(!proof.valid() && std::any_of(proof.errors.begin(), proof.errors.end(),
+                   [](const auto &error) {
+                     return error.find("HIR fold lost its exact ordered call") !=
+                            std::string::npos;
+                   }),
+               "fold verification rejects incomplete/foreign applications, retagged "
+               "applied parameters, wrong equal-typed lanes, duplicate calls and "
+               "missing or forged callable boundaries and generic owner types");
+      }
+      checked = true;
+      break;
+    }
+    if (checked) break;
+  }
+  expect(checked, "reference fold fixture exercises a complete selected lifetime application");
+}
+} // namespace
+
 int main() {
   const auto result = lang::Frontend().analyze(
       "reference-pack-loans.gti", R"gti(
@@ -24,6 +102,8 @@ int main() { mut Ticket first{}; mut Ticket second{}; update(first, second); ret
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
          "reference pack calls and folds retain verified per-element loans");
+  if (result.hirValid)
+    checkFoldLifetimeApplication(result);
   if (!result.canGenerateCode())
     return 1;
   bool checkedEntry = false;
@@ -85,6 +165,8 @@ int main() { int first = 3; int second = 8; View left{first}; View right{second}
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(carriers.canGenerateCode() && lang::verifyMirProgram(carriers.mir).valid(),
          "reference-to-carrier pack leaves retain separate physical shells and stored external groups");
+  if (carriers.hirValid)
+    checkFoldLifetimeApplication(carriers);
   bool checkedGroups = false;
   for (const auto &function : carriers.mir.functionInstances()) {
     const lang::MirLoan *first = nullptr;

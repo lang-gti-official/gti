@@ -2373,7 +2373,7 @@ RelocationKind relocationKind(const MirProgram &program,
       return semanticTraits(candidate).relocation;
     const MirClassInstance *owner = nullptr;
     for (const auto &instance : program.classInstances()) {
-      if (instance.type != candidate)
+      if (!equivalentLifetimeTypes(instance.type, candidate))
         continue;
       if (owner != nullptr)
         return RelocationKind::Unavailable;

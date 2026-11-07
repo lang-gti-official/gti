@@ -18,6 +18,18 @@ element; subsequent fields and selected operators project from the reference
 carrier, not from the coarser range origin. The lowering query preserves this
 distinction without changing access permissions, active-loan rules or endpoints.
 
+Nominal member selection, relocation lookup and selected constructor fields
+compare closed callable scopes by alpha equivalence. Free and fixed regions,
+repeated binder correlations, access and nominal identity remain exact. LLVM
+field publication uses that same type identity while retaining the exact
+producer, destination and cleanup protocol; it performs no runtime conversion.
+The private GTI invocation-pointer carrier has a separate, transient read
+operand from its callable signature inputs. Its unregioned shell is accepted
+only at a unique argument-zero stage consumed by the independently checked
+invocation. It supplies no result lifetime. Physical read permission and loan
+activity remain independently verified; an absent region is never an outlives
+proof.
+
 A text result whose owner is a reference to a borrowed carrier retains its own
 producing loan. Its parent protects the carrier's physical storage, while the
 separate stored dependency retains the carrier's external owners. A local text
@@ -5737,6 +5749,10 @@ lifetime supplier cannot substitute for its runtime address. Local carrier
 publication and returning a copied field reuse the independently reconstructed
 contents. Ordinary ownership, availability and cleanup checks remain mandatory;
 a source destructor still makes its class noncopyable.
+Generated movement records the evaluated same-type value as its MIR parameter
+role. The source-level special-member reference chooses the policy; it does not
+turn the executable transfer into a fresh borrow. This distinction preserves
+all retained suppliers when a copied reference can select several owners.
 
 The staged checked-reference contents vocabulary keeps a
 `MirReferenceContentsSource` (opening identity plus typed field selector)

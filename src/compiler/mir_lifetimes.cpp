@@ -617,6 +617,53 @@ bool preservesHirLifetimeBody(const HirLifetimeBody &source,
   return preservesFacts(source, lowered);
 }
 namespace {
+// A GTI invocation pointer's first operand lends its code carrier only for
+// this invocation. The callable contract describes the later signature
+// operands; the carrier's shell is neither a quantified input nor a result
+// supplier. Prove that exact operation/endpoint before omitting an outer
+// region relationship. Ordinary place, read permission and loan replay still
+// validate the input independently.
+bool immediatePointerCarrierInput(const MirProgram &program, const MirBody &body,
+                                  const MirInstruction &stage,
+                                  const SemanticType &actual) {
+  const auto &expected = stage.info.type;
+  if (!stage.result || !stage.callSite || stage.callInputRole != MirCallInputRole::Argument ||
+      stage.callInputIndex != 0 || stage.operands.size() != 1 ||
+      (stage.callInputKind != HirCallInputKind::ReadBorrow &&
+       stage.callInputKind != HirCallInputKind::ReadTemporaryBorrow) ||
+      expected.kind != SemanticType::Reference || expected.arguments.size() != 1 ||
+      expected.referenceAccess != AccessMode::ReadOnly || expected.referenceLifetime.specified())
+    return false;
+  const auto &referent = actual.kind == SemanticType::Reference && actual.arguments.size() == 1
+      ? actual.arguments.front() : actual;
+  if (!equivalentLifetimeTypes(referent, expected.arguments.front()))
+    return false;
+  const auto &uses = body.usesOf(*stage.result);
+  if (uses.size() != 1 || uses.front().kind != MirValueUseKind::InstructionOperand ||
+      uses.front().operandIndex != 0)
+    return false;
+  const auto *block = body.findBlock(uses.front().block);
+  if (!block)
+    return false;
+  const auto found = std::find_if(block->instructions.begin(), block->instructions.end(),
+      [&](const auto &instruction) { return instruction.id == uses.front().instruction; });
+  if (found == block->instructions.end())
+    return false;
+  const auto &call = *found;
+  return !call.tombstone && call.kind == MirInstructionKind::Call &&
+      call.intrinsic == IntrinsicKind::FunctionPointerInvoke && call.hirValue == stage.callSite &&
+      !call.functionTarget && !call.constructorTarget && !call.lambdaTarget && !call.nativeCalleeType &&
+      !call.receiver && !call.parameterTypes.empty() && !call.operands.empty() &&
+      call.parameterTypes.front() == expected &&
+      call.operands.front().kind == MirOperandKind::Value &&
+      call.operands.front().value == *stage.result && call.operands.front().type == expected &&
+      !(call.borrowOrigin == BorrowOriginKind::Argument && call.borrowArgument == 0) &&
+      std::find(call.borrowArguments.begin(), call.borrowArguments.end(), 0) == call.borrowArguments.end() &&
+      std::none_of(call.borrowFields.begin(), call.borrowFields.end(), [](const auto &field) {
+        return field.origin == BorrowOriginKind::Argument && field.parameter == 0;
+      }) && checkedMirCallableLifetimeSignature(program, call);
+}
+
 bool containsLifetimeMetadata(const SemanticType &type) {
   if (type.referenceLifetime != Lifetime{} || !type.lifetimeArguments.empty() ||
       !type.quantifiedLifetimes.empty())
@@ -2199,9 +2246,10 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
             const bool regionProved = previousStage && actual->kind == SemanticType::Reference
                 ? graph.proves(actual->referenceLifetime, expected.referenceLifetime)
                 : relations.borrowedOperand(input, expected.referenceLifetime, instruction.hirValue);
-            proved = expected.arguments.size() == 1 && regionProved &&
+            proved = immediatePointerCarrierInput(program, body, instruction, *actual) ||
+                (expected.arguments.size() == 1 && regionProved &&
                 relations.types(referent, expected.arguments.front(),
-                                expected.referenceAccess == AccessMode::Mutable ? 0 : 1);
+                                expected.referenceAccess == AccessMode::Mutable ? 0 : 1));
           } else if (expected.kind == SemanticType::CString &&
                      actual->kind == SemanticType::NullPtr) {
             // Null has no borrowed storage. The existing scalar conversion

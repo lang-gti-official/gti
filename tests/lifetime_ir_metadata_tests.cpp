@@ -530,6 +530,70 @@ int main() {
   }
 }
 
+void generatedMoveValueRoles() {
+  const auto root = std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      root.parent_path() / "tests/fixtures/generated-move-value-role.gti", R"gti(
+int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; } return right;
+}
+struct Reading<lifetime a> {
+  int&<a> value;
+  Reading(int&<a> input) : value(input) {}
+};
+int main() {
+  int left = 3; int right = 9;
+  int& selected = choose(left, right, false);
+  Reading reading{selected}; Reading copied{reading};
+  Reading moved{std::move(copied)};
+  return moved.value - 9;
+}
+)gti", {root / "prelude.gti"}, {}, {root});
+  expect(checked.canGenerateCode(),
+         "moving a copied record preserves every possible external owner");
+  const MirInstruction *move = nullptr;
+  HirFunctionInstanceId owner = 0;
+  for (const auto &function : checked.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Construct &&
+            instruction.constructorKind == ConstructorKind::Move) {
+          expect(!move, "move role fixture has one generated transfer");
+          move = &instruction;
+          owner = function.id;
+        }
+  expect(move && move->loan && move->operands.size() == 1 &&
+             move->operands.front().kind == MirOperandKind::Value &&
+             move->operands.front().type == move->info.type &&
+             move->parameterTypes == std::vector<SemanticType>{move->info.type},
+         "generated move executes as a same-type value transfer");
+  const auto &original = checked.mir.functionInstances()[owner - 1].body;
+  expect(original.loans[*move->loan - 1].additionalDependencies.size() == 1,
+         "selected reference retains both possible owners through movement");
+  for (unsigned mutation = 0; mutation != 7; ++mutation) {
+    auto forged = checked.mir;
+    auto &body = MirProgramTestAccess::functions(forged)[owner - 1].body;
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions) {
+        if (instruction.id != move->id) continue;
+        if (mutation == 0)
+          instruction.parameterTypes.front() = SemanticType::referenceTo(instruction.info.type);
+        if (mutation == 1) instruction.parameterTypes.front() = SemanticType::Int32;
+        if (mutation == 2) instruction.parameterTypes.clear();
+        if (mutation == 3) body.loans[*instruction.loan - 1].additionalDependencies.clear();
+        if (mutation == 4) instruction.operands.front().type = SemanticType::Int32;
+        if (mutation == 5) {
+          instruction.parameterTypes.front() = SemanticType::Int32;
+          instruction.operands.front().type = SemanticType::Int32;
+        }
+        if (mutation == 6) instruction.operands.front().kind = MirOperandKind::BorrowRead;
+      }
+    const auto proof = verifyMirProgram(forged);
+    if (proof.valid()) std::cerr << "accepted generated move role mutation " << mutation << '\n';
+    expect(!proof.valid(), "move rejects borrowed roles, erased owners and mistyped inputs");
+  }
+}
+
 void generatedRecordCopies() {
   const std::array initializers{
       "View<a,b> copied = input;", "auto copied = input;",
@@ -1553,6 +1617,7 @@ int main() {
   stagedReferenceContentsTransport();
   nestedCarrierPublication();
   erasedCarrierReturnPublication();
+  generatedMoveValueRoles();
   generatedRecordCopies();
   inPlaceConstructorLifetimeApplication();
   closureEnvironmentReplay();
