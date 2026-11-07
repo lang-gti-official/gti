@@ -911,11 +911,88 @@ int main() {
   return 0;
 }
 )");
-  expect(hasCode(arrayContainment, "GTI-S2067") &&
-             hasMessage(arrayContainment, "Fixed array 'values'") &&
-             hasMessage(arrayContainment, "bounded containment slice"),
-         "fixed arrays should retain the stable owning payload-enum "
-         "containment diagnostic");
+  expect(arrayContainment.canGenerateCode() &&
+             lang::verifyMirProgram(arrayContainment.mir).valid(),
+         "fixed arrays retain each owning enum element's verified cleanup");
+  if (arrayContainment.canGenerateCode()) {
+    auto forgedArray = arrayContainment.mir;
+    bool removedElement = false;
+    for (const auto address : lang::enumerateMirBodyAddresses(forgedArray)) {
+      auto *body = lang::findMirBody(forgedArray, address);
+      if (body == nullptr)
+        continue;
+      for (auto &drop : body->dropObligations) {
+        if (!removedElement && drop.dropType.fixedArray &&
+            drop.dropType.fixedArray->leafType.kind ==
+                lang::SemanticType::Enum &&
+            !drop.dropType.aggregate.empty()) {
+          drop.dropType.aggregate.clear();
+          removedElement = true;
+        }
+      }
+    }
+    expect(removedElement && !lang::verifyMirProgram(forgedArray).valid(),
+           "MIR rejects an owning enum array without its element cleanup");
+  }
+
+  const std::string arrayPrelude = R"(
+import std.memory;
+class resource {
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+)";
+  const auto copiedArray =
+      analyzeWithPrelude("owning-payload-array-copy.gti", arrayPrelude + R"(
+int main() {
+  holder values[2] = {holder::one(resource()), holder::none};
+  auto copied = values;
+  return 0;
+}
+)");
+  expect(hasCode(copiedArray, "GTI-S2003") &&
+             hasMessage(copiedArray, "move-only"),
+         "array copyability must fold the owning enum's move-only payload");
+  const auto movedElement = analyzeWithPrelude(
+      "owning-payload-array-moved-element.gti", arrayPrelude + R"(
+int main() {
+  mut holder values[2] = {holder::one(resource()), holder::none};
+  auto first = std::move(values[0]);
+  auto second = std::move(values[0]);
+  return 0;
+}
+)");
+  expect(hasCode(movedElement, "GTI-S2018") &&
+             hasMessage(movedElement, "values[0]' has already been moved"),
+         "an owning enum array element cannot be moved twice");
+  const auto missingElements = analyzeWithPrelude(
+      "owning-payload-array-initialization.gti", arrayPrelude + R"(
+int main() {
+  holder uninitialized[2];
+  holder partial[2] = {holder::none};
+  return 0;
+}
+)");
+  expect(countCode(missingElements, "GTI-S2015") == 2,
+         "owning enum arrays require every element to be initialized");
+
+  const auto arrayCapture =
+      analyzeWithPrelude("owning-payload-array-capture.gti", arrayPrelude + R"(
+int main() {
+  holder values[2] = {holder::one(resource()), holder::none};
+  auto callback = [items = std::move(values)]() -> int32_t { return 0; };
+  return callback();
+}
+)");
+  expect(countCode(arrayCapture, "GTI-S2067") == 1 &&
+             hasMessage(arrayCapture, "Lambda capture 'items'") &&
+             hasMessage(arrayCapture, "holder[2]"),
+         "array storage admission does not silently enable owning array "
+         "captures");
 
   const lang::FrontendResult unsupportedFieldOwners =
       analyze("owning-payload-unsupported-field-owners.gti", R"(
@@ -929,17 +1006,17 @@ class generic_wrapper<T> { holder value; };
 class polymorphic_wrapper {
 private:
   holder value;
+  holder values[2] = {holder::none, holder::none};
 public:
   virtual int32_t marker() { return 0; }
 };
 int main() { return 0; }
 )");
-  expect(countCode(unsupportedFieldOwners, "GTI-S2067") == 1 &&
-             hasHint(unsupportedFieldOwners,
-                     "direct owning payload-enum field is supported only") &&
+  expect(countCode(unsupportedFieldOwners, "GTI-S2067") == 2 &&
+             hasHint(unsupportedFieldOwners, "directly or in a fixed array") &&
              hasMessage(unsupportedFieldOwners, "Instance field 'value'"),
-         "only polymorphic owners retain the direct-field containment "
-         "diagnostic; concrete generic ownership is structural");
+         "polymorphic owners reject direct and array enum fields; "
+         "concrete generic ownership is structural");
 
   const lang::FrontendResult wrapperContainment =
       analyze("owning-payload-wrapper-containment.gti", R"(

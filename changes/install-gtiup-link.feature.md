@@ -1,0 +1,1 @@
+`scripts/install_neovim_local.py --local --gtiup` builds a checkout and makes it the active gtiup toolchain in one command: it installs a fresh prefix, runs `gtiup link dev` and `gtiup default dev`, and keeps the three newest builds.

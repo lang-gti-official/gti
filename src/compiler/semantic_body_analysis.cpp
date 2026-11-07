@@ -72,6 +72,37 @@ missingSwitchCasesFix(const SwitchStmt &stmt, const SourceManager *sources,
 }
 } // namespace
 
+void SemanticVisitor::Impl::validateCodegenAttributes(
+    const std::vector<FunctionAttribute> &attributes, bool sourceBody,
+    bool lifecycle) {
+  std::unordered_set<std::string> names;
+  const bool hasInline = std::any_of(
+      attributes.begin(), attributes.end(),
+      [](const auto &attribute) { return attribute.name.lexeme == "inline"; });
+  for (const auto &attribute : attributes) {
+    const auto &name = attribute.name.lexeme;
+    const auto invalid = [&](std::string message) {
+      diagnostics.push_back(
+          makeDiagnostic(DiagnosticId::InvalidFunctionContract, attribute.name,
+                         {std::move(message)}));
+    };
+    if (name != "inline" && name != "noinline" && name != "cold") {
+      if (lifecycle)
+        invalid("Only [[inline]], [[noinline]] and [[cold]] apply to a "
+                "constructor or destructor.");
+      continue;
+    }
+    if (!names.insert(name).second)
+      invalid("Duplicate function attribute '" + name + "'.");
+    else if (name == "noinline" && hasInline)
+      invalid("[[inline]] and [[noinline]] cannot be combined on the same "
+              "function.");
+    else if (attribute.argument || !sourceBody)
+      invalid("Code-generation attributes require a source-defined GTI "
+              "function, method, constructor or destructor.");
+  }
+}
+
 auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   reflectedMethodTargets.clear();
   macroLookup.clear();
@@ -479,6 +510,16 @@ auto SemanticVisitor::Impl::containsOwningPayloadEnum(
 auto SemanticVisitor::Impl::validateOwningPayloadEnumByValueBoundary(
     const SemanticType &type, const Token &location, std::string_view boundary,
     bool directTransport) -> void {
+  if (type.kind == SemanticType::TypePack) {
+    // A concrete parameter pack expands into independent formals, not an
+    // aggregate that contains their ownership. Apply the ordinary boundary
+    // contract to every element, retaining the callable's eligibility.
+    for (const auto &element : type.arguments) {
+      validateOwningPayloadEnumByValueBoundary(element, location, boundary,
+                                               directTransport);
+    }
+    return;
+  }
   if (!containsOwningPayloadEnum(type)) {
     return;
   }
@@ -2208,6 +2249,8 @@ auto SemanticVisitor::Impl::visitStaticAssertDecl(const StaticAssertDecl &stmt)
 auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
     -> void {
   const DeclarationOrderScope declarationOrder{*this, stmt};
+  validateCodegenAttributes(stmt.functionAttributes(), stmt.body() != nullptr,
+                            true);
   const std::size_t constructorDiagnosticStart = diagnostics.size();
   if (!currentClass) {
     report(stmt.name(),
@@ -2756,6 +2799,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
 auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
     -> void {
   const DeclarationOrderScope declarationOrder{*this, stmt};
+  validateCodegenAttributes(stmt.functionAttributes(), stmt.body() != nullptr,
+                            true);
   if (!currentClass) {
     report(stmt.tilde(),
            "Destructors can only be declared in a class or struct.",
@@ -3526,6 +3571,12 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                                          where, {std::move(message)}));
   };
   std::unordered_set<std::string> functionAttributeNames;
+  validateCodegenAttributes(
+      stmt.functionAttributes(),
+      functionInfo != nullptr && !stmt.hasCLinkage() &&
+          !stmt.runtimeBinding() && !stmt.isMacro() && !stmt.isPure() &&
+          functionInfo->bodyDeclaration() != nullptr &&
+          functionInfo->bodyDeclaration()->body() != nullptr);
   if (stmt.isMacro()) {
     const Token &keyword = *stmt.macroKeyword();
     if (functionInfo == nullptr || functionInfo->ownerClass != 0 ||
@@ -3597,22 +3648,6 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     }
     if (attribute.lexeme == "inline" || attribute.lexeme == "noinline" ||
         attribute.lexeme == "cold") {
-      if (!functionAttributeNames.insert(attribute.lexeme).second) {
-        reportContract(attribute, "Duplicate function attribute '" +
-                                      attribute.lexeme + "'.");
-      } else if (stmt.hasFunctionAttribute("inline") &&
-                 stmt.hasFunctionAttribute("noinline") &&
-                 attribute.lexeme == "noinline") {
-        reportContract(attribute, "[[inline]] and [[noinline]] cannot be "
-                                  "combined on the same function.");
-      } else if (contract.argument || functionInfo == nullptr ||
-                 stmt.hasCLinkage() || stmt.runtimeBinding() ||
-                 stmt.isMacro() || stmt.isPure() ||
-                 functionInfo->bodyDeclaration() == nullptr ||
-                 functionInfo->bodyDeclaration()->body() == nullptr) {
-        reportContract(attribute, "Code-generation attributes require a "
-                                  "source-defined GTI function or method.");
-      }
       continue;
     }
     if (attribute.lexeme == "test") {
@@ -5158,7 +5193,10 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
       valueControlFlow;
 
   scopes = beforeBranches;
-  mergeValueStates(beforeBranches, thenScopes, elseScopes);
+  mergeValueStates(
+      beforeBranches, thenScopes, elseScopes,
+      summarizeFlow(stmt.thenBranch().get(), nullptr, true).canFallThrough,
+      summarizeFlow(stmt.elseBranch().get(), nullptr, true).canFallThrough);
   const ScopeStack loanScopes = scopes;
   ScopeStack moveScopes = beforeBranches;
   if (const std::optional<bool> condition = constantBoolean(stmt.condition())) {
@@ -6508,38 +6546,25 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
   semanticModel.recordFullExpression(stmt, initializer);
   if (catalog.sealed)
     validateOrdinaryClassLayout(declaredType);
-  if (declaredType.kind == SemanticType::Array &&
-      containsOwningPayloadEnum(declaredType)) {
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2067", DiagnosticPhase::Semantics, stmt.name(),
-        "Fixed array '" + stmt.name().lexeme + "' has type '" +
-            typeSpelling(declaredType) +
-            "', but owning payload-enum elements are not supported in this "
-            "bounded containment slice.");
-    diagnostic.hints.emplace_back(
-        "Keep each owning payload enum in its own local binding until "
-        "aggregate element lifecycle state is represented explicitly.");
-    diagnostics.emplace_back(std::move(diagnostic));
-  } else if (instanceField && declaredType.kind == SemanticType::Enum &&
-             containsOwningPayloadEnum(declaredType) &&
-             !(fieldOwner != nullptr &&
-               (fieldOwner->kind == ClassKind::Class ||
-                fieldOwner->kind == ClassKind::Struct) &&
-               !fieldOwner->polymorphic && !fieldOwner->cAbiRecord &&
-               !fieldOwner->cOpaqueHandle && !fieldOwner->storedReference &&
-               !fieldOwner->compilerPrivate &&
-               fieldOwner->compilerCapability ==
-                   CompilerCapabilityTypeKind::None)) {
+  if (instanceField && containsOwningPayloadEnum(declaredType) &&
+      !(fieldOwner != nullptr &&
+        (fieldOwner->kind == ClassKind::Class ||
+         fieldOwner->kind == ClassKind::Struct) &&
+        !fieldOwner->polymorphic && !fieldOwner->cAbiRecord &&
+        !fieldOwner->cOpaqueHandle && !fieldOwner->storedReference &&
+        !fieldOwner->compilerPrivate &&
+        fieldOwner->compilerCapability == CompilerCapabilityTypeKind::None)) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2067", DiagnosticPhase::Semantics, stmt.name(),
         "Instance field '" + stmt.name().lexeme + "' has type '" +
             typeSpelling(declaredType) +
             "', which contains owning payload-enum state unsupported for "
-            "this owner in the bounded direct-field slice.");
+            "this owner in the owning-field slice.");
     diagnostic.hints.emplace_back(
-        "A direct owning payload-enum field is supported only in an ordinary "
-        "non-polymorphic GTI class or struct; keep "
-        "layout-constrained and compiler-owned shapes in separate bindings.");
+        "An owning payload-enum field, directly or in a fixed array, is "
+        "supported only in an ordinary non-polymorphic GTI class or struct; "
+        "keep layout-constrained and compiler-owned shapes in separate "
+        "bindings.");
     diagnostics.emplace_back(std::move(diagnostic));
   }
   const SemanticBindingKind bindingKind =

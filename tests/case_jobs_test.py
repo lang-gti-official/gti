@@ -242,6 +242,8 @@ class CaseJobsTests(unittest.TestCase):
                 patch.object(payload_matrix, "run", process), \
                 patch.object(payload_matrix, "build_fixture", fixture_build), \
                 patch.object(payload_matrix, "run_cases", run_plan), \
+                patch.object(payload_matrix, "run_enum_array_cases",
+                             lambda compiler, modes: None), \
                 patch.dict(os.environ, {"GTI_TEST_CASE_JOBS": "1"}), \
                 contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(io.StringIO()):

@@ -3,7 +3,10 @@
 import copy
 import io
 import json
+import os
 from pathlib import Path
+import re
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -37,7 +40,7 @@ def commit(root, path, value):
 
 
 def packages(directory, compat=COMPAT, sha=SHA):
-    directory.mkdir()
+    directory.mkdir(parents=True, exist_ok=True)
     for platform in artifacts.PLATFORMS:
         archive = directory / f'gti-nightly-{platform}.tar.gz'
         with tarfile.open(archive, 'w:gz') as stream:
@@ -130,6 +133,58 @@ class IndependentLSP(unittest.TestCase):
             archive.write_bytes(archive.read_bytes() + b'altered')
             with self.assertRaisesRegex(ValueError, 'checksum'):
                 component.pack(root / 'input', root / 'corrupt', PLAN)
+
+    def test_workflow_packaging_isolated_from_checked_out_packages(self):
+        workflow = (ROOT / '.github/workflows/lsp.yml').read_text()
+
+        def step(name):
+            return workflow.split('      - name: ' + name + '\n', 1)[1].split('\n      - ', 1)[0]
+
+        def run_line(name):
+            return re.search(r'^\s+run: (.+)$', step(name), re.MULTILINE).group(1)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            checkout = root / 'checkout'; checkout.mkdir()
+            runner = root / 'runner temp'; runner.mkdir()
+            (checkout / 'scripts').symlink_to(ROOT / 'scripts', target_is_directory=True)
+            # Actions downloads merge into an existing destination. This is a
+            # source directory in the real checkout, not an empty artifact store.
+            source = checkout / 'packages/README.md'
+            source.parent.mkdir()
+            source.write_text('GTI package sources must be preserved.\n')
+
+            def expand(value):
+                return value.replace('${{ runner.temp }}', str(runner)).replace('${RUNNER_TEMP}', str(runner))
+
+            def argument(command, flag):
+                argv = shlex.split(expand(command))
+                return checkout / argv[argv.index(flag) + 1]
+
+            download = re.search(r'^\s+path: (.+)$', step('Download exact admitted packages'), re.MULTILINE).group(1)
+            inputs = checkout / expand(download)
+            packages(inputs)
+            selection = run_line('Select successful integration already on main')
+            argument(selection, '--plan').write_text(json.dumps(PLAN))
+            command = run_line('Verify and package compatible LSPs without rebuilding')
+            result = subprocess.run(['bash', '-e', '-c', command], cwd=checkout,
+                                    env=dict(os.environ, RUNNER_TEMP=str(runner), GITHUB_REPOSITORY=REPO),
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            output = argument(command, '--output')
+            self.assertEqual(json.loads((output / 'lsp.json').read_text())['source'], SHA)
+            self.assertEqual(argument(run_line('Publish immutable compatible updates'), '--directory'), output)
+            subject = re.search(r'^\s+subject-path: (.+)$', step('Attest component archives'), re.MULTILINE).group(1)
+            self.assertEqual((checkout / expand(subject)).parent, output)
+            self.assertEqual(source.read_text(), 'GTI package sources must be preserved.\n')
+            self.assertEqual(list(source.parent.iterdir()), [source])
+
+    def test_package_rejects_unexpected_input_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); packages(root / 'input')
+            (root / 'input/README.md').write_text('not an admitted artifact')
+            with self.assertRaisesRegex(ValueError, 'unexpected release artifact set'):
+                component.pack(root / 'input', root / 'output', PLAN)
 
     def test_already_published_source_skips_package_downloads(self):
         def api(path):

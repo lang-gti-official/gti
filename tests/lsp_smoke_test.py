@@ -7072,6 +7072,50 @@ def test_function_contract_diagnostics(executable, root):
         assert "cannot be combined" in conflict["message"], conflict
         assert not conflict["data"].get("fixes"), conflict
 
+        lifecycle = "struct S { [[inline]] S() {} [[cold, noinline]] ~S() {} };\nint main() { S value{}; return 0; }\n"
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 9},
+                       "contentChanges": [{"text": lifecycle}]},
+        })
+        publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 9
+        )["params"]
+        assert not has_error_diagnostics(publication), publication
+        for request_id, offset, expected in (
+            (4, lifecycle.index("S()"), "[[inline]]"),
+            (5, lifecycle.index("~S()") + 1, "[[noinline]]"),
+        ):
+            session.send({
+                "jsonrpc": "2.0", "id": request_id, "method": "textDocument/hover",
+                "params": {"textDocument": {"uri": uri},
+                           "position": lsp_position(lifecycle, offset)},
+            })
+            hover = session.receive_until(lambda message: message.get("id") == request_id)
+            assert expected in json.dumps(hover), hover
+
+        invalid_lifecycle = lifecycle.replace("[[inline]]", "[[inline, noinline]]")
+        session.send({
+            "jsonrpc": "2.0", "method": "textDocument/didChange",
+            "params": {"textDocument": {"uri": uri, "version": 10},
+                       "contentChanges": [{"text": invalid_lifecycle}]},
+        })
+        publication = session.receive_until(
+            lambda message: message.get("method") == "textDocument/publishDiagnostics"
+            and message["params"]["uri"] == uri
+            and message["params"].get("version") == 10
+        )["params"]
+        conflict = next(item for item in publication["diagnostics"] if item.get("code") == "GTI-S2099")
+        offset = invalid_lifecycle.index("noinline")
+        assert conflict["range"] == {
+            "start": lsp_position(invalid_lifecycle, offset),
+            "end": lsp_position(invalid_lifecycle, offset + len("noinline")),
+        }, conflict
+        assert "cannot be combined" in conflict["message"], conflict
+        assert not conflict["data"].get("fixes"), conflict
+
     finally:
         session.close()
 

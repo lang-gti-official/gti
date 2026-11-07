@@ -1,0 +1,23 @@
+import std.string;
+import std.memory;
+
+// A fixed message buffer owns the payload of every occupied slot.
+enum Message { Empty, Text(std::string text), Code(int code) };
+
+int text_size(Message& message) {
+  switch (message) {
+    case Message::Text(auto& text): return int(text.size());
+    default: return 0;
+  }
+}
+
+int main() {
+  mut Message messages[3] = {
+      Message::Text(std::string("hello")), Message::Empty, Message::Code(42)};
+  auto received = std::move(messages[0]);
+  messages[1] = Message::Text(std::string("world"));
+  if (text_size(received) != 5 || text_size(messages[1]) != 5) return 1;
+  // The moved-out slot has no remaining payload to destroy. The other slots
+  // and received message retain their own ordinary cleanup obligations.
+  return 0;
+}

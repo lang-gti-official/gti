@@ -376,6 +376,9 @@ struct ExecutableBuildResult {
   std::optional<BuildProvenance> provenance;
   std::optional<NativeInstrumentationPlan> nativeInstrumentation;
   bool generatedSourceRetained = false;
+  // The exact published or cache-validated bytes, retained for downstream
+  // targets without reopening an artifact another build may replace.
+  CompiledLibrarySnapshot compiledLibrarySnapshot = {};
 
   [[nodiscard]] bool succeeded() const {
     return status == ExecutableBuildStatus::Success;

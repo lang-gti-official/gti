@@ -692,10 +692,39 @@ def successes(root: Path) -> dict[str, str]:
     return cases
 
 
+RAW_FIELD_ARGUMENTS = r'''
+mut int destroyed = 0;
+struct Cell {
+  mut int value = 7;
+  Cell() = default;
+  ~Cell() { destroyed += 1; }
+};
+struct Outer { mut Cell cell{}; Outer() = default; };
+int read(int& value) { return value; }
+void change(mut int& value) { value = 9; }
+struct Snapshot { int value; Snapshot(int& source) : value(source) {} };
+int main() {
+  {
+    mut Outer owner{};
+    unsafe {
+      Outer* pointer = &owner;
+      Cell* cell = &owner.cell;
+      Snapshot snapshot{cell->value};
+      change(cell->value);
+      const Outer* readonly = pointer;
+      if (read(readonly->cell.value) != 9 || snapshot.value != 7) return 1;
+    }
+    if (destroyed != 0) return 2;
+  }
+  return destroyed == 1 ? 0 : 3;
+}
+'''
+
+
 def native_only_cases() -> dict[str, str]:
-    # The C++ representation vocabulary cannot currently transport nested text.
-    # Native expectations come from GTI's byte/count contract.
-    return {'nested-text-return': NESTED_TEXT_RETURN}
+    # LLVM-only regressions use explicit source-contract expectations.
+    return {'nested-text-return': NESTED_TEXT_RETURN,
+            'raw-field-arguments': RAW_FIELD_ARGUMENTS}
 
 
 def failure_cases() -> dict[str, str]:
@@ -816,7 +845,7 @@ def main() -> None:
                 result = execute(gti, root, work / f'{name}-{endpoint.optimization}', source, endpoint, env)
                 if result.error or result.observable != (0, '', ''):
                     raise AssertionError(f'{name} {endpoint}: {result}')
-            print(f'{name}: LLVM O0-O3 source-contract oracle passed (known C++ representation limitation)', flush=True)
+            print(f'{name}: LLVM O0-O3 source-contract oracle passed', flush=True)
         for name, text in rejections.items():
             if selection and selection != name:
                 continue

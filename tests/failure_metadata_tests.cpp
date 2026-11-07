@@ -4,6 +4,7 @@
 #include "gti/mir_effects.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
+#include "temporary_directory.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -283,7 +284,7 @@ int main() {
 
   const std::string snapshot = lang::MirPrinter().print(frontend.mir);
   const bool validSnapshot =
-      snapshot.starts_with("mir-v120 ") &&
+      snapshot.starts_with("mir-v121 ") &&
       snapshot.find("failure-metadata artifact=" +
                     metadata.artifactIdentity().hex()) != std::string::npos &&
       snapshot.find("failure-site @1 source=8:main.gti") != std::string::npos &&
@@ -1756,8 +1757,7 @@ int main(mut int count, mut arguments values) { return count; }
 
 void testExternalSourceRouteIdentity() {
   const std::filesystem::path fixtureRoot =
-      std::filesystem::weakly_canonical(
-          std::filesystem::temp_directory_path()) /
+      std::filesystem::weakly_canonical(gti_test::temporaryDirectory()) /
       "gti-route";
   const std::string entrySource = R"(
 import "../shared.gti";
@@ -1814,7 +1814,7 @@ int main() { return checked(1); }
 
 void testModuleImplementationSourceIdentity() {
   const auto fixtureRoot = std::filesystem::weakly_canonical(
-      std::filesystem::temp_directory_path() / "gti-module-source-identity");
+      gti_test::temporaryDirectory() / "gti-module-source-identity");
   const auto analyzeAt = [](const std::filesystem::path &root,
                             std::string_view call = "Widget::read()") {
     const auto app = root / "app";

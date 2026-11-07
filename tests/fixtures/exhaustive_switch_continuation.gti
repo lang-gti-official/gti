@@ -1,0 +1,66 @@
+import std.string;
+import std.optional;
+import std.meta;
+
+enum value_type { NONE, String(std::string text), Int(int64_t number) };
+
+value_type& pick(value_type& slot, std::string probe) { return slot; }
+
+std::optional<T> get_as<std::move_constructible T>(value_type& slot,
+                                                  std::string_view key) {
+  if constexpr (std::meta::is_same<T, int64_t>()) {
+    switch (pick(slot, std::string(key))) {
+    case value_type::Int(auto& number): return std::optional<T>(number);
+    default: return std::optional<T>();
+    }
+  }
+  return std::optional<T>();
+}
+
+mut int drops = 0;
+class Probe {
+public:
+  Probe() {}
+  ~Probe() { drops = drops + 1; }
+};
+value_type& observed(value_type& slot, Probe probe) { return slot; }
+
+std::optional<int64_t> exhaustive(value_type& slot) {
+  switch (observed(slot, Probe())) {
+  case value_type::Int(auto& number):
+    // This break belongs to the loop, not the enclosing switch.
+    while (true) { break; }
+    return std::optional<int64_t>(number);
+  case value_type::String: return std::optional<int64_t>();
+  case value_type::NONE: return std::optional<int64_t>();
+  }
+  return std::optional<int64_t>();
+}
+
+int with_break(value_type& slot) {
+  switch (slot) {
+  case value_type::Int: break;
+  default: return 0;
+  }
+  return 37;
+}
+
+int partial(int value) {
+  switch (value) { case 1: return 11; }
+  return 22;
+}
+
+int main() {
+  value_type number = value_type::Int(72);
+  value_type none = value_type::NONE;
+  auto found = get_as<int64_t>(number, "par");
+  if (!found.has_value() || found.value() != 72) return 1;
+  if (get_as<int64_t>(none, "par").has_value()) return 2;
+  if (get_as<std::string>(number, "par").has_value()) return 3;
+  auto matched = exhaustive(number);
+  if (!matched.has_value() || matched.value() != 72 || drops != 1) return 4;
+  if (exhaustive(none).has_value() || drops != 2) return 5;
+  if (with_break(number) != 37 || with_break(none) != 0) return 6;
+  if (partial(1) != 11 || partial(2) != 22) return 7;
+  return 0;
+}

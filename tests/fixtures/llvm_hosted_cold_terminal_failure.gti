@@ -3,9 +3,9 @@ mut int trace = 0;
 class Marker {
   int value;
 public:
-  Marker(int value) : value(value) {}
+  [[inline]] Marker(int value) : value(value) {}
   int read() { return this.value; }
-  ~Marker() { trace = trace * 10 + this.value; }
+  [[cold, noinline]] ~Marker() { trace = trace * 10 + this.value; }
 };
 thread_local Marker early{1};
 thread_local Marker late{2};
@@ -17,7 +17,7 @@ struct Coordinate {
   Marker field;
   uint8_t row;
   uint8_t column;
-  Coordinate(uint8_t row, uint8_t column) : field(Marker(4)), row(row), column(column) {
+  [[inline]] Coordinate(uint8_t row, uint8_t column) : field(Marker(4)), row(row), column(column) {
     if (row >= 9 || column >= 9) { report_invalid_coordinate(row, column); }
   }
 };

@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -111,6 +113,23 @@ int main() {
   }
   const auto standardLibrary =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto exhaustiveSwitchPath =
+      std::filesystem::path(__FILE__).parent_path() /
+      "fixtures/exhaustive_switch_continuation.gti";
+  std::ifstream exhaustiveSwitchInput(exhaustiveSwitchPath);
+  std::stringstream exhaustiveSwitchSource;
+  exhaustiveSwitchSource << exhaustiveSwitchInput.rdbuf();
+  const auto exhaustiveSwitch = lang::Frontend().analyze(
+      exhaustiveSwitchPath.string(), exhaustiveSwitchSource.str(),
+      {standardLibrary / "prelude.gti"}, {}, {standardLibrary});
+  if (!exhaustiveSwitchInput || !exhaustiveSwitch.canGenerateCode() ||
+      !lang::verifyMirProgram(exhaustiveSwitch.mir).valid()) {
+    std::cerr
+        << "terminal switches must not lower a disconnected continuation\n";
+    for (const auto &diagnostic : exhaustiveSwitch.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+    return 1;
+  }
   const auto forwarded = lang::Frontend().analyze(
       "/tmp/forwarded.gti", R"(
 import std.string;

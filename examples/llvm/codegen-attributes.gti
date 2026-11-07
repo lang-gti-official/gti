@@ -3,8 +3,8 @@
 mut int destroyed = 0;
 class Guard {
 public:
-  Guard() = default;
-  ~Guard() { destroyed += 1; }
+  [[inline]] Guard() {}
+  [[noinline]] ~Guard() { destroyed += 1; }
 };
 [[inline]] int increment(int value) { return value + 1; }
 [[noinline]] int recurse(int value) {
@@ -14,7 +14,7 @@ public:
 [[cold, noinline]] int uncommon_result() { return 7; }
 [[inline]] T identity<T>(T value) { return value; }
 struct Reader {
-  Reader() = default;
+  [[cold, noinline]] Reader() {}
   [[inline]] int read() { return identity<int>(uncommon_result()); }
 };
 int main() {

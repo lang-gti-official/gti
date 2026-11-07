@@ -9,6 +9,14 @@ resolved calls, ownership operations, and cleanup. Verified optimized MIR is
 the executable component of the backend-neutral `LoweredProgram`; `MirProgram`
 alone is not the complete backend API.
 
+An exhaustive switch has a completing continuation only when an arm completes
+normally or a `break` targets that switch. If all arms terminate, lowering marks
+the unused exit unreachable, as it does for an `if` whose branches terminate.
+Following statements are not emitted into a disconnected CFG. Nested loop or
+switch breaks retain their own targets; partial switches keep their unmatched
+continuation. Full-expression root/cleanup ordering remains independently
+verified, including when a generic compile-time branch contains the switch.
+
 ## Projected references and existing-value allocation
 
 A local reference initialized from a projected address retains that exact
@@ -437,8 +445,9 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-The combined deterministic serialization is currently `mir-v120`/`mir-body-v93`,
-with `lowered-program-v34` declaration metadata. Function instances and sealed
+The combined deterministic serialization is currently `mir-v121`/`mir-body-v93`,
+with `lowered-program-v35` declaration metadata. Function, constructor and
+destructor instances and their sealed
 declarations retain the resolved cold hint and default/hint/never inlining policy;
 verification rejects a mismatching or non-source policy. These distinct combined
 identities retain both macro result-region/local-initializer authority and
@@ -755,8 +764,9 @@ checks the pack root, element index, type, access and availability; program
 verification checks enum traits against the exact integral or payload enum row.
 Payload enum relocation and lifecycle facts must not fall back to the generic
 scalar-enum defaults. This also applies to enum pack places synthesized while
-lowering constructor arguments or loans. The existing semantic boundary for
-owning payload enums inside by-value packs remains unchanged.
+lowering constructor arguments or loans. Owning payload enum elements in
+by-value packs use the same semantic transport eligibility and individual
+ownership obligations as ordinary by-value parameters.
 
 The combined serialization is `mir-v113`/`lowered-program-v22`, preserving
 embedding rows, exact generic enum metadata, and concrete class alias catalogs.
@@ -1785,6 +1795,14 @@ Program v45 adds concrete fixed-array drop schedules: every array drop retains
 its ordered extents, exact leaf type, and leaf class instance when applicable.
 This lets verification and backends consume reverse element cleanup without
 recovering array lifecycle meaning from a source type or target spelling.
+Owning payload-enum array leaves use the existing aggregate element recipe
+with the enum's active-alternative children. The program verifier requires
+the exact array extents and leaf identity, and rejects a missing element
+cleanup recipe. Completed initializer elements transfer their temporary
+obligations into the array; failure before publication retains cleanup of the
+completed prefix. Element movement retires the source enum's active payload,
+so subsequent reverse array cleanup does not destroy it twice. This admission
+requires no new MIR operation or backend-specific ownership inference.
 Program v44/body v42 added exact proof-carrying safety discharges to instructions
 and transformation records. At that stage a discharge named bounds, storage-state, or
 arithmetic-overflow family plus the exact local defined-failure origin and
@@ -3659,6 +3677,11 @@ The bounded direct callable schedule uses those same obligations for argument
 preparation, parameter entry, direct result placement, success activation, and
 defined-failure cleanup. No AST or HIR expression is re-emitted to manufacture
 a payload-enum call boundary.
+Concrete owning enum pack elements use the same ordered owning-parameter
+classification as direct enum inputs. HIR retains one copy/move input and one
+lexical drop obligation per expanded element; MIR stages and transfers those
+obligations through ordinary calls and construction. No pack-wide ownership
+container or backend-specific enum forwarding rule is introduced.
 
 For an admitted ordinary direct field, MIR retains the existing class
 initializer and lifecycle schedule. A payload construction's value-rooted enum

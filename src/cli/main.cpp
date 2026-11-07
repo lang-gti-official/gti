@@ -2888,12 +2888,24 @@ int buildProjectPlan(
     const char *driver = nullptr,
     std::optional<lang::driver::BuildProvenance> *capturedProvenance = nullptr,
     DiagnosticSummary *capturedDiagnostics = nullptr,
-    std::vector<std::string> *capturedTestCases = nullptr) {
+    std::vector<std::string> *capturedTestCases = nullptr,
+    lang::driver::CompiledLibrarySnapshots *selectedLibraries = nullptr,
+    lang::driver::CompiledLibrarySnapshot *capturedLibrary = nullptr) {
+  lang::driver::CompiledLibrarySnapshots localLibraries;
+  auto &libraries = selectedLibraries ? *selectedLibraries : localLibraries;
   for (const auto &dependency : plan.compiledBuildDependencies()) {
-    const int status = buildProjectPlan(dependency, options, toolchain,
-                                        diagnosticSources, driver);
+    lang::driver::CompiledLibrarySnapshot artifact;
+    const int status = buildProjectPlan(
+        dependency, options, toolchain, diagnosticSources, driver, nullptr,
+        nullptr, nullptr, &libraries, &artifact);
     if (status != exitCode(ExitStatus::Success))
       return status;
+    try {
+      libraries.retain(dependency.output(), std::move(artifact));
+    } catch (const std::exception &error) {
+      std::cerr << "gti: compiled library: " << error.what() << '\n';
+      return exitCode(ExitStatus::Compilation);
+    }
   }
   if (plan.compiledLibrary() &&
       (!plan.buildScripts().empty() || !plan.bindgenImports().empty())) {
@@ -3010,6 +3022,15 @@ int buildProjectPlan(
         .project = projectProvenance(plan)};
   }
 
+  std::vector<lang::driver::CompiledLibraryImport> imports;
+  try {
+    imports = libraries.select(plan.compiledImports());
+  } catch (const std::exception &error) {
+    progress.suspend();
+    std::cerr << "gti: compiled library: " << error.what() << '\n';
+    progress.finish(false);
+    return exitCode(ExitStatus::Compilation);
+  }
   const lang::driver::ExecutableBuildResult result =
       lang::driver::buildExecutable(
           lang::driver::ExecutableBuildRequest(
@@ -3029,7 +3050,7 @@ int buildProjectPlan(
                   .trustedRoot = plan.workspaceRoot(),
                   .outputRoot = plan.workspaceRoot() / "build" / "gti"},
               std::move(cCompiler), std::move(cache), std::move(buildReport),
-              plan.compiledLibrary(), std::nullopt, plan.compiledImports()),
+              plan.compiledLibrary(), std::nullopt, std::move(imports)),
           progress.observer());
   progress.suspend();
   const int status = reportBuildResult(
@@ -3043,6 +3064,8 @@ int buildProjectPlan(
   if (capturedTestCases != nullptr) {
     *capturedTestCases = result.compilation.testCases;
   }
+  if (capturedLibrary != nullptr && result.succeeded())
+    *capturedLibrary = result.compiledLibrarySnapshot;
   progress.finish(status == exitCode(ExitStatus::Success));
   return status;
 }

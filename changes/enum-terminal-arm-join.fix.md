@@ -1,0 +1,1 @@
+Fix an internal compiler error when an enum is assigned in one branch and the other branch cannot continue, such as a call to `std::panic`. Continuing enum values retain their exact alternatives and borrow dependencies.

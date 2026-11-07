@@ -803,6 +803,8 @@ private:
 
   void printValue(const LoweredConstructorDeclaration &value) {
     output << "constructor(id=" << value.id << ";owner=" << value.owner
+           << ";codegen-inline=" << number(value.codegenAttributes.inlining)
+           << ";codegen-cold=" << value.codegenAttributes.cold
            << ";kind=" << number(value.kind)
            << ";access=" << number(value.access) << ";generics=";
     genericParameters(value.genericParameters);
@@ -844,6 +846,8 @@ private:
 
   void printValue(const LoweredDestructorDeclaration &value) {
     output << "destructor(owner=" << value.owner
+           << ";codegen-inline=" << number(value.codegenAttributes.inlining)
+           << ";codegen-cold=" << value.codegenAttributes.cold
            << ";access=" << number(value.access) << ";specifier=";
     if (value.specifier) {
       output << number(*value.specifier);
@@ -898,7 +902,7 @@ std::string LoweredProgramPrinter::print(const LoweredProgram &program) const {
 
 void LoweredProgramPrinter::print(const LoweredProgram &program,
                                   std::ostream &output) const {
-  output << "lowered-program-v34\n";
+  output << "lowered-program-v35\n";
   for (const auto &unit : program.compiledInterfaceUnits())
     output << "compiled-interface-unit " << unit.sourceUnit
            << " package=" << std::quoted(unit.owner.package)

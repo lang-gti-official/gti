@@ -666,7 +666,25 @@ Neovim after changing toolchains so the server and parser are reloaded together.
 
 ### Local macOS installation without a release runner
 
-From this checkout, run:
+With [gtiup](https://github.com/lang-gti-official/gtiup) 0.5.0 or later, one
+command builds this checkout and makes it your active toolchain:
+
+```sh
+python3 scripts/install_neovim_local.py --local --gtiup
+```
+
+It builds the compiler, LSP and parser, installs them into a new prefix under
+`~/.local/share/gti/linked/dev/`, runs `gtiup link dev <prefix>` and then
+`gtiup default dev`. Terminal commands and a gtiup-managed Neovim then use the
+build; restart Neovim's LSP client to pick it up. Each run installs a fresh
+prefix, so a running `gti_lsp` keeps working until it restarts, and the three
+newest prefixes are kept (`--keep N`). `--gtiup NAME` links under another name,
+`--no-default` links without switching, and without `--local` it builds the
+canonical nightly source instead. This mode writes no `~/.local/bin` commands and
+no Neovim configuration. `gtiup default nightly` switches back, and
+`gtiup unlink dev` forgets the link.
+
+Without gtiup, from this checkout, run:
 
 ```sh
 python3 scripts/install_neovim_local.py --dry-run --replace-config --replace-bin

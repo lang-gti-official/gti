@@ -4025,11 +4025,14 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   if (compiledLibrary || compiledImport) {
     try {
       if (compiledLibrary) {
-        if (request.cache() &&
-            reusableCompiledScalarLibraryTarget(
-                request.compilation(), *request.compiledLibrary(),
-                request.compiledImports(), request.toolchain().runtimeLibrary,
-                request.output())) {
+        auto reused =
+            request.cache()
+                ? reusableCompiledScalarLibrarySnapshot(
+                      request.compilation(), *request.compiledLibrary(),
+                      request.compiledImports(),
+                      request.toolchain().runtimeLibrary, request.output())
+                : CompiledLibrarySnapshot{};
+        if (reused) {
           result.status = ExecutableBuildStatus::Success;
           result.compilation.status = CompilationStatus::Success;
           result.cache.status = BuildCacheStatus::Hit;
@@ -4037,6 +4040,7 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
           result.cache.detail =
               "compiled library source/configuration/dependency fingerprints "
               "match";
+          result.compiledLibrarySnapshot = std::move(reused);
           return result;
         }
         auto built = buildCompiledScalarLibraryTarget(
@@ -4415,14 +4419,17 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   }
 
   if (compiledLibrary) {
+    auto snapshot =
+        std::make_shared<const std::string>(std::move(compiledBundle));
     std::string error;
-    if (!publishTextAtomically(request.output(), compiledBundle, error)) {
+    if (!publishTextAtomically(request.output(), *snapshot, error)) {
       result.status = ExecutableBuildStatus::ArtifactPublicationFailure;
       result.driverDiagnostic =
           "gti: cannot publish compiled library: " + error;
       return result;
     }
     result.artifactPublishResult = ArtifactPublishResult{};
+    result.compiledLibrarySnapshot = std::move(snapshot);
     result.status = ExecutableBuildStatus::Success;
     return result;
   }

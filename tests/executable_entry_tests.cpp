@@ -1,5 +1,6 @@
 #include "gti/driver/compilation.h"
 #include "gti/frontend.h"
+#include "temporary_directory.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -18,7 +19,7 @@ void expect(bool condition, const char *message) {
 
 int main() {
   const std::filesystem::path path =
-      std::filesystem::temp_directory_path() / "gti-entry-diagnostic.gti";
+      gti_test::temporaryDirectory() / "gti-entry-diagnostic.gti";
   const std::string source = "// UTF-8: \xf0\x9f\x98\x80\nnamespace tea { int "
                              "main() { return 0; } }\n";
   lang::FrontendOptions options;
