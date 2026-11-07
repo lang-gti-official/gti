@@ -451,6 +451,10 @@ witnesses. Body records collect the selected applications with assignment and
 return obligations. HIR qualifies semantic places to its body and replaces
 source expressions with stable value IDs; MIR maps those witnesses to exact
 places, rejecting stale domains and ambiguous temporary materializations.
+A contextual conversion has a distinct HIR value even when it shares its
+receiver's source expression. Body-origin finalization reuses the already
+checked region/place/source witness only through that exact conversion's
+receiver chain; conflicting evaluations cannot be selected by source order.
 These maps and completion states participate in the sealed fingerprint; a
 completion flag alone is not proof of any outlives relation. Direct reference
 arguments may differ in free region annotations only when their exact target is
@@ -471,6 +475,12 @@ the constructor's own checked semantic model, alongside explicit initializers.
 An ownerless enum alternative contributes its complete guarded domain. A default
 that an explicit initializer overrides contributes no dependency facts; the
 selected initializer must independently retain every active owner.
+Direct reference fields are replayed from their escaping borrow publication,
+including every supplier of a reference-returning call. An exclusive formal
+may transfer its exact entry capability. These facts remain separate from SSA
+carrier initialization, are checked against the captured initializer set and
+must be present at every normal exit; stored referent and region conversion
+are independently checked against the callable owner's field recipe.
 
 Payload operations instantiate the selected enum's sealed variant recipe with
 its exact actual region bindings. Construction reconstructs each source type

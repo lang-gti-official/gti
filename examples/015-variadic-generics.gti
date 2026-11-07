@@ -25,6 +25,12 @@ T construct<T, Args...>(Args... values) {
 int add(int first, int second = 5) { return first + second; }
 int add_forwarded<Args...>(Args... values) { return add(values...); }
 
+// A named result lifetime preserves the owners of exact reference-pack lanes.
+int&<a> select_second<lifetime a>(int&<a> first, int&<a> second) { return second; }
+int&<a> select_forwarded<lifetime a, Args...>(Args&<a>... values) {
+  return select_second(values...);
+}
+
 class SumBase {
   int total;
 public:
@@ -50,9 +56,11 @@ int main() {
   forward(seed); // Each expansion copies the array; seed remains available.
 
   SumDerived inherited{2, 4};
+  int first = 3; int second = 8;
 
   if (inferred == 7 and explicit_types == 9 and copied.sum() == 6 and
-      add_forwarded(3) == 8 and inherited.sum() == 6) {
+      add_forwarded(3) == 8 and inherited.sum() == 6 and
+      select_forwarded(first, second) == 8) {
     return 0;
   }
   return 1;

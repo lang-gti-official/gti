@@ -26,6 +26,84 @@ MirInstruction *firstLifetimeCall(MirBody &body) {
         return &instruction;
   return nullptr;
 }
+void checkCompleteReferenceInitializers() {
+  const auto checked = Frontend({.stopAfter = FrontendPhase::Mir}).analyze(
+      "complete-reference-initializers.gti", R"gti(
+int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; } return right;
+}
+struct Selected<lifetime a> {
+  int&<a> value;
+  Selected(int&<a> left, int&<a> right, bool first) : value(choose(left, right, first)) {}
+};
+struct Direct<lifetime a> {
+  int&<a> value;
+  Direct(int&<a> input) : value(input) {}
+};
+struct Exclusive<lifetime a> {
+  mut int&<a> value;
+  Exclusive(mut int&<a> input) : value(input) {}
+};
+int main() {
+  int left = 3; int right = 8; mut int third = 9;
+  Selected selected{left, right, false}; Direct direct{right}; Exclusive exclusive{third};
+  return selected.value + direct.value + exclusive.value - 25;
+}
+)gti");
+  if (!checked.canGenerateCode()) {
+    for (const auto &diagnostic : checked.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    for (const auto &error : verifyMirProgram(checked.mir).errors)
+      std::cerr << error.message << '\n';
+    expect(false, "reference-field constructors independently publish scalar, selected and exclusive inputs");
+  }
+  bool selected = false;
+  bool exclusive = false;
+  for (const auto &constructor : checked.mir.constructorInstances()) {
+    if (!constructor.completeBorrow || constructor.initializers.size() != 1 ||
+        !constructor.initializers.front().storesReference)
+      continue;
+    const auto publication = std::find_if(constructor.body.loans.begin(), constructor.body.loans.end(),
+        [&](const auto &loan) { return loan.escapes && loan.kind == MirLoanKind::Stored &&
+            loan.storedPath == BorrowPath{fieldProjection(constructor.initializers.front().field)}; });
+    expect(publication != constructor.body.loans.end(), "reference initializer has its exact publication loan");
+    if (constructor.completeBorrow->dependencies.size() == 2) {
+      selected = true;
+      expect(publication->additionalDependencies.size() == 1,
+             "a selected scalar publication preserves both permitted origins");
+      for (int mutation = 0; mutation != 7; ++mutation) {
+        auto forged = checked.mir;
+        auto *owner = const_cast<MirConstructorInstance *>(forged.findConstructorInstance(constructor.id));
+        auto *loan = const_cast<MirLoan *>(owner->body.findLoan(publication->id));
+        if (mutation == 0) loan->additionalDependencies.clear();
+        if (mutation == 1) loan->source = loan->additionalDependencies.front().source;
+        if (mutation == 2) owner->initializers.front().completeBorrow->dependencies.pop_back();
+        if (mutation == 3) owner->initializers.front().targetType.referenceLifetime = Lifetime::staticLifetime();
+        if (mutation == 4)
+          for (auto &block : owner->body.blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.kind == MirInstructionKind::Borrow && instruction.loan == loan->id)
+                instruction.tombstone = true;
+        if (mutation == 5) loan->access = AccessMode::Mutable;
+        if (mutation == 6) owner->completeBorrow->dependencies.pop_back();
+        expect(!verifyMirProgram(forged).valid(),
+               "reference constructor replay rejects lost suppliers, forged origin/access/region and skipped publication");
+      }
+    }
+    if (publication->entry) {
+      exclusive = true;
+      expect(publication->access == AccessMode::Mutable,
+             "exclusive constructor reference transfers its unique incoming capability");
+      auto forged = checked.mir;
+      auto *owner = const_cast<MirConstructorInstance *>(forged.findConstructorInstance(constructor.id));
+      const_cast<MirLoan *>(owner->body.findLoan(publication->id))->entry = false;
+      expect(!verifyMirProgram(forged).valid(),
+             "an entry reference transfer cannot become an unproduced escaping loan");
+    }
+  }
+  expect(selected && exclusive, "constructor fixture exercises both selected suppliers and entry transfer");
+}
+
 void checkProgramBasePathAuthority() {
   const auto source = Frontend({.stopAfter = FrontendPhase::Mir}).analyze("base-path-authority.gti", R"gti(
 interface Marker { int mark(); };
@@ -211,7 +289,9 @@ int main() {
       {{prelude.string(), ""}, {capability.string(), declarations}, {entry.string(), source}}, {root});
   if (!checked.canGenerateCode())
     for (const auto &diagnostic : checked.diagnostics)
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+      std::cerr << diagnostic.code << " at " << diagnostic.primary.source << ':'
+                << diagnostic.primary.start << '-' << diagnostic.primary.end << ": "
+                << diagnostic.message << '\n';
   expect(checked.canGenerateCode(),
          "trusted erased views preserve read/mutable origins and independently prove restored borrowed types");
   struct Site { MirBodyAddress body; MirInstructionId instruction; IntrinsicKind intrinsic; };
@@ -306,6 +386,7 @@ int main() {
 } // namespace
 
 int main() {
+  checkCompleteReferenceInitializers();
   const auto frontend = Frontend({.stopAfter = FrontendPhase::Mir})
                             .analyze("lifetime-mir-contracts.gti", R"gti(
 int&<a> identity<lifetime a>(int&<a> value) { return value; }

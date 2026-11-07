@@ -1262,8 +1262,7 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
       if (dependencies.empty()) {
         auto place = source ? retainedLoanPlace(source) : SemanticLoanPlace{};
         if (argument && argument->forwardedPackElement) {
-          const auto *expansion = exprAs<PackExpansion>(source);
-          const auto *carrier = expansion ? resolve(expansion->name()) : nullptr;
+          const auto *carrier = parameterPackArgument(*argument);
           place = carrier ? SemanticLoanPlace{.root = toolingSymbolFor(*carrier)}
                           : SemanticLoanPlace{};
           for (const auto element : argument->packPath)

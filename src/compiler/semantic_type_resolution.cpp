@@ -1728,7 +1728,11 @@ auto SemanticVisitor::Impl::resolveClassArguments(
       !owner.definitionFamilyMembers.empty() ||
       owner.definitionFamilyPrimary != 0) {
     resolveClassArgumentPatterns(classId);
-    for (const TypeRef &argument : arguments) {
+    const auto typeArity = owner.declaration->genericArgumentPatterns().empty()
+        ? genericTypeParameterCount(owner.genericParameters)
+        : owner.genericArgumentPatterns.size();
+    const auto typeCount = std::min(typeArity, arguments.size());
+    for (const TypeRef &argument : std::span(arguments).first(typeCount)) {
       const std::size_t before = diagnostics.size();
       validateType(argument);
       if (argument.genericArgumentSyntax == GenericArgumentSyntax::Value) {
@@ -1763,9 +1767,16 @@ auto SemanticVisitor::Impl::resolveClassArguments(
       diagnostics.emplace_back(std::move(diagnostic));
       result.valid = false;
     }
+    std::vector<GenericParameterInfo> lifetimeParameters;
     for (const auto &parameter : classInfo(selected).genericParameters)
       if (parameter.lifetime)
-        result.lifetimes.push_back(inferredLifetime(site, parameter.id));
+        lifetimeParameters.push_back(parameter);
+    const std::vector<TypeRef> lifetimeArguments(
+        arguments.begin() + static_cast<std::ptrdiff_t>(typeCount), arguments.end());
+    auto regions = resolveNominalArguments(lifetimeParameters, classInfo(selected).name,
+                                           lifetimeArguments, site, diagnosticCode);
+    result.lifetimes = std::move(regions.lifetimes);
+    result.valid = result.valid && regions.valid;
     return result;
   }
   return resolveNominalArguments(owner.genericParameters, owner.name, arguments,
@@ -3299,8 +3310,15 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   const bool conditionalFields =
       std::any_of(storedPaths.begin(), storedPaths.end(),
                   [](const auto &path) { return !path.conditions.empty(); });
+  const bool checkedInitializerBody = selected.kind == ConstructorKind::Ordinary &&
+      selected.constructor && selected.constructor->declaration &&
+      selected.constructor->declaration->body() &&
+      selected.constructor->declaration->body()->statements().empty() &&
+      !containsOpenTypeParameter(constructedType) &&
+      std::none_of(selected.parameterTypes.begin(), selected.parameterTypes.end(),
+                   containsOpenTypeParameter);
   if (const auto paths = storedReferencePaths(constructedType);
-      !paths.empty() && !conditionalFields &&
+      !paths.empty() && !conditionalFields && !checkedInitializerBody &&
       selected.kind == ConstructorKind::Ordinary) {
     storedParameters = selected.constructor == nullptr
                            ? std::vector<std::size_t>{}
@@ -3327,7 +3345,7 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
   std::vector<BorrowedFieldOrigin> storedFields;
   // Even one destination reference can retain several possible origins. Its
   // constructor publishes a field mapping, not an alias of the input scalar.
-  if (!storedPaths.empty() && !conditionalFields &&
+  if (!storedPaths.empty() && !conditionalFields && !checkedInitializerBody &&
       selected.kind == ConstructorKind::Ordinary && selected.constructor != nullptr)
     for (const auto &binding : storedCarrierConstructorBindings(
              constructedType, selected.constructor->declaration,
@@ -3376,36 +3394,43 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
             resolved.lifetimeArguments.push_back(binding.second);
             break;
           }
-  if ((conditionalFields || !resolved.borrowFields.empty()) &&
+  if ((conditionalFields || (checkedInitializerBody && !storedPaths.empty()) ||
+       !resolved.borrowFields.empty()) &&
       selected.kind == ConstructorKind::Ordinary &&
       !containsOpenTypeParameter(constructedType)) {
-    // Conditional initialization needs its checked body summary. Ordinary
-    // reference fields already have exact constructor-initializer bindings;
-    // instantiate the same complete supplier machinery for those mappings.
-    const auto summary = conditionalFields
+    // Empty initializer bodies publish the exact selected Base/field proof,
+    // including generic binders, defaults and all possible scalar suppliers.
+    // The older nonempty-body family retains its declaration-map boundary.
+    const auto summary = conditionalFields || checkedInitializerBody
         ? completeConstructorBorrow(resolved, tokenSpan(paren))
         : std::optional<FunctionBorrowDependencySummary>(
               FunctionBorrowDependencySummary{.dependencies = resolved.borrowFields});
     ResolvedCallInfo publication;
     publication.returnType = constructedType;
     publication.parameterTypes = selected.parameterTypes;
-    std::vector<const ExprPtr *> inputs;
-    for (const auto &argument : arguments)
-      inputs.push_back(argument.expression);
     const auto dependencies =
         summary
-            ? instantiateCompleteBorrowArguments(publication, *summary, inputs)
+            ? instantiateCompleteBorrowArguments(publication, *summary, arguments)
             : std::nullopt;
     if (!dependencies) {
       report(paren,
              "Construction requires a complete checked dependency contract "
              "for every active borrowed field and alternative.",
              "GTI-S2045");
+      currentType = constructedType;
+      return;
     } else {
       resolved.borrowFields = summary->dependencies;
+      resolved.borrowArguments.clear();
+      for (const auto &dependency : summary->dependencies)
+        if (dependency.origin == BorrowOriginKind::Argument &&
+            std::find(resolved.borrowArguments.begin(), resolved.borrowArguments.end(),
+                      dependency.parameter) == resolved.borrowArguments.end())
+          resolved.borrowArguments.push_back(dependency.parameter);
       if (!summary->dependencies.empty()) {
-        resolved.borrowOrigin = BorrowOriginKind::Argument;
+        resolved.borrowOrigin = summary->dependencies.front().origin;
         resolved.borrowArgument = summary->dependencies.front().parameter;
+        resolved.borrowAccess = summary->dependencies.front().access;
       }
       if (contextualConstruction && construction != nullptr)
         resolved.contextualBorrowDependencies = *dependencies;
@@ -9377,7 +9402,7 @@ auto SemanticVisitor::Impl::validateParameterPacks(
   }
 
   const bool functionOwnsPack = pack != nullptr;
-  if (pack == nullptr && returnType != nullptr && currentClass &&
+  if (pack == nullptr && currentClass &&
       !parameters.empty() && parameters.back().pack) {
     const auto parameterIdentity =
         activeTypePackIdentity(parameters.back().type);
@@ -9462,9 +9487,8 @@ auto SemanticVisitor::Impl::validateParameterPacks(
              "supported.",
              "GTI-S2023");
     }
-    if (parameter.type.reference) {
-      const SemanticType result = returnType ? typeOf(*returnType)
-                                  : currentClass
+    if (parameter.type.reference && returnType == nullptr) {
+      const SemanticType result = currentClass
                                       ? SemanticType::classType(*currentClass)
                                       : SemanticType::Void;
       if (result.kind == SemanticType::Reference ||

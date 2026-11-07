@@ -13769,6 +13769,89 @@ completeBorrowConstructorDomain(const MirProgram &program,
   return domain;
 }
 
+// Reference fields use their exact escaping Borrow publication, rather than
+// an SSA carrier Initialize. A mutable formal can transfer its entry capability
+// directly; its initializer expression must still address that exact formal.
+struct CompleteReferenceInitializer {
+  const MirConstructorInitializer *initializer = nullptr;
+  const MirLoan *loan = nullptr;
+  const MirInstruction *borrow = nullptr;
+};
+[[nodiscard]] std::optional<CompleteReferenceInitializer>
+completeReferenceInitializer(const MirProgram &program,
+                             const MirConstructorInstance &constructor,
+                             std::size_t index) {
+  if (index >= constructor.initializers.size()) return std::nullopt;
+  const auto &initializer = constructor.initializers[index];
+  const auto domain = completeBorrowConstructorDomain(program, constructor);
+  if (!domain || initializer.kind != ConstructorInitializerTargetKind::Field ||
+      !initializer.storesReference || !initializer.field ||
+      initializer.arguments.size() != 1 || initializer.constructorTarget ||
+      initializer.generatedDefault || initializer.targetType.kind != SemanticType::Reference ||
+      initializer.targetType.arguments.size() != 1 ||
+      initializer.borrowAccess != initializer.targetType.referenceAccess ||
+      std::count_if(domain->fields.begin(), domain->fields.end(), [&](const auto &field) {
+        return field.step == fieldProjection(initializer.field) && field.type == initializer.targetType;
+      }) != 1)
+    return std::nullopt;
+  const auto &body = constructor.body;
+  const MirLoan *published = nullptr;
+  for (const auto &loan : body.loans)
+    if (loan.escapes && loan.storedPath == BorrowPath{fieldProjection(initializer.field)}) {
+      if (published) return std::nullopt;
+      published = &loan;
+    }
+  if (!published || published->kind != MirLoanKind::Stored || published->lifecycleBound ||
+      published->access != initializer.borrowAccess || published->referenceSelection)
+    return std::nullopt;
+  const MirInstruction *borrow = nullptr;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (!instruction.tombstone && instruction.kind == MirInstructionKind::Borrow &&
+          instruction.loan == published->id) {
+        if (borrow) return std::nullopt;
+        borrow = &instruction;
+      }
+  if (published->entry) {
+    const auto inputs = mir_detail::concreteFormalInputs(body, constructor.parameterTypes,
+                                                        constructor.parameterBindings);
+    const auto *place = body.findPlace(published->source);
+    if (borrow || published->producedBy || published->parent ||
+        published->access != AccessMode::Mutable || !published->designatedFields.empty() ||
+        !published->conditions.empty() || !published->additionalDependencies.empty() ||
+        !inputs || !place || !place->initiallyAvailable || place->foreignStorage ||
+        std::count_if(inputs->begin(), inputs->end(), [&](const auto &input) {
+          return mir_detail::formalInputPlace(*place, input) &&
+                 input.type.kind == SemanticType::Reference &&
+                 input.type.referenceAccess == AccessMode::Mutable &&
+                 mirLifetimeReferenceConversion(program, body, constructor.id,
+                                                input.type, initializer.targetType);
+        }) != 1)
+      return std::nullopt;
+    std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindings;
+    for (const auto &loan : body.loans)
+      for (const auto binding : loan.carriers) bindings[binding].push_back(loan.id);
+    const auto original = canonicalBorrowOrigin(body, published->source, bindings, true);
+    bool addressed = false;
+    for (const auto &candidate : body.places)
+      if (candidate.sourceValue == initializer.arguments.front()) {
+        const auto selected = canonicalBorrowOrigin(body, candidate.id, bindings, true);
+        if (original.ambiguous || selected.ambiguous || !sameCanonicalPlace(original, selected))
+          return std::nullopt;
+        addressed = true;
+      }
+    if (!addressed) return std::nullopt;
+  } else if (!borrow || published->producedBy != initializer.arguments.front() ||
+             borrow->hirValue != initializer.arguments.front() || borrow->operands.size() != 1 ||
+             borrow->result || borrow->destination ||
+             (borrow->operands.front().kind != MirOperandKind::Loan &&
+              borrow->operands.front().kind != MirOperandKind::BorrowRead &&
+              borrow->operands.front().kind != MirOperandKind::BorrowWrite)) {
+    return std::nullopt;
+  }
+  return CompleteReferenceInitializer{&initializer, published, borrow};
+}
+
 // A result-domain view deliberately contains no body-local place or loan IDs.
 // Local facts and declaration-relative summaries share this structural proof;
 // their independent origin/availability proofs remain with their consumers.
@@ -14129,6 +14212,9 @@ struct CompleteBorrowFlow {
   // reborrows. Kept only in this replay result, never attached to source MIR.
   std::unordered_map<MirInstructionId, std::vector<CompleteBorrowFact>> payloadConstructionInputs;
   std::unordered_map<MirInstructionId, CompleteBorrowFact> initializerFacts;
+  // Replayed scalar reference fields, indexed by the existing initializer
+  // records. No summary or attached complete set creates these facts.
+  std::vector<CompleteBorrowFact> referenceInitializerFacts;
   std::vector<CompleteBorrowReturnFact> normalReturns;
   std::unordered_set<MirInstructionId> noNormalBorrowResults;
   // Populated only for failed claimed values during the final replay, never
@@ -14213,7 +14299,12 @@ completeBorrowSourcePath(const MirProgram &program,
   struct State {
     std::vector<Fact> values;
     std::vector<Fact> places;
+    std::vector<Fact> referenceInitializers;
   };
+  std::vector<std::optional<CompleteReferenceInitializer>> referenceInitializers;
+  if (constructor)
+    for (std::size_t index = 0; index < constructor->initializers.size(); ++index)
+      referenceInitializers.push_back(completeReferenceInitializer(program, *constructor, index));
   std::vector<const MirInstruction *> definitions(body.values.size());
   std::unordered_map<MirLoanId, const MirInstruction *> loanDefinitions;
   for (const auto &block : body.blocks)
@@ -14786,6 +14877,80 @@ completeBorrowSourcePath(const MirProgram &program,
                    operand.kind == MirOperandKind::Move
                ? fromPlace(state, operand.place)
                : std::nullopt;
+  };
+  const auto referencePublicationFact = [&](const State &state,
+                                             const CompleteReferenceInitializer &publication) -> Fact {
+    const auto &loan = *publication.loan;
+    Fact fact;
+    if (loan.entry) {
+      // completeReferenceInitializer already proved the unique mutable formal,
+      // its exact addressed initializer expression and capability transfer.
+      fact = MirBorrowDependencySet{.dependencies = {{.source = loan.source, .access = loan.access}}};
+    } else {
+      const auto &operand = publication.borrow->operands.front();
+      const auto producer = operand.kind == MirOperandKind::Loan
+          ? loanDefinitions.find(operand.loan) : loanDefinitions.end();
+      const auto *input = operand.kind == MirOperandKind::Loan ? body.findLoan(operand.loan) : nullptr;
+      if (input && input->kind == MirLoanKind::CallResult &&
+          producer != loanDefinitions.end() && producer->second &&
+          producer->second->kind == MirInstructionKind::Call && producer->second->result &&
+          *producer->second->result <= state.values.size()) {
+        // The call's independently reconstructed value has the external
+        // suppliers. Its transient result loan is retired by publication.
+        fact = state.values[*producer->second->result - 1];
+      } else {
+        fact = fromOperand(state, operand);
+      }
+    }
+    if (!fact || fact->dependencies.empty() || !fact->possibleAlternatives.empty())
+      return std::nullopt;
+    std::vector<MirLoanDependency> claims{{.source = loan.source, .parent = loan.parent,
+        .designatedFields = loan.designatedFields, .access = loan.access, .conditions = loan.conditions}};
+    claims.insert(claims.end(), loan.additionalDependencies.begin(), loan.additionalDependencies.end());
+    if (claims.size() != fact->dependencies.size()) return std::nullopt;
+    std::vector<bool> matched(claims.size());
+    for (const auto &dependency : fact->dependencies) {
+      bool found = false;
+      for (std::size_t index = 0; index < claims.size(); ++index) {
+        const auto &claim = claims[index];
+        if (matched[index] || !claim.designatedFields.empty() || !claim.conditions.empty() ||
+            !dependency.designatedFields.empty() || !dependency.conditions.empty() ||
+            (claim.access == AccessMode::Mutable && dependency.access != AccessMode::Mutable))
+          continue;
+        const auto actual = canonicalBorrowOrigin(body, dependency.source, bindingLoans, true);
+        const auto asserted = canonicalBorrowOrigin(body, claim.source, bindingLoans, true);
+        if (actual.ambiguous || asserted.ambiguous || !sameCanonicalPlace(actual, asserted))
+          continue;
+        bool parent = claim.parent == dependency.parent;
+        if (!parent && !claim.parent && dependency.parent &&
+            claim.access == AccessMode::ReadOnly && dependency.access == AccessMode::ReadOnly) {
+          const auto *entry = body.findLoan(dependency.parent);
+          const auto *source = entry ? body.findPlace(entry->source) : nullptr;
+          const auto inputs = parameterTypes && parameters
+              ? mir_detail::concreteFormalInputs(body, *parameterTypes, *parameters) : std::nullopt;
+          const auto entryOrigin = source ? canonicalBorrowOrigin(body, source->id, bindingLoans, true)
+                                          : CanonicalPlace{.ambiguous = true};
+          parent = entry && entry->entry && entry->kind == MirLoanKind::Parameter &&
+              !entry->parent && entry->access == AccessMode::ReadOnly &&
+              entry->designatedFields.empty() && entry->conditions.empty() &&
+              entry->additionalDependencies.empty() && source && source->initiallyAvailable &&
+              !source->foreignStorage && inputs && !entryOrigin.ambiguous &&
+              sameCanonicalPlace(entryOrigin, actual) &&
+              std::count_if(inputs->begin(), inputs->end(), [&](const auto &input) {
+                return mir_detail::formalInputPlace(*source, input) &&
+                       input.type.kind == SemanticType::Reference &&
+                       input.type.referenceAccess == AccessMode::ReadOnly;
+              }) == 1;
+        }
+        if (!parent) continue;
+        matched[index] = found = true;
+        break;
+      }
+      if (!found) return std::nullopt;
+    }
+    MirBorrowDependencySet result{.dependencies = std::move(claims)};
+    return completeBorrowSetHasTypedShape(program, publication.initializer->targetType, result)
+        ? std::optional{std::move(result)} : std::nullopt;
   };
   const auto extractionSource = [&](const State &state,
                                     const MirInstruction &instruction) -> Fact {
@@ -15367,6 +15532,7 @@ completeBorrowSourcePath(const MirProgram &program,
                                       index + 1 == fields.size());
   }
   std::unordered_map<MirInstructionId, Fact> *initializerObservations = nullptr;
+  std::vector<Fact> *referenceInitializerObservations = nullptr;
   const auto execute = [&](State &state, const MirInstruction &instruction) {
     Fact result;
     const bool payload =
@@ -15735,6 +15901,12 @@ completeBorrowSourcePath(const MirProgram &program,
       if (instruction.receiver)
         invalidateMutable(*instruction.receiver);
     }
+    for (std::size_t index = 0; index < referenceInitializers.size(); ++index)
+      if (referenceInitializers[index] && referenceInitializers[index]->borrow == &instruction) {
+        state.referenceInitializers[index] = referencePublicationFact(state, *referenceInitializers[index]);
+        if (referenceInitializerObservations)
+          (*referenceInitializerObservations)[index] = state.referenceInitializers[index];
+      }
     if (initializerObservations && instruction.kind == MirInstructionKind::InitializeBase)
       initializerObservations->insert_or_assign(instruction.id, result);
     if (instruction.destination)
@@ -15804,7 +15976,12 @@ completeBorrowSourcePath(const MirProgram &program,
     return edges;
   };
   State initial{.values = std::vector<Fact>(body.values.size()),
-                .places = std::vector<Fact>(body.places.size())};
+                .places = std::vector<Fact>(body.places.size()),
+                .referenceInitializers = std::vector<Fact>(referenceInitializers.size())};
+  for (std::size_t index = 0; index < referenceInitializers.size(); ++index)
+    if (referenceInitializers[index] && referenceInitializers[index]->loan->entry)
+      initial.referenceInitializers[index] = referencePublicationFact(initial, *referenceInitializers[index]);
+  const auto entryReferenceFacts = initial.referenceInitializers;
   const auto *entryTypes = function ? &function->parameterTypes
                          : lambda ? &lambda->parameterTypes
                          : constructor ? &constructor->parameterTypes : nullptr;
@@ -15827,6 +16004,8 @@ completeBorrowSourcePath(const MirProgram &program,
           changed |= join(target.values[index], incoming.values[index]);
         for (std::size_t index = 0; index < target.places.size(); ++index)
           changed |= join(target.places[index], incoming.places[index]);
+        for (std::size_t index = 0; index < target.referenceInitializers.size(); ++index)
+          changed |= join(target.referenceInitializers[index], incoming.referenceInitializers[index]);
         return changed;
       });
   if (!flow.converged())
@@ -15836,6 +16015,8 @@ completeBorrowSourcePath(const MirProgram &program,
       .values = std::vector<Fact>(body.values.size()),
       .payloadSelectionSources = std::vector<Fact>(body.values.size())};
   initializerObservations = &observations.initializerFacts;
+  observations.referenceInitializerFacts = entryReferenceFacts;
+  referenceInitializerObservations = &observations.referenceInitializerFacts;
   const auto constructedObject = [&](const State &state) -> Fact {
     const auto domain = constructor ? completeBorrowConstructorDomain(program, *constructor) : std::nullopt;
     if (!domain || domain->fields.empty())
@@ -15849,9 +16030,18 @@ completeBorrowSourcePath(const MirProgram &program,
             return std::nullopt;
           initialized = &place;
         }
-      if (!initialized || initialized->type != field.type)
-        return std::nullopt;
-      auto value = fromPlace(state, initialized->id);
+      Fact value;
+      if (field.type.kind == SemanticType::Reference) {
+        const auto initializer = std::find_if(constructor->initializers.begin(), constructor->initializers.end(),
+            [&](const auto &item) { return item.field == field.step.field; });
+        if (initializer == constructor->initializers.end()) return std::nullopt;
+        const auto index = static_cast<std::size_t>(initializer - constructor->initializers.begin());
+        value = state.referenceInitializers[index];
+      } else {
+        if (!initialized || initialized->type != field.type)
+          return std::nullopt;
+        value = fromPlace(state, initialized->id);
+      }
       if (!value || !completeBorrowSetHasTypedShape(program, field.type, *value))
         return std::nullopt;
       for (auto &dependency : value->dependencies) {
@@ -15872,7 +16062,8 @@ completeBorrowSourcePath(const MirProgram &program,
   for (const auto &block : body.blocks) {
     State state = flow.incoming[block.id - 1].value_or(
         State{.values = std::vector<Fact>(body.values.size()),
-              .places = std::vector<Fact>(body.places.size())});
+              .places = std::vector<Fact>(body.places.size()),
+              .referenceInitializers = std::vector<Fact>(referenceInitializers.size())});
     for (const auto &parameter : block.parameters)
       observations.values[parameter.value - 1] =
           state.values[parameter.value - 1];
@@ -16781,6 +16972,14 @@ private:
       const auto index = static_cast<std::size_t>(
                              initializer - constructor.initializers.begin()) +
                          1;
+      if (fieldInfo.type.kind == SemanticType::Reference) {
+        const auto exact = completeReferenceInitializer(program, constructor, index - 1);
+        return exact && initializer->completeBorrow &&
+               index <= flow.referenceInitializerFacts.size() &&
+               equalCompleteBorrowSets(initializer->completeBorrow, flow.referenceInitializerFacts[index - 1]) &&
+               flow.referenceInitializerFacts[index - 1] &&
+               completeBorrowSetHasTypedShape(program, fieldInfo.type, *flow.referenceInitializerFacts[index - 1]);
+      }
       const MirBlock *stageBlock = nullptr;
       const MirInstruction *stage = nullptr;
       std::size_t stagePosition = 0;
@@ -17637,6 +17836,19 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
           }
         const auto initializer = std::find_if(constructor->initializers.begin(), constructor->initializers.end(),
             [&](const auto &item) { return item.field == field.step.field; });
+        if (field.type.kind == SemanticType::Reference) {
+          if (initializer == constructor->initializers.end())
+            return verificationFailure(body, owner, "reference field has no exact initializer");
+          const auto index = static_cast<std::size_t>(initializer - constructor->initializers.begin());
+          if (!completeReferenceInitializer(program, *constructor, index) ||
+              index >= flow.referenceInitializerFacts.size() || !flow.referenceInitializerFacts[index])
+            return verificationFailure(body, owner, "reference field has no independent publication fact");
+          for (auto dependency : flow.referenceInitializerFacts[index]->dependencies) {
+            dependency.designatedFields.insert(dependency.designatedFields.begin(), field.step);
+            published->dependencies.push_back(std::move(dependency));
+          }
+          continue;
+        }
         const MirInstruction *initialization = nullptr;
         if (initializer != constructor->initializers.end()) {
           const auto index = static_cast<std::size_t>(initializer - constructor->initializers.begin()) + 1;

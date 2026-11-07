@@ -2542,7 +2542,8 @@ private:
   completeBaseInitializerBorrow(const ConstructorInitializer &syntax,
                                const ResolvedConstructorInitializerInfo &selected,
                                std::span<const AnalyzedCallArgument> arguments);
-  void recordCompleteConstructorBorrow(const ConstructorDecl &constructor);
+  [[nodiscard]] bool
+  recordCompleteConstructorBorrow(const ConstructorDecl &constructor);
   std::optional<FunctionBorrowDependencySummary>
   completeConstructorBorrow(const ResolvedConstructionInfo &construction,
                             const SourceSpan &site);
@@ -3181,6 +3182,8 @@ private:
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   completeBorrowDependencySetForType(const AnalyzedCallArgument &argument,
                                      const SemanticType &target);
+  [[nodiscard]] const Symbol *
+  parameterPackArgument(const AnalyzedCallArgument &argument) const;
   [[nodiscard]] const EntryBorrowElement *
   entryBorrowElement(const AnalyzedCallArgument &argument) const;
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
@@ -3192,6 +3195,9 @@ private:
   transportBorrowDependencySet(const SemanticBorrowDependencySet &source,
                               SemanticType actual, SemanticType target);
 
+  [[nodiscard]] std::optional<SemanticBorrowDependencySet>
+  initializerBorrowDependencies(const ExprPtr &expression,
+                                const SemanticType &target);
   [[nodiscard]] std::optional<SemanticBorrowDependencySet>
   payloadBorrowDependencySet(const Call &call,
                              const EnumeratorRecord &enumerator);

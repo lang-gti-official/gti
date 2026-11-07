@@ -2802,6 +2802,9 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
               .kind = ConstructorInitializerTargetKind::Field,
               .targetType = fieldType,
               .field = fieldSymbol,
+              .completeBorrow = typeTraits(fieldType).containsBorrowedState
+                  ? initializerBorrowDependencies(initializer.arguments.front(), fieldType)
+                  : std::nullopt,
               .storesReference = fieldType.kind == SemanticType::Reference,
               .borrowAccess = isDefaultLibraryMutexGuardCarrier(owner)
                                   ? AccessMode::Mutable
@@ -2860,8 +2863,17 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   if (collectingRawFields)
     recordRawConstructorResult(stmt);
   if (!hasErrorDiagnostics(
-          std::span(diagnostics).subspan(constructorDiagnosticStart)))
-    recordCompleteConstructorBorrow(stmt);
+          std::span(diagnostics).subspan(constructorDiagnosticStart))) {
+    const bool complete = recordCompleteConstructorBorrow(stmt);
+    const auto resultType = openClassType(owner.id);
+    if (!complete && stmt.body()->statements().empty() &&
+        !containsOpenTypeParameter(resultType) &&
+        !storedReferencePaths(resultType).empty())
+      report(stmt.name(),
+             "Constructor initializers require a complete checked dependency "
+             "contract for every active borrowed field and base.",
+             "GTI-S2045");
+  }
   finalizeLoanFlow();
   endScope();
   restoreRawProgramStorage(std::move(enclosingRawProgramStorage));
@@ -3930,6 +3942,15 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   const SemanticType declaredReturnType =
       functionInfo ? functionInfo->returnType
                    : typeOf(stmt.returnType(), stmt.returnMutability());
+  // A declaration's unresolved pack has no concrete supplier ordinals. Its
+  // normalized lifetime signature is retained, but the exact complete return
+  // contract must be derived and checked after expansion in instance analysis.
+  const bool deferredPackSuppliers =
+      stmt.body() && functionInfo && functionInfo->lifetimeContract.valid() &&
+      std::any_of(functionInfo->parameterTypes.begin(),
+                  functionInfo->parameterTypes.end(), [](const auto &type) {
+                    return type.kind == SemanticType::TypePack && !type.concretePack;
+                  });
   // A source body can establish a complete conditional return contract without
   // a single unconditional origin (for example, a dependency-free variant).
   // Each return and each call still requires its independently checked complete
@@ -3965,6 +3986,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
            "GTI-S2045");
   } else if (isBorrowReturningType(declaredReturnType) &&
              !intrinsicDeclaration && !hasReturnBorrowSummary &&
+             !deferredPackSuppliers &&
              functionInfo != nullptr &&
              !stmt.hasFunctionAttribute("borrowed_from") &&
              // A complete conditional contract comes from the body, but it
@@ -8696,9 +8718,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     // owns its fixed or variadic target; never publish a provisional call.
     semanticModel.suppressInheritedCall(expr);
     loanFlow.deferredGenericFlow = true;
-    currentType = callee->overloads.size() == 1
-                      ? callExpressionType(callee->overloads.front().returnType)
-                      : SemanticType::Unknown;
+    requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
+    currentType = SemanticType::Unknown;
     return;
   }
   ContextualCallArguments flatAnalysis;
@@ -12758,15 +12779,25 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
 
   if (valid && packSymbol->type.concretePack) {
     fold.elements.reserve(packSymbol->type.arguments.size());
-    for (const SemanticType &element : packSymbol->type.arguments) {
+    for (std::size_t elementIndex = 0;
+         elementIndex < packSymbol->type.arguments.size(); ++elementIndex) {
+      const auto &element = packSymbol->type.arguments[elementIndex];
       std::vector<SemanticType> concreteArguments = argumentTypes;
       concreteArguments.back() = element;
+      std::vector<AnalyzedCallArgument> inputs;
+      for (std::size_t index = 0; index < concreteArguments.size(); ++index)
+        inputs.push_back({.type = concreteArguments[index],
+                          .expression = &call->arguments()[index],
+                          .forwardedPackElement = index == packIndex,
+                          .packPath = index == packIndex
+                                          ? std::vector<std::size_t>{elementIndex}
+                                          : std::vector<std::size_t>{}});
       CallableCandidate resolved;
       std::vector<SemanticType> typeArguments;
       std::vector<CompileTimeValue> valueArguments;
       ConstraintFailure failure;
-      if (!tryInstantiateFunction(candidate, {}, {}, concreteArguments,
-                                  call->arguments(), resolved, typeArguments,
+      if (!tryInstantiateFunction(candidate, {}, {}, inputs,
+                                  resolved, typeArguments,
                                   valueArguments, &failure)) {
         if (hasConstraintFailure(failure)) {
           reportConstraintFailure(expr.ellipsis(), failure);
@@ -12779,15 +12810,14 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
         valid = false;
         continue;
       }
+      if (!applyCallLifetimeContract(resolved, inputs, call->paren())) {
+        valid = false;
+        continue;
+      }
       bool argumentsMatch = true;
       for (std::size_t index = 0; index < concreteArguments.size(); ++index) {
-        const bool matches =
-            index == packIndex && element.kind == SemanticType::Reference
-                ? forwardedPackArgumentMatches(resolved.parameterTypes[index],
-                                               element)
-                : callArgumentMatches(resolved.parameterTypes[index],
-                                      concreteArguments[index],
-                                      call->arguments()[index]);
+        const bool matches = functionCallArgumentMatch(resolved, index, inputs[index]) !=
+                             CallArgumentMatchKind::Mismatch;
         if (!matches) {
           reportCallArgumentMismatch(index, resolved.parameterTypes[index],
                                      concreteArguments[index],
@@ -12798,12 +12828,13 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
       if (!argumentsMatch ||
           !validateSelectedFunction(
               resolved, call->callee(), call->paren(), call->arguments(),
-              callReceiverMode(call->callee(), resolved)) ||
+              callReceiverMode(call->callee(), resolved), inputs) ||
           !validateConfinedCallableArguments(
               candidate, resolved, concreteArguments, call->arguments())) {
         valid = false;
         continue;
       }
+      commitLifetimeApplication(resolved.lifetimeApplication);
       fold.elements.push_back(
           {.elementType = element,
            .call = ResolvedCallInfo{
@@ -12813,6 +12844,8 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
                .parameterTypes = resolved.parameterTypes,
                .typeArguments = std::move(typeArguments),
                .valueArguments = std::move(valueArguments),
+               .lifetimeArguments = resolved.lifetimeArguments,
+               .lifetimeApplication = resolved.lifetimeApplication,
                .requirements = resolved.requirements,
                .neverReturns = resolved.record().neverReturns,
                .tracksCaller = resolved.record().tracksCaller,

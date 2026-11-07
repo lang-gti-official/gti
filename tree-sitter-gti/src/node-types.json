@@ -3306,6 +3306,16 @@
     "type": "generic_argument_profile_clause",
     "named": true,
     "fields": {
+      "lifetime_parameter": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "lifetime_parameter",
+            "named": true
+          }
+        ]
+      },
       "pattern": {
         "multiple": true,
         "required": true,
@@ -3523,6 +3533,16 @@
     "type": "generic_signature_pattern_clause",
     "named": true,
     "fields": {
+      "lifetime_parameter": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "lifetime_parameter",
+            "named": true
+          }
+        ]
+      },
       "pattern": {
         "multiple": true,
         "required": true,

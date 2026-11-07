@@ -295,6 +295,15 @@ its own anonymous slot; referent spelling does not imply a lifetime relation.
 Repeated lifetime names require the same region. `static` remains a fixed
 region, `_` creates an anonymous projected binder, and names bound inside a
 `for<lifetime ...>` callable stay within that callable's invocation scope.
+A patterned primary can also declare trailing nominal lifetime parameters:
+`class Callback<R(Args...), lifetime environment>`. Its public arguments are
+one signature followed by the environment lifetime, as in
+`Callback<int(int), a>`; `Callback<int(int)>` infers the omitted environment.
+The environment is available to stored fields and method signatures. It stays
+independent of lifetime binders projected from the signature or quantified for
+each invocation. If an explicit nominal lifetime also appears inside a pattern,
+that occurrence refers to the fixed nominal parameter rather than declaring a
+projected binder. Only lifetime parameters may follow the pattern arguments.
 The qualifier selects the definition before exact component matching, including
 after generic substitution. There is no ranking, fallback between qualifiers,
 or overlap with an ordinary `class Name<T>` primary. Exact qualified concrete
@@ -1299,10 +1308,14 @@ Reference-pack declarators can also bind a class's prescribed object-type pack.
 They use the same per-element references as explicit function-pack deduction.
 Read-only elements may alias; mutable elements require disjoint places, including
 against fixed reference parameters. Forwarding can reborrow mutable elements
-read-only but cannot strengthen read-only access. Reference packs admit only
-results without borrowed state, including for constructors: pack elements cannot
-escape through a returned reference, borrowed carrier, field, global, escaping
-closure or thread. Plain value packs and owned thread/task entry points retain
+read-only but cannot strengthen read-only access. A function's checked reference
+or borrowed-carrier result follows its normalized lifetime contract and complete
+concrete supplier proof. Pack expansion preserves the exact source element;
+equal element types do not make their owners interchangeable. Unresolved packs
+do not publish a return supplier summary, and every selected instance must
+validate its expanded inputs and every returned origin. Constructor reference
+packs still require a result without borrowed state. Pack access alone never
+permits storage in a global, escaping closure or thread. Plain value packs and owned thread/task entry points retain
 their existing transport rules. Forwarding references and implicit borrowing
 during value-pack deduction remain unsupported.
 

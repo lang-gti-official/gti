@@ -220,3 +220,60 @@ int main() {
           (primary_expression
             (literal
               (integer_literal))))))))
+
+==================
+Patterned primary with trailing lifetime formals
+==================
+class Callback<R&<result>(Args...), lifetime environment> { int&<environment> value; };
+class Mutable<R(Args...) mut, lifetime environment, lifetime fallback> {};
+struct Reference<T&<borrowed>, lifetime owner> {};
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (generic_signature_pattern_clause
+      (function_signature
+        (user_type
+          (identifier))
+        (reference_declarator
+          (lifetime_argument
+            (identifier)))
+        (type
+          (user_type
+            (identifier))))
+      (lifetime_parameter
+        (identifier)))
+    (class_body
+      (variable_declaration
+        (type
+          (primitive_type)
+          (reference_declarator
+            (lifetime_argument
+              (identifier))))
+        (identifier))))
+  (class_declaration
+    (identifier)
+    (generic_signature_pattern_clause
+      (function_signature
+        (user_type
+          (identifier))
+        (type
+          (user_type
+            (identifier))))
+      (lifetime_parameter
+        (identifier))
+      (lifetime_parameter
+        (identifier)))
+    (class_body))
+  (class_declaration
+    (identifier)
+    (generic_argument_profile_clause
+      (identifier)
+      (reference_declarator
+        (lifetime_argument
+          (identifier)))
+      (lifetime_parameter
+        (identifier)))
+    (class_body)))

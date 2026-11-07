@@ -145,13 +145,14 @@ SignaturePrinter::function(const FunctionInfo &info,
   } else {
     result += types.print(returnType) + " " + functionName(info);
   }
-  if (selected != nullptr &&
+  if (selected != nullptr && hasSourceGenericParameters(info.genericParameters) &&
       (!selected->typeArguments.empty() || !selected->valueArguments.empty() ||
        !selected->lifetimeArguments.empty())) {
     result += '<';
     appendSelectedGenericArguments(
         result, info.genericParameters, selected->typeArguments,
-        selected->valueArguments, selected->lifetimeArguments);
+        selected->valueArguments, selected->lifetimeArguments,
+        selected->lifetimeApplication.bindings);
     result += '>';
   } else if (selected == nullptr &&
              hasSourceGenericParameters(info.genericParameters)) {
@@ -296,12 +297,13 @@ SignaturePrinter::constructor(const ClassTypeInfo &owner,
         selected.declaration == nullptr
             ? nullptr
             : semantics.findConstructor(*selected.declaration);
-    if (constructor != nullptr) {
+    if (constructor != nullptr && hasSourceGenericParameters(constructor->genericParameters)) {
       result += "::" + selected.declaration->name().lexeme;
       result += '<';
       appendSelectedGenericArguments(
           result, constructor->genericParameters, selected.typeArguments,
-          selected.valueArguments, selected.lifetimeArguments);
+          selected.valueArguments, selected.lifetimeArguments,
+          selected.lifetimeApplication.bindings);
       result += '>';
     }
   }
@@ -391,12 +393,19 @@ SignaturePrinter::classType(const ClassTypeInfo &info) const {
     result += info.qualifiedName;
   }
   if (info.exactSpecializationPrimary == 0 &&
-      hasSourceGenericParameters(info.genericParameters)) {
+      (hasSourceGenericParameters(info.genericParameters) || !info.genericArgumentPatterns.empty())) {
     result += '<';
     if (info.genericArgumentPatterns.empty()) {
       appendGenericParameters(result, info.genericParameters);
     } else {
       appendTypes(result, info.genericArgumentPatterns);
+      // The patterns already present their projected type binders. Only the
+      // explicitly written nominal lifetime suffix follows those patterns.
+      for (const auto &parameter : info.genericParameters)
+        if (parameter.lifetime && !parameter.implicit) {
+          result += ", ";
+          appendGenericParameters(result, {parameter});
+        }
     }
     result += '>';
   }
@@ -552,7 +561,14 @@ void SignaturePrinter::appendSelectedGenericArguments(
     std::string &result, const std::vector<GenericParameterInfo> &parameters,
     const std::vector<SemanticType> &typeArguments,
     const std::vector<CompileTimeValue> &valueArguments,
-    const std::vector<Lifetime> &lifetimeArguments) const {
+    const std::vector<Lifetime> &lifetimeArguments,
+    std::span<const LifetimeBinding> lifetimeBindings) const {
+  // The presentation vector is the source-written lifetime prefix. Some
+  // protocol selections also carry hidden head slots there for seeding; that
+  // vector has no unambiguous display position once implicit slots exist.
+  // Resolved binder identity is authoritative; incomplete facts display '_'.
+  const bool positionalLifetimes = std::none_of(parameters.begin(), parameters.end(),
+      [](const auto &parameter) { return parameter.lifetime && parameter.implicit; });
   std::size_t typeIndex = 0;
   std::size_t valueIndex = 0;
   std::size_t lifetimeIndex = 0;
@@ -565,11 +581,20 @@ void SignaturePrinter::appendSelectedGenericArguments(
     }
     first = false;
     if (parameter.lifetime) {
-      const std::string name =
-          lifetimeIndex < lifetimeArguments.size()
-              ? types.printLifetime(lifetimeArguments[lifetimeIndex++])
-              : std::string();
-      result += name.empty() ? parameter.name.lexeme : name;
+      const auto identity = Lifetime::parameter(parameter.id);
+      const auto count = std::count_if(lifetimeBindings.begin(), lifetimeBindings.end(),
+          [&](const auto &binding) { return binding.first == identity; });
+      Lifetime actual;
+      if (count == 1) {
+        const auto found = std::find_if(lifetimeBindings.begin(), lifetimeBindings.end(),
+            [&](const auto &binding) { return binding.first == identity; });
+        actual = found->second;
+      } else if (count == 0 && positionalLifetimes && lifetimeIndex < lifetimeArguments.size()) {
+        actual = lifetimeArguments[lifetimeIndex];
+      }
+      ++lifetimeIndex;
+      const std::string name = types.printLifetime(actual);
+      result += name.empty() ? "_" : name;
       continue;
     }
     if (!parameter.value) {

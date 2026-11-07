@@ -797,6 +797,7 @@ module.exports = grammar({
         "<",
         field("pattern", $.function_signature),
         repeat(seq(",", field("pattern", $.type))),
+        repeat(seq(",", field("lifetime_parameter", $.lifetime_parameter))),
         ">",
       ),
 
@@ -809,6 +810,7 @@ module.exports = grammar({
           seq(optional("mut"), $.identifier, $.reference_declarator),
         )),
         repeat(seq(",", field("pattern", $.type))),
+        repeat(seq(",", field("lifetime_parameter", $.lifetime_parameter))),
         ">",
       ),
 

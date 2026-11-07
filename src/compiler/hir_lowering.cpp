@@ -387,6 +387,49 @@ private:
     return result;
   }
 
+  // A contextual conversion shares its receiver's AST expression but is a
+  // distinct evaluated value. Reuse a prior exact origin witness only across
+  // that checked conversion chain; source order and equal types are not
+  // storage identities. Repeated evaluations or conflicting witnesses fail.
+  [[nodiscard]] const HirValue *lifetimeOriginSource(
+      const SemanticLifetimeOrigin &origin, const PlaceKey &place,
+      const HirBody &body) const {
+    if (!origin.source)
+      return nullptr;
+    const auto *current = body.valueForSource(*origin.source);
+    if (!current)
+      return nullptr;
+    const HirValue *witness = nullptr;
+    for (const auto &value : body.values)
+      for (const auto &prior : value.lifetimeApplication.origins) {
+        if (prior.region != origin.region || prior.place != place || !prior.source)
+          continue;
+        const auto *source = body.findValue(prior.source);
+        if (!source || (witness && witness->id != source->id))
+          return nullptr;
+        witness = source;
+      }
+    if (!witness || witness->id == current->id)
+      return current;
+    std::unordered_set<HirValueId> visited;
+    while (current && current->id != witness->id) {
+      const auto *target = current->functionTarget
+                               ? output.program.findFunctionInstance(*current->functionTarget)
+                               : nullptr;
+      if (!visited.insert(current->id).second || current->source != origin.source ||
+          current->kind != HirValueKind::Call || !target || !target->source ||
+          !target->source->operatorName() ||
+          target->source->operatorName()->kind != OverloadedOperator::Conversion ||
+          !current->receiver || current->operands != std::vector<HirValueId>{*current->receiver} ||
+          !current->parameterTypes.empty() || !current->callPlan ||
+          !current->callPlan->arguments.empty() || !current->callPlan->receiver ||
+          current->callPlan->receiver->value != *current->receiver)
+        return nullptr;
+      current = body.findValue(*current->receiver);
+    }
+    return current && current->source == origin.source ? current : nullptr;
+  }
+
   [[nodiscard]] HirLifetimeApplication
   lowerLifetimeApplication(const SemanticLifetimeApplication &application,
                            const HirBody &body) {
@@ -399,8 +442,9 @@ private:
                                   .complete = application.complete};
     for (const auto &origin : application.origins) {
       HirValueId source = 0;
+      const auto place = qualifyPlace(origin.place, body.placeDomain);
       if (origin.source != nullptr) {
-        const auto *value = body.valueForSource(*origin.source);
+        const auto *value = lifetimeOriginSource(origin, place, body);
         if (value == nullptr)
           lifecycleValid = false;
         else
@@ -410,7 +454,7 @@ private:
         lifecycleValid = false;
       result.origins.push_back(
           {.region = origin.region,
-           .place = qualifyPlace(origin.place, body.placeDomain),
+           .place = place,
            .source = source});
     }
     return result;

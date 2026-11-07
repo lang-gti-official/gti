@@ -514,6 +514,10 @@ The current implemented foundation includes:
   reference parameter owns the result, the callable must publish the same
   origin, and each call result borrows that argument rather than the view.
   A view does not infer cross-thread capability.
+  Both forms have a trailing, normally inferred `lifetime environment`
+  parameter. `std::function_ref<int(int), a>` fixes the stored callable borrow
+  to `a`; ordinary construction omits it. That environment is distinct from
+  the reference relationships quantified by the invocation signature.
   `std::function_ptr<R(Args...)>` provides non-null GTI invocation addresses for
   exact namespace-function items and captureless lambdas, preserving GTI failure
   and argument/result ownership rules rather than the native C ABI;

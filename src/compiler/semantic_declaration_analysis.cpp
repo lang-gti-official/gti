@@ -65,6 +65,8 @@ classArgumentProfile(const ClassDecl &owner) {
     if (owner.genericParameters().empty())
       return std::nullopt;
     for (const auto &parameter : owner.genericParameters()) {
+      if (parameter.lifetimeKeyword)
+        continue;
       if (parameter.pack || parameter.valueType || parameter.defaultType ||
           parameter.defaultValue)
         return std::nullopt;
@@ -2941,7 +2943,13 @@ auto SemanticVisitor::Impl::makeClassPatternParameters(
     const ClassDecl &declaration, const std::vector<std::string> &scope,
     std::vector<GenericParameterInfo> &lifetimes)
     -> std::vector<GenericParameterInfo> {
-  std::vector<GenericParameter> parameters;
+  // Written trailing lifetimes are public nominal arguments. Regions
+  // discovered inside a pattern are projections of its type argument instead.
+  std::vector<GenericParameter> parameters = declaration.genericParameters();
+  std::unordered_set<std::string> explicitLifetimes;
+  for (const auto &parameter : declaration.genericParameters())
+    if (parameter.lifetimeKeyword)
+      explicitLifetimes.insert(parameter.name.lexeme);
   const auto add = [&](GenericParameter parameter) {
     const auto found = std::find_if(
         parameters.begin(), parameters.end(), [&](const auto &existing) {
@@ -2995,7 +3003,7 @@ auto SemanticVisitor::Impl::makeClassPatternParameters(
     }
   };
   for (const TypeRef &pattern : declaration.genericArgumentPatterns()) {
-    collect(collect, pattern, {});
+    collect(collect, pattern, explicitLifetimes);
   }
   if (parameters.empty()) {
     report(declaration.name(),
@@ -3007,10 +3015,14 @@ auto SemanticVisitor::Impl::makeClassPatternParameters(
   std::stable_partition(parameters.begin(), parameters.end(),
                         [](const auto &parameter) { return !parameter.pack; });
   auto result = makeGenericParameters(parameters, declaration.name(), scope);
+  const auto projected = [&](const auto &parameter) {
+    return parameter.lifetime &&
+           !explicitLifetimes.contains(parameter.name.lexeme);
+  };
   for (const auto &parameter : result)
-    if (parameter.lifetime)
+    if (projected(parameter))
       lifetimes.push_back(parameter);
-  std::erase_if(result, [](const auto &parameter) { return parameter.lifetime; });
+  std::erase_if(result, projected);
   return result;
 }
 
@@ -6611,6 +6623,17 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
   }
   analyzingConstructorInitializer = enclosingConstructorInitializer;
 
+  if (std::any_of(arguments.begin(), arguments.end(), [](const auto &argument) {
+        return argument.type.kind == SemanticType::TypePack &&
+               !argument.type.concretePack;
+      })) {
+    // Cardinality and exact input identities are supplied by concrete owner
+    // reanalysis. Do not select a target or publish an initializer summary
+    // from an unresolved pack.
+    loanFlow.deferredGenericFlow = true;
+    requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
+    return;
+  }
   const Token &location = initializer.target.name.last();
   auto selection = selectConstructorCandidate(baseType, arguments, location);
   if (!selection)
@@ -7768,6 +7791,10 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
     }
     const SemanticType ownerType = openClassType(owner.id);
     const auto dependencies = storedReferencePaths(ownerType);
+    const auto checkedInitializerBody = [](const ConstructorInfo &constructor) {
+      return constructor.declaration && constructor.declaration->body() &&
+             constructor.declaration->body()->statements().empty();
+    };
     const auto validateExclusiveBindings = [&](const ConstructorInfo &constructor) {
       const auto bindings = storedCarrierConstructorBindings(
           ownerType, constructor.declaration, constructor.parameterTypes);
@@ -7883,13 +7910,14 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
         constructor.borrowParameters = storedCarrierConstructorParameters(
             ownerType, constructor,
             constructor.parameterTypes);
-        if (constructor.borrowParameters.empty()) {
+        if (constructor.borrowParameters.empty() &&
+            !checkedInitializerBody(constructor)) {
           report(constructor.declaration->name(),
                  "Every constructor of a composed borrowed value must bind "
                  "each borrowed field directly from an exact reference or "
                  "carrier parameter.",
                  "GTI-S2045");
-        } else {
+        } else if (!constructor.borrowParameters.empty()) {
           constructor.borrowParameter = constructor.borrowParameters.front();
           constructor.borrowAccess =
               dependencies.front().reference.referenceAccess;
@@ -7929,7 +7957,8 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
           constructor.borrowParameter = storedCarrierConstructorParameter(
               ownerType, constructor, constructor.parameterTypes);
           constructor.borrowAccess = path->reference.referenceAccess;
-          if (!constructor.borrowParameter) {
+          if (!constructor.borrowParameter &&
+              !checkedInitializerBody(constructor)) {
             report(constructor.declaration->name(),
                    "Every constructor of a nested stored-reference class "
                    "must initialize its borrowed field directly from one "
@@ -7963,6 +7992,11 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
                                        : stored.access;
         continue;
       }
+      // Overload/default/pack selection belongs to checked body analysis.
+      // Its empty initializer body must publish the complete result before
+      // any caller may construct this borrowed carrier.
+      if (checkedInitializerBody(constructor))
+        continue;
       const ConstructorInitializer *binding = nullptr;
       for (const ConstructorInitializer &initializer :
            constructor.declaration->initializers()) {

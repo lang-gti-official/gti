@@ -499,6 +499,40 @@ for<T> concept P<Wrap<T>> {
          "a local lifetime requirement conjoins with the block's inherited application");
 }
 
+void testPatternedNominalLifetimes() {
+  const std::string source = R"(
+class Callback<R&<result>(Args...), lifetime environment> {
+  int&<environment> value;
+};
+)";
+  lang::Lexer lexer;
+  lang::Parser parser(lexer.scan(source, "pattern-lifetimes.gti"));
+  const auto program = parser.parse();
+  expect(!lexer.hadError() && !parser.hadError() && program.declarations().size() == 1,
+         "patterned primaries accept trailing nominal lifetime parameters");
+  const auto *owner = lang::stmtAs<lang::ClassDecl>(program.declarations().front().get());
+  expect(owner && owner->genericArgumentPatterns().size() == 1 &&
+             owner->genericParameters().size() == 1,
+         "public type patterns and nominal lifetime declarations remain distinct");
+  const auto &parameter = owner->genericParameters().front();
+  expect(parameter.lifetimeKeyword && parameter.name.lexeme == "environment" &&
+             parameter.name.position == source.find("environment") &&
+             parameter.lifetimeKeyword->position == source.find("lifetime") &&
+             owner->genericArgumentPatterns().front().arguments.back()
+                     .referenceLifetime->name.lexeme == "result",
+         "projected and explicit nominal lifetime tokens retain their own source identity");
+  for (const std::string invalid : {
+           "class Bad<R(Args...), lifetime a, T> {};",
+           "class Bad<R(Args...), lifetime _> {};",
+           "class Bad<R(Args...), lifetime a = static> {};"}) {
+    lang::Lexer invalidLexer;
+    lang::Parser invalidParser(invalidLexer.scan(invalid, "invalid-pattern-lifetime.gti"));
+    (void)invalidParser.parse();
+    expect(invalidParser.hadError(),
+           "pattern lifetime suffix rejects non-lifetime, anonymous and defaulted formals");
+  }
+}
+
 void testConstructorInitializerPackArguments() {
   const std::string source = R"(
 struct Derived<Args...> : public Base {
@@ -553,5 +587,6 @@ int main() {
   testCompletionMarkers();
   testMalformedLifetimeRecovery();
   testProtocolOperationBinders();
+  testPatternedNominalLifetimes();
   testConstructorInitializerPackArguments();
 }

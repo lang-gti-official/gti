@@ -14,6 +14,9 @@ int&<shared> choose<lifetime shared>(
 struct Reading<lifetime data> {
   int&<data> value;
   Reading(int&<data> input) : value(input) {}
+  // The result keeps both permitted owners even though execution selects one.
+  Reading(int&<data> left, int&<data> right, bool first)
+      : value(choose(left, right, first)) {}
   int&<data> get() { return this.value; }
 };
 
@@ -37,6 +40,14 @@ struct IntBorrow<int&<source>> {
   int&<source> get() { return this.value; }
 };
 
+// A signature pattern can carry a separate inferred environment lifetime.
+// Invocation metadata and the storage borrowed by the wrapper stay distinct.
+struct Environment<R(Args...), lifetime data> {
+  int&<data> value;
+  Environment(int&<data> input) : value(input) {}
+  int read() { return this.value; }
+};
+
 int main() {
   mut int left = 3;
   int right = 9;
@@ -44,9 +55,13 @@ int main() {
   int& selected = choose(left, right, false);
   Reading reading{selected};
   if (reading.get() != 9) { return 1; }
+  Reading constructedChoice{left, right, false};
+  if (constructedChoice.get() != 9) { return 5; }
   if (ValueReader<Reading>::read(reading) != 9) { return 4; }
   if (read_through_view(right) != 9) { return 2; }
   IntBorrow<int&> projected{right};
   if (projected.get() != 9) { return 3; }
+  Environment<int(int)> environment{right};
+  if (environment.read() != 9) { return 6; }
   return identity(left) - 4;
 }

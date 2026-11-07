@@ -1250,7 +1250,7 @@ private:
       exactSpecialization.emplace(std::move(target), std::move(arguments));
     } else if (check(TokenKind::LESS)) {
       if (classSignaturePatternAhead()) {
-        genericArgumentPatterns = typeArgumentList();
+        classPatternParameterList(genericArgumentPatterns, genericParameters);
       } else {
         genericParameters = genericParameterList();
       }
@@ -1962,23 +1962,44 @@ private:
     }
   }
 
+  bool lifetimeParameterAhead() const {
+    return check(TokenKind::IDENTIFIER) && peek().lexeme == "lifetime" &&
+           (peekAt(1).kind == TokenKind::IDENTIFIER ||
+            peekAt(1).kind == TokenKind::STATIC);
+  }
+
+  GenericParameter lifetimeParameter() {
+    Token keyword = advance();
+    Token name = consume(TokenKind::IDENTIFIER,
+                         "Expect a lifetime parameter name after 'lifetime'.");
+    if (name.lexeme == "_")
+      throw error(name, "A lifetime parameter requires a name; '_' is an "
+                        "inferred lifetime argument.");
+    return {.name = std::move(name), .lifetimeKeyword = std::move(keyword)};
+  }
+
+  void classPatternParameterList(std::vector<TypeRef> &patterns,
+                                 std::vector<GenericParameter> &parameters) {
+    consume(TokenKind::LESS, "Expect '<' before class argument patterns.");
+    do {
+      if (lifetimeParameterAhead()) {
+        parameters.push_back(lifetimeParameter());
+      } else {
+        if (!parameters.empty())
+          throw error(peek(), "Only lifetime parameters may follow the class "
+                              "argument patterns and their lifetime parameters.");
+        patterns.push_back(parseGenericArgument());
+      }
+    } while (match({TokenKind::COMMA}));
+    consumeGenericClose("Expect '>' after class argument patterns.");
+  }
+
   std::vector<GenericParameter> genericParameterList() {
     consume(TokenKind::LESS, "Expect '<' before generic parameters.");
     std::vector<GenericParameter> parameters;
     do {
-      if (check(TokenKind::IDENTIFIER) && peek().lexeme == "lifetime" &&
-          (peekAt(1).kind == TokenKind::IDENTIFIER ||
-           peekAt(1).kind == TokenKind::STATIC)) {
-        Token keyword = advance();
-        Token name =
-            consume(TokenKind::IDENTIFIER,
-                    "Expect a lifetime parameter name after 'lifetime'.");
-        if (name.lexeme == "_") {
-          throw error(name, "A lifetime parameter requires a name; '_' is an "
-                            "inferred lifetime argument.");
-        }
-        parameters.push_back(
-            {.name = std::move(name), .lifetimeKeyword = std::move(keyword)});
+      if (lifetimeParameterAhead()) {
+        parameters.push_back(lifetimeParameter());
         continue;
       }
       if (isValueGenericParameterStart()) {

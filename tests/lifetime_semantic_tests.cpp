@@ -1,5 +1,6 @@
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
+#include "gti/lowered_program_builder.h"
 
 #include <algorithm>
 #include <iostream>
@@ -33,6 +34,18 @@ namespace std {
                            {prelude}, {{prelude.string(), textPrelude}}, {root})
         : frontend.analyze(std::string(name) + ".gti", std::string(source));
     const bool passed = mir ? result.canGenerateCode() : result.semanticValid;
+    if (mir && accepted && passed &&
+        (name.starts_with("conformance-") || name.starts_with("patterned-primary-"))) {
+      const auto lowered = lang::LoweredProgramBuilder{}.build(
+          result.program, result.semantics, result.hir, result.mir, result.mir,
+          {}, lang::TargetInfo::host());
+      if (!lowered.valid()) {
+        ++failures;
+        std::cerr << name << ": accepted generic declaration must retain valid lowered metadata\n";
+        for (const auto &issue : lowered.issues)
+          std::cerr << "  " << issue.detail << '\n';
+      }
+    }
     const bool codePresent = code.empty() ||
         std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
                     [&](const auto &diagnostic) { return diagnostic.code == code; });
@@ -45,7 +58,7 @@ namespace std {
       std::cerr << name << ": expected " << (accepted ? "acceptance" : "rejection")
                 << (code.empty() ? "" : std::string(" with ") + std::string(code)) << '\n';
       for (const auto &diagnostic : result.diagnostics)
-        std::cerr << "  " << diagnostic.code << ": " << diagnostic.message << '\n';
+        std::cerr << "  " << diagnostic.code << " at line " << diagnostic.primary.line << ": " << diagnostic.message << '\n';
       if (mir && internal && argc > 2) {
         const auto directory = std::filesystem::path(argv[2]);
         std::filesystem::create_directories(directory);
@@ -269,6 +282,40 @@ int&<shorter> shorten<lifetime longer, lifetime shorter>(int&<longer> input) {
   return input;
 }
 )gti", false);
+  check("patterned-primary-separates-nominal-environment", R"gti(
+struct Callback<R(Args...), lifetime environment> {
+  int&<environment> value;
+  Callback(int&<environment> input) : value(input) {}
+  int read() { return this.value; }
+};
+int read<lifetime a>(int&<a> input) {
+  Callback<int(int), a> explicitView{input};
+  Callback<int(int)> inferredView{input};
+  return explicitView.read() + inferredView.read();
+}
+int main() { int value = 7; return read(value) - 14; }
+)gti", true);
+  check("patterned-primary-fixed-region-is-not-projected", R"gti(
+struct Callback<R&<environment>(Args...), lifetime environment> {
+  R&<environment> value;
+  Callback(R&<environment> input) : value(input) {}
+};
+int read<lifetime a>(int&<a> input) {
+  Callback<int&<a>(), a> value{input};
+  return value.value;
+}
+int main() { int value = 7; return read(value) - 7; }
+)gti", true);
+  check("patterned-primary-nominal-environment-cannot-invent-static", R"gti(
+struct Callback<R(Args...), lifetime environment> {
+  int&<environment> value;
+  Callback(int&<environment> input) : value(input) {}
+};
+int main() { int value = 7; Callback<int(int), static> invalid{value}; return 0; }
+)gti", false, "GTI-S2127");
+  check("patterned-primary-type-lifetime-name-collision", R"gti(
+struct Callback<R(Args...), lifetime R> {};
+)gti", false, "GTI-S2126");
   check("conformance-head-elides-borrowed-nominal-region", R"gti(
 struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
 concept Inspect<T> { int inspect(T& input); };
@@ -311,10 +358,10 @@ concept Inspect<T> { int inspect(T& value); };
 for concept Inspect<View> { int inspect(View<static>& value) { return value.value; } };
 )gti", false, "GTI-S2123");
   check("conformance-preserves-declared-operation-lifetime-requirements", R"gti(
-concept Pair<lifetime a, lifetime b> {
+concept Pair<T, lifetime a, lifetime b> {
   void use(int&<a> first, int&<b> second) requires outlives<a, b>;
 };
-for<lifetime a, lifetime b> concept Pair<a, b> {
+for<lifetime a, lifetime b> concept Pair<int, a, b> {
   void use(int&<a> first, int&<b> second) requires outlives<a, b> {}
 };
 int main() { return 0; }
@@ -331,8 +378,8 @@ for concept Inspect<PairView> {
 int main() { int left = 3; int right = 8; PairView value{left, right}; return Inspect<PairView>::inspect(value) - 11; }
 )gti", true);
   check("conformance-cannot-strengthen-operation-lifetime-requirements", R"gti(
-concept Pair<lifetime a, lifetime b> { void use(int&<a> first, int&<b> second); };
-for<lifetime a, lifetime b> concept Pair<a, b> {
+concept Pair<T, lifetime a, lifetime b> { void use(int&<a> first, int&<b> second); };
+for<lifetime a, lifetime b> concept Pair<int, a, b> {
   void use(int&<a> first, int&<b> second) requires outlives<a, b> {}
 };
 )gti", false, "GTI-S2123");

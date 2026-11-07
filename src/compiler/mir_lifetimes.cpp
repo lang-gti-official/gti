@@ -2340,6 +2340,68 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
       }
     }
   }
+  if (body.kind == MirBodyKind::Constructor) {
+    const auto *constructor = program.findConstructorInstance(owner);
+    const auto ownerType = constructor ? checkedMirCallableOwnerType(program, constructor->owner,
+        constructor->ownerType, constructor->lifetimeContract) : std::nullopt;
+    const auto view = ownerType ? mirClassLifetimeView(program, *ownerType) : std::nullopt;
+    if (constructor)
+      for (const auto &initializer : constructor->initializers) {
+        if (!initializer.storesReference || !containsLifetimeMetadata(initializer.targetType))
+          continue;
+        const auto &expected = initializer.targetType;
+        const MirLoan *publication = nullptr;
+        for (const auto &loan : body.loans)
+          if (loan.escapes && loan.storedPath == BorrowPath{fieldProjection(initializer.field)}) {
+            if (publication) { publication = nullptr; break; }
+            publication = &loan;
+          }
+        const MirInstruction *borrow = nullptr;
+        if (publication && !publication->entry)
+          for (const auto &block : body.blocks)
+            for (const auto &instruction : block.instructions)
+              if (!instruction.tombstone && instruction.kind == MirInstructionKind::Borrow &&
+                  instruction.loan == publication->id) {
+                if (borrow) { publication = nullptr; break; }
+                borrow = &instruction;
+              }
+        std::optional<SemanticType> fieldType;
+        if (view)
+          for (const auto &field : view->instance->declaredFields)
+            if (field.symbol == initializer.field) {
+              if (fieldType) { fieldType.reset(); break; }
+              fieldType = view->instantiate(field.type);
+            }
+        if (fieldType != std::optional<SemanticType>{expected} ||
+            expected.kind != SemanticType::Reference || expected.arguments.size() != 1 ||
+            initializer.arguments.size() != 1 || !publication ||
+            (expected.referenceAccess == AccessMode::Mutable &&
+             publication->access != AccessMode::Mutable) ||
+            (!publication->entry && (!borrow || borrow->operands.size() != 1 ||
+                                      borrow->hirValue != initializer.arguments.front()))) {
+          reject("MIR reference field has no exact initializer publication", body.entry);
+          continue;
+        }
+        const MirOperand input = publication->entry
+            ? MirOperand{.kind = MirOperandKind::Loan, .loan = publication->id,
+                         .type = expected.arguments.front()}
+            : borrow->operands.front();
+        auto actual = relations.actualType(input);
+        if (input.kind == MirOperandKind::Loan)
+          for (const auto &block : body.blocks)
+            for (const auto &instruction : block.instructions)
+              if (instruction.kind == MirInstructionKind::Call && instruction.loan == input.loan)
+                if (const auto signature = appliedTargetSignature(program, instruction))
+                  actual = signature->returnType;
+        const auto referent = actual && actual->kind == SemanticType::Reference && actual->arguments.size() == 1
+            ? std::optional{actual->arguments.front()} : actual;
+        if (!referent ||
+            !relations.borrowedOperand(input, expected.referenceLifetime, initializer.arguments.front()) ||
+            !relations.types(*referent, expected.arguments.front(),
+                             expected.referenceAccess == AccessMode::Mutable ? 0 : 1))
+          reject("MIR reference field does not prove its exact stored lifetime and referent", body.entry);
+      }
+  }
   return result;
 }
 

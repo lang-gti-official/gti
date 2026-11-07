@@ -163,15 +163,17 @@ public:
 namespace std {
 /// A read-only, signature-erased checked borrow of an existing callable.
 /// The callable and everything it borrows must outlive this view's uses.
-export class function_ref<R(Args...)> {
-  std::erased_object& object;
-  gti_internal::function_pointer<R(std::erased_object&, Args...)> invoke;
+/// The normally inferred environment lifetime is fixed for the stored borrow;
+/// lifetime binders in the signature describe each invocation separately.
+export class function_ref<R(Args...), lifetime environment> {
+  std::erased_object&<environment> object;
+  gti_internal::function_pointer<R(std::erased_object&<environment>, Args...)> invoke;
 public:
-  function_ref<F>(F& target)
+  function_ref<F>(F&<environment> target)
       : object(std::erase_ref(target)),
-        invoke(gti_internal::function_pointer_from_item<R(std::erased_object&, Args...)>([](std::erased_object& object, Args... args) -> R {
+        invoke(gti_internal::function_pointer_from_item<R(std::erased_object&<environment>, Args...)>([](std::erased_object&<environment> object, Args... args) -> R {
           unsafe {
-            F& callable = std::restore_ref<F>(object);
+            F&<environment> callable = std::restore_ref<F>(object);
             return callable(args...);
           }
         })) {}
@@ -180,15 +182,15 @@ public:
 
 /// A read-only view whose result is a read-only reference that borrows the
 /// input relationship named by the signature, independently of the view.
-export class function_ref<R&<result>(Args...)> {
-  std::erased_object& object;
-  gti_internal::function_pointer<R&<result>(std::erased_object&, Args...)> invoke;
+export class function_ref<R&<result>(Args...), lifetime environment> {
+  std::erased_object&<environment> object;
+  gti_internal::function_pointer<R&<result>(std::erased_object&<environment>, Args...)> invoke;
 public:
-  function_ref<F>(F& target)
+  function_ref<F>(F&<environment> target)
       : object(std::erase_ref(target)),
-        invoke(gti_internal::function_pointer_from_item<R&<result>(std::erased_object&, Args...)>([](std::erased_object& object, Args... args) -> R&<result> {
+        invoke(gti_internal::function_pointer_from_item<R&<result>(std::erased_object&<environment>, Args...)>([](std::erased_object&<environment> object, Args... args) -> R&<result> {
           unsafe {
-            F& callable = std::restore_ref<F>(object);
+            F&<environment> callable = std::restore_ref<F>(object);
             return callable(args...);
           }
         })) {}
@@ -197,15 +199,15 @@ public:
 
 /// An exclusive, move-only borrowed callback. Invocation requires mutable
 /// access to the view; overlapping invocation/reentry remains rejected.
-export class function_ref<R(Args...) mut> {
-  mut std::erased_object& object;
-  gti_internal::function_pointer<R(mut std::erased_object&, Args...)> invoke;
+export class function_ref<R(Args...) mut, lifetime environment> {
+  mut std::erased_object&<environment> object;
+  gti_internal::function_pointer<R(mut std::erased_object&<environment>, Args...)> invoke;
 public:
-  function_ref<F>(mut F& target)
+  function_ref<F>(mut F&<environment> target)
       : object(std::erase_mut(target)),
-        invoke(gti_internal::function_pointer_from_item<R(mut std::erased_object&, Args...)>([](mut std::erased_object& object, Args... args) -> R {
+        invoke(gti_internal::function_pointer_from_item<R(mut std::erased_object&<environment>, Args...)>([](mut std::erased_object&<environment> object, Args... args) -> R {
           unsafe {
-            mut F& callable = std::restore_mut<F>(object);
+            mut F&<environment> callable = std::restore_mut<F>(object);
             return callable(args...);
           }
         })) {}
@@ -214,15 +216,15 @@ public:
 
 /// An exclusive view whose result is a read-only reference borrowing the one
 /// input relationship the supplied signature names.
-export class function_ref<R&<result>(Args...) mut> {
-  mut std::erased_object& object;
-  gti_internal::function_pointer<R&<result>(mut std::erased_object&, Args...)> invoke;
+export class function_ref<R&<result>(Args...) mut, lifetime environment> {
+  mut std::erased_object&<environment> object;
+  gti_internal::function_pointer<R&<result>(mut std::erased_object&<environment>, Args...)> invoke;
 public:
-  function_ref<F>(mut F& target)
+  function_ref<F>(mut F&<environment> target)
       : object(std::erase_mut(target)),
-        invoke(gti_internal::function_pointer_from_item<R&<result>(mut std::erased_object&, Args...)>([](mut std::erased_object& object, Args... args) -> R&<result> {
+        invoke(gti_internal::function_pointer_from_item<R&<result>(mut std::erased_object&<environment>, Args...)>([](mut std::erased_object&<environment> object, Args... args) -> R&<result> {
           unsafe {
-            mut F& callable = std::restore_mut<F>(object);
+            mut F&<environment> callable = std::restore_mut<F>(object);
             return callable(args...);
           }
         })) {}

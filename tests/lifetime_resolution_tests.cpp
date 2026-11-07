@@ -1816,6 +1816,39 @@ int main() { twice(Owned()); return 0; }
          "entry projection cannot revive a pack consumed by an earlier forwarding call");
 }
 
+void testReferencePackReturnContracts() {
+  const std::string declarations = R"(
+int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
+int&<a> relay<lifetime a, Args...>(Args&<a>... values) { return second(values...); }
+int&<a> fixed<lifetime a, Args...>(int&<a> first, Args&... ignored) { return first; }
+)";
+  const auto valid = analyze(declarations + R"(
+int main() {
+  int first = 3; int selected = 8; bool ignored = false;
+  return relay(first, selected) + fixed(first, ignored) - 11;
+}
+)");
+  expectValid(valid,
+              "reference packs preserve declared result suppliers after exact concrete expansion");
+  const auto wrongRegion = analyze(declarations + R"(
+int&<a> invalid<lifetime a, lifetime b>(int&<a> first, int&<b> secondValue) {
+  return relay<a>(first, secondValue);
+}
+int main() { return 0; }
+)");
+  expect(wrongRegion.syntaxValid && !wrongRegion.semanticValid,
+         "a fixed reference-pack result cannot escape an independent shorter element");
+  const auto localEscape = analyze(declarations + R"(
+int&<static> invalid<Args...>(Args&... values) {
+  int local = 4;
+  return fixed(local, values...);
+}
+int main() { int value = 1; invalid(value); return 0; }
+)");
+  expect(localEscape.syntaxValid && !localEscape.semanticValid,
+         "concrete reference-pack return proof cannot publish a local owner as static");
+}
+
 void testFixedArityPackCallSelection() {
   const auto result = analyze(R"(
 int choose(int first, int second = 5) { return first + second; }
@@ -1901,6 +1934,8 @@ int&<a> relay<lifetime a>(int&<a> source) {
   RegionDerived<a> derived{source};
   return derived.value;
 }
+
+
 )";
   const auto selected = analyze(declarations + R"(
 int main() { int source = 5; RegionDerived derived{source}; return relay(source) + derived.marker - 12; }
@@ -1948,6 +1983,50 @@ int main() { return 0; }
 )");
   expect(!exclusive.semanticValid,
          "base initialization cannot duplicate one exclusive source across selected inputs");
+}
+
+void testCompleteOrdinaryConstructorInputs() {
+  const auto result = analyze(R"(
+int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; }
+  return right;
+}
+struct Selected<lifetime a> {
+  int&<a> value;
+  Selected(int&<a> left, int&<a> right, bool first)
+      : value(choose(left, right, first)) {}
+};
+int main() {
+  int left = 3; int right = 8;
+  Selected selected{left, right, false};
+  return selected.value - 8;
+}
+)");
+  expectValid(result,
+              "an unconditional constructor preserves every supplier of its checked scalar initializer");
+  const auto *owner = record(result, "Selected");
+  const auto *lifecycle = owner && owner->declaration
+      ? result.semantics.findClassLifecycle(*owner->declaration) : nullptr;
+  const auto *summary = lifecycle && lifecycle->constructors.size() == 1 &&
+                                lifecycle->constructors.front().completeBorrow
+      ? &*lifecycle->constructors.front().completeBorrow : nullptr;
+  expect(summary && summary->dependencies.size() == 2 &&
+             summary->dependencies[0].resultFields == summary->dependencies[1].resultFields &&
+             summary->dependencies[0].parameter != summary->dependencies[1].parameter,
+         "one stored reference can retain two distinct permitted formal suppliers");
+  for (const auto source : {
+           R"(struct Local { int& value; Local(int input) : value(input) {} };
+int main() { Local value{3}; return value.value; })",
+           R"(mut int&<a> relay<lifetime a>(mut int&<a> input) { return input; }
+struct Duplicate<lifetime a> {
+  mut int&<a> first; mut int&<a> second;
+  Duplicate(mut int&<a> input) : first(relay(input)), second(relay(input)) {}
+};
+int main() { mut int source = 3; Duplicate value{source}; return value.first; })"}) {
+    const auto rejected = analyze(source);
+    expect(!rejected.semanticValid,
+           "complete initializer proof rejects local storage escape and duplicated exclusive origins");
+  }
 }
 
 void testCheckedReferenceErasureLifetimeAuthority() {
@@ -2113,8 +2192,10 @@ int main() { return 0; }
 
 int main() {
   testForwardedPackBorrowPaths();
+  testReferencePackReturnContracts();
   testFixedArityPackCallSelection();
   testSelectedBaseConstructorInputs();
+  testCompleteOrdinaryConstructorInputs();
   testConstructorRelationsAfterFieldIdentity();
   testOwnedPointeeLifetimeAuthority();
   testCheckedReferenceErasureLifetimeAuthority();

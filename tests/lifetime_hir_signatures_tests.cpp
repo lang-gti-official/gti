@@ -1,5 +1,6 @@
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
+#include "gti/mir_lowering.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -77,7 +78,9 @@ struct Flag {
   operator bool() { return this.value != 0; }
 };
 int choose(Flag& flag) { if (flag) { return 1; } return 0; }
-int main() { Flag flag{1}; return choose(flag) - 1; }
+Flag makeFlag(int value) { return Flag(value); }
+int unary() { if (!makeFlag(1)) { return 1; } return 0; }
+int main() { Flag flag{1}; return choose(flag) - 1 + unary(); }
 )gti");
   if (!result.canGenerateCode()) {
     for (const auto &diagnostic : result.diagnostics)
@@ -85,6 +88,7 @@ int main() { Flag flag{1}; return choose(flag) - 1; }
     expect(false, "contextual operator calls preserve their checked receiver lifetime application");
   }
   bool checked = false;
+  bool temporaryOrigin = false;
   for (const auto &function : result.hir.functionInstances())
     for (const auto &value : function.body.values) {
       if (value.kind != HirValueKind::Call || !value.source ||
@@ -93,6 +97,39 @@ int main() { Flag flag{1}; return choose(flag) - 1; }
       expect(value.lifetimeApplication.complete &&
                  !value.lifetimeApplication.bindings.empty(),
              "HIR contextual calls retain the independently checked receiver substitution");
+      for (const auto &origin : value.lifetimeApplication.origins) {
+        const auto *source = function.body.findValue(origin.source);
+        if (origin.region.kind != Lifetime::Kind::Local || !source ||
+            source->source != value.source || !value.receiver ||
+            source->id != *value.receiver || source->id == value.id)
+          continue;
+        temporaryOrigin = true;
+        const auto bodyOrigin = std::find(function.body.lifetimeBody.origins.begin(),
+                                          function.body.lifetimeBody.origins.end(), origin);
+        expect(bodyOrigin != function.body.lifetimeBody.origins.end(),
+               "body facts retain the exact temporary receiver rather than its contextual result");
+        for (int mutation = 0; mutation != 3; ++mutation) {
+          auto stale = result.hir;
+          auto *body = const_cast<HirBody *>(&stale.findFunctionInstance(function.id)->body);
+          auto found = std::find(body->lifetimeBody.origins.begin(), body->lifetimeBody.origins.end(), origin);
+          expect(found != body->lifetimeBody.origins.end(), "origin mutation selects exact checked storage");
+          if (mutation == 0) {
+            found->source = value.id;
+          } else if (mutation == 1) {
+            auto conflict = *found;
+            conflict.source = value.id;
+            body->lifetimeBody.origins.push_back(conflict);
+          } else {
+            auto *call = const_cast<HirValue *>(body->findValue(value.id));
+            auto applied = std::find(call->lifetimeApplication.origins.begin(),
+                                     call->lifetimeApplication.origins.end(), origin);
+            expect(applied != call->lifetimeApplication.origins.end(), "application origin matches exact body witness");
+            applied->source = value.id;
+          }
+          expect(!MirLowerer{}.lower(stale, result.failureMetadata).valid(),
+                 "contextual receiver origins reject forged conversion results and conflicting witnesses");
+        }
+      }
       auto forged = result.mir;
       auto *changed = const_cast<MirFunctionInstance *>(forged.findFunctionInstance(function.id));
       if (!changed) continue;
@@ -107,6 +144,7 @@ int main() { Flag flag{1}; return choose(flag) - 1; }
                "a contextual call cannot lose its receiver contract application");
     }
   expect(checked, "the contextual operator fixture must exercise a concrete checked call");
+  expect(temporaryOrigin, "unary contextual conversion must retain a temporary receiver origin");
 }
 
 void defaultFieldCallableUniverse() {

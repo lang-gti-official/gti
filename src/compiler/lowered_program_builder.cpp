@@ -953,6 +953,9 @@ private:
       row.source = tokenSpan(declaration->name());
       row.generic = !declaration->genericParameters().empty();
       if (const FunctionInfo *info = semantics_.findFunction(*declaration)) {
+        // Elision can introduce declaration binders without source generic
+        // syntax (for example, a conformance head's stored regions).
+        row.generic = !info->genericParameters.empty();
         row.semanticIdentity = info->id;
         row.payload = LoweredFunctionDeclaration{
             .id = info->id,

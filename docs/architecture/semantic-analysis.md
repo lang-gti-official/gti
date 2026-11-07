@@ -1053,6 +1053,17 @@ ordinary lookup. Private homonyms in unrelated modules cannot select a different
 stored origin or ownerless-text contract; scoped context restoration also keeps
 recursive summaries and later caller analysis independent of import order.
 
+Empty constructor bodies publish a complete checked initializer summary for
+unconditional as well as guarded borrowed fields. Ordinary field initializers
+and selected base initializers contribute exact typed paths, including every
+possible supplier of a scalar reference. The body proof retains selected
+constructor generic arguments, lifetime application and defaults; an early
+declaration scan cannot reject that result merely because it lacks a one-source
+map. Concrete construction demands the complete summary before publication,
+and unavailable or recursive evidence remains unknown. Simultaneously active
+exclusive destinations cannot retain overlapping origins. This initializer
+proof does not extend the existing support for nonempty constructor bodies.
+
 `ownerlessTextConstructorInputs`, the pre-body input contract checked at each
 construction, includes a base initializer that passes a formal to a base
 constructor storing that parameter. The derived class keeps its text fields
@@ -1483,8 +1494,14 @@ pack, not a reference to the group. Forwarding and folds retain each element's
 origin and access: mutable elements may be reborrowed read-only, but read-only
 elements cannot acquire exclusive access. Named move-only values are observed
 without copying; multiple read-only aliases are permitted and exclusive alias
-conflicts use ordinary call checking. The first slice confines reference packs
-to invocations with non-borrowed results. Exact fresh read-only arguments use
+conflicts use ordinary call checking. Function results use the same normalized
+lifetime contract and complete supplier proof as fixed reference inputs. An
+unresolved top-level pack defers supplier ordinals without publishing a summary;
+concrete instance analysis expands the signature and proves all returned owners.
+Constructor reference packs retain their non-borrowed-result boundary. Pack
+folds instantiate and commit an ordinary lifetime application for every exact
+element. Their named pack operand is a syntax carrier, while loan access is
+checked against each element's active entry and full index path. Exact fresh read-only arguments use
 the same full-expression materialization and failure cleanup as fixed reference
 parameters, including ordinary source constructors whose result carries no
 borrow. Mutable arguments always require a mutable source place.

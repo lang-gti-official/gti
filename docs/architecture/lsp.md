@@ -507,6 +507,15 @@ Compile-time-conditional declarations contribute the semantically selected
 branch.
 Each node's detail reuses the hover signature query, so the outline and hover
 always present identical compiler-owned renderings.
+Selected lifetime arguments are displayed by the declaration binder's exact
+identity in the checked application. Synthesized conformance-head regions stay
+hidden; they do not shift written operation parameters or add an empty generic
+list. A source-only explicit-lifetime prefix is a fallback only when the
+parameter inventory has no hidden lifetime slots.
+Patterned nominal headers render their typed patterns followed by written
+trailing lifetime formals. The formatter preserves that order, and Tree-sitter
+uses its existing lifetime-parameter nodes so editor highlighting retains the
+same binder ranges as ordinary generic declarations.
 
 Signature help reads the semantic database's call occurrences: the analyzer
 records each selected call's and construction's byte-exact argument-list

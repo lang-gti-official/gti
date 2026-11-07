@@ -14,6 +14,22 @@ from backend_modes import native_modes
 
 
 CASES = {
+    "complete_scalar_constructor_inputs": """
+int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; }
+  return right;
+}
+struct Selected<lifetime a> {
+  int&<a> value;
+  Selected(int&<a> left, int&<a> right, bool first)
+      : value(choose(left, right, first)) {}
+};
+int main() {
+  int left = 3; int right = 8;
+  Selected selected{left, right, false};
+  return selected.value - 8;
+}
+""",
     "checked_erasure_regions": """
 import std.memory;
 T&<region> round_trip<T, lifetime region>(T&<region> source) {
@@ -116,6 +132,17 @@ int main() {
   int first = 3; int second = 8; View view{second};
   if (scalar.invoke(first, second) != 8) { return 1; }
   return carrier.invoke(first, view) - 8;
+}
+""",
+    "reference_pack_results": """
+int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
+int&<a> relay<lifetime a, Args...>(Args&<a>... values) { return second(values...); }
+void increment<T>(mut T& value) { value++; }
+void update<Args...>(mut Args&... values) { (increment(values), ...); }
+int main() {
+  mut int first = 3; mut int selected = 8;
+  update(first, selected);
+  return relay(first, selected) - 9;
 }
 """,
     "fixed_pack_call_defaults": """
@@ -320,6 +347,56 @@ int bump(mut int& first, mut int& second) {
   return first + second;
 }
 int main() { mut Derived pair{}; return bump(pair.left, pair.right) - 5; }
+""",
+    "stored_callback_environment": """
+import std.functional;
+struct Adder<lifetime data> {
+  int&<data> base;
+  Adder(int&<data> value) : base(value) {}
+  int operator()(int value) { return this.base + value; }
+};
+int apply<F, lifetime environment>(F&<environment> target) {
+  std::function_ref<int(int), environment> callback{target};
+  return callback(4);
+}
+int main() { int value = 3; Adder add{value}; return apply(add) - 7; }
+""",
+    "user_defined_callback_environment": """
+import std.functional;
+class BorrowedCall<R(Args...), lifetime environment> {
+  std::erased_object&<environment> object;
+  std::function_ptr<R(std::erased_object&<environment>, Args...)> invoke;
+public:
+  BorrowedCall<F>(F&<environment> target)
+    : object(std::erase_ref(target)),
+      invoke(std::function_ptr<R(std::erased_object&<environment>, Args...)>(
+        [](std::erased_object&<environment> object, Args... args) -> R {
+          unsafe {
+            F&<environment> callable = std::restore_ref<F>(object);
+            return callable(args...);
+          }
+        })) {}
+  R operator()(Args... args) { return this.invoke(this.object, args...); }
+};
+struct Adder<lifetime data> {
+  int&<data> base;
+  Adder(int&<data> value) : base(value) {}
+  int operator()(int value) { return this.base + value; }
+};
+int main() { int value = 3; Adder add{value}; BorrowedCall<int(int)> callback{add}; return callback(4) - 7; }
+""",
+    "patterned_nominal_environment": """
+struct Callback<R(Args...), lifetime environment> {
+  int&<environment> value;
+  Callback(int&<environment> input) : value(input) {}
+  int read() { return this.value; }
+};
+int read<lifetime a>(int&<a> input) {
+  Callback<int(int), a> explicitView{input};
+  Callback<int(int)> inferredView{input};
+  return explicitView.read() + inferredView.read();
+}
+int main() { int value = 7; return read(value) - 14; }
 """,
     "elided_conformance_head_regions": """
 struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };

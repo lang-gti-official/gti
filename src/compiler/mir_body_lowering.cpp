@@ -13320,6 +13320,9 @@ private:
       // Capture the identity before createLoan can reallocate output.loans.
       const MirLoanId storedDependency = source.storedDependency;
       const bool transformedReference = source.kind == MirLoanKind::CallResult;
+      const auto sourceFields = source.designatedFields;
+      const auto sourceConditions = source.conditions;
+      const auto sourceDependencies = source.additionalDependencies;
       const MirLoanId stored = createLoan(MirLoanKind::Stored, sourcePlace,
                                           access, valueId, 0, BorrowPath{fieldProjection(field)});
       // This publishes a reference field, not ownership of the referent.
@@ -13327,6 +13330,9 @@ private:
       // must not be inferred from the referenced value's class.
       output.loans[stored - 1].lifecycleBound = false;
       output.loans[stored - 1].storedDependency = storedDependency;
+      output.loans[stored - 1].designatedFields = sourceFields;
+      output.loans[stored - 1].conditions = sourceConditions;
+      output.loans[stored - 1].additionalDependencies = sourceDependencies;
       (void)appendInstruction(
           {.kind = MirInstructionKind::Borrow,
            .hirValue = valueId,

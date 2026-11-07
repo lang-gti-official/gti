@@ -39,17 +39,18 @@ int main() { Ticket value{}; touch(value); return 0; }
 void consume<Args...>(Args... args) {}
 int main() { Ticket value{}; consume(value); return 0; }
 """, "GTI-S2018"),
-        "reference_result": ("""
-int& escape<Args...>(int& value, Args&... args) { return value; }
+        "reference_result_escape": ("""
+int&<static> escape<Args...>(int& value, Args&... args) { int local = 1; return local; }
 int main() { int value = 3; Ticket ticket{}; escape(value, ticket); return 0; }
-""", "GTI-S2023"),
-        "borrowed_result": ("""
-struct Borrowed { Ticket& value; Borrowed(Ticket& source) : value(source) {} };
-Borrowed escape<Args...>(Ticket& value, Args&... args) {
-  return Borrowed(value);
+""", "GTI-S2127"),
+        "borrowed_result_escape": ("""
+struct Borrowed<lifetime a> { Ticket&<a> value; Borrowed(Ticket&<a> source) : value(source) {} };
+Borrowed<static> escape<Args...>(Ticket& value, Args&... args) {
+  Borrowed saved{value};
+  return saved;
 }
 int main() { Ticket value{}; escape(value, value); return 0; }
-""", "GTI-S2023"),
+""", "GTI-S2127"),
         "readonly_to_mutable": ("""
 void mutate<Args...>(mut Args&... args) {}
 void forward<Args...>(Args&... args) { mutate(args...); }
@@ -84,13 +85,16 @@ int main() { std::string text = "owner"; int n = 1; Holder holder{text.view(), n
 """, "GTI-S2023"),
         "function_text_escape": ("""
 import std.string;
-struct Holder {
-  std::string_view value;
-  Holder(std::string_view text) : value(text) {}
+struct Holder<lifetime a> {
+  std::string_view<a> value;
+  Holder(std::string_view<a> text) : value(text) {}
 };
-Holder observe<Args...>(std::string_view text, Args&... args) { return Holder(text); }
+Holder<static> observe<lifetime a, Args...>(std::string_view<a> text, Args&... args) {
+  Holder saved{text};
+  return saved;
+}
 int main() { std::string text = "owner"; int n = 1; auto holder = observe(text.view(), n); return 0; }
-""", "GTI-S2045"),
+""", "GTI-S2127"),
         "forwarding_reference": ("""
 void observe<Args...>(Args&&... args) {}
 int main() { return 0; }

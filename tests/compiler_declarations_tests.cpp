@@ -9550,11 +9550,14 @@ void missing_parameter<Args...>() {}
 void wrong_type<Args...>(int... values) {}
 void mutable_pack<Args...>(mut Args... values) {}
 void forwarding_pack<Args...>(Args&&... values) {}
-[[borrowed_from(first)]]
-int& borrowed_result<Args...>(int& first, Args&... values) { return first; }
+int&<static> borrowed_result<Args...>(int& first, Args&... values) {
+  int local = 1;
+  return local;
+}
 void direct_use<Args...>(Args... values) { values; }
 void local_pack<Args...>(Args... values) { Args local; }
 void bad_forward<Args...>(Args... values) { fixed(values...); }
+void wrong_flat_arity() { bad_forward(1, 2); }
 void not_a_pack(int value) { consume(value...); }
 )");
   expect(!invalid.canGenerateCode(),
@@ -9568,16 +9571,14 @@ void not_a_pack(int value) { consume(value...); }
           hasDiagnostic(invalid.diagnostics, "Parameter packs are immutable") &&
           hasDiagnostic(invalid.diagnostics,
                         "arrays and forwarding references are not supported") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "A reference parameter pack requires a result with "
-                        "no borrowed state") &&
+          hasDiagnostic(invalid.diagnostics, "Every possible owner of the returned reference") &&
           hasDiagnostic(invalid.diagnostics,
                         "must be expanded as the final call argument") &&
           hasDiagnostic(
               invalid.diagnostics,
               "can only appear in its matching final parameter-pack") &&
           hasDiagnostic(invalid.diagnostics,
-                        "only be forwarded to another variadic") &&
+                        "Function expects 1 argument but received 2") &&
           hasDiagnostic(invalid.diagnostics, "is not a parameter pack"),
       "variadic diagnostics should explain invalid pack placement, mutable "
       "value packs, forwarding references, borrowed results, and invalid "
