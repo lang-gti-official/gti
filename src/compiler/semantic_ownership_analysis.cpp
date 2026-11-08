@@ -1,3 +1,4 @@
+#include <execinfo.h> // TEMP-TRACE
 #include "semantic_analyzer_impl.h"
 #include "gti/borrow_conditions.h"
 #include "gti/concrete_formals.h"
@@ -6921,7 +6922,7 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
                                        : SemanticType::Unknown)) ||
       containsOpenTypeParameter(cleared.returnType) || cleared.neverReturns ||
       loanFlow.deferredGenericFlow || loanFlow.unknownImplicitResultReturn)
-    return;
+    { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[summary-fail] line %d\n", __LINE__); return; } // TEMP-TRACE-SUMFAIL
 
   // Expression facts were recorded at each return's own evaluation point,
   // before a later move or replacement could change its binding. Reuse the
@@ -6930,7 +6931,7 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
   std::vector<const ReturnStmt *> returns;
   (void)summarizeFlow(syntax->body()->statements(), &returns, true);
   if (returns.empty() && loanFlow.implicitResultReturns.empty())
-    return;
+    { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[summary-fail] line %d\n", __LINE__); return; } // TEMP-TRACE-SUMFAIL
   FunctionBorrowDependencySummary summary;
   const auto merge = [&](const FunctionBorrowDependencySummary &normalized) {
     for (const auto &dependency : normalized.dependencies)
@@ -6981,7 +6982,7 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
                  info->access != AccessMode::Mutable))
              : (!contextualResult && info->type != cleared.returnType &&
                 !sameLifetimeConversionShape(info->type, cleared.returnType))))
-      return;
+      { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[summary-fail] line %d\n", __LINE__); return; } // TEMP-TRACE-SUMFAIL
     const auto normalized = normalizedCompleteReturnBorrow(cleared, *complete, nullptr, returned->value().get());
     if (std::getenv("GTI_TRACE_LIFETIME_REQ")) { // TEMP-TRACE
       std::fprintf(stderr, "[ret-collect] fn=%s line=%u returnLine=%u completeDeps=%zu normalized=%d\n", syntax->name().lexeme.c_str(), static_cast<unsigned>(syntax->name().line), static_cast<unsigned>(returned->keyword().line), complete->dependencies.size(), normalized.has_value()); // TEMP-TRACE
@@ -6991,7 +6992,7 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     // MIR return/call facts. Collecting it does not bypass payload admission,
     // ordinary escape checking, or the conditional loan proofs.
     if (!normalized)
-      return;
+      { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[summary-fail] line %d\n", __LINE__); return; } // TEMP-TRACE-SUMFAIL
     merge(*normalized);
   }
   // A synthetic early return (prefix `?`) contributes its residual
@@ -6999,13 +7000,13 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
   for (const auto &implicit : loanFlow.implicitResultReturns) {
     const auto normalized = normalizedCompleteReturnBorrow(cleared, implicit);
     if (!normalized)
-      return;
+      { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[summary-fail] line %d\n", __LINE__); return; } // TEMP-TRACE-SUMFAIL
     merge(*normalized);
   }
   // Reload after nested body demands and restoration-summary publication.
   const auto *current = semanticModel.findFunction(id);
   if (!current || !current->declaration)
-    return;
+    { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[summary-fail] line %d\n", __LINE__); return; } // TEMP-TRACE-SUMFAIL
   FunctionInfo updated = *current;
   // The exact complete source contract also owns the field mapping used by
   // call lowering. Leaving the legacy receiver-only spelling here would
@@ -7280,6 +7281,7 @@ auto SemanticVisitor::Impl::invalidateBorrowDependencySet(
   invalidateReferenceContents();
   if (place.root == nullptr)
     return;
+  if (const char *want = std::getenv("GTI_TRACE_INVAL"); want && place.root->completeBorrowSet && place.root->type.kind == SemanticType::Class) { void *frames[8]; int n = backtrace(frames, 8); std::fprintf(stderr, "[inval] %s\n", want); backtrace_symbols_fd(frames, n, 2); } // TEMP-TRACE
   place.root->completeBorrowSet.reset();
   // A mutable reference can change its referent's active alternative. Clear
   // the referent's fact, not only the reference binding's physical shell.
@@ -12450,6 +12452,122 @@ auto SemanticVisitor::Impl::recordLoanFlowBreak(
                              .switchPath = loanFlow.activeSwitchArms});
 }
 
+namespace {
+// Conservatively decides whether a loop statement can replace the value held
+// by the binding named `name`. Reads, member calls on the binding (whose
+// receiver contents the MIR replay independently keeps only when no other
+// input carries a lifetime) and std::move of it do not; an assignment, a
+// field/element/dereference write rooted at it, passing it as an ordinary
+// call argument, a shadowing declaration or any unrecognized construct do.
+class LoopBindingWriteScan {
+public:
+  explicit LoopBindingWriteScan(std::string_view name) : name(name) {}
+  bool writes(const Stmt *statement) {
+    if (!statement)
+      return false;
+    if (const auto *block = stmtAs<BlockStmt>(statement)) {
+      for (const auto &item : block->statements())
+        if (writes(item.get()))
+          return true;
+      return false;
+    }
+    if (const auto *expression = stmtAs<ExpressionStmt>(statement))
+      return writes(expression->expression().get());
+    if (const auto *branch = stmtAs<IfStmt>(statement))
+      return writes(branch->condition().get()) ||
+             writes(branch->thenBranch().get()) ||
+             writes(branch->elseBranch().get());
+    if (const auto *returned = stmtAs<ReturnStmt>(statement))
+      return writes(returned->value().get());
+    if (const auto *loop = stmtAs<WhileStmt>(statement))
+      return writes(loop->condition().get()) || writes(loop->body().get());
+    if (const auto *loop = stmtAs<ForStmt>(statement))
+      return writes(loop->initializer().get()) ||
+             writes(loop->condition().get()) ||
+             writes(loop->increment().get()) || writes(loop->body().get());
+    if (const auto *loop = stmtAs<DoWhileStmt>(statement))
+      return writes(loop->body().get()) || writes(loop->condition().get());
+    if (const auto *declaration = stmtAs<VariableDecl>(statement))
+      return declaration->name().lexeme == name ||
+             writes(declaration->initializer().get());
+    if (stmtAs<LoopControlStmt>(statement))
+      return false;
+    return true;
+  }
+  bool writes(const Expr *expression) {
+    if (!expression)
+      return false;
+    if (exprAs<Variable>(expression) || exprAs<LiteralExpr>(expression) ||
+        exprAs<QualifiedName>(expression) || exprAs<This>(expression))
+      return false;
+    if (const auto *group = exprAs<Grouping>(expression))
+      return writes(group->expression().get());
+    if (const auto *binary = exprAs<Binary>(expression))
+      return writes(binary->left().get()) || writes(binary->right().get());
+    if (const auto *logical = exprAs<Logical>(expression))
+      return writes(logical->left().get()) || writes(logical->right().get());
+    if (const auto *unary = exprAs<Unary>(expression))
+      return named(unary->right().get()) ? false : writes(unary->right().get());
+    if (const auto *postfix = exprAs<Postfix>(expression))
+      return named(postfix->expression().get()) ? false
+                                                 : writes(postfix->expression().get());
+    if (const auto *get = exprAs<Get>(expression))
+      return writes(get->object().get());
+    if (const auto *index = exprAs<Index>(expression))
+      return writes(index->object().get()) || writes(index->index().get());
+    if (const auto *conditional = exprAs<ConditionalExpr>(expression))
+      return writes(conditional->condition().get()) ||
+             writes(conditional->thenExpression().get()) ||
+             writes(conditional->elseExpression().get());
+    if (const auto *assign = exprAs<Assign>(expression))
+      return assign->name().lexeme == name || writes(assign->value().get());
+    if (const auto *set = exprAs<Set>(expression))
+      return rooted(set->object().get()) || writes(set->object().get()) ||
+             writes(set->value().get());
+    if (const auto *set = exprAs<IndexSet>(expression))
+      return rooted(set->object().get()) || writes(set->object().get()) ||
+             writes(set->index().get()) || writes(set->value().get());
+    if (const auto *call = exprAs<Call>(expression)) {
+      const auto *callee = call->callee().get();
+      const auto *qualified = exprAs<QualifiedName>(callee);
+      const bool move = qualified && qualified->name().last().lexeme == "move" &&
+                        call->arguments().size() == 1;
+      if (!move && writes(callee))
+        return true;
+      for (const auto &argument : call->arguments())
+        if ((!move && named(argument.get())) || writes(argument.get()))
+          return true;
+      return false;
+    }
+    return true;
+  }
+
+private:
+  bool named(const Expr *expression) const {
+    while (const auto *group = exprAs<Grouping>(expression))
+      expression = group->expression().get();
+    const auto *variable = exprAs<Variable>(expression);
+    return variable && variable->name().lexeme == name;
+  }
+  bool rooted(const Expr *expression) const {
+    while (expression) {
+      if (named(expression))
+        return true;
+      if (const auto *get = exprAs<Get>(expression))
+        expression = get->object().get();
+      else if (const auto *index = exprAs<Index>(expression))
+        expression = index->object().get();
+      else if (const auto *group = exprAs<Grouping>(expression))
+        expression = group->expression().get();
+      else
+        return true;
+    }
+    return false;
+  }
+  std::string_view name;
+};
+} // namespace
+
 auto SemanticVisitor::Impl::beginLoanFlowLoop(const Stmt &statement) -> void {
   invalidateReferenceContents();
   // The semantic loop body is visited once. An incoming exact alternative is
@@ -12468,6 +12586,17 @@ auto SemanticVisitor::Impl::beginLoanFlowLoop(const Stmt &statement) -> void {
   for (auto &scope : scopes)
     for (auto &[_, symbol] : scope)
       if (symbol.assignable && symbol.completeBorrowSet) {
+        // An unconditional set of a binding the loop never replaces is still
+        // exact on every backedge (mutable member calls keep the receiver's
+        // own region contents; MIR replays that independently).
+        if (symbol.completeBorrowSet->possibleAlternatives.empty() &&
+            std::all_of(symbol.completeBorrowSet->dependencies.begin(),
+                        symbol.completeBorrowSet->dependencies.end(),
+                        [](const auto &dependency) {
+                          return dependency.conditions.empty();
+                        }) &&
+            !LoopBindingWriteScan(symbol.declaration.lexeme).writes(&statement))
+          continue;
         if (const SymbolId id = symbolForDeclaration(symbol.declaration))
           loop.droppedBorrowSets.push_back(id);
         symbol.completeBorrowSet.reset();

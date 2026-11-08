@@ -5345,8 +5345,42 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         base.projections.pop_back();
         return sameCanonicalPlace(expectedPlace, base);
       };
+      // A compact entry identity (the formal plus its one designated stored
+      // path) and the concrete referent that path dereferences are the same
+      // supplier when the result is a child of that exact entry group.
+      const auto entryReferent = [&] {
+        if (!expectedSource || !loan->parent)
+          return false;
+        const auto *entry = body.findLoan(loan->parent);
+        const auto *expectedPlace = body.findPlace(*expectedSource);
+        const auto *actual = body.findPlace(loan->source);
+        if (!entry || !entry->entry || entry->kind != MirLoanKind::Stored ||
+            entry->source != *expectedSource ||
+            !entry->additionalDependencies.empty() ||
+            entry->designatedFields.empty() || !expectedPlace || !actual ||
+            actual->root != expectedPlace->root ||
+            actual->binding != expectedPlace->binding ||
+            actual->symbol != expectedPlace->symbol ||
+            actual->projections.size() !=
+                expectedPlace->projections.size() +
+                    entry->designatedFields.size() + 1 ||
+            !std::equal(expectedPlace->projections.begin(),
+                        expectedPlace->projections.end(),
+                        actual->projections.begin()) ||
+            actual->projections.back().kind != MirProjectionKind::Dereference)
+          return false;
+        for (std::size_t index = 0; index < entry->designatedFields.size(); ++index) {
+          const auto &projection =
+              actual->projections[expectedPlace->projections.size() + index];
+          if (projection.kind != MirProjectionKind::Field ||
+              entry->designatedFields[index] != fieldProjection(projection.field))
+            return false;
+        }
+        return true;
+      };
       if (!exactSource && !sameCanonicalPlace(expectedPlace, actualPlace) &&
-          !selectedTextField()) {
+          !selectedTextField() && !entryReferent()) {
+        if (std::getenv("GTI_TRACE_LCBD2")) { const auto *ft = target; std::fprintf(stderr, "[srcid] owner=%zu inst=%llu fn=%llu completeFn=%d completeRet=%d retKind=%d bf=%zu origin=%d loan=%llu kind=%d src=p%llu parent=%llu adds=%zu\n", owner, (unsigned long long)instruction.id, ft ? (unsigned long long)ft->id : 0ull, completeFunction, ft && ft->completeReturnBorrow.has_value(), ft ? static_cast<int>(ft->returnType.kind) : -1, instruction.borrowFields.size(), static_cast<int>(instruction.borrowOrigin), (unsigned long long)loan->id, static_cast<int>(loan->kind), (unsigned long long)loan->source, (unsigned long long)loan->parent, loan->additionalDependencies.size()); } // TEMP-TRACE
         const std::string expected =
             expectedSource ? std::to_string(*expectedSource) : "unresolved";
         return verificationFailure(

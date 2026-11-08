@@ -7926,6 +7926,7 @@ private:
                               prefix.end());
         }
         const auto *input = sourceValue ? findValue(*sourceValue) : nullptr;
+        if (std::getenv("GTI_TRACE_LCBD2") && loan->entry && loan->kind == MirLoanKind::Stored) std::fprintf(stderr, "[compact] v%llu access=%d cat=%d kind=%d borrowed=%d copyable=%d adds=%zu designatedEq=%d dsz=%zu ssz=%zu\n", (unsigned long long)value.id, static_cast<int>(loan->access), static_cast<int>(value.info.category), static_cast<int>(value.info.type.kind), value.info.traits.containsBorrowedState, value.info.traits.copyable, loan->additionalDependencies.size(), loan->designatedFields == mapping.sourceFields, loan->designatedFields.size(), mapping.sourceFields.size()); // TEMP-TRACE
         if (loan->entry && loan->kind == MirLoanKind::Stored &&
             loan->access == AccessMode::ReadOnly &&
             value.info.category == ValueCategory::Value &&
