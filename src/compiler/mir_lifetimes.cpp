@@ -595,10 +595,13 @@ bool resolveOrigins(Facts &application, const MirBody &body) {
     // A keyed origin may name its owner through a retained alias (a range
     // element's iterator) that lowers to no place of its own. Its exact
     // source expression still designates one lowered place: use it.
-    if (!selected && origin.key.valid() && origin.source != 0) {
+    if (!selected && origin.key.valid() && origin.source != 0 &&
+        origin.key.domain == body.placeDomain) {
       bool ambiguous = false;
       for (const auto &place : body.places) {
-        if (place.sourceValue != origin.source || place.id == 0)
+        // Never cross place domains: equal identities elsewhere are no evidence.
+        if (place.sourceValue != origin.source || place.id == 0 ||
+            (place.key && place.key->domain != origin.key.domain))
           continue;
         if (selected && !(selected->key && place.key && *selected->key == *place.key))
           ambiguous = true;
@@ -1815,6 +1818,29 @@ public:
                      graph.proves(origin.region, target);
             });
       }
+    // A consuming receiver moved or copied directly (no prepared temporary)
+    // is witnessed by the origin semantics gave that exact staged value; its
+    // region must still cover the required receiver region.
+    if (operand.kind == MirOperandKind::Value)
+      if (const auto *stage = definition(operand.value);
+          stage && !stage->tombstone && stage->kind == MirInstructionKind::CallInput &&
+          stage->callInputRole == MirCallInputRole::Receiver &&
+          !stage->preparedParameterDrop && stage->result == operand.value &&
+          stage->operands.size() == 1 && stage->hirValue != 0 &&
+          stage->info.type.kind != SemanticType::Reference &&
+          (stage->callInputKind == HirCallInputKind::MoveValue ||
+           stage->callInputKind == HirCallInputKind::CopyValue)) {
+        const auto *input = stage->operands.front().kind == MirOperandKind::Value
+            ? definition(stage->operands.front().value) : nullptr;
+        if (std::any_of(body.lifetimeBody.origins.begin(), body.lifetimeBody.origins.end(),
+                [&](const MirLifetimeOrigin &origin) {
+                  return origin.source != 0 &&
+                         (origin.source == stage->hirValue ||
+                          (input && origin.source == input->hirValue)) &&
+                         graph.proves(origin.region, target);
+                }))
+          return true;
+      }
     const auto *actual = sourceOperand(operand, source);
     if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { // TEMP-TRACE
       const auto *ap = actual && actual->place ? body.findPlace(actual->place) : nullptr; // TEMP-TRACE
@@ -2778,10 +2804,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
         if (instruction.functionTarget) {
           const auto *target =
               program.findFunctionInstance(*instruction.functionTarget);
-          // A consuming receiver is moved in, not borrowed: no caller loan
-          // supplies `this`. Its object regions are the owner-type check below.
           if (target && target->lifetimeContract.receiver.specified() &&
-              target->receiverMutability != ReceiverMutability::Consuming &&
               (!instruction.receiver ||
                !relations.borrowedOperand(
                    *instruction.receiver,
@@ -2801,6 +2824,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
                              static_cast<int>(op.kind), (unsigned long long)op.place, pl ? static_cast<int>(pl->root) : -1, // TEMP-TRACE
                              pl ? pl->projections.size() : 0, pl && pl->key ? 1 : 0, (unsigned long long)op.loan, // TEMP-TRACE
                              ln ? static_cast<int>(ln->kind) : -1, ln ? (unsigned long long)ln->source : 0ull); // TEMP-TRACE
+                if (op.kind == MirOperandKind::Value) if (const auto *d = relations.definition(op.value)) std::fprintf(stderr, "[recv]   stage kind=%d prepared=%llu dest=%llu tomb=%d op0value=%llu\n", static_cast<int>(d->callInputKind), (unsigned long long)d->preparedParameterDrop.value_or(0), (unsigned long long)d->destination.value_or(0), d->tombstone, d->operands.empty() ? 0ull : (unsigned long long)d->operands.front().value); // TEMP-TRACE
                 if (op.kind == MirOperandKind::Value) if (const auto *d = relations.definition(op.value)) { // TEMP-TRACE
                   const auto *dop = d->operands.empty() ? nullptr : &d->operands.front(); // TEMP-TRACE
                   std::fprintf(stderr, "[recv]   value def kind=%d intrinsic=%d fn=%d result-type=%d:%llu ops=%zu op0kind=%d op0place=%llu op0loan=%llu lifetime=%d:%llu\n", static_cast<int>(d->kind), static_cast<int>(d->intrinsic), d->functionTarget ? 1 : 0, static_cast<int>(d->info.type.kind), (unsigned long long)d->info.type.classId, d->operands.size(), dop ? static_cast<int>(dop->kind) : -1, dop ? (unsigned long long)dop->place : 0ull, dop ? (unsigned long long)dop->loan : 0ull, static_cast<int>(d->info.type.referenceLifetime.kind), (unsigned long long)d->info.type.referenceLifetime.id); } // TEMP-TRACE
