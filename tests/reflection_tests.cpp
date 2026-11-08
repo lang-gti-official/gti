@@ -1027,6 +1027,81 @@ int main() { return 0; }
   }
 }
 
+void checkUnboundMethodQueries(const std::filesystem::path &root,
+                               const std::filesystem::path &directory) {
+  const std::string declarations = R"(import std.meta;
+import std.format;
+class OpenMethod {
+public:
+  OpenMethod() = default;
+  T pick<T>(T value) { return value; }
+};
+class PointerMethod {
+public:
+  PointerMethod() = default;
+  T* pick<T>(T* value) { return value; }
+};
+)";
+  const std::vector<std::string> queries{
+      "std::meta::method<OpenMethod, 0>().result().name()",
+      "std::meta::parameter<OpenMethod, 0, 0>().type().name()",
+      "std::meta::name_of<std::meta::return_type<OpenMethod, 0>>()",
+      "std::meta::method<OpenMethod, 0>().result().is_void()",
+      "std::meta::method<PointerMethod, 0>().result().name()"};
+  for (const auto mode : {lang::TrustedBodyAnalysis::Complete,
+                          lang::TrustedBodyAnalysis::Reachable}) {
+    for (std::size_t index = 0; index < queries.size(); ++index) {
+      const std::string name =
+          "unbound-reflection-" + std::to_string(index) + ".gti";
+      const std::string source = declarations +
+                                 "int main() { std::println(\"{}\", " +
+                                 queries[index] + "); return 0; }\n";
+      const auto result = analyzeSource(root, directory, name, source, mode);
+      const auto error =
+          std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
+                       [](const lang::Diagnostic &diagnostic) {
+                         return diagnostic.code == "GTI-S2126";
+                       });
+      expect(error != result.diagnostics.end() && !result.hirValid,
+             "an unbound reflected signature query is diagnosed before MIR: " +
+                 queries[index]);
+      if (error == result.diagnostics.end()) {
+        for (const auto &diagnostic : result.diagnostics)
+          std::cerr << "  unbound query: " << diagnostic.code << ": "
+                    << diagnostic.message << '\n';
+        continue;
+      }
+      const std::string_view callable = index == 2   ? "name_of"
+                                        : index == 3 ? "is_void"
+                                                     : "name";
+      const auto callStart =
+          source.find(queries[index]) + queries[index].rfind(callable);
+      const bool attributed =
+          std::filesystem::path(error->primary.source).filename() == name &&
+          error->primary.start == callStart &&
+          error->primary.end == callStart + callable.size() &&
+          error->phase == lang::DiagnosticPhase::Semantics &&
+          error->message.find("concrete generic arguments") !=
+              std::string::npos &&
+          !error->related.empty() && error->fixes.empty();
+      if (!attributed) {
+        std::cerr << "  query " << queries[index] << ": "
+                  << error->primary.source << ":" << error->primary.start << "-"
+                  << error->primary.end
+                  << " phase=" << static_cast<int>(error->phase)
+                  << " related=" << error->related.size()
+                  << " fixes=" << error->fixes.size()
+                  << " message=" << error->message << '\n';
+      }
+      expect(attributed,
+             "unbound reflection keeps the user's exact call span and library "
+             "instance relation without suggesting an invented type");
+      expect(!hasCode(result, "GTI-B0001") && !hasCode(result, "GTI-B0003"),
+             "unbound reflection does not reach MIR or LLVM admission");
+    }
+  }
+}
+
 // `constexpr for` limits come from the compilation's CompileLimits.
 void checkExpansionLimits(const std::filesystem::path &root,
                           const std::filesystem::path &directory) {
@@ -1124,24 +1199,32 @@ void checkExpansionLimits(const std::filesystem::path &root,
          "separate declarations never share a copy budget");
 }
 
-int main() {
+int main(int argc, char **argv) {
+  if (argc > 1 &&
+      (argc != 2 || std::string_view(argv[1]) != "--unbound-method-queries"))
+    return 2;
   const std::filesystem::path root =
       std::filesystem::path(__FILE__).parent_path().parent_path();
   const std::filesystem::path directory =
       std::filesystem::temp_directory_path() /
       ("gti-reflection-" + std::to_string(::getpid()));
   std::filesystem::create_directories(directory);
-  checkExpansion(root, directory);
-  checkDiagnostics(root, directory);
-  checkFormatter();
-  checkAttributes(root, directory);
-  checkAttributeFormatter();
-  checkTypeFacts(root, directory);
-  checkPhase3(root, directory);
-  checkMethodInvocation(root, directory);
-  checkDefaults(root, directory);
-  checkClassAssertions(root, directory);
-  checkExpansionLimits(root, directory);
+  if (argc == 2) {
+    checkUnboundMethodQueries(root, directory);
+  } else {
+    checkExpansion(root, directory);
+    checkDiagnostics(root, directory);
+    checkFormatter();
+    checkAttributes(root, directory);
+    checkAttributeFormatter();
+    checkTypeFacts(root, directory);
+    checkPhase3(root, directory);
+    checkMethodInvocation(root, directory);
+    checkDefaults(root, directory);
+    checkClassAssertions(root, directory);
+    checkUnboundMethodQueries(root, directory);
+    checkExpansionLimits(root, directory);
+  }
   std::filesystem::remove_all(directory);
   if (failures != 0) {
     std::cerr << failures << " failure(s)\n";
