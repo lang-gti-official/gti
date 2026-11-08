@@ -6917,10 +6917,24 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
         // verifyStoredEntryPaths has already independently checked every
         // attached local value publication; the source identity, not an empty
         // carrier list, distinguishes this caller-owned entry.
+        // A field of the receiver stores its references inside the same
+        // `this` contents, which the receiver's one entry group describes.
+        const bool receiverField =
+            entrySource != nullptr &&
+            entrySource->root == MirPlaceRootKind::This &&
+            entrySource->projections.empty() &&
+            dependencySource->root == MirPlaceRootKind::This &&
+            !dependencySource->projections.empty() &&
+            std::all_of(dependencySource->projections.begin(),
+                        dependencySource->projections.end(),
+                        [](const auto &projection) {
+                          return projection.kind == MirProjectionKind::Field;
+                        });
         const bool abstractEntry =
             candidate.entry && candidate.kind == MirLoanKind::Stored &&
             entrySource != nullptr &&
-            mir_detail::wholeEntryPlaceMatches(body, *entrySource, *dependencySource) &&
+            (mir_detail::wholeEntryPlaceMatches(body, *entrySource, *dependencySource) ||
+             receiverField) &&
             (entrySource->root == MirPlaceRootKind::This ||
              entrySource->type.kind == SemanticType::Reference);
         const bool exactEntryLane = !candidate.entry ||
@@ -6958,6 +6972,7 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
         (independentlyStaticTextBinding(program, body, *source) ||
          ownerlessTextPayload || exactParent))
       continue;
+    if ((expected == 0 || loan.storedDependency != expected) && std::getenv("GTI_TRACE_LCBD2")) { std::fprintf(stderr, "[shell-sd] owner=%zu loan=%llu kind=%d src=p%llu parent=%llu sd=%llu expected=%llu depsrc=p%llu root=%d\n", owner, (unsigned long long)loan.id, static_cast<int>(loan.kind), (unsigned long long)loan.source, (unsigned long long)loan.parent, (unsigned long long)loan.storedDependency, (unsigned long long)expected, (unsigned long long)dependencySource->id, static_cast<int>(dependencySource->root)); for (const auto &l : body.loans) std::fprintf(stderr, "   loan%llu kind=%d entry=%d src=p%llu parent=%llu sd=%llu\n", (unsigned long long)l.id, static_cast<int>(l.kind), l.entry, (unsigned long long)l.source, (unsigned long long)l.parent, (unsigned long long)l.storedDependency); } // TEMP-TRACE
     if (expected == 0 || loan.storedDependency != expected)
       return verificationFailure(
           body, owner,

@@ -9623,6 +9623,7 @@ private:
         // primary supplier and keep the group as the stored edge, the parent
         // of each external path selected through it.
         MirLoanId receiverGroup = 0;
+        if (std::getenv("GTI_TRACE_LCBD2") && value.borrowFields.size() > 1) { const auto rv = receiverValue(value); const auto rp = rv ? placeForValue(*rv) : MirPlaceId{0}; const auto *pl = output.findPlace(rp); std::fprintf(stderr, "[fix77pre] v%llu src=p%llu parent=%llu m0src=%zu recv=p%llu root=%d proj=%zu:", (unsigned long long)value.id, (unsigned long long)published.source, (unsigned long long)published.parent, value.borrowFields.front().sourceFields.size(), (unsigned long long)rp, pl ? static_cast<int>(pl->root) : -1, pl ? pl->projections.size() : 0); for (const auto &l : output.loans) if (l.kind == MirLoanKind::Stored && l.source == rp) std::fprintf(stderr, " stored%llu(entry=%d)", (unsigned long long)l.id, l.entry); for (const auto &l : output.loans) if (l.entry) { const auto *sp = output.findPlace(l.source); std::fprintf(stderr, " entry%llu(kind=%d src=p%llu root=%d proj=%zu sd=%llu)", (unsigned long long)l.id, static_cast<int>(l.kind), (unsigned long long)l.source, sp ? static_cast<int>(sp->root) : -1, sp ? sp->projections.size() : 0, (unsigned long long)l.storedDependency); } if (pl && pl->root == MirPlaceRootKind::Binding) if (auto b = bindingLoans.find(pl->binding); b != bindingLoans.end()) std::fprintf(stderr, " bl=%llu", (unsigned long long)b->second); std::fprintf(stderr, "\n"); } // TEMP-TRACE
         if (const auto &front = value.borrowFields.front();
             value.borrowFields.size() > 1 &&
             front.origin == BorrowOriginKind::Receiver &&
@@ -9644,6 +9645,56 @@ private:
             published.source = place;
             published.parent = 0;
             published.storedDependency = group.id;
+          }
+        } else if (const auto &front = value.borrowFields.front();
+                   value.borrowFields.size() > 1 &&
+                   front.origin == BorrowOriginKind::Receiver &&
+                   front.sourceFields.empty() && published.parent == 0) {
+          // The primary already names the whole receiver's storage. Its
+          // stored paths are still selected through the receiver's own
+          // Stored group: a formal or `this` entry group rooted at that same
+          // place, or the named carrier's retained group.
+          const auto receiver = receiverValue(value);
+          const auto place = receiver ? placeForValue(*receiver) : MirPlaceId{0};
+          const auto *carrier = output.findPlace(place);
+          const bool receiverField =
+              carrier && carrier->root == MirPlaceRootKind::This &&
+              !carrier->projections.empty() &&
+              std::all_of(carrier->projections.begin(),
+                          carrier->projections.end(),
+                          [](const auto &projection) {
+                            return projection.kind == MirProjectionKind::Field;
+                          });
+          if (carrier &&
+              (carrier->projections.empty() || receiverField) &&
+              (carrier->root == MirPlaceRootKind::Binding ||
+               carrier->root == MirPlaceRootKind::This) &&
+              sameBorrowSource(published.source, place)) {
+            MirLoanId found = 0;
+            bool ambiguous = false;
+            for (const auto &loan : output.loans) {
+              const auto *entrySource = output.findPlace(loan.source);
+              const bool rooted =
+                  loan.kind == MirLoanKind::Stored && !loan.escapes &&
+                  ((loan.entry && !receiverField &&
+                    sameBorrowSource(loan.source, place)) ||
+                   (loan.entry && receiverField && entrySource &&
+                    entrySource->root == MirPlaceRootKind::This &&
+                    entrySource->projections.empty()) ||
+                   (carrier->root == MirPlaceRootKind::Binding &&
+                    std::find(loan.carriers.begin(), loan.carriers.end(),
+                              carrier->binding) != loan.carriers.end() &&
+                    loanIsActive(scopes, loan.id)));
+              if (!rooted)
+                continue;
+              ambiguous |= found != 0;
+              found = loan.id;
+            }
+            if (!ambiguous && found != 0) {
+              receiverGroup = found;
+              if (published.storedDependency == 0)
+                published.storedDependency = found;
+            }
           }
         }
         for (std::size_t index = 1; index < value.borrowFields.size();
@@ -9697,6 +9748,34 @@ private:
             return;
           }
           auto selected = *lowered;
+          // Semantics names an accessor-reached receiver by its owner place.
+          // The executable receiver is the referent of that accessor's call
+          // result, so the dependency is a child of that exact result loan.
+          if (selected.parent == 0 &&
+              value.borrowDependencies->dependencies.size() == 1) {
+            MirLoanId inputLoan = 0;
+            if (value.borrowOrigin == BorrowOriginKind::Receiver &&
+                originCall.receiver) {
+              if (const auto *receiverPlace =
+                      output.findPlace(originCall.receiver->place);
+                  receiverPlace &&
+                  receiverPlace->root == MirPlaceRootKind::Loan &&
+                  receiverPlace->projections.empty())
+                inputLoan = receiverPlace->loan;
+            } else if (value.borrowOrigin == BorrowOriginKind::Argument &&
+                       value.borrowArgument < originCall.operands.size() &&
+                       value.borrowArgument < value.parameterTypes.size() &&
+                       value.parameterTypes[value.borrowArgument].kind ==
+                           SemanticType::Reference) {
+              inputLoan = operandLoan(originCall.operands[value.borrowArgument]);
+            }
+            if (const auto *accessor = output.findLoan(inputLoan);
+                accessor && accessor->kind == MirLoanKind::CallResult &&
+                accessor->additionalDependencies.empty() &&
+                accessor->source == selected.source &&
+                loanIsActive(scopes, accessor->id))
+              selected.parent = accessor->id;
+          }
           if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[lcbd2] v%llu semroot=%llu recv=%d proj=%zu semparent=%llu -> src=p%llu parent=%llu\n", (unsigned long long)value.id, (unsigned long long)dependency.place.root, dependency.place.receiver, dependency.place.projections.size(), (unsigned long long)dependency.parent, (unsigned long long)selected.source, (unsigned long long)selected.parent); // TEMP-TRACE
           // A consumed carrier's complete external permission is transferred
           // through the call. The result must not remain a child of the group
