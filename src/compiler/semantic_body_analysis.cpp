@@ -726,19 +726,6 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
   for (auto &bound : concreteFunction.lifetimeContract.typeBounds)
     bound.type = substituteType(bound.type, substitution);
   concreteFunction.returnType = canonical->returnType;
-  if (concreteFunction.returnType.kind == SemanticType::Reference &&
-      concreteFunction.returnType.arguments.size() == 1 &&
-      !containsOpenTypeParameter(concreteFunction.returnType.arguments.front()) &&
-      !typeTraits(concreteFunction.returnType.arguments.front()).containsBorrowedState) {
-    // The concrete referent stores no references: see subsumedByPhysicalShell.
-    if (std::getenv("GTI_TRACE_SUBSUME") && function->declaration) // TEMP-TRACE
-      std::fprintf(stderr, "[subsume-inst] %s line=%u fields=%zu complete=%zu\n", function->declaration->name().lexeme.c_str(), static_cast<unsigned>(function->declaration->name().line), concreteFunction.returnBorrowFields.size(), concreteFunction.completeReturnBorrow ? concreteFunction.completeReturnBorrow->dependencies.size() : 0); // TEMP-TRACE
-    if (!std::getenv("GTI_NO_SUBSUME")) // TEMP-TRACE bisect
-      removeShellSubsumedSuppliers(concreteFunction.returnBorrowFields);
-    if (concreteFunction.completeReturnBorrow)
-      if (!std::getenv("GTI_NO_SUBSUME")) // TEMP-TRACE bisect
-        removeShellSubsumedSuppliers(concreteFunction.completeReturnBorrow->dependencies);
-  }
   concreteFunction.parameterTypes = canonical->parameterTypes;
   concreteFunction.requirements = canonical->requirements;
   concreteFunction.lifetimeContract = canonical->lifetimeContract;
@@ -5824,7 +5811,17 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       currentReturnType.classId == valueType.classId && classInfo(currentReturnType) &&
       classInfo(currentReturnType)->compilerType == CompilerTypeKind::MetaType &&
       eraseTypeLifetimes(currentReturnType) == eraseTypeLifetimes(valueType);
+  // A value of the returned shape whose regions differ converts by the
+  // ordinary covariant lifetime relation, proved here like any binding.
+  const auto lifetimeAdjusted =
+      valueType != currentReturnType &&
+              sameLifetimeConversionShape(valueType, currentReturnType)
+          ? applyLifetimeValueConversion(valueType, currentReturnType,
+                                         expressionToken(stmt.value()), 1, false, true)
+          : std::optional<SemanticType>{};
   if (!contextualInitialization && !deferredInitialization && !sameTypeDescriptor &&
+      !(lifetimeAdjusted &&
+        isOwnershipAssignable(currentReturnType, *lifetimeAdjusted, stmt.value())) &&
       !isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
     const ImplicitReturnMoveStatus implicitMove =
         analyzeImplicitReturnMove(stmt.value(), currentReturnType, valueType);

@@ -8163,11 +8163,6 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
       if (summary.origin == BorrowOriginKind::None)
         summary.origin = BorrowOriginKind::Argument;
     }
-    if (returnType.arguments.size() == 1 &&
-        !containsOpenTypeParameter(returnType.arguments.front()) &&
-        !typeTraits(returnType.arguments.front()).containsBorrowedState)
-      if (!std::getenv("GTI_NO_SUBSUME")) // TEMP-TRACE bisect
-        { const auto before = summary.fields.size(); removeShellSubsumedSuppliers(summary.fields); if (std::getenv("GTI_TRACE_SUBSUME") && before != summary.fields.size()) std::fprintf(stderr, "[subsume-decl] removed %zu\n", before - summary.fields.size()); } // TEMP-TRACE
     if (summary.fields.size() == 1 && summary.fields.front().sourceFields.empty() &&
         summary.fields.front().sourceConditions.empty()) {
       // Keep the proven one-owner fast path; several suppliers use the full

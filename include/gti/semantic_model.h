@@ -926,35 +926,6 @@ struct BorrowedFieldOrigin {
 // parameters/receiver projections, never a callee's local places or loan IDs.
 // Absence means unknown; an empty dependency list still requires the exact
 // typed alternative inventory proved by every reachable normal return.
-// LT-4 receiver default. When a method result's referent stores no references,
-// a permitted borrow of the whole receiver shell keeps every stored loan that
-// shell carries live, so the receiver's stored external paths add no owner;
-// callers retain them as the result loan's stored dependency. A referent that
-// stores references still needs those paths for its contents.
-inline bool subsumedByPhysicalShell(const std::vector<BorrowedFieldOrigin> &suppliers,
-                                    const BorrowedFieldOrigin &stored) {
-  // Only the receiver default: an argument's stored authority stays explicit
-  // (a type-erased reference restores it from that exact supplier).
-  if (stored.sourceFields.empty() || !stored.resultFields.empty() ||
-      !stored.resultConditions.empty() || stored.origin != BorrowOriginKind::Receiver)
-    return false;
-  return std::any_of(suppliers.begin(), suppliers.end(), [&](const BorrowedFieldOrigin &shell) {
-    return shell.origin == stored.origin && shell.parameter == stored.parameter &&
-           shell.globalRoot == 0 && shell.sourceFields.empty() &&
-           shell.sourceConditions.empty() && shell.resultFields.empty() &&
-           shell.resultConditions.empty() && shell.access == stored.access;
-  });
-}
-
-inline void removeShellSubsumedSuppliers(std::vector<BorrowedFieldOrigin> &suppliers) {
-  const auto original = suppliers;
-  suppliers.erase(std::remove_if(suppliers.begin(), suppliers.end(),
-                                 [&](const BorrowedFieldOrigin &supplier) {
-                                   return subsumedByPhysicalShell(original, supplier);
-                                 }),
-                  suppliers.end());
-}
-
 struct FunctionBorrowDependencySummary {
   std::vector<BorrowedFieldOrigin> dependencies;
   std::vector<BorrowAlternativePath> possibleAlternatives;

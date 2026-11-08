@@ -8448,8 +8448,13 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
       if (adjusted && validateLifetimeConstraints({}, obligations))
         matched = *adjusted;
     }
+    // Argument viability compares shape; a payload has no separate call
+    // contract, so a by-value payload's regions must be this proved conversion.
+    const bool unprovedRegions =
+        actual != SemanticType::Unknown && field.kind != SemanticType::Reference &&
+        matched != field && eraseTypeLifetimes(matched) == eraseTypeLifetimes(field);
     if (actual != SemanticType::Unknown &&
-        !callArgumentMatches(field, matched, call.arguments()[index])) {
+        (unprovedRegions || !callArgumentMatches(field, matched, call.arguments()[index]))) {
       report(expressionToken(call.arguments()[index]),
              "Payload argument " + std::to_string(index + 1) + " has type '" +
                  typeSpelling(actual) + "'; variant '" +

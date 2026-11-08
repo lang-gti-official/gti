@@ -1479,9 +1479,105 @@ int exercise() {
 }
 int main() { int result = exercise(); return result + retired - 4; }
 """,
+    # Each case below is a regression from completing RFC 0004 (2026-11-08).
+    'view_of_call_returned_reference': r"""
+import std.string;
+int use(std::string_view v) { return int(v.size()); }
+class Box { std::string s; public: Box(std::string v) : s(std::move(v)) {} std::string& get() { return this.s; } };
+int main() { Box b = Box(std::string("ab")); std::string& r = b.get(); return use(r.view()) - 2; }
+""",
+    'consuming_receiver_value': r"""
+import std.string;
+struct Owner { int n; Owner(int v) : n(v) {} };
+expected<Owner, int> make(int v) { if (v < 0) { return unexpected(1); } return Owner(v); }
+int main() { mut auto made = make(3); if (!made) { return 9; } Owner owner = std::move(made).value(); return owner.n - 3; }
+""",
+    'range_element_method_and_argument': r"""
+import std.string;
+import std.vector;
+bool positive(int32_t& v) { return v > 0; }
+int main() {
+  std::vector<std::string> names = {std::string("a"), std::string("bc")};
+  std::vector<int32_t> values = std::vector<int32_t>({1, 2});
+  mut int n = 0;
+  for (auto& name : names) { n = n + int(name.view().size()); }
+  for (auto& value : values) { if (positive(value)) { n = n + 1; } }
+  return n - 5;
+}
+""",
+    'range_over_stored_reference_field': r"""
+import std.vector;
+class Holder {
+  std::string_view& label;
+  std::vector<int32_t>& items;
+public:
+  Holder(std::string_view& l, std::vector<int32_t>& i) : label(l), items(i) {}
+  int32_t sum() mut { mut int32_t s = 0; for (auto& x : this.items) { s = s + x; } return s; }
+};
+int main() {
+  std::string_view label = "x";
+  std::vector<int32_t> v = std::vector<int32_t>({1, 2});
+  mut Holder h = Holder(label, v);
+  return h.sum() - 3;
+}
+""",
+    'field_default_initializer_call': r"""
+import std.string;
+int id(int& x) { return x; }
+int g = 3;
+struct S { std::string name = std::string("ab"); int v = id(g); S() = default; };
+int main() { S s{}; return int(s.name.size()) + s.v - 5; }
+""",
+    'arrow_through_user_dereference': r"""
+struct P { mut int v; P(int x) : v(x) {} };
+class It {
+  mut P p;
+public:
+  It() : p(P(1)) {}
+  mut P& operator*() mut { return this.p; }
+  mut P& operator->() mut { return *this; }
+};
+int main() { mut It it = It(); it->v = 5; return (*it).v - 5; }
+""",
+    'immutable_receiver_contents_across_mut_calls': r"""
+import std.string;
+struct Scanner {
+  std::string_view& text;
+  mut { std::size_t offset; }
+  Scanner(std::string_view& t) : text(t), offset(0) {}
+  void step() mut { this.offset = this.offset + 1; }
+  std::size_t twice() mut { this.step(); this.step(); return this.offset; }
+};
+int main() { std::string_view v = "abc"; mut Scanner s = Scanner(v); return int(s.twice()) - 2; }
+""",
+    'closure_environment_in_generic_class': r"""
+class Accumulator<T> {
+  mut T total;
+public:
+  Accumulator(T start) : total(start) {}
+  T apply<F>(F update) mut { this.total = update(this.total); return this.total; }
+  T add(T operand) mut { return this.apply([operand](T observed) -> T { return T(observed + operand); }); }
+};
+int main() { mut Accumulator<int> a = Accumulator<int>(1); return a.add(4) - 5; }
+""",
+    'pack_forwarding_class_result': r"""
+import std.string;
+std::string make<Args...>(Args&... a) { return std::string("x"); }
+std::string relay<Args...>(Args&... a) { mut auto r = make(a...); return std::move(r); }
+int main() { int x = 1; auto s = relay(x); return int(s.size()) - 1; }
+""",
 }
 
 REJECTIONS = {
+    "range_element_escape": r"""
+import std.vector;
+int32_t& escape() {
+  std::vector<int32_t> v = std::vector<int32_t>({1, 2});
+  for (auto& x : v) { return x; }
+  std::panic("empty");
+}
+int main() { return escape(); }
+""",
     "mutation_before_moved_destructor": r"""
 
 mut int trace = 0;
@@ -1686,6 +1782,7 @@ def main():
         "retained_constructed_supplier": {"GTI-S2017"},
         "borrowed_destructor_copy": {"GTI-S2018"},
         "local_record_escape": {"GTI-S2045", "GTI-S2085", "GTI-S2127"},
+        "range_element_escape": {"GTI-S2017", "GTI-S2127"},
     }
     if rejection_codes.keys() != REJECTIONS.keys():
         raise RuntimeError("every lifetime rejection needs an explicit owning diagnostic")

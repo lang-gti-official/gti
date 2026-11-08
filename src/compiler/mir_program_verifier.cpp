@@ -17875,16 +17875,6 @@ completeBorrowSourcePath(const MirProgram &program,
       });
 }
 
-// The result's referent stores no references (LT-4 shell subsumption applies).
-[[nodiscard]] bool mirReferentStoresNoReferences(const MirProgram &program,
-                                                 const SemanticType &result) {
-  if (result.kind != SemanticType::Reference || result.arguments.size() != 1)
-    return false;
-  // Payload alternatives without references add no stored supplier; the
-  // semantic rule is the referent's borrowed state, i.e. its reference paths.
-  const auto inventory = findStoredCarrierReferenceInventory(program, result.arguments.front());
-  return inventory && inventory->empty();
-}
 
 [[nodiscard]] bool permitsCompleteBorrowMapping(
     const MirProgram &program, const MirFunctionInstance &function, const BorrowedFieldOrigin &allowed,
@@ -17900,15 +17890,6 @@ completeBorrowSourcePath(const MirProgram &program,
       !std::equal(allowed.sourceFields.begin(), allowed.sourceFields.end(),
                   actual.sourceFields.begin()))
     return false;
-  // A permitted borrow of the input's whole physical shell keeps every stored
-  // loan that shell carries live; callers retain them as the result loan's
-  // stored dependency. An observed stored path of that same input is
-  // therefore subsumed (the LT-4 receiver default), not a separate owner.
-  if (allowed.origin == BorrowOriginKind::Receiver &&
-      allowed.sourceFields.empty() && allowed.sourceConditions.empty() &&
-      !actual.sourceFields.empty() &&
-      mirReferentStoresNoReferences(program, function.returnType) && !std::getenv("GTI_NO_SUBSUME")) // TEMP-TRACE bisect
-    return true;
   const auto allowedSource = completeBorrowSourcePath(program, function, allowed);
   const auto actualSource = completeBorrowSourcePath(program, function, actual);
   // A permitted physical subobject may be refined, but crossing another
@@ -18237,9 +18218,6 @@ declaredScalarLifetimeSuppliers(const MirProgram &program,
       return std::nullopt;
     }
   }
-  if (mirReferentStoresNoReferences(program, function.returnType))
-    if (!std::getenv("GTI_NO_SUBSUME")) // TEMP-TRACE bisect
-      removeShellSubsumedSuppliers(required);
   return required;
 }
 
