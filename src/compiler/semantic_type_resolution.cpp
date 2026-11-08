@@ -6444,6 +6444,22 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
         dependencies.push_back(std::move(dependency));
       }
     }
+    // An exclusive mutex guard read is authorized by its exclusively held
+    // lock token (interior synchronization); the shared storage reference
+    // only locates the value. For the returned reference's owner proof, the
+    // token's own place is that authority: the result is valid no longer
+    // than the token. MIR separately verifies the intrinsic's storage loan.
+    if (const auto *call = exprAs<Call>(value.get());
+        call != nullptr && function->returnType.referenceAccess == AccessMode::Mutable)
+      if (const auto *resolved = semanticModel.findCall(*call);
+          resolved != nullptr && resolved->intrinsic == IntrinsicKind::MutexGuardReadMut &&
+          call->arguments().size() == 2)
+        if (const auto *token = semanticModel.findExpression(*call->arguments()[1]);
+            token != nullptr && token->access == AccessMode::Mutable &&
+            token->category == ValueCategory::Place)
+          if (const auto place = retainedLoanPlace(call->arguments()[1]); place.valid())
+            dependencies = {SemanticLoanDependency{.place = place,
+                                                   .access = AccessMode::Mutable}};
     const auto ownerShaped = [&](const auto &candidates) {
       return !candidates.empty() &&
              std::all_of(candidates.begin(), candidates.end(), [&](const auto &dependency) {
@@ -6492,7 +6508,7 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
     if (std::getenv("GTI_TRACE_LIFETIME_REQ")) { // TEMP-TRACE
       std::fprintf(stderr, "[retown] line=%d complete=%d deps=%zu\n", expressionToken(value).line, completeResult.has_value(), dependencies.size()); // TEMP-TRACE
       for (const auto &d : dependencies) // TEMP-TRACE
-        std::fprintf(stderr, "[retown]  valid=%d fields=%zu conds=%zu access=%d parent=%llu contents=%d\n", d.place.valid(), d.designatedFields.size(), d.conditions.size(), static_cast<int>(d.access), (unsigned long long)d.parent, d.referenceContents.has_value()); // TEMP-TRACE
+        std::fprintf(stderr, "[retown]  valid=%d fields=%zu conds=%zu access=%d parent=%llu contents=%d root=%s recv=%d proj=%zu\n", d.place.valid(), d.designatedFields.size(), d.conditions.size(), static_cast<int>(d.access), (unsigned long long)d.parent, d.referenceContents.has_value(), semanticModel.database().findSymbol(d.place.root) ? semanticModel.database().findSymbol(d.place.root)->name.c_str() : "-", d.place.receiver, d.place.projections.size()); // TEMP-TRACE
     } // TEMP-TRACE
     // The source's dependency set is conservative at branch joins. Every
     // possible owner must satisfy the declared result region; a successful

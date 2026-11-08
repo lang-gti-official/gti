@@ -4032,6 +4032,24 @@ private:
             selected = place.id;
             break;
           }
+      // The same holds for a receiver field of class type reached through a
+      // trailing pointee step (a compiler-owned storage capability's
+      // element): its supplier is that exact evaluated field place.
+      if (selected == 0 && dependency.place.receiver &&
+          dependency.place.projections.size() > 1 &&
+          dependency.place.projections.back().kind == PlaceProjectionKind::Dereference) {
+        auto prefix = dependency.place;
+        while (!prefix.projections.empty() &&
+               prefix.projections.back().kind == PlaceProjectionKind::Dereference)
+          prefix.projections.pop_back();
+        for (const auto &place : output.places)
+          if (place.key && *place.key == prefix && place.type.kind == SemanticType::Class &&
+              (dependency.access != AccessMode::Mutable ||
+               place.access == AccessMode::Mutable)) {
+            selected = place.id;
+            break;
+          }
+      }
       if (selected == 0)
         for (const auto &place : output.places)
           if (place.root != MirPlaceRootKind::Value &&
@@ -4067,7 +4085,9 @@ private:
                              .conditions = dependency.conditions};
   }
 
-  MirValueId appendValue(HirValueId sourceValue, ExpressionInfo info) {
+  MirValueId appendValue(HirValueId sourceValue, ExpressionInfo info,
+                         std::source_location where = std::source_location::current()) { // TEMP-TRACE
+    if (std::getenv("GTI_TRACE_APPENDV")) std::fprintf(stderr, "[appendv] v%zu src=%llu line=%u\n", output.values.size() + 1, (unsigned long long)sourceValue, (unsigned)where.line()); // TEMP-TRACE
     const MirValueId id = output.values.size() + 1;
     output.values.push_back(
         {.id = id, .sourceValue = sourceValue, .info = std::move(info)});
@@ -4140,29 +4160,33 @@ private:
                value->borrowDependencies->possibleAlternatives;
   }
 
-  [[nodiscard]] MirValueId mirValueFor(const HirValue &value) {
+  [[nodiscard]] MirValueId mirValueFor(const HirValue &value,
+                                       std::source_location where = std::source_location::current()) { // TEMP-TRACE
     if (const auto found = loweredValues.find(value.id);
         found != loweredValues.end()) {
       return found->second;
     }
+    if (std::getenv("GTI_TRACE_APPENDV")) std::fprintf(stderr, "[mirvalfor] hir=%llu kind=%d line=%u\n", (unsigned long long)value.id, (int)value.kind, (unsigned)where.line()); // TEMP-TRACE
     const MirValueId id = appendValue(value.id, value.info);
     loweredValues.emplace(value.id, id);
     return id;
   }
 
-  [[nodiscard]] MirValueId mirValueFor(HirValueId id) {
+  [[nodiscard]] MirValueId mirValueFor(HirValueId id,
+                                       std::source_location where = std::source_location::current()) { // TEMP-TRACE
     const HirValue *value = findValue(id);
     if (value == nullptr) {
       { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return 0;
     }
-    return mirValueFor(*value);
+    return mirValueFor(*value, where);
   }
 
-  [[nodiscard]] std::optional<MirValueId> resultFor(const HirValue &value) {
+  [[nodiscard]] std::optional<MirValueId> resultFor(const HirValue &value,
+                                                    std::source_location where = std::source_location::current()) { // TEMP-TRACE
     return value.info.type.kind == SemanticType::Void
                ? std::nullopt
-               : std::optional<MirValueId>{mirValueFor(value)};
+               : std::optional<MirValueId>{mirValueFor(value, where)};
   }
 
   MirPlaceId appendPlace(MirPlace place) {
@@ -9188,7 +9212,7 @@ private:
     const auto recordMovedCarrier = [&](HirBindingId moved, MirLoanId loan) {
       if (std::find(movedArgumentLoans.begin(), movedArgumentLoans.end(),
                     loan) != movedArgumentLoans.end())
-        return;
+        { if (std::getenv("GTI_TRACE_CALLRET")) std::fprintf(stderr, "[callret] %d\n", 9197); return; } // TEMP-TRACE-CALLRET
       movedArgumentLoans.push_back(loan);
       if (std::any_of(bindingLoans.begin(), bindingLoans.end(),
                       [&](const auto &entry) {
@@ -9866,7 +9890,7 @@ private:
           } // TEMP-TRACE
           if (!lowered) {
             { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
-            return;
+            { if (std::getenv("GTI_TRACE_CALLRET")) std::fprintf(stderr, "[callret] %d\n", 9875); return; } // TEMP-TRACE-CALLRET
           }
           auto selected = *lowered;
           // Semantics names an accessor-reached receiver by its owner place.
@@ -9930,7 +9954,7 @@ private:
             const auto *previous = output.findLoan(selected.parent);
             if (!previous) {
               { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
-              return;
+              { if (std::getenv("GTI_TRACE_CALLRET")) std::fprintf(stderr, "[callret] %d\n", 9939); return; } // TEMP-TRACE-CALLRET
             }
             std::optional<MirLoanId> externalParent;
             bool ambiguous = false;
@@ -9939,7 +9963,7 @@ private:
               if (!sameBorrowSource(source, selected.source) ||
                   (selected.access == AccessMode::Mutable &&
                    access != AccessMode::Mutable))
-                return;
+                { if (std::getenv("GTI_TRACE_CALLRET")) std::fprintf(stderr, "[callret] %d\n", 9948); return; } // TEMP-TRACE-CALLRET
               if (externalParent && *externalParent != parent)
                 ambiguous = true;
               else
@@ -9959,14 +9983,14 @@ private:
                                              AccessMode access,
                                              MirLoanId parent) {
                 if (fields.empty())
-                  return;
+                  { if (std::getenv("GTI_TRACE_CALLRET")) std::fprintf(stderr, "[callret] %d\n", 9968); return; } // TEMP-TRACE-CALLRET
                 const auto projected =
                     projectBorrowFields(source, fields, conditions);
                 const auto *actual = output.findPlace(projected);
                 const auto *expected = output.findPlace(selected.source);
                 if (!actual || !expected ||
                     !equivalentLifetimeTypes(actual->type, expected->type))
-                  return;
+                  { if (std::getenv("GTI_TRACE_CALLRET")) std::fprintf(stderr, "[callret] %d\n", 9975); return; } // TEMP-TRACE-CALLRET
                 consider(projected, access, parent);
               };
               entryReferent(previous->source, previous->designatedFields,
@@ -9981,7 +10005,7 @@ private:
             }
             if (!externalParent || ambiguous) {
               { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
-              return;
+              { if (std::getenv("GTI_TRACE_CALLRET")) std::fprintf(stderr, "[callret] %d\n", 9990); return; } // TEMP-TRACE-CALLRET
             }
             if (kind == MirLoanKind::CallResult) {
               auto &transfers = callResultTransferredFrom[loan];
@@ -9995,7 +10019,7 @@ private:
         }
         if (complete.empty()) {
           { valid = false; GTI_INVALID2(); } // No origin may be invented for a borrowed result. // TEMP-TRACE-INVALID2
-          return;
+          { if (std::getenv("GTI_TRACE_CALLRET")) std::fprintf(stderr, "[callret] %d\n", 10004); return; } // TEMP-TRACE-CALLRET
         }
         // A receiver reached through a multi-supplier call result (a
         // two-supplier range element) depends on every supplier of that
@@ -10043,7 +10067,7 @@ private:
                   !conditions.empty() ||
                   (dependency.access == AccessMode::Mutable && access != AccessMode::Mutable) ||
                   !sameBorrowSource(source, dependency.source))
-                return;
+                { if (std::getenv("GTI_TRACE_CALLRET")) std::fprintf(stderr, "[callret] %d\n", 10052); return; } // TEMP-TRACE-CALLRET
               ambiguous |= selected &&
                   (selected != accessor || selectedSource != source);
               selected = accessor;
@@ -10198,7 +10222,7 @@ private:
             }
           if (ambiguous || physical == complete.end()) {
             { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
-            return;
+            { if (std::getenv("GTI_TRACE_CALLRET")) std::fprintf(stderr, "[callret] %d\n", 10207); return; } // TEMP-TRACE-CALLRET
           }
           std::rotate(complete.begin(), physical, physical + 1);
         }
@@ -10221,7 +10245,7 @@ private:
           published.storedDependency = 0;
         if (!call.result) {
           { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
-          return;
+          { if (std::getenv("GTI_TRACE_CALLRET")) std::fprintf(stderr, "[callret] %d\n", 10230); return; } // TEMP-TRACE-CALLRET
         }
         // The result value's transport may precede the places its call's
         // inputs materialize; publish the same source-established set now.

@@ -14527,6 +14527,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
     if (value.id != index + 1 || value.sourceValue == 0 ||
         value.definitionBlock == 0 ||
         (!blockParameter && value.definition == 0)) {
+      if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[badvalue] owner=%zu v%llu source=%llu def=%llu defBlock=%llu params=%zu\n", owner, (unsigned long long)value.id, (unsigned long long)value.sourceValue, (unsigned long long)value.definition, (unsigned long long)value.definitionBlock, definitionCounts[index]); // TEMP-TRACE
       return failure(body, owner,
                      "value " + std::to_string(value.id) +
                          " has an invalid identity, provenance, or definition");

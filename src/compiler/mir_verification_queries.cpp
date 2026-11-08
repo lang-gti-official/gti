@@ -1961,7 +1961,8 @@ bool completeObjectType(const MirProgram &program,
              type.arguments.front().kind != SemanticType::Unknown;
     case SemanticType::StringView:
     case SemanticType::CString:
-      return type == SemanticType(type.kind);
+      // A text region changes validity, not the object's layout.
+      return eraseTypeLifetimes(type) == SemanticType(type.kind);
     case SemanticType::Enum:
       return program.findIntegralEnum(type) != nullptr ||
              program.findPayloadEnum(type) != nullptr;

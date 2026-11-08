@@ -579,7 +579,11 @@ bool resolveOrigins(Facts &application, const MirBody &body) {
               : place.sourceValue == origin.source &&
                                    place.projections.empty() &&
                                    (place.root == MirPlaceRootKind::Temporary ||
-                                    place.root == MirPlaceRootKind::Value);
+                                    place.root == MirPlaceRootKind::Value ||
+                                    // A constant's static storage (an
+                                    // enumerator) evaluated for this source.
+                                    (place.root == MirPlaceRootKind::Symbol &&
+                                     !place.key));
       if (!matches)
         continue;
       // Repeated aliases of a named exact key designate the same source. A
@@ -591,6 +595,28 @@ bool resolveOrigins(Facts &application, const MirBody &body) {
         return false;
       if (!selected || place.id < selected->id)
         selected = &place;
+    }
+    // A keyed origin may end in a pointee step that has no MIR projection on
+    // a class (an overloaded pointee accessor or a compiler-owned storage
+    // capability's element). Its owner is the exact evaluated class place.
+    if (!selected && origin.key.valid() && !origin.key.projections.empty() &&
+        origin.key.projections.back().kind == PlaceProjectionKind::Dereference) {
+      auto prefix = origin.key;
+      while (!prefix.projections.empty() &&
+             prefix.projections.back().kind == PlaceProjectionKind::Dereference)
+        prefix.projections.pop_back();
+      for (const auto &place : body.places)
+        if (place.key && *place.key == prefix &&
+            place.type.kind == SemanticType::Class) {
+          if (selected && selected->id != place.id &&
+              !(selected->root == place.root && selected->binding == place.binding &&
+                selected->projections == place.projections)) {
+            selected = nullptr;
+            break;
+          }
+          if (!selected || place.id < selected->id)
+            selected = &place;
+        }
     }
     // A keyed origin may name its owner through a retained alias (a range
     // element's iterator) that lowers to no place of its own. Its exact

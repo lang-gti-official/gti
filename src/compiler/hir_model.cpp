@@ -3245,14 +3245,16 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           exactEntry && target != nullptr && declaration != nullptr &&
           target->source != nullptr &&
           declaration->declaration == target->source &&
-          target->returnType == threadTaskResults[index] &&
+          eraseTypeLifetimes(target->returnType) ==
+              eraseTypeLifetimes(threadTaskResults[index]) &&
           target->parameterTypes.empty() &&
           (functionItemEntry
                ? owner == nullptr &&
                      adapter.taskType.functionId == target->declaration &&
                      adapter.targetInvocation ==
                          CallableInvocationCapability::Read
-               : owner != nullptr && owner->type == adapter.taskType &&
+               : owner != nullptr &&
+                     eraseTypeLifetimes(owner->type) == eraseTypeLifetimes(adapter.taskType) &&
                      target->source->operatorName().has_value() &&
                      target->source->operatorName()->kind ==
                          OverloadedOperator::Call &&
@@ -3262,9 +3264,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
     if (lambdaEntry) {
       const HirLambda *target = program.findLambda(*adapter.lambdaTarget);
+      // Task identity is the region-erased callable; its regions are proved
+      // by the spawn's lifetime application.
       exactEntry =
-          exactEntry && target != nullptr && target->type == adapter.taskType &&
-          target->returnType == threadTaskResults[index] &&
+          exactEntry && target != nullptr &&
+          eraseTypeLifetimes(target->type) == eraseTypeLifetimes(adapter.taskType) &&
+          eraseTypeLifetimes(target->returnType) ==
+              eraseTypeLifetimes(threadTaskResults[index]) &&
           target->parameterTypes.empty() &&
           adapter.targetInvocation == CallableInvocationCapability::Read;
     }
