@@ -3781,6 +3781,7 @@ private:
   void recordRetainedBorrow(const VariableDecl &binding,
                             const Expr *expression);
 
+  void retainTextShellOwner(const Expr *expression, SemanticLoanId id);
   void recordSemanticLoanUseForLoan(SemanticLoanId loan);
 
   // A use of `loan` and of every authority it depends on: parents, stored

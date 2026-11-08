@@ -1,3 +1,4 @@
+#include <source_location>
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_lowering.h"
@@ -11412,7 +11413,9 @@ private:
 
   static void removeLoanFromState(
       MirLoanId loan, std::vector<Scope> &scopeState,
-      std::unordered_map<HirBindingId, MirLoanId> &bindingLoanState) {
+      std::unordered_map<HirBindingId, MirLoanId> &bindingLoanState,
+      std::source_location where = std::source_location::current()) { // TEMP-TRACE
+    if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[rmloan] loan=%llu line=%u\n", (unsigned long long)loan, (unsigned)where.line()); // TEMP-TRACE
     for (Scope &scope : scopeState) {
       std::erase(scope.loans, loan);
     }
@@ -11683,7 +11686,9 @@ private:
   }
 
   void endSemanticLoans(const std::vector<SemanticLoanId> &loans,
-                        HirStatementId statement) {
+                        HirStatementId statement,
+                        std::source_location where = std::source_location::current()) { // TEMP-TRACE
+    if (std::getenv("GTI_TRACE_MIR_BODY")) { std::fprintf(stderr, "[endsem-call] stmt=%llu line=%u:", (unsigned long long)statement, (unsigned)where.line()); for (auto l : loans) std::fprintf(stderr, " s%llu->m%llu", (unsigned long long)l, (unsigned long long)mirLoanForSemanticLoan(l)); std::fprintf(stderr, "\n"); } // TEMP-TRACE
     const auto retained = lifecycleRetainedLoans({});
     for (const MirLoanId loan : childFirstLoans(loans)) {
       if (mustReachBorrowedReturn(loan) || retained.contains(loan) ||
@@ -11697,6 +11702,7 @@ private:
           callTransferredLoanEndpoints.erase(transferred);
           continue;
         }
+        if (std::getenv("GTI_TRACE_MIR_BODY")) { const auto &l = output.loans[loan - 1]; std::fprintf(stderr, "[endsem] loan=%llu kind=%d src=p%llu parent=%llu sd=%llu producedBy=%llu stmt=%llu\n", (unsigned long long)loan, (int)l.kind, (unsigned long long)l.source, (unsigned long long)l.parent, (unsigned long long)l.storedDependency, (unsigned long long)l.producedBy, (unsigned long long)statement); } // TEMP-TRACE
         { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }

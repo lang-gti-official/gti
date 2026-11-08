@@ -13234,6 +13234,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             "Cannot retain this value while an overlapping borrow may still "
             "be live.");
       const auto &primary = dependencies.front();
+      if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 13238\n"); // TEMP-TRACE-RRB
       if (std::getenv("GTI_TRACE_CRL")) std::fprintf(stderr, "[crl] site %d\n", __LINE__); // TEMP-TRACE-CRL
       const auto id = createRetainedLoan(
           *carrier, carrierSymbol, SemanticLoanKind::StoredValue, expression,
@@ -13251,6 +13252,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
         if (dependency.parent != 0)
           recordSemanticLoanUseForLoan(dependency.parent);
       }
+      if (dependencies.size() == 1 && primary.parent == 0)
+        retainTextShellOwner(expression, id);
       semanticModel.recordBindingLoan(binding, id);
       return;
     }
@@ -13296,6 +13299,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
         dependency.access = carrierAccess;
       }
       const auto &primary = dependencies.front();
+      if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 13300\n"); // TEMP-TRACE-RRB
       if (std::getenv("GTI_TRACE_CRL")) std::fprintf(stderr, "[crl] site %d\n", __LINE__); // TEMP-TRACE-CRL
       const auto id = createRetainedLoan(
           *carrier, carrierSymbol, SemanticLoanKind::Reference, expression,
@@ -13399,6 +13403,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
               "storage may still be live.");
           const auto owner = shell.root;
           const auto receiver = shell.receiver;
+          if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 13403\n"); // TEMP-TRACE-RRB
           if (std::getenv("GTI_TRACE_CRL")) std::fprintf(stderr, "[crl] site %d\n", __LINE__); // TEMP-TRACE-CRL
           const auto id = createRetainedLoan(
               *carrier, carrierSymbol, SemanticLoanKind::StoredValue,
@@ -13552,6 +13557,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       // permission. The other fields retain independent origins; they are
       // not projections under this parent.
       parent = originLoan->id;
+    if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 13556\n"); // TEMP-TRACE-RRB
     if (std::getenv("GTI_TRACE_CRL")) std::fprintf(stderr, "[crl] site %d\n", __LINE__); // TEMP-TRACE-CRL
     const SemanticLoanId id = createRetainedLoan(
         *carrier, carrierSymbol, SemanticLoanKind::StoredValue, expression,
@@ -13631,6 +13637,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           sourceToken, conflictingLoans(place, carrierAccess, parent),
           "Cannot retain this text while an overlapping owner borrow may still "
           "be live.");
+      if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 13635\n"); // TEMP-TRACE-RRB
       if (std::getenv("GTI_TRACE_CRL")) std::fprintf(stderr, "[crl] site %d\n", __LINE__); // TEMP-TRACE-CRL
       const auto id = createRetainedLoan(
           *carrier, carrierSymbol, SemanticLoanKind::StoredValue, expression,
@@ -13695,6 +13702,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
         dependency.access = carrierAccess;
       }
       const auto &primary = dependencies->front();
+      if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 13699\n"); // TEMP-TRACE-RRB
       if (std::getenv("GTI_TRACE_CRL")) std::fprintf(stderr, "[crl] site %d\n", __LINE__); // TEMP-TRACE-CRL
       const auto child = createRetainedLoan(
           *carrier, carrierSymbol, SemanticLoanKind::Reference, expression,
@@ -13754,6 +13762,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           sourceToken, childConflicts(origin.place),
           "Cannot restore this reference while an overlapping child borrow "
           "may still be live.");
+      if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 13758\n"); // TEMP-TRACE-RRB
       if (std::getenv("GTI_TRACE_CRL")) std::fprintf(stderr, "[crl] site %d\n", __LINE__); // TEMP-TRACE-CRL
       const auto child = createRetainedLoan(
           *carrier, carrierSymbol, SemanticLoanKind::Reference, expression,
@@ -13776,6 +13785,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           "Cannot create a child reborrow while another overlapping child "
           "loan may still be live.");
       const auto storedDependency = sourceLoan->storedDependency;
+      if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 13780\n"); // TEMP-TRACE-RRB
       if (std::getenv("GTI_TRACE_CRL")) std::fprintf(stderr, "[crl] site %d\n", __LINE__); // TEMP-TRACE-CRL
       const auto child = createRetainedLoan(
           *carrier, carrierSymbol, SemanticLoanKind::Reference, expression,
@@ -13854,6 +13864,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           "storage may still be live.");
       const SymbolId owner = shell.root;
       const bool receiver = shell.receiver;
+      if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 13858\n"); // TEMP-TRACE-RRB
       const SemanticLoanId reference =
           createRetainedLoan(*carrier, carrierSymbol,
                              storedReceiverShell ? SemanticLoanKind::StoredValue
@@ -14023,6 +14034,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             token, conflicts,
             "Cannot retain this value while an overlapping borrow may still "
             "be live.");
+        if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 14027\n"); // TEMP-TRACE-RRB
         if (std::getenv("GTI_TRACE_CRL")) std::fprintf(stderr, "[crl] site %d\n", __LINE__); // TEMP-TRACE-CRL
         const auto child = createRetainedLoan(
             *carrier, carrierSymbol, SemanticLoanKind::StoredValue, expression,
@@ -14077,6 +14089,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
         const auto sourceRecord = *sourceLoan;
         const auto place =
             source->dependency ? source->dependency->place : sourceRecord.place;
+        if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 14081\n"); // TEMP-TRACE-RRB
         if (std::getenv("GTI_TRACE_CRL")) std::fprintf(stderr, "[crl] site %d\n", __LINE__); // TEMP-TRACE-CRL
         const auto id = createRetainedLoan(
             *carrier, carrierSymbol,
@@ -14099,6 +14112,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           sourceLoan->kind == SemanticLoanKind::StoredValue &&
           resolved != nullptr &&
           resolved->borrowOrigin != BorrowOriginKind::None) {
+        if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 14106\n"); // TEMP-TRACE-RRB
         // A method-produced view has its own value publication. It retains
         // the shared external owner, but is not a Load/Move copy of the
         // parameter's carrier shell (its offset/length may differ).
@@ -14216,6 +14230,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                  opaqueCarrier)
             ? SemanticLoanId{0}
             : sourceLoan->id;
+    if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 14220\n"); // TEMP-TRACE-RRB
     if (std::getenv("GTI_TRACE_CRL")) std::fprintf(stderr, "[crl] site %d\n", __LINE__); // TEMP-TRACE-CRL
     const SemanticLoanId child = createRetainedLoan(
         *carrier, carrierSymbol, kind, expression, std::move(childPlace),
@@ -14258,6 +14273,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             "may still be live."
           : "Cannot create a read-only borrow while an overlapping mutable "
             "borrow may still be live.");
+  if (std::getenv("GTI_TRACE_RRB")) std::fprintf(stderr, "[rrb] site 14262\n"); // TEMP-TRACE-RRB
   const SemanticLoanId id =
       createRetainedLoan(*carrier, carrierSymbol,
                          retainedStoredBorrow ? SemanticLoanKind::StoredValue
@@ -14267,7 +14283,54 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
   if (lexicalGlobalMutableBorrow) {
     loanFlow.records.at(id).confinedToRegion = false;
   }
+  // A stored reference to a whole local text-view shell also retains that
+  // view's own owner loan: the stored reference reaches the owner's text
+  // through the shell. Name it so the owner loan outlives this carrier.
+  if (retainedStoredBorrow)
+    retainTextShellOwner(expression, id);
   semanticModel.recordBindingLoan(binding, id);
+}
+
+// A stored reference to a whole text-view shell (a local or a by-value
+// parameter) also retains that view's own owner loan: the stored reference reaches the owner's text through
+// the shell, so the owner loan must outlive this carrier. MIR lowering derives
+// the same edge for an adapter over a local view shell.
+void SemanticVisitor::Impl::retainTextShellOwner(const Expr *expression,
+                                                 SemanticLoanId id) {
+  const auto *construction = semanticModel.findConstruction(*expression);
+  if (construction == nullptr ||
+      construction->borrowOrigin != BorrowOriginKind::Argument)
+    return;
+  const ExprPtr *source = storedBorrowSource(expression);
+  const auto *type = source && *source ? semanticModel.findType(**source) : nullptr;
+  const auto *loan = semanticModel.findLoan(id);
+  if (type == nullptr || loan == nullptr ||
+      (type->kind != SemanticType::StringView &&
+       type->kind != SemanticType::CString) ||
+      loan->storedDependency != 0 || loan->place.root == 0 ||
+      loan->place.receiver || !loan->place.projections.empty())
+    return;
+  const SymbolId shell = loan->place.root;
+  SemanticLoanId owner = 0;
+  for (const auto &[candidate, flow] : loanFlow.records) {
+    (void)flow;
+    const auto *record = semanticModel.findLoan(candidate);
+    // A by-value text parameter's entry loan names its caller-owned text.
+    if (record == nullptr || candidate == id ||
+        record->kind != SemanticLoanKind::StoredValue ||
+        std::find(record->carriers.begin(), record->carriers.end(), shell) ==
+            record->carriers.end())
+      continue;
+    if (owner != 0 && owner != candidate)
+      return;
+    owner = candidate;
+  }
+  if (owner == 0)
+    return;
+  SemanticLoanInfo updated = *loan;
+  updated.storedDependency = owner;
+  semanticModel.recordLoan(std::move(updated));
+  recordSemanticLoanUseForLoan(owner);
 }
 
 auto SemanticVisitor::Impl::recordSemanticLoanUseForLoan(SemanticLoanId loan)

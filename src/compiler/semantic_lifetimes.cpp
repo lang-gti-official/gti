@@ -1602,7 +1602,12 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
       std::vector<SemanticLoanDependency> dependencies;
       // A reference to a carrier borrows its physical shell. Its contents'
       // external owners are distinct obligations in the nested type relation.
-      if (source && !materializedCarrier && !typeTraits(actual).containsBorrowedState)
+      // A text view is such a carrier too, although its own class traits hold
+      // no borrowed state (L-OWN-02): the reference names the view's shell.
+      const bool textCarrier = actual.kind == SemanticType::StringView ||
+                               actual.kind == SemanticType::CString;
+      if (source && !materializedCarrier && !textCarrier &&
+          !typeTraits(actual).containsBorrowedState)
         dependencies = argument ? storedBorrowDependencies(*argument)
                                 : storedBorrowDependencies(source);
       if (dependencies.empty()) {

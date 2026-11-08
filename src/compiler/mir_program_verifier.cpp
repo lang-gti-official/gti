@@ -3212,6 +3212,14 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         extraction->operation == MirOperation::PayloadExtract &&
         extraction->info.type == source.type)
       return true;
+    // A binding initialized once from a text literal and never written holds
+    // static text, whatever region its declared type names.
+    if (extraction != nullptr &&
+        extraction->kind == MirInstructionKind::Compute &&
+        extraction->operation == MirOperation::Literal &&
+        eraseTypeLifetimes(extraction->info.type) ==
+            eraseTypeLifetimes(source.type))
+      return true;
   }
   if (!referenceAlias && source.traits.containsBorrowedState)
     return false;
@@ -6300,7 +6308,10 @@ completeBorrowParameterEntryFactForPlace(const MirProgram &program, const MirBod
        (instruction.kind != MirInstructionKind::Call ||
         instruction.intrinsic != IntrinsicKind::None ||
         !instruction.functionTarget)) ||
-      !instruction.borrowArguments.empty() ||
+      // A one-supplier list naming the primary argument is the same contract.
+      !(instruction.borrowArguments.empty() ||
+        (instruction.borrowArguments.size() == 1 &&
+         instruction.borrowArguments.front() == instruction.borrowArgument)) ||
       instruction.info.category != ValueCategory::Value ||
       instruction.info.type.kind != SemanticType::Class)
     return false;
@@ -6341,7 +6352,15 @@ completeBorrowParameterEntryFactForPlace(const MirProgram &program, const MirBod
       parameter.arguments.size() != 1 ||
       !isPotentiallyBorrowedCarrier(program, parameter.arguments.front()))
     return false;
-  return paths.front().reference.arguments == parameter.arguments;
+  // The field's declared regions are instantiated by the construction's
+  // lifetime application, which is proved separately.
+  return paths.front().reference.arguments.size() == parameter.arguments.size() &&
+         std::equal(paths.front().reference.arguments.begin(),
+                    paths.front().reference.arguments.end(),
+                    parameter.arguments.begin(),
+                    [](const SemanticType &left, const SemanticType &right) {
+                      return eraseTypeLifetimes(left) == eraseTypeLifetimes(right);
+                    });
 }
 
 // Zero denotes an exact caller-owned receiver/reference source. A nonzero
@@ -6862,6 +6881,7 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                (instruction.borrowOrigin == BorrowOriginKind::Argument &&
                 instruction.borrowArgument <
                     instruction.parameterTypes.size()));
+          if (instruction.loan == loan.id && std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[shell] loan=%llu inst=%llu kind=%d carrierRef=%d textPub=%d origin=%d bargs=%zu bfields=%zu paths=%zu cat=%d tkind=%d barg=%zu ptypes=%zu\n", (unsigned long long)loan.id, (unsigned long long)instruction.id, (int)instruction.kind, isCarrierReferenceResult(program, instruction), textPublication, (int)instruction.borrowOrigin, instruction.borrowArguments.size(), instruction.borrowFields.size(), instruction.info.type.kind == SemanticType::Class ? findStoredCarrierReferences(program, instruction.info.type).size() : 99, (int)instruction.info.category, (int)instruction.info.type.kind, instruction.borrowArgument, instruction.parameterTypes.size()); // TEMP-TRACE
           if (instruction.loan != loan.id ||
               (!isCarrierReferenceResult(program, instruction) &&
                !textPublication))
@@ -6879,9 +6899,12 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                                      : input;
           // Relaying text by value keeps its existing external owner. Only
           // a distinct owner type publishes a new physical text-owner shell.
+          // Regions are proved by the lifetime relations; shell identity is
+          // the region-erased shape.
           constructedShell =
-              referent == sourceType &&
-              (!textPublication || referent != instruction.info.type);
+              eraseTypeLifetimes(referent) == eraseTypeLifetimes(sourceType) &&
+              (!textPublication || eraseTypeLifetimes(referent) !=
+                                       eraseTypeLifetimes(instruction.info.type));
         }
       }
     }
