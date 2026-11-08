@@ -5624,14 +5624,35 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                                           canonical(candidate.source));
               });
         };
-        if (std::any_of(expectedSources.begin(), expectedSources.end(),
+        // A single-source result published as a child of the receiver's
+        // multi-supplier loan retains every owner of that parent through the
+        // parent edge; compare the parent's complete supplier set instead.
+        const auto *resultParent =
+            actualSources.size() == 1 && loan->parent ? body.findLoan(loan->parent)
+                                                      : nullptr;
+        const auto parentSources = resultParent && resultParent->kind == MirLoanKind::CallResult &&
+                                           !resultParent->additionalDependencies.empty()
+                                       ? concreteDependencies(*resultParent)
+                                       : std::vector<MirLoanDependency>{};
+        const auto sameSet = [&](const std::vector<MirLoanDependency> &left,
+                                 const std::vector<MirLoanDependency> &right) {
+          return !left.empty() &&
+                 std::all_of(left.begin(), left.end(), [&](const auto &source) {
+                   return includes(right, source);
+                 }) &&
+                 std::all_of(right.begin(), right.end(), [&](const auto &source) {
+                   return includes(left, source);
+                 });
+        };
+        if (!sameSet(expectedSources, parentSources) &&
+            (std::any_of(expectedSources.begin(), expectedSources.end(),
                         [&](const auto &source) {
                           return !includes(actualSources, source);
                         }) ||
             std::any_of(actualSources.begin(), actualSources.end(),
                         [&](const auto &source) {
                           return !includes(expectedSources, source);
-                        })) {
+                        }))) {
           const auto describe =
               [](const std::vector<MirLoanDependency> &sources) {
                 std::string text;
@@ -5649,6 +5670,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                 }
                 return text;
               };
+          if (std::getenv("GTI_TRACE_LCBD2")) { const auto *ft = instruction.functionTarget ? program.findFunctionInstance(*instruction.functionTarget) : nullptr; const auto *ct = instruction.constructorTarget ? program.findConstructorInstance(*instruction.constructorTarget) : nullptr; std::fprintf(stderr, "[composed] owner=%zu inst=%llu kind=%d fn=%llu ctor=%llu decl=%llu borrowFields=%zu origin=%d mapped=%zu\n", owner, (unsigned long long)instruction.id, static_cast<int>(instruction.kind), ft ? (unsigned long long)ft->id : 0ull, ct ? (unsigned long long)ct->id : 0ull, ft ? (unsigned long long)ft->declaration : 0ull, instruction.borrowFields.size(), static_cast<int>(instruction.borrowOrigin), mappedCallSources.size()); if (ft) std::fprintf(stderr, "   ret=%d retArgs=%zu owner=%llu params=%zu recvType=%d completeRet=%d\n", static_cast<int>(ft->returnType.kind), ft->returnType.arguments.size(), (unsigned long long)ft->owner.value_or(0), ft->parameterTypes.size(), instruction.receiver ? static_cast<int>(instruction.receiver->type.kind) : -1, ft->completeReturnBorrow.has_value()); for (const auto &ci : program.classInstances()) if (ft->owner && ci.id == *ft->owner) std::fprintf(stderr, "   ownerClass decl=%llu\n", (unsigned long long)ci.declaration); std::fprintf(stderr, "   result loan%llu kind=%d src=p%llu parent=%llu sd=%llu adds=%zu recvKind=%d recvPlace=p%llu\n", (unsigned long long)loan->id, static_cast<int>(loan->kind), (unsigned long long)loan->source, (unsigned long long)loan->parent, (unsigned long long)loan->storedDependency, loan->additionalDependencies.size(), instruction.receiver ? static_cast<int>(instruction.receiver->kind) : -1, instruction.receiver ? (unsigned long long)instruction.receiver->place : 0ull); for (const auto &pl : body.places) if (pl.id == 15 || pl.id == 17 || pl.id == 25 || pl.id == loan->source) std::fprintf(stderr, "   place p%llu root=%d loan=%llu binding=%llu proj=%zu\n", (unsigned long long)pl.id, static_cast<int>(pl.root), (unsigned long long)pl.loan, (unsigned long long)pl.binding, pl.projections.size()); for (const auto &l : body.loans) if (l.kind == MirLoanKind::CallResult && !l.additionalDependencies.empty()) std::fprintf(stderr, "   CR loan%llu src=p%llu parent=%llu sd=%llu add0=p%llu/%llu\n", (unsigned long long)l.id, (unsigned long long)l.source, (unsigned long long)l.parent, (unsigned long long)l.storedDependency, (unsigned long long)l.additionalDependencies.front().source, (unsigned long long)l.additionalDependencies.front().parent); } // TEMP-TRACE
           return verificationFailure(body, owner,
                                      "composed borrow result does not preserve "
                                      "every independent owner "
@@ -6031,6 +6053,7 @@ storedCarrierReferentPlace(const MirProgram &program, const MirBody &body,
   auto projections = carrier.projections;
   projections.insert(projections.end(), view->projections.begin(), view->projections.end());
   std::optional<MirPlaceId> result;
+  if (std::getenv("GTI_TRACE_THIS_ENTRY")) for (const auto &place : body.places) if (place.root == carrier.root && place.binding == carrier.binding && place.projections == projections) std::fprintf(stderr, "[referent] p%llu typeEq=%d eraseEq=%d access=%d/%d foreign=%d sv=%llu hosted=%d avail=%d keyed=%d copyable=%d borrowed=%d\n", (unsigned long long)place.id, place.type == view->type, eraseTypeLifetimes(place.type) == eraseTypeLifetimes(view->type), static_cast<int>(place.access), static_cast<int>(path.reference.referenceAccess), place.foreignStorage, (unsigned long long)place.sourceValue, (int)place.hostedStartupOperation, place.initiallyAvailable, place.key.has_value(), place.traits.copyable, place.traits.containsBorrowedState); // TEMP-TRACE
   for (const auto &place : body.places)
     if (place.root == carrier.root && place.binding == carrier.binding &&
         place.symbol == carrier.symbol && place.capture == carrier.capture &&
@@ -6045,11 +6068,19 @@ storedCarrierReferentPlace(const MirProgram &program, const MirBody &body,
         // access already match above. Preserve source-value, storage and
         // availability authority too; equal types alone never select an
         // unrelated place. Source occurrence keys do not grant aliasing.
-        if (canonical.sourceValue != place.sourceValue ||
+        // A named-root address (receiver, binding or symbol) is fully
+        // determined by its root and projections; the expression that first
+        // materialized it is provenance, not a different storage location.
+        const bool namedRoot = place.root == MirPlaceRootKind::This ||
+                               place.root == MirPlaceRootKind::Binding ||
+                               place.root == MirPlaceRootKind::Symbol;
+        if ((canonical.sourceValue != place.sourceValue && !namedRoot) ||
             canonical.hostedStartupOperation != place.hostedStartupOperation ||
             canonical.initiallyAvailable != place.initiallyAvailable ||
-            canonical.traits != place.traits)
+            (canonical.traits != place.traits && !namedRoot)) {
+          if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[referent-dup] p%llu vs p%llu root=%d sv=%d hosted=%d avail=%d traits=%d\n", (unsigned long long)canonical.id, (unsigned long long)place.id, static_cast<int>(place.root), canonical.sourceValue != place.sourceValue, canonical.hostedStartupOperation != place.hostedStartupOperation, canonical.initiallyAvailable != place.initiallyAvailable, canonical.traits != place.traits); // TEMP-TRACE
           return std::nullopt;
+        }
       } else {
         result = place.id;
       }
@@ -6092,38 +6123,38 @@ completeBorrowParameterEntryFact(const MirProgram &program, const MirBody &body,
           ? program.findClassInstance(*function->owner)
           : nullptr;
   if (!bindings || !types || (receiverClass && !bindingPrefix.empty()))
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[entry-fail] line %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE-ENTRY
   std::optional<ConcreteFormalInput> input;
   if (!receiverClass) {
     const auto inputs = mir_detail::concreteFormalInputs(body, *types, *bindings);
     if (!inputs)
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[entry-fail] line %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE-ENTRY
     for (const auto &candidate : *inputs)
       if (candidate.binding == binding &&
           std::equal(candidate.bindingPrefix.begin(), candidate.bindingPrefix.end(),
                      bindingPrefix.begin(), bindingPrefix.end())) {
         if (input)
-          return std::nullopt;
+          { if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[entry-fail] line %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE-ENTRY
         input = candidate;
       }
     if (!input)
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[entry-fail] line %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE-ENTRY
   }
   const auto receiverType = receiverClass ? checkedMirCallableOwnerType(
       program, function->owner, function->ownerType, function->lifetimeContract) : std::nullopt;
   if (receiverClass && !receiverType)
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[entry-fail] line %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE-ENTRY
   const auto formal = receiverType ? *receiverType : input->type;
   const bool reference =
       receiverClass || formal.kind == SemanticType::Reference;
   if (!receiverClass && reference && formal.arguments.size() != 1)
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[entry-fail] line %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE-ENTRY
   const auto &type =
       reference && !receiverClass ? formal.arguments.front() : formal;
   const auto inventory = findStoredCarrierReferenceInventory(program, type);
   auto alternatives = findStoredCarrierAlternativeInventory(program, type);
   if (!inventory || !alternatives)
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[entry-fail] line %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE-ENTRY
   const auto exactCarrier = [&](const MirPlace &place) {
     return (receiverClass ? place.root == MirPlaceRootKind::This
                           : place.root == MirPlaceRootKind::Binding &&
@@ -6144,7 +6175,7 @@ completeBorrowParameterEntryFact(const MirProgram &program, const MirBody &body,
   const auto carrier =
       std::find_if(body.places.begin(), body.places.end(), exactCarrier);
   if (carrier == body.places.end())
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[entry-fail] line %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE-ENTRY
   CompleteBorrowParameterEntry result{
       .carrier = carrier->id,
       .type = type,
@@ -6161,7 +6192,7 @@ completeBorrowParameterEntryFact(const MirProgram &program, const MirBody &body,
         !exactCarrier(*source))
       continue;
     if (entry)
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[entry-fail] line %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE-ENTRY
     entry = &loan;
   }
   if (!entry || entry->parent || entry->storedDependency || entry->escapes ||
@@ -6173,14 +6204,14 @@ completeBorrowParameterEntryFact(const MirProgram &program, const MirBody &body,
       entry->conditions != inventory->front().conditions ||
       entry->access != inventory->front().reference.referenceAccess ||
       entry->additionalDependencies.size() + 1 != inventory->size())
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[entry-fail] line %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE-ENTRY
   for (std::size_t path = 1; path < inventory->size(); ++path) {
     const MirLoanDependency expected{
         .designatedFields = (*inventory)[path].fields,
         .access = (*inventory)[path].reference.referenceAccess,
         .conditions = (*inventory)[path].conditions};
     if (entry->additionalDependencies[path - 1] != expected)
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[entry-fail] line %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE-ENTRY
   }
   result.carrier = entry->source;
   result.group = entry->id;
@@ -6188,7 +6219,7 @@ completeBorrowParameterEntryFact(const MirProgram &program, const MirBody &body,
     const auto external = storedCarrierReferentPlace(
         program, body, *body.findPlace(entry->source), path);
     if (!external)
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[entry-fail] line %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE-ENTRY
     result.dependencies.dependencies.push_back(
         {.source = *external,
          .parent = entry->id,
@@ -17593,10 +17624,12 @@ completeBorrowSourcePath(const MirProgram &program,
         if (const auto entry = completeBorrowParameterEntryFact(
                 program, body, owner, input.binding, input.bindingPrefix))
           publish(initial, entry->carrier, entry->dependencies);
-  if (function && function->owner && !function->staticMember)
-    if (const auto entry =
-            completeBorrowParameterEntryFact(program, body, owner, 0))
+  if (function && function->owner && !function->staticMember) {
+    const auto entry = completeBorrowParameterEntryFact(program, body, owner, 0);
+    if (std::getenv("GTI_TRACE_THIS_ENTRY")) std::fprintf(stderr, "[this-entry] owner=%zu entry=%d carrier=p%llu deps=%s\n", owner, entry.has_value(), entry ? (unsigned long long)entry->carrier : 0ull, entry ? describeCompleteBorrowFact(entry->dependencies).c_str() : "-"); // TEMP-TRACE
+    if (entry)
       publish(initial, entry->carrier, entry->dependencies);
+  }
   auto flow = runMirForwardDataflow(
       body, std::move(initial), transfer,
       [&](State &target, const State &incoming,

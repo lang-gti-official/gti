@@ -4070,8 +4070,14 @@ private:
     const MirValueId id = output.values.size() + 1;
     output.values.push_back(
         {.id = id, .sourceValue = sourceValue, .info = std::move(info)});
+    // A primitive text view has no language reference field path; its owner
+    // is verified by the text-owner rules, never as a complete field set.
+    const bool textValue =
+        (output.values.back().info.type.kind == SemanticType::StringView ||
+         output.values.back().info.type.kind == SemanticType::CString);
     if (const auto *source = findValue(sourceValue);
-        source && source->info.type == output.values.back().info.type &&
+        source && !textValue &&
+        source->info.type == output.values.back().info.type &&
         source->borrowDependencies &&
         !(source->info.category == ValueCategory::Place &&
           output.values.back().info.category == ValueCategory::Value &&
