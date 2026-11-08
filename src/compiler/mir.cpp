@@ -12857,8 +12857,11 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       // An item retains its declaration's closed invocation scope while the
       // concrete parameter may alpha-rename that scope. Only this boundary
       // admits bound renaming; all materialized storage below stays exact.
+      // The temporary's region conversion to the parameter's referent is the
+      // MIR lifetime verifier's call-input proof; this is the shape.
       const bool exactReferent = place &&
           (place->type == referent ||
+           sameLifetimeConversionShape(place->type, referent) ||
            (referent.kind == SemanticType::FunctionItem &&
             equivalentLifetimeTypes(place->type, referent)));
       // The value-rooted place of a linear temporary, or the hidden slot of a
@@ -12940,6 +12943,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           place->root == MirPlaceRootKind::Temporary &&
           (producer->kind == MirInstructionKind::Load ||
            producer->kind == MirInstructionKind::Move);
+      if (std::getenv("GTI_TRACE_MIR_SHAPE") && place && source && producer && loan) std::fprintf(stderr, "[tmpshape] kind=%d src=%d acc=%d entry=%d esc=%d parent=%llu prod=%d proj=%zu placeAcc=%d placeSv=%d exactRef=%d sourceSv=%d srcType=%d cat=%d borrowedVsCap=%d/%d sd=%llu cap=%llu traits=%d result=%d prodHir=%d prodType=%d prodTypeErased=%d\n", static_cast<int>(loan->kind), loan->source == place->id, static_cast<int>(loan->access), loan->entry, loan->escapes, (unsigned long long)loan->parent, loan->producedBy == input.callSite, place->projections.size(), static_cast<int>(place->access), place->sourceValue == input.hirValue, exactReferent, source->sourceValue == input.hirValue, source->info.type == place->type, static_cast<int>(source->info.category), source->info.traits.containsBorrowedState, bool(captureDependency), (unsigned long long)loan->storedDependency, captureDependency ? (unsigned long long)captureDependency.loan->id : 0ull, sameCallInputTraits(place->traits, source->info.traits), producer->result && *producer->result == source->id, producer->hirValue == input.hirValue, producer->info.type == place->type, eraseTypeLifetimes(producer->info.type) == eraseTypeLifetimes(place->type)); // TEMP-TRACE
       if (place == nullptr || source == nullptr || producer == nullptr ||
           loan == nullptr || loan->kind != MirLoanKind::CallArgument ||
           loan->source != place->id || loan->access != AccessMode::ReadOnly ||
@@ -13135,6 +13139,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           (*instruction.callInputRole == MirCallInputRole::Receiver &&
            (instruction.callInputIndex != 0 ||
             instruction.callInputKind == HirCallInputKind::CopyValue))) {
+        if (std::getenv("GTI_TRACE_MIR_SHAPE")) std::fprintf(stderr, "[cin-shape] inst=%llu role=%d kind=%d borrowed=%d loan=%d tempArg=%d tempRecv=%d typeOk=%d\n", (unsigned long long)instruction.id, static_cast<int>(*instruction.callInputRole), static_cast<int>(instruction.callInputKind), instruction.info.traits.containsBorrowedState, instruction.loan.has_value(), temporaryArgument, temporaryCarrierReceiver, instruction.operands.size() == 1 && mir_detail::validCallInputType(instruction.operands.front().type, instruction.info.type, instruction.callInputKind)); // TEMP-TRACE
         return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       const MirOperand &operand = instruction.operands.front();

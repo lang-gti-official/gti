@@ -1312,14 +1312,22 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
       parameter.arguments.size() != 1)
     return false;
   const auto adjusted = callLifetimeArgumentType(function, argument, parameter);
-  if (!adjusted || *adjusted != parameter.arguments.front())
+  // Before the candidate's application is complete, selection matches the
+  // shape; the call's applied lifetime contract then proves the regions.
+  const bool pendingApplication =
+      !function.lifetimeApplication.complete &&
+      eraseTypeLifetimes(argument) == eraseTypeLifetimes(parameter.arguments.front());
+  if (!pendingApplication &&
+      (!adjusted || *adjusted != parameter.arguments.front()))
     return false;
   // The completed application proves the conversion. Freshness, source
   // identity and cleanup still belong to the original producer type; do not
   // retag its expression merely to match the target's applied regions.
   auto producerParameter = parameter;
   producerParameter.arguments.front() = argument;
-  return temporaryReadBorrowArgumentMatches(producerParameter, argument, expression);
+  const bool produced = temporaryReadBorrowArgumentMatches(producerParameter, argument, expression); // TEMP-TRACE
+  if (std::getenv("GTI_TRACE_EPH")) std::fprintf(stderr, "[eph] pending=%d complete=%d produced=%d\n", pendingApplication, function.lifetimeApplication.complete, produced); // TEMP-TRACE
+  return produced;
 }
 
 auto SemanticVisitor::Impl::temporaryReadBorrowArgumentMatches(
@@ -1373,7 +1381,9 @@ auto SemanticVisitor::Impl::temporaryReadBorrowArgumentMatches(
   }
   const FreshTemporaryValueAssessment assessment =
       freshTemporaryBorrowValue(expression);
-  return assessment.eligible && assessment.type == argument;
+  // The producer's regions are the call's to prove; freshness is the shape.
+  return assessment.eligible &&
+         eraseTypeLifetimes(assessment.type) == eraseTypeLifetimes(argument);
 }
 
 auto SemanticVisitor::Impl::functionCallArgumentMatch(

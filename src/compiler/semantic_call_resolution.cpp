@@ -7084,8 +7084,11 @@ auto SemanticVisitor::Impl::hasExactOperatorCandidate(
       substituteSymbol(found->second.symbol, receiverType);
   return std::any_of(overloadSet.overloads.begin(), overloadSet.overloads.end(),
                      [&](const CallableCandidate &candidate) {
+                       // Shape selects the operator; its applied lifetime
+                       // contract proves the regions when it is called.
                        return candidate.parameterTypes.size() == 1 &&
-                              candidate.parameterTypes.front() == argumentType;
+                              eraseTypeLifetimes(candidate.parameterTypes.front()) ==
+                                  eraseTypeLifetimes(argumentType);
                      });
 }
 
@@ -7098,10 +7101,11 @@ auto SemanticVisitor::Impl::exactOperatorArgumentMatches(
   }
   if (parameterType.kind == SemanticType::Reference) {
     if (parameterType.arguments.size() != 1 ||
-        parameterType.arguments.front() != argumentType) {
+        eraseTypeLifetimes(parameterType.arguments.front()) !=
+            eraseTypeLifetimes(argumentType)) {
       return false;
     }
-  } else if (parameterType != argumentType) {
+  } else if (eraseTypeLifetimes(parameterType) != eraseTypeLifetimes(argumentType)) {
     return false;
   }
   return callArgumentMatches(parameterType, argumentType, argument);

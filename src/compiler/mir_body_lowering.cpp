@@ -8274,13 +8274,19 @@ private:
           type.arguments.size() != 1 ||
           !isTemporaryBorrowReferentType(type.arguments.front()) ||
           input.operands.front().kind != MirOperandKind::BorrowRead ||
-          input.operands.front().type != type || source == nullptr ||
+          eraseTypeLifetimes(input.operands.front().type) !=
+              eraseTypeLifetimes(type) ||
+          source == nullptr ||
           !materialization || !source->projections.empty() ||
+          // Program verification proves the temporary's region conversion.
           (source->type != type.arguments.front() &&
+           eraseTypeLifetimes(source->type) !=
+               eraseTypeLifetimes(type.arguments.front()) &&
            !(source->type.kind == SemanticType::FunctionItem &&
              equivalentLifetimeTypes(source->type, type.arguments.front()))) ||
           source->access != AccessMode::Mutable ||
           source->sourceValue != sourceValue || scopes.empty()) {
+        if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[tmparg] typeKind=%d access=%d refArgs=%zu referentOk=%d opKind=%d opTypeErased=%d src=%d mat=%d proj=%zu srcTypeErased=%d srcAccess=%d sv=%d\n", static_cast<int>(type.kind), static_cast<int>(type.referenceAccess), type.arguments.size(), type.arguments.size()==1 && isTemporaryBorrowReferentType(type.arguments.front()), static_cast<int>(input.operands.front().kind), eraseTypeLifetimes(input.operands.front().type) == eraseTypeLifetimes(type), source != nullptr, static_cast<bool>(materialization), source ? source->projections.size() : 0, source && type.arguments.size()==1 && eraseTypeLifetimes(source->type) == eraseTypeLifetimes(type.arguments.front()), source ? static_cast<int>(source->access) : -1, source && source->sourceValue == sourceValue); // TEMP-TRACE
         { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       } else {
         inputLoan = createLoan(MirLoanKind::CallArgument, source->id,
