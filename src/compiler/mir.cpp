@@ -1,4 +1,5 @@
 #include "gti/mir.h"
+#include "gti/mir_printer.h" // TEMP-TRACE
 #include "gti/lifetime_types.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
@@ -10690,6 +10691,8 @@ MirVerificationResult verificationFailure(const MirBody &body,
                                           std::size_t owner,
                                           std::string message, MirBlockId block,
                                           MirInstructionId instruction) {
+  if (std::getenv("GTI_TRACE_MIR_BODY")) // TEMP-TRACE
+    std::fprintf(stderr, "[mirbody] owner=%zu %s\n%s\n", owner, message.c_str(), MirPrinter{}.print(body).c_str()); // TEMP-TRACE
   return failure(body, owner, std::move(message), block, instruction);
 }
 
@@ -12026,6 +12029,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       return false;
     }
   };
+  const auto shapeTraceReject = [](int line) { if (std::getenv("GTI_TRACE_MIR_SHAPE")) std::fprintf(stderr, "[shape-reject] mir.cpp:%d\n", line); return false; }; // TEMP-TRACE
   const auto validInstructionShape = [&](const MirInstruction &instruction) {
     if (instruction.tombstone) {
       return instruction == makeMirInstructionTombstone(instruction);
@@ -12033,7 +12037,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
     if (instruction.payloadExtractionKind &&
         (instruction.kind != MirInstructionKind::Compute ||
          instruction.operation != MirOperation::PayloadExtract)) {
-      return false;
+      return shapeTraceReject(__LINE__); // TEMP-TRACE
     }
     if (instruction.destination &&
         (instruction.kind == MirInstructionKind::Assign ||
@@ -12046,20 +12050,20 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
            destination->projections.front().kind ==
                MirProjectionKind::RawIndex)) {
         if (!instruction.rawMemoryAccess)
-          return false;
+          return shapeTraceReject(__LINE__); // TEMP-TRACE
         if (instruction.kind == MirInstructionKind::Assign &&
             instruction.unsafeOperation !=
                 UnsafeOperationKind::RawDereference &&
             instruction.unsafeOperation != UnsafeOperationKind::RawIndex &&
             instruction.unsafeOperation != UnsafeOperationKind::RawMember &&
             instruction.unsafeOperation != UnsafeOperationKind::UnionMember)
-          return false;
+          return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
     }
     if ((instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
          instruction.intrinsic == IntrinsicKind::CStringFromAddress) &&
         !mir_detail::textAddressResultLoan(body, instruction))
-      return false;
+      return shapeTraceReject(__LINE__); // TEMP-TRACE
     const bool hasResult = instruction.result.has_value();
     const bool noOperation = instruction.operation == MirOperation::None;
     if (instruction.nativeCalleeType) {
@@ -12079,7 +12083,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           instruction.parameterTypes.size() != parameters.size() ||
           !std::equal(parameters.begin(), parameters.end(),
                       instruction.parameterTypes.begin(), sameLifetimeConversionShape))
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
     }
     const bool callable = instruction.kind == MirInstructionKind::Call ||
                           instruction.kind == MirInstructionKind::Construct;
@@ -12103,7 +12107,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           instruction.definedFailure.mayUnwind() ||
           !instruction.localFailureSites.empty() ||
           !instruction.lifecycle.empty())
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
     }
     const bool stagedPayload = stagedPayloadConstruction(instruction);
     const bool selectedBorrowTarget =
@@ -12120,7 +12124,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         (!callable || instruction.borrowOrigin == BorrowOriginKind::None ||
          (!selectedBorrowTarget && !signatureBorrowTarget &&
           !mir_detail::generatedCopyConstruction(instruction))))
-      return false;
+      return shapeTraceReject(__LINE__); // TEMP-TRACE
     const bool callInput = instruction.kind == MirInstructionKind::CallInput;
     const bool baseCallInput =
         callInput && body.kind == MirBodyKind::Constructor &&
@@ -12283,7 +12287,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           !instruction.definedFailure.empty() ||
           !instruction.localFailureSites.empty() ||
           !instruction.lifecycle.empty()))) {
-      return false;
+      return shapeTraceReject(__LINE__); // TEMP-TRACE
     }
     if (simdIntrinsic(instruction.intrinsic)) {
       if (instruction.kind != MirInstructionKind::Call || instruction.result ||
@@ -12301,7 +12305,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           !instruction.localFailureSites.empty() ||
           !instruction.lifecycle.empty() || instruction.operands.size() != 3 ||
           instruction.parameterTypes.size() != 3)
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       std::array<SemanticType, 3> arrays;
       for (std::size_t index = 0; index < 3; ++index) {
         const SemanticType &parameter = instruction.parameterTypes[index];
@@ -12313,7 +12317,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             operand.type != parameter ||
             operand.kind != (index == 2 ? MirOperandKind::BorrowWrite
                                         : MirOperandKind::BorrowRead))
-          return false;
+          return shapeTraceReject(__LINE__); // TEMP-TRACE
         const MirPlace *place = body.findPlace(operand.place);
         arrays[index] = parameter.arguments[0];
         if (place == nullptr || place->type != arrays[index] ||
@@ -12322,7 +12326,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             arrays[index].arguments.size() != 1 ||
             arrays[index].arrayLengthParameterId != 0 ||
             arrays[index].arrayLength < 1 || arrays[index].arrayLength > 64)
-          return false;
+          return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       if (arrays[0] != arrays[1] ||
           (arrays[0].arguments[0] != SemanticType::Float &&
@@ -12332,7 +12336,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               (simdComparisonIntrinsic(instruction.intrinsic)
                    ? SemanticType::Bool
                    : arrays[0].arguments[0]))
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
     }
     const auto validCallableInvocation = [&]() {
       if (!instruction.callableInvocation) {
@@ -12346,7 +12350,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                                         instruction.id);
       }
       if (!instruction.receiver) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       if (instruction.receiver->kind == MirOperandKind::Value ||
           instruction.receiver->kind == MirOperandKind::Move ||
@@ -12362,7 +12366,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         return true;
       }
       if (instruction.receiver->kind != MirOperandKind::Loan) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       const MirLoan *loan = body.findLoan(instruction.receiver->loan);
       return loan != nullptr && (*instruction.callableInvocation ==
@@ -12418,7 +12422,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           place->traits.copyable &&
           sameCallInputTraits(place->traits, input.info.traits);
       if (!exactSource) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       if (!input.preparedParameterDrop) {
         return !input.destination && input.lifecycle.empty();
@@ -12443,7 +12447,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
            input.info.type.kind != SemanticType::Enum &&
            input.info.type.kind != SemanticType::Lambda) ||
           operand.kind != MirOperandKind::Value) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       const MirValue *source = body.findValue(operand.value);
       const MirInstruction *definition =
@@ -12458,7 +12462,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           definition->kind == MirInstructionKind::CallInput ||
           !sameCallInputTraits(source->info.traits, input.info.traits) ||
           !sameCallInputTraits(definition->info.traits, input.info.traits)) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       if (input.info.type.kind == SemanticType::Lambda &&
           input.info.traits.containsBorrowedState) {
@@ -12481,7 +12485,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                 definition->operands.size() ||
             definition->closureCaptureModes.size() !=
                 definition->operands.size())
-          return false;
+          return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       std::vector<MirDropObligationId> obligations;
       for (const auto *obligation : dropsForValue(source->sourceValue)) {
@@ -12576,7 +12580,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               !input.info.traits.movable ||
               !input.info.traits.containsBorrowedState ||
               operand.kind != MirOperandKind::Value) {
-            return false;
+            return shapeTraceReject(__LINE__); // TEMP-TRACE
           }
           const MirValue *source = body.findValue(operand.value);
           const MirInstruction *producer =
@@ -12597,7 +12601,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               producer->hirValue != input.hirValue || !producer->loan ||
               producer->borrowOrigin == BorrowOriginKind::None ||
               !sameCallInputTraits(producer->info.traits, input.info.traits)) {
-            return false;
+            return shapeTraceReject(__LINE__); // TEMP-TRACE
           }
           const MirLoan *retained = body.findLoan(*producer->loan);
           const MirPlace *loanSource =
@@ -12607,7 +12611,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               retained->escapes || !retained->storedPath.empty() ||
               !retained->carriers.empty() ||
               retained->producedBy != input.hirValue) {
-            return false;
+            return shapeTraceReject(__LINE__); // TEMP-TRACE
           }
 
           const MirDropObligation *drop = nullptr;
@@ -12619,7 +12623,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               continue;
             }
             if (drop != nullptr) {
-              return false;
+              return shapeTraceReject(__LINE__); // TEMP-TRACE
             }
             drop = &candidate;
             slot = body.findPlace(candidate.place);
@@ -12682,7 +12686,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           input.info.type.kind != SemanticType::Class ||
           input.info.category != ValueCategory::Value ||
           operand.kind != expectedOperand) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       const MirPlace *place = body.findPlace(operand.place);
       const MirTemporaryMaterialization materialization =
@@ -12713,7 +12717,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                        !producer->constructorTarget ||
                        producer->constructorKind !=
                            ConstructorKind::Ordinary)) {
-          return false;
+          return shapeTraceReject(__LINE__); // TEMP-TRACE
         }
       }
       const bool ordinaryConstruction =
@@ -12764,7 +12768,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           !sameCallInputTraits(producer->info.traits, input.info.traits) ||
           (!ordinaryConstruction && !ordinaryCall && !lambdaCall &&
            !specialConstruction && !generatedDefault && !joinedTemporary)) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
 
       const auto obligations = dropsForValue(input.hirValue);
@@ -12773,7 +12777,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           obligations.front()->dropType.type != input.info.type ||
           obligations.front()->hirFullExpression == 0 ||
           obligations.front()->fullExpression == 0) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       const MirDropObligationId obligation = obligations.front()->id;
       // The join temporary is initialized on its incoming edges. Ordinary
@@ -12801,7 +12805,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           input.info.category != ValueCategory::Value ||
           operand.kind != MirOperandKind::BorrowRead ||
           operand.type != input.info.type) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       const SemanticType &referent = input.info.type.arguments.front();
       const MirPlace *place = body.findPlace(operand.place);
@@ -12917,7 +12921,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
            !scalarComputation && !scalarCallResult && !payloadConstruction &&
            !callableConstruction && !joinedTemporary &&
            producer->kind != MirInstructionKind::Move)) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
 
       const auto obligations = dropsForValue(input.hirValue);
@@ -12926,7 +12930,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           obligations.front()->dropType.type != place->type ||
           obligations.front()->hirFullExpression == 0 ||
           obligations.front()->fullExpression == 0) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       const MirDropObligationId obligation = obligations.front()->id;
       return joinedTemporary || producer->successResultDrop == obligation ||
@@ -12966,7 +12970,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
     case MirInstructionKind::Initialize: {
       if (!noOperation || hasResult || !instruction.destination ||
           instruction.operands.size() > 1) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       const MirPlace *destination = body.findPlace(*instruction.destination);
       // A Loan publishes an address alias. An owning value instead needs
@@ -12977,7 +12981,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           destination->type.kind != SemanticType::Reference &&
           instruction.operands.size() == 1 &&
           instruction.operands.front().kind == MirOperandKind::Loan)
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       if (destination == nullptr ||
           destination->root != MirPlaceRootKind::Binding ||
           destination->type.kind != SemanticType::Reference) {
@@ -12993,7 +12997,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           instruction.operands.front().kind != MirOperandKind::Loan ||
           instruction.operands.front().place == 0 ||
           destination->type.arguments.size() != 1) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       const MirOperand &source = instruction.operands.front();
       const MirPlace *address = body.findPlace(source.place);
@@ -13085,7 +13089,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           (*instruction.callInputRole == MirCallInputRole::Receiver &&
            (instruction.callInputIndex != 0 ||
             instruction.callInputKind == HirCallInputKind::CopyValue))) {
-        return false;
+        return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       const MirOperand &operand = instruction.operands.front();
       switch (instruction.callInputKind) {
@@ -13165,13 +13169,13 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       case HirCallInputKind::MutableBorrow: {
         if (instruction.preparedParameterDrop ||
             !instruction.lifecycle.empty()) {
-          return false;
+          return shapeTraceReject(__LINE__); // TEMP-TRACE
         }
         if (operand.kind == MirOperandKind::BorrowWrite) {
           return true;
         }
         if (operand.kind != MirOperandKind::Loan) {
-          return false;
+          return shapeTraceReject(__LINE__); // TEMP-TRACE
         }
         const MirLoan *loan = body.findLoan(operand.loan);
         return loan != nullptr && loan->access == AccessMode::Mutable;
@@ -13185,7 +13189,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         return validTemporaryReceiverInput(instruction, operand,
                                            MirOperandKind::BorrowWrite);
       }
-      return false;
+      return shapeTraceReject(__LINE__); // TEMP-TRACE
     }
     case MirInstructionKind::Call:
       return noOperation &&
@@ -13452,9 +13456,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
              rollback->dropType.type == base->type;
     }
     case MirInstructionKind::Count:
-      return false;
+      return shapeTraceReject(__LINE__); // TEMP-TRACE
     }
-    return false;
+    return shapeTraceReject(__LINE__); // TEMP-TRACE
   };
 
   std::size_t expectedUseCount = 0;
@@ -14857,6 +14861,21 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                         return !validOperand(operand);
                       }) ||
           invalidLoanValueEvidence || !validInstructionShape(instruction)) {
+        if (std::getenv("GTI_TRACE_MIR_SHAPE")) { // TEMP-TRACE
+          int badOperand = -1; // TEMP-TRACE
+          for (std::size_t i = 0; i < instruction.operands.size(); ++i) // TEMP-TRACE
+            if (!validOperand(instruction.operands[i])) { badOperand = static_cast<int>(i); break; } // TEMP-TRACE
+          std::fprintf(stderr, "[shape] owner=%zu inst=%llu kind=%d dest=%d recv=%d loan=%d result=%d badOperand=%d loanEvidence=%d shape=%d\n", // TEMP-TRACE
+                       owner, (unsigned long long)instruction.id, static_cast<int>(instruction.kind), // TEMP-TRACE
+                       instruction.destination ? (validPlace(*instruction.destination) ? 1 : 0) : 2, // TEMP-TRACE
+                       instruction.receiver ? (validOperand(*instruction.receiver) ? 1 : 0) : 2, // TEMP-TRACE
+                       instruction.loan ? (validLoan(*instruction.loan) ? 1 : 0) : 2, // TEMP-TRACE
+                       instruction.result ? (validValue(*instruction.result) ? 1 : 0) : 2, badOperand, // TEMP-TRACE
+                       invalidLoanValueEvidence ? 1 : 0, validInstructionShape(instruction) ? 1 : 0); // TEMP-TRACE
+          if (badOperand >= 0) { const auto &op = instruction.operands[badOperand]; // TEMP-TRACE
+            std::fprintf(stderr, "[shape]   operand kind=%d place=%llu value=%llu loan=%llu typeKind=%d\n", static_cast<int>(op.kind), // TEMP-TRACE
+                         (unsigned long long)op.place, (unsigned long long)op.value, (unsigned long long)op.loan, static_cast<int>(op.type.kind)); } // TEMP-TRACE
+        } // TEMP-TRACE
         return failure(body, owner,
                        "instruction has an invalid shape or reference",
                        block.id, instruction.id);

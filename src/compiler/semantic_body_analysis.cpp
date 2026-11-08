@@ -16,6 +16,47 @@ bool needsCheckedStaticReturnSupplier(const FunctionInfo *function) {
          !function->declaration->hasFunctionAttribute("borrowed_from") &&
          function->bodyDeclaration() && function->bodyDeclaration()->body();
 }
+
+// A compile-time condition (`if constexpr`, `static_assert`) is resolved during
+// analysis and never executes, so the body has no runtime borrows from it.
+// Withdraw only the lifetime inventory suffix its analysis appended, exactly as
+// constant substitution withdraws a replaced invocation's executable facts.
+// Constant evaluation keeps its own checks; the selected executable arm is
+// analyzed outside this scope and keeps every fact it records.
+template <typename Flow> class CompileTimeConditionLifetimeFacts {
+public:
+  explicit CompileTimeConditionLifetimeFacts(Flow &flow)
+      : flow(flow), block(flow.lifetimeBlock), expression(flow.lifetimeExpression),
+        variables(flow.lifetimeVariables.size()),
+        obligations(flow.lifetimeObligations.size()),
+        typeObligations(flow.lifetimeTypeObligations.size()),
+        origins(flow.lifetimeOrigins.size()) {}
+  CompileTimeConditionLifetimeFacts(const CompileTimeConditionLifetimeFacts &) = delete;
+  CompileTimeConditionLifetimeFacts &
+  operator=(const CompileTimeConditionLifetimeFacts &) = delete;
+  ~CompileTimeConditionLifetimeFacts() {
+    // A different or rewound body inventory is not this condition's suffix.
+    if (flow.lifetimeBlock != block || flow.lifetimeExpression != expression ||
+        variables > flow.lifetimeVariables.size() ||
+        obligations > flow.lifetimeObligations.size() ||
+        typeObligations > flow.lifetimeTypeObligations.size() ||
+        origins > flow.lifetimeOrigins.size())
+      return;
+    flow.lifetimeVariables.resize(variables);
+    flow.lifetimeObligations.resize(obligations);
+    flow.lifetimeTypeObligations.resize(typeObligations);
+    flow.lifetimeOrigins.resize(origins);
+  }
+
+private:
+  Flow &flow;
+  const BlockStmt *block;
+  const Expr *expression;
+  std::size_t variables;
+  std::size_t obligations;
+  std::size_t typeObligations;
+  std::size_t origins;
+};
 } // namespace
 
 namespace {
@@ -2356,7 +2397,10 @@ auto SemanticVisitor::Impl::visitStaticAssertDecl(const StaticAssertDecl &stmt)
   const bool enclosingDependency = constantConditionGenericDependency;
   analyzingDependentConstantCondition = true;
   constantConditionGenericDependency = false;
-  const SemanticType conditionType = analyze(stmt.condition());
+  const SemanticType conditionType = [&] {
+    CompileTimeConditionLifetimeFacts<decltype(loanFlow)> conditionFacts(loanFlow);
+    return analyze(stmt.condition());
+  }();
   const bool genericDependent = constantConditionGenericDependency;
   analyzingDependentConstantCondition = enclosingStaticAssert;
   constantConditionGenericDependency = enclosingDependency;
@@ -2731,6 +2775,13 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
       if (member != owner.members.end()) {
         fieldType = substituteSymbol(member->second.symbol,
                                       openClassType(owner.id)).type;
+        // The member symbol predates nominal lifetime normalization. Its
+        // declaration's normalized stored type names the class's anonymous
+        // region slots; use it when it denotes the same object shape.
+        if (field != nullptr && catalog.normalizedNominalTypes.contains(&field->type()))
+          if (const auto declared = typeOf(field->type(), owner.namespaceScope);
+              eraseTypeLifetimes(declared) == eraseTypeLifetimes(fieldType))
+            fieldType = declared;
         fieldSymbol = toolingSymbolFor(member->second.symbol);
         semanticModel.recordOccurrence(
             {.sourceUnit = currentSourceUnit,
@@ -2831,6 +2882,18 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
       forceProgramStorageBoundaryAccess(initializer.arguments.front());
       validateReferenceBinding(fieldType, valueType,
                                initializer.arguments.front());
+    } else if (field != nullptr && initializer.arguments.size() == 1 &&
+               fieldType != valueType && valueType != SemanticType::Unknown &&
+               eraseTypeLifetimes(fieldType) == eraseTypeLifetimes(valueType) &&
+               isOwnershipAssignable(eraseTypeLifetimes(fieldType),
+                                     eraseTypeLifetimes(valueType),
+                                     initializer.arguments.front())) {
+      // The same stored shape with different regions: the stored value must
+      // satisfy the field slot's region, which records a checked obligation,
+      // exactly as a base initializer's value conversion does.
+      (void)applyLifetimeValueConversion(valueType, fieldType,
+                                         expressionToken(initializer.arguments.front()),
+                                         1, false, true);
     } else if (field != nullptr && initializer.arguments.size() == 1 &&
                !recursiveLayoutFields.contains(field) &&
                !recordsDeclarationConversion(*initializer.arguments.front()) &&
@@ -5390,6 +5453,8 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
     semanticModel.recordFullExpression(stmt, stmt.condition());
   }
   if (stmt.isConstexpr()) {
+    std::optional<CompileTimeConditionLifetimeFacts<decltype(loanFlow)>> conditionFacts;
+    conditionFacts.emplace(loanFlow);
     const bool enclosingCondition = analyzingDependentConstantCondition;
     const bool enclosingDependency = constantConditionGenericDependency;
     analyzingDependentConstantCondition = true;
@@ -5402,6 +5467,12 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
     requireBool(stmt.condition(), conditionType,
                 expressionToken(stmt.condition()),
                 "If constexpr condition must be bool.");
+    const bool traceConstexprIf = std::getenv("GTI_TRACE_CONSTEXPR_IF") != nullptr; // TEMP-TRACE
+    if (traceConstexprIf) // TEMP-TRACE
+      std::fprintf(stderr, "[cif] stmt=%p model=%p line=%u type=%s dependent=%d instance=%d\n", // TEMP-TRACE
+                   static_cast<const void *>(&stmt), static_cast<const void *>(&semanticModel), // TEMP-TRACE
+                   static_cast<unsigned>(stmt.constexprKeyword()->line), typeSpelling(conditionType).c_str(), // TEMP-TRACE
+                   dependent ? 1 : 0, instanceAnalysisActive ? 1 : 0); // TEMP-TRACE
     if (conditionType != SemanticType::Bool) {
       return;
     }
@@ -5418,6 +5489,9 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
         evaluateConstexprExpression(stmt.condition(), context);
     const bool *selected =
         evaluated ? std::get_if<bool>(&*evaluated.value) : nullptr;
+    if (traceConstexprIf) // TEMP-TRACE
+      std::fprintf(stderr, "[cif]   evaluated=%d selected=%d message=%s\n", evaluated ? 1 : 0, // TEMP-TRACE
+                   selected ? (*selected ? 1 : 0) : -1, evaluated.detail.c_str()); // TEMP-TRACE
     if (selected == nullptr) {
       if (evaluated) {
         evaluated.failure = ConstantEvaluationFailure::InvalidOperands;
@@ -5428,6 +5502,7 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
     }
 
     semanticModel.recordConstexprBranch(stmt, *selected);
+    conditionFacts.reset();
     // A successful concept test supplies exactly the same declaration facts
     // as its requires-clause application. Keep them confined to this arm.
     requirementScopes.push_back(
@@ -7152,7 +7227,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
                                     declaredType.kind == SemanticType::Enum) &&
                                    initializerInfo != nullptr &&
                                    ((isTextDependentValue(*initializerInfo) &&
-                                     initializerInfo->type == declaredType) ||
+                                     eraseTypeLifetimes(initializerInfo->type) ==
+                                         eraseTypeLifetimes(declaredType)) ||
                                     contextualText);
   // A dependent field of a dependent value has no loan of its own yet: a
   // switch observes it in place.
@@ -7213,7 +7289,8 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       declaredType.arguments.size() == 1 && initializerInfo != nullptr &&
       initializerInfo->category == ValueCategory::Place &&
       isTextDependentValue(*initializerInfo) &&
-      initializerInfo->type == declaredType.arguments.front()) {
+      eraseTypeLifetimes(initializerInfo->type) ==
+          eraseTypeLifetimes(SemanticType(declaredType.arguments.front()))) {
     consumeTextDependentValue(initializer);
     if (globalStorage || instanceField)
       report(stmt.name(),
@@ -14506,10 +14583,19 @@ auto SemanticVisitor::Impl::analyzeParameterDefaults(
     analyzingDefaultArgument = enclosingDefaultArgument;
     currentProgramEffectOwner = enclosingEffectOwner;
 
+    // A default whose every carried region is static is valid for any region
+    // the parameter is instantiated with at a call, as a literal view is.
+    const auto actualRegions = freeTypeLifetimes(actual);
+    const bool staticDefault =
+        eraseTypeLifetimes(actual) == eraseTypeLifetimes(parameterType) &&
+        !actualRegions.empty() &&
+        std::all_of(actualRegions.begin(), actualRegions.end(), [](const Lifetime &region) {
+          return region.kind == Lifetime::Kind::Static;
+        });
     if (parameterType != SemanticType::Unknown &&
         parameterType.kind != SemanticType::TypeParameter &&
         parameterType.kind != SemanticType::TypePack &&
-        actual != SemanticType::Unknown &&
+        actual != SemanticType::Unknown && !staticDefault &&
         !callArgumentMatches(parameterType, actual, syntax.expression)) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2077", DiagnosticPhase::Semantics,

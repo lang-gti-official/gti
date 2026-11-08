@@ -348,7 +348,21 @@ public:
             // The initializer reads each argument after all of them run, so
             // a class assignment's result is copied at its own commit.
             const HirValue *input = findValue(argument);
-            if (initializer.storesReference)
+            if (initializer.storesReference &&
+                transfersMutableReferenceParameter(argument, initializer.borrowAccess))
+            {
+              // The parameter's unique capability itself becomes the stored
+              // loan (markStoredBorrow); no new borrow is formed. Read the
+              // reference as this initializer's evaluated root, as before.
+              // That unused read publishes nothing: the transferred Stored
+              // loan, not this value, carries the field's dependency.
+              const auto before = output.values.size();
+              (void)emitValue(argument);
+              for (std::size_t index = before; index < output.values.size(); ++index)
+                if (output.values[index].sourceValue == argument)
+                  output.values[index].borrowDependencies.reset();
+            }
+            else if (initializer.storesReference)
               emitPlaceDependencies(argument);
             else if (input != nullptr && hasAssignmentResultCopy(*input))
               (void)assignmentResultValue(*input);
@@ -3965,6 +3979,18 @@ private:
           for (const auto &place : output.places)
             if (place.root == MirPlaceRootKind::Binding)
               consider(place.id, place.access);
+        // A body-local borrow of a place likewise covers that place's
+        // subobjects: an exact evaluated sub-place extending the parent
+        // loan's source key names the dependency.
+        if (selected == 0 && !loan->entry && loan->kind == MirLoanKind::Local)
+          if (const auto *base = output.findPlace(loan->source); base && base->key)
+            for (const auto &place : output.places)
+              if (place.key && place.key->root == base->key->root &&
+                  place.key->receiver == base->key->receiver &&
+                  place.key->projections.size() > base->key->projections.size() &&
+                  std::equal(base->key->projections.begin(), base->key->projections.end(),
+                             place.key->projections.begin()))
+                consider(place.id, loan->access);
       }
     } else {
       // A direct physical owner can be materialized from its existing typed
@@ -4808,8 +4834,16 @@ private:
       valid = false;
       return;
     }
+    // A body-local loan sourced at a loan's referent (a reference call
+    // result) already addresses the designated referent: the semantic field
+    // path is what that call crossed. Only Stored/Return loans designate.
+    const auto *loweredSource = output.findPlace(lowered.source);
+    const bool resolvedReferent =
+        lowered.kind == MirLoanKind::Local && loweredSource != nullptr &&
+        loweredSource->root == MirPlaceRootKind::Loan;
     lowered.designatedFields =
-        loan.designatedFields.empty() ? solePath : loan.designatedFields;
+        resolvedReferent ? BorrowPath{}
+        : loan.designatedFields.empty() ? solePath : loan.designatedFields;
     if (!lowered.conditions.empty() && lowered.conditions != loan.conditions) {
       valid = false;
       return;
@@ -6167,6 +6201,8 @@ private:
       valid = false;
       return;
     }
+    if (std::getenv("GTI_TRACE_MIR_BODY")) // TEMP-TRACE
+      std::fprintf(stderr, "[epd] id=%llu kind=%d type=%d seq=%zu ops=%zu\n", (unsigned long long)id, static_cast<int>(value->kind), static_cast<int>(value->info.type.kind), value->sequencedInputs.size(), value->operands.size()); // TEMP-TRACE
     for (const HirValueId input : value->sequencedInputs) {
       emitValue(input, true);
       if (terminated()) {
@@ -8285,6 +8321,8 @@ private:
 
   void emitCall(const HirValue &value, bool detachedBorrowResult = false,
                 bool reserveBorrowResult = false, bool construction = false) {
+    if (std::getenv("GTI_TRACE_MIR_BODY")) // TEMP-TRACE
+      std::fprintf(stderr, "[emitcall] enter v%llu valid=%d terminated=%d\n", (unsigned long long)value.id, valid, terminated()); // TEMP-TRACE
     if (value.kind == HirValueKind::Call && value.functionTarget &&
         !value.operands.empty()) {
       const HirValue *callee = findValue(value.operands.front());
@@ -8301,7 +8339,7 @@ private:
     if (value.intrinsic == IntrinsicKind::RawPointerConversion) {
       const auto arguments = callArgumentValues(value);
       if (arguments.size() != 1 || !value.definedFailure.empty()) {
-        valid = false;
+        { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
         return;
       }
       auto operand = valueOperand(arguments.front());
@@ -8318,7 +8356,7 @@ private:
       for (const HirValueId id : callArgumentValues(value)) {
         const HirValue *argument = findValue(id);
         if (argument == nullptr) {
-          valid = false;
+          { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
           return;
         }
         if (argument->kind != HirValueKind::PackExpansion) {
@@ -8330,7 +8368,7 @@ private:
             local == localSymbols.end() ? 0 : placeForBinding(local->second));
         if (root == nullptr || root->type.kind != SemanticType::TypePack ||
             !root->type.concretePack || root->type.arguments.size() > 1) {
-          valid = false;
+          { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
           return;
         }
         if (root->type.arguments.empty()) {
@@ -8359,7 +8397,7 @@ private:
       }
       if (operands.size() != 1 || operands.front().type != value.info.type ||
           !value.definedFailure.empty()) {
-        valid = false;
+        { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
         return;
       }
       (void)appendInstruction({.kind = MirInstructionKind::Compute,
@@ -8394,13 +8432,13 @@ private:
                                           value.functionTarget);
     }
     if (reserveBorrowResult && !detachedBorrowResult) {
-      valid = false;
+      { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
       return;
     }
     if (detachedBorrowResult &&
         (!value.functionTarget ||
          value.borrowOrigin == BorrowOriginKind::None)) {
-      valid = false;
+      { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
       return;
     }
     MirInstruction call{
@@ -8476,7 +8514,7 @@ private:
                                  !receiverSource->retainedReceiverProjection ||
                                  receiverSource->kind != HirValueKind::Move ||
                                  receiverSource->operands.size() != 1)) {
-          valid = false;
+          { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
           return;
         }
         sourceReceiver =
@@ -8519,7 +8557,7 @@ private:
       if (retainedReceiver &&
           (!expandsPack || receiverSource->kind != HirValueKind::Move ||
            receiverSource->operands.size() != 1)) {
-        valid = false;
+        { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
         return;
       }
       MirOperand operand =
@@ -8706,7 +8744,7 @@ private:
       for (std::size_t index = 0; index < arguments.size(); ++index) {
         const HirValue *input = findValue(arguments[index]);
         if (input == nullptr) {
-          valid = false;
+          { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
           continue;
         }
         if (input->kind != HirValueKind::PackExpansion) {
@@ -8726,7 +8764,7 @@ private:
                         HirCallInputKind>{HirCallInputKind::MutableBorrow}
                   : inputKindFor(*input, parameter);
           if (!kind) {
-            valid = false;
+            { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
             continue;
           }
           MirOperand sourceArgument =
@@ -8791,7 +8829,7 @@ private:
             resolvedPackPlace->type != input->info.type ||
             input->packExpansionElements.size() != elements.size() ||
             !resolvedPackPlace->key) {
-          valid = false;
+          { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
           continue;
         }
         const MirPlace packPlace = *resolvedPackPlace;
@@ -8823,7 +8861,7 @@ private:
                    parameter.arguments.size() == 1 && element.arguments.size() == 1 &&
                    sameLifetimeConversionShape(parameter.arguments.front(),
                                                element.arguments.front())))))) {
-            valid = false;
+            { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
             continue;
           }
           PlaceKey elementKey = *packPlace.key;
@@ -8847,7 +8885,7 @@ private:
               element.referenceAccess == AccessMode::Mutable) {
             const auto loan = packEntryLoans.find(elementPlace);
             if (loan == packEntryLoans.end()) {
-              valid = false;
+              { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
               continue;
             }
             sourceArgument = {.kind = MirOperandKind::Loan,
@@ -9301,7 +9339,7 @@ private:
         if (shellContract->parent != 0) {
           const auto found = semanticLoans.find(shellContract->parent);
           if (found == semanticLoans.end())
-            valid = false;
+            { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
           else
             parent = found->second;
         }
@@ -9464,7 +9502,7 @@ private:
         if (output.loans[loan - 1].storedDependency == 0 &&
             value.info.type.kind != SemanticType::StringView &&
             value.info.type.kind != SemanticType::CString)
-          valid = false;
+          { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
       } else if (parent != 0) {
         // A referent returned through an existing carrier reference remains
         // a child of that physical reference. Preserve its already-verified
@@ -9477,7 +9515,7 @@ private:
       if (accessorResult != 0 &&
           output.loans[loan - 1].storedDependency !=
               output.loans[accessorResult - 1].storedDependency)
-        valid = false;
+        { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
       const MirLoanId dependencyLoan =
           originLoan != 0 ? originLoan
           : value.borrowOrigin == BorrowOriginKind::Argument &&
@@ -9502,7 +9540,7 @@ private:
       }
       for (const std::size_t parameter : value.borrowArguments) {
         if (parameter >= originCall.operands.size()) {
-          valid = false;
+          { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
           continue;
         }
         HirValue dependency = value;
@@ -9547,7 +9585,7 @@ private:
           selected.borrowFields = {mapping};
           const auto source = borrowOriginPlace(selected, originCall);
           if (source == 0)
-            valid = false;
+            { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
           MirLoanId inputParent = 0;
           if (mapping.origin == BorrowOriginKind::Argument &&
               mapping.parameter < originCall.operands.size() &&
@@ -9573,8 +9611,13 @@ private:
         std::vector<MirLoanDependency> complete;
         for (const auto &dependency : value.borrowDependencies->dependencies) {
           const auto lowered = lowerCompleteBorrowDependency(dependency);
+          if (!lowered && std::getenv("GTI_TRACE_MIR_BODY")) { // TEMP-TRACE
+            std::fprintf(stderr, "[lcbd] v%llu root=%llu receiver=%d proj=%zu parent=%llu mapped=%d fields=%zu contents=%d access=%d\n", (unsigned long long)value.id, (unsigned long long)dependency.place.root, dependency.place.receiver, dependency.place.projections.size(), (unsigned long long)dependency.parent, semanticLoans.contains(dependency.parent), dependency.designatedFields.size(), dependency.referenceContents.has_value(), static_cast<int>(dependency.access)); // TEMP-TRACE
+            for (const auto &pl : output.places) if (pl.key) std::fprintf(stderr, "[lcbd]   place p%llu root=%llu recv=%d proj=%zu same=%d\n", (unsigned long long)pl.id, (unsigned long long)pl.key->root, pl.key->receiver, pl.key->projections.size(), *pl.key == dependency.place); // TEMP-TRACE
+            if (const auto m = semanticLoans.find(dependency.parent); m != semanticLoans.end()) if (const auto *l = output.findLoan(m->second)) std::fprintf(stderr, "[lcbd]   parent loan kind=%d entry=%d source=p%llu\n", static_cast<int>(l->kind), l->entry, (unsigned long long)l->source); // TEMP-TRACE
+          } // TEMP-TRACE
           if (!lowered) {
-            valid = false;
+            { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
             return;
           }
           auto selected = *lowered;
@@ -9585,7 +9628,7 @@ private:
                         selected.parent) != movedArgumentLoans.end()) {
             const auto *previous = output.findLoan(selected.parent);
             if (!previous) {
-              valid = false;
+              { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
               return;
             }
             std::optional<MirLoanId> externalParent;
@@ -9636,7 +9679,7 @@ private:
                               extra.access, extra.parent);
             }
             if (!externalParent || ambiguous) {
-              valid = false;
+              { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
               return;
             }
             if (kind == MirLoanKind::CallResult) {
@@ -9837,7 +9880,7 @@ private:
               physical = candidate;
             }
           if (ambiguous || physical == complete.end()) {
-            valid = false;
+            { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
             return;
           }
           std::rotate(complete.begin(), physical, physical + 1);
@@ -9860,7 +9903,7 @@ private:
                 CompilerCapabilityTypeKind::ErasedObject)
           published.storedDependency = 0;
         if (!call.result) {
-          valid = false;
+          { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
           return;
         }
         // The result value's transport may precede the places its call's
@@ -9929,7 +9972,7 @@ private:
     if (value.intrinsic == IntrinsicKind::ThreadScope) {
       if (value.scopedThreadTasks.size() != call.operands.size() ||
           argumentDependencies.size() != call.operands.size()) {
-        valid = false;
+        { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
       } else {
         for (std::size_t index = 0; index < call.operands.size(); ++index) {
           const auto *adapter =
@@ -9940,7 +9983,7 @@ private:
                   : MirLoanId{0};
           if (adapter == nullptr || !adapter->scoped ||
               (!adapter->scopeDependencies.empty() && loan == 0))
-            valid = false;
+            { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
           if (const auto *entry = output.findLoan(loan);
               entry != nullptr && entry->entry &&
               entry->kind == MirLoanKind::Stored) {
@@ -9976,7 +10019,7 @@ private:
     }
     for (const MirDropObligationId parameterDrop : preparedParameterDrops) {
       if (!removeTemporary(parameterDrop)) {
-        valid = false;
+        { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
       }
       appendLifecycle(call, {.kind = MirLifecycleEventKind::TransferOut,
                              .source = parameterDrop});
@@ -10021,6 +10064,8 @@ private:
     // The unreachable success continuation still carries the invocation's
     // exact temporary-input loan epilogue. Finish that epilogue before
     // sealing the block; failure cleanup is routed by appendInstruction.
+    if (std::getenv("GTI_TRACE_MIR_BODY")) // TEMP-TRACE
+      std::fprintf(stderr, "[emitcall] append v%llu valid=%d terminated=%d\n", (unsigned long long)value.id, valid, terminated()); // TEMP-TRACE
     (void)appendInstruction(std::move(call), true, true, !deferredUnreachable);
     // A by-value move transfers the shell and every dependency to the callee.
     // A returned carrier publishes its own checked dependency set; it is not
@@ -13840,12 +13885,22 @@ private:
     return sourceLoan;
   }
 
+  // Whether storing this value transfers a mutable reference parameter's
+  // entry capability rather than forming a new stored borrow.
+  [[nodiscard]] bool transfersMutableReferenceParameter(HirValueId valueId,
+                                                        AccessMode access) const {
+    const MirLoanId sourceLoan = loanForValue(valueId);
+    if (sourceLoan == 0 || sourceLoan > output.loans.size())
+      return false;
+    const MirLoan &source = output.loans[sourceLoan - 1];
+    return access == AccessMode::Mutable && source.entry &&
+           source.kind == MirLoanKind::Parameter && source.access == AccessMode::Mutable;
+  }
+
   void markStoredBorrow(HirValueId valueId, SymbolId field, AccessMode access) {
     if (const MirLoanId sourceLoan = loanForValue(valueId); sourceLoan != 0) {
       MirLoan &source = output.loans[sourceLoan - 1];
-      if (access == AccessMode::Mutable && source.entry &&
-          source.kind == MirLoanKind::Parameter &&
-          source.access == AccessMode::Mutable) {
+      if (transfersMutableReferenceParameter(valueId, access)) {
         // A mutable reference parameter is already the unique capability for
         // its referent. Storing it in the constructed value transfers that
         // capability; creating a sibling BorrowWrite would incorrectly model
@@ -17440,11 +17495,24 @@ private:
         const bool completeEmpty =
             result && completeEmptyBorrowValue(*statement.value, *result,
                                                output.returnType);
+        if (std::getenv("GTI_TRACE_MIR_SHAPE") && value) // TEMP-TRACE
+          std::fprintf(stderr, "[retlow] valueBorrowed=%d returnBorrowed=%d completeEmpty=%d returnKind=%d largs=%zu\n", // TEMP-TRACE
+                       value->info.traits.containsBorrowedState ? 1 : 0, // TEMP-TRACE
+                       resolvedTraits(output.returnType).containsBorrowedState ? 1 : 0, completeEmpty ? 1 : 0, // TEMP-TRACE
+                       static_cast<int>(output.returnType.kind), output.returnType.lifetimeArguments.size()); // TEMP-TRACE
         // A scalar loaded from a reference place uses its borrow while
         // evaluating the expression; it does not export that address with
         // the copied result. Keep expression-specific ownerless facts too.
+        // A text view has no structural borrowed state; its dependency is a
+        // property of the value. A function that declares a return dependency
+        // for its text result still publishes that dependency here.
+        const bool declaredTextReturn =
+            (output.returnType.kind == SemanticType::StringView ||
+             output.returnType.kind == SemanticType::CString) &&
+            bodyReturnBorrowOrigin() != BorrowOriginKind::None;
         if (value != nullptr && value->info.traits.containsBorrowedState &&
-            resolvedTraits(output.returnType).containsBorrowedState && !completeEmpty) {
+            (resolvedTraits(output.returnType).containsBorrowedState || declaredTextReturn) &&
+            !completeEmpty) {
           MirLoanId retained = loanForValue(*statement.value);
           if (retained == 0 &&
               (output.returnType.kind == SemanticType::Class ||
@@ -17534,8 +17602,11 @@ private:
             const bool exactStoredCarrierEntry =
                 retainedLoan.kind == MirLoanKind::Stored &&
                 retainedLoan.entry && !retainedLoan.designatedFields.empty();
+            // A text result relayed from a call keeps that call's CallResult
+            // loan; the published value is the call's own produced text.
             const bool exactDynamicTextEntry =
-                retainedLoan.kind == MirLoanKind::Stored &&
+                (retainedLoan.kind == MirLoanKind::Stored ||
+                 retainedLoan.kind == MirLoanKind::CallResult) &&
                 retainedLoan.designatedFields.empty() &&
                 (value->info.type.kind == SemanticType::StringView ||
                  value->info.type.kind == SemanticType::CString) &&

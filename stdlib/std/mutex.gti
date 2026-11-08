@@ -26,12 +26,12 @@ void mutex_unlock<std::movable T>(
     mut gti_internal::mutex_lock_token<T>& token);
 bool mutex_guard_active<std::movable T>(
     gti_internal::mutex_lock_token<T>& token);
-T& mutex_guard_read<std::movable T>(
-    gti_internal::mutex_storage<T>& storage,
-    gti_internal::mutex_lock_token<T>& token);
-mut T& mutex_guard_read_mut<std::movable T>(
-    gti_internal::mutex_storage<T>& storage,
-    gti_internal::mutex_lock_token<T>& token);
+T&<a> mutex_guard_read<std::movable T, lifetime a>(
+    gti_internal::mutex_storage<T>&<a> storage,
+    gti_internal::mutex_lock_token<T>&<a> token);
+mut T&<a> mutex_guard_read_mut<std::movable T, lifetime a>(
+    gti_internal::mutex_storage<T>&<a> storage,
+    gti_internal::mutex_lock_token<T>&<a> token);
 void mutex_lock_failure();
 }
 

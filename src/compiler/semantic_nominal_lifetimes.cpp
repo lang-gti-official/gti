@@ -25,6 +25,16 @@ auto SemanticVisitor::Impl::normalizeNominalStoredType(
     return;
   }
   std::vector<LifetimeBinding> bindings;
+  if (std::getenv("GTI_TRACE_NOMINAL")) { // TEMP-TRACE
+    std::fprintf(stderr, "[nominal] %s kind=%d largs=%zu ref=%d:%llu regions:", syntax.name.last().lexeme.c_str(), // TEMP-TRACE
+                 static_cast<int>(type.kind), type.lifetimeArguments.size(), static_cast<int>(type.referenceLifetime.kind), // TEMP-TRACE
+                 (unsigned long long)type.referenceLifetime.id); // TEMP-TRACE
+    for (const Lifetime region : declarationTypeLifetimes(type)) // TEMP-TRACE
+      std::fprintf(stderr, " %d:%llu", static_cast<int>(region.kind), (unsigned long long)region.id); // TEMP-TRACE
+    for (const Lifetime region : type.lifetimeArguments) // TEMP-TRACE
+      std::fprintf(stderr, " arg=%d:%llu", static_cast<int>(region.kind), (unsigned long long)region.id); // TEMP-TRACE
+    std::fprintf(stderr, "\n"); // TEMP-TRACE
+  } // TEMP-TRACE
   for (const Lifetime region : declarationTypeLifetimes(type)) {
     if (region.kind != Lifetime::Kind::Inference)
       continue;
@@ -399,6 +409,8 @@ auto SemanticVisitor::Impl::validateNominalFormation(
   if (requestSession.deferredNominalFormation)
     return; // The declaration's normalized contract retains these premises.
   SemanticLifetimeApplication application;
+  if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+    std::fprintf(stderr, "[formation] kind=%d class=%llu line=%u\n", static_cast<int>(type.kind), (unsigned long long)type.classId, static_cast<unsigned>(site.line)); // TEMP-TRACE
   if (!applyLifetimeRequirements(*formula, application, site, true))
     return;
   for (const auto edge : application.obligations)

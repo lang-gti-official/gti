@@ -532,16 +532,51 @@ const CallableLifetimeSignature *checkedMirCallableLifetimeSignature(
 }
 
 namespace {
+// A projection-free receiver key names the whole receiver object.
+[[nodiscard]] bool wholeReceiverKey(const PlaceKey &key) {
+  return key.valid() && key.receiver && key.root == 0 && key.projections.empty();
+}
+
+// Lowered `This` places carry no separate semantic key, yet a projection-free
+// `This` root designates exactly the receiver object, so every such alias is
+// that one exact place. Lambda bodies root their environment at `This` and
+// never use the receiver key form, so they are excluded.
+[[nodiscard]] bool keylessWholeReceiverPlace(const MirBody &body,
+                                             const MirPlace &place) {
+  return body.kind != MirBodyKind::Lambda && !place.key &&
+         place.root == MirPlaceRootKind::This && place.projections.empty() &&
+         place.capture == 0;
+}
+
+// A field, base or element of the receiver reached without any dereference is
+// inline storage of the receiver object and lives exactly as long as it, so
+// the whole-receiver origin also proves its validity. A dereference reaches an
+// external referent whose region is unrelated and never qualifies.
+[[nodiscard]] bool inlineReceiverSubobject(const MirBody &body,
+                                           const MirPlace &place) {
+  return body.kind != MirBodyKind::Lambda &&
+         place.root == MirPlaceRootKind::This && place.capture == 0 &&
+         std::all_of(place.projections.begin(), place.projections.end(),
+                     [](const MirPlaceProjection &projection) {
+                       return projection.kind == MirProjectionKind::Field ||
+                              projection.kind == MirProjectionKind::Base ||
+                              projection.kind == MirProjectionKind::Index;
+                     });
+}
+
 template <typename Facts>
 bool resolveOrigins(Facts &application, const MirBody &body) {
   for (auto &origin : application.origins) {
     const MirPlace *selected = nullptr;
     if (!origin.key.valid() && origin.source == 0)
       return false;
+    const bool wholeReceiver = wholeReceiverKey(origin.key);
     for (const auto &place : body.places) {
       const bool matches =
-          origin.key.valid() ? place.key && *place.key == origin.key
-                             : place.sourceValue == origin.source &&
+          origin.key.valid()
+              ? (place.key ? *place.key == origin.key
+                           : wholeReceiver && keylessWholeReceiverPlace(body, place))
+              : place.sourceValue == origin.source &&
                                    place.projections.empty() &&
                                    (place.root == MirPlaceRootKind::Temporary ||
                                     place.root == MirPlaceRootKind::Value);
@@ -558,8 +593,25 @@ bool resolveOrigins(Facts &application, const MirBody &body) {
         selected = &place;
     }
     if (!selected || selected->id == 0 ||
-        (origin.place != 0 && origin.place != selected->id))
+        (origin.place != 0 && origin.place != selected->id)) {
+      if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { // TEMP-TRACE
+        std::fprintf(stderr, "[origin] keyValid=%d source=%llu selected=%llu originPlace=%llu root=%llu receiver=%d proj=%zu first=%d/%llu domainMatchesBody=%d\n", // TEMP-TRACE
+                     origin.key.valid() ? 1 : 0, (unsigned long long)origin.source, // TEMP-TRACE
+                     (unsigned long long)(selected ? selected->id : 0), (unsigned long long)origin.place, // TEMP-TRACE
+                     (unsigned long long)origin.key.root, origin.key.receiver ? 1 : 0, origin.key.projections.size(), // TEMP-TRACE
+                     origin.key.projections.empty() ? -1 : static_cast<int>(origin.key.projections.front().kind), // TEMP-TRACE
+                     origin.key.projections.empty() ? 0ull : (unsigned long long)origin.key.projections.front().field, // TEMP-TRACE
+                     origin.key.domain == body.placeDomain ? 1 : 0); // TEMP-TRACE
+        for (const auto &place : body.places) // TEMP-TRACE
+          if ((place.root == MirPlaceRootKind::This && place.projections.empty()) || // TEMP-TRACE
+              (origin.source && place.sourceValue == origin.source) || // TEMP-TRACE
+              (origin.key.valid() && place.key && place.key->root == origin.key.root)) // TEMP-TRACE
+            std::fprintf(stderr, "[origin]   place=%llu root=%d projections=%zu hasKey=%d keyEq=%d\n", // TEMP-TRACE
+                         (unsigned long long)place.id, static_cast<int>(place.root), place.projections.size(), // TEMP-TRACE
+                         place.key ? 1 : 0, place.key && *place.key == origin.key ? 1 : 0); // TEMP-TRACE
+      } // TEMP-TRACE
       return false;
+    }
     origin.place = selected->id;
   }
   return true;
@@ -838,7 +890,8 @@ std::optional<SemanticType> instantiateMirCallableOwnerType(
   const auto owner = checkedMirCallableOwnerType(
       program, function.owner, function.ownerType, function.lifetimeContract);
   const auto signature = owner ? instantiateMirLifetimeSignature(
-      function.lifetimeContract, *owner, function.parameterTypes, application) : std::nullopt;
+      function.lifetimeContract, *owner, function.parameterTypes, application,
+      &function.ownerType) : std::nullopt;
   return signature ? std::optional{signature->returnType} : std::nullopt;
 }
 
@@ -846,7 +899,8 @@ std::optional<MirInstantiatedLifetimeSignature>
 instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
                                 const SemanticType &returnType,
                                 std::span<const SemanticType> parameterTypes,
-                                const MirLifetimeApplication &application) {
+                                const MirLifetimeApplication &application,
+                                const SemanticType *receiverOwner) {
   const bool regionSignature =
       containsLifetimeMetadata(returnType) ||
       std::any_of(parameterTypes.begin(), parameterTypes.end(),
@@ -913,6 +967,11 @@ instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
       return std::nullopt;
   }
   for (const auto &bound : contract.typeBounds) {
+    // The call's actual argument discharges a bound implied by a reference
+    // parameter; semantics records no separate obligation for it.
+    if (typeBoundImpliedByReferenceParameter(bound, parameterTypes) ||
+        (receiverOwner && typeBoundImpliedByReceiver(bound, contract, *receiverOwner)))
+      continue;
     auto type = substituteTypeLifetimes(bound.type, application.bindings);
     if (!type)
       return std::nullopt;
@@ -1564,7 +1623,7 @@ appliedTargetSignature(const MirProgram &program,
       return std::nullopt;
     return instantiateMirLifetimeSignature(
         target->lifetimeContract, target->returnType, target->parameterTypes,
-        instruction.lifetimeApplication);
+        instruction.lifetimeApplication, target->owner ? &target->ownerType : nullptr);
   }
   if (instruction.constructorTarget) {
     const auto *target =
@@ -1717,9 +1776,34 @@ public:
     if (actual->kind == MirOperandKind::Value)
       if (const auto *stage = definition(actual->value);
           stage && stage->kind == MirInstructionKind::CallInput &&
-          stage->info.type.kind == SemanticType::Reference)
-        return !stage->tombstone &&
-               graph.proves(stage->info.type.referenceLifetime, target);
+          stage->info.type.kind == SemanticType::Reference) {
+        if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { // TEMP-TRACE
+          const auto *op = stage->operands.empty() ? nullptr : &stage->operands.front(); // TEMP-TRACE
+          const auto *pl = op && op->place ? body.findPlace(op->place) : nullptr; // TEMP-TRACE
+          std::fprintf(stderr, "[recv]   stage role=%d lifetime=%d:%llu ops=%zu opKind=%d opPlace=%llu root=%d proj=%zu\n", // TEMP-TRACE
+                       stage->callInputRole ? static_cast<int>(*stage->callInputRole) : -1, static_cast<int>(stage->info.type.referenceLifetime.kind), // TEMP-TRACE
+                       (unsigned long long)stage->info.type.referenceLifetime.id, stage->operands.size(), // TEMP-TRACE
+                       op ? static_cast<int>(op->kind) : -1, op ? (unsigned long long)op->place : 0ull, // TEMP-TRACE
+                       pl ? static_cast<int>(pl->root) : -1, pl ? pl->projections.size() : 0); // TEMP-TRACE
+        } // TEMP-TRACE
+        if (stage->tombstone)
+          return false;
+        if (graph.proves(stage->info.type.referenceLifetime, target))
+          return true;
+        // A receiver stage that directly borrows a place lends exactly that
+        // place for this call. Its own region may be a fresh placeholder;
+        // the place's checked origin then supplies the validity proof. This
+        // never applies to an argument stage or a checked expression region.
+        if (stage->callInputRole == MirCallInputRole::Receiver &&
+            stage->operands.size() == 1) {
+          const auto &input = stage->operands.front();
+          if ((input.kind == MirOperandKind::BorrowRead ||
+               input.kind == MirOperandKind::BorrowWrite) && input.place)
+            if (const auto *place = body.findPlace(input.place))
+              return originPlaceProves(*place, target);
+        }
+        return false;
+      }
     // A checked expression's own declared/instantiated reference region takes
     // precedence over older supplier places; a shortened alias cannot regain
     // a longer region merely because its physical owner survives longer.
@@ -1766,6 +1850,8 @@ public:
         if (known.specified())
           return graph.proves(known, target);
         if (originPlaceProves(*place, target))
+          return true;
+        if (loanSubobjectProves(*place, target))
           return true;
       }
     if (actual->kind == MirOperandKind::Loan)
@@ -2061,12 +2147,25 @@ private:
   }
 
   bool originPlaceProves(const MirPlace &place, Lifetime target) const {
+    const bool receiverAlias = inlineReceiverSubobject(body, place);
     for (const auto &origin : body.lifetimeBody.origins)
       if ((origin.place == place.id ||
-           (place.key && origin.key.valid() && *place.key == origin.key)) &&
+           (place.key && origin.key.valid() && *place.key == origin.key) ||
+           (receiverAlias && wholeReceiverKey(origin.key))) &&
           graph.proves(origin.region, target))
         return true;
     return false;
+  }
+
+  // A loan's referent, and any inline field chain over it, lives in exactly
+  // that loan's region; a dereference, index or payload selection needs its
+  // own proof.
+  bool loanSubobjectProves(const MirPlace &place, Lifetime target,
+                           std::size_t depth = 0) const {
+    return place.root == MirPlaceRootKind::Loan && place.loan &&
+           std::all_of(place.projections.begin(), place.projections.end(),
+                       [](const auto &part) { return part.kind == MirProjectionKind::Field; }) &&
+           loanProves(place.loan, target, depth + 1);
   }
 
   bool loanProves(MirLoanId id, Lifetime target, std::size_t depth) const {
@@ -2098,7 +2197,8 @@ private:
         return false;
       const auto region = declaredPlaceRegion(*place);
       return region.specified() ? graph.proves(region, target)
-                                : originPlaceProves(*place, target);
+                                : originPlaceProves(*place, target) ||
+                                      loanSubobjectProves(*place, target, depth);
     };
     bool proved = loan->source   ? sourceProves(loan->source)
                   : loan->parent ? loanProves(loan->parent, target, depth + 1)
@@ -2167,6 +2267,28 @@ bool mirLifetimeReferenceConversion(
         .message = "MIR reference conversion is not proved in every lifetime assumption case"}}};
   }).valid();
 }
+
+namespace {
+// A call may denote its returned reference by the CallResult loan it produces
+// while the instruction itself carries the referent value. An overloaded
+// subscript store does this: the stored value is committed through that loan
+// after the call. The reference shape is then that exact loan's access, never
+// an assumption from the instruction's value category.
+bool publishesCallResultLoan(const MirBody &body, const MirInstruction &instruction,
+                             AccessMode access) {
+  if (instruction.kind != MirInstructionKind::Call || !instruction.result ||
+      instruction.hirValue == 0)
+    return false;
+  std::size_t published = 0;
+  for (const auto &loan : body.loans)
+    if (loan.kind == MirLoanKind::CallResult && loan.producedBy == instruction.hirValue) {
+      if (loan.access != access)
+        return false;
+      ++published;
+    }
+  return published == 1;
+}
+} // namespace
 
 bool mirLifetimeValueConversion(
     const MirProgram &program, const MirBody &body, std::size_t owner,
@@ -2358,6 +2480,28 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
                                instruction.lambdaTarget || instruction.nativeCalleeType ||
                                instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke ||
                                referenceErasureIntrinsic(instruction.intrinsic);
+        if (!hasTarget &&
+            (instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
+             instruction.intrinsic == IntrinsicKind::CStringFromAddress)) {
+          // The operation determines this contract: the produced text is valid
+          // only while its witness owner stays borrowed. Structural checks
+          // prove that the result loan borrows exactly that witness; here the
+          // witness borrow must independently outlive the text's own region.
+          // The attached application cannot add a stronger result region.
+          const std::size_t witness =
+              instruction.intrinsic == IntrinsicKind::TextViewFromAddress ? 2 : 1;
+          const auto &text = instruction.info.type;
+          const Lifetime region = text.lifetimeArguments.size() == 1
+                                      ? text.lifetimeArguments.front() : Lifetime{};
+          if (instruction.kind != MirInstructionKind::Call ||
+              instruction.operands.size() != witness + 1 ||
+              (region.specified() &&
+               !relations.borrowedOperand(instruction.operands[witness], region,
+                                          instruction.hirValue)))
+            reject("MIR text address result does not prove its witness owner region",
+                   block.id, instruction.id);
+          continue;
+        }
         if (!hasTarget) {
           const auto &application = instruction.lifetimeApplication;
           if (!application.bindings.empty() || !application.variables.empty() ||
@@ -2481,10 +2625,35 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
                !relations.borrowedOperand(
                    *instruction.receiver,
                    applyLifetime(target->lifetimeContract.receiver,
-                                 instruction.lifetimeApplication.bindings))))
+                                 instruction.lifetimeApplication.bindings)))) {
+            if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { // TEMP-TRACE
+              const auto required = applyLifetime(target->lifetimeContract.receiver, // TEMP-TRACE
+                                                  instruction.lifetimeApplication.bindings); // TEMP-TRACE
+              std::fprintf(stderr, "[recv] body=%d inst=%llu required=%d:%llu hasReceiver=%d\n", static_cast<int>(body.kind), // TEMP-TRACE
+                           (unsigned long long)instruction.id, static_cast<int>(required.kind), (unsigned long long)required.id, // TEMP-TRACE
+                           instruction.receiver ? 1 : 0); // TEMP-TRACE
+              if (instruction.receiver) { // TEMP-TRACE
+                const auto &op = *instruction.receiver; // TEMP-TRACE
+                const auto *pl = op.place ? body.findPlace(op.place) : nullptr; // TEMP-TRACE
+                const auto *ln = op.kind == MirOperandKind::Loan ? body.findLoan(op.loan) : nullptr; // TEMP-TRACE
+                std::fprintf(stderr, "[recv]   operand kind=%d place=%llu root=%d proj=%zu key=%d loan=%llu loanKind=%d loanPlace=%llu\n", // TEMP-TRACE
+                             static_cast<int>(op.kind), (unsigned long long)op.place, pl ? static_cast<int>(pl->root) : -1, // TEMP-TRACE
+                             pl ? pl->projections.size() : 0, pl && pl->key ? 1 : 0, (unsigned long long)op.loan, // TEMP-TRACE
+                             ln ? static_cast<int>(ln->kind) : -1, ln ? (unsigned long long)ln->source : 0ull); // TEMP-TRACE
+                if (ln) if (const auto *lp = body.findPlace(ln->source)) // TEMP-TRACE
+                  std::fprintf(stderr, "[recv]   loan place root=%d proj=%zu key=%d\n", static_cast<int>(lp->root), lp->projections.size(), lp->key ? 1 : 0); // TEMP-TRACE
+              } // TEMP-TRACE
+              for (const auto &origin : body.lifetimeBody.origins) // TEMP-TRACE
+                std::fprintf(stderr, "[recv]   origin place=%llu receiverKey=%d region=%d:%llu\n", (unsigned long long)origin.place, // TEMP-TRACE
+                             origin.key.receiver ? 1 : 0, static_cast<int>(origin.region.kind), (unsigned long long)origin.region.id); // TEMP-TRACE
+              for (const auto &edge : body.lifetimeBody.obligations) // TEMP-TRACE
+                std::fprintf(stderr, "[recv]   obligation %d:%llu >= %d:%llu\n", static_cast<int>(edge.longer.kind), (unsigned long long)edge.longer.id, // TEMP-TRACE
+                             static_cast<int>(edge.shorter.kind), (unsigned long long)edge.shorter.id); // TEMP-TRACE
+            } // TEMP-TRACE
             reject(
                 "MIR receiver does not prove its required region relationship",
                 block.id, instruction.id);
+          }
           if (target && target->owner && !target->staticMember && instruction.receiver) {
             const auto expectedOwner = instantiateMirCallableOwnerType(
                 program, *target, instruction.lifetimeApplication);
@@ -2513,11 +2682,36 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
             (returned.kind == SemanticType::Reference
                  ? returned.arguments.size() != 1 ||
                        !equivalentLifetimeTypes(instruction.info.type, returned.arguments.front()) ||
-                       instruction.info.category != ValueCategory::Place ||
-                       instruction.info.access != returned.referenceAccess
-                 : !equivalentLifetimeTypes(instruction.info.type, returned)))
+                       !(instruction.info.category == ValueCategory::Place
+                             ? instruction.info.access == returned.referenceAccess
+                             : publishesCallResultLoan(body, instruction,
+                                                       returned.referenceAccess))
+                 : !equivalentLifetimeTypes(instruction.info.type, returned))) {
+          if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { // TEMP-TRACE
+            const auto dump = [](const auto &self, const SemanticType &type) -> std::string { // TEMP-TRACE
+              std::string out = "k" + std::to_string(static_cast<int>(type.kind)); // TEMP-TRACE
+              if (type.classId) out += "#c" + std::to_string(type.classId); // TEMP-TRACE
+              if (type.kind == SemanticType::Reference) // TEMP-TRACE
+                out += "&a" + std::to_string(static_cast<int>(type.referenceAccess)) + "<" + // TEMP-TRACE
+                       std::to_string(static_cast<int>(type.referenceLifetime.kind)) + ":" + // TEMP-TRACE
+                       std::to_string(type.referenceLifetime.id) + ">"; // TEMP-TRACE
+              for (const auto &l : type.lifetimeArguments) // TEMP-TRACE
+                out += "{" + std::to_string(static_cast<int>(l.kind)) + ":" + std::to_string(l.id) + "}"; // TEMP-TRACE
+              if (!type.arguments.empty()) { out += "("; for (const auto &a : type.arguments) out += self(self, a) + ","; out += ")"; } // TEMP-TRACE
+              return out; // TEMP-TRACE
+            }; // TEMP-TRACE
+            std::fprintf(stderr, "[sig] inst=%llu kind=%d result=%d operands=%zu actual=%s cat=%d acc=%d returned=%s\n", // TEMP-TRACE
+                         (unsigned long long)instruction.id, static_cast<int>(instruction.kind), instruction.result ? 1 : 0, instruction.operands.size(), dump(dump, instruction.info.type).c_str(), // TEMP-TRACE
+                         static_cast<int>(instruction.info.category), static_cast<int>(instruction.info.access), // TEMP-TRACE
+                         dump(dump, returned).c_str()); // TEMP-TRACE
+            for (const auto &loan : body.loans) // TEMP-TRACE
+              if (loan.producedBy == instruction.hirValue) // TEMP-TRACE
+                std::fprintf(stderr, "[sig]   loan=%llu kind=%d access=%d hirValue=%llu\n", (unsigned long long)loan.id, // TEMP-TRACE
+                             static_cast<int>(loan.kind), static_cast<int>(loan.access), (unsigned long long)instruction.hirValue); // TEMP-TRACE
+          } // TEMP-TRACE
           reject("MIR result differs from its lifetime-instantiated signature",
                  block.id, instruction.id);
+        }
       }
       if ((instruction.kind == MirInstructionKind::Initialize ||
            instruction.kind == MirInstructionKind::Assign) &&
@@ -2664,9 +2858,10 @@ bool appliedSignatureMatches(
 bool mirLifetimeParameterTypesMatch(std::span<const SemanticType> selected,
                                     std::span<const SemanticType> declared,
                                     const LifetimeSignatureContract &contract,
-                                    const MirLifetimeApplication &application) {
+                                    const MirLifetimeApplication &application,
+                                    const SemanticType *receiverOwner) {
   const auto signature = instantiateMirLifetimeSignature(
-      contract, SemanticType::Void, declared, application);
+      contract, SemanticType::Void, declared, application, receiverOwner);
   return signature &&
          canonicalLifetimeParameters(selected) ==
              canonicalLifetimeParameters(signature->parameterTypes);
@@ -2676,7 +2871,12 @@ bool mirLifetimeCallSignatureMatches(const MirInstruction &instruction,
                                      const MirFunctionInstance &target) {
   const auto signature = instantiateMirLifetimeSignature(
       target.lifetimeContract, target.returnType, target.parameterTypes,
-      instruction.lifetimeApplication);
+      instruction.lifetimeApplication, target.owner ? &target.ownerType : nullptr);
+  if (std::getenv("GTI_TRACE_MIR_ORIGIN") && (!signature || !appliedSignatureMatches(instruction, *signature))) { // TEMP-TRACE
+    std::fprintf(stderr, "[sigm] target=%llu signature=%d typeBounds=%zu appTypeObl=%zu bindings=%zu\n", (unsigned long long)target.id, signature.has_value(), target.lifetimeContract.typeBounds.size(), instruction.lifetimeApplication.typeObligations.size(), instruction.lifetimeApplication.bindings.size()); // TEMP-TRACE
+    for (const auto &b : target.lifetimeContract.typeBounds) // TEMP-TRACE
+      std::fprintf(stderr, "[sigm]   bound class=%llu region=%d:%llu receiver=%d:%llu ownerClass=%llu implied=%d\n", (unsigned long long)b.type.classId, static_cast<int>(b.region.kind), (unsigned long long)b.region.id, static_cast<int>(target.lifetimeContract.receiver.kind), (unsigned long long)target.lifetimeContract.receiver.id, (unsigned long long)target.ownerType.classId, typeBoundImpliedByReceiver(b, target.lifetimeContract, target.ownerType)); // TEMP-TRACE
+  } // TEMP-TRACE
   return signature && appliedSignatureMatches(instruction, *signature);
 }
 bool mirLifetimeCallSignatureMatches(const MirInstruction &instruction,

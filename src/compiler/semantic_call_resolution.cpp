@@ -9095,7 +9095,11 @@ auto SemanticVisitor::Impl::reportOverloadResolutionFailure(
 auto SemanticVisitor::Impl::callConversionRank(const SemanticType &parameter,
                                                const SemanticType &argument)
     -> int {
-  if (parameter == argument) {
+  // Ranking compares conversion shape only. Regions never select an overload:
+  // a universal parameter region accepts any actual region, and the selected
+  // call's lifetime application proves every relationship afterwards.
+  if (parameter == argument ||
+      eraseTypeLifetimes(parameter) == eraseTypeLifetimes(argument)) {
     return 0;
   }
   if (parameter.kind == SemanticType::CString) {
@@ -9115,7 +9119,8 @@ auto SemanticVisitor::Impl::callConversionRank(const SemanticType &parameter,
   }
   if (argument.kind == SemanticType::RawPointer &&
       parameter.arguments.size() == 1 && argument.arguments.size() == 1 &&
-      parameter.arguments.front() == argument.arguments.front() &&
+      eraseTypeLifetimes(parameter.arguments.front()) ==
+          eraseTypeLifetimes(argument.arguments.front()) &&
       parameter.pointerAccess == AccessMode::ReadOnly &&
       argument.pointerAccess == AccessMode::Mutable) {
     return 1;

@@ -387,4 +387,42 @@ inline SemanticType eraseTypeLifetimes(SemanticType type) {
   return type;
 }
 
+// Whether a callable's type bound `U: a` is the bound implied by one of its
+// reference parameters `U&<a>`. Such a bound is the callee's assumption; at a
+// call the actual argument discharges it, because its conversion proves its own
+// region covers `a` and a checked reference is only formed from storage valid
+// for its region. Semantics and MIR verification share this one rule.
+inline bool typeBoundImpliedByReferenceParameter(const LifetimeTypeBound &bound,
+                                                 std::span<const SemanticType> parameters) {
+  const auto occurs = [&](auto &&self, const SemanticType &type, std::size_t depth) -> bool {
+    if (depth > 32 || type.kind == SemanticType::FunctionSignature ||
+        type.kind == SemanticType::FunctionItem || type.kind == SemanticType::Lambda ||
+        !type.quantifiedLifetimes.empty())
+      return false;
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
+        type.referenceLifetime == bound.region &&
+        equivalentLifetimeTypes(type.arguments.front(), bound.type))
+      return true;
+    return std::any_of(type.arguments.begin(), type.arguments.end(),
+                       [&](const SemanticType &child) { return self(self, child, depth + 1); });
+  };
+  return std::any_of(parameters.begin(), parameters.end(),
+                     [&](const SemanticType &parameter) { return occurs(occurs, parameter, 0); });
+}
+
+// Whether a method's type bound is the receiver premise `Owner: this` that
+// declaration normalization adds for its receiver reference `Owner&<this>`.
+// `owner` is the call's actual receiver type (its regions are the caller's).
+// Like a reference parameter's implied bound, the actual receiver discharges
+// it: a checked receiver reference exists only for storage valid for its
+// region. Any other bound on the receiver region remains an obligation.
+inline bool typeBoundImpliedByReceiver(const LifetimeTypeBound &bound,
+                                       const LifetimeSignatureContract &contract,
+                                       const SemanticType &owner) {
+  return contract.receiver.specified() && bound.region == contract.receiver &&
+         owner.kind == SemanticType::Class && bound.type.kind == SemanticType::Class &&
+         bound.type.classId == owner.classId &&
+         eraseTypeLifetimes(bound.type) == eraseTypeLifetimes(owner);
+}
+
 } // namespace lang

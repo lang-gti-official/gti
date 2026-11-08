@@ -1129,7 +1129,10 @@ auto SemanticVisitor::Impl::callArgumentMatches(const SemanticType &parameter,
     if (parameter.kind == SemanticType::NativeFunction) {
       return isAssignable(parameter, argument, expression.get());
     }
-    if (parameter == argument && expression &&
+    // Viability compares stored shape; the selected call proves its regions.
+    const bool sameShape = parameter == argument ||
+                           eraseTypeLifetimes(parameter) == eraseTypeLifetimes(argument);
+    if (sameShape && expression &&
         parameter.kind != SemanticType::TypePack) {
       const ExpressionInfo *info = semanticModel.findExpression(*expression);
       if (info != nullptr) {
@@ -1142,13 +1145,15 @@ auto SemanticVisitor::Impl::callArgumentMatches(const SemanticType &parameter,
     }
     return allowValueAssignment
                ? isAssignable(parameter, argument, expression.get())
-               : parameter == argument;
+               : sameShape;
   }
   if (parameter.arguments.size() != 1 || !expression) {
     return false;
   }
   const SemanticType &referent = parameter.arguments[0];
-  if (referent != argument && !isPublicBaseConversion(argument, referent)) {
+  if (referent != argument &&
+      eraseTypeLifetimes(referent) != eraseTypeLifetimes(argument) &&
+      !isPublicBaseConversion(argument, referent)) {
     return false;
   }
   const ExpressionInfo *info = semanticModel.findExpression(*expression);
@@ -6095,7 +6100,15 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
       return; // No provisional place or supplier: the concrete call must prove both.
   }
   const SemanticType &referent = reference.arguments[0];
+  // The same referent shape with other regions is a checked lifetime
+  // conversion: covariant behind a read-only reference, exact behind `mut`.
   if (valueType != SemanticType::Unknown && valueType != referent &&
+      eraseTypeLifetimes(valueType) == eraseTypeLifetimes(referent)) {
+    if (!applyLifetimeValueConversion(
+            valueType, referent, expressionToken(value),
+            reference.referenceAccess == AccessMode::Mutable ? 0 : 1, false, true))
+      return;
+  } else if (valueType != SemanticType::Unknown && valueType != referent &&
       !isPublicBaseConversion(valueType, referent)) {
     report(expressionToken(value),
            "Reference return requires an exact '" + typeSpelling(referent) +
@@ -6369,8 +6382,8 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   // carrier shell: its storage check above remains independent.
   const auto completeResult = completeBorrowDependencySet(value);
   if (lifetimeReferenceContract && valueInfo->category == ValueCategory::Place) {
-    if (const auto region = borrowedExpressionLifetime(value.get());
-        region.specified() &&
+    const auto region = borrowedExpressionLifetime(value.get());
+    if (region.specified() &&
         !requireLifetimeRelationship(region, function->returnType.referenceLifetime,
                                       expressionToken(value)))
       return;
@@ -6398,6 +6411,52 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
         dependencies.push_back(std::move(dependency));
       }
     }
+    const auto ownerShaped = [&](const auto &candidates) {
+      return !candidates.empty() &&
+             std::all_of(candidates.begin(), candidates.end(), [&](const auto &dependency) {
+               return dependency.place.valid() && dependency.designatedFields.empty() &&
+                      dependency.conditions.empty() &&
+                      (function->returnType.referenceAccess == AccessMode::ReadOnly ||
+                       dependency.access == AccessMode::Mutable);
+             });
+    };
+    // A subobject of a reference-producing call has that referent's physical
+    // owners. Use them when no owner-shaped set describes this place; stored
+    // contents of the subobject describe external referents, not its address.
+    if (!completeResult && !ownerShaped(dependencies) &&
+        !isBorrowedCarrierReference(function->returnType))
+      if (const auto physical = physicalReferenceReturnBorrow(
+              value, function->returnType.referenceAccess);
+          physical && ownerShaped(physical->dependencies))
+        dependencies = physical->dependencies;
+    // An inline field of a reference-producing call whose producer has no
+    // owner-shaped set (for example one reached through a stored reference
+    // field): the call's checked result region, proved against the declared
+    // result above, is the lifetime evidence. MIR independently replays the
+    // producer's verified summary for the returned subobject.
+    if (!completeResult && !ownerShaped(dependencies) && region.specified() &&
+        (function->returnType.referenceAccess == AccessMode::ReadOnly ||
+         valueInfo->access == AccessMode::Mutable)) {
+      const Expr *object = value.get();
+      bool inlineField = false;
+      while (const auto *member = exprAs<Get>(object)) {
+        const auto *resolved = findMember(memberAccessObjectType(*member), member->name());
+        if (!resolved || resolved->symbol.type.kind == SemanticType::Reference)
+          break;
+        inlineField = true;
+        object = member->object().get();
+        while (const auto *group = exprAs<Grouping>(object))
+          object = group->expression().get();
+      }
+      if (inlineField && object && exprAs<Call>(object) &&
+          borrowedExpressionLifetime(object).specified())
+        return;
+    }
+    if (std::getenv("GTI_TRACE_LIFETIME_REQ")) { // TEMP-TRACE
+      std::fprintf(stderr, "[retown] line=%d complete=%d deps=%zu\n", expressionToken(value).line, completeResult.has_value(), dependencies.size()); // TEMP-TRACE
+      for (const auto &d : dependencies) // TEMP-TRACE
+        std::fprintf(stderr, "[retown]  valid=%d fields=%zu conds=%zu access=%d parent=%llu contents=%d\n", d.place.valid(), d.designatedFields.size(), d.conditions.size(), static_cast<int>(d.access), (unsigned long long)d.parent, d.referenceContents.has_value()); // TEMP-TRACE
+    } // TEMP-TRACE
     // The source's dependency set is conservative at branch joins. Every
     // possible owner must satisfy the declared result region; a successful
     // branch must not be selected merely because one owner happens to fit.
@@ -6416,6 +6475,8 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       const SemanticBorrowDependencySet checked{
           .dependencies = std::move(dependencies)};
       std::vector<LifetimeBound> required;
+      if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+        std::fprintf(stderr, "[retown] line=%d normalized=%d\n", expressionToken(value).line, normalizedCompleteReturnBorrow(*function, checked, nullptr, value.get()).has_value()); // TEMP-TRACE
       if (normalizedCompleteReturnBorrow(
               *function, checked,
               loanFlow.collectingLifetimeContract ? &required : nullptr, value.get())) {

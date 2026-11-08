@@ -49,7 +49,7 @@ namespace application {
     if (enabled) { action(); }
   }
   #macro F retain_callable<F>(F expression) { return expression; }
-  #macro std::string_view written<T>(T expression) {
+  #macro std::string_view<static> written<T>(T expression) {
     return std::expression_text!(expression);
   }
   #macro positive<T>(T value) requires std::numeric<T> {

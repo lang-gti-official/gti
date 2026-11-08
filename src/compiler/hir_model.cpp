@@ -3499,11 +3499,14 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           (primaryDeferred && range != nullptr && exactConcreteTypes) ||
           (semantic != nullptr && range != nullptr && exactConcreteTypes &&
            (genericSemantic || range->strategy == semantic->strategy) &&
-           (genericSemantic || (range->rangeType == semantic->rangeType &&
-                                range->iteratorType == semantic->iteratorType &&
-                                range->sentinelType == semantic->sentinelType &&
-                                range->elementType == semantic->elementType &&
-                                range->arrayLength == semantic->arrayLength)) &&
+           // Plan identity is structural: an anonymous iterator slot may get a
+           // fresh inference region per analysis; MIR proves the regions.
+           (genericSemantic ||
+            (eraseTypeLifetimes(range->rangeType) == eraseTypeLifetimes(semantic->rangeType) &&
+             eraseTypeLifetimes(range->iteratorType) == eraseTypeLifetimes(semantic->iteratorType) &&
+             eraseTypeLifetimes(range->sentinelType) == eraseTypeLifetimes(semantic->sentinelType) &&
+             eraseTypeLifetimes(range->elementType) == eraseTypeLifetimes(semantic->elementType) &&
+             range->arrayLength == semantic->arrayLength)) &&
            range->elementAccess == semantic->elementAccess &&
            exactLoanProvenance &&
            (genericSemantic ||
@@ -3648,6 +3651,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       if (!exactSemantic || !exactStructure || !exactLoans || !exactStrategy ||
           !exactOwner || range == nullptr || !exactEndpointResult ||
           !exactElementStaging) {
+        if (std::getenv("GTI_TRACE_HIR_VALID") && semantic && range) // TEMP-TRACE
+          std::fprintf(stderr, "[range]  concrete=%d deferred=%d generic=%d strat=%d rt=%d it=%d st=%d et=%d len=%d acc=%d prov=%d fns=%d owns=%d nb=%d mat=%d\n", exactConcreteTypes, primaryDeferred, genericSemantic, range->strategy == semantic->strategy, range->rangeType == semantic->rangeType, range->iteratorType == semantic->iteratorType, range->sentinelType == semantic->sentinelType, range->elementType == semantic->elementType, range->arrayLength == semantic->arrayLength, range->elementAccess == semantic->elementAccess, exactLoanProvenance, range->beginFunction == semantic->beginFunction && range->endFunction == semantic->endFunction && range->compareFunction == semantic->compareFunction && range->dereferenceFunction == semantic->dereferenceFunction && range->incrementFunction == semantic->incrementFunction, range->ownsRangeTemporary == semantic->ownsRangeTemporary, range->nonBorrowingEndpoint == semantic->nonBorrowingEndpoint, range->materializesElementValue == semantic->materializesElementValue); // TEMP-TRACE
+        if (std::getenv("GTI_TRACE_HIR_VALID") && semantic && range) { // TEMP-TRACE
+          const auto dump = [](auto &&self, const SemanticType &t) -> std::string { std::string o = std::to_string(static_cast<int>(t.kind)) + ":" + std::to_string(t.classId) + "<" + std::to_string(static_cast<int>(t.referenceLifetime.kind)) + "." + std::to_string(t.referenceLifetime.id) + ">"; for (const auto &l : t.lifetimeArguments) o += "{" + std::to_string(static_cast<int>(l.kind)) + "." + std::to_string(l.id) + "}"; if (!t.arguments.empty()) { o += "("; for (const auto &a : t.arguments) o += self(self, a) + ","; o += ")"; } return o; }; // TEMP-TRACE
+          std::fprintf(stderr, "[range]  hir-it=%s sem-it=%s erasedEq=%d\n", dump(dump, range->iteratorType).c_str(), dump(dump, semantic->iteratorType).c_str(), eraseTypeLifetimes(range->iteratorType) == eraseTypeLifetimes(semantic->iteratorType)); } // TEMP-TRACE
+        if (std::getenv("GTI_TRACE_HIR_VALID")) // TEMP-TRACE
+          std::fprintf(stderr, "[range] semantic=%d structure=%d loans=%d strategy=%d owner=%d range=%d endpoint=%d staging=%d\n", exactSemantic, exactStructure, exactLoans, exactStrategy, exactOwner, range != nullptr, exactEndpointResult, exactElementStaging); // TEMP-TRACE
         result.errors.emplace_back(
             "range HIR plan differs from semantic owner/loan/protocol facts");
       }
@@ -4356,8 +4366,15 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       exactOwner(stringConstructor->owner, stringType) &&
       stringConstructor->typeArguments.empty() &&
       stringConstructor->valueArguments.empty() &&
-      stringConstructor->parameterTypes ==
-          std::vector<SemanticType>{SemanticType::StringView};
+      stringConstructor->parameterTypes.size() == 1 &&
+      stringConstructor->parameterTypes.front() == SemanticType::StringView &&
+      // Startup text is valid for the whole program: the constructor must
+      // accept any region, as semantic startup selection requires.
+      std::all_of(stringConstructor->parameterTypes.front().lifetimeArguments.begin(),
+                  stringConstructor->parameterTypes.front().lifetimeArguments.end(),
+                  [](const Lifetime &region) {
+                    return region.kind == Lifetime::Kind::Parameter;
+                  });
   if (append == nullptr || vectorConstructor == nullptr ||
       stringConstructor == nullptr || vectorType.kind != SemanticType::Class ||
       stringType.kind != SemanticType::Class || !exactAppend ||

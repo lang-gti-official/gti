@@ -4,15 +4,15 @@
 #endif
 
 #if target.vendor == "apple"
-std::string_view platform_name() {
+std::string_view<static> platform_name() {
   return "Apple platform";
 }
 #elif target.os == "windows"
-std::string_view platform_name() {
+std::string_view<static> platform_name() {
   return "Windows platform";
 }
 #else
-std::string_view platform_name() {
+std::string_view<static> platform_name() {
   return "another supported platform";
 }
 #endif

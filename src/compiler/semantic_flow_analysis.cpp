@@ -2789,13 +2789,29 @@ auto SemanticVisitor::Impl::findProgramEntryConstructor(
   if (lifecycle == nullptr) {
     return 0;
   }
+  // Hosted startup supplies values valid for the whole program. A parameter
+  // matches when it has the required shape and every region it mentions is a
+  // universal parameter of the constructor, so any actual region is accepted.
+  // A constructor demanding a particular region is never selected here.
+  const auto accepts = [](const SemanticType &declared,
+                          const SemanticType &supplied) {
+    if (declared == supplied)
+      return true;
+    if (eraseTypeLifetimes(declared) != eraseTypeLifetimes(supplied))
+      return false;
+    const auto regions = freeTypeLifetimes(declared);
+    return std::all_of(regions.begin(), regions.end(), [](const Lifetime &region) {
+      return region.kind == Lifetime::Kind::Parameter;
+    });
+  };
   for (const ConstructorInfo &constructor : lifecycle->constructors) {
     if (constructor.kind == ConstructorKind::Ordinary &&
         constructor.access == AccessModifier::Public &&
         constructor.declaration != nullptr &&
         constructor.parameterTypes.size() == parameters.size() &&
         std::equal(constructor.parameterTypes.begin(),
-                   constructor.parameterTypes.end(), parameters.begin())) {
+                   constructor.parameterTypes.end(), parameters.begin(),
+                   accepts)) {
       return constructor.id;
     }
   }

@@ -2,6 +2,7 @@
 
 #include "mir_verification_queries.h"
 #include "mir_lifetimes.h"
+#include "gti/lifetime_types.h"
 
 #include <algorithm>
 #include <functional>
@@ -15,6 +16,12 @@
 
 namespace lang::mir_detail {
 namespace {
+// Identifies an initializer's supplying value by stored shape. Region
+// relationships between that value and the field are proved separately.
+bool sameStoredShape(const SemanticType &left, const SemanticType &right) {
+  return left == right || eraseTypeLifetimes(left) == eraseTypeLifetimes(right);
+}
+
 bool textType(const SemanticType &type) {
   return type.kind == SemanticType::StringView ||
          type.kind == SemanticType::CString;
@@ -2106,7 +2113,7 @@ private:
                                 initializer.arguments.size() == 1 &&
                                 initializer.arguments.front() ==
                                     value->sourceValue &&
-                                initializer.targetType == value->info.type;
+                                sameStoredShape(initializer.targetType, value->info.type);
                        });
   }
 
@@ -2251,7 +2258,7 @@ private:
         context.body.values.begin(), context.body.values.end(),
         [&](const auto &value) {
           return value.sourceValue == initializer.arguments.front() &&
-                 value.info.type == initializer.targetType;
+                 sameStoredShape(value.info.type, initializer.targetType);
         });
     const auto *producer = found == context.body.values.end()
                                ? nullptr
@@ -2950,7 +2957,7 @@ auto TextContracts::initializerTextInputs(
           constructor.body.values.begin(), constructor.body.values.end(),
           [&](const auto &value) {
             return value.sourceValue == initializer.arguments.front() &&
-                   value.info.type == initializer.targetType;
+                   sameStoredShape(value.info.type, initializer.targetType);
           });
       if (found != constructor.body.values.end())
         noteWholeRelay(context,
@@ -2996,7 +3003,7 @@ auto TextContracts::initializerTextInputs(
         constructor.body.values.begin(), constructor.body.values.end(),
         [&](const auto &value) {
           return value.sourceValue == initializer.arguments.front() &&
-                 (value.info.type == initializer.targetType ||
+                 (sameStoredShape(value.info.type, initializer.targetType) ||
                   (initializer.targetType.kind == SemanticType::CString &&
                    value.info.type.kind == SemanticType::NullPtr));
         });

@@ -4342,7 +4342,10 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
     if (movedVariable(*source) == nullptr)
       return std::nullopt;
     const auto index = formalIndex(source->get());
-    return index && parameterTypes[*index] == stored ? index : std::nullopt;
+    // Publication identifies the supplying formal by stored shape. Region
+    // relationships between the formal and the field are proved separately.
+    return index && eraseTypeLifetimes(parameterTypes[*index]) == eraseTypeLifetimes(stored)
+               ? index : std::nullopt;
   };
   // The text field of a by-value class formal that `expression` reads, of
   // type `stored`: `formal.field`, or a zero-argument accessor of the formal
@@ -4388,8 +4391,9 @@ auto SemanticVisitor::Impl::ownerlessTextConstructorInputs(
       if (member == formalClass->members.end() ||
           member->second.symbol.staticMember ||
           member->second.symbol.bindingKind != SemanticBindingKind::Field ||
-          substituteType(member->second.symbol.type,
-                         classSubstitution(formalType)) != stored)
+          eraseTypeLifetimes(substituteType(member->second.symbol.type,
+                                            classSubstitution(formalType))) !=
+              eraseTypeLifetimes(stored))
         return std::nullopt;
       const SymbolId symbol =
           symbolForDeclaration(member->second.symbol.declaration);
@@ -5554,6 +5558,8 @@ auto SemanticVisitor::Impl::physicalReferenceReturnBorrow(
   };
   SemanticBorrowDependencySet result;
   const auto place = semanticPlace(value);
+  if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+    std::fprintf(stderr, "[phys] root=%d\n", place.root != nullptr); // TEMP-TRACE
   if (place.root) {
     if (const auto selected = selectedReferenceDependencies(place)) {
       result.dependencies = *selected;
@@ -5612,11 +5618,37 @@ auto SemanticVisitor::Impl::physicalReferenceReturnBorrow(
       else
         break;
     }
+    // An inline (by-value) field chain over a reference producer addresses a
+    // subobject of that producer's referent: it has exactly the referent's
+    // physical owners. A stored reference field stops the walk; its referent
+    // is described by the field's own region and contents.
+    const Expr *subobjectOf = nullptr;
+    for (const Expr *object = producer; const auto *member = exprAs<Get>(object);) {
+      const auto *resolved = findMember(memberAccessObjectType(*member), member->name());
+      if (!resolved || resolved->symbol.type.kind == SemanticType::Reference)
+        break;
+      object = member->object().get();
+      while (object)
+        if (const auto *alias = semanticModel.findExpressionAlias(*object))
+          object = alias;
+        else if (const auto *group = exprAs<Grouping>(object))
+          object = group->expression().get();
+        else
+          break;
+      if (object && (exprAs<Call>(object) || semanticModel.findOperator(*object)))
+        subobjectOf = object;
+    }
+    if (subobjectOf && !borrowedExpressionLifetime(subobjectOf).specified())
+      subobjectOf = nullptr;
+    if (subobjectOf)
+      producer = subobjectOf;
     bool referenceProducer = borrowedExpressionLifetime(producer).specified();
     if (const auto *member = exprAs<Get>(producer))
       if (const auto *resolved = findMember(memberAccessObjectType(*member), member->name()))
         referenceProducer = resolved->symbol.type.kind == SemanticType::Reference;
-    const auto complete = completeBorrowDependencySet(value);
+    const auto complete = completeBorrowDependencySet(subobjectOf ? subobjectOf : value.get());
+    if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+      std::fprintf(stderr, "[phys] sub=%d refprod=%d complete=%d scalar=%d deps=%zu\n", subobjectOf != nullptr, referenceProducer, complete.has_value(), complete && scalar(*complete), complete ? complete->dependencies.size() : 0); // TEMP-TRACE
     // An unqualified scalar field set can also describe a primitive carrier's
     // contents. Only an actual reference producer may use it as physical
     // storage when there is no addressable binding to inspect.
@@ -5983,6 +6015,13 @@ auto SemanticVisitor::Impl::normalizedCompleteBorrow(
       // storage then contains the referent.
       if (projection.kind == PlaceProjectionKind::Dereference &&
           sourceType.kind == SemanticType::Class && !externalReferent)
+        break;
+      // A dynamically indexed element of an inline fixed array lives exactly
+      // as long as the array storage that contains it. The supplier is that
+      // whole array at the region reached so far; the selected element's
+      // identity is not a lifetime fact, so the path ends conservatively here.
+      if (projection.kind == PlaceProjectionKind::DynamicIndex &&
+          sourceType.kind == SemanticType::Array && sourceType.arguments.size() == 1)
         break;
       if (!isWellFormedBorrowPath(std::span(&projection, 1)))
         return std::nullopt;

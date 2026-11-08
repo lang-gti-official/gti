@@ -380,9 +380,138 @@ auto SemanticVisitor::Impl::normalizeConstructorLifetimeContract(
     return implicitSyntaxLifetime(site, slot, "_input" + std::to_string(slot));
   };
   SemanticType result = openClassType(constructor.owner);
+  const SemanticType declaredResult = result;
+  const LifetimeSignatureContract declaredContract = contract;
   auto normalized = normalizeLifetimeSignature(
       result, constructor.parameterTypes, std::move(contract),
       constructor.requirements, fresh);
+  // With no input region at all, a region the constructed type leaves open
+  // cannot relate to any input: it is the constructing context's choice. Make
+  // each such hole a universal parameter of this constructor. Anything the body
+  // stores there must then outlive every region, which the body still proves.
+  // Inputs with regions keep the declared-relationship requirement.
+  bool inputRegions = false;
+  for (const auto &parameter : constructor.parameterTypes)
+    inputRegions = inputRegions || !declarationTypeLifetimes(parameter).empty();
+  if (normalized.ambiguousResult && !inputRegions) {
+    std::vector<Lifetime> universals;
+    const auto fill = [&](auto &&self, SemanticType &type) -> void {
+      if (isLifetimeInvocationSignature(type) || type.kind == SemanticType::FunctionItem)
+        return; // A nested callable keeps its own elision scope.
+      const auto resolve = [&](Lifetime &region) {
+        if (region.kind == Lifetime::Kind::Unspecified ||
+            region.kind == Lifetime::Kind::Inference) {
+          region = fresh();
+          universals.push_back(region);
+        }
+      };
+      if (type.kind == SemanticType::Reference)
+        resolve(type.referenceLifetime);
+      if ((type.kind == SemanticType::StringView || type.kind == SemanticType::CString) &&
+          type.lifetimeArguments.empty())
+        type.lifetimeArguments.emplace_back();
+      for (auto &region : type.lifetimeArguments)
+        resolve(region);
+      lifetime_detail::children(type, [&](SemanticType &child) { self(self, child); });
+    };
+    SemanticType open = declaredResult;
+    fill(fill, open);
+    auto retried = declaredContract;
+    for (const auto region : universals)
+      appendUnique(retried.parameters, region);
+    auto second = normalizeLifetimeSignature(open, constructor.parameterTypes, std::move(retried),
+                                             constructor.requirements, fresh);
+    if (!second.ambiguousResult)
+      normalized = std::move(second);
+  }
+  // Signature elision for an anonymous stored region: with exactly one distinct
+  // input region, every implicit slot of the constructed class is bounded by
+  // it, as an elided result region is. This is declaration-based, so a body
+  // change cannot alter it. Explicitly named class regions keep their declared
+  // meaning, and several input regions still need a declared relationship.
+  if (!normalized.ambiguousResult && constructor.declaration != nullptr &&
+      !constructor.lifetimeContract.receiver.specified()) {
+    std::vector<Lifetime> inputs;
+    for (const auto &parameter : constructor.parameterTypes)
+      for (const auto region : declarationTypeLifetimes(parameter))
+        appendUnique(inputs, region);
+    if (inputs.size() == 1)
+      for (const auto &parameter : owner.genericParameters)
+        if (parameter.lifetime && parameter.implicit &&
+            Lifetime::parameter(parameter.id) != inputs.front())
+          appendUnique(normalized.contract.bounds,
+                       LifetimeBound{inputs.front(), Lifetime::parameter(parameter.id)});
+    // Checked initializer-list provenance: `field(parameter)` whose stored type
+    // has the parameter's exact shape binds each anonymous slot of the field to
+    // the parameter's region in the same position. The field's outermost
+    // borrow region and top-level text region are covariant (the input must
+    // outlive the slot); every nested region is fixed (both directions). This
+    // reads only the declaration, so a body change cannot alter it, and an
+    // explicitly named class region keeps its declared meaning.
+    if (inputs.size() > 1) {
+      std::vector<Lifetime> implicitSlots;
+      for (const auto &parameter : owner.genericParameters)
+        if (parameter.lifetime && parameter.implicit)
+          implicitSlots.push_back(Lifetime::parameter(parameter.id));
+      const auto &syntaxParameters = constructor.declaration->parameters();
+      for (const ConstructorInitializer &initializer :
+           constructor.declaration->initializers()) {
+        if (implicitSlots.empty() || initializer.arguments.size() != 1 ||
+            initializer.target.name.segments.size() != 1 ||
+            !initializer.target.arguments.empty())
+          continue;
+        const auto *argument = exprAs<Variable>(initializer.arguments.front().get());
+        if (argument == nullptr)
+          continue;
+        const auto parameter = std::find_if(
+            syntaxParameters.begin(), syntaxParameters.end(), [&](const Parameter &candidate) {
+              return candidate.name.lexeme == argument->name().lexeme;
+            });
+        const auto parameterIndex =
+            static_cast<std::size_t>(parameter - syntaxParameters.begin());
+        if (parameter == syntaxParameters.end() || parameter->pack ||
+            parameterIndex >= constructor.parameterTypes.size())
+          continue;
+        const auto field = std::find_if(owner.fields.begin(), owner.fields.end(),
+            [&](const auto &candidate) {
+              return candidate.declaration != nullptr &&
+                     candidate.declaration->name().lexeme ==
+                         initializer.target.name.last().lexeme;
+            });
+        if (field == owner.fields.end())
+          continue;
+        const auto stored = catalog.normalizedNominalTypes.find(&field->declaration->type());
+        if (stored == catalog.normalizedNominalTypes.end())
+          continue;
+        SemanticType fieldType = stored->second;
+        // A field's `mut` reference access belongs to its declaration, not to
+        // the stored type syntax; the member symbol carries the exact access.
+        if (const auto member = owner.members.find(field->declaration->name().lexeme);
+            member != owner.members.end() && fieldType.kind == SemanticType::Reference &&
+            member->second.symbol.type.kind == SemanticType::Reference)
+          fieldType.referenceAccess = member->second.symbol.type.referenceAccess;
+        const auto bindings = matchUniversalTypeLifetimes(
+            fieldType, constructor.parameterTypes[parameterIndex], implicitSlots);
+        if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+          std::fprintf(stderr, "[prov] field=%s bindings=%d n=%zu field=%s param=%s\n", initializer.target.name.last().lexeme.c_str(), bindings.has_value(), bindings ? bindings->size() : 0, typeSpelling(fieldType).c_str(), typeSpelling(constructor.parameterTypes[parameterIndex]).c_str()); // TEMP-TRACE
+        if (!bindings)
+          continue;
+        std::vector<Lifetime> covariant;
+        if (fieldType.kind == SemanticType::Reference)
+          covariant.push_back(fieldType.referenceLifetime);
+        if (fieldType.kind == SemanticType::StringView || fieldType.kind == SemanticType::CString)
+          covariant.insert(covariant.end(), fieldType.lifetimeArguments.begin(),
+                           fieldType.lifetimeArguments.end());
+        for (const auto &[slot, input] : *bindings) {
+          if (!input.specified() || slot == input)
+            continue;
+          appendUnique(normalized.contract.bounds, LifetimeBound{input, slot});
+          if (std::find(covariant.begin(), covariant.end(), slot) == covariant.end())
+            appendUnique(normalized.contract.bounds, LifetimeBound{slot, input});
+        }
+      }
+    }
+  }
   constructor.lifetimeContract = std::move(normalized.contract);
   if (normalized.ambiguousResult)
     report(site, "A constructed borrowed type needs a declared relationship "
@@ -943,6 +1072,13 @@ auto SemanticVisitor::Impl::borrowedExpressionLifetime(const Expr *expression) c
         // provenance cannot replace an explicitly shortened field contract.
         if (selected.kind == SemanticType::Reference && selected.arguments.size() == 1)
           return selected.referenceLifetime;
+        // An inline (by-value) field is a subobject of its object's storage,
+        // so it is borrowed in exactly the object's region. A by-value object
+        // expression has no region and ends the walk below.
+        if (selected.kind != SemanticType::Reference) {
+          expression = field->object().get();
+          continue;
+        }
       }
     }
     if (const auto *variable = exprAs<Variable>(expression))
@@ -1446,13 +1582,39 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
     if (!require(receiverRegion, substitute(function.lifetimeContract.receiver)))
       return reject("The method receiver has no checked lifetime origin.");
   }
+  // A bound implied by a reference parameter or by the receiver reference is
+  // the callee's assumption; the actual argument or receiver discharges it.
+  const auto receiverType = [&]() -> std::optional<SemanticType> {
+    if (!function.ownerClass || !function.lifetimeContract.receiver.specified())
+      return std::nullopt;
+    if (receiver) {
+      const auto *info = semanticModel.findExpression(*receiver);
+      if (!info)
+        return std::nullopt;
+      auto type = info->type;
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+        type = SemanticType(type.arguments.front());
+      return type;
+    }
+    if (receiverPlace && receiverPlace->receiver && currentClass)
+      return openClassType(*currentClass);
+    return std::nullopt;
+  }();
   for (const auto &bound : function.lifetimeContract.typeBounds) {
+    if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+      std::fprintf(stderr, "[tb] owner=%llu boundKind=%d class=%llu region=%d:%llu receiver=%d:%llu ownerType=%llu equiv=%d erasedEq=%d bt=%s ot=%s\n", (unsigned long long)function.ownerClass, static_cast<int>(bound.type.kind), (unsigned long long)bound.type.classId, static_cast<int>(bound.region.kind), (unsigned long long)bound.region.id, static_cast<int>(function.lifetimeContract.receiver.kind), (unsigned long long)function.lifetimeContract.receiver.id, function.ownerClass ? (unsigned long long)openClassType(function.ownerClass).classId : 0ull, function.ownerClass && equivalentLifetimeTypes(bound.type, openClassType(function.ownerClass)), function.ownerClass && eraseTypeLifetimes(bound.type) == eraseTypeLifetimes(openClassType(function.ownerClass)), typeSpelling(bound.type).c_str(), function.ownerClass ? typeSpelling(openClassType(function.ownerClass)).c_str() : ""); // TEMP-TRACE
+    if (typeBoundImpliedByReferenceParameter(bound, function.parameterTypes) ||
+        (receiverType &&
+         typeBoundImpliedByReceiver(bound, function.lifetimeContract, *receiverType)))
+      continue;
     auto type = substituteTypeLifetimes(bound.type, application.bindings);
     if (!type)
       return reject("A type-outlives obligation captures a quantified lifetime.");
     application.typeObligations.push_back({std::move(*type), substitute(bound.region)});
   }
   for (const auto &bound : function.lifetimeApplication.typeObligations) {
+    if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+      std::fprintf(stderr, "[tb2] owner=%llu class=%llu region=%d:%llu\n", (unsigned long long)function.ownerClass, (unsigned long long)bound.type.classId, static_cast<int>(bound.region.kind), (unsigned long long)bound.region.id); // TEMP-TRACE
     auto type = substituteTypeLifetimes(bound.type, application.bindings);
     if (!type)
       return reject("An interface type-outlives obligation captures a quantified lifetime.");

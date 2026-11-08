@@ -3245,6 +3245,10 @@ const MirLoan *textAddressResultLoan(const MirBody &body,
                        .borrowAccess = AccessMode::ReadOnly,
                        .intrinsic = instruction.intrinsic,
                        .info = instruction.info};
+  // The call's lifetime application is region proof metadata. Lifetime
+  // verification checks it independently against the intrinsic's contract; it
+  // grants no representation, so the carrier shape carries it through as is.
+  exact.lifetimeApplication = instruction.lifetimeApplication;
   auto traits = semanticTraits(instruction.info.type);
   traits.ownership = OwnershipKind::Borrowed;
   traits.copyAssignable = false;

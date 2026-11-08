@@ -2,6 +2,7 @@
 #include "class_hierarchy_lifetimes.h"
 #include "gti/borrow_conditions.h"
 #include "gti/callable_lifetimes.h"
+#include "gti/lifetime_types.h"
 #include "gti/compiled_scalar_signature.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
@@ -30,6 +31,12 @@
 
 namespace lang {
 namespace {
+// Ownerless-return forms are recognised by their exact producer; the text's
+// region (a literal is static) is checked by lifetime verification separately.
+[[maybe_unused]] bool sameTextReturnShape(const SemanticType &left, const SemanticType &right) {
+  return left == right || eraseTypeLifetimes(left) == eraseTypeLifetimes(right);
+}
+
 
 // A base constructor's by-value parameter that a staged initializer may hand
 // an owned prepared argument: an owning class, payload enum or closure.
@@ -2968,7 +2975,10 @@ uniqueMirClassInstanceForType(const MirProgram &program,
            !mirLifetimeParameterTypesMatch(instruction.parameterTypes,
                                            functionTarget->parameterTypes,
                                            functionTarget->lifetimeContract,
-                                           instruction.lifetimeApplication))) {
+                                           instruction.lifetimeApplication,
+                                           functionTarget->owner
+                                               ? &functionTarget->ownerType
+                                               : nullptr))) {
         return verificationFailure(
             body, owner,
             "operator() invocation does not match its exact target "
@@ -4362,7 +4372,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         }
         if (!mirLifetimeParameterTypesMatch(
                 instruction.parameterTypes, target->parameterTypes,
-                target->lifetimeContract, instruction.lifetimeApplication)) {
+                target->lifetimeContract, instruction.lifetimeApplication,
+                target->owner ? &target->ownerType : nullptr)) {
           return verificationFailure(
               body, owner,
               "call parameter roles do not match the exact target "
@@ -7731,13 +7742,13 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           definition->operation == MirOperation::Literal &&
           definition->literal &&
           ((instance.returnType.kind == SemanticType::StringView &&
-            returned->info.type == instance.returnType &&
+            sameTextReturnShape(returned->info.type, instance.returnType) &&
             std::holds_alternative<std::string>(*definition->literal)) ||
            (instance.returnType.kind == SemanticType::CString &&
             returned->info.type.kind == SemanticType::NullPtr &&
             std::holds_alternative<std::nullptr_t>(*definition->literal))) &&
           definition->result == returned->id &&
-          definition->info.type == returned->info.type &&
+          sameTextReturnShape(definition->info.type, returned->info.type) &&
           !definition->info.traits.containsBorrowedState && !definition->loan &&
           definition->operands.empty() && !definition->destination &&
           !definition->receiver && definition->lifecycle.empty() &&
@@ -7765,13 +7776,13 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           !stored->projections.empty() &&
           (stored->projections.back().kind == MirProjectionKind::Field ||
            stored->projections.back().kind == MirProjectionKind::Index) &&
-          stored->type == instance.returnType &&
+          sameTextReturnShape(stored->type, instance.returnType) &&
           !stored->traits.containsBorrowedState &&
-          returned->info.type == instance.returnType &&
+          sameTextReturnShape(returned->info.type, instance.returnType) &&
           !returned->info.traits.containsBorrowedState &&
           definition->result == returned->id &&
-          definition->info.type == returned->info.type &&
-          definition->operands.front().type == instance.returnType &&
+          sameTextReturnShape(definition->info.type, returned->info.type) &&
+          sameTextReturnShape(definition->operands.front().type, instance.returnType) &&
           !definition->info.traits.containsBorrowedState && !definition->loan &&
           !definition->destination && !definition->receiver &&
           definition->lifecycle.empty();
@@ -7790,7 +7801,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           mir_detail::textFieldResult(
               relayed->returnType, relayed->returnBorrowOrigin,
               relayed->returnBorrowParameter, relayed->returnBorrowFields) &&
-          returned->info.type == instance.returnType &&
+          sameTextReturnShape(returned->info.type, instance.returnType) &&
           !returned->info.traits.containsBorrowedState &&
           definition->result == returned->id && !definition->loan &&
           !definition->info.traits.containsBorrowedState;
@@ -7802,7 +7813,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           instance.dependentTextReturn && returned && definition &&
           (definition->kind == MirInstructionKind::Construct ||
            definition->kind == MirInstructionKind::Call) &&
-          returned->info.type == instance.returnType &&
+          sameTextReturnShape(returned->info.type, instance.returnType) &&
           !returned->info.traits.containsBorrowedState &&
           definition->result == returned->id && !definition->loan &&
           !definition->dependentTextPublication &&
@@ -7826,7 +7837,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           ownerlessTextTarget->definitionKind == MirDefinitionKind::Source &&
           ownerlessTextTarget->linkage == LanguageLinkage::Gti &&
           !ownerlessTextTarget->virtualMethod &&
-          ownerlessTextTarget->returnType == instance.returnType &&
+          sameTextReturnShape(ownerlessTextTarget->returnType, instance.returnType) &&
           ((ownerlessTextTarget->returnBorrowOrigin == BorrowOriginKind::None &&
             ownerlessTextTarget->returnBorrowFields.empty() &&
             !ownerlessTextTarget->completeReturnBorrow) ||
@@ -7835,7 +7846,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
                ownerlessTextTarget->returnBorrowOrigin,
                ownerlessTextTarget->returnBorrowParameter,
                ownerlessTextTarget->returnBorrowFields)) &&
-          returned->info.type == instance.returnType &&
+          sameTextReturnShape(returned->info.type, instance.returnType) &&
           !returned->info.traits.containsBorrowedState &&
           definition->result == returned->id && !definition->loan &&
           !definition->dependentTextPublication &&
@@ -7847,6 +7858,13 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
            emptyReturn && emptyReturn(block.id))) {
         continue;
       }
+      if (std::getenv("GTI_TRACE_MIR_SHAPE")) // TEMP-TRACE
+        std::fprintf(stderr, "[retloan] fn=%llu origin=%d returnKind=%d returned=%d def=%d defKind=%d intrinsic=%d defLoan=%d fnTarget=%d literal=%d containsBorrowed=%d dependentText=%d\n", // TEMP-TRACE
+                     (unsigned long long)instance.id, static_cast<int>(instance.returnBorrowOrigin), static_cast<int>(instance.returnType.kind), // TEMP-TRACE
+                     returned ? 1 : 0, definition ? 1 : 0, definition ? static_cast<int>(definition->kind) : -1, // TEMP-TRACE
+                     definition ? static_cast<int>(definition->intrinsic) : -1, definition && definition->loan ? 1 : 0, // TEMP-TRACE
+                     definition && definition->functionTarget ? 1 : 0, definition && definition->literal ? 1 : 0, // TEMP-TRACE
+                     returned && returned->info.traits.containsBorrowedState ? 1 : 0, instance.dependentTextReturn ? 1 : 0); // TEMP-TRACE
       return verificationFailure(
           body, instance.id,
           "owner-dependent return is missing its escaping loan", block.id);
@@ -12570,8 +12588,13 @@ verifyMirHostedStartup(const MirProgram &program) {
         stringConstructor->owner == stringClass->id &&
         stringConstructor->typeArguments.empty() &&
         stringConstructor->valueArguments.empty() &&
-        stringConstructor->parameterTypes ==
-            std::vector<SemanticType>{SemanticType::StringView} &&
+        stringConstructor->parameterTypes.size() == 1 &&
+        stringConstructor->parameterTypes.front() == SemanticType::StringView &&
+        std::all_of(stringConstructor->parameterTypes.front().lifetimeArguments.begin(),
+                    stringConstructor->parameterTypes.front().lifetimeArguments.end(),
+                    [](const Lifetime &region) {
+                      return region.kind == Lifetime::Kind::Parameter;
+                    }) &&
         stringConstructor->borrowOrigin == BorrowOriginKind::None &&
         stringConstructor->borrowParameter == 0 &&
         stringConstructor->borrowAccess == AccessMode::ReadOnly &&
@@ -15840,6 +15863,10 @@ completeBorrowSourcePath(const MirProgram &program,
       const auto found = loanDefinitions.find(id);
       const MirInstruction *call =
           found != loanDefinitions.end() ? found->second : nullptr;
+      if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { // TEMP-TRACE
+        const auto *t = call && call->functionTarget ? program.findFunctionInstance(*call->functionTarget) : nullptr; // TEMP-TRACE
+        std::fprintf(stderr, "[callres] owner=%zu loan=%llu call=%d kind=%d target=%d complete=%d result=%d cat=%d fact=%s\n", (std::size_t)owner, (unsigned long long)id, call != nullptr, call ? static_cast<int>(call->kind) : -1, t != nullptr, t && t->completeReturnBorrow.has_value(), call && call->result ? 1 : 0, call ? static_cast<int>(call->info.category) : -1, call && call->result && *call->result <= state.values.size() ? describeCompleteBorrowFact(state.values[*call->result - 1]).c_str() : "-"); // TEMP-TRACE
+      } // TEMP-TRACE
       if (call && call->kind != MirInstructionKind::Call)
         return std::nullopt;
       const auto *target =
@@ -15949,6 +15976,30 @@ completeBorrowSourcePath(const MirProgram &program,
       } else if (operand.kind == MirOperandKind::BorrowRead ||
                  operand.kind == MirOperandKind::BorrowWrite) {
         const auto *place = body.findPlace(operand.place);
+        // An inline field chain over a loan's referent is a subobject of that
+        // referent: it has exactly the referent's physical owners. Any
+        // dereference, index or payload selection needs its own evidence.
+        if (place && place->root == MirPlaceRootKind::Loan && !place->projections.empty() &&
+            std::all_of(place->projections.begin(), place->projections.end(),
+                        [](const auto &part) { return part.kind == MirProjectionKind::Field; })) {
+          // The claim names exactly the borrowed subobject; the replayed
+          // owners of its root loan, not that claim, are the evidence.
+          if (loan->source != place->id || !loan->designatedFields.empty() ||
+              !loan->conditions.empty() || !loan->additionalDependencies.empty())
+            return std::nullopt;
+          auto owners = self(self, state, place->loan, depth + 1);
+          if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+            std::fprintf(stderr, "[subret] owner=%zu loan=%llu root-loan=%llu owners=%s\n", (std::size_t)owner, (unsigned long long)id, (unsigned long long)place->loan, describeCompleteBorrowFact(owners).c_str()); // TEMP-TRACE
+          if (!owners || owners->dependencies.empty() || !owners->possibleAlternatives.empty())
+            return std::nullopt;
+          for (auto &dependency : owners->dependencies) {
+            if (loan->access == AccessMode::Mutable && dependency.access != AccessMode::Mutable)
+              return std::nullopt;
+            dependency.access = loan->access;
+            dependency.parent = id;
+          }
+          return owners;
+        }
         if (place && place->root == MirPlaceRootKind::Loan &&
             place->projections.empty())
           fact = self(self, state, place->loan, depth + 1);
@@ -16472,6 +16523,8 @@ completeBorrowSourcePath(const MirProgram &program,
     if (domainStatus)
       *domainStatus = BorrowResultDomainStatus::Unknown;
     const auto signature = instantiateMirLifetimeTarget(program, instruction);
+    if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+      std::fprintf(stderr, "[crs] owner=%zu inst=%llu signature=%d deps=%zu\n", (std::size_t)owner, (unsigned long long)instruction.id, signature.has_value(), universalSummary.dependencies.size()); // TEMP-TRACE
     if (!signature)
       return std::nullopt;
     auto target = universalTarget;
@@ -16509,6 +16562,8 @@ completeBorrowSourcePath(const MirProgram &program,
           receiverType->arguments.size() == 1)
         receiverType = &receiverType->arguments.front();
       const auto path = completeBorrowSourcePath(program, target, mapping, receiverType);
+      if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+        std::fprintf(stderr, "[cr0] owner=%zu inst=%llu index=%zu origin=%d path=%d ext=%zu receiver=%d\n", (std::size_t)owner, (unsigned long long)instruction.id, index, static_cast<int>(mapping.origin), path.has_value(), path ? path->externalReferences : 0, instruction.receiver.has_value()); // TEMP-TRACE
       if (!path || path->externalReferences > 1)
         continue;
       if (mapping.origin == BorrowOriginKind::Global) {
@@ -16659,6 +16714,10 @@ completeBorrowSourcePath(const MirProgram &program,
             continue;
           sources = address->dependencies;
         }
+        if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { // TEMP-TRACE
+          const auto *pl = storage->place ? body.findPlace(storage->place) : nullptr; // TEMP-TRACE
+          std::fprintf(stderr, "[cr] owner=%zu inst=%llu storageKind=%d place=%llu root=%d rootLoan=%llu proj=%zu address=%s\n", (std::size_t)owner, (unsigned long long)instruction.id, static_cast<int>(storage->kind), (unsigned long long)storage->place, pl ? static_cast<int>(pl->root) : -1, pl ? (unsigned long long)pl->loan : 0ull, pl ? pl->projections.size() : 0, describeCompleteBorrowFact(fromOperand(state, *storage)).c_str()); // TEMP-TRACE
+        } // TEMP-TRACE
       }
       if (sources.empty())
         continue;
@@ -16984,6 +17043,8 @@ completeBorrowSourcePath(const MirProgram &program,
           target && mirLifetimeCallSignatureMatches(instruction, *target)
               ? callSummary(target->id, MirBodyKind::Function)
               : nullptr;
+      if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+        std::fprintf(stderr, "[exec-call] owner=%zu inst=%llu target=%llu sigMatch=%d summary=%d\n", (std::size_t)owner, (unsigned long long)instruction.id, target ? (unsigned long long)target->id : 0ull, target && mirLifetimeCallSignatureMatches(instruction, *target), summary != nullptr); // TEMP-TRACE
       if (summary)
         result = callResult(state, instruction, *target, *summary);
     } else if (instruction.kind == MirInstructionKind::Call &&
@@ -16995,6 +17056,18 @@ completeBorrowSourcePath(const MirProgram &program,
           ? callSummary(target->id, MirBodyKind::Lambda) : nullptr;
       if (summary)
         result = callResult(state, instruction, lambdaPublication(*target), *summary);
+    } else if (instruction.kind == MirInstructionKind::Call &&
+               (instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+                instruction.intrinsic == IntrinsicKind::UniqueOwnerBorrowMut) &&
+               exactUniqueOwnerBorrowContract(body, instruction)) {
+      // The checked owner borrow addresses the referent that the copied owner
+      // place exclusively owns: that exact place is its one physical owner.
+      // The exact contract proved the operand is a Copy load of that place.
+      const auto *stage = definitionFor(body, instruction.operands.front().value);
+      const auto &copied = stage->operands.front();
+      if (copied.place && body.findPlace(copied.place))
+        result = MirBorrowDependencySet{
+            .dependencies = {{.source = copied.place, .access = instruction.info.access}}};
     } else if (instruction.kind == MirInstructionKind::Call &&
                mir_detail::rawBorrowResultLoan(body, instruction)) {
       // This unsafe primitive asserts a typed address against one checked
@@ -17960,6 +18033,18 @@ normalizedCompleteReturnBorrow(const MirProgram &program,
       const auto prefix = currentPath();
       if (!prefix)
         return std::nullopt;
+      // A runtime-indexed element of an inline fixed array lives exactly as
+      // long as that array, so the array is the complete lifetime supplier.
+      // Semantics ends the same path here; no element identity is claimed.
+      // A payload selection below the element would need its own variant
+      // proof and is not admitted through this conservative boundary.
+      if (projection.kind == MirProjectionKind::Index && !projection.constantIndex &&
+          projection.index && prefix->type.kind == SemanticType::Array &&
+          prefix->type.arguments.size() == 1) {
+        if (payloadIndex != source.payloadSelections.size())
+          return std::nullopt;
+        break;
+      }
       if (projection.kind == MirProjectionKind::Field)
         mapping.sourceFields.push_back(fieldProjection(projection.field));
       else if (projection.kind == MirProjectionKind::Base && projection.constantIndex &&
@@ -18161,6 +18246,8 @@ public:
                                          alternative) !=
                                claim.possibleAlternatives.end();
                       });
+      if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+        std::fprintf(stderr, "[summary] fn=%zu wellFormed=%d covers=%d observed=%d\n", (std::size_t)id, wellFormed(*function, claim), covers, observed.has_value()); // TEMP-TRACE
       if (wellFormed(*function, claim) && covers) {
         // Keep the declaration contract stable across optimizer narrowing.
         // Its additional well-typed alternatives and dependency obligations
@@ -18637,6 +18724,8 @@ private:
             mirLifetimeValueConversion(program, function.body, function.id,
                                        block->terminator.value->type,
                                        returnedType)));
+      if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+        std::fprintf(stderr, "[recon] fn=%zu typeMatch=%d deps=%s shape=%d normalized=%d\n", (std::size_t)function.id, returnedTypeMatches, describeCompleteBorrowFact(returned.dependencies).c_str(), returned.dependencies && completeBorrowSetHasTypedShape(program, function.returnType, *returned.dependencies), returned.dependencies && normalizedCompleteReturnBorrow(program, function, *returned.dependencies).has_value()); // TEMP-TRACE
       if (!returnedTypeMatches ||
           !returned.dependencies ||
           !completeBorrowSetHasTypedShape(program, function.returnType,
@@ -19505,6 +19594,12 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
             isStoredReferenceExtraction(*producer->payloadExtractionKind))
           resultType =
               SemanticType::referenceTo(value.info.type, value.info.access);
+        else if (producer->kind == MirInstructionKind::Call &&
+                 (producer->intrinsic == IntrinsicKind::UniqueOwnerBorrow ||
+                  producer->intrinsic == IntrinsicKind::UniqueOwnerBorrowMut) &&
+                 exactUniqueOwnerBorrowContract(body, *producer))
+          // The checked owner borrow addresses its owned referent.
+          resultType = SemanticType::referenceTo(value.info.type, value.info.access);
         else if (producer->kind == MirInstructionKind::Call) {
           if (mir_detail::rawBorrowResultLoan(body, *producer)) {
             resultType = SemanticType::referenceTo(value.info.type,
@@ -19514,19 +19609,29 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
           }
           const auto signature =
               instantiateMirLifetimeTarget(program, *producer);
+          // The referent's shape identifies the result domain; its regions
+          // are the applied signature's, which lifetime verification proves.
           if (signature &&
               signature->returnType.kind == SemanticType::Reference &&
               signature->returnType.arguments.size() == 1 &&
-              signature->returnType.arguments.front() == value.info.type &&
+              eraseTypeLifetimes(signature->returnType.arguments.front()) ==
+                  eraseTypeLifetimes(value.info.type) &&
               signature->returnType.referenceAccess == value.info.access)
             resultType = signature->returnType;
         }
       }
       if (!completeBorrowSetHasTypedShape(program, resultType,
-                                          *value.borrowDependencies))
+                                          *value.borrowDependencies)) {
+        if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { // TEMP-TRACE
+          const auto sig = producer && producer->kind == MirInstructionKind::Call ? instantiateMirLifetimeTarget(program, *producer) : std::nullopt; // TEMP-TRACE
+          if (producer && producer->functionTarget) if (const auto *t = program.findFunctionInstance(*producer->functionTarget)) // TEMP-TRACE
+            std::fprintf(stderr, "[domain]  target=%llu owner=%llu params=%zu bindings=%zu complete=%d typeBounds=%zu appTypeObl=%zu bounds=%zu appObl=%zu valid=%d\n", (unsigned long long)t->id, (unsigned long long)t->owner.value_or(0), t->lifetimeContract.parameters.size(), producer->lifetimeApplication.bindings.size(), producer->lifetimeApplication.complete, t->lifetimeContract.typeBounds.size(), producer->lifetimeApplication.typeObligations.size(), t->lifetimeContract.bounds.size(), producer->lifetimeApplication.obligations.size(), t->lifetimeContract.valid()); // TEMP-TRACE
+          std::fprintf(stderr, "[domain] owner=%zu value=%llu producer=%d cat=%d type=%d resultType=%d sig=%d sigRet=%d deps=%s\n", (std::size_t)owner, (unsigned long long)value.id, producer ? static_cast<int>(producer->kind) : -1, static_cast<int>(value.info.category), static_cast<int>(value.info.type.kind), static_cast<int>(resultType.kind), sig.has_value(), sig ? static_cast<int>(sig->returnType.kind) : -1, describeCompleteBorrowFact(value.borrowDependencies).c_str()); // TEMP-TRACE
+        } // TEMP-TRACE
         return verificationFailure(body, owner,
                                    "complete dependency set does not match its "
                                    "typed result domain");
+      }
       const auto *block = body.findBlock(value.definitionBlock);
       const bool parameter =
           value.definition == 0 && block &&

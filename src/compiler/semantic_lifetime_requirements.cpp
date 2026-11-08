@@ -423,6 +423,15 @@ auto SemanticVisitor::Impl::applyLifetimeRequirements(
       append(application.typeObligations, bound);
     return true;
   });
+  if (!accepted && std::getenv("GTI_TRACE_LIFETIME_REQ")) { // TEMP-TRACE
+    std::fprintf(stderr, "[req] root=%zu nodes=%zu line=%u\n", requirements.root, requirements.nodes.size(), // TEMP-TRACE
+                 static_cast<unsigned>(site.line)); // TEMP-TRACE
+    for (std::size_t i = 0; i < requirements.nodes.size(); ++i) { const auto &n = requirements.nodes[i]; // TEMP-TRACE
+      std::fprintf(stderr, "[req]   #%zu kind=%d l=%zu r=%zu truth=%d bound=%d:%llu>=%d:%llu typeKind=%d\n", i, static_cast<int>(n.kind), // TEMP-TRACE
+                   n.left, n.right, n.semanticTruth ? (*n.semanticTruth ? 1 : 0) : -1, static_cast<int>(n.bound.longer.kind), // TEMP-TRACE
+                   (unsigned long long)n.bound.longer.id, static_cast<int>(n.bound.shorter.kind), (unsigned long long)n.bound.shorter.id, // TEMP-TRACE
+                   static_cast<int>(n.type.kind)); } // TEMP-TRACE
+  } // TEMP-TRACE
   if (!accepted && diagnose)
     report(site, exhausted
         ? "Lifetime requirement inference exceeded its bounded branch budget; simplify or name the required relationship."

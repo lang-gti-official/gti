@@ -1,6 +1,6 @@
 mut int global_total = 0;
 
-mut int& total() {
+mut int&<static> total() {
   return global_total;
 }
 
@@ -8,7 +8,7 @@ class Metrics {
 public:
   static mut int value = 0;
 
-  static mut int& current() {
+  static mut int&<static> current() {
     return Metrics::value;
   }
 public:

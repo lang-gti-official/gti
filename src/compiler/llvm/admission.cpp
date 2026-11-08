@@ -4328,7 +4328,7 @@ public:
     return producer && producer->result &&
                    (!returned || *producer->result == returned) &&
                    producer->info.category == category &&
-                   producer->info.type == referent &&
+                   eraseTypeLifetimes(producer->info.type) == eraseTypeLifetimes(referent) &&
                    producer->info.access == loan.access
                ? producer
                : nullptr;
@@ -4358,6 +4358,12 @@ public:
                     (referent.kind == SemanticType::StringView ||
                      referent.kind == SemanticType::CString) &&
                     natives.representations().sameType(target->returnType, referent)));
+    if (std::getenv("GTI_TRACE_LLVM_ADMIT") && category == ValueCategory::Value) // TEMP-TRACE
+      std::fprintf(stderr, "[admit] producer stage=i%llu producer=%d target=%d exact=%d unsafe=%d intrinsic=%d dispatchStatic=%d source=%d gti=%d requiresUnsafe=%d\n", // TEMP-TRACE
+        (unsigned long long)stage.id, producer ? 1 : 0, target ? 1 : 0, exactReturn ? 1 : 0, // TEMP-TRACE
+        producer ? static_cast<int>(producer->unsafeOperation) : -1, producer ? static_cast<int>(producer->intrinsic) : -1, // TEMP-TRACE
+        producer && producer->dispatch == CallDispatch::Static ? 1 : 0, target && target->definitionKind == MirDefinitionKind::Source ? 1 : 0, // TEMP-TRACE
+        target && target->linkage == LanguageLinkage::Gti ? 1 : 0, target && target->requiresUnsafe ? 1 : 0); // TEMP-TRACE
     return producer && target && exactReturn &&
            producer->unsafeOperation ==
                UnsafeOperationKind::DeclaredUnsafeCall &&
@@ -4577,15 +4583,24 @@ public:
     const bool reference = body.returnType.kind == SemanticType::Reference &&
                            body.returnType.arguments.size() == 1;
     if (!text && !reference)
-      return nullptr;
+      { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[admit] directReturnSourceLoan reject #1\n"); return nullptr; } // TEMP-TRACE
     const auto &referent =
         text ? body.returnType : body.returnType.arguments.front();
     const auto category = text ? ValueCategory::Value : ValueCategory::Place;
+    if (std::getenv("GTI_TRACE_LLVM_ADMIT") && stage.kind == MirInstructionKind::Borrow) // TEMP-TRACE
+      std::fprintf(stderr, "[admit] borrow i%llu loan=%d result=%d hir=%d raw=%d intrinsic=%d op=%d cat=%d type=%d ops=%zu dest=%d recv=%d targets=%d native=%d params=%zu lifecycle=%zu failure=%d local=%zu\n", // TEMP-TRACE
+        (unsigned long long)stage.id, stage.loan ? 1 : 0, stage.result ? 1 : 0, stage.hirValue ? 1 : 0, stage.rawMemoryAccess ? 1 : 0, // TEMP-TRACE
+        static_cast<int>(stage.intrinsic), static_cast<int>(stage.operation), stage.info.category == category ? 1 : 0, // TEMP-TRACE
+        eraseTypeLifetimes(stage.info.type) == eraseTypeLifetimes(referent) ? 1 : 0, stage.operands.size(), stage.destination ? 1 : 0, // TEMP-TRACE
+        stage.receiver ? 1 : 0, (stage.functionTarget || stage.constructorTarget || stage.lambdaTarget || stage.bodyTarget) ? 1 : 0, // TEMP-TRACE
+        (stage.nativeCalleeType || stage.nativeCallbackAdapter || stage.threadTaskAdapter || stage.callableInvocation) ? 1 : 0, // TEMP-TRACE
+        stage.parameterTypes.size(), stage.lifecycle.size(), stage.definedFailure.empty() ? 0 : 1, stage.localFailureSites.size()); // TEMP-TRACE
     if (stage.kind != MirInstructionKind::Borrow || !stage.loan ||
         stage.result || stage.hirValue == 0 || stage.rawMemoryAccess ||
         stage.intrinsic != IntrinsicKind::None ||
         stage.operation != MirOperation::None ||
-        stage.info.category != category || stage.info.type != referent ||
+        stage.info.category != category ||
+        eraseTypeLifetimes(stage.info.type) != eraseTypeLifetimes(referent) ||
         stage.operands.size() != 1 || stage.destination || stage.receiver ||
         stage.functionTarget || stage.constructorTarget || stage.lambdaTarget ||
         stage.bodyTarget || stage.nativeCalleeType ||
@@ -4593,16 +4608,17 @@ public:
         stage.callableInvocation || !stage.parameterTypes.empty() ||
         !stage.lifecycle.empty() || !stage.definedFailure.empty() ||
         !stage.localFailureSites.empty())
-      return nullptr;
+      { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[admit] directReturnSourceLoan reject #2\n"); return nullptr; } // TEMP-TRACE
     const auto &input = stage.operands.front();
     if (input.kind != MirOperandKind::Loan || input.place ||
         (text ? !input.value : input.value != 0) || input.literal ||
-        input.type != stage.info.type)
-      return nullptr;
+        eraseTypeLifetimes(input.type) != eraseTypeLifetimes(stage.info.type))
+      { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[admit] directReturnSourceLoan reject #3\n"); return nullptr; } // TEMP-TRACE
     const auto *from = body.findLoan(input.loan);
     const auto *to = body.findLoan(*stage.loan);
     if (!from || !to ||
-        from->kind != (text ? MirLoanKind::Stored : MirLoanKind::CallResult) ||
+        (text ? from->kind != MirLoanKind::Stored && from->kind != MirLoanKind::CallResult
+              : from->kind != MirLoanKind::CallResult) ||
         from->entry || from->escapes || from->producedBy != stage.hirValue ||
         from->referenceSelection || to->referenceSelection ||
         to->kind != MirLoanKind::Return || to->entry || !to->escapes ||
@@ -4613,12 +4629,13 @@ public:
         to->designatedFields != from->designatedFields ||
         to->conditions != from->conditions ||
         to->additionalDependencies != from->additionalDependencies)
-      return nullptr;
+      { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[admit] directReturnSourceLoan reject #4\n"); return nullptr; } // TEMP-TRACE
     const auto &term = block.terminator;
     if (term.kind != MirTerminatorKind::Return || term.returnLoan != to->id ||
-        !term.value || term.value->type != stage.info.type ||
+        !term.value ||
+        eraseTypeLifetimes(term.value->type) != eraseTypeLifetimes(stage.info.type) ||
         term.value->place || term.value->literal)
-      return nullptr;
+      { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[admit] directReturnSourceLoan reject #5\n"); return nullptr; } // TEMP-TRACE
     if (!text)
       return body.returnType.referenceAccess == from->access &&
                      term.value->kind == MirOperandKind::Loan &&
@@ -4632,10 +4649,10 @@ public:
         from->access != AccessMode::ReadOnly || stage.ownership ||
         stage.preparedParameterDrop || stage.successResultDrop ||
         stage.successResultDestination)
-      return nullptr;
+      { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[admit] directReturnSourceLoan reject #6\n"); return nullptr; } // TEMP-TRACE
     if (term.value->kind != MirOperandKind::Value || !term.value->value ||
         term.value->value != input.value || term.value->loan)
-      return nullptr;
+      { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[admit] directReturnSourceLoan reject #7\n"); return nullptr; } // TEMP-TRACE
     const auto *producer = earlierLiveCallResult(
         body, block, stage, *from, referent, category, term.value->value);
     return producer && term.value->kind == MirOperandKind::Value &&
@@ -4716,7 +4733,10 @@ public:
       return std::nullopt;
     if (plan.transport ==
         native_llvm::UnstagedConstructorFieldPublicationTransport::ExactValue) {
-      if (!equivalentLifetimeTypes(plan.targetType, plan.sourceType))
+      // Representation only: MIR lifetime verification proved the stored
+      // value's region relationship to the field slot.
+      if (!equivalentLifetimeTypes(plan.targetType, plan.sourceType) &&
+          eraseTypeLifetimes(plan.targetType) != eraseTypeLifetimes(plan.sourceType))
         return std::nullopt;
       if (isPassiveScalarValueType(plan.targetType))
         return Shape::SuccessResultPublication;

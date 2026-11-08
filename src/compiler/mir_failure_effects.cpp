@@ -1237,7 +1237,8 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
               instruction.functionTarget && target != nullptr &&
               mirLifetimeParameterTypesMatch(
                   instruction.parameterTypes, target->parameterTypes,
-                  target->lifetimeContract, instruction.lifetimeApplication) &&
+                  target->lifetimeContract, instruction.lifetimeApplication,
+                  target->owner ? &target->ownerType : nullptr) &&
               instruction.operands.size() ==
                   instruction.parameterTypes.size() &&
               std::all_of(instruction.parameterTypes.begin(),
@@ -2091,7 +2092,8 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
             instruction.constructorTarget ||
             !mirLifetimeParameterTypesMatch(
                 instruction.parameterTypes, target->parameterTypes,
-                target->lifetimeContract, instruction.lifetimeApplication) ||
+                target->lifetimeContract, instruction.lifetimeApplication,
+                target->owner ? &target->ownerType : nullptr) ||
             instruction.operands.size() != target->parameterTypes.size() ||
             instruction.operation != MirOperation::None ||
             instruction.literal || !proveFunction(target->id) ||

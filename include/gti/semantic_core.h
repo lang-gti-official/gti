@@ -764,6 +764,19 @@ struct SemanticType {
   }
 
   friend bool operator==(const SemanticType &, const SemanticType &) = default;
+  // Comparing with a bare kind asks "is this that type". Text views carry a
+  // region argument that is a lifetime constraint, not part of that identity,
+  // so a region-bearing std::string_view or c_string still is that text type.
+  // Every other kind keeps exact equality with its default-shaped type.
+  friend bool operator==(const SemanticType &left, Kind right) {
+    if ((right == StringView || right == CString) && left.kind == right &&
+        !left.lifetimeArguments.empty()) {
+      SemanticType plain = left;
+      plain.lifetimeArguments.clear();
+      return plain == SemanticType(right);
+    }
+    return left == SemanticType(right);
+  }
 
   Kind kind;
   NativeCScalarKind nativeCScalar = NativeCScalarKind::None;

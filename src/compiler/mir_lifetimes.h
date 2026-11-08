@@ -31,7 +31,8 @@ struct MirInstantiatedLifetimeSignature {
 instantiateMirLifetimeSignature(const LifetimeSignatureContract &,
                                 const SemanticType &returnType,
                                 std::span<const SemanticType> parameterTypes,
-                                const MirLifetimeApplication &);
+                                const MirLifetimeApplication &,
+                                const SemanticType *receiverOwner = nullptr);
 
 // Reconstruct declaration variance and verify every concrete storage recipe.
 [[nodiscard]] MirVerificationResult
@@ -73,7 +74,8 @@ verifyMirLifetimeApplications(const MirProgram &, const MirBody &,
 mirLifetimeParameterTypesMatch(std::span<const SemanticType> selected,
                                std::span<const SemanticType> declared,
                                const LifetimeSignatureContract &,
-                               const MirLifetimeApplication &);
+                               const MirLifetimeApplication &,
+                               const SemanticType *receiverOwner = nullptr);
 [[nodiscard]] bool mirLifetimeCallSignatureMatches(const MirInstruction &,
                                                    const MirFunctionInstance &);
 [[nodiscard]] bool mirLifetimeCallSignatureMatches(const MirInstruction &,
