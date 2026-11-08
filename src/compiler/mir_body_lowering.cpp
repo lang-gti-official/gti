@@ -17896,6 +17896,33 @@ private:
                 returnedValue == 0) {
               { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             }
+            // Returning ends every local loan. A local child of the returned
+            // carrier's group (a copied cursor's retained group) must end
+            // before that group is transferred; end such descendants first.
+            std::vector<MirLoanId> descendants;
+            for (const auto &scope : scopes)
+              for (const auto id : scope.loans) {
+                if (id == published || id == retained)
+                  continue;
+                std::unordered_set<MirLoanId> seen;
+                for (MirLoanId link = output.loans[id - 1].parent;
+                     link != 0 && link <= output.loans.size() &&
+                     seen.insert(link).second;
+                     link = output.loans[link - 1].parent)
+                  if (link == retained) {
+                    descendants.push_back(id);
+                    break;
+                  }
+              }
+            std::sort(descendants.begin(), descendants.end(), std::greater<>());
+            descendants.erase(std::unique(descendants.begin(), descendants.end()),
+                              descendants.end());
+            for (const auto id : descendants) {
+              (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                       .hirValue = *statement.value,
+                                       .loan = id});
+              removeLoanFromState(id, scopes, bindingLoans);
+            }
             (void)appendInstruction(
                 {.kind = MirInstructionKind::Borrow,
                  .hirValue = *statement.value,

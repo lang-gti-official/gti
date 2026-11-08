@@ -4843,6 +4843,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                           return active[child - 1] !=
                                  MirLoanFlowState::Inactive;
                         })) {
+          if (std::getenv("GTI_TRACE_LCBD2")) { std::fprintf(stderr, "[endchild] owner=%zu loan=%llu hir=%llu block=%llu:", owner, (unsigned long long)loan, (unsigned long long)instruction.hirValue, (unsigned long long)block.id); for (auto c : children[loan - 1]) if (active[c - 1] != MirLoanFlowState::Inactive) { const auto &cl = body.loans[c - 1]; std::fprintf(stderr, " child%llu(kind=%d src=p%llu producedBy=%llu carriers=%zu)", (unsigned long long)c, static_cast<int>(cl.kind), (unsigned long long)cl.source, (unsigned long long)cl.producedBy, cl.carriers.size()); } std::fprintf(stderr, "\n"); for (const auto &i : block.instructions) std::fprintf(stderr, "   i%llu kind=%d loan=%llu hir=%llu\n", (unsigned long long)i.id, static_cast<int>(i.kind), (unsigned long long)i.loan.value_or(0), (unsigned long long)i.hirValue); } // TEMP-TRACE
           return failure(body, owner,
                          "loan " + std::to_string(loan) +
                              " is ended before its child reborrow",
