@@ -1463,7 +1463,18 @@ verifyMirLifetimeBodyFactsForCase(const MirProgram &program, const MirBody &body
   checkTypeRegions(body.returnType);
   for (const auto &place : body.places)
     checkTypeRegions(place.type);
+  // A published program constant is static data: its literal-backed text and
+  // passive fields hold no body-local borrow, so its regions are closed.
+  const auto publishedConstant = [&](const MirValue &value) {
+    for (const auto &block : body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.id == value.definition)
+          return instruction.programConstantSubstitution;
+    return false;
+  };
   for (const auto &value : body.values) {
+    if (publishedConstant(value))
+      continue;
     if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
       for (const auto region : freeTypeLifetimes(value.info.type)) // TEMP-TRACE
         if (!known(region)) { // TEMP-TRACE

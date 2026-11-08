@@ -3819,7 +3819,7 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
     // argument's lifetime regions are not part of its identity, so every
     // spelling of one shape names one descriptor instance (RFC 0004).
     for (auto &argument : type.arguments)
-      argument = eraseTypeLifetimes(std::move(argument));
+      argument = closeTypeLifetimes(std::move(argument));
     return type;
   }
   case CompilerTypeKind::MetaFieldList: {

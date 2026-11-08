@@ -377,6 +377,22 @@ inline std::optional<LifetimeSignatureContract> substituteLifetimeContract(
 // Representation-only operation. Semantic conversion, overload selection and
 // borrow verification must use the original types and their contracts. This
 // helper alone is not evidence that erasing a caller's obligations is sound.
+// Closes every region of a type to `static`, keeping nominal lifetime
+// arity. Used where a type is only a compile-time descriptor (reflection):
+// its regions carry no meaning, but its identity must stay a complete type.
+inline SemanticType closeTypeLifetimes(SemanticType type) {
+  if (type.kind == SemanticType::Reference && type.referenceLifetime.specified())
+    type.referenceLifetime = Lifetime::staticLifetime();
+  for (auto &region : type.lifetimeArguments)
+    region = Lifetime::staticLifetime();
+  if (type.kind == SemanticType::Reference && !type.referenceLifetime.specified())
+    type.referenceLifetime = Lifetime::staticLifetime();
+  lifetime_detail::children(type, [](SemanticType &child) {
+    child = closeTypeLifetimes(std::move(child));
+  });
+  return type;
+}
+
 inline SemanticType eraseTypeLifetimes(SemanticType type) {
   type.referenceLifetime = {};
   type.lifetimeArguments.clear();

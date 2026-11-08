@@ -1787,6 +1787,20 @@ auto SemanticVisitor::Impl::discardImmediateProgramEffects(
   loanFlow.lifetimeObligations.resize(evaluation.lifetimeObligationStart);
   loanFlow.lifetimeTypeObligations.resize(evaluation.lifetimeTypeObligationStart);
   loanFlow.lifetimeOrigins.resize(evaluation.lifetimeOriginStart);
+  // The published value keeps its checked result type. Its inference regions
+  // remain body variables (unconstrained: static data is valid for any
+  // region), so the destination that receives it stays in scope.
+  {
+    std::vector<SemanticType> resultTypes{semanticModel.typeOf(expression)};
+    if (const auto *contextual = semanticModel.findContextualConstruction(expression))
+      resultTypes.push_back(contextual->constructedType);
+    for (const auto &type : resultTypes)
+      for (const auto region : freeTypeLifetimes(type))
+        if (region.kind == Lifetime::Kind::Inference &&
+            std::find(loanFlow.lifetimeVariables.begin(), loanFlow.lifetimeVariables.end(),
+                      region) == loanFlow.lifetimeVariables.end())
+          loanFlow.lifetimeVariables.push_back(region);
+  }
   // Loan-flow conflicts retain indices into this vector. Keep those indices
   // stable while making the now nonexistent runtime checks vacuous.
   for (std::size_t index = evaluation.borrowCheckStart;

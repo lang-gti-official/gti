@@ -1,3 +1,4 @@
+#include "gti/lifetime_types.h"
 #include "representation.h"
 #include "scalar.h"
 
@@ -247,7 +248,9 @@ llvm::Constant *Scalars::constant(const ConstantValue &value,
       type.kind == SemanticType::Class) {
     const auto &object = *aggregate->value;
     const auto &owner = session.layouts().instance(type);
-    if (!object.exactType || *object.exactType != type ||
+    // Constant identity is the type shape; regions were proved in MIR.
+    if (!object.exactType ||
+        eraseTypeLifetimes(*object.exactType) != eraseTypeLifetimes(type) ||
         object.identity != owner.declaration || !owner.bases.empty() ||
         owner.requiresActiveCleanup ||
         object.fields.size() != owner.declaredFields.size())

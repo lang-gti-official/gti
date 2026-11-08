@@ -741,7 +741,7 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
       if (const auto *descriptor = classInfo(type);
           descriptor && descriptor->compilerType == CompilerTypeKind::MetaType) {
         for (auto &argument : type.arguments)
-          argument = eraseTypeLifetimes(std::move(argument));
+          argument = closeTypeLifetimes(std::move(argument));
         return;
       }
     if (isLifetimeInvocationSignature(type) ||
@@ -1439,6 +1439,8 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
     const SemanticLoanPlace *receiverPlace) -> bool {
   notePrivateLifetimeDependency(function.id);
   const auto reject = [&](std::string_view message) {
+    if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+      std::fprintf(stderr, "[call-reject] line=%u %.*s\n", static_cast<unsigned>(site.line), static_cast<int>(message.size()), message.data()); // TEMP-TRACE
     if (diagnose)
       report(site, std::string(message), "GTI-S2127");
     return false;

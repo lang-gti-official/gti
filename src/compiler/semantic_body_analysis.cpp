@@ -8220,6 +8220,16 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
 }
 
 auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
+  struct TraceMetaCall { // TEMP-TRACE
+    Impl &self; const Call &expr; std::size_t before; // TEMP-TRACE
+    ~TraceMetaCall() { // TEMP-TRACE
+      if (!std::getenv("GTI_TRACE_CONSTEXPR_IF")) return; // TEMP-TRACE
+      const auto name = self.expressionToken(expr.callee()).lexeme; // TEMP-TRACE
+      if (name.rfind("meta_", 0) != 0 || self.currentType != SemanticType::Unknown) return; // TEMP-TRACE
+      std::fprintf(stderr, "[metacall] %s unknown instance=%d typeArgs=%zu arg0=%s newDiags=%zu\n", name.c_str(), self.instanceAnalysisActive, expr.typeArguments().size(), expr.typeArguments().empty() ? "-" : self.typeSpelling(self.typeOf(expr.typeArguments().front())).c_str(), self.diagnostics.size() - before); // TEMP-TRACE
+      for (std::size_t i = before; i < self.diagnostics.size(); ++i) std::fprintf(stderr, "[metacall]   diag %s %s\n", self.diagnostics[i].code.c_str(), self.diagnostics[i].message.c_str()); // TEMP-TRACE
+    } // TEMP-TRACE
+  } traceMetaCall{*this, expr, diagnostics.size()}; // TEMP-TRACE
   PackBorrowInvocationScope packInvocation(*this);
   loanFlow.deferredPackCalls.erase(&expr);
   if (expr.capturedArguments() && analyzeCapturedCall(expr))

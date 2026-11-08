@@ -6585,8 +6585,13 @@ auto SemanticVisitor::Impl::readMemberRequirementSatisfied(
   const CallableCandidate *rejectedConstraints = nullptr;
   std::optional<ConstraintFailure> rejectedConstraintCause;
   for (const auto &candidate : overloads.overloads) {
+    // A member signature requirement names parameter shapes; the member's
+    // elided or declared regions are its own contract (RFC 0004).
     if (candidate.staticMember || candidate.parameterPack ||
-        !std::ranges::equal(candidate.parameterTypes, parameters) ||
+        !std::ranges::equal(candidate.parameterTypes, parameters,
+                            [](const SemanticType &left, const SemanticType &right) {
+                              return eraseTypeLifetimes(left) == eraseTypeLifetimes(right);
+                            }) ||
         candidate.receiverMutability != (mutableReceiver
                                              ? ReceiverMutability::Mutable
                                              : ReceiverMutability::ReadOnly) ||
@@ -8009,6 +8014,8 @@ auto SemanticVisitor::Impl::checkedArgumentPotential(const ExprPtr &argument,
       {{.type = source, .expression = &argument}}, expressionToken(argument),
       false, true, &candidates, true);
   currentType = enclosingType;
+  if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+    std::fprintf(stderr, "[checked-arg] source=%s target=%s candidates=%zu\n", typeSpelling(source).c_str(), typeSpelling(target).c_str(), candidates.size()); // TEMP-TRACE
   return !candidates.empty();
 }
 

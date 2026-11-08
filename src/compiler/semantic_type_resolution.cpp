@@ -2624,7 +2624,9 @@ auto SemanticVisitor::Impl::selectConstructorCandidate(
                   parameter.arguments.size() == 1
               ? parameter.arguments.front()
               : parameter;
-      if (observed != arguments.front().type)
+      // The checked conversion's regions were proved by the lifetime
+      // application above; the immediate parameter is selected by shape.
+      if (eraseTypeLifetimes(observed) != eraseTypeLifetimes(arguments.front().type))
         continue;
     }
     bool exact = true;
@@ -2641,7 +2643,8 @@ auto SemanticVisitor::Impl::selectConstructorCandidate(
           checkedArgument && parameterType.kind == SemanticType::Reference &&
                   parameterType.referenceAccess == AccessMode::ReadOnly &&
                   parameterType.arguments.size() == 1 &&
-                  parameterType.arguments.front() == argument.type
+                  eraseTypeLifetimes(parameterType.arguments.front()) ==
+                      eraseTypeLifetimes(argument.type)
               ? true
           : requireExactNullParameter
               ? parameterType == SemanticType::NullPtr &&

@@ -1317,8 +1317,20 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
             construction->generatedDefault
                 ? candidate.generatedDefault
                 : candidate.declaration == construction->constructor;
-        if (selected && owner && owner->type == construction->constructedType &&
-            candidate.typeArguments == construction->typeArguments &&
+        if (std::getenv("GTI_TRACE_CONSTEXPR_IF") && candidate.declaration == construction->constructor) // TEMP-TRACE
+          std::fprintf(stderr, "[staged-ctor] cand=%llu owner=%s constructed=%s targs=%zu/%zu vargs=%d\n", (unsigned long long)candidate.id, owner ? typeSpelling(owner->type).c_str() : "-", typeSpelling(construction->constructedType).c_str(), candidate.typeArguments.size(), construction->typeArguments.size(), candidate.valueArguments == construction->valueArguments); // TEMP-TRACE
+        // The staged instance is selected by shape: a borrowed record's
+        // constructed type carries the caller's regions, the instance its own.
+        const auto sameShapes = [](const auto &left, const auto &right) {
+          return left.size() == right.size() &&
+                 std::equal(left.begin(), left.end(), right.begin(),
+                            [](const SemanticType &a, const SemanticType &b) {
+                              return eraseTypeLifetimes(a) == eraseTypeLifetimes(b);
+                            });
+        };
+        if (selected && owner &&
+            eraseTypeLifetimes(owner->type) == eraseTypeLifetimes(construction->constructedType) &&
+            sameShapes(candidate.typeArguments, construction->typeArguments) &&
             candidate.valueArguments == construction->valueArguments) {
           root = {MirBodyKind::Constructor, candidate.id};
           break;

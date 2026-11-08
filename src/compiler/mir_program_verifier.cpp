@@ -25289,7 +25289,9 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     if (type.kind == SemanticType::Class) {
       const auto owner = std::find_if(
           program.classInstances().begin(), program.classInstances().end(),
-          [&](const auto &candidate) { return candidate.type == type; });
+          [&](const auto &candidate) {
+            return eraseTypeLifetimes(candidate.type) == eraseTypeLifetimes(type);
+          });
       if (owner == program.classInstances().end() ||
           owner->requiresActiveCleanup || owner->traits.containsBorrowedState ||
           owner->polymorphic || owner->kind == ClassKind::Union ||
@@ -25576,6 +25578,8 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
         if (!instruction.programConstantSubstitution)
           continue;
         const auto constant = publishedConstants.find(instruction.hirValue);
+        if (std::getenv("GTI_TRACE_MIR_SHAPE") && constant != publishedConstants.end()) // TEMP-TRACE
+          std::fprintf(stderr, "[published] finite=%d passive=%d matches=%d typeKind=%d lifetimes=%zu\n", finiteLayout(finiteLayout, instruction.info.type), passiveConstantType(passiveConstantType, instruction.info.type), constantMatchesType(*constant->second, instruction.info.type, &program), static_cast<int>(instruction.info.type.kind), instruction.info.type.lifetimeArguments.size()); // TEMP-TRACE
         if (constant == publishedConstants.end() ||
             !finiteLayout(finiteLayout, instruction.info.type) ||
             !passiveConstantType(passiveConstantType, instruction.info.type) ||

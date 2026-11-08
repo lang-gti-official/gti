@@ -29,6 +29,8 @@
 #include <utility>
 
 namespace lang {
+static inline bool gtiShapeTraceReject(int line) { if (std::getenv("GTI_TRACE_MIR_SHAPE")) std::fprintf(stderr, "[shape-reject] mir.cpp:%d\n", line); return false; } // TEMP-TRACE-RET
+
 
 namespace {
 [[nodiscard]] std::vector<MirLoanId>
@@ -1049,8 +1051,9 @@ programConstantMatchesType(const ConstantValue &constant,
            type.enumId == enumerator->enumId;
   }
   if (const auto *aggregate = std::get_if<ConstantAggregateValue>(&constant)) {
+    // A constant has no lifetime meaning: its identity is the type shape.
     if (aggregate->value == nullptr || aggregate->value->exactType == nullptr ||
-        *aggregate->value->exactType != type) {
+        eraseTypeLifetimes(*aggregate->value->exactType) != eraseTypeLifetimes(type)) {
       return false;
     }
     if (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
@@ -1099,7 +1102,7 @@ programConstantMatchesType(const ConstantValue &constant,
         program->classInstances().begin(), program->classInstances().end(),
         [&](const MirClassInstance &candidate) {
           return candidate.declaration == type.classId &&
-                 candidate.type == type;
+                 eraseTypeLifetimes(candidate.type) == eraseTypeLifetimes(type);
         });
     if (instance == program->classInstances().end() ||
         instance->declaredFields.size() != aggregate->value->fields.size()) {
@@ -12340,7 +12343,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
     }
     const auto validCallableInvocation = [&]() {
       if (!instruction.callableInvocation) {
-        return !instruction.callableBoundary;
+        { const bool shapeTraceResult = (!instruction.callableBoundary); if (!shapeTraceResult) gtiShapeTraceReject(__LINE__); return shapeTraceResult; } // TEMP-TRACE-RET
       }
       if (*instruction.callableInvocation ==
           CallableInvocationCapability::Once) {
@@ -12425,7 +12428,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
         return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       if (!input.preparedParameterDrop) {
-        return !input.destination && input.lifecycle.empty();
+        { const bool shapeTraceResult = (!input.destination && input.lifecycle.empty()); if (!shapeTraceResult) gtiShapeTraceReject(__LINE__); return shapeTraceResult; } // TEMP-TRACE-RET
       }
       const MirDropObligation *prepared =
           body.findDropObligation(*input.preparedParameterDrop);
@@ -12555,7 +12558,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                !input.lifecycle.front().conditional;
       }
       if (obligations.empty()) {
-        return !input.destination && input.lifecycle.empty();
+        { const bool shapeTraceResult = (!input.destination && input.lifecycle.empty()); if (!shapeTraceResult) gtiShapeTraceReject(__LINE__); return shapeTraceResult; } // TEMP-TRACE-RET
       }
       // An explicitly moved receiver remains a caller-owned temporary until
       // full-expression cleanup. Invocation uses that exact value; unlike a
@@ -12991,7 +12994,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       // an empty placeholder in the class field-initializer body; a
       // constructor initializer supplies the actual address later.
       if (instruction.operands.empty()) {
-        return body.kind == MirBodyKind::FieldInitializers;
+        { const bool shapeTraceResult = (body.kind == MirBodyKind::FieldInitializers); if (!shapeTraceResult) gtiShapeTraceReject(__LINE__); return shapeTraceResult; } // TEMP-TRACE-RET
       }
       if (instruction.operands.size() != 1 ||
           instruction.operands.front().kind != MirOperandKind::Loan ||
@@ -13142,7 +13145,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                std::all_of(anchor->projections.begin(),
                            anchor->projections.end(),
                            [](const auto &projection) {
-                             return projection.kind == MirProjectionKind::Field;
+                             { const bool shapeTraceResult = (projection.kind == MirProjectionKind::Field); if (!shapeTraceResult) gtiShapeTraceReject(__LINE__); return shapeTraceResult; } // TEMP-TRACE-RET
                            }) &&
                instruction.ownership &&
                instruction.ownership->kind ==
@@ -13156,11 +13159,11 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                instruction.lifecycle.empty() &&
                operand.kind == MirOperandKind::Value;
       case HirCallInputKind::CopyValue:
-        return validOwnedCopyInput(instruction, operand);
+        { const bool shapeTraceResult = (validOwnedCopyInput(instruction, operand)); if (!shapeTraceResult) gtiShapeTraceReject(__LINE__); return shapeTraceResult; } // TEMP-TRACE-RET
       case HirCallInputKind::MoveValue:
-        return validOwnedMoveInput(instruction, operand);
+        { const bool shapeTraceResult = (validOwnedMoveInput(instruction, operand)); if (!shapeTraceResult) gtiShapeTraceReject(__LINE__); return shapeTraceResult; } // TEMP-TRACE-RET
       case HirCallInputKind::MoveBorrowedTemporary:
-        return validBorrowedTemporaryMoveInput(instruction, operand);
+        { const bool shapeTraceResult = (validBorrowedTemporaryMoveInput(instruction, operand)); if (!shapeTraceResult) gtiShapeTraceReject(__LINE__); return shapeTraceResult; } // TEMP-TRACE-RET
       case HirCallInputKind::ReadBorrow:
         return !instruction.preparedParameterDrop &&
                instruction.lifecycle.empty() &&
@@ -13178,7 +13181,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           return shapeTraceReject(__LINE__); // TEMP-TRACE
         }
         const MirLoan *loan = body.findLoan(operand.loan);
-        return loan != nullptr && loan->access == AccessMode::Mutable;
+        { const bool shapeTraceResult = (loan != nullptr && loan->access == AccessMode::Mutable); if (!shapeTraceResult) gtiShapeTraceReject(__LINE__); return shapeTraceResult; } // TEMP-TRACE-RET
       }
       case HirCallInputKind::ReadTemporaryBorrow:
         return temporaryArgument
@@ -13385,7 +13388,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           std::find_if(
               instruction.lifecycle.begin(), instruction.lifecycle.end(),
               [](const MirLifecycleEvent &event) {
-                return event.kind != MirLifecycleEventKind::TransferOut;
+                { const bool shapeTraceResult = (event.kind != MirLifecycleEventKind::TransferOut); if (!shapeTraceResult) gtiShapeTraceReject(__LINE__); return shapeTraceResult; } // TEMP-TRACE-RET
               }) -
           instruction.lifecycle.begin());
       const bool preparedTransfers = std::all_of(
