@@ -9519,6 +9519,8 @@ auto SemanticVisitor::Impl::receiverModeForObject(
       isMutableObject(receiver)) {
     return CallReceiverMode::MutablePlace;
   }
+  if (std::getenv("GTI_TRACE_RECV") && info && info->traits.containsBorrowedState) { std::fprintf(stderr, "[recvfn] mut=%d origin=%d ret=%d fields=%zu:", static_cast<int>(function.receiverMutability), static_cast<int>(function.returnBorrowOrigin), static_cast<int>(function.returnType.kind), function.returnBorrowFields.size()); for (const auto &m : function.returnBorrowFields) std::fprintf(stderr, " [o=%d src=%zu res=%zu]", static_cast<int>(m.origin), m.sourceFields.size(), m.resultFields.size()); std::fprintf(stderr, "\n"); } // TEMP-TRACE
+  if (std::getenv("GTI_TRACE_RECV") && info) std::fprintf(stderr, "[recvmode] allow=%d freshSupp=%d borrowed=%d ephem=%d textDep=%d relay=%d eligible=%d consuming=%d\n", allowFreshTemporary, freshTemporaryMethodSupported(function), info->traits.containsBorrowedState, ephemeralBorrowResultSupported(function), isTextDependentValue(*info), receiverTextFieldRelay(function), freshTemporaryReceiverValue(receiver).eligible, consumingReceiverValue(receiver)); // TEMP-TRACE
   // A text field relay returns what a dependent temporary holds in that
   // field, its owner's text, never a view of the temporary itself.
   if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&

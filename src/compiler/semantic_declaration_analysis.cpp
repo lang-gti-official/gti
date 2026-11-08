@@ -4529,7 +4529,17 @@ auto SemanticVisitor::Impl::analyzeDeclarationAttributeList(
       diagnostics.emplace_back(std::move(diagnostic));
       continue;
     }
-    if (attribute->hasGenericBindings() ||
+    // An attribute value is a compile-time constant: its anonymous view
+    // regions are static. Only type/value generic bindings are excluded.
+    const bool typeOrValueGeneric =
+        std::any_of(attribute->genericParameters.begin(),
+                    attribute->genericParameters.end(),
+                    [](const auto &parameter) { return !parameter.lifetime; }) ||
+        !attribute->genericArgumentPatternLifetimes.empty() ||
+        !attribute->genericArgumentPatterns.empty() ||
+        (attribute->declaration &&
+         !attribute->declaration->genericArgumentPatterns().empty());
+    if (typeOrValueGeneric ||
         (!attribute->fields.empty() && !attribute->designatedConstructor)) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2113", DiagnosticPhase::Semantics, anchor,
@@ -10288,10 +10298,14 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
             FunctionBorrowDependencySummary{.dependencies = std::move(dependencies)};
       }
       updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
+      // The text field a returned text reference designates is a body fact
+      // independent of the signature contract (L-OWN-02).
+      updated.returnedTextReference = textReferenceReturnSummary(updated);
       semanticModel.record(*declaration, updated);
       publishFunctionBorrowSummary(updated, candidateIndex);
       continue;
     }
+    if (std::getenv("GTI_TRACE_RECV") && updated.declaration) std::fprintf(stderr, "[retsum-branch] %s complete=%d explicit=%d\n", updated.declaration->name().lexeme.c_str(), updated.lifetimeContract.complete, updated.explicitReturnBorrowOrigin); // TEMP-TRACE
     if (updated.explicitReturnBorrowOrigin) {
       // A declaration contract is authoritative even when invalid (None).
       // Body-based inference must neither overwrite it nor rescue a typo.
@@ -10319,6 +10333,7 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
             dynamicTextReturnBorrowSummary(updated)) {
       summary = *dynamicText;
     }
+    if (std::getenv("GTI_TRACE_RECV") && updated.declaration) std::fprintf(stderr, "[retsum] %s origin=%d fields=%zu\n", updated.declaration->name().lexeme.c_str(), static_cast<int>(summary.origin), summary.fields.size()); // TEMP-TRACE
     if (const auto fields = storedFieldReturnBorrowSummary(updated))
       summary = *fields;
     updated.returnedTextReference = textReferenceReturnSummary(updated);

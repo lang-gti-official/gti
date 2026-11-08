@@ -6201,7 +6201,11 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
     }
     if (const auto *function = currentFunctionInfo();
         function && !currentLambdaReturn && function->lifetimeContract.valid()) {
-      const auto checked = physicalReferenceReturnBorrow(value, reference.referenceAccess);
+      auto checked = physicalReferenceReturnBorrow(value, reference.referenceAccess);
+      // A returned call result's storage is described by that call's own
+      // complete dependency set (its callee's checked contract).
+      if (!checked && exprAs<Call>(value.get()))
+        checked = completeBorrowDependencySet(value);
       validShell = checked && normalizedCompleteReturnBorrow(*function, *checked, nullptr, value.get()).has_value();
       if (!validShell && checked && validateKnownLeadingReturnBorrow(*function, *checked)) {
         loanFlow.deferredGenericFlow = true;
@@ -6209,6 +6213,7 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
         validShell = true;
       }
     }
+    if (!validShell && std::getenv("GTI_TRACE_RECV")) { const auto *fn = currentFunctionInfo(); std::fprintf(stderr, "[shellret] fn=%s line=%u valid=%d call=%d complete=%d receiver=%d\n", fn && fn->declaration ? fn->declaration->name().lexeme.c_str() : "?", static_cast<unsigned>(expressionToken(value).line), fn && fn->lifetimeContract.valid(), exprAs<Call>(value.get()) != nullptr, completeBorrowDependencySet(value).has_value(), shell.receiver); } // TEMP-TRACE
     if (!validShell) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(value),

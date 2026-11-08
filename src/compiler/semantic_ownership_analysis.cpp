@@ -1444,7 +1444,7 @@ auto SemanticVisitor::Impl::contextualTextValue(const Expr &expression,
     -> bool {
   const auto *contextual = semanticModel.findContextualConstruction(expression);
   return contextual != nullptr && contextual->dependentTextPublication &&
-         contextual->constructedType == type;
+         eraseTypeLifetimes(contextual->constructedType) == eraseTypeLifetimes(type);
 }
 
 auto SemanticVisitor::Impl::textDependentPaths(const Expr &expression) const
@@ -2810,7 +2810,10 @@ auto SemanticVisitor::Impl::recordTextFieldUses(
                           const SemanticType &formalType) {
     const ExpressionInfo *info =
         argument ? semanticModel.findExpression(*argument) : nullptr;
-    if (info == nullptr || info->type != formalType)
+    // The formal's regions are the call's applied contract; the relay is
+    // selected by the argument's shape.
+    if (info == nullptr ||
+        eraseTypeLifetimes(info->type) != eraseTypeLifetimes(formalType))
       return;
     if (isTextDependentValue(*info)) {
       const auto found =
@@ -3648,7 +3651,8 @@ auto SemanticVisitor::Impl::relayReturnedTextFormal(
   if (!index || !function || !function->declaration ||
       function->virtualMethod || function->overrideMethod ||
       function->linkage != LanguageLinkage::Gti ||
-      function->returnType != type || !textPublicationOwner(type) ||
+      eraseTypeLifetimes(function->returnType) != eraseTypeLifetimes(type) ||
+      !textPublicationOwner(type) ||
       (constructor != nullptr &&
        !constructionKeepsPublishedText(type, constructor)))
     return false;
@@ -3675,7 +3679,8 @@ auto SemanticVisitor::Impl::noteDependentTextReturn(const ExprPtr &value)
     return;
   const ExpressionInfo *info = semanticModel.findExpression(*value);
   if (info == nullptr ||
-      !((isTextDependentValue(*info) && info->type == type) ||
+      !((isTextDependentValue(*info) &&
+         eraseTypeLifetimes(info->type) == eraseTypeLifetimes(type)) ||
         contextualTextValue(*value, type)))
     return;
   const FunctionInfo *function = [&] {
@@ -3957,7 +3962,8 @@ auto SemanticVisitor::Impl::finalizeOwnerlessTextContracts() -> void {
               caller->ownerlessTextParameters.end())
         continue;
       if (*use.forwardedParameter >= caller->parameterTypes.size() ||
-          caller->parameterTypes[*use.forwardedParameter] != use.callerFormal)
+          eraseTypeLifetimes(caller->parameterTypes[*use.forwardedParameter]) !=
+              eraseTypeLifetimes(use.callerFormal))
         continue;
       FunctionInfo updated = *caller;
       updated.ownerlessTextParameters.push_back(*use.forwardedParameter);
@@ -3980,7 +3986,8 @@ auto SemanticVisitor::Impl::finalizeOwnerlessTextContracts() -> void {
         use.caller ? semanticModel.findFunction(*use.caller) : nullptr;
     if (caller && use.forwardedParameter &&
         (*use.forwardedParameter >= caller->parameterTypes.size() ||
-         caller->parameterTypes[*use.forwardedParameter] != use.callerFormal))
+         eraseTypeLifetimes(caller->parameterTypes[*use.forwardedParameter]) !=
+             eraseTypeLifetimes(use.callerFormal)))
       continue;
     if (caller && use.forwardedParameter &&
         std::find(caller->ownerlessTextParameters.begin(),
@@ -8309,6 +8316,13 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
                  .access = contract.access};
     }
   }
+  // A text view's owner is not a signature fact: the declaration's checked
+  // body summary (L-OWN-02) names the field the view relays. Keep it.
+  if (summary.origin == BorrowOriginKind::None &&
+      (function.returnType.kind == SemanticType::StringView ||
+       function.returnType.kind == SemanticType::CString) &&
+      function.returnBorrowOrigin != BorrowOriginKind::None)
+    return;
   function.returnBorrowOrigin = summary.origin;
   function.returnBorrowParameter = summary.parameter;
   function.returnBorrowAccess = summary.access;
