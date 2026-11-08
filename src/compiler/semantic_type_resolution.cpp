@@ -3892,9 +3892,21 @@ auto SemanticVisitor::Impl::analyzeStringViewMemberCall(
       }
     }
     validateCallPlaceExclusivityImpl(factory->parameterTypes, inputs, paren);
-    recordResolvedCall(call, *factory, {}, {}, {}, {}, CallReceiverMode::None,
+    // The trusted factory is an ordinary lifetime-generic function. Bind its
+    // regions from the selected view and arguments as any call does; its
+    // declared parameters never leak into the caller's types.
+    CallableCandidate selected = *factory;
+    std::vector<AnalyzedCallArgument> analyzed;
+    for (std::size_t index = 0; index < inputs.size(); ++index)
+      analyzed.push_back({.type = types[index], .expression = inputs[index]});
+    if (!applyCallLifetimeContract(selected, analyzed, paren)) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    commitLifetimeApplication(selected.lifetimeApplication);
+    recordResolvedCall(call, selected, {}, {}, {}, {}, CallReceiverMode::None,
                        &member.object());
-    currentType = callExpressionType(factory->returnType);
+    currentType = callExpressionType(selected.returnType);
     return;
   }
   if (member.name().lexeme != "size" && member.name().lexeme != "empty") {

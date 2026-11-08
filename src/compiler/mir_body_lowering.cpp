@@ -16,6 +16,7 @@
 #include <memory>
 #include <tuple>
 
+#define GTI_INVALID2() do { if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid2] mir_body_lowering.cpp:%d\n", __LINE__); } while (0) // TEMP-TRACE-INVALID2
 namespace lang {
 
 namespace {
@@ -146,7 +147,7 @@ public:
         }
       if (kind == MirBodyKind::FieldInitializers &&
           fieldInitializerOwner == nullptr)
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
     }
     output.hasCallerLocation = function != nullptr && function->tracksCaller;
     output.placeDomain = source.placeDomain;
@@ -157,7 +158,7 @@ public:
       values.emplace(value.id, &value);
       if (value.programConstantSubstitution) {
         if (!value.constant) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         } else {
           output.programConstantSubstitutions.push_back(
               {.hirValue = value.id, .constant = *value.constant});
@@ -313,7 +314,7 @@ public:
               const auto parameterView = substituteTypeLifetimes(
                   program.findConstructorInstance(*initializer.constructorTarget)->parameterTypes[argumentIndex],
                   initializer.lifetimeApplication.bindings);
-              if (!parameterView) { valid = false; break; }
+              if (!parameterView) { { valid = false; GTI_INVALID2(); } break; } // TEMP-TRACE-INVALID2
               const auto &parameter = *parameterView;
               MirOperand operand = valueOperand(argument);
               if (terminated())
@@ -332,7 +333,7 @@ public:
               const auto parameterView = substituteTypeLifetimes(
                   program.findConstructorInstance(*initializer.constructorTarget)->parameterTypes[argumentIndex],
                   initializer.lifetimeApplication.bindings);
-              if (!parameterView) { valid = false; break; }
+              if (!parameterView) { { valid = false; GTI_INVALID2(); } break; } // TEMP-TRACE-INVALID2
               const auto &parameter = *parameterView;
               auto prepared = prepareCallInput(
                   0, argument, parameter,
@@ -375,7 +376,7 @@ public:
             for (const auto &dependency : initializer.completeBorrow->dependencies) {
               const auto lowered = lowerCompleteBorrowDependency(dependency);
               if (!lowered) {
-                valid = false;
+                { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
                 break;
               }
               complete.dependencies.push_back(*lowered);
@@ -638,7 +639,7 @@ public:
 
 private:
   void reject(HirValueId value, std::string message) {
-    valid = false;
+    { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
     if (!firstRejection)
       firstRejection = std::pair{value, std::move(message)};
   }
@@ -656,7 +657,7 @@ private:
 
   void captureSourceDebug() {
     if (!isValidSourceDebugRecord(source.sourceDebug)) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     output.sourceDebug = mir_detail::describeHirSourceDebug(source);
@@ -984,10 +985,10 @@ private:
           ownedBaseArgument(initializer, index)) {
         const auto parameterView = substituteTypeLifetimes(
             selectedConstructor->parameterTypes[index], initializer.lifetimeApplication.bindings);
-        if (!parameterView) { valid = false; return; }
+        if (!parameterView) { { valid = false; GTI_INVALID2(); } return; } // TEMP-TRACE-INVALID2
         const auto &parameter = *parameterView;
         if (!prepared[index]) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return;
         }
         arguments.push_back(*prepared[index]);
@@ -1013,14 +1014,14 @@ private:
         if (!candidate.interface && candidate.instance == base->id && actual &&
             *actual == initializer.targetType) {
           if (baseOrdinal) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             return;
           }
           baseOrdinal = ordinal;
         }
       }
     if (!baseOrdinal) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const MirPlaceId destination =
@@ -1064,7 +1065,7 @@ private:
     if (traits.containsBorrowedState &&
         (initializerIndex >= initializerCompleteBorrows.size() ||
          !initializerCompleteBorrows[initializerIndex])) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     if (initializerIndex < initializerCompleteBorrows.size())
@@ -1090,7 +1091,7 @@ private:
     // The base constructor owns each prepared parameter once it begins.
     for (const MirDropObligationId drop : preparedDrops) {
       if (!removeTemporary(drop))
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       stage.lifecycle.push_back(
           {.kind = MirLifecycleEventKind::TransferOut, .source = drop});
     }
@@ -1140,7 +1141,7 @@ private:
           continue;
         }
         if (initializerRollback != nullptr) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           initializerRollback = nullptr;
           break;
         }
@@ -1636,7 +1637,7 @@ private:
       MirDropObligation &existing = output.dropObligations[found->second - 1];
       if (place != 0) {
         if (existing.place != 0 && existing.place != place) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         } else {
           existing.place = place;
         }
@@ -1654,7 +1655,7 @@ private:
               *obligation.packElement >= root->type.arguments.size() ||
               root->type.arguments[*obligation.packElement] !=
                   obligation.dropType.type) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             return 0;
           }
           MirPlace element = *root;
@@ -1682,7 +1683,7 @@ private:
       }
     }
     if (place == 0) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return 0;
     }
     const MirDropObligationId id = output.dropObligations.size() + 1;
@@ -1813,7 +1814,7 @@ private:
     const HirValue *call =
         callSite != 0 ? findValue(callSite) : findValue(sourceValue);
     if (call == nullptr || call->fullExpression == 0 || result == 0) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return 0;
     }
     const MirPlaceId place = appendPlace({.root = MirPlaceRootKind::Temporary,
@@ -1842,7 +1843,7 @@ private:
         call.info.type.kind != SemanticType::UniqueOwner ||
         call.info.type.arguments.size() != 1 ||
         call.info.type.arguments.front().kind != SemanticType::Class) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return 0;
     }
     const MirPlaceId place = appendPlace({.root = MirPlaceRootKind::Temporary,
@@ -1970,7 +1971,7 @@ private:
                             ? nullptr
                             : &output.places[obligation->place - 1];
       if (place == nullptr) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }
       if (place->root == MirPlaceRootKind::Value) {
@@ -2024,7 +2025,7 @@ private:
         if ((!initializesObligation && !successEdgeInitializesObligation) ||
             (definition->destination &&
              *definition->destination != obligation->place)) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           continue;
         }
         // A branch-only owning value needs executable storage that remains
@@ -2062,7 +2063,7 @@ private:
     const MirDropObligation *sourceDrop = output.findDropObligation(source);
     const MirDropObligation *targetDrop = output.findDropObligation(target);
     if (sourceDrop == nullptr || targetDrop == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const bool lifetimeInput =
@@ -2149,7 +2150,7 @@ private:
         producer->activeFailure != activeFailure ||
         producer->instructions.empty() ||
         producer->instructions.back().id != producerInstruction) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
 
@@ -2471,7 +2472,7 @@ private:
            ++loan) {
         const MirLoan *record = output.findLoan(*loan);
         if (record == nullptr) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           continue;
         }
         if (!record->lifecycleBound || !record->carriers.empty() ||
@@ -2513,7 +2514,7 @@ private:
       const MirPlace *place =
           obligation == nullptr ? nullptr : output.findPlace(obligation->place);
       if (obligation == nullptr || place == nullptr) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }
       (void)appendFailureCleanupDrop(
@@ -2551,7 +2552,7 @@ private:
         continue;
       }
       if (place == nullptr || obligation == 0) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }
       const MirLoanId lifecycleLoan = lifecycleLoanForPlace(*place);
@@ -2866,7 +2867,7 @@ private:
       auto &expression = output.fullExpressions[index];
       if (expression.id == 0 || expression.id >= remap.size() ||
           remap[expression.id] != 0) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       remap[expression.id] = index + 1;
@@ -2875,7 +2876,7 @@ private:
     }
     const auto repair = [&](HirFullExpressionId &id) {
       if (id >= remap.size() || (id != 0 && remap[id] == 0))
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       else
         id = remap[id];
     };
@@ -2969,7 +2970,7 @@ private:
     const MirBlock *producer = currentBlock();
     if (producer == nullptr || producer->instructions.empty() ||
         producer->instructions.back().id != producerInstruction) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
 
@@ -3165,7 +3166,7 @@ private:
              ++loan) {
           const MirLoan *record = output.findLoan(*loan);
           if (record == nullptr) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             continue;
           }
           // A transient returned view/reference may still borrow an active
@@ -3285,7 +3286,7 @@ private:
         const MirDropObligationId obligation =
             dropObligationForLocalPlace(place);
         if (obligation == 0) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           continue;
         }
         if (!containsDrop(consumedDrops, obligation)) {
@@ -3316,7 +3317,7 @@ private:
       const MirPlace *place =
           obligation == nullptr ? nullptr : output.findPlace(obligation->place);
       if (obligation == nullptr || place == nullptr) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }
       const MirLoanId lifecycleLoan = lifecycleLoanForPlace(*place);
@@ -3443,7 +3444,7 @@ private:
       // here; drops and boundary markers have their own recorders.
       if (instruction.kind != MirInstructionKind::EndBorrow ||
           !instruction.loan) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return 0;
       }
       // Program verification justifies ending a lifecycle-bound loan by the
@@ -3551,7 +3552,7 @@ private:
       const auto site =
           failureMetadata.callerSiteFor(*instruction.callerLocation);
       if (!site) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       } else {
         instruction.callerLocationSite = *site;
       }
@@ -3562,7 +3563,7 @@ private:
          instruction.definedFailure.localOrigins) {
       const std::optional<FailureSiteId> site = failureMetadata.siteFor(origin);
       if (!site) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }
       instruction.localFailureSites.push_back(*site);
@@ -3649,11 +3650,11 @@ private:
     if (instruction.result) {
       if (*instruction.result == 0 ||
           *instruction.result > output.values.size()) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       } else {
         MirValue &result = output.values[*instruction.result - 1];
         if (result.definition != 0) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         } else {
           result.definitionBlock = block->id;
           result.definition = id;
@@ -3766,7 +3767,7 @@ private:
   [[nodiscard]] HirFullExpressionId
   publishFullExpression(const HirFullExpression &expression) {
     if (expression.id == 0 || expression.roots.empty()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return 0;
     }
     if (const auto found = fullExpressionIds.find(expression.id);
@@ -3806,12 +3807,12 @@ private:
       const MirDropObligation *obligation =
           output.findDropObligation(candidate->obligation);
       if (obligation == nullptr || obligation->place == 0) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }
       const MirPlace *place = output.findPlace(obligation->place);
       if (place == nullptr) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }
       consumedDrops.push_back(candidate->obligation);
@@ -3870,7 +3871,7 @@ private:
                            hirValue) != expression.roots.end();
         });
     if (ambiguous) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const HirFullExpressionId boundaryId = publishFullExpression(*boundary);
@@ -3878,7 +3879,7 @@ private:
       return;
     }
     if (earlyExit && boundary->roots.empty()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     (void)appendInstruction(
@@ -4099,7 +4100,7 @@ private:
           if ((source->functionTarget || source->constructorTarget) &&
               source->borrowOrigin != BorrowOriginKind::None)
             return id;
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return id;
         }
         complete.dependencies.push_back(*lowered);
@@ -4145,7 +4146,7 @@ private:
   [[nodiscard]] MirValueId mirValueFor(HirValueId id) {
     const HirValue *value = findValue(id);
     if (value == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return 0;
     }
     return mirValueFor(*value);
@@ -4276,12 +4277,12 @@ private:
       if (entry && entry->entry &&
           entry->kind == SemanticLoanKind::StoredValue) {
         if (mapped == semanticLoans.end()) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return 0;
         }
         const auto *lowered = output.findLoan(mapped->second);
         if (!lowered) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return 0;
         }
         const auto base = lowered->source;
@@ -4297,7 +4298,7 @@ private:
           if (auto projected =
                   project(dependency.designatedFields, dependency.conditions)) {
             if (exact != 0 && exact != projected) {
-              valid = false;
+              { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
               return 0;
             }
             exact = projected;
@@ -4307,7 +4308,7 @@ private:
             (resultValue && place->type != resultValue->info.type) ||
             (loan.access == AccessMode::Mutable &&
              place->access != AccessMode::Mutable)) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return 0;
         }
         semanticLoanPlaces.emplace(loan.semanticLoan, exact);
@@ -4364,7 +4365,7 @@ private:
             }
           }
       if (!sameRoot) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return 0;
       }
       lowered.root = MirPlaceRootKind::Loan;
@@ -4378,7 +4379,7 @@ private:
           *function->owner <= program.classInstances().size()) {
         const auto owner = hirLifetimeInstanceView(program.classInstances(), function->ownerType);
         if (!owner || owner->instance->id != *function->owner) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return 0;
         }
         lowered.type = function->ownerType;
@@ -4391,7 +4392,7 @@ private:
       } else if (destructor != nullptr) {
         const auto owner = hirLifetimeInstanceView(program.classInstances(), destructor->ownerType);
         if (!owner || owner->instance->id != destructor->owner) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return 0;
         }
         lowered.type = destructor->ownerType;
@@ -4403,7 +4404,7 @@ private:
       const MirPlaceId base = placeForBinding(local->second);
       const MirPlace *place = output.findPlace(base);
       if (place == nullptr) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return 0;
       }
       if (loan.place.projections.empty()) {
@@ -4426,13 +4427,13 @@ private:
         lowered.initiallyAvailable = true;
       }
     } else {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return 0;
     }
     if (std::any_of(loan.place.projections.begin(), loan.place.projections.end(),
                     [](const auto &step) { return step.kind == PlaceProjectionKind::Base; })) {
       if (!isWellFormedBorrowPath(loan.place.projections)) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return 0;
       }
       auto rootKey = loan.place;
@@ -4451,7 +4452,7 @@ private:
       const auto projected = projectBorrowFields(root, loan.place.projections, loan.conditions);
       const auto *place = output.findPlace(projected);
       if (!place || (resultValue && place->type != resultValue->info.type)) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return 0;
       }
       semanticLoanPlaces.emplace(loan.semanticLoan, projected);
@@ -4472,7 +4473,7 @@ private:
       switch (projection.kind) {
       case SemanticLoanPlaceProjectionKind::Field:
         if (projection.field == 0) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return 0;
         }
         lowered.projections.push_back(
@@ -4503,7 +4504,7 @@ private:
       case SemanticLoanPlaceProjectionKind::Base:
         // Base loan paths require the exact typed adapter introduced with
         // the atomic path migration, never a field-symbol approximation.
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return 0;
       }
     }
@@ -4587,7 +4588,7 @@ private:
       switch (projection.kind) {
       case PlaceProjectionKind::Field:
         if (projection.field == 0) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return 0;
         }
         lowered.projections.push_back(
@@ -4605,7 +4606,7 @@ private:
                                        .selection = projection.selection});
         break;
       case PlaceProjectionKind::Base:
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return 0;
       }
     }
@@ -4724,7 +4725,7 @@ private:
   void recordLoanIdentity(MirLoanId id, const HirLoan &recorded,
                           HirBindingId binding = 0) {
     if (id == 0 || id > output.loans.size()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     MirLoan &lowered = output.loans[id - 1];
@@ -4743,23 +4744,23 @@ private:
         target->info.type != *domain && conditional) {
       producerView = recorded;
       const auto conditions = conditionTypeView(target->info.type, *domain, recorded.conditions);
-      if (!conditions) { valid = false; return; }
+      if (!conditions) { { valid = false; GTI_INVALID2(); } return; } // TEMP-TRACE-INVALID2
       producerView->conditions = *conditions;
       for (auto &dependency : producerView->additionalDependencies) {
         const auto conditions = conditionTypeView(target->info.type, *domain, dependency.conditions);
-        if (!conditions) { valid = false; return; }
+        if (!conditions) { { valid = false; GTI_INVALID2(); } return; } // TEMP-TRACE-INVALID2
         dependency.conditions = *conditions;
       }
     }
     const HirLoan &loan = producerView ? *producerView : recorded;
     if (const auto found = semanticLoans.find(loan.semanticLoan);
         found != semanticLoans.end() && found->second != id) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     if (lowered.semanticLoan != 0 &&
         lowered.semanticLoan != loan.semanticLoan) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     lowered.semanticLoan = loan.semanticLoan;
@@ -4792,7 +4793,7 @@ private:
                ? !isStoredReferenceExtraction(*producer->payloadExtractionKind)
                : selection.kind != ReferenceSelectionKind::PhysicalPayload ||
                      *producer->payloadExtractionKind != PayloadExtractionKind::BorrowValue)) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       MirReferenceSelection selected{.kind = selection.kind,
@@ -4808,19 +4809,19 @@ private:
             output.findLoan(source->second) == nullptr ||
             *producer->payloadExtractionKind !=
                 PayloadExtractionKind::TransferReference) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return;
         }
         selected.transferredFrom = source->second;
       }
       if (lowered.referenceSelection &&
           *lowered.referenceSelection != selected) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       lowered.referenceSelection = std::move(selected);
     } else if (lowered.referenceSelection) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     if (loan.storedDependency != 0) {
@@ -4828,16 +4829,17 @@ private:
       if (dependency == semanticLoans.end() ||
           (lowered.storedDependency != 0 &&
            lowered.storedDependency != dependency->second)) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       lowered.storedDependency = dependency->second;
     } else if (lowered.storedDependency != 0) {
-      valid = false;
+      if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[ident-sd] loan%llu kind=%d src=p%llu parent=%llu sd=%llu producedBy=%llu semantic=%llu\n", (unsigned long long)id, static_cast<int>(lowered.kind), (unsigned long long)lowered.source, (unsigned long long)lowered.parent, (unsigned long long)lowered.storedDependency, (unsigned long long)lowered.producedBy, (unsigned long long)loan.semanticLoan); // TEMP-TRACE
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     if (lowered.lifecycleBound && !loan.lifecycleBound) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     lowered.lifecycleBound = loan.lifecycleBound;
@@ -4859,7 +4861,7 @@ private:
     if (!lowered.designatedFields.empty() &&
         lowered.designatedFields != loan.designatedFields &&
         (!loan.designatedFields.empty() || !namedSolePath())) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     // A body-local loan sourced at a loan's referent (a reference call
@@ -4873,7 +4875,7 @@ private:
         resolvedReferent ? BorrowPath{}
         : loan.designatedFields.empty() ? solePath : loan.designatedFields;
     if (!lowered.conditions.empty() && lowered.conditions != loan.conditions) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     lowered.conditions = loan.conditions;
@@ -4911,7 +4913,7 @@ private:
                 break;
               }
           if (concreteSource == 0) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             return;
           }
         }
@@ -4926,12 +4928,12 @@ private:
              .conditions = dependency.conditions});
         if (dependency.parent != 0 &&
             lowered.additionalDependencies.back().parent == 0)
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
     }
     if (lowered.access == AccessMode::ReadOnly &&
         loan.access == AccessMode::Mutable) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     // A by-reference capture's entry loan is held by the closure environment.
@@ -5225,7 +5227,7 @@ private:
               ? substituteTypeLifetimes(target->returnType, value->lifetimeApplication.bindings)
               : std::nullopt;
           if (!receiver || !appendMemberProjections(place, *receiver, *value)) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             return 0;
           }
         }
@@ -5235,7 +5237,7 @@ private:
                                 MirProjectionKind::RawDereference);
         const auto *receiver = findValue(value->operands.front());
         if (!receiver || !appendMemberProjections(place, receiver->info.type, *value)) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return 0;
         }
       } else if (!value->operands.empty()) {
@@ -5268,7 +5270,7 @@ private:
           }
           const auto *receiver = findValue(value->operands.front());
           if (!receiver || !appendMemberProjections(place, receiver->info.type, *value)) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             return 0;
           }
           if (value->storedReferenceAccess) {
@@ -5331,7 +5333,7 @@ private:
           value->info.category != ValueCategory::Place ||
           value->info.access != AccessMode::ReadOnly ||
           value->info.traits != resolvedTraits(value->info.type)) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         break;
       }
       const auto *sourcePlace = output.findPlace(placeForValue(pack->id));
@@ -5341,7 +5343,7 @@ private:
                        [](const auto &step) { return step.kind == MirProjectionKind::PackElement; }) ||
           sourcePlace->symbol != pack->symbol ||
           sourcePlace->type != pack->info.type) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         break;
       }
       MirPlace projected = *sourcePlace;
@@ -5480,7 +5482,7 @@ private:
           }
           const auto *receiver = findValue(value.operands.front());
           if (!receiver || !appendMemberProjections(place, receiver->info.type, value)) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             return 0;
           }
           if (value.storedReferenceAccess)
@@ -5539,14 +5541,14 @@ private:
       return;
     }
     if (!value.programConstantSubstitution || !value.constant) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const std::optional<Literal> literal =
         programConstantLiteral(*value.constant);
     if (!literal &&
         !std::holds_alternative<ConstantAggregateValue>(*value.constant)) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     ExpressionInfo materializedInfo = value.info;
@@ -5566,7 +5568,7 @@ private:
       if (enumValue == nullptr || value.info.type.enumId == 0 ||
           (enumerator != nullptr &&
            enumerator->enumId != value.info.type.enumId)) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       const MirValueId result = appendValue(value.id, materializedInfo);
@@ -5628,7 +5630,7 @@ private:
     }
     const HirValue *value = findValue(id);
     if (value == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return {};
     }
     if (value->programConstantSubstitution) {
@@ -5799,7 +5801,7 @@ private:
   [[nodiscard]] MirOperand addressOperand(HirValueId id) {
     const HirValue *value = findValue(id);
     if (value == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return {};
     }
     emitPlaceDependencies(id);
@@ -5808,7 +5810,7 @@ private:
     }
     const MirPlaceId place = placeForValue(id);
     if (place == 0) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
     }
     return {.kind = MirOperandKind::Address,
             .place = place,
@@ -5821,7 +5823,7 @@ private:
   [[nodiscard]] DefinedFailureOperation addressDefinedFailure(HirValueId id) {
     const HirValue *value = findValue(id);
     if (value == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return {};
     }
     if (value->kind == HirValueKind::Index &&
@@ -6013,7 +6015,7 @@ private:
     const MirDropObligationId obligation =
         dropObligationForValue(value.id, temporary);
     if (obligation == 0) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return 0;
     }
     MirInstruction initialize{
@@ -6097,7 +6099,7 @@ private:
     const MirPlaceId place = placeForValue(value.id);
     const auto *selected = output.findPlace(place);
     if (selected == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const auto pointer =
@@ -6130,7 +6132,7 @@ private:
         recorded->place != SemanticLoanPlace{} || recorded->referenceSelection ||
         !recorded->carriers.empty() || !recorded->conditions.empty() ||
         recorded->access != AccessMode::ReadOnly) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const auto &opening = *recorded->contentsOpening;
@@ -6138,7 +6140,7 @@ private:
         opening.referenceType.arguments.size() != 1 ||
         opening.referenceType.arguments.front() != value->info.type ||
         value->info.category != ValueCategory::Place || opening.readLoans.empty()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     if (const auto found = semanticLoans.find(recorded->semanticLoan);
@@ -6146,7 +6148,7 @@ private:
       const auto *existing = output.findLoan(found->second);
       if (!existing || !existing->contentsOpening || existing->producedBy != id ||
           existing->contentsOpening->referenceType != opening.referenceType)
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     // The source evaluation has completed, including any selected call/index.
@@ -6155,7 +6157,7 @@ private:
     const auto *referent = output.findPlace(place);
     if (!referent || referent->type != opening.referenceType.arguments.front() ||
         scopes.empty()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     MirReferenceContentsOpening loweredOpening{
@@ -6167,7 +6169,7 @@ private:
       if (!read || found == semanticLoans.end() || !output.findLoan(found->second) ||
           std::find(loweredOpening.readLoans.begin(), loweredOpening.readLoans.end(),
                     found->second) != loweredOpening.readLoans.end()) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       loweredOpening.readLoans.push_back(found->second);
@@ -6189,7 +6191,7 @@ private:
     const auto first = lowerField({.referenceContents = recorded->referenceContents,
                                    .designatedFields = recorded->designatedFields,
                                    .access = recorded->access});
-    if (!first) { valid = false; return; }
+    if (!first) { { valid = false; GTI_INVALID2(); } return; } // TEMP-TRACE-INVALID2
     std::vector<MirLoanDependency> additional;
     for (const auto &field : recorded->additionalDependencies) {
       const auto lowered = lowerField(field);
@@ -6197,7 +6199,7 @@ private:
           std::any_of(additional.begin(), additional.end(), [&](const auto &previous) {
             return previous.designatedFields == lowered->designatedFields;
           })) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       additional.push_back(*lowered);
@@ -6226,7 +6228,7 @@ private:
   void emitPlaceDependenciesCore(HirValueId id, bool checkedPrefix) {
     const HirValue *value = findValue(id);
     if (value == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     if (std::getenv("GTI_TRACE_MIR_BODY")) // TEMP-TRACE
@@ -6716,14 +6718,14 @@ private:
     MirPlaceId place = placeForValue(id);
     const MirPlace *resolved = output.findPlace(place);
     if (value == nullptr || resolved == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return {.kind = MirOperandKind::Copy, .type = parameter};
     }
     if (resolved->sourceValue != id) {
       place = clonePlace(place, *value);
     }
     if (place == 0) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
     }
     // Keep the physical source's type. The prepared input owns the converted
     // parameter type; independent program verification proves the relation.
@@ -6835,13 +6837,13 @@ private:
          !allowBorrowedCarrier &&
          temporary->info.type.kind != SemanticType::Class &&
          temporary->info.type.kind != SemanticType::StringView)) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return {};
     }
 
     const MirOperand produced = valueOperand(id);
     if (produced.kind != MirOperandKind::Value || produced.value == 0) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return {};
     }
 
@@ -6851,7 +6853,7 @@ private:
       const MirDropObligation *drop = output.findDropObligation(obligation);
       if (drop == nullptr || !temporaryIsActive(obligation) ||
           drop->kind != MirDropObligationKind::Value || drop->value != id) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return {};
       }
       place = drop->place;
@@ -6904,7 +6906,7 @@ private:
         !materialized->projections.empty() ||
         (temporary->info.traits.containsBorrowedState &&
          !findMirTemporaryCarrierDependency(output, *materialized))) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return {};
     }
     return {.kind = access == AccessMode::Mutable ? MirOperandKind::BorrowWrite
@@ -6916,7 +6918,7 @@ private:
   [[nodiscard]] MirOperand receiverOperand(HirValueId id, AccessMode access) {
     const HirValue *receiver = findValue(id);
     if (receiver == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return {};
     }
     // Transparent place wrappers still denote the substituted value. Keep
@@ -6933,7 +6935,7 @@ private:
     }
     if (substituted != nullptr && substituted->programConstantSubstitution) {
       if (access != AccessMode::ReadOnly) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return {};
       }
       emitPlaceDependencies(id);
@@ -6951,7 +6953,7 @@ private:
       if (pointer == nullptr ||
           pointer->info.type.kind != SemanticType::RawPointer ||
           pointer->info.type.arguments.size() != 1) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return {};
       }
       const MirValueId pointerValue = operandValue(pointerId);
@@ -8222,7 +8224,7 @@ private:
       const MirPlaceId anchor =
           placeForValue(*sourceValueInfo->retainedReceiverOwner);
       if (anchor == 0) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       } else {
         input.retainedOwnerPlace = anchor;
       }
@@ -8241,7 +8243,7 @@ private:
               ? AccessMode::Mutable
               : AccessMode::ReadOnly;
       if (!dependency || shell->type != type || scopes.empty()) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       } else {
         const MirLoanId stored = dependency.loan->id;
         inputLoan =
@@ -8272,7 +8274,7 @@ private:
              equivalentLifetimeTypes(source->type, type.arguments.front()))) ||
           source->access != AccessMode::Mutable ||
           source->sourceValue != sourceValue || scopes.empty()) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       } else {
         inputLoan = createLoan(MirLoanKind::CallArgument, source->id,
                                AccessMode::ReadOnly, callSite);
@@ -8284,7 +8286,7 @@ private:
           if (!dependency || (source->type.kind != SemanticType::Lambda &&
                               source->type.kind != SemanticType::Class &&
                               source->type.kind != SemanticType::StringView))
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           else
             output.loans[inputLoan - 1].storedDependency = dependency.loan->id;
         }
@@ -8321,7 +8323,7 @@ private:
       const MirDropObligation *prepared =
           output.findDropObligation(parameterDrop);
       if (prepared == nullptr) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       } else {
         input.preparedParameterDrop = parameterDrop;
         input.destination = prepared->place;
@@ -9849,7 +9851,7 @@ private:
           complete.push_back(std::move(selected));
         }
         if (complete.empty()) {
-          valid = false; // No origin may be invented for a borrowed result.
+          { valid = false; GTI_INVALID2(); } // No origin may be invented for a borrowed result. // TEMP-TRACE-INVALID2
           return;
         }
         // A reference input read through a call result's loan is a child of
@@ -10322,7 +10324,7 @@ private:
            .lifecycle = {{.kind = MirLifecycleEventKind::TransferOut,
                           .source = allocation}}});
       if (!removeTemporary(allocation)) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
     }
     for (auto loan = temporaryArgumentLoans.rbegin();
@@ -10343,7 +10345,7 @@ private:
         value.packFoldParameter == 0 || value.packFoldFunction == 0 ||
         value.operands.size() !=
             value.packFoldArgument + 1 + value.packFoldElements.size()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
 
@@ -10353,7 +10355,7 @@ private:
         !pack->info.type.concretePack ||
         pack->info.type.genericParameterId != value.packFoldParameter ||
         pack->info.type.arguments.size() != value.packFoldElements.size()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     for (std::size_t elementIndex = 0;
@@ -10369,7 +10371,7 @@ private:
           value.operands[value.packFoldArgument + 1 + elementIndex] !=
               element.call ||
           !call->callPlan) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
 
@@ -10409,7 +10411,7 @@ private:
         value.parameterTypes.front().kind != SemanticType::Reference ||
         value.parameterTypes.front().arguments.size() != 1 ||
         value.parameterTypes.front().arguments.front() != value.info.type) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const HirPackExpansionElement &element = pack.packExpansionElements.front();
@@ -10417,7 +10419,7 @@ private:
         element.kind != (moved ? HirCallInputKind::MoveValue
                                : HirCallInputKind::CopyValue) ||
         (moved ? !element.traits.movable : !element.traits.copyable)) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     // A generated special member transfers one exact element; it has no
@@ -10456,7 +10458,7 @@ private:
       const MirDropObligationId targetDrop = dropObligationForValue(value.id);
       if (targetDrop != 0) {
         if (sourceDrop == 0) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return;
         }
         appendLifecycle(transfer, {.kind = MirLifecycleEventKind::Move,
@@ -10465,7 +10467,7 @@ private:
         registerTemporary(targetDrop);
       } else if (sourceDrop != 0 && output.findDropObligation(sourceDrop)
                                         ->dropType.requiresActiveCleanup) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
     } else {
@@ -10522,7 +10524,7 @@ private:
     if (value.callPlan) {
       if (value.callPlan->receiver ||
           value.callPlan->arguments.size() != arguments.size()) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       for (const HirCallArgument &argument : value.callPlan->arguments) {
@@ -10673,7 +10675,7 @@ private:
       }
       for (const std::size_t parameter : value.borrowArguments) {
         if (parameter >= originConstruct.operands.size()) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           continue;
         }
         HirValue dependency = value;
@@ -10712,7 +10714,7 @@ private:
           selected.borrowFields = {mapping};
           const auto dependency = borrowOriginPlace(selected, originConstruct);
           if (dependency == 0)
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           output.loans[loan - 1].additionalDependencies.push_back(
               {.source = dependency,
                .designatedFields = mapping.resultFields,
@@ -10746,7 +10748,7 @@ private:
         std::vector<MirLoanDependency> complete;
         for (const auto &dependency : value.borrowDependencies->dependencies) {
           const auto lowered = lowerCompleteBorrowDependency(dependency);
-          if (!lowered) { valid = false; return; }
+          if (!lowered) { { valid = false; GTI_INVALID2(); } return; } // TEMP-TRACE-INVALID2
           complete.push_back(*lowered);
         }
         const auto &first = complete.front();
@@ -10883,11 +10885,11 @@ private:
   [[nodiscard]] MirOperand conditionOperand(HirValueId id) {
     const HirValue *value = findValue(id);
     if (value == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return {};
     }
     if (value->info.type != SemanticType::Bool) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return {};
     }
     return valueOperand(id);
@@ -10913,7 +10915,7 @@ private:
 
   void endAddedLoans(const std::vector<Scope> &incoming) {
     if (incoming.size() != scopes.size()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     // A consuming call in this branch may already have retired an incoming
@@ -10930,7 +10932,7 @@ private:
       const std::vector<MirLoanId> &after = scopes[depth - 1].loans;
       if (after.size() < before.size() ||
           !std::equal(before.begin(), before.end(), after.begin())) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }
       for (std::size_t index = after.size(); index > before.size(); --index) {
@@ -10947,7 +10949,7 @@ private:
   // arbitrary branch-local reference loans keep their old strict endpoint.
   void retainBranchCarrierLoans(const std::vector<Scope> &branch) {
     if (branch.size() != scopes.size()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const auto retained = temporaryCarrierLoans();
@@ -10999,7 +11001,7 @@ private:
   void endFullExpressionLoans(const std::vector<Scope> &baseline,
                               const std::vector<MirLoanId> &outliving = {}) {
     if (baseline.size() != scopes.size()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     std::unordered_set<MirLoanId> retained = retainedReborrowAncestors();
@@ -11042,7 +11044,7 @@ private:
 
   void endReturnExpressionLoans(const std::vector<Scope> &baseline) {
     if (baseline.size() != scopes.size()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const std::unordered_set<MirLoanId> retained = retainedReborrowAncestors();
@@ -11074,7 +11076,7 @@ private:
     if (found == semanticLoans.end() || found->second == 0 ||
         found->second > output.loans.size() ||
         output.loans[found->second - 1].escapes) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return 0;
     }
     return found->second;
@@ -11565,7 +11567,7 @@ private:
           callTransferredLoanEndpoints.erase(transferred);
           continue;
         }
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }
       (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
@@ -11603,7 +11605,7 @@ private:
         continue;
       }
       if (!loanIsActive(scopeState, loan)) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }
       removeLoanFromState(loan, scopeState, bindingLoanState);
@@ -11654,7 +11656,7 @@ private:
   void emitRegionReturn(const HirStatement &statement) {
     if (resultRegions.empty() ||
         statement.resultRegion != resultRegions.back().value->id) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     // Evaluating a return expression may itself enter another result region,
@@ -11664,7 +11666,7 @@ private:
     const auto incomingScopes = scopes;
     if (regionValue->info.type != SemanticType::Void) {
       if (!statement.value) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       const MirOperand operand = valueOperand(*statement.value);
@@ -11730,7 +11732,7 @@ private:
             resultRegions.begin(), resultRegions.end(),
             [&](const auto &region) { return region.value == &value; }) ||
         value.info.traits.containsBorrowedState) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     if ((value.info.type.kind == SemanticType::Class ||
@@ -11738,7 +11740,7 @@ private:
         !value.dropObligation) {
       // Result-slot initialization is a language lifetime fact, including
       // passive objects, not a pattern for the backend to reconstruct.
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const MirBlockId merge = appendBlock();
@@ -11756,7 +11758,7 @@ private:
     lowerStatement(*value.regionBody);
     if (!terminated()) {
       if (hasResult) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       } else {
         const MirBlockId bridge = appendBlock();
         terminate({.kind = MirTerminatorKind::Goto, .target = bridge});
@@ -11799,7 +11801,7 @@ private:
     for (std::size_t index = 1; index < region.exits.size(); ++index) {
       if (!sameScopeState(scopes, region.exits[index].scopes) ||
           bindingLoans != region.exitBindings[index])
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       callTransferredLoanEndpoints = intersectTransferredLoanEndpoints(
           callTransferredLoanEndpoints, region.exits[index].transfers);
       temporaryDrops =
@@ -11848,7 +11850,7 @@ private:
         if (!loanIsActive(scopes, loan))
           continue;
         if (output.loans[loan - 1].lifecycleBound) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           continue;
         }
         (void)appendInstruction(
@@ -11866,7 +11868,7 @@ private:
     if (value.operands.size() != 2 || !value.operation ||
         (*value.operation != TokenKind::AND &&
          *value.operation != TokenKind::OR)) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
 
@@ -11962,7 +11964,7 @@ private:
         producer->info.type != value.info.type ||
         producer->info.access != value.info.access ||
         authority->access != value.info.access) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     valueLoans.insert_or_assign(value.id, loan);
@@ -11974,7 +11976,7 @@ private:
 
   void emitConditional(const HirValue &value, bool discardResult = false) {
     if (value.operands.size() != 3) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
 
@@ -12001,7 +12003,7 @@ private:
         (!findValue(value.operands[1]) || !findValue(value.operands[2]) ||
          findValue(value.operands[1])->neverReturns ==
              findValue(value.operands[2])->neverReturns)) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const MirPlaceId temporary = hasResult && !borrowedResult
@@ -12023,7 +12025,7 @@ private:
       callTransferredLoanEndpoints = incomingTransferEndpoints;
       const HirValue *armValue = findValue(arm);
       if (armValue == nullptr) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         completesNormally = false;
         return temporaryDrops;
       }
@@ -12031,7 +12033,7 @@ private:
         emitValue(arm);
         completesNormally = false;
         if (!terminated()) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         }
         return temporaryDrops;
       }
@@ -12156,7 +12158,7 @@ private:
   // step is an ordinary call or construction verified like any other.
   void emitPropagation(const HirValue &value) {
     if (!value.propagation || value.info.type == SemanticType::Unknown) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const HirPropagationPlan &plan = *value.propagation;
@@ -12169,7 +12171,7 @@ private:
         test->info.type != SemanticType::Bool ||
         success->info.type != value.info.type ||
         returned->info.type != output.returnType) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const auto temporaryBaseline =
@@ -12179,7 +12181,7 @@ private:
     if (value.fullExpression == 0 ||
         temporaryBaseline == fullExpressionTemporaryBaselines.end() ||
         scopeBaseline == fullExpressionScopeBaselines.end()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     // Recursive operand emission may add nested result-region expressions and
@@ -12569,14 +12571,14 @@ private:
 
   void emitModify(const HirValue &value) {
     if (value.operands.size() != 1) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     emitPlaceDependencies(value.operands.front());
     const MirOperation operation = modifierOperation(value);
     const MirPlaceId destination = placeForValue(value.operands.front());
     if (operation == MirOperation::None || destination == 0) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const bool increment = operation == MirOperation::PreIncrement ||
@@ -12680,7 +12682,7 @@ private:
     }
     const HirValue *value = findValue(id);
     if (value == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
 
@@ -12874,7 +12876,7 @@ private:
       }
       if (compoundSchedule) {
         if (operands.size() != 1 || sourceObligation != 0) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return;
         }
         emitOrderedCompoundSchedule(*value, destination, compoundOperation,
@@ -12886,7 +12888,7 @@ private:
       if (reservedBorrowStore) {
         const auto reserved = valueLoans.find(value->id);
         if (reserved == valueLoans.end()) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return;
         }
         (void)appendInstruction({.kind = MirInstructionKind::ActivateBorrow,
@@ -13115,21 +13117,21 @@ private:
         instruction.lambdaTarget) {
       const HirLambda *lambda = program.findLambda(*instruction.lambdaTarget);
       if (lambda == nullptr) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       } else {
         const auto environment = matchUniversalTypeLifetimes(
             lambda->type, value->info.type, lambda->environmentLifetimes);
         instruction.closureCaptureTypes.reserve(lambda->captures.size());
         instruction.closureCaptureModes.reserve(lambda->captures.size());
         if (!environment) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         } else for (std::size_t index = 0; index < lambda->captures.size(); ++index) {
           const auto &capture = lambda->captures[index];
           const auto instantiated = substituteTypeLifetimes(capture.type, *environment);
           const auto actualCaptures = value->info.type.lambdaCaptureTypes();
           if (!instantiated || index >= actualCaptures.size() ||
               !equivalentLifetimeTypes(*instantiated, actualCaptures[index])) {
-            valid = false; break;
+            { valid = false; GTI_INVALID2(); } break; // TEMP-TRACE-INVALID2
           }
           instruction.closureCaptureTypes.push_back(actualCaptures[index]);
           instruction.closureCaptureModes.push_back(capture.mode);
@@ -13137,7 +13139,7 @@ private:
       }
     }
     if (instruction.operation == MirOperation::None) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
     }
     std::vector<MirDropObligationId> payloadPreparedDrops;
     std::vector<MirLoanId> payloadTemporaryLoans;
@@ -13147,7 +13149,7 @@ private:
     if (stagedPayload) {
       if (value->callPlan->receiver ||
           value->callPlan->arguments.size() != value->operands.size()) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       instruction.callSite = value->id;
@@ -13186,7 +13188,7 @@ private:
                             }))
               payloadConsumedGroups.push_back(group);
           } else
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         }
       }
     }
@@ -13261,7 +13263,7 @@ private:
       const auto &complete =
           output.values[*instruction.result - 1].borrowDependencies;
       if (!complete || (!complete->dependencies.empty() && !stagedPayload)) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       if (!complete->dependencies.empty()) {
@@ -13296,7 +13298,7 @@ private:
               : nullptr;
       const MirPlaceId origin = argumentLoan ? argumentLoan->source : 0;
       if (origin == 0) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       const auto loan = createLoan(MirLoanKind::Stored, origin,
@@ -13326,7 +13328,7 @@ private:
     }
     for (const auto drop : payloadPreparedDrops) {
       if (!removeTemporary(drop))
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       appendLifecycle(instruction, {.kind = MirLifecycleEventKind::TransferOut,
                                     .source = drop});
     }
@@ -13359,7 +13361,7 @@ private:
           return std::size_t{0};
         }();
         if (capture == 0 || capture > instruction.operands.size()) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           continue;
         }
         auto sourcePlace = instruction.operands[capture - 1].place;
@@ -13395,7 +13397,7 @@ private:
         }
         const auto *source = output.findPlace(sourcePlace);
         if (source == nullptr) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           continue;
         }
         if (source->key != dependency.place) {
@@ -13409,7 +13411,7 @@ private:
                                 ? semanticLoans.at(dependency.parent)
                                 : 0;
         if (dependency.parent != 0 && parent == 0)
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         dependencies.push_back({.source = sourcePlace,
                                 .parent = parent,
                                 .designatedFields = dependency.designatedFields,
@@ -13477,7 +13479,7 @@ private:
       emitValue(valueId);
       const MirPlaceId field = placeForValue(valueId);
       if (field == 0) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return {};
       }
       // Ordinary payload borrowing protects the enum's field storage. A
@@ -13487,7 +13489,7 @@ private:
           desired->referenceSelection->kind == ReferenceSelectionKind::StoredExternalReference;
       const MirPlaceId origin = externalReference ? placeForLoan(*desired, value) : field;
       if (origin == 0) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return {};
       }
       if (!externalReference)
@@ -13496,7 +13498,7 @@ private:
       if (desired->parent != 0) {
         const auto found = semanticLoans.find(desired->parent);
         if (found == semanticLoans.end()) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return {};
         }
         parent = found->second;
@@ -13800,7 +13802,7 @@ private:
         }
         const auto found = semanticLoans.find(desired->parent);
         if (found == semanticLoans.end()) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return {};
         }
         parent = found->second;
@@ -13832,7 +13834,7 @@ private:
           compatible =
               compatible && transientId == parent && !transientChain.empty();
           if (!compatible) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           } else {
             for (const MirLoanId transient : transientChain) {
               (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
@@ -13875,7 +13877,7 @@ private:
             }
           }
           if (!compatible || transient != 0 || transientChain.empty()) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           } else if (desired->access == AccessMode::ReadOnly ||
                      sourceLoan.access == AccessMode::Mutable) {
             // The chain is a call-result reborrow chain the expression built
@@ -14019,7 +14021,7 @@ private:
           storedDependencyForPlace(sourcePlace);
       if (output.loans[loan - 1].storedDependency == 0 &&
           !receiverTextFieldPlace(sourcePlace))
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
     }
     (void)appendInstruction(
         {.kind = MirInstructionKind::Borrow,
@@ -14055,7 +14057,7 @@ private:
          (!source->entry || source->designatedFields.empty())) ||
         source->access != access || value == nullptr ||
         !value->info.traits.containsBorrowedState) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return 0;
     }
     const auto dependencies = source->additionalDependencies;
@@ -14165,7 +14167,7 @@ private:
     }
     MirOperand borrow = referenceOperand(valueId);
     if (borrow.loan == 0 || borrow.loan > output.loans.size()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     MirLoan &loan = output.loans[borrow.loan - 1];
@@ -14190,7 +14192,7 @@ private:
         binding->info.traits.drop == DropKind::Lexical &&
         !binding->info.threadLocal && !binding->info.staticStorage) {
       if (dropObligationForBinding(bindingId) == 0) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       scopes.back().drops.push_back(place);
@@ -14215,12 +14217,12 @@ private:
         : constructor != nullptr ? &constructor->parameterBindings
                                  : nullptr;
     if (parameters == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     for (const HirBindingId parameter : *parameters) {
       if (parameter == 0 || placeForBinding(parameter) == 0) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
     }
   }
@@ -14277,7 +14279,7 @@ private:
       const bool capturedEntry = lambdaCaptures.contains(loan.place.root);
       if (loan.semanticLoan == 0 || loan.parent != 0 ||
           (loan.carriers.empty() && !abstractStored && !capturedEntry)) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }
       const MirLoanKind kind = loan.kind == SemanticLoanKind::StoredValue
@@ -14298,11 +14300,11 @@ private:
         // the parameter's physical enum shell.
         if (projectBorrowFields(sourcePlace, loan.designatedFields,
                                 loan.conditions) == 0)
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         for (const auto &dependency : loan.additionalDependencies)
           if (projectBorrowFields(sourcePlace, dependency.designatedFields,
                                   dependency.conditions) == 0)
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
       const MirPlace *place = output.findPlace(sourcePlace);
       if (kind == MirLoanKind::Stored && place &&
@@ -14322,7 +14324,7 @@ private:
                       [](const auto &step) { return step.kind == MirProjectionKind::PackElement; })) {
         if (kind == MirLoanKind::Parameter || place->type.kind != SemanticType::Reference) {
           if (!packEntryLoans.emplace(sourcePlace, lowered).second)
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         }
       } else {
         for (const HirBindingId carrier : output.loans[lowered - 1].carriers) {
@@ -14874,7 +14876,7 @@ private:
     walkScopeExit(state, 0, emitter);
     if (!emitter.consistent ||
         (!emitter.joined && emitter.index != plan.units.size())) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return true;
     }
     if (emitter.joined) {
@@ -14901,7 +14903,7 @@ private:
   void lowerProgramInitializationPlan() {
     if (output.kind != MirBodyKind::Module ||
         loweredProgramInitialization == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       currentProgramInitializationStep = 0;
       output.entry = appendBlock();
       current = output.entry;
@@ -14915,7 +14917,7 @@ private:
     for (const SourceUnitId sourceUnit : programInitialization->unitOrder) {
       const std::size_t index = loweredProgramInitialization->units.size();
       if (sourceUnit == 0 || !units.emplace(sourceUnit, index).second) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
       loweredProgramInitialization->units.push_back({.sourceUnit = sourceUnit});
     }
@@ -14940,11 +14942,11 @@ private:
       if (step.id != index + 1 || (step.sourceUnit == 0 && !units.empty()) ||
           step.symbol == 0 || step.binding == 0 ||
           !plannedBindings.insert(step.binding).second) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
       const auto unit = units.find(step.sourceUnit);
       if (unit == units.end() && !(step.sourceUnit == 0 && units.empty())) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       } else if (unit != units.end()) {
         loweredProgramInitialization->units[unit->second].steps.push_back(
             step.id);
@@ -14956,7 +14958,7 @@ private:
       if (output.entry == 0) {
         output.entry = entryBlock;
       } else if (predecessor == 0 || terminated()) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       } else {
         current = predecessor;
         terminate({.kind = MirTerminatorKind::Goto, .target = entryBlock});
@@ -14983,12 +14985,12 @@ private:
       if (binding == nullptr || binding->info.symbol != step.symbol ||
           storagePlace == 0 ||
           step.requiresActiveCleanup != step.nativeRetirement.has_value()) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
 
       if (step.role == ProgramInitializationStepRole::DataOnly) {
         if (step.initializer || step.statement != 0) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         }
         lowered.dataInitialization =
             binding != nullptr && binding->info.constant
@@ -15016,14 +15018,14 @@ private:
             statement->binding != step.binding ||
             statement->value != step.initializer ||
             initializer->fullExpression == 0) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         }
         expectedRoots.push_back(step.statement);
         lowered.statement = step.statement;
         lowered.initializer = step.initializer.value_or(0);
         const auto &reachable = initializerInventories[index];
         if (!reachable.complete)
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         std::vector<HirBindingId> locals(reachable.bindings.begin(),
                                          reachable.bindings.end());
         std::sort(locals.begin(), locals.end());
@@ -15035,7 +15037,7 @@ private:
           if (local == nullptr || place == 0 ||
               nonLexicalBindings.contains(id) ||
               !initializerLocalBindings.insert(id).second) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             continue;
           }
           lowered.locals.push_back(
@@ -15046,7 +15048,7 @@ private:
                 ? fullExpressionIds.end()
                 : fullExpressionIds.find(initializer->fullExpression);
         if (fullExpression == fullExpressionIds.end()) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         } else {
           lowered.fullExpression = fullExpression->second;
         }
@@ -15056,16 +15058,16 @@ private:
           const auto nested = fullExpressionIds.find(expression.id);
           if (nested == fullExpressionIds.end() ||
               nested->second == lowered.fullExpression) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             continue;
           }
           lowered.nestedFullExpressions.push_back(nested->second);
         }
       } else {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
       if (lowered.storageInitialization == 0) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
       loweredProgramInitialization->steps.push_back(std::move(lowered));
     }
@@ -15083,7 +15085,7 @@ private:
                     [&](const HirBinding &binding) {
                       return !plannedBindings.contains(binding.id);
                     })) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
     }
   }
 
@@ -15116,12 +15118,12 @@ private:
       return onFreshNativeStack([&] { lowerStatement(id); });
     const HirStatement *statement = findStatement(id);
     if (statement == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     if (statement->kind != HirStatementKind::Return &&
         statement->resultRegion != 0) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     switch (statement->kind) {
@@ -15176,7 +15178,7 @@ private:
       return;
     case HirStatementKind::Break:
       if (breakContexts.empty()) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       breakContexts.back().hasBreak = true;
@@ -15188,7 +15190,7 @@ private:
       return;
     case HirStatementKind::Continue:
       if (continueContexts.empty()) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       emitScopeExit(continueContexts.back().keepScopes);
@@ -15241,7 +15243,7 @@ private:
       if (initializer && initializer->neverReturns) {
         emitValue(*statement.value);
         if (!terminated())
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return 0;
       }
     }
@@ -15414,7 +15416,7 @@ private:
           if (cursor.parent == 0)
             cursor.parent = parent->id;
           if (cursor.parent != parent->id)
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           physicalRangeLoan = true;
           std::erase(output.loans[parent->id - 1].carriers, *statement.binding);
         }
@@ -15567,7 +15569,7 @@ private:
               candidate->source = existing->source;
             retainedLoan = existing->id;
           } else {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           }
         } else if (found == semanticLoans.end()) {
           semanticLoans.emplace(semanticLoan, retainedLoan);
@@ -15578,7 +15580,7 @@ private:
           // separate producer-owned physical loan ends with its lexical
           // cursor/element binding, including each loop iteration's cleanup.
         } else if (desired == nullptr) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         } else if (desired->lifecycleBound ||
                    (desired->kind == SemanticLoanKind::StoredValue &&
                     (desired->access == AccessMode::Mutable ||
@@ -15589,7 +15591,7 @@ private:
           if (desired->parent != 0) {
             const auto parent = semanticLoans.find(desired->parent);
             if (parent == semanticLoans.end()) {
-              valid = false;
+              { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             } else {
               expectedParent = parent->second;
             }
@@ -15667,14 +15669,14 @@ private:
           if (retained.parent != expectedParent &&
               !exactRuntimeTransferParent && !exactAccessorParent &&
               !exactAccessorReceiverParent) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           }
           recordLoanIdentity(retainedLoan, *desired, *statement.binding);
         } else {
           MirLoan &retained = output.loans[retainedLoan - 1];
           if (retained.semanticLoan != 0 &&
               retained.semanticLoan != semanticLoan) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           } else {
             retained.semanticLoan = semanticLoan;
           }
@@ -15712,7 +15714,7 @@ private:
                !(operands.size() == 1 &&
                  completeEmptyBorrowValue(*statement.value, operands.front(),
                                           binding->info.type))) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
     }
     MirInstruction initialize{
         .kind = MirInstructionKind::Initialize,
@@ -15778,7 +15780,7 @@ private:
       } else {
         // A lexical initializer-local must have its own Binding obligation.
         // Never reinterpret its missing obligation as a field subobject.
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         appendLifecycle(initialize, {.kind = MirLifecycleEventKind::TransferOut,
                                      .source = sourceObligation});
         (void)removeTemporary(sourceObligation);
@@ -15806,7 +15808,7 @@ private:
 
   void lowerStructuredBinding(const HirStatement &statement) {
     if (!statement.binding) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const HirBinding *sourceBinding = findBinding(*statement.binding);
@@ -15814,7 +15816,7 @@ private:
     const MirPlace *sourcePlace = output.findPlace(sourcePlaceId);
     if (sourceBinding == nullptr || sourcePlace == nullptr ||
         !statement.value) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const MirPlace sourceSnapshot = *sourcePlace;
@@ -15849,7 +15851,7 @@ private:
          statement.structuredBindings) {
       const HirBinding *binding = findBinding(element.binding);
       if (binding == nullptr) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }
       MirPlace projected = sourceSnapshot;
@@ -15861,14 +15863,14 @@ private:
       projected.sourceValue = statement.value.value_or(0);
       if (element.projection == HirStructuredBindingProjectionKind::Field) {
         if (element.field == 0) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           continue;
         }
         projected.projections.push_back(
             {.kind = MirProjectionKind::Field, .field = element.field});
       } else {
         if (!element.index) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           continue;
         }
         emitValue(*element.index);
@@ -15882,7 +15884,7 @@ private:
         if (constantIndex == nullptr ||
             sourceSnapshot.type.kind != SemanticType::Array ||
             *constantIndex >= sourceSnapshot.type.arrayLength) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           continue;
         }
         projected.projections.push_back({.kind = MirProjectionKind::Index,
@@ -15981,7 +15983,7 @@ private:
       if (!sameScopeState(thenScopes, elseScopes) ||
           thenBindingLoans != elseBindingLoans ||
           thenTemporaryDrops != elseTemporaryDrops) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
       scopes = thenScopes;
       temporaryDrops = thenTemporaryDrops;
@@ -16067,7 +16069,7 @@ private:
     lowerScopedStatement(statement.body);
     if (!terminated()) {
       if (temporaryDrops != loopTemporaryDrops) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
       terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
     }
@@ -16111,7 +16113,7 @@ private:
     lowerScopedStatement(statement.body);
     if (!terminated()) {
       if (temporaryDrops != loopTemporaryDrops) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
       terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
     }
@@ -16218,7 +16220,7 @@ private:
     lowerScopedStatement(statement.body);
     if (!terminated()) {
       if (temporaryDrops != loopTemporaryDrops) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
       terminate({.kind = MirTerminatorKind::Goto, .target = incrementBlock});
     }
@@ -16265,27 +16267,27 @@ private:
   void lowerRangeFor(const HirStatement &statement) {
     lowerNestedStatement(statement.body);
     if (!statement.rangeIteration) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const HirRangeIteration &sourceRange = *statement.rangeIteration;
     const auto loop = loweredLoops.find(sourceRange.coreLoop);
     if (loop == loweredLoops.end()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     const auto loanFor = [&](SemanticLoanId semanticLoan,
                              bool required) -> MirLoanId {
       if (semanticLoan == 0) {
         if (required) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         }
         return 0;
       }
       const auto found = semanticLoans.find(semanticLoan);
       if (found == semanticLoans.end() || found->second == 0 ||
           found->second > output.loans.size()) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return 0;
       }
       return found->second;
@@ -16295,7 +16297,7 @@ private:
     if (ownerBinding != nullptr && ownerBinding->dropObligation) {
       const auto found = dropObligations.find(*ownerBinding->dropObligation);
       if (found == dropObligations.end()) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       } else {
         ownerDrop = found->second;
       }
@@ -16342,7 +16344,7 @@ private:
                        std::find(loan.carriers.begin(), loan.carriers.end(),
                                  sourceRange.element) != loan.carriers.end()) {
                      if (selected != 0) {
-                       valid = false;
+                       { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
                        return MirLoanId{0};
                      }
                      selected = loan.id;
@@ -16429,7 +16431,7 @@ private:
         binding->info.type.kind != SemanticType::Enum ||
         binding->info.type != value->info.type ||
         value->info.category != ValueCategory::Value || scopes.empty()) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return std::nullopt;
     }
     const MirPlaceId destination = placeForBinding(*statement.binding);
@@ -16460,7 +16462,7 @@ private:
       }
     } else if (binding->info.traits.drop == DropKind::Lexical &&
                !nonLexicalBindings.contains(*statement.binding)) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
     }
     (void)appendInstruction(std::move(initialize));
     if (binding->info.retainedLoan != 0) {
@@ -16470,7 +16472,7 @@ private:
       if (mapped == semanticLoans.end() || mapped->second != retained ||
           !group || group->kind != MirLoanKind::Stored ||
           !loanIsActive(scopes, retained)) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return std::nullopt;
       }
       // This real value initialization acquires the existing dependency
@@ -16522,7 +16524,7 @@ private:
           !loanIsActive(scopes, group->id) ||
           lifecycleRetainedLoans({}).contains(group->id) ||
           containsLoan(constructorPublishedLoans, group->id)) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       // The subject's physical owner has already been consumed. Its entry
@@ -16538,7 +16540,7 @@ private:
     };
     const MirPlace *subjectPlace = output.findPlace(consumed.place);
     if (subjectPlace == nullptr) {
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
     if (arm.payloadBindings.empty()) {
@@ -16607,14 +16609,14 @@ private:
           extraction->kind != HirValueKind::PayloadExtraction ||
           !exactBinding || !extraction->enumOwner || !extraction->enumVariant ||
           !extraction->payloadIndex) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         continue;
       }
       if (referenceTransfer) {
         const auto *loan = source.findLoan(binding->info.retainedLoan);
         if (consumed.dependency == 0 || !loan || !loan->referenceSelection ||
             loan->referenceSelection->transferredFrom != consumed.dependency) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           continue;
         }
       }
@@ -16744,7 +16746,7 @@ private:
     std::optional<ConsumedSwitchSubject> consumed;
     if (statement.binding) {
       if (!statement.value) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       consumed = initializeConsumedSwitchSubject(statement);
@@ -16753,7 +16755,7 @@ private:
         return;
       }
       if (!consumed) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
       subject = {.kind = MirOperandKind::BorrowRead,
@@ -16901,7 +16903,7 @@ private:
       // A semantically valid consumed payload switch is exhaustive or has a
       // `default` arm, so it never reaches this unmatched edge.
       if (consumed) {
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
       current = unmatchedBlock;
       scopes = switchScopes;
@@ -16943,7 +16945,7 @@ private:
       if (consumed && consumed->dependency != 0) {
         if (std::find(entryEnded.begin(), entryEnded.end(),
                       consumed->dependency) == entryEnded.end())
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         std::erase(entryEnded, consumed->dependency);
       }
       endSemanticLoans(entryEnded, statement.id);
@@ -16977,7 +16979,7 @@ private:
         const HirBinding *binding = findBinding(payload.binding);
         const MirPlaceId destination = placeForBinding(payload.binding);
         if (binding == nullptr || destination == 0 || payload.value == 0) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           continue;
         }
         MirInstruction initialize{
@@ -17017,7 +17019,7 @@ private:
                                         : output.findLoan(mapped->second);
           if (!retained || retained->kind != MirLoanKind::Stored ||
               !loanIsActive(scopes, retained->id)) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           } else {
             bindingLoans.insert_or_assign(payload.binding, retained->id);
             auto &carriers = output.loans[retained->id - 1].carriers;
@@ -17052,7 +17054,7 @@ private:
       if (!terminated()) {
         fallsThrough = true;
         if (temporaryDrops != switchTemporaryDrops) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         }
         endSemanticLoansIfActive(statement.endedLoans, statement.id);
         emitScopeExit(scopes.size() - 1);
@@ -17102,7 +17104,7 @@ private:
       if (value && value->neverReturns) {
         emitValue(*statement.value);
         if (!terminated())
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
         return;
       }
     }
@@ -17116,7 +17118,7 @@ private:
       if (output.returnType.kind == SemanticType::Void) {
         const HirValue *value = findValue(*statement.value);
         if (value == nullptr || value->info.type != SemanticType::Void) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return;
         }
         // A void expression is evaluated for its effects, not transported as
@@ -17319,7 +17321,7 @@ private:
                 runtime != nullptr && designates(runtime->type) &&
                 designates(value->info.type);
             if (!exactRuntimeReferent) {
-              valid = false;
+              { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             } else {
               // The entry Stored loan names the caller-owned dependency,
               // while runtimePlace names the exact reference value returned
@@ -17372,7 +17374,7 @@ private:
                 (value->info.type != output.returnType.arguments.front() &&
                  !hasBase(value->info.type,
                           output.returnType.arguments.front()))) {
-              valid = false;
+              { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             } else {
               // A reference parameter's entry loan is seeded at the
               // body entry and has no producing instruction, so its runtime
@@ -17542,7 +17544,7 @@ private:
               const HirValue *value = findValue(*statement.value);
               if (value == nullptr || output.returnType.arguments.size() != 1 ||
                   value->info.type != output.returnType.arguments.front()) {
-                valid = false;
+                { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
               } else {
                 const HirValueId producer =
                     output.loans[borrow.loan - 1].producedBy;
@@ -17777,7 +17779,7 @@ private:
             }
           }
           if (retained == 0 || retained > output.loans.size()) {
-            valid = false;
+            { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           } else {
             // A borrow-carrying value owns two temporally distinct
             // capabilities at a return: its live body-local/entry loan, then
@@ -17848,7 +17850,7 @@ private:
             // itself a carrier reached through a physical parameter loan.
             if ((exactStoredCarrierEntry || exactDynamicTextEntry) &&
                 returnedValue == 0) {
-              valid = false;
+              { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
             }
             (void)appendInstruction(
                 {.kind = MirInstructionKind::Borrow,
@@ -17909,7 +17911,7 @@ private:
       // to prepare or publish around the cleanup.
       if (shared->hasValue) {
         if (!result) {
-          valid = false;
+          { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           return;
         }
         shared->stored = *result;
@@ -17920,7 +17922,7 @@ private:
                          statement.id);
       if (!emitSharedExit(*shared, carrier)) {
         // The candidate scan promised a shareable drop.
-        valid = false;
+        { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       }
       return;
     }
@@ -18177,7 +18179,7 @@ MirBody MirLowerer::lowerBody(
   }
   if (loweredInitializers) {
     if (loweredInitializers->size() != lowerer->initializerCompleteBorrows.size())
-      valid = false;
+      { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
     else
       for (std::size_t index = 0; index < loweredInitializers->size(); ++index)
         (*loweredInitializers)[index].completeBorrow =

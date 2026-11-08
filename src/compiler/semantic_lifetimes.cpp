@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "semantic_analyzer_impl.h"
 #include "gti/lifetime_types.h"
 #include "gti/lifetime_requirements.h"
@@ -1412,6 +1413,7 @@ auto SemanticVisitor::Impl::applyLifetimeValueConversion(
   if (!adjusted)
     return std::nullopt;
   if (!validateLifetimeConstraints(obligations)) {
+    if (std::getenv("GTI_TRACE_LTCONV")) { std::fprintf(stderr, "[ltconv] line=%d actual:", site.line); for (auto l : actual.lifetimeArguments) std::fprintf(stderr, " %d:%llu", static_cast<int>(l.kind), (unsigned long long)l.id); std::fprintf(stderr, " ref=%d:%llu expected:", static_cast<int>(actual.referenceLifetime.kind), (unsigned long long)actual.referenceLifetime.id); for (auto l : expected.lifetimeArguments) std::fprintf(stderr, " %d:%llu", static_cast<int>(l.kind), (unsigned long long)l.id); std::fprintf(stderr, " obligations:"); for (auto o : obligations) std::fprintf(stderr, " %d:%llu>=%d:%llu", static_cast<int>(o.longer.kind), (unsigned long long)o.longer.id, static_cast<int>(o.shorter.kind), (unsigned long long)o.shorter.id); std::fprintf(stderr, "\n"); } // TEMP-TRACE
     if (diagnose)
       report(site, "This value conversion requires a lifetime relationship "
                    "that the current borrowing contract does not prove.",

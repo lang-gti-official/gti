@@ -13748,11 +13748,18 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       if (mappedPhysicalInput == false)
         return failure(body, owner,
                        "mapped reference field must retain its exact physical input authority");
+      // A Stored group published as a child of another Stored group keeps
+      // that parent, and therefore the parent's own external owner edge,
+      // active for its whole lifetime; it needs no separate copy of it.
+      const bool storedChildOfStoredGroup =
+          loan.kind == MirLoanKind::Stored && parent.kind == MirLoanKind::Stored &&
+          loan.storedDependency == 0 && !loan.entry;
       if (parent.storedDependency != 0 &&
           loan.storedDependency != parent.storedDependency &&
-          !mappedPhysicalInput.value_or(false) &&
+          !mappedPhysicalInput.value_or(false) && !storedChildOfStoredGroup &&
           !(loan.storedDependency == parent.id &&
             mir_detail::restoredBorrowAuthority(body, loan))) {
+        if (std::getenv("GTI_TRACE_LCBD2")) { std::fprintf(stderr, "[childsd] owner=%zu loan=%llu kind=%d src=p%llu sd=%llu producedBy=%llu | parent=%llu kind=%d src=p%llu sd=%llu\n", owner, (unsigned long long)loan.id, static_cast<int>(loan.kind), (unsigned long long)loan.source, (unsigned long long)loan.storedDependency, (unsigned long long)loan.producedBy, (unsigned long long)parent.id, static_cast<int>(parent.kind), (unsigned long long)parent.source, (unsigned long long)parent.storedDependency); for (const auto &d : loan.additionalDependencies) std::fprintf(stderr, "   +p%llu/%llu\n", (unsigned long long)d.source, (unsigned long long)d.parent); } // TEMP-TRACE
         return failure(body, owner,
                        "child loan " + std::to_string(loan.id) +
                            " does not preserve its parent's stored dependency");
