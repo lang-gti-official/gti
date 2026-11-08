@@ -14305,14 +14305,23 @@ void SemanticVisitor::Impl::retainTextShellOwner(const Expr *expression,
   const ExprPtr *source = storedBorrowSource(expression);
   const auto *recorded = source && *source ? semanticModel.findType(**source) : nullptr;
   const auto *loan = semanticModel.findLoan(id);
-  if (recorded == nullptr || loan == nullptr)
+  if (std::getenv("GTI_TRACE_RRB") && loan) { const auto *sym = semanticModel.database().findSymbol(loan->place.root); std::fprintf(stderr, "[tso] id=%llu root=%s proj=%zu recv=%d parent=%llu parentSd=%llu srcKind=%d\n", (unsigned long long)id, sym ? sym->name.c_str() : "-", loan->place.projections.size(), loan->place.receiver, (unsigned long long)loan->parent, loan->parent && semanticModel.findLoan(loan->parent) ? (unsigned long long)semanticModel.findLoan(loan->parent)->storedDependency : 0ull, recorded ? (int)recorded->kind : -1); } // TEMP-TRACE
+  if (loan == nullptr || loan->storedDependency != 0)
     return;
-  const SemanticType &type = recorded->kind == SemanticType::Reference &&
-                                     recorded->arguments.size() == 1
-                                 ? recorded->arguments.front() : *recorded;
-  if ((type.kind != SemanticType::StringView &&
-       type.kind != SemanticType::CString) ||
-      loan->storedDependency != 0)
+  const auto text = [](const SemanticType *type) {
+    if (type != nullptr && type->kind == SemanticType::Reference &&
+        type->arguments.size() == 1)
+      type = &type->arguments.front();
+    return type != nullptr && (type->kind == SemanticType::StringView ||
+                               type->kind == SemanticType::CString);
+  };
+  // The shell is the loan's whole root binding: either the borrowed source
+  // expression is that view, or a carrier selected it (`wrapped.rbegin()`).
+  const auto *root = loan->place.root != 0 && loan->place.projections.empty() &&
+                             !loan->place.receiver
+                         ? semanticModel.database().findSymbol(loan->place.root)
+                         : nullptr;
+  if (!text(recorded) && !(root != nullptr && text(&root->type)))
     return;
   const auto record = [&](SemanticLoanId owner) {
     SemanticLoanInfo updated = *loan;

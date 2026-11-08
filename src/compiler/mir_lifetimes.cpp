@@ -2961,7 +2961,27 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
                    block.id, instruction.id);
         } else if (const auto actual =
                        relations.actualType(instruction.operands.front());
-                   !actual || !relations.types(*actual, expected)) {
+                   !actual ||
+                   // A local reference without a named region relates only
+                   // its referent; the loan's own scope bounds the borrow.
+                   !(expected.kind == SemanticType::Reference &&
+                             !expected.referenceLifetime.specified() &&
+                             actual->kind != SemanticType::Reference &&
+                             expected.arguments.size() == 1
+                         ? relations.types(*actual, expected.arguments.front(),
+                                           expected.referenceAccess == AccessMode::Mutable ? 0 : 1)
+                         : relations.types(*actual, expected))) {
+          if (std::getenv("GTI_TRACE_SCOPED")) { // TEMP-TRACE
+            const auto dump = [](auto &&self, const SemanticType &t, int d) -> void { // TEMP-TRACE
+              std::fprintf(stderr, "%*s kind=%d class=%u refLt=%d:%llu lts=", d*2, "", (int)t.kind, (unsigned)t.classId, (int)t.referenceLifetime.kind, (unsigned long long)t.referenceLifetime.id); // TEMP-TRACE
+              for (auto r : t.lifetimeArguments) std::fprintf(stderr, "%d:%llu,", (int)r.kind, (unsigned long long)r.id); // TEMP-TRACE
+              std::fprintf(stderr, "\n"); // TEMP-TRACE
+              lifetime_detail::children(t, [&](const SemanticType &c) { self(self, c, d+1); }); // TEMP-TRACE
+            }; // TEMP-TRACE
+            std::fprintf(stderr, "[stored-dest] inst=%llu opKind=%d expected:\n", (unsigned long long)instruction.id, (int)instruction.operands.front().kind); dump(dump, expected, 1); // TEMP-TRACE
+            std::fprintf(stderr, "[stored-dest] actual:\n"); if (actual) dump(dump, *actual, 1); // TEMP-TRACE
+            for (const auto &edge : body.lifetimeBody.obligations) std::fprintf(stderr, "[stored-dest] ob %d:%llu >= %d:%llu\n", (int)edge.longer.kind, (unsigned long long)edge.longer.id, (int)edge.shorter.kind, (unsigned long long)edge.shorter.id); // TEMP-TRACE
+          } // TEMP-TRACE
           reject("MIR stored value does not prove its destination lifetime "
                  "contract",
                  block.id, instruction.id);

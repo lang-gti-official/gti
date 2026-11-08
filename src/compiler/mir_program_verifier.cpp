@@ -7032,11 +7032,16 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
             entrySource->projections.empty() &&
             dependencySource->root == MirPlaceRootKind::This &&
             !dependencySource->projections.empty() &&
+            dependencySource->projections.front().kind == MirProjectionKind::Field &&
+            // A stored reference field's referent is reached through the same
+            // entry authority: Field steps, then at most one final Dereference.
             std::all_of(dependencySource->projections.begin(),
-                        dependencySource->projections.end(),
+                        dependencySource->projections.end() - 1,
                         [](const auto &projection) {
                           return projection.kind == MirProjectionKind::Field;
-                        });
+                        }) &&
+            (dependencySource->projections.back().kind == MirProjectionKind::Field ||
+             dependencySource->projections.back().kind == MirProjectionKind::Dereference);
         const bool abstractEntry =
             candidate.entry && candidate.kind == MirLoanKind::Stored &&
             entrySource != nullptr &&
