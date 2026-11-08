@@ -2277,9 +2277,16 @@ private:
   bool aliasReferentProves(const MirPlace &place, Lifetime target) const {
     if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
       std::fprintf(stderr, "[alias] enter place=p%llu root=%d binding=%llu proj=%zu kind0=%d\n", (unsigned long long)place.id, static_cast<int>(place.root), (unsigned long long)place.binding, place.projections.size(), place.projections.empty() ? -1 : static_cast<int>(place.projections.front().kind)); // TEMP-TRACE
+    // The referent itself, or an inline field/element subobject of it, which
+    // lives exactly as long as that referent.
     if (place.root != MirPlaceRootKind::Binding || !place.binding ||
-        place.projections.size() != 1 ||
-        place.projections.front().kind != MirProjectionKind::Dereference)
+        place.projections.empty() ||
+        place.projections.front().kind != MirProjectionKind::Dereference ||
+        !std::all_of(place.projections.begin() + 1, place.projections.end(),
+                     [](const auto &projection) {
+                       return projection.kind == MirProjectionKind::Field ||
+                              projection.kind == MirProjectionKind::Index;
+                     }))
       return false;
     const MirLoan *carried = nullptr;
     for (const auto &loan : body.loans)
@@ -2310,7 +2317,12 @@ private:
     }
     if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
       std::fprintf(stderr, "[alias] place=p%llu loan=%llu source=p%llu proves=%d target=%d:%llu\n", (unsigned long long)place.id, (unsigned long long)carried->id, (unsigned long long)carried->source, source && originPlaceProves(*source, target), static_cast<int>(target.kind), (unsigned long long)target.id); // TEMP-TRACE
-    return source && originPlaceProves(*source, target);
+    if (source && originPlaceProves(*source, target))
+      return true;
+    // A local reborrow's referent lies within its parent loan's referent, so
+    // the parent's proven region also covers this alias (a range binding
+    // reborrowing a reference formal's entry).
+    return carried->parent != 0 && loanProves(carried->parent, target, 0);
   }
 
   // A loan's referent, and any inline field chain over it, lives in exactly

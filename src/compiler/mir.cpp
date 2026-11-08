@@ -3901,6 +3901,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       }
       return requireStoredDependency(loan, context, instruction);
     };
+    // Set while a Move operand transfers a whole carrier shell (see below).
+    bool shellTransfer = false;
     const auto checkCanonicalPlace =
         [&](MirPlaceId placeId, const MirCanonicalPlace &place, bool write,
             const char *context, MirInstructionId instruction = 0,
@@ -4213,6 +4215,13 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                 !accessed.referent && !accessed.referenceStorage &&
                 !accessed.invalidReferentProjection)
               return false;
+            // Writing the carrier shell can reseat a read-only stored
+            // reference but never write through it: its old referent, which
+            // the live loan protects, is unchanged.
+            if (borrowed.referent && !borrowed.mutableReferent &&
+                !borrowed.invalidReferentProjection && !accessed.referent &&
+                !accessed.invalidReferentProjection)
+              return false;
           }
           return canonicalPlacesOverlap(place, referent);
         };
@@ -4224,7 +4233,29 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                      overlapsProtected(canonicalPlace(body, dependency.source,
                                                       bindingLoans, active));
             });
+        // Transferring a carrier shell moves its stored reference values and
+        // writing it can at most reseat them; neither writes through a
+        // read-only reference. A read-only loan on a referent reached through
+        // a dereference inside the written place is unaffected.
+        const auto *protectedSource = body.findPlace(loan.source);
+        const bool referentBehindTransferredShell =
+            (shellTransfer || (protectedSource != nullptr &&
+                               protectedSource->access == AccessMode::ReadOnly)) &&
+            loan.access == AccessMode::ReadOnly &&
+            !protectedPlace.ambiguous && protectedPlace.root == place.root &&
+            protectedPlace.binding == place.binding &&
+            protectedPlace.symbol == place.symbol &&
+            protectedPlace.projections.size() > place.projections.size() &&
+            std::equal(place.projections.begin(), place.projections.end(),
+                       protectedPlace.projections.begin()) &&
+            std::any_of(protectedPlace.projections.begin() +
+                            static_cast<std::ptrdiff_t>(place.projections.size()),
+                        protectedPlace.projections.end(),
+                        [](const auto &projection) {
+                          return projection.kind == MirProjectionKind::Dereference;
+                        });
         const bool primaryConflict =
+            !referentBehindTransferredShell &&
             overlapsProtected(protectedPlace) &&
             (write || loan.access == AccessMode::Mutable);
         if (!primaryConflict && !additionalConflict) {
@@ -4233,6 +4264,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         if (loanState == MirLoanFlowState::Reserved && !write) {
           continue;
         }
+        if (std::getenv("GTI_TRACE_LCBD2")) { std::fprintf(stderr, "[placeconf] owner=%zu inst=%llu write=%d loan=%llu kind=%d src=p%llu parent=%llu sd=%llu producedBy=%llu primary=%d additional=%d through=%llu\n", owner, (unsigned long long)instruction, write, (unsigned long long)loan.id, static_cast<int>(loan.kind), (unsigned long long)loan.source, (unsigned long long)loan.parent, (unsigned long long)loan.storedDependency, (unsigned long long)loan.producedBy, primaryConflict, additionalConflict, (unsigned long long)place.throughLoan); std::fprintf(stderr, "   context=%s abstract=%zu placeRoot=%d placeBinding=%llu placeProj=%zu transfer=%d | prot root=%d binding=%llu proj:", std::string(context).c_str(), abstractAccesses.size(), static_cast<int>(place.root), (unsigned long long)place.binding, place.projections.size(), shellTransfer, static_cast<int>(protectedPlace.root), (unsigned long long)protectedPlace.binding); for (const auto &pr : protectedPlace.projections) std::fprintf(stderr, " %d", static_cast<int>(pr.kind)); std::fprintf(stderr, "\n"); } // TEMP-TRACE
         return failure(body, owner,
                        std::string(write ? "write" : "read") +
                            " of a place conflicts with active " +
@@ -4444,7 +4476,10 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                               carrierLoan);
           }
         }
-        return checkPlace(resolved.place, true, context, instruction);
+        shellTransfer = true;
+        auto transferred = checkPlace(resolved.place, true, context, instruction);
+        shellTransfer = false;
+        return transferred;
       }
       case MirOperandKind::BorrowWrite:
         return checkPlace(resolved.place, true, context, instruction,
@@ -5014,7 +5049,10 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         }
         for (const auto id : liveLoanIds()) {
           const auto &other = body.loans[id - 1];
+          // A whole-receiver result keeps its receiver's Stored group as its
+          // stored edge rather than as a parent; that group is its authority.
           if (other.id == loan || other.id == parent ||
+              other.id == reserved.storedDependency ||
               active[other.id - 1] == MirLoanFlowState::Inactive ||
               isLoanAncestor(body, other.id, loan) ||
               abstractAuthorityForLoan(other, reserved)) {
@@ -5027,6 +5065,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
               !abstractStoredAccess(body, other, reservedPlace).overlaps)
             continue;
           if (canonicalPlacesOverlap(reservedPlace, otherPlace)) {
+            if (std::getenv("GTI_TRACE_LCBD2")) { std::fprintf(stderr, "[twophase] reserved=%llu kind=%d src=p%llu parent=%llu | other=%llu kind=%d src=p%llu parent=%llu sd=%llu adds=%zu\n", (unsigned long long)loan, static_cast<int>(reserved.kind), (unsigned long long)reserved.source, (unsigned long long)reserved.parent, (unsigned long long)other.id, static_cast<int>(other.kind), (unsigned long long)other.source, (unsigned long long)other.parent, (unsigned long long)other.storedDependency, other.additionalDependencies.size()); for (const auto &pl : body.places) if (pl.id == reserved.source || pl.id == other.source) std::fprintf(stderr, "   p%llu root=%d binding=%llu loan=%llu proj=%zu\n", (unsigned long long)pl.id, static_cast<int>(pl.root), (unsigned long long)pl.binding, (unsigned long long)pl.loan, pl.projections.size()); } // TEMP-TRACE
             return failure(body, owner,
                            "two-phase loan " + std::to_string(loan) +
                                " activates while overlapping loan " +
