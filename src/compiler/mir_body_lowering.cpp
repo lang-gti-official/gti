@@ -9627,6 +9627,27 @@ private:
         }
       }
       if (std::getenv("GTI_TRACE_LCBD2")) { const auto &L = output.loans[loan - 1]; std::fprintf(stderr, "[loan@%s] v%llu loan%llu src=p%llu parent=%llu bf=%zu bd=%d bargs=%zu origin=%d", "bf", (unsigned long long)value.id, (unsigned long long)loan, (unsigned long long)L.source, (unsigned long long)L.parent, value.borrowFields.size(), value.borrowDependencies.has_value(), value.borrowArguments.size(), static_cast<int>(value.borrowOrigin)); for (const auto &d : L.additionalDependencies) std::fprintf(stderr, " +p%llu/%llu", (unsigned long long)d.source, (unsigned long long)d.parent); std::fprintf(stderr, "\n"); } // TEMP-TRACE
+      // A receiver reached through a multi-supplier call result (a
+      // two-supplier range element) depends on every supplier of that
+      // parent, each as its child, not only on its primary source.
+      if (value.borrowFields.empty() && !value.borrowDependencies &&
+          value.borrowOrigin == BorrowOriginKind::Receiver)
+        if (auto &published = output.loans[loan - 1];
+            published.parent != 0 && published.additionalDependencies.empty() &&
+            published.designatedFields.empty())
+          if (const auto *parentLoan = output.findLoan(published.parent);
+              parentLoan && parentLoan->kind == MirLoanKind::CallResult &&
+              !parentLoan->additionalDependencies.empty() &&
+              sameBorrowSource(parentLoan->source, published.source)) {
+            const auto parentId = parentLoan->id;
+            const auto extras = parentLoan->additionalDependencies;
+            for (const auto &other : extras)
+              if (other.source != 0 && other.designatedFields.empty() &&
+                  other.conditions.empty())
+                output.loans[loan - 1].additionalDependencies.push_back(
+                    {.source = other.source, .parent = parentId,
+                     .access = output.loans[loan - 1].access});
+          }
       if (!value.borrowFields.empty()) {
         auto &published = output.loans[loan - 1];
         published.designatedFields = value.borrowFields.front().resultFields;
@@ -9947,6 +9968,22 @@ private:
           { valid = false; GTI_INVALID2(); } // No origin may be invented for a borrowed result. // TEMP-TRACE-INVALID2
           return;
         }
+        // A receiver reached through a multi-supplier call result (a
+        // two-supplier range element) depends on every supplier of that
+        // parent, each as its child, not only on its primary source.
+        if (value.borrowOrigin == BorrowOriginKind::Receiver &&
+            complete.size() == 1 && complete.front().parent != 0)
+          if (const auto *parentLoan = output.findLoan(complete.front().parent);
+              parentLoan && parentLoan->kind == MirLoanKind::CallResult &&
+              !parentLoan->additionalDependencies.empty() &&
+              sameBorrowSource(parentLoan->source, complete.front().source) &&
+              complete.front().designatedFields.empty())
+            for (const auto &other : parentLoan->additionalDependencies)
+              if (other.source != 0 && other.designatedFields.empty() &&
+                  other.conditions.empty())
+                complete.push_back({.source = other.source,
+                                    .parent = parentLoan->id,
+                                    .access = complete.front().access});
         // A reference input read through a call result's loan is a child of
         // that accessor result, not of the accessor's own parent named by
         // the semantic contract. Keep the accessor in the published ancestry.
