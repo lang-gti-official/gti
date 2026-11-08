@@ -14545,7 +14545,10 @@ exactMutexIntrinsicContract(const MirProgram &program, const MirBody &body,
                   instruction.parameterTypes.end(),
                   instruction.operands.begin(),
                   [](const SemanticType &parameter, const MirOperand &operand) {
-                    return parameter == operand.type;
+                    // Capability operands keep their applied regions; the
+                    // intrinsic's synthesized parameters name none.
+                    return eraseTypeLifetimes(parameter) ==
+                           eraseTypeLifetimes(operand.type);
                   })) {
     return false;
   }
@@ -14555,7 +14558,7 @@ exactMutexIntrinsicContract(const MirProgram &program, const MirBody &body,
   };
   const auto exactResult = [&](const SemanticType &type, ValueCategory category,
                                AccessMode access) {
-    return instruction.info.type == type &&
+    return eraseTypeLifetimes(instruction.info.type) == eraseTypeLifetimes(type) &&
            instruction.info.category == category &&
            instruction.info.access == access &&
            (type == SemanticType::Void ? !instruction.result
@@ -14660,6 +14663,7 @@ exactMutexIntrinsicContract(const MirProgram &program, const MirBody &body,
             : AccessMode::ReadOnly;
     const MirLoan *loan =
         instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+    if (std::getenv("GTI_TRACE_SCOPED") && twoOperand) std::fprintf(stderr, "[mutexread] two=%d sb=%d tb=%d res=%d origin=%d barg=%zu bacc=%d loan=%d kind=%d lb=%d entry=%d esc=%d parent=%llu src=%d acc=%d prod=%d sync=%d\n", twoOperand, exactBorrow(*storageOperand, MirOperandKind::BorrowRead), exactBorrow(*tokenOperand, MirOperandKind::BorrowRead), exactResult(*storageValue, ValueCategory::Place, resultAccess), (int)instruction.borrowOrigin, instruction.borrowArgument, instruction.borrowAccess == resultAccess, loan != nullptr, loan ? (int)loan->kind : -1, loan ? loan->lifecycleBound : -1, loan ? loan->entry : -1, loan ? loan->escapes : -1, loan ? (unsigned long long)loan->parent : 0ull, loan && loan->source == storageOperand->place, loan && loan->access == resultAccess, loan && loan->producedBy == instruction.hirValue, instruction.synchronization.kind == SynchronizationOperationKind::None); // TEMP-TRACE
     return twoOperand &&
            exactBorrow(*storageOperand, MirOperandKind::BorrowRead) &&
            exactBorrow(*tokenOperand, MirOperandKind::BorrowRead) &&
@@ -14668,7 +14672,15 @@ exactMutexIntrinsicContract(const MirProgram &program, const MirBody &body,
            instruction.borrowArgument == 0 &&
            instruction.borrowAccess == resultAccess && loan != nullptr &&
            loan->kind == MirLoanKind::CallResult && !loan->lifecycleBound &&
-           !loan->entry && !loan->escapes && loan->parent == 0 &&
+           !loan->entry && !loan->escapes &&
+           // A storage reference reached through a carrier field is a child
+           // of that carrier's abstract entry group.
+           (loan->parent == 0 ||
+            [&] {
+              const auto *parent = body.findLoan(loan->parent);
+              return parent != nullptr && parent->entry &&
+                     parent->kind == MirLoanKind::Stored;
+            }()) &&
            loan->source == storageOperand->place &&
            loan->access == resultAccess &&
            loan->producedBy == instruction.hirValue &&
@@ -14807,7 +14819,7 @@ struct CompleteReferenceInitializer {
 completeReferenceInitializer(const MirProgram &program,
                              const MirConstructorInstance &constructor,
                              std::size_t index) {
-  if (index >= constructor.initializers.size()) return std::nullopt;
+  if (index >= constructor.initializers.size()) { if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[cri] null at %d\n", 14822); return std::nullopt; } // TEMP-TRACE-CRI
   const auto &initializer = constructor.initializers[index];
   const auto domain = completeBorrowConstructorDomain(program, constructor);
   if (!domain || initializer.kind != ConstructorInitializerTargetKind::Field ||
@@ -14815,27 +14827,32 @@ completeReferenceInitializer(const MirProgram &program,
       initializer.arguments.size() != 1 || initializer.constructorTarget ||
       initializer.generatedDefault || initializer.targetType.kind != SemanticType::Reference ||
       initializer.targetType.arguments.size() != 1 ||
-      initializer.borrowAccess != initializer.targetType.referenceAccess ||
+      // An exclusive dependency may be held through a read-only reference
+      // field (a guard's exclusive owner loan); never the reverse.
+      (initializer.borrowAccess != initializer.targetType.referenceAccess &&
+       !(initializer.borrowAccess == AccessMode::Mutable &&
+         initializer.targetType.referenceAccess == AccessMode::ReadOnly)) ||
       std::count_if(domain->fields.begin(), domain->fields.end(), [&](const auto &field) {
-        return field.step == fieldProjection(initializer.field) && field.type == initializer.targetType;
+        return field.step == fieldProjection(initializer.field) &&
+               eraseTypeLifetimes(field.type) == eraseTypeLifetimes(initializer.targetType);
       }) != 1)
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[cri] null at %d domain=%d kind=%d stores=%d field=%d args=%zu ctorT=%d gen=%d tkind=%d targs=%zu acc=%d(%d vs %d) count=%ld\n", 14835, domain.has_value(), (int)initializer.kind, initializer.storesReference, initializer.field != 0, initializer.arguments.size(), initializer.constructorTarget.has_value(), initializer.generatedDefault, (int)initializer.targetType.kind, initializer.targetType.arguments.size(), initializer.borrowAccess == initializer.targetType.referenceAccess, (int)initializer.borrowAccess, (int)initializer.targetType.referenceAccess, domain ? (long)std::count_if(domain->fields.begin(), domain->fields.end(), [&](const auto &field) { return field.step == fieldProjection(initializer.field); }) : -1l); return std::nullopt; } // TEMP-TRACE-CRI
   const auto &body = constructor.body;
   const MirLoan *published = nullptr;
   for (const auto &loan : body.loans)
     if (loan.escapes && loan.storedPath == BorrowPath{fieldProjection(initializer.field)}) {
-      if (published) return std::nullopt;
+      if (published) { if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[cri] null at %d\n", 14840); return std::nullopt; } // TEMP-TRACE-CRI
       published = &loan;
     }
   if (!published || published->kind != MirLoanKind::Stored || published->lifecycleBound ||
       published->access != initializer.borrowAccess || published->referenceSelection)
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[cri] null at %d\n", 14845); return std::nullopt; } // TEMP-TRACE-CRI
   const MirInstruction *borrow = nullptr;
   for (const auto &block : body.blocks)
     for (const auto &instruction : block.instructions)
       if (!instruction.tombstone && instruction.kind == MirInstructionKind::Borrow &&
           instruction.loan == published->id) {
-        if (borrow) return std::nullopt;
+        if (borrow) { if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[cri] null at %d\n", 14851); return std::nullopt; } // TEMP-TRACE-CRI
         borrow = &instruction;
       }
   if (published->entry) {
@@ -14853,7 +14870,7 @@ completeReferenceInitializer(const MirProgram &program,
                  mirLifetimeReferenceConversion(program, body, constructor.id,
                                                 input.type, initializer.targetType);
         }) != 1)
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[cri] null at %d\n", 14869); return std::nullopt; } // TEMP-TRACE-CRI
     std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindings;
     for (const auto &loan : body.loans)
       for (const auto binding : loan.carriers) bindings[binding].push_back(loan.id);
@@ -14863,17 +14880,17 @@ completeReferenceInitializer(const MirProgram &program,
       if (candidate.sourceValue == initializer.arguments.front()) {
         const auto selected = canonicalBorrowOrigin(body, candidate.id, bindings, true);
         if (original.ambiguous || selected.ambiguous || !sameCanonicalPlace(original, selected))
-          return std::nullopt;
+          { if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[cri] null at %d\n", 14879); return std::nullopt; } // TEMP-TRACE-CRI
         addressed = true;
       }
-    if (!addressed) return std::nullopt;
+    if (!addressed) { if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[cri] null at %d\n", 14882); return std::nullopt; } // TEMP-TRACE-CRI
   } else if (!borrow || published->producedBy != initializer.arguments.front() ||
              borrow->hirValue != initializer.arguments.front() || borrow->operands.size() != 1 ||
              borrow->result || borrow->destination ||
              (borrow->operands.front().kind != MirOperandKind::Loan &&
               borrow->operands.front().kind != MirOperandKind::BorrowRead &&
               borrow->operands.front().kind != MirOperandKind::BorrowWrite)) {
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[cri] null at %d\n", 14889); return std::nullopt; } // TEMP-TRACE-CRI
   }
   return CompleteReferenceInitializer{&initializer, published, borrow};
 }
@@ -16424,6 +16441,7 @@ completeBorrowSourcePath(const MirProgram &program,
         fact = fromOperand(state, operand);
       }
     }
+    if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[refpub] loan=%llu entry=%d fact=%s claimSrc=p%llu parent=%llu access=%d adds=%zu opKind=%d\n", (unsigned long long)loan.id, loan.entry, describeCompleteBorrowFact(fact).c_str(), (unsigned long long)loan.source, (unsigned long long)loan.parent, (int)loan.access, loan.additionalDependencies.size(), loan.entry ? -1 : (int)publication.borrow->operands.front().kind); // TEMP-TRACE
     if (!fact || fact->dependencies.empty() || !fact->possibleAlternatives.empty())
       return std::nullopt;
     std::vector<MirLoanDependency> claims{{.source = loan.source, .parent = loan.parent,
@@ -16435,9 +16453,22 @@ completeBorrowSourcePath(const MirProgram &program,
       bool found = false;
       for (std::size_t index = 0; index < claims.size(); ++index) {
         const auto &claim = claims[index];
+        // Interior synchronization: an exclusive guard loan over a mutex's
+        // compiler-owned storage is published from a shared reference to it.
+        const auto mutexStorage = [&](MirPlaceId id) {
+          const auto *place = body.findPlace(id);
+          if (place == nullptr)
+            return false;
+          const auto &type = place->type.kind == SemanticType::Reference &&
+                                     place->type.arguments.size() == 1
+                                 ? place->type.arguments.front() : place->type;
+          return exactMirCapabilityClass(program, type,
+                                         CompilerCapabilityTypeKind::MutexStorage) != nullptr;
+        };
         if (matched[index] || !claim.designatedFields.empty() || !claim.conditions.empty() ||
             !dependency.designatedFields.empty() || !dependency.conditions.empty() ||
-            (claim.access == AccessMode::Mutable && dependency.access != AccessMode::Mutable))
+            (claim.access == AccessMode::Mutable && dependency.access != AccessMode::Mutable &&
+             !mutexStorage(dependency.source)))
           continue;
         const auto actual = canonicalBorrowOrigin(body, dependency.source, bindingLoans, true);
         const auto asserted = canonicalBorrowOrigin(body, claim.source, bindingLoans, true);
@@ -17492,6 +17523,19 @@ completeBorrowSourcePath(const MirProgram &program,
         result = MirBorrowDependencySet{
             .dependencies = {{.source = copied.place, .access = instruction.info.access}}};
     } else if (instruction.kind == MirInstructionKind::Call &&
+               (instruction.intrinsic == IntrinsicKind::MutexGuardRead ||
+                instruction.intrinsic == IntrinsicKind::MutexGuardReadMut) &&
+               exactMutexIntrinsicContract(program, body, instruction)) {
+      // A checked guard read addresses the value its shared storage operand
+      // names, under the result loan's verified parent; the token's
+      // exclusivity grants the access (interior synchronization).
+      const auto *loan = instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
+      if (loan && instruction.operands.front().place)
+        result = MirBorrowDependencySet{
+            .dependencies = {{.source = instruction.operands.front().place,
+                              .parent = loan->parent,
+                              .access = instruction.info.access}}};
+    } else if (instruction.kind == MirInstructionKind::Call &&
                mir_detail::rawBorrowResultLoan(body, instruction)) {
       // This unsafe primitive asserts a typed address against one checked
       // owner. Its exact operand/loan/access proof is independent of the
@@ -17914,12 +17958,16 @@ completeBorrowSourcePath(const MirProgram &program,
         const auto index = static_cast<std::size_t>(initializer - constructor->initializers.begin());
         value = state.referenceInitializers[index];
       } else {
-        if (!initialized || initialized->type != field.type)
+        if (!initialized || initialized->type != field.type) {
+          if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[ctorobj] value field kind=%d initialized=%d erasedEq=%d\n", (int)field.type.kind, initialized != nullptr, initialized && eraseTypeLifetimes(initialized->type) == eraseTypeLifetimes(field.type)); // TEMP-TRACE
           return std::nullopt;
+        }
         value = fromPlace(state, initialized->id);
       }
-      if (!value || !completeBorrowSetHasTypedShape(program, field.type, *value))
+      if (!value || !completeBorrowSetHasTypedShape(program, field.type, *value)) {
+        if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[ctorobj] field kind=%d value=%d initialized=%d typeEq=%d erasedEq=%d\n", (int)field.type.kind, value.has_value(), initialized != nullptr, initialized && initialized->type == field.type, initialized && eraseTypeLifetimes(initialized->type) == eraseTypeLifetimes(field.type)); // TEMP-TRACE
         return std::nullopt;
+      }
       for (auto &dependency : value->dependencies) {
         dependency.designatedFields.insert(dependency.designatedFields.begin(), field.step);
         for (auto &condition : dependency.conditions)
@@ -18642,6 +18690,12 @@ public:
                              claim.possibleAlternatives.end(),
                              alternative) != claim.possibleAlternatives.end();
       }
+      if (!valid && std::getenv("GTI_TRACE_SCOPED")) { // TEMP-TRACE
+        std::fprintf(stderr, "[ctorsum] id=%zu src=%d kind=%d flowValid=%d returns=%zu wellFormed=%d fieldPub=%d claimDeps=%zu\n", (std::size_t)id, constructor->definitionKind == MirDefinitionKind::Source, constructor->body.kind == MirBodyKind::Constructor, flow.verification.valid(), flow.normalReturns.size(), wellFormed(publication, claim), constructorFieldPublication(*constructor, flow), claim.dependencies.size()); // TEMP-TRACE
+        for (const auto &e : flow.verification.errors) std::fprintf(stderr, "[ctorsum]   flow error: %s\n", e.message.c_str()); // TEMP-TRACE
+        for (const auto &[v, reason] : flow.failureReasons) std::fprintf(stderr, "[ctorsum]   v%llu unknown: %s\n", (unsigned long long)v, reason.c_str()); // TEMP-TRACE
+        for (const auto &r : flow.normalReturns) std::fprintf(stderr, "[ctorsum]   return deps=%s normalized=%d\n", describeCompleteBorrowFact(r.dependencies).c_str(), r.dependencies && normalizedCompleteReturnBorrow(program, publication, *r.dependencies, &constructor->body).has_value()); // TEMP-TRACE
+      } // TEMP-TRACE
       if (valid)
         constructorSummaries[id - 1] = claim;
       else
@@ -20118,6 +20172,12 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
                   producer->intrinsic == IntrinsicKind::UniqueOwnerBorrowMut) &&
                  exactUniqueOwnerBorrowContract(body, *producer))
           // The checked owner borrow addresses its owned referent.
+          resultType = SemanticType::referenceTo(value.info.type, value.info.access);
+        else if (producer->kind == MirInstructionKind::Call &&
+                 (producer->intrinsic == IntrinsicKind::MutexGuardRead ||
+                  producer->intrinsic == IntrinsicKind::MutexGuardReadMut) &&
+                 exactMutexIntrinsicContract(program, body, *producer))
+          // A checked guard read addresses the guarded referent.
           resultType = SemanticType::referenceTo(value.info.type, value.info.access);
         else if (producer->kind == MirInstructionKind::Call) {
           if (mir_detail::rawBorrowResultLoan(body, *producer)) {

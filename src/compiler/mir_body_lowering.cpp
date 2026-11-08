@@ -4012,6 +4012,7 @@ private:
         }
         if (fieldPath) {
           const auto projected = projectBorrowFields(base, fields);
+          if (std::getenv("GTI_TRACE_MIR_BODY")) { const auto *pp = output.findPlace(projected); std::fprintf(stderr, "[lcbd-proj] base=p%llu projected=p%llu hasKey=%d keyEq=%d access=%d depAccess=%d\n", (unsigned long long)base, (unsigned long long)projected, pp && pp->key, pp && pp->key && *pp->key == dependency.place, pp ? (int)pp->access : -1, (int)dependency.access); } // TEMP-TRACE
           if (const auto *place = output.findPlace(projected))
             consider(projected, place->access);
         }
@@ -4032,11 +4033,12 @@ private:
             selected = place.id;
             break;
           }
-      // The same holds for a receiver field of class type reached through a
-      // trailing pointee step (a compiler-owned storage capability's
-      // element): its supplier is that exact evaluated field place.
-      if (selected == 0 && dependency.place.receiver &&
-          dependency.place.projections.size() > 1 &&
+      // The same holds for a receiver field or a binding of class type
+      // reached through a trailing pointee step (a compiler-owned storage
+      // capability's element, a smart pointer's `->`): its supplier is that
+      // exact evaluated class place.
+      if (selected == 0 &&
+          dependency.place.projections.size() > (dependency.place.receiver ? 1u : 0u) &&
           dependency.place.projections.back().kind == PlaceProjectionKind::Dereference) {
         auto prefix = dependency.place;
         while (!prefix.projections.empty() &&
@@ -7467,11 +7469,29 @@ private:
     if (type.kind != SemanticType::Class)
       return std::nullopt;
     const auto view = hirLifetimeInstanceView(program.classInstances(), type);
-    if (!view)
+    if (!view) {
+      if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[bft] no view class=%u lts=%zu args=%zu\n", (unsigned)type.classId, type.lifetimeArguments.size(), type.arguments.size()); // TEMP-TRACE
       return std::nullopt;
+    }
     for (const auto &member : view->instance->fields)
       if (member.info.symbol == field)
         return substituteTypeLifetimes(member.info.type, view->bindings);
+    // Instances that differ only in region shape share one declaration and
+    // field order; a path recorded against a sibling instance names the same
+    // declared field by its ordinal.
+    for (const auto &sibling : program.classInstances()) {
+      if (&sibling == view->instance ||
+          sibling.declaration != view->instance->declaration ||
+          sibling.fields.size() != view->instance->fields.size() ||
+          eraseTypeLifetimes(sibling.type) != eraseTypeLifetimes(view->instance->type))
+        continue;
+      for (std::size_t index = 0; index < sibling.fields.size(); ++index)
+        if (sibling.fields[index].info.symbol == field)
+          return substituteTypeLifetimes(view->instance->fields[index].info.type,
+                                         view->bindings);
+    }
+    if (std::getenv("GTI_TRACE_MIR_BODY")) for (const auto &other : program.classInstances()) for (const auto &m : other.fields) if (m.info.symbol == field) std::fprintf(stderr, "[bft] field %llu belongs to instance %llu decl=%llu\n", (unsigned long long)field, (unsigned long long)other.id, (unsigned long long)other.declaration); // TEMP-TRACE
+    if (std::getenv("GTI_TRACE_MIR_BODY")) { std::fprintf(stderr, "[bft] no field %llu in instance %llu fields:", (unsigned long long)field, (unsigned long long)view->instance->id); for (const auto &m : view->instance->fields) std::fprintf(stderr, " %llu", (unsigned long long)m.info.symbol); std::fprintf(stderr, " bases=%zu\n", view->instance->bases.size()); } // TEMP-TRACE
     return std::nullopt;
   }
 
@@ -9884,7 +9904,8 @@ private:
         for (const auto &dependency : value.borrowDependencies->dependencies) {
           const auto lowered = lowerCompleteBorrowDependency(dependency);
           if (!lowered && std::getenv("GTI_TRACE_MIR_BODY")) { // TEMP-TRACE
-            std::fprintf(stderr, "[lcbd] v%llu root=%llu receiver=%d proj=%zu parent=%llu mapped=%d fields=%zu contents=%d access=%d\n", (unsigned long long)value.id, (unsigned long long)dependency.place.root, dependency.place.receiver, dependency.place.projections.size(), (unsigned long long)dependency.parent, semanticLoans.contains(dependency.parent), dependency.designatedFields.size(), dependency.referenceContents.has_value(), static_cast<int>(dependency.access)); // TEMP-TRACE
+            std::fprintf(stderr, "[lcbd] v%llu root=%llu receiver=%d proj=%zu kind0=%d parent=%llu mapped=%d fields=%zu contents=%d access=%d local=%d\n", (unsigned long long)value.id, (unsigned long long)dependency.place.root, dependency.place.receiver, dependency.place.projections.size(), dependency.place.projections.empty() ? -1 : (int)dependency.place.projections.front().kind, (unsigned long long)dependency.parent, semanticLoans.contains(dependency.parent), dependency.designatedFields.size(), dependency.referenceContents.has_value(), static_cast<int>(dependency.access), localSymbols.contains(dependency.place.root)); // TEMP-TRACE
+            for (const auto &pl : output.places) if (pl.key && pl.key->root == dependency.place.root) std::fprintf(stderr, "[lcbd]   same-root p%llu type=%d access=%d proj=%zu\n", (unsigned long long)pl.id, (int)pl.type.kind, (int)pl.access, pl.key->projections.size()); // TEMP-TRACE
             for (const auto &pl : output.places) if (pl.key) std::fprintf(stderr, "[lcbd]   place p%llu root=%llu recv=%d proj=%zu same=%d\n", (unsigned long long)pl.id, (unsigned long long)pl.key->root, pl.key->receiver, pl.key->projections.size(), *pl.key == dependency.place); // TEMP-TRACE
             if (const auto m = semanticLoans.find(dependency.parent); m != semanticLoans.end()) if (const auto *l = output.findLoan(m->second)) std::fprintf(stderr, "[lcbd]   parent loan kind=%d entry=%d source=p%llu\n", static_cast<int>(l->kind), l->entry, (unsigned long long)l->source); // TEMP-TRACE
           } // TEMP-TRACE
