@@ -127,6 +127,17 @@ def publication_admitted(manifest, releases, main, api=source.request):
     return True
 
 
+def all_releases(api):
+    """Every release, drafts included (only an authenticated listing shows them)."""
+    releases = []
+    for page in range(1, 101):
+        rows = api(f"{BASE}/releases?per_page=100&page={page}")
+        releases.extend(rows)
+        if len(rows) < 100:
+            return releases
+    raise ValueError("release inventory exceeded bound")
+
+
 def publish(directory, plan, api=source.request):
     manifest = json.loads((directory / "lsp.json").read_text())
     for key, value in (("source", plan["sha"]), ("run_id", plan["run_id"]),
@@ -136,14 +147,7 @@ def publish(directory, plan, api=source.request):
     evidence = release_artifacts.release_evidence(REPOSITORY, plan["sha"], api)
     if (int(evidence["run_id"]), int(evidence["run_attempt"])) != (plan["run_id"], plan["attempt"]) or evidence.get("validation_mode", "full") != plan.get("validation_mode", "full"):
         raise ValueError("CI evidence changed before component publication")
-    releases = []
-    for page in range(1, 101):
-        rows = api(f"{BASE}/releases?per_page=100&page={page}")
-        releases.extend(rows)
-        if len(rows) < 100:
-            break
-    else:
-        raise ValueError("release inventory exceeded bound")
+    releases = all_releases(api)
     main = api(f"{BASE}/git/ref/heads/main")["object"]["sha"]
     if not publication_admitted(manifest, releases, main, api):
         print("This source or a newer compatible LSP is already published.")
@@ -174,7 +178,13 @@ def publish(directory, plan, api=source.request):
                         "--title", "GTI LSP " + manifest["source"][:12], "--notes",
                         "Compatible LSP update. Install through gtiup; lsp.json records exact shared-input and CI identity."], check=True)
     def inventory():
-        release = api(f"{BASE}/releases/tags/{tag}")
+        # GitHub's release-by-tag lookup never returns a draft (a draft has no
+        # tag until it is published), so find the draft in the full listing
+        # and read its current assets by release id.
+        matches = [r for r in all_releases(api) if r["tag_name"] == tag]
+        if len(matches) != 1:
+            raise ValueError("component draft missing or duplicated during publication")
+        release = api(f"{BASE}/releases/{matches[0]['id']}")
         if not release.get("draft") or release.get("target_commitish") != manifest["source"]:
             raise ValueError("component draft changed during publication")
         rows = release.get("assets", [])
