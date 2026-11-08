@@ -1398,7 +1398,10 @@ auto SemanticVisitor::Impl::functionCallArgumentMatch(
                                     : argument;
     // Expression parameters are not an eager copy/move boundary. Their
     // actual uses in the expansion perform ordinary ownership checking.
+    // Lifetimes are checked by the expansion's ordinary uses; an elided
+    // parameter region is not a separate call-site borrow contract.
     if (parameter == value || parameter == SemanticType::Unknown ||
+        eraseTypeLifetimes(parameter) == eraseTypeLifetimes(value) ||
         value == SemanticType::Unknown ||
         (value.kind == SemanticType::TypePack &&
          forwardedPackArgumentMatches(parameter, value)))

@@ -1073,7 +1073,8 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
                             ? actual->arguments.front()
                         : actual ? *actual
                                  : SemanticType::Unknown;
-    if (value != SemanticType::Unknown && value != expected) {
+    if (value != SemanticType::Unknown && value != expected &&
+        eraseTypeLifetimes(value) != eraseTypeLifetimes(expected)) {
       reject("Macro arguments require exact expression types; write the "
              "conversion explicitly at the call site.");
       return true;

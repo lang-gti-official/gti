@@ -6991,9 +6991,25 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
       stmt.type(), localReference || instanceField,
       localReference ? "local binding"
                      : (instanceField ? "instance field" : "storage"));
-  const SemanticType declaredType =
-      typeOf(stmt.type(),
-             stmt.isMutable() ? Mutability::Mutable : Mutability::Immutable);
+  const SemanticType declaredType = [&] {
+    SemanticType type =
+        typeOf(stmt.type(),
+               stmt.isMutable() ? Mutability::Mutable : Mutability::Immutable);
+    // Namespace-scope and static storage has no enclosing region: an elided
+    // lifetime of its declared type can only be the static region.
+    if (functionDepth == 0 && !instanceField &&
+        lifetimeParameterScopes.empty()) {
+      std::vector<std::pair<Lifetime, Lifetime>> bindings;
+      for (const auto region : freeTypeLifetimes(type))
+        if (region.kind == Lifetime::Kind::Parameter ||
+            region.kind == Lifetime::Kind::Inference)
+          bindings.emplace_back(region, Lifetime::staticLifetime());
+      if (!bindings.empty())
+        if (auto adjusted = substituteTypeLifetimes(type, bindings))
+          type = std::move(*adjusted);
+    }
+    return type;
+  }();
   const bool openField = declaredType.kind == SemanticType::Class &&
                          !isConcreteExactSpecializationType(declaredType);
   const ExprPtr &initializer =
