@@ -16719,6 +16719,10 @@ completeBorrowSourcePath(const MirProgram &program,
           std::fprintf(stderr, "[cr] owner=%zu inst=%llu storageKind=%d place=%llu root=%d rootLoan=%llu proj=%zu address=%s\n", (std::size_t)owner, (unsigned long long)instruction.id, static_cast<int>(storage->kind), (unsigned long long)storage->place, pl ? static_cast<int>(pl->root) : -1, pl ? (unsigned long long)pl->loan : 0ull, pl ? pl->projections.size() : 0, describeCompleteBorrowFact(fromOperand(state, *storage)).c_str()); // TEMP-TRACE
         } // TEMP-TRACE
       }
+      if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { // TEMP-TRACE
+        std::string src; for (const auto &d : sources) src += " p" + std::to_string(d.source) + "/parent" + std::to_string(d.parent) + "/f" + std::to_string(d.designatedFields.size()); // TEMP-TRACE
+        std::fprintf(stderr, "[crmap] owner=%zu inst=%llu index=%zu origin=%d param=%zu srcFields=%zu resFields=%zu ext=%d prefix=%zu referenceInput=%d sources=%s\n", (std::size_t)owner, (unsigned long long)instruction.id, index, static_cast<int>(mapping.origin), mapping.parameter, mapping.sourceFields.size(), mapping.resultFields.size(), path->externalPrefix.has_value(), path->externalPrefix.value_or(0), referenceInput, src.c_str()); // TEMP-TRACE
+      } // TEMP-TRACE
       if (sources.empty())
         continue;
       bool complete = true;

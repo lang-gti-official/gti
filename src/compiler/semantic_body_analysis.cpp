@@ -9048,11 +9048,28 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     }
 
     const auto *receiver = exprAs<Get>(expr.callee().get());
+    // Through an overloaded `p->method()`, the method's receiver is the
+    // selected operator-> result, not `p` itself; that member expression
+    // carries the operator and its checked result region.
+    const auto arrowOperator = [&](const Get &member) -> const ResolvedOperatorInfo * {
+      for (const auto *found : {semanticModel.findOperator(member),
+                                semanticModel.findProjectionOperator(member)})
+        if (found && found->kind == OverloadedOperator::Arrow)
+          return found;
+      return nullptr;
+    };
+    const auto *projectedReceiver =
+        receiver && receiver->access().kind == TokenKind::ARROW && arrowOperator(*receiver)
+            ? static_cast<const Expr *>(receiver)
+            : nullptr;
+    if (std::getenv("GTI_TRACE_LIFETIME_REQ") && receiver && receiver->access().kind == TokenKind::ARROW) // TEMP-TRACE
+      std::fprintf(stderr, "[arrow-recv] line=%u projected=%d op=%d\n", static_cast<unsigned>(receiver->name().line), projectedReceiver != nullptr, semanticModel.findOperator(*receiver) != nullptr); // TEMP-TRACE
     if (valid)
       valid = applyCallLifetimeContract(
           resolved, argumentsFor(argumentAnalysis), expr.paren(),
           resolved.ownerClass != 0 && !resolved.staticMember && receiver
-              ? receiver->object().get() : nullptr, true);
+              ? (projectedReceiver ? projectedReceiver : receiver->object().get())
+              : nullptr, true);
 
     const bool instantiatedPackForwardingShape =
         candidate.record().parameterPack && !resolved.parameterPack &&

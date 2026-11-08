@@ -1063,6 +1063,23 @@ auto SemanticVisitor::Impl::borrowedExpressionLifetime(const Expr *expression) c
         type = &resolved->returnType;
     if (type && type->kind == SemanticType::Reference)
       return type->referenceLifetime;
+    // Through an overloaded `->`, a method receiver or an inline field is the
+    // selected operator result's referent; a stored reference field keeps
+    // its own declared region below.
+    if (const auto *field = exprAs<Get>(expression);
+        field && field->access().kind == TokenKind::ARROW)
+      if (const auto *arrow = [&]() -> const ResolvedOperatorInfo * {
+            for (const auto *found : {semanticModel.findOperator(*field),
+                                      semanticModel.findProjectionOperator(*field)})
+              if (found && found->kind == OverloadedOperator::Arrow)
+                return found;
+            return nullptr;
+          }();
+          arrow && arrow->returnType.kind == SemanticType::Reference) {
+        const auto *member = findMember(memberAccessObjectType(*field), field->name());
+        if (!member || member->symbol.type.kind != SemanticType::Reference)
+          return arrow->returnType.referenceLifetime;
+      }
     if (const auto *field = exprAs<Get>(expression)) {
       const auto owner = memberAccessObjectType(*field);
       if (const auto *member = findMember(owner, field->name())) {

@@ -2862,6 +2862,11 @@ private:
           concrete->returnBorrowFields;
       output.program.functions[index].completeReturnBorrow =
           concrete->completeReturnBorrow;
+      if (std::getenv("GTI_TRACE_LIFETIME_REQ") && concrete->completeReturnBorrow && concrete->completeReturnBorrow->dependencies.size() > 1) { // TEMP-TRACE
+        std::fprintf(stderr, "[inst-summary] fn=%zu line=%u deps=%zu returnBorrowFields=%zu\n", index + 1, concrete->declaration ? static_cast<unsigned>(concrete->declaration->name().line) : 0u, concrete->completeReturnBorrow->dependencies.size(), concrete->returnBorrowFields.size()); // TEMP-TRACE
+        for (const auto &d : concrete->completeReturnBorrow->dependencies) // TEMP-TRACE
+          std::fprintf(stderr, "[inst-summary]   origin=%d src=%zu res=%zu\n", static_cast<int>(d.origin), d.sourceFields.size(), d.resultFields.size()); // TEMP-TRACE
+      } // TEMP-TRACE
       output.program.functions[index].returnBorrowAccess =
           concrete->returnBorrowAccess;
       output.program.functions[index].returnBorrowPlace =

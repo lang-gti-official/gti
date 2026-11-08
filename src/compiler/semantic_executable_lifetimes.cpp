@@ -164,7 +164,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
     if (!function && instanceBaseModel)
       function = instanceBaseModel->findFunction(key.declaration);
     if (!function || !function->declaration)
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
     if (const auto *declared = catalog.callable(*function->declaration)) {
       declarationFunction = projectCallableDeclaration(*declared);
       function = &*declarationFunction;
@@ -188,19 +188,19 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
         break;
     }
     if (!constructor || !constructor->owner)
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
     ownerId = constructor->owner;
     site = constructor->declaration ? constructor->declaration->name()
                                     : classInfo(ownerId).name;
   } else if (key.kind == InstanceAnalysisKind::EnumLayout) {
     enumId = key.declaration;
     if (!enumId || enumId > enums.size())
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
     site = enums[enumId - 1].name;
   } else {
     ownerId = key.declaration;
     if (!ownerId || ownerId > classes.size())
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
     const auto &owner = classInfo(ownerId);
     site = owner.name;
     if (key.kind == InstanceAnalysisKind::Destructor && owner.destructor)
@@ -217,7 +217,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
     // Exact selection is checked before lifting. Region spelling cannot
     // select a declaration, but the complete runtime argument shape must.
     if (eraseTypeLifetimes(actual) != eraseTypeLifetimes(expected))
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   }
 
   const ClassInfo *patternOwner = ownerId ? &publicClassInfo(ownerId) : nullptr;
@@ -229,7 +229,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
           genericParameterIdentities(patternOwner->genericParameters),
           genericParameterIdentities(patternOwner->genericArgumentPatternLifetimes),
           {}, GenericPatternMatch::Structure))
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   const auto fixedPatternRegion = [&](Lifetime region) {
     return region.kind == Lifetime::Kind::Static ||
         (patternOwner && region.kind == Lifetime::Kind::Parameter &&
@@ -261,7 +261,9 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
     if (!inserted || nextGenericParameterId >= highHalf ||
         registry.nextId < highHalf ||
         semanticModel.findGenericParameter(registry.nextId)) {
-      valid = false;
+      if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+        std::fprintf(stderr, "[exec-lift] fresh fail inserted=%d ordinal=%zu descriptors=%zu\n", inserted, ordinal, descriptors.size()); // TEMP-TRACE
+      { valid = false; if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-lift] invalid at %d\n", __LINE__); } // TEMP-TRACE
       return 0;
     }
     Token name = site;
@@ -289,7 +291,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
                                      target->parameterTypes, target->lifetimeContract)
           : std::nullopt;
       if (!declared || !equivalentLifetimeTypes(*declared, type)) {
-        valid = false;
+        { valid = false; if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-lift] invalid at %d\n", __LINE__); } // TEMP-TRACE
         return;
       }
       // Item identity fixes its namespace signature. Only the declaration's
@@ -310,7 +312,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
           ? matchUniversalTypeLifetimes(lambda->type, type, lambda->environmentLifetimes)
           : std::nullopt;
       if (!environment || environment->size() != lambda->environmentLifetimes.size()) {
-        valid = false;
+        { valid = false; if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-lift] invalid at %d\n", __LINE__); } // TEMP-TRACE
         return;
       }
       std::vector<LifetimeBinding> liftedEnvironment;
@@ -318,7 +320,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
         const auto actual = std::find_if(environment->begin(), environment->end(),
             [&](const auto binding) { return binding.first == parameter; });
         if (actual == environment->end()) {
-          valid = false;
+          { valid = false; if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-lift] invalid at %d\n", __LINE__); } // TEMP-TRACE
           return;
         }
         const auto enclosing = std::find_if(bound.rbegin(), bound.rend(),
@@ -339,7 +341,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
       }
       const auto canonical = substituteTypeLifetimes(lambda->type, liftedEnvironment);
       if (!canonical) {
-        valid = false;
+        { valid = false; if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-lift] invalid at %d\n", __LINE__); } // TEMP-TRACE
         return;
       }
       type = *canonical;
@@ -413,11 +415,13 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
     lift(lift, type, {}, result.functionLifetimeParameters.back(), nullptr);
   }
   if (!patternValid)
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   if (!valid || ordinal != descriptors.size()) {
+    if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+      std::fprintf(stderr, "[exec-lift] report valid=%d ordinal=%zu descriptors=%zu inserted=%d\n", valid, ordinal, descriptors.size(), inserted); // TEMP-TRACE
     report(site, "Too many distinct executable lifetime parameters in this compilation.",
            "GTI-S2126");
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   }
   result.liftedLifetimes = descriptors;
   for (const auto &parameter : descriptors)
@@ -453,7 +457,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
     result.lifetimeContract = enums[enumId - 1].lifetimeContract;
   }
   if (!substitution.valid)
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   // Structural default construction has no member invocation signature or
   // source body. Its nested callable scopes stay closed, just as in layout;
   // opening them would invent construction arguments for invocation binders.
@@ -461,7 +465,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
       (constructor && !requestsStructuralDefaultConstruction(*constructor));
   if (ownerId && memberInvocation) {
     if (!importMemberCallableScopes(substitution, key.kind, key.declaration, result.ownerType, site))
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
     for (const auto &scope : substitution.callableScopes)
       for (const auto parameter : scope.signature.quantifiedLifetimes) {
         const auto imported = scope.imports.at(parameter);
@@ -470,7 +474,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
           result.lifetimeContract.parameters.push_back(imported);
         const auto *descriptor = semanticModel.findGenericParameter(imported.id);
         if (!descriptor)
-          return std::nullopt;
+          { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
         result.liftedLifetimes.push_back(*descriptor);
       }
   }
@@ -503,20 +507,20 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
             // that unused formal; a free use or existing application fact
             // requires proof and must never be silently erased.
             if (hasFreeExecutableLifetime(result, region))
-              return std::nullopt;
+              { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
             auto &parameters = result.lifetimeContract.parameters;
             parameters.erase(std::remove(parameters.begin(), parameters.end(), region), parameters.end());
           }
           continue;
         }
-        return std::nullopt;
+        { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
       }
       projectedRegions.emplace_back(Lifetime::parameter(parameter.id), selected->second);
     }
   const auto projectedContract = substituteLifetimeContract(
       std::move(result.lifetimeContract), projectedRegions);
   if (!projectedContract)
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-canon] nullopt at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   result.lifetimeContract = *projectedContract;
   for (const auto &binding : result.lifetimeApplication.bindings)
     if (std::find(result.lifetimeContract.parameters.begin(),
@@ -537,8 +541,15 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
     addScopedCallableResultBound(*function->declaration, result.returnType,
                                 result.parameterTypes, substitution,
                                 result.lifetimeContract);
-  if (!result.lifetimeContract.valid())
+  if (!result.lifetimeContract.valid()) {
+    if (std::getenv("GTI_TRACE_LIFETIME_REQ")) { // TEMP-TRACE
+      const auto &c = result.lifetimeContract; // TEMP-TRACE
+      std::fprintf(stderr, "[exec-canon] invalid contract complete=%d origin=%d params=%zu receiver=%d:%llu typeBounds=%zu nodes=%zu ambiguous=%d\n", c.complete, static_cast<int>(c.origin), c.parameters.size(), static_cast<int>(c.receiver.kind), (unsigned long long)c.receiver.id, c.typeBounds.size(), c.requirements.nodes.size(), normalized.ambiguousResult); // TEMP-TRACE
+      for (const auto p : c.parameters) std::fprintf(stderr, "[exec-canon]   param %d:%llu\n", static_cast<int>(p.kind), (unsigned long long)p.id); // TEMP-TRACE
+      for (const auto &b : c.typeBounds) std::fprintf(stderr, "[exec-canon]   tb region %d:%llu\n", static_cast<int>(b.region.kind), (unsigned long long)b.region.id); // TEMP-TRACE
+    } // TEMP-TRACE
     return std::nullopt;
+  }
   return result;
 }
 

@@ -7047,6 +7047,11 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     updated.returnBorrowAccess = global.access;
     updated.returnBorrowPlace = std::move(place);
   }
+  if (std::getenv("GTI_TRACE_LIFETIME_REQ")) { // TEMP-TRACE
+    std::fprintf(stderr, "[summary-pub] %s line=%u deps=%zu\n", syntax->name().lexeme.c_str(), static_cast<unsigned>(syntax->name().line), summary.dependencies.size()); // TEMP-TRACE
+    for (const auto &d : summary.dependencies) // TEMP-TRACE
+      std::fprintf(stderr, "[summary-pub]   origin=%d param=%zu src=%zu res=%zu access=%d\n", static_cast<int>(d.origin), d.parameter, d.sourceFields.size(), d.resultFields.size(), static_cast<int>(d.access)); // TEMP-TRACE
+  } // TEMP-TRACE
   updated.completeReturnBorrow = std::move(summary);
   semanticModel.record(*updated.declaration, std::move(updated));
 }
