@@ -2381,8 +2381,16 @@ private:
     // A call result whose referent lives in a retained stored group (an
     // iterator's element in its range's storage) is also valid wherever that
     // group's own source is; semantics witnesses that retained place.
+    // The same holds when the result's only other suppliers are that group's
+    // own stored edge, the path a whole-receiver result forwards through it.
     if (!proved && loan->kind == MirLoanKind::CallResult && loan->storedDependency &&
-        loan->additionalDependencies.empty())
+        std::all_of(loan->additionalDependencies.begin(),
+                    loan->additionalDependencies.end(),
+                    [&](const MirLoanDependency &dependency) {
+                      const auto *group = body.findLoan(loan->storedDependency);
+                      return group && dependency.parent == group->id &&
+                             dependency.source == group->source;
+                    }))
       proved = loanProves(loan->storedDependency, target, depth + 1);
     return proved;
   }

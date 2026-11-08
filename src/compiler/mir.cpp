@@ -13011,6 +13011,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           address != nullptr && address->root == MirPlaceRootKind::Loan
               ? body.findLoan(address->loan)
               : nullptr;
+      if (std::getenv("GTI_TRACE_MIR_SHAPE")) std::fprintf(stderr, "[init-shape] inst=%llu addr=p%llu root=%d addrLoan=%llu loan=%llu retains=%d carries=%d\n", (unsigned long long)instruction.id, (unsigned long long)source.place, address ? static_cast<int>(address->root) : -1, address ? (unsigned long long)address->loan : 0ull, (unsigned long long)source.loan, address && loan ? mir_detail::referenceAddressRetainsLoan(body, *address, *loan) : -1, loan ? std::find(loan->carriers.begin(), loan->carriers.end(), destination->binding) != loan->carriers.end() : -1); // TEMP-TRACE
       return address != nullptr && loan != nullptr &&
              mir_detail::referenceAddressRetainsLoan(body, *address, *loan) &&
              // A Stored loan describes external provenance, not a runtime

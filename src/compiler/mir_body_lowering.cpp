@@ -7707,6 +7707,17 @@ private:
                        });
   }
 
+  [[nodiscard]] bool isRangeElementBinding(HirBindingId binding) const {
+    return binding != 0 &&
+           std::any_of(source.statements.begin(), source.statements.end(),
+                       [&](const auto &statement) {
+                         return statement.rangeIteration &&
+                                (statement.rangeIteration->element == binding ||
+                                 statement.rangeIteration->elementOwner ==
+                                     binding);
+                       });
+  }
+
   [[nodiscard]] bool
   isPhysicalProxyRangeProtocolBinding(HirBindingId binding) const {
     return binding != 0 &&
@@ -9600,10 +9611,39 @@ private:
           }
         }
       }
+      if (std::getenv("GTI_TRACE_LCBD2")) { const auto &L = output.loans[loan - 1]; std::fprintf(stderr, "[loan@%s] v%llu loan%llu src=p%llu parent=%llu bf=%zu bd=%d bargs=%zu origin=%d", "bf", (unsigned long long)value.id, (unsigned long long)loan, (unsigned long long)L.source, (unsigned long long)L.parent, value.borrowFields.size(), value.borrowDependencies.has_value(), value.borrowArguments.size(), static_cast<int>(value.borrowOrigin)); for (const auto &d : L.additionalDependencies) std::fprintf(stderr, " +p%llu/%llu", (unsigned long long)d.source, (unsigned long long)d.parent); std::fprintf(stderr, "\n"); } // TEMP-TRACE
       if (!value.borrowFields.empty()) {
         auto &published = output.loans[loan - 1];
         published.designatedFields = value.borrowFields.front().resultFields;
         published.additionalDependencies.clear();
+        // A result through a whole named receiver keeps two suppliers: the
+        // receiver's own storage and the external referent its stored group
+        // retains. Ordinary receiver selection folds the physical supplier
+        // into that group's source; restore the receiver place as the
+        // primary supplier and keep the group as the stored edge, the parent
+        // of each external path selected through it.
+        MirLoanId receiverGroup = 0;
+        if (const auto &front = value.borrowFields.front();
+            value.borrowFields.size() > 1 &&
+            front.origin == BorrowOriginKind::Receiver &&
+            front.sourceFields.empty() && published.parent != 0 &&
+            published.parent <= output.loans.size()) {
+          const auto receiver = receiverValue(value);
+          const auto place = receiver ? placeForValue(*receiver) : MirPlaceId{0};
+          const auto *carrier = output.findPlace(place);
+          const auto &group = output.loans[published.parent - 1];
+          if (carrier && carrier->root == MirPlaceRootKind::Binding &&
+              carrier->projections.empty() &&
+              group.kind == MirLoanKind::Stored && !group.entry &&
+              group.source == published.source &&
+              std::find(group.carriers.begin(), group.carriers.end(),
+                        carrier->binding) != group.carriers.end()) {
+            receiverGroup = group.id;
+            published.source = place;
+            published.parent = 0;
+            published.storedDependency = group.id;
+          }
+        }
         for (std::size_t index = 1; index < value.borrowFields.size();
              ++index) {
           const auto &mapping = value.borrowFields[index];
@@ -9612,6 +9652,7 @@ private:
           selected.borrowArgument = mapping.parameter;
           selected.borrowFields = {mapping};
           const auto source = borrowOriginPlace(selected, originCall);
+          if (std::getenv("GTI_TRACE_LCBD2")) { HirValue z = value; z.borrowOrigin = value.borrowFields.front().origin; z.borrowArgument = value.borrowFields.front().parameter; z.borrowFields = {value.borrowFields.front()}; std::fprintf(stderr, "[bfmap] v%llu idx=%zu origin=%d param=%zu src=%zu res=%zu -> p%llu ; m0 origin=%d src=%zu -> p%llu\n", (unsigned long long)value.id, index, static_cast<int>(mapping.origin), mapping.parameter, mapping.sourceFields.size(), mapping.resultFields.size(), (unsigned long long)source, static_cast<int>(z.borrowOrigin), value.borrowFields.front().sourceFields.size(), (unsigned long long)borrowOriginPlace(z, originCall)); } // TEMP-TRACE
           if (source == 0)
             { valid = false; if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[invalid] mir_body_lowering.cpp:%d v%llu\n", __LINE__, (unsigned long long)value.id); } // TEMP-TRACE-INVALID
           MirLoanId inputParent = 0;
@@ -9628,6 +9669,10 @@ private:
                 sameBorrowSource(authority->source, source))
               inputParent = inherited;
           }
+          if (receiverGroup != 0 &&
+              mapping.origin == BorrowOriginKind::Receiver &&
+              !mapping.sourceFields.empty())
+            inputParent = receiverGroup;
           published.additionalDependencies.push_back(
               {.source = source,
                .parent = inputParent,
@@ -9635,6 +9680,7 @@ private:
                .access = mapping.access});
         }
       }
+      if (std::getenv("GTI_TRACE_LCBD2")) { const auto &L = output.loans[loan - 1]; std::fprintf(stderr, "[loan@%s] v%llu loan%llu src=p%llu parent=%llu bf=%zu bd=%d bargs=%zu origin=%d", "bd", (unsigned long long)value.id, (unsigned long long)loan, (unsigned long long)L.source, (unsigned long long)L.parent, value.borrowFields.size(), value.borrowDependencies.has_value(), value.borrowArguments.size(), static_cast<int>(value.borrowOrigin)); for (const auto &d : L.additionalDependencies) std::fprintf(stderr, " +p%llu/%llu", (unsigned long long)d.source, (unsigned long long)d.parent); std::fprintf(stderr, "\n"); } // TEMP-TRACE
       if (value.borrowDependencies) {
         std::vector<MirLoanDependency> complete;
         for (const auto &dependency : value.borrowDependencies->dependencies) {
@@ -9649,6 +9695,7 @@ private:
             return;
           }
           auto selected = *lowered;
+          if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[lcbd2] v%llu semroot=%llu recv=%d proj=%zu semparent=%llu -> src=p%llu parent=%llu\n", (unsigned long long)value.id, (unsigned long long)dependency.place.root, dependency.place.receiver, dependency.place.projections.size(), (unsigned long long)dependency.parent, (unsigned long long)selected.source, (unsigned long long)selected.parent); // TEMP-TRACE
           // A consumed carrier's complete external permission is transferred
           // through the call. The result must not remain a child of the group
           // that the successful invocation retires below.
@@ -11090,6 +11137,27 @@ private:
   // outermost link designates exactly what the retained binding names, and
   // the chain already bottoms out at `ancestor`, so retaining it preserves
   // that loan's suspension and reactivation.
+  // A result through a whole named receiver is a child of the receiver's
+  // storage, not of its stored group. It still retains that exact group as
+  // its stored edge and as the parent of the one external path it forwards.
+  [[nodiscard]] bool retainsStoredOwnerEdge(const MirLoan &result,
+                                            const MirLoan &group,
+                                            HirValueId valueId) {
+    return result.kind == MirLoanKind::CallResult &&
+           result.producedBy == valueId && result.parent == 0 &&
+           !result.escapes &&
+           group.kind == MirLoanKind::Stored && !group.entry &&
+           result.storedDependency == group.id &&
+           loanIsActive(scopes, result.id) && loanIsActive(scopes, group.id) &&
+           std::any_of(result.additionalDependencies.begin(),
+                       result.additionalDependencies.end(),
+                       [&](const MirLoanDependency &dependency) {
+                         return dependency.parent == group.id &&
+                                sameBorrowSource(dependency.source,
+                                                 group.source);
+                       });
+  }
+
   [[nodiscard]] bool retainableCallResultChain(MirLoanId outermost,
                                                MirLoanId ancestor,
                                                HirValueId valueId,
@@ -13497,6 +13565,17 @@ private:
         if (existing != 0 && existing != found->second) {
           const MirLoan *transient = output.findLoan(existing);
           const MirLoan *retained = output.findLoan(found->second);
+          // A range element read through the whole iterator keeps the
+          // dereference's own result loan, as a physical proxy element does:
+          // it protects the iterator storage and retains the cursor group as
+          // its stored edge. The range verifier checks that exact shape.
+          if (exactRangeElement && transient && retained &&
+              desired->access == AccessMode::ReadOnly &&
+              retainsStoredOwnerEdge(*transient, *retained, valueId)) {
+            return {.kind = MirOperandKind::Loan,
+                    .loan = existing,
+                    .type = value->info.type};
+          }
           // Several shared aliases can retain one semantic owner identity
           // even when an accessor selects a different runtime referent. Keep
           // the owner loan here; reference initialization separately captures
@@ -13505,7 +13584,9 @@ private:
               desired->access != AccessMode::ReadOnly ||
               (!sameBorrowSource(transient->source, retained->source) &&
                !retainableCallResultChain(existing, found->second, valueId,
-                                          desired->access))) {
+                                          desired->access) &&
+               !retainsStoredOwnerEdge(*transient, *retained, valueId))) {
+            if (std::getenv("GTI_TRACE_LCBD2") && transient && retained) { std::fprintf(stderr, "[refinit] v%llu transient=%llu kind=%d src=p%llu parent=%llu sd=%llu | retained=%llu kind=%d src=p%llu parent=%llu sd=%llu\n", (unsigned long long)valueId, (unsigned long long)transient->id, static_cast<int>(transient->kind), (unsigned long long)transient->source, (unsigned long long)transient->parent, (unsigned long long)transient->storedDependency, (unsigned long long)retained->id, static_cast<int>(retained->kind), (unsigned long long)retained->source, (unsigned long long)retained->parent, (unsigned long long)retained->storedDependency); for (const auto &d : transient->additionalDependencies) std::fprintf(stderr, "   +p%llu/%llu\n", (unsigned long long)d.source, (unsigned long long)d.parent); } // TEMP-TRACE
             reject(valueId, "reference initializer's accessor result does not "
                             "retain the selected owner and access");
           }
@@ -15303,6 +15384,7 @@ private:
                 consumesExistingCarrier = true;
             }
           }
+          if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[bindret] b%llu existing=%llu candidate=%llu init=%llu elem=%d cprod=%llu\n", (unsigned long long)*statement.binding, existing ? (unsigned long long)existing->id : 0ull, candidate ? (unsigned long long)candidate->id : 0ull, initializer ? (unsigned long long)initializer->id : 0ull, isRangeElementBinding(*statement.binding), candidate ? (unsigned long long)candidate->producedBy : 0ull); if (std::getenv("GTI_TRACE_LCBD2") && existing && candidate && initializer) std::fprintf(stderr, "[bindret2] alias=%d edge=%d kind=%d\n", exactReadonlyRangeElementAlias(*statement.binding, *initializer, *candidate), retainsStoredOwnerEdge(*candidate, *existing, candidate->producedBy), static_cast<int>(initializer->kind)); // TEMP-TRACE
           if (existing != nullptr && candidate != nullptr &&
               existing->access == candidate->access && initializer != nullptr &&
               (candidate->producedBy == initializer->id ||
@@ -15310,7 +15392,12 @@ private:
                                               *candidate)) &&
               (candidate->kind == MirLoanKind::Stored ||
                candidate->kind == MirLoanKind::CallResult) &&
-              isPhysicalProxyRangeProtocolBinding(*statement.binding)) {
+              (isPhysicalProxyRangeProtocolBinding(*statement.binding) ||
+               (isRangeElementBinding(*statement.binding) &&
+                candidate->kind == MirLoanKind::CallResult &&
+                candidate->access == AccessMode::ReadOnly &&
+                retainsStoredOwnerEdge(*candidate, *existing,
+                                       candidate->producedBy)))) {
             // The semantic range loan is the traversal's owner/escape
             // boundary. It is not the storage of a concrete cursor or an
             // inline proxy returned by dereference. Keep the selected call's
@@ -15519,6 +15606,7 @@ private:
           carriers.end()) {
         carriers.push_back(*statement.binding);
       }
+      if (std::getenv("GTI_TRACE_LCBD2")) { std::fprintf(stderr, "[carry] b%llu -> loan%llu carriers:", (unsigned long long)*statement.binding, (unsigned long long)retainedLoan); for (auto c : output.loans[retainedLoan - 1].carriers) std::fprintf(stderr, " b%llu", (unsigned long long)c); std::fprintf(stderr, "\n"); } // TEMP-TRACE
       const MirLoan *retained = output.findLoan(retainedLoan);
       const HirBindingId transferred =
           statement.value ? movedBorrowCarrierBinding(*statement.value) : 0;
@@ -16155,7 +16243,17 @@ private:
                      sourceRange.strategy != RangeIterationStrategy::Consuming),
          .elementLoan =
              [&] {
-               if (isPhysicalProxyRangeProtocolBinding(sourceRange.element)) {
+               if (isPhysicalProxyRangeProtocolBinding(sourceRange.element) ||
+                   std::any_of(output.loans.begin(), output.loans.end(),
+                               [&](const MirLoan &loan) {
+                                 return loan.kind == MirLoanKind::CallResult &&
+                                        loan.parent == 0 &&
+                                        loan.storedDependency != 0 &&
+                                        std::find(loan.carriers.begin(),
+                                                  loan.carriers.end(),
+                                                  sourceRange.element) !=
+                                            loan.carriers.end();
+                               })) {
                  MirLoanId selected = 0;
                  for (const auto &loan : output.loans)
                    if ((loan.kind == MirLoanKind::CallResult ||
@@ -16177,7 +16275,17 @@ private:
          .elementOwnerLoan =
              [&] {
                if (isPhysicalProxyRangeProtocolBinding(
-                       sourceRange.elementOwner))
+                       sourceRange.elementOwner) ||
+                   std::any_of(output.loans.begin(), output.loans.end(),
+                               [&](const MirLoan &loan) {
+                                 return loan.kind == MirLoanKind::CallResult &&
+                                        loan.parent == 0 &&
+                                        loan.storedDependency != 0 &&
+                                        std::find(loan.carriers.begin(),
+                                                  loan.carriers.end(),
+                                                  sourceRange.elementOwner) !=
+                                            loan.carriers.end();
+                               }))
                  for (const auto &loan : output.loans)
                    if (loan.kind == MirLoanKind::CallResult &&
                        std::find(loan.carriers.begin(), loan.carriers.end(),

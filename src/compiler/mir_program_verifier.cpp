@@ -16409,6 +16409,64 @@ completeBorrowSourcePath(const MirProgram &program,
         key.value && key.value <= state.values.size())
       state.values[key.value - 1] = fact;
   };
+  // A mutable member call on a named carrier of one Stored group can rewrite
+  // the carrier's reference fields only with values whose regions are the
+  // carrier's own class regions. When no other input of the callee carries a
+  // reference or alternative, the receiver's contents before the call are the
+  // only external sources of those regions, so the immutable group still
+  // describes them afterwards. Any extra lifetime-bearing input kills it.
+  const auto retainedReceiverGroup = [&](const State &state,
+                                         const MirInstruction &call,
+                                         MirPlaceId id) -> Fact {
+    if (!id || id > identities.size() || !call.functionTarget ||
+        call.dispatch != CallDispatch::Static)
+      return std::nullopt;
+    const auto &key = identities[id - 1];
+    if (key.ambiguous || key.root != MirPlaceRootKind::Binding ||
+        !key.projections.empty())
+      return std::nullopt;
+    const auto *target = program.findFunctionInstance(*call.functionTarget);
+    if (!target || target->staticMember ||
+        target->receiverMutability != ReceiverMutability::Mutable)
+      return std::nullopt;
+    for (const auto &parameter : target->parameterTypes) {
+      if (parameter.kind == SemanticType::Reference)
+        return std::nullopt;
+      const auto inventory =
+          findStoredCarrierReferenceInventory(program, parameter);
+      const auto alternatives =
+          findStoredCarrierAlternativeInventory(program, parameter);
+      if (!inventory || !inventory->empty() || !alternatives ||
+          !alternatives->empty())
+        return std::nullopt;
+    }
+    const auto found = bindingLoans.find(key.binding);
+    if (found == bindingLoans.end() || found->second.size() != 1)
+      return std::nullopt;
+    const auto *group = body.findLoan(found->second.front());
+    const auto &fact = state.places[id - 1];
+    if (!group || group->kind != MirLoanKind::Stored || group->escapes ||
+        group->entry || !group->conditions.empty() || !fact ||
+        !fact->possibleAlternatives.empty())
+      return std::nullopt;
+    std::vector<MirLoanDependency> retained{
+        {.source = group->source,
+         .parent = group->parent,
+         .designatedFields = group->designatedFields,
+         .access = group->access}};
+    retained.insert(retained.end(), group->additionalDependencies.begin(),
+                    group->additionalDependencies.end());
+    auto contents = fact->dependencies;
+    if (retained.size() == contents.size())
+      for (std::size_t index = 0; index < contents.size(); ++index)
+        if (contents[index].parent == group->id)
+          contents[index].parent = retained[index].parent;
+    if (retained != contents ||
+        std::any_of(retained.begin(), retained.end(),
+                    [](const auto &item) { return !item.conditions.empty(); }))
+      return std::nullopt;
+    return fact;
+  };
   std::string *replayFailure = nullptr;
   const auto retainedCarrierInput = [&](const State &state,
                                         MirPlaceId id) -> Fact {
@@ -17383,10 +17441,16 @@ completeBorrowSourcePath(const MirProgram &program,
           source = &stage->operands.front();
         }
         if (source->kind == MirOperandKind::BorrowWrite) {
-          if (source->place && source->place <= identities.size())
+          if (source->place && source->place <= identities.size()) {
+            const auto retained = instruction.receiver && &operand == &*instruction.receiver
+                ? retainedReceiverGroup(state, instruction, source->place)
+                : Fact{};
             invalidate(state, source->place);
-          else
+            if (retained)
+              publish(state, source->place, retained);
+          } else {
             invalidateUnknown();
+          }
           return;
         }
         if (source->kind == MirOperandKind::Loan) {

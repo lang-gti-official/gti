@@ -1649,6 +1649,23 @@ bool referenceAddressRetainsLoan(const MirBody &body, const MirPlace &address,
           child->storedDependency == retained.storedDependency &&
           child->additionalDependencies == retained.additionalDependencies)
         return true;
+      // A result through a whole named receiver is a child of that
+      // receiver's storage. Its stored edge is the receiver's Stored group,
+      // which also parents the one external path it forwards; the complete
+      // dependency-set replay proves that path independently.
+      if (link == address.loan && child->parent == 0 &&
+          retained.kind == MirLoanKind::Stored && !retained.entry &&
+          child->storedDependency == retained.id &&
+          producer->borrowOrigin == BorrowOriginKind::Receiver &&
+          (retained.access == AccessMode::Mutable ||
+           child->access == AccessMode::ReadOnly) &&
+          std::any_of(child->additionalDependencies.begin(),
+                      child->additionalDependencies.end(),
+                      [&](const MirLoanDependency &dependency) {
+                        return dependency.parent == retained.id &&
+                               dependency.source == retained.source;
+                      }))
+        return true;
     }
     link = child->parent;
   }
