@@ -2,7 +2,7 @@
 
 [`llvm/codegen-attributes.gti`](llvm/codegen-attributes.gti) demonstrates advisory
 `[[inline]]`, `[[noinline]]` call boundaries and a returning `[[cold]]` function,
-including generic/member functions and deterministic cleanup. Run it with
+including generic/member functions, constructors, destructors and deterministic cleanup. Run it with
 `gti examples/llvm/codegen-attributes.gti --backend llvm -O3 -o codegen-attributes`
 and then `./codegen-attributes`. The `codegen_attribute_runtime` gate executes it
 at LLVM O0 and O3. Like the other bounded LLVM examples below, it is outside the
@@ -227,6 +227,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Share an object's lifetime without deep-copying it | [98: shared ownership](098-shared-ownership.gti) |
 | Propagate a failed lookup without copying its borrowed result | [99: borrowed expected](099-borrowed-expected.gti) |
 | Retain a lambda as a callback | [86: owning callbacks](086-owning-callbacks.gti) |
+| Queue a callback that owns a payload enum | [Owning enum closures](owning-enum-closures/README.md) |
 | Borrow surrounding state in a callback or signature-erased view | [156: borrowing callbacks](156-borrowing-callbacks.gti) |
 | Model an absent value and initialize it later | [84: optional values](084-optional-values.gti) |
 | Take ownership of an enum alternative's payload in a `switch` | [161: consuming matches](161-consuming-matches.gti) |
@@ -323,6 +324,7 @@ is a teaching helper, not a production server.
 | `075-bounded-arena-pool.gti` | fixed-capacity typed arenas and reusable pools with checked owner-tied access |
 | `076-scalar-atomics.gti` | share-safe integer fetch operations and sleeping completion with acquire wait/notification across managed threads |
 | `077-callable-concepts.gti` | exact reusable predicate, operation, and consuming-action contracts |
+| `owning-enum-packs/main.gti` | store owning string/JSON enum alternatives through variadic map construction, replace and erase them (covered by `enum_pack_runtime`) |
 | `078-owning-payload-enums.gti` | closed payload enums that directly own active-cleanup alternatives |
 | `079-class-scoped-type-aliases.gti` | access-controlled aliases declared as class members |
 | `080-function-items.gti` | exact namespace free functions passed to confined generic callables, including deduced argument packs |
@@ -708,8 +710,12 @@ binding; it does not create a reusable moved-from source value.
 `085-payload-enum-fields.gti` places a cleanup-owning closed payload enum
 directly inside an ordinary class and struct. Moving the containing object,
 replacing its active field, and leaving scope each destroy exactly the active
-payload. Generic, polymorphic, recursive, array, and public native-layout
-owners remain outside this bounded slice.
+payload. Concrete generic and finite recursive ordinary owners are supported;
+polymorphic and public native-layout owners remain excluded.
+
+[`owning-enum-arrays`](owning-enum-arrays/README.md) stores owning payload
+enums directly in a fixed array, moves one element out, and replaces another.
+It demonstrates the same structural cleanup rules without a wrapper class.
 
 `086-owning-callbacks.gti` starts with an authentication callback setter that
 accepts a lambda directly and invokes it after registration has returned. It
@@ -883,7 +889,8 @@ consumer builds and checks. The `compiled_libraries_project` gate owns it.
 [`compiled-primitive-library/`](compiled-primitive-library/README.md) demonstrates
 all primitive interface types, overloaded exports, void results, checked
 arithmetic and preserved `[[inline]]`/`[[noinline]]`/`[[cold]]` policies across a
-library boundary. `compiled_primitive_library` owns its
+library boundary, with private allocation and runtime-backed destructor cleanup
+in the producer. `compiled_primitive_library` owns its
 O0/O1/O3 execution and failure/cleanup checks.
 
 [`compiled-value-types/`](compiled-value-types/README.md) demonstrates source-free
@@ -895,8 +902,9 @@ parameters and borrowed results through library metadata, with normal caller
 loan checking. `compiled_borrow_library` owns its positive and negative matrix.
 
 [`compiled-dependencies/`](compiled-dependencies/README.md) demonstrates automatic
-library builds through a diamond dependency graph, exact dependency receipts and
-reuse of unchanged libraries. `compiled_dependency_project` owns its execution,
+library builds through a diamond dependency graph, a shared private counter and
+class static constant, exact dependency receipts and reuse of unchanged libraries.
+`compiled_dependency_project` owns its execution,
 failure, freshness and source-free distribution checks.
 
 The [compiled namespace example](compiled-namespaces/README.md) composes distinct

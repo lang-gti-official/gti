@@ -1,0 +1,41 @@
+import std.memory;
+import std.functional;
+class Resource {
+public:
+  int id;
+  Resource(int value) : id(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { std::println(this.id); }
+};
+enum Event<T> { Empty, Owned(T value) };
+int identity(Event<Resource>& event) {
+  switch (event) {
+    case Event<Resource>::Owned(auto& value): return value.id;
+    default: return 0;
+  }
+}
+F forward<F>(F callback) { return std::move(callback); }
+int main() {
+  {
+    auto source = Event<Resource>::Owned(Resource(4));
+    auto producer = [held = std::move(source)]() -> Event<Resource> {
+      return Event<Resource>::Owned(Resource(identity(held) + 2));
+    };
+    auto returned = forward(std::move(producer));
+    auto result = std::move(returned)();
+    if (identity(result) != 6) return 1;
+  }
+  {
+    auto source = Event<Resource>::Owned(Resource(5));
+    auto callback = [held = std::move(source)]() -> int { return identity(held); };
+    auto task = std::move_only_function<int() &&>(std::move(callback));
+    if (std::move(task)() != 5) return 2;
+  }
+  {
+    auto empty = Event<Resource>::Empty;
+    auto unused = [held = std::move(empty)]() -> int { return identity(held); };
+  }
+  std::println(20);
+  return 0;
+}

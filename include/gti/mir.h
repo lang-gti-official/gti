@@ -1594,6 +1594,7 @@ struct MirConstructorDispatchState {
 };
 
 struct MirConstructorInstance {
+  FunctionCodegenAttributes codegenAttributes;
   HirConstructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
   bool constexprConstructor = false;
@@ -1639,6 +1640,7 @@ struct MirDestructorDispatchState {
 };
 
 struct MirDestructorInstance {
+  FunctionCodegenAttributes codegenAttributes;
   HirDestructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
   MirDefinitionKind definitionKind = MirDefinitionKind::Declaration;

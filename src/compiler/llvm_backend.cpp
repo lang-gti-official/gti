@@ -7,7 +7,9 @@
 #include "llvm/body.h"
 #include "llvm/placement.h"
 #include "llvm/session.h"
+#include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/Config/llvm-config.h>
+#include <llvm/Object/Archive.h>
 #include <llvm/Object/ObjectFile.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/MemoryBufferRef.h>
@@ -26,6 +28,83 @@ bool sameNativeTarget(const TargetInfo &left, const TargetInfo &right) {
 }
 
 } // namespace
+
+std::vector<std::string>
+compiledLibrarySupportSymbols(std::string_view bytes,
+                              const TargetInfo &target) {
+  auto archive = llvm::object::Archive::create(llvm::MemoryBufferRef(
+      llvm::StringRef(bytes.data(), bytes.size()), "compiled library runtime"));
+  if (!archive)
+    throw std::invalid_argument("invalid compiled library runtime archive: " +
+                                llvm::toString(archive.takeError()));
+  // Thin members can refer outside the pinned bytes and must never be opened.
+  if ((*archive)->isThin())
+    throw std::invalid_argument("compiled library runtime must not be thin");
+  const auto machine = native_llvm::makeMachine(target, {});
+  const auto &triple = machine->getTargetTriple();
+  std::set<std::string> services;
+  llvm::Error error = llvm::Error::success();
+  for (const auto &child : (*archive)->children(error)) {
+    auto binary = child.getAsBinary();
+    if (!binary) {
+      llvm::consumeError(std::move(error));
+      throw std::invalid_argument("invalid compiled library runtime member: " +
+                                  llvm::toString(binary.takeError()));
+    }
+    const auto *object =
+        llvm::dyn_cast<llvm::object::ObjectFile>(binary->get());
+    if (!object || !object->isRelocatableObject() ||
+        object->getArch() != triple.getArch() ||
+        object->getBytesInAddress() != 8 ||
+        object->isMachO() != triple.isOSBinFormatMachO() ||
+        object->isELF() != triple.isOSBinFormatELF() ||
+        object->isCOFF() != triple.isOSBinFormatCOFF()) {
+      llvm::consumeError(std::move(error));
+      throw std::invalid_argument(
+          "compiled library runtime target or format mismatch");
+    }
+    for (const auto &symbol : object->symbols()) {
+      auto flags = symbol.getFlags();
+      auto name = symbol.getName();
+      if (!flags || !name) {
+        if (!flags)
+          llvm::consumeError(flags.takeError());
+        if (!name)
+          llvm::consumeError(name.takeError());
+        llvm::consumeError(std::move(error));
+        throw std::invalid_argument(
+            "invalid compiled library runtime symbol table");
+      }
+      if (!(*flags & llvm::object::SymbolRef::SF_Global) ||
+          (*flags & llvm::object::SymbolRef::SF_Undefined))
+        continue;
+      auto canonical = *name;
+      if (object->isMachO())
+        canonical.consume_front("_");
+      // Admit only the runtime C ABI actually defined in this archive, not
+      // arbitrary libc/C++ implementation symbols or a prefix-only promise.
+      if (canonical.starts_with("gti_rt_"))
+        services.insert(canonical.str());
+    }
+  }
+  if (error)
+    throw std::invalid_argument("invalid compiled library runtime inventory: " +
+                                llvm::toString(std::move(error)));
+  if (services.empty())
+    throw std::invalid_argument(
+        "compiled library runtime has no C ABI services");
+  // LLVM may lower memory intrinsics/aggregate copies to the target's hosted
+  // C ABI, including at O0. The ordinary final native link already supplies
+  // these. Keep this target-derived support family explicit and bounded; it
+  // does not authorize arbitrary producer native inputs or library names.
+  const llvm::TargetLibraryInfoImpl implementation(triple);
+  const llvm::TargetLibraryInfo libraries(implementation);
+  for (auto function : {llvm::LibFunc_memcpy, llvm::LibFunc_memmove,
+                        llvm::LibFunc_memset, llvm::LibFunc_bzero})
+    if (libraries.has(function))
+      services.insert(libraries.getName(function).str());
+  return {services.begin(), services.end()};
+}
 
 void verifyCompiledScalarObject(std::string_view bytes,
                                 const TargetInfo &target,

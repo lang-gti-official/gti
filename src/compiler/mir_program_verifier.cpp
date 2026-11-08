@@ -19906,19 +19906,23 @@ verifyMirProgramContracts(const MirProgram &program) {
     }
   };
   std::size_t entryPoints = 0;
+  const auto validCodegenAttributes =
+      [](const FunctionCodegenAttributes &attributes, bool sourceBody) {
+        return (attributes.inlining == FunctionInlining::Default ||
+                attributes.inlining == FunctionInlining::Hint ||
+                attributes.inlining == FunctionInlining::Never) &&
+               (sourceBody || attributes == FunctionCodegenAttributes{});
+      };
   for (std::size_t index = 0; index < program.functionInstances().size();
        ++index) {
     const MirFunctionInstance &instance = program.functionInstances()[index];
     verifyCallableBodySignature(instance.body, MirBodyKind::Function,
                                 instance.returnType, instance.id);
     const auto &codegen = instance.codegenAttributes;
-    if ((codegen.inlining != FunctionInlining::Default &&
-         codegen.inlining != FunctionInlining::Hint &&
-         codegen.inlining != FunctionInlining::Never) ||
-        ((codegen.cold || codegen.inlining != FunctionInlining::Default) &&
-         (instance.linkage != LanguageLinkage::Gti ||
-          instance.definitionKind != MirDefinitionKind::Source ||
-          instance.pureVirtual))) {
+    if (!validCodegenAttributes(
+            codegen, instance.linkage == LanguageLinkage::Gti &&
+                         instance.definitionKind == MirDefinitionKind::Source &&
+                         !instance.pureVirtual)) {
       result.errors.push_back(
           {.bodyKind = MirBodyKind::Function,
            .owner = instance.id,
@@ -20408,6 +20412,14 @@ verifyMirProgramContracts(const MirProgram &program) {
         program.constructorInstances()[index];
     verifyCallableBodySignature(instance.body, MirBodyKind::Constructor,
                                 SemanticType::Void, instance.id);
+    if (!validCodegenAttributes(instance.codegenAttributes,
+                                instance.definitionKind ==
+                                        MirDefinitionKind::Source &&
+                                    !instance.generatedDefault))
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Constructor,
+           .owner = instance.id,
+           .message = "invalid source constructor code-generation attributes"});
     if (instance.id != index + 1 || instance.owner == 0 ||
         instance.owner > program.classInstances().size()) {
       result.errors.push_back(
@@ -21651,6 +21663,13 @@ verifyMirProgramContracts(const MirProgram &program) {
         program.destructorInstances()[index];
     verifyCallableBodySignature(instance.body, MirBodyKind::Destructor,
                                 SemanticType::Void, instance.id);
+    if (!validCodegenAttributes(instance.codegenAttributes,
+                                instance.definitionKind ==
+                                    MirDefinitionKind::Source))
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::Destructor,
+           .owner = instance.id,
+           .message = "invalid source destructor code-generation attributes"});
     if (instance.id != index + 1 || instance.owner == 0 ||
         instance.owner > program.classInstances().size()) {
       result.errors.push_back(

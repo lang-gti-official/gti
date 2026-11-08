@@ -19,6 +19,12 @@
 
 namespace lang {
 
+// Parse proposed repair text with the ordinary syntax authority. Rejected
+// synthetic syntax has no user diagnostic; the analyzer still owns lookup and
+// must prove that the resulting name denotes the intended semantic identity.
+[[nodiscard]] ExprPtr parseRepairExpression(const std::string &text,
+                                            const std::string &sourceName);
+
 // Diagnostic-only witnesses, owned by the current semantic analysis. Joins
 // retain a bounded, deterministic sample, not a second ownership analysis.
 struct SemanticMoveOrigins {

@@ -47,8 +47,23 @@ case "$(uname -s)" in
     rm -f "${key}"
     echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-${llvm_major} main" |
       sudo tee /etc/apt/sources.list.d/apt.llvm.org.list >/dev/null
-    sudo apt-get update
-    sudo apt-get install -y --no-install-recommends \
+    # A stalled mirror once held an integration shard in `apt-get update`
+    # until the six-hour job limit. Bound each attempt and retry instead.
+    apt_get() {
+      local attempt
+      for attempt in 1 2 3 4; do
+        if sudo timeout 300 apt-get -o Acquire::Retries=3 \
+             -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 "$@"; then
+          return 0
+        fi
+        echo "apt-get $1: attempt ${attempt} failed or exceeded 300 s" >&2
+        sleep $((attempt * 15))
+      done
+      echo "apt-get $1 did not succeed after 4 attempts" >&2
+      return 1
+    }
+    apt_get update
+    apt_get install -y --no-install-recommends \
       build-essential ccache "clang-${llvm_major}" cmake g++-14 gcc-14 ninja-build \
       libcurl4-openssl-dev "llvm-${llvm_major}-dev" "libclang-${llvm_major}-dev" \
       "libclang-rt-${llvm_major}-dev"

@@ -1,0 +1,38 @@
+import std.memory;
+import std.panic;
+import std.string;
+import std.vector;
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {}
+  ~Resource() { std::println(this.identity); }
+};
+enum State { empty, number(int64_t value), owned(std::unique_ptr<Resource> value) };
+void consume(State state) {
+  switch (state) {
+  case State::empty: std::println(0); break;
+  case State::number(auto& value): std::println(value); break;
+  case State::owned(auto& value): std::println(7); break;
+  }
+}
+void choose(bool success, bool reverse) {
+  Resource guard{9};
+  mut State state = State::empty;
+  if (reverse) {
+    if (!success) { return; }
+    else { state = State::owned(std::make_unique<Resource>(8)); }
+  } else {
+    if (success) { state = State::number(200); }
+    else { std::panic("no value"); }
+  }
+  consume(std::move(state));
+}
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 2) { choose(false, false); }
+  choose(true, false);
+  choose(true, true);
+  choose(false, true);
+  return 0;
+}

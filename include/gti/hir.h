@@ -841,6 +841,7 @@ struct HirConstructorInitializer {
 };
 
 struct HirConstructorInstance {
+  FunctionCodegenAttributes codegenAttributes;
   HirConstructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ConstructorId declaration = 0;
@@ -868,6 +869,7 @@ struct HirConstructorInstance {
 };
 
 struct HirDestructorInstance {
+  FunctionCodegenAttributes codegenAttributes;
   HirDestructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   const DestructorDecl *source = nullptr;

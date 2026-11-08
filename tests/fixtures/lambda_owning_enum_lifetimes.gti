@@ -1,0 +1,38 @@
+import std.memory;
+import std.string;
+import std.vector;
+class Resource {
+public:
+  int id;
+  Resource(int value) : id(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { std::println(this.id); }
+};
+enum Event { Empty, Owned(Resource value) };
+int identity(Event& event) {
+  switch (event) {
+    case Event::Owned(auto& value): return value.id;
+    default: return 0;
+  }
+}
+int later(int divisor) {
+  Resource temporary{3};
+  return 6 / divisor;
+}
+F prepare<F>(F callback, int witness) { return std::move(callback); }
+int main(int argc, std::vector<std::string> argv) {
+  Resource caller{9};
+  auto source = Event::Owned(Resource(1));
+  auto callback = [held = std::move(source)](Event incoming, int argument, int divisor) -> Event {
+    std::println(10 + identity(held));
+    int checked = argument / divisor;
+    return std::move(incoming);
+  };
+  if (argc == 4) return 0;
+  auto ready = prepare(std::move(callback), later(argc == 5 ? 0 : 1));
+  auto argument = Event::Owned(Resource(2));
+  auto result = ready(std::move(argument), later(argc == 2 ? 0 : 1), argc == 3 ? 0 : 1);
+  auto empty = ready(Event::Empty, 1, 1);
+  return identity(result) == 2 && identity(empty) == 0 ? 0 : 1;
+}

@@ -60,6 +60,16 @@ int main() { Tag a{}; Tag b{}; return a == b ? 0 : 1; }
             error = next(item for item in diagnostics if item.get("code") == "GTI-S2022")
             assert len(error.get("relatedInformation", [])) >= 2, error
             assert not publish(SOURCE)
+            shared_parent = """void keep(int& value) {}
+int main() { mut int owner = 1; mut int& parent = owner;
+  int& child = parent; keep(parent); keep(child); return 0; }
+"""
+            assert not publish(shared_parent)
+            exclusive_child = shared_parent.replace("int& child", "mut int& child")
+            diagnostics = publish(exclusive_child)
+            assert any(item.get("code") == "GTI-S2017" for item in diagnostics), diagnostics
+            assert not any(item.get("code", "").startswith("GTI-B") for item in diagnostics), diagnostics
+            assert not publish(shared_parent)
         finally:
             session.close()
 

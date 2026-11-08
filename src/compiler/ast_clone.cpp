@@ -590,7 +590,8 @@ private:
         arms.emplace_back(std::move(copy));
       }
       return std::make_shared<SwitchStmt>(
-          tok(node.keyword()), expr(node.expression()), std::move(arms));
+          tok(node.keyword()), expr(node.expression()), std::move(arms),
+          tok(node.closingBrace()));
     }
     case StmtKind::StructuredBindingDecl: {
       const auto &node = static_cast<const StructuredBindingDecl &>(statement);

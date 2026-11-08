@@ -1,0 +1,1 @@
+Separately compiled GTI libraries can use the matching toolchain runtime for private allocation, printing and destructor cleanup, including cleanup during checked failure propagation. Runtime imports are verified against the selected archive on publication, import and reuse; arbitrary native dependencies remain unsupported.

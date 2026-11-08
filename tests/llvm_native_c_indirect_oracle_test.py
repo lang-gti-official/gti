@@ -10,10 +10,12 @@ import sys
 import time
 
 from llvm_evidence_manifest import build_manifest
+from backend_modes import cpp_modes
 
 FIXTURE_SOURCES = ("contracts", "native_indirect", "native_indirect_order",
                    "native_indirect_failure", "native_indirect_roots",
-                   "native_function_borrows")
+                   "native_function_borrows", "native_result_borrows")
+LLVM_ONLY_SOURCES = {"native_result_borrows"}
 EXAMPLE = "native_c_function_values"
 SOURCE_PATHS = {name: f"tests/fixtures/llvm_native_c_abi/{name}.gti"
                 for name in FIXTURE_SOURCES}
@@ -31,7 +33,7 @@ def evidence_profiles(root):
     return {**{profile: SOURCES for profile in
                ("function-values", "function-imports", "scalar-indirect")},
             "function-borrows": ("native_function_borrows", "existing_indirect"),
-            "result-inputs": ("existing_indirect",)}
+            "result-inputs": ("existing_indirect", "native_result_borrows")}
 
 
 def evidence_manifest(root):
@@ -90,7 +92,8 @@ def main():
                                 "log": str(log)})
         (output / "evidence.json").write_text(json.dumps(report, indent=2) + "\n")
         if result.returncode != expected:
-            raise RuntimeError(f"{tag}: exit {result.returncode}, expected {expected}; {log}")
+            raise RuntimeError(f"{tag}: exit {result.returncode}, expected {expected}; {log}\n"
+                               + (result.stdout + result.stderr)[-6000:].decode(errors="replace"))
         return result
 
     def observe(source, result):
@@ -134,13 +137,17 @@ def main():
         run([args.emitter.resolve(), root / SOURCE_PATHS["existing_indirect"],
              output / "result-contracts.o", output / "result-contracts.ll", 0,
              "--result-contracts"], "result-contracts")
+        run([args.emitter.resolve(), root / SOURCE_PATHS["native_result_borrows"],
+             output / "result-borrow-contracts.o",
+             output / "result-borrow-contracts.ll", 0,
+             "--result-borrow-contracts"], "result-borrow-contracts")
     for source, mode in root_checks:
         run([args.emitter.resolve(), fixture / (source + ".gti"),
              output / (source + ".o"), output / (source + ".ll"), 0, mode],
             "roots-" + source)
     executions = controls = negatives = 0
     sources = (("native_indirect_roots",) if args.focus == "reachability" else
-               ("native_function_borrows", "existing_indirect") if args.focus == "borrows" else
+               ("native_function_borrows", "existing_indirect", "native_result_borrows") if args.focus == "borrows" else
                (EXAMPLE,) if args.focus == "example" else SOURCES)
     levels = (0, 3) if args.focus == "reachability" else range(4)
     for c_level in (0, 3):
@@ -170,11 +177,10 @@ def main():
             source_path = root / SOURCE_PATHS[source]
             source_objects = ([example_object] if source == EXAMPLE else
                               [existing_object] if source == "existing_indirect" else objects)
-            for standard in ("c++20", "c++23"):
-                tag = f"{source}-{standard}-c{c_level}"
+            for mode, flags, _ in (() if source in LLVM_ONLY_SOURCES else cpp_modes()):
+                tag = f"{source}-{mode}-c{c_level}"
                 binary = output / tag
-                run([compiler, source_path, "--std", standard,
-                     "-O3", "-o", binary, "--", *source_objects], "build-" + tag)
+                run([compiler, source_path, *flags, "-o", binary, "--", *source_objects], "build-" + tag)
                 result = run([binary], "run-" + tag,
                              70 if source == "native_indirect_failure" else 0)
                 observe(source, result)
@@ -191,13 +197,13 @@ def main():
                 result = run([binary], "run-" + tag,
                              70 if source == "native_indirect_failure" else 0)
                 observe(source, result)
-                if (result.stdout, result.stderr) != oracles[source]:
+                if source in oracles and (result.stdout, result.stderr) != oracles[source]:
                     raise RuntimeError("native indirect execution differs from supported C++ comparator")
                 executions += 1
     rejected = fixture / "reject_native_indirect.gti"
-    for standard in (() if args.focus else ("c++20", "c++23")):
-        binary = output / f"aggregate-indirect-{standard}"
-        run([compiler, rejected, "--std", standard, "-O3", "-o", binary,
+    for mode, flags, _ in (() if args.focus else cpp_modes()):
+        binary = output / f"aggregate-indirect-{mode}"
+        run([compiler, rejected, *flags, "-o", binary,
              "--", *objects], "build-" + binary.name)
         result = run([binary], "run-" + binary.name)
         controls += 1
@@ -227,7 +233,7 @@ def main():
     if args.focus and args.focus != "borrows":
         rejections = ()
     for source, code, site in rejections:
-        for backend in ("cpp", "llvm"):
+        for backend in (("cpp", "llvm") if cpp_modes() else ("llvm",)):
             destination = output / f"{source}-{backend}"
             sentinel = b"existing native artifact\n"
             destination.write_bytes(sentinel)

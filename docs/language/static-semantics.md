@@ -1718,9 +1718,23 @@ leaves the moved-from source without the transferred cleanup obligation.
 The bounded owning family admits direct local values and top-level read-only
 checked-reference observation. It also admits the enum itself by value across
 an ordinary source-defined free function, non-polymorphic method or ordinary
-constructor, and an exact typed captureless lambda. Ordinary argument analysis
+constructor, and an exact typed lambda. Ordinary argument analysis
 selects copy only when the enum's folded traits permit it; otherwise an explicit
 move or fresh value is required.
+
+A lambda may directly own a reference-free payload enum through an explicit
+move capture, or a copy capture when the enum's folded traits permit copying.
+The captured enum retains its active-alternative cleanup inside the environment;
+closure movement, generic forwarding, stored callbacks and consuming invocation
+use the ordinary closure lifecycle. An unused closure still destroys its owned
+captures. A capturing lambda may also accept and return an owning enum by value.
+Capture bindings remain immutable under the general lambda rules: moving a
+value out of a capture is not added by this support. Capturing an owning enum
+whose type also carries conditional borrowed payloads remains a separate
+unsupported dependency-transport family. Arrays and other structural aggregates
+containing owning enums are not admitted as captures by this support. Stored
+callbacks may own an enum in their environment; owning enums in erased callable
+parameter/result signatures retain the separate polymorphic-dispatch boundary.
 
 An ordinary non-polymorphic class or struct, including a concrete generic
 instance, may contain an owning payload enum as a direct field. The field may
@@ -1736,6 +1750,20 @@ by-value cycle remains ill-formed. This owning containment rule does not itself
 authorize stored-reference classes,
 compiler-private capabilities, polymorphic bases, or native-layout
 declarations.
+
+Reference-free owning payload enums may also be elements of fixed arrays,
+including nested arrays, local bindings, thread-local bindings, and fields of
+the ordinary class/struct owners admitted above. Every element must be
+initialized under the ordinary exact-extent array rules. Array traits fold
+from the concrete element type: an array of move-only enums cannot be copied.
+A mutable constant-index element may be moved out, and moving it again is a
+use-after-move error. Replacement destroys the destination's previous active
+payload; scope exit destroys the remaining elements in reverse order. A
+failure during initialization destroys only completed elements, and failure
+after initialization destroys the complete remaining array. Ordinary local
+whole-array movement transfers those obligations. This admission does not
+extend cleanup-owning whole-array by-value function parameter/result transport,
+borrowed-state array storage, or namespace/global/static owning cleanup.
 
 A payload enum may contain `T&`, `mut T&`, and nested reference-bearing enum
 values. Construction retains the exact owner, access and field path for each
@@ -1759,20 +1787,24 @@ compiler error. Reference-field selection and borrowed-value extraction are
 distinct operations.
 
 Concrete generic free functions, methods, and constructors use that same
-ordered transport contract. A type argument mentioning the enum does not by
-itself create an ownership edge; concrete fields and declaration-bound storage
-capabilities determine containment and cleanup. This permits ordinary owning
+ordered transport contract. Concrete by-value parameter packs apply this
+contract to each expanded formal, including owning payload enums mixed with
+ordinary values. Forwarding copies copyable elements and transfers move-only
+elements under the existing pack rules. A pack is not an aggregate containment
+boundary; each element retains its own cleanup and callable eligibility.
+Unsupported elements are diagnosed using their concrete type. A type argument
+mentioning the enum does not by itself create an ownership edge; concrete fields
+and declaration-bound storage capabilities determine containment and cleanup.
+This permits ordinary owning
 collections and inline optional storage of the enum without public-library
 name recognition. Consuming methods may return an enum field while retaining
 the containing receiver through the caller's full expression.
 
-Polymorphic dispatch, native/runtime declarations, operators,
-and direct enum lambda captures retain `GTI-S2067` at their declaration or capture
-boundary. Unsupported containment retains `GTI-S2067` at the field or
+Polymorphic dispatch, native/runtime declarations and operators retain
+`GTI-S2067` at their declaration boundary. Unsupported containment retains `GTI-S2067` at the field or
 aggregate boundary, before HIR/MIR/backend emission. A direct checked
 reference or raw pointer does not itself contain the referent's ownership
-state. Fixed arrays of direct owning enum elements and direct enum captures
-remain outside this transport slice.
+state.
 
 Payload alternatives use exact construction. A unit alternative is written
 `Result::empty`; a payload alternative is written `Result::value(arguments)`.

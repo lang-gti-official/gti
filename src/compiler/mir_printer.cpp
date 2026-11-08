@@ -284,7 +284,7 @@ public:
     const bool classAliases = std::any_of(
         program.classInstances().begin(), program.classInstances().end(),
         [](const auto &instance) { return !instance.typeAliases.empty(); });
-    output << "mir-v120 valid=" << program.valid() << '\n';
+    output << "mir-v121 valid=" << program.valid() << '\n';
     if (program.requiresNativeObjectLayout())
       output << "native-object-layout\n";
     for (const auto &storage : program.foreignStorageDeclarations()) {
@@ -777,6 +777,9 @@ public:
     for (const MirConstructorInstance &instance :
          program.constructorInstances()) {
       output << "constructor @" << instance.id << " owner=" << instance.owner
+             << " codegen-inline="
+             << static_cast<int>(instance.codegenAttributes.inlining)
+             << " codegen-cold=" << instance.codegenAttributes.cold
              << " constexpr=" << instance.constexprConstructor
              << " requires-unsafe=" << instance.requiresUnsafe
              << " generated-default=" << instance.generatedDefault
@@ -865,6 +868,9 @@ public:
     for (const MirDestructorInstance &instance :
          program.destructorInstances()) {
       output << "destructor @" << instance.id << " owner=" << instance.owner
+             << " codegen-inline="
+             << static_cast<int>(instance.codegenAttributes.inlining)
+             << " codegen-cold=" << instance.codegenAttributes.cold
              << " definition=";
       switch (instance.definitionKind) {
       case MirDefinitionKind::Source:

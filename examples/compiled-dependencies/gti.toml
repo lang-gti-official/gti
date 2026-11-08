@@ -6,12 +6,12 @@ version = "0.1.0"
 [targets.base]
 kind = "gti-library"
 root = "base.gti"
-functions = ["base_value"]
+functions = ["base_value", "base_tick"]
 
 [targets.left]
 kind = "gti-library"
 root = "left.gti"
-functions = ["left_value"]
+functions = ["left_value", "left_tick"]
 [[targets.left.compiled-dependencies]]
 target = "base"
 interface = "api/base.gti"
@@ -19,7 +19,7 @@ interface = "api/base.gti"
 [targets.right]
 kind = "gti-library"
 root = "right.gti"
-functions = ["right_value"]
+functions = ["right_value", "right_tick"]
 [[targets.right.compiled-dependencies]]
 target = "base"
 interface = "api/base.gti"

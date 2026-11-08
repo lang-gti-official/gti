@@ -157,6 +157,25 @@ BackendArtifact CppBackend::generate(LoweredProgram program) {
         throw BackendUnsupportedError(
             "aggregate constant publication requires the LLVM backend",
             row.identity.source);
+    // Text results can carry an owner dependency without returning a
+    // reference. The C++ loan vocabulary only binds CallResult loans to
+    // reference-producing calls/accessors; it cannot represent these value
+    // dependencies. Reject that verified shape, not every text-returning call
+    // or every generic function, before representation planning.
+    std::unordered_set<HirValueId> callResultLoans;
+    for (const auto &loan : body->loans)
+      if (loan.kind == MirLoanKind::CallResult && loan.producedBy != 0)
+        callResultLoans.insert(loan.producedBy);
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions)
+        if (!instruction.tombstone &&
+            instruction.kind == MirInstructionKind::Call &&
+            instruction.intrinsic == IntrinsicKind::None &&
+            instruction.info.type.kind == SemanticType::StringView &&
+            callResultLoans.contains(instruction.hirValue))
+          throw BackendUnsupportedError(
+              "borrow-dependent text call results require the LLVM backend",
+              row.identity.source);
     // A fresh class argument consumed directly by the legacy subscript Call
     // has no ordered CallInput publication stage in the C++ vocabulary.
     // Named class moves, scalar indices and conditional declarations already

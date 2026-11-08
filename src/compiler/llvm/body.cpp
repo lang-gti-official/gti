@@ -3021,6 +3021,16 @@ llvm::Function *Bodies::function(MirBodyAddress address) {
     session.requireDefinition(*output);
   } else
     throw BackendUnsupportedError("LLVM body kind is not implemented");
+  if (address.kind == MirBodyKind::Constructor)
+    applyCodegenAttributes(*output, session.program()
+                                        .mir()
+                                        .findConstructorInstance(address.owner)
+                                        ->codegenAttributes);
+  else if (address.kind == MirBodyKind::Destructor)
+    applyCodegenAttributes(*output, session.program()
+                                        .mir()
+                                        .findDestructorInstance(address.owner)
+                                        ->codegenAttributes);
   functions.emplace(key, output);
   if (auto *debug = session.debugInfo();
       debug && address.kind == MirBodyKind::Lambda)
