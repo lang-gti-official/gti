@@ -4961,6 +4961,13 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
       // an attached result annotation by itself never selects this path.
       if (completeResult)
         continue;
+      // A complete reference callee's publication is matched against the
+      // independent replay by the mandatory dependency-set transport gate
+      // even without attached result metadata (multi-supplier receivers).
+      if (completeFunction && target->completeReturnBorrow &&
+          target->returnType.kind == SemanticType::Reference &&
+          instruction.borrowFields.size() > 1)
+        continue;
 
       std::vector<MirLoanDependency> mappedCallSources;
       // One formal field can be supplied by several alternatives of an
@@ -16446,9 +16453,13 @@ completeBorrowSourcePath(const MirProgram &program,
     const auto *group = body.findLoan(found->second.front());
     const auto &fact = state.places[id - 1];
     if (!group || group->kind != MirLoanKind::Stored || group->escapes ||
-        group->entry || !group->conditions.empty() || !fact ||
+        !group->conditions.empty() || !fact ||
         !fact->possibleAlternatives.empty())
       return std::nullopt;
+    // A formal's typed entry group is rooted at the formal itself; its exact
+    // entry reconstruction already names the group (retainedCarrierInput).
+    if (group->entry)
+      return group->source == id ? fact : Fact{};
     std::vector<MirLoanDependency> retained{
         {.source = group->source,
          .parent = group->parent,

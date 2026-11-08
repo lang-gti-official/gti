@@ -9632,9 +9632,11 @@ private:
           const auto place = receiver ? placeForValue(*receiver) : MirPlaceId{0};
           const auto *carrier = output.findPlace(place);
           const auto &group = output.loans[published.parent - 1];
+          if (std::getenv("GTI_TRACE_LCBD2")) { std::fprintf(stderr, "[fix77] v%llu place=p%llu root=%d proj=%zu group=%llu kind=%d entry=%d gsrc=p%llu psrc=p%llu carriers:", (unsigned long long)value.id, (unsigned long long)place, carrier ? static_cast<int>(carrier->root) : -1, carrier ? carrier->projections.size() : 0, (unsigned long long)group.id, static_cast<int>(group.kind), group.entry, (unsigned long long)group.source, (unsigned long long)published.source); for (auto c : group.carriers) std::fprintf(stderr, " b%llu", (unsigned long long)c); std::fprintf(stderr, " binding=b%llu sd=%llu\n", carrier ? (unsigned long long)carrier->binding : 0ull, (unsigned long long)group.storedDependency); } // TEMP-TRACE
           if (carrier && carrier->root == MirPlaceRootKind::Binding &&
               carrier->projections.empty() &&
-              group.kind == MirLoanKind::Stored && !group.entry &&
+              group.kind == MirLoanKind::Stored &&
+              (!group.entry || group.source == place) &&
               group.source == published.source &&
               std::find(group.carriers.begin(), group.carriers.end(),
                         carrier->binding) != group.carriers.end()) {
