@@ -6373,7 +6373,21 @@ completeBorrowParameterEntryFactForPlace(const MirProgram &program, const MirBod
 storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
                          const MirLoan &entry, const MirPlace &source,
                          const SemanticType &carrierType) {
-  if (source.type != carrierType)
+  // The entry's own reference binding names the same caller-owned view as
+  // its dereference: a text relay may read through either.
+  if (entry.entry && source.root == MirPlaceRootKind::Binding &&
+      source.projections.empty() && source.type.kind == SemanticType::Reference &&
+      source.type.arguments.size() == 1 &&
+      (carrierType.kind == SemanticType::StringView ||
+       carrierType.kind == SemanticType::CString) &&
+      eraseTypeLifetimes(source.type.arguments.front()) ==
+          eraseTypeLifetimes(carrierType))
+    if (const MirPlace *origin = body.findPlace(entry.source);
+        origin != nullptr && origin->root == MirPlaceRootKind::Binding &&
+        origin->binding == source.binding && origin->projections.empty())
+      return HirBindingId{0};
+  // Region spelling is proved by the lifetime relations; identity is shape.
+  if (eraseTypeLifetimes(source.type) != eraseTypeLifetimes(carrierType))
     return std::nullopt;
   if (source.root == MirPlaceRootKind::Binding && source.projections.empty() &&
       std::find(entry.carriers.begin(), entry.carriers.end(), source.binding) !=
@@ -6918,6 +6932,7 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
          sourceType.kind == SemanticType::CString)) {
       const auto origin = storedCarrierValueOrigin(
           program, body, *originalDependency, *source, sourceType);
+      if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[relay] loan=%llu origin=%lld srcRoot=%d srcProj=%zu srcTypeKind=%d\n", (unsigned long long)loan.id, origin ? (long long)*origin : -1ll, (int)source->root, source->projections.size(), (int)source->type.kind); // TEMP-TRACE
       for (const auto &block : body.blocks) {
         for (const auto &instruction : block.instructions) {
           const auto argument = instruction.borrowArgument;
@@ -6925,13 +6940,14 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
               instruction.kind != MirInstructionKind::Call ||
               instruction.loan != loan.id ||
               instruction.hirValue != loan.producedBy ||
-              instruction.info.type != sourceType ||
+              eraseTypeLifetimes(instruction.info.type) != eraseTypeLifetimes(sourceType) ||
               instruction.info.category != ValueCategory::Value ||
               instruction.borrowOrigin != BorrowOriginKind::Argument ||
               !instruction.borrowFields.empty() ||
               !instruction.borrowArguments.empty() ||
               argument >= instruction.parameterTypes.size() ||
-              instruction.parameterTypes[argument] != sourceType ||
+              eraseTypeLifetimes(instruction.parameterTypes[argument]) !=
+                  eraseTypeLifetimes(sourceType) ||
               argument >= instruction.operands.size() ||
               instruction.operands[argument].kind != MirOperandKind::Value)
             continue;
@@ -6951,8 +6967,18 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
               load && load->kind == MirInstructionKind::Load &&
               load->operands.size() == 1 &&
               load->operands.front().kind == MirOperandKind::Copy &&
-              load->operands.front().type == sourceType &&
-              load->operands.front().place == source->id;
+              eraseTypeLifetimes(load->operands.front().type) ==
+                  eraseTypeLifetimes(sourceType) &&
+              (load->operands.front().place == source->id ||
+               // Copying through a reference source reads its referent.
+               [&] {
+                 const auto *read = body.findPlace(load->operands.front().place);
+                 return read != nullptr && source->type.kind == SemanticType::Reference &&
+                        read->root == source->root && read->binding == source->binding &&
+                        source->projections.empty() && read->projections.size() == 1 &&
+                        read->projections.front().kind == MirProjectionKind::Dereference;
+               }());
+          if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[relay2] inst=%llu stage=%d load=%d copied=%d\n", (unsigned long long)instruction.id, stage != nullptr, load != nullptr, copiedTextRelay); // TEMP-TRACE
         }
       }
     }
@@ -6960,6 +6986,13 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                             ((loan.kind == MirLoanKind::Local ||
                               loan.kind == MirLoanKind::Parameter) &&
                              isPotentiallyBorrowedCarrier(program, sourceType));
+    if (loan.kind == MirLoanKind::Stored && loan.parent == 0 &&
+        loan.storedDependency != 0 && !publishedShell && !constructedShell &&
+        !copiedTextRelay && std::getenv("GTI_TRACE_SCOPED")) { // TEMP-TRACE
+      const auto *dep = body.findLoan(loan.storedDependency); // TEMP-TRACE
+      std::fprintf(stderr, "[ssd] loan=%llu src=p%llu sd=%llu depEntry=%d depKind=%d origDep=%d srcType=%d esc=%d path=%zu prod=%llu\n", (unsigned long long)loan.id, (unsigned long long)loan.source, (unsigned long long)loan.storedDependency, dep ? dep->entry : -1, dep ? (int)dep->kind : -1, originalDependency != nullptr, (int)sourceType.kind, loan.escapes, loan.storedPath.size(), (unsigned long long)loan.producedBy); // TEMP-TRACE
+      for (const auto &b : body.blocks) for (const auto &i : b.instructions) if (i.hirValue == loan.producedBy && i.kind == MirInstructionKind::Call) { std::fprintf(stderr, "[ssd]  call inst=%llu loan=%llu typeKind=%d cat=%d origin=%d barg=%zu bargs=%zu bfields=%zu ptype=%d op=%d\n", (unsigned long long)i.id, (unsigned long long)(i.loan ? *i.loan : 0), (int)i.info.type.kind, (int)i.info.category, (int)i.borrowOrigin, i.borrowArgument, i.borrowArguments.size(), i.borrowFields.size(), i.borrowArgument < i.parameterTypes.size() ? (int)i.parameterTypes[i.borrowArgument].kind : -1, i.borrowArgument < i.operands.size() ? (int)i.operands[i.borrowArgument].kind : -1); } // TEMP-TRACE
+    } // TEMP-TRACE
     if (loan.kind == MirLoanKind::Stored && loan.parent == 0 &&
         loan.storedDependency != 0 && !publishedShell && !constructedShell &&
         !copiedTextRelay)
@@ -19138,12 +19171,25 @@ private:
       // A by-value result retains its producer's applied regions. Its
       // declaration view is proved under this body's exact constraints, not
       // established by retagging the value or erasing nominal lifetimes.
+      // A read-only reference result is covariant in its referent; a mutable
+      // one is invariant and keeps the exact type.
       const bool returnedTypeMatches = block && block->terminator.value &&
           (block->terminator.value->type == returnedType ||
-           (function.returnType.kind != SemanticType::Reference &&
+           ((function.returnType.kind != SemanticType::Reference ||
+             function.returnType.referenceAccess == AccessMode::ReadOnly) &&
             mirLifetimeValueConversion(program, function.body, function.id,
                                        block->terminator.value->type,
                                        returnedType)));
+      if (std::getenv("GTI_TRACE_SCOPED") && block && block->terminator.value) { // TEMP-TRACE
+        const auto dump = [](auto &&self, const SemanticType &t, int d) -> void { // TEMP-TRACE
+          std::fprintf(stderr, "%*s kind=%d class=%u refLt=%d:%llu lts=", d*2, "", (int)t.kind, (unsigned)t.classId, (int)t.referenceLifetime.kind, (unsigned long long)t.referenceLifetime.id); // TEMP-TRACE
+          for (auto r : t.lifetimeArguments) std::fprintf(stderr, "%d:%llu,", (int)r.kind, (unsigned long long)r.id); // TEMP-TRACE
+          std::fprintf(stderr, "\n"); // TEMP-TRACE
+          lifetime_detail::children(t, [&](const SemanticType &c) { self(self, c, d+1); }); // TEMP-TRACE
+        }; // TEMP-TRACE
+        std::fprintf(stderr, "[recon-types] fn=%zu value:\n", (std::size_t)function.id); dump(dump, block->terminator.value->type, 1); // TEMP-TRACE
+        std::fprintf(stderr, "[recon-types] declared:\n"); dump(dump, function.returnType, 1); // TEMP-TRACE
+      } // TEMP-TRACE
       if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
         std::fprintf(stderr, "[recon] fn=%zu typeMatch=%d deps=%s shape=%d normalized=%d\n", (std::size_t)function.id, returnedTypeMatches, describeCompleteBorrowFact(returned.dependencies).c_str(), returned.dependencies && completeBorrowSetHasTypedShape(program, function.returnType, *returned.dependencies), returned.dependencies && normalizedCompleteReturnBorrow(program, function, *returned.dependencies).has_value()); // TEMP-TRACE
       if (!returnedTypeMatches ||
@@ -19364,6 +19410,25 @@ verifySelectedReferenceOrigins(const MirProgram &program, const MirBody &body,
   return {};
 }
 
+// A carrier built from an accessor result is retained under that result's
+// MIR-local loan, itself a child of the semantic parent. A claim may name
+// that ancestor: its protection is wider, and body verification proves it
+// active. This never relates a root (0) parent to a derived one.
+[[nodiscard]] bool claimedParentCovers(const MirBody &body, MirLoanId claimed,
+                                       MirLoanId replayed) {
+  if (claimed == replayed)
+    return true;
+  if (claimed == 0)
+    return false;
+  for (std::size_t depth = 0; replayed != 0 && depth < 32; ++depth) {
+    const auto *loan = body.findLoan(replayed);
+    replayed = loan ? loan->parent : 0;
+    if (replayed == claimed)
+      return true;
+  }
+  return false;
+}
+
 // Distinct place ids with one root, path, type and access name the same
 // storage, so a dependency through either is the same dependency.
 [[nodiscard]] bool
@@ -19399,7 +19464,8 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
     bool found = false;
     for (std::size_t index = 0; index < right->dependencies.size(); ++index) {
       const auto &candidate = right->dependencies[index];
-      if (matched[index] || candidate.parent != dependency.parent ||
+      if (matched[index] ||
+          !claimedParentCovers(body, dependency.parent, candidate.parent) ||
           candidate.designatedFields != dependency.designatedFields ||
           candidate.access != dependency.access ||
           candidate.conditions != dependency.conditions ||
@@ -19719,7 +19785,10 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
         const auto &fact = flow.values[*producer.result - 1];
         valid = loan.kind == MirLoanKind::Stored && !loan.escapes &&
                 loan.producedBy == producer.hirValue && fact &&
-                loanDependencies(loan) == fact->dependencies;
+                (loanDependencies(loan) == fact->dependencies ||
+                 equalCompleteBorrowSetsInBody(
+                     body, MirBorrowDependencySet{.dependencies = loanDependencies(loan)},
+                     MirBorrowDependencySet{.dependencies = fact->dependencies}));
         if (!valid && std::getenv("GTI_TRACE_MIR_BODY")) { // TEMP-TRACE
           std::cerr << "[prove] loan=" << loan.id << " kind=" << int(loan.kind)
                     << " escapes=" << loan.escapes << " producedBy=" << loan.producedBy

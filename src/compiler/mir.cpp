@@ -6053,6 +6053,25 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                                                         parent)))) {
               return true;
             }
+            // A moved carrier transfers its whole authority. When that
+            // authority descends from the declared parent (a carrier built
+            // from an accessor result of the parent), the result may be
+            // retained directly under the parent, a wider protection.
+            if (movedCarrier && place != nullptr &&
+                place->root == MirPlaceRootKind::Binding &&
+                place->projections.empty())
+              for (const auto &candidate : body.loans) {
+                if (std::find(candidate.carriers.begin(), candidate.carriers.end(),
+                              place->binding) == candidate.carriers.end())
+                  continue;
+                MirLoanId ancestor = candidate.parent;
+                for (std::size_t depth = 0; ancestor != 0 && depth < 32; ++depth) {
+                  if (ancestor == parent)
+                    return true;
+                  const auto *next = body.findLoan(ancestor);
+                  ancestor = next ? next->parent : 0;
+                }
+              }
             const MirCanonicalPlace operandPlace =
                 canonicalPlace(body, resolved->place, bindingLoans, active);
             if (operandPlace.throughLoan == parent)

@@ -4840,8 +4840,28 @@ private:
         return;
       }
       lowered.storedDependency = dependency->second;
-    } else if (lowered.storedDependency != 0) {
-      if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[ident-sd] loan%llu kind=%d src=p%llu parent=%llu sd=%llu producedBy=%llu semantic=%llu\n", (unsigned long long)id, static_cast<int>(lowered.kind), (unsigned long long)lowered.source, (unsigned long long)lowered.parent, (unsigned long long)lowered.storedDependency, (unsigned long long)lowered.producedBy, (unsigned long long)loan.semanticLoan); // TEMP-TRACE
+      if (std::getenv("GTI_TRACE_SDSET")) std::fprintf(stderr, "[sdset] line 4842\n"); // TEMP-TRACE-SDSET
+    } else if (lowered.storedDependency != 0 &&
+               // A whole-receiver result moves its semantic parent group to
+               // the stored edge and borrows the receiver place itself.
+               !(lowered.parent == 0 && [&] {
+                   // Either the semantic parent group itself, or the stored
+                   // group carried by the receiver binding the result names.
+                   if (loan.parent != 0) {
+                     const auto parent = semanticLoans.find(loan.parent);
+                     return parent != semanticLoans.end() &&
+                            parent->second == lowered.storedDependency;
+                   }
+                   const auto *group = output.findLoan(lowered.storedDependency);
+                   const auto *receiver = output.findPlace(lowered.source);
+                   return group != nullptr && receiver != nullptr &&
+                          group->kind == MirLoanKind::Stored &&
+                          receiver->root == MirPlaceRootKind::Binding &&
+                          receiver->projections.empty() &&
+                          std::find(group->carriers.begin(), group->carriers.end(),
+                                    receiver->binding) != group->carriers.end();
+                 }())) {
+      if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[ident-sd] loan%llu kind=%d src=p%llu parent=%llu sd=%llu producedBy=%llu semantic=%llu semParent=%llu semKind=%d\n", (unsigned long long)id, static_cast<int>(lowered.kind), (unsigned long long)lowered.source, (unsigned long long)lowered.parent, (unsigned long long)lowered.storedDependency, (unsigned long long)lowered.producedBy, (unsigned long long)loan.semanticLoan, (unsigned long long)loan.parent, (int)loan.kind); // TEMP-TRACE
       { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
       return;
     }
@@ -8257,6 +8277,7 @@ private:
         inputLoan =
             createLoan(MirLoanKind::CallArgument, shell->id, access, callSite);
         output.loans[inputLoan - 1].storedDependency = stored;
+        if (std::getenv("GTI_TRACE_SDSET")) std::fprintf(stderr, "[sdset] line 8259\n"); // TEMP-TRACE-SDSET
         input.loan = inputLoan;
         scopes.back().loans.push_back(inputLoan);
       }
@@ -9475,6 +9496,7 @@ private:
         recordLoanIdentity(loan, *shellContract);
       } else if (textShellOwner != 0) {
         output.loans[loan - 1].storedDependency = textShellOwner;
+        if (std::getenv("GTI_TRACE_SDSET")) std::fprintf(stderr, "[sdset] line 9477\n"); // TEMP-TRACE-SDSET
       } else if (kind == MirLoanKind::Stored &&
                  (value.info.type.kind == SemanticType::StringView ||
                   value.info.type.kind == SemanticType::CString) &&
@@ -9689,6 +9711,7 @@ private:
             published.source = place;
             published.parent = 0;
             published.storedDependency = group.id;
+            if (std::getenv("GTI_TRACE_SDSET")) std::fprintf(stderr, "[sdset] line 9691\n"); // TEMP-TRACE-SDSET
           } else if (carrier && carrier->root == MirPlaceRootKind::Binding &&
                      carrier->projections.empty() &&
                      isRangeIteratorBinding(carrier->binding) &&
@@ -10892,6 +10915,7 @@ private:
         published.source = first.source;
         published.parent = first.parent;
         published.storedDependency = 0;
+        if (std::getenv("GTI_TRACE_SDSET")) std::fprintf(stderr, "[sdset] line 10894\n"); // TEMP-TRACE-SDSET
         published.access = first.access;
         published.designatedFields = first.designatedFields;
         published.conditions = first.conditions;
@@ -10913,6 +10937,7 @@ private:
           published.source = group->source;
           published.parent = group->id;
           published.storedDependency = 0;
+          if (std::getenv("GTI_TRACE_SDSET")) std::fprintf(stderr, "[sdset] line 10915\n"); // TEMP-TRACE-SDSET
           published.access = group->access;
           published.designatedFields = group->designatedFields;
           published.conditions = group->conditions;
@@ -11341,6 +11366,7 @@ private:
     view.conditions = ordered.front().conditions;
     view.additionalDependencies.assign(ordered.begin() + 1, ordered.end());
     view.storedDependency = stored->semanticLoan;
+    if (std::getenv("GTI_TRACE_SDSET")) std::fprintf(stderr, "[sdset] line 11343\n"); // TEMP-TRACE-SDSET
     return view;
   }
 
@@ -14275,6 +14301,7 @@ private:
       // must not be inferred from the referenced value's class.
       output.loans[stored - 1].lifecycleBound = false;
       output.loans[stored - 1].storedDependency = storedDependency;
+      if (std::getenv("GTI_TRACE_SDSET")) std::fprintf(stderr, "[sdset] line 14277\n"); // TEMP-TRACE-SDSET
       output.loans[stored - 1].designatedFields = sourceFields;
       output.loans[stored - 1].conditions = sourceConditions;
       output.loans[stored - 1].additionalDependencies = sourceDependencies;
@@ -17813,6 +17840,7 @@ private:
             if (erasedProjection) {
               auto &publication = output.loans[published - 1];
               publication.storedDependency = erasedProjection->stored;
+              if (std::getenv("GTI_TRACE_SDSET")) std::fprintf(stderr, "[sdset] line 17815\n"); // TEMP-TRACE-SDSET
               publication.additionalDependencies.assign(
                   erasedProjection->publication.dependencies.begin() + 1,
                   erasedProjection->publication.dependencies.end());
@@ -17850,6 +17878,7 @@ private:
               if (loan.storedDependency == 0 &&
                   parent.kind == MirLoanKind::Stored) {
                 loan.storedDependency = loan.parent;
+                if (std::getenv("GTI_TRACE_SDSET")) std::fprintf(stderr, "[sdset] line 17852\n"); // TEMP-TRACE-SDSET
               }
               loan.parent = 0;
             }
