@@ -163,6 +163,12 @@ public:
     std::size_t lifetimeObligationStart = 0;
     std::size_t lifetimeTypeObligationStart = 0;
     std::size_t lifetimeOriginStart = 0;
+    // Where this expression's own analysis ended. Facts recorded later belong
+    // to sibling expressions analyzed before a deferred contextual conversion.
+    std::optional<std::size_t> lifetimeVariableEnd;
+    std::optional<std::size_t> lifetimeObligationEnd;
+    std::optional<std::size_t> lifetimeTypeObligationEnd;
+    std::optional<std::size_t> lifetimeOriginEnd;
     bool directFailureBefore = false;
   };
 

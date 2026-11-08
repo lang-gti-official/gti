@@ -1591,14 +1591,23 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
       const auto declaredRegion = actual.kind == SemanticType::Reference
                                       ? actual.referenceLifetime
                                       : borrowedExpressionLifetime(source);
+      // A by-value argument bound to a reference is materialized: the
+      // reference borrows that temporary's shell, keyed by its source. Its
+      // contents' external owners stay obligations of the nested type.
+      const auto *sourceInfo = source && actual.kind != SemanticType::Reference
+                                   ? semanticModel.findExpression(*source) : nullptr;
+      const bool materializedCarrier = sourceInfo != nullptr &&
+          sourceInfo->category == ValueCategory::Value &&
+          !(argument && argument->forwardedPackElement);
       std::vector<SemanticLoanDependency> dependencies;
       // A reference to a carrier borrows its physical shell. Its contents'
       // external owners are distinct obligations in the nested type relation.
-      if (source && !typeTraits(actual).containsBorrowedState)
+      if (source && !materializedCarrier && !typeTraits(actual).containsBorrowedState)
         dependencies = argument ? storedBorrowDependencies(*argument)
                                 : storedBorrowDependencies(source);
       if (dependencies.empty()) {
-        auto place = source ? retainedLoanPlace(source) : SemanticLoanPlace{};
+        auto place = source && !materializedCarrier ? retainedLoanPlace(source)
+                                                    : SemanticLoanPlace{};
         if (argument && argument->forwardedPackElement) {
           const auto *carrier = parameterPackArgument(*argument);
           place = carrier ? SemanticLoanPlace{.root = toolingSymbolFor(*carrier)}
@@ -1609,7 +1618,7 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
         }
         dependencies.push_back({.place = std::move(place)});
       }
-      if (declaredRegion.specified()) {
+      if (declaredRegion.specified() && !materializedCarrier) {
         if (!require(declaredRegion, parameter.referenceLifetime))
           return reject("A borrowed argument has no complete lifetime contract.");
       } else {

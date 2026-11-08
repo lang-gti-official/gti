@@ -2911,7 +2911,9 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             argumentInput->info.type.referenceAccess != AccessMode::ReadOnly ||
             argumentInput->info.type.arguments.size() != 1 ||
             argumentPlace == nullptr ||
-            (argumentInput->info.type.arguments.front() != argumentPlace->type &&
+            // Regions are proved by the call-input lifetime relation.
+            (!sameLifetimeConversionShape(argumentPlace->type,
+                                          argumentInput->info.type.arguments.front()) &&
              !(argumentPlace->type.kind == SemanticType::FunctionItem &&
                equivalentLifetimeTypes(argumentInput->info.type.arguments.front(),
                                        argumentPlace->type))) ||
@@ -2919,6 +2921,7 @@ uniqueMirClassInstanceForType(const MirProgram &program,
             loan->source != argumentPlace->id ||
             loan->producedBy != instruction.hirValue || !exactProducer ||
             argumentObligations != 1 || !supportedResult || !confined) {
+          if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[tmparg] exactTarget=%d appliedParam=%d idx=%d ref=%d access=%d args=%d place=%d typeEq=%d loan=%d loanKind=%d loanSrc=%d loanProd=%d producer=%d obligations=%zu result=%d confined=%d\n", exactTarget, exactAppliedParameter, argumentInput->callInputIndex == index, argumentInput->info.type.kind == SemanticType::Reference, argumentInput->info.type.referenceAccess == AccessMode::ReadOnly, argumentInput->info.type.arguments.size() == 1, argumentPlace != nullptr, argumentPlace && argumentInput->info.type.arguments.size() == 1 && argumentInput->info.type.arguments.front() == argumentPlace->type, loan != nullptr, loan && loan->kind == MirLoanKind::CallArgument, loan && argumentPlace && loan->source == argumentPlace->id, loan && loan->producedBy == instruction.hirValue, exactProducer, argumentObligations, supportedResult, confined); // TEMP-TRACE
           return verificationFailure(
               body, owner,
               "temporary argument input does not match its exact "

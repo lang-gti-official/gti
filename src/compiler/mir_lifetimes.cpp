@@ -1576,8 +1576,9 @@ verifyMirLifetimeBodyFactsForCase(const MirProgram &program, const MirBody &body
       for (const auto bound : application.obligations)
         if (std::find(facts.obligations.begin(), facts.obligations.end(),
                       bound) == facts.obligations.end())
+          { if (std::getenv("GTI_TRACE_SCOPED")) { std::fprintf(stderr, "[missing-ob] inst=%llu %d:%llu >= %d:%llu\n", (unsigned long long)instruction.id, (int)bound.longer.kind, (unsigned long long)bound.longer.id, (int)bound.shorter.kind, (unsigned long long)bound.shorter.id); for (const auto &o : application.origins) std::fprintf(stderr, "[missing-ob]  app origin %d:%llu src=%llu\n", (int)o.region.kind, (unsigned long long)o.region.id, (unsigned long long)o.source); for (const auto &o : facts.origins) std::fprintf(stderr, "[missing-ob]  body origin %d:%llu src=%llu\n", (int)o.region.kind, (unsigned long long)o.region.id, (unsigned long long)o.source); for (const auto &b : facts.obligations) std::fprintf(stderr, "[missing-ob]  body %d:%llu >= %d:%llu\n", (int)b.longer.kind, (unsigned long long)b.longer.id, (int)b.shorter.kind, (unsigned long long)b.shorter.id); } // TEMP-TRACE
           reject("MIR call lifetime obligation is missing from the body graph",
-                 block.id, instruction.id);
+                 block.id, instruction.id); }
       for (const auto &bound : application.typeObligations)
         if (std::find(facts.typeObligations.begin(),
                       facts.typeObligations.end(),
@@ -2577,6 +2578,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
             const bool regionProved = previousStage && actual->kind == SemanticType::Reference
                 ? graph.proves(actual->referenceLifetime, expected.referenceLifetime)
                 : relations.borrowedOperand(input, expected.referenceLifetime, instruction.hirValue);
+            if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[cin-parts] region=%d types=%d referentLts=%zu expectedLts=%zu r0=%d:%llu e0=%d:%llu\n", regionProved, expected.arguments.size() == 1 && relations.types(referent, expected.arguments.front(), expected.referenceAccess == AccessMode::Mutable ? 0 : 1), referent.lifetimeArguments.size(), expected.arguments.empty() ? 0 : expected.arguments.front().lifetimeArguments.size(), referent.lifetimeArguments.empty() ? -1 : (int)referent.lifetimeArguments[0].kind, referent.lifetimeArguments.empty() ? 0ull : (unsigned long long)referent.lifetimeArguments[0].id, expected.arguments.empty() || expected.arguments.front().lifetimeArguments.empty() ? -1 : (int)expected.arguments.front().lifetimeArguments[0].kind, expected.arguments.empty() || expected.arguments.front().lifetimeArguments.empty() ? 0ull : (unsigned long long)expected.arguments.front().lifetimeArguments[0].id); // TEMP-TRACE
             proved = immediatePointerCarrierInput(program, body, instruction, *actual) ||
                 (expected.arguments.size() == 1 && regionProved &&
                 relations.types(referent, expected.arguments.front(),

@@ -1783,10 +1783,26 @@ auto SemanticVisitor::Impl::discardImmediateProgramEffects(
   // Invocation checking and constant execution already proved these facts.
   // A substituted value carries no borrowed result; its temporary inputs no
   // longer have executable origins. Preserve every pre-expression body fact.
-  loanFlow.lifetimeVariables.resize(evaluation.lifetimeVariableStart);
-  loanFlow.lifetimeObligations.resize(evaluation.lifetimeObligationStart);
-  loanFlow.lifetimeTypeObligations.resize(evaluation.lifetimeTypeObligationStart);
-  loanFlow.lifetimeOrigins.resize(evaluation.lifetimeOriginStart);
+  // A contextual conversion may be selected only after later sibling
+  // arguments were analyzed (a deduced immediate parameter). Those siblings'
+  // facts are not this expression's suffix; keep them.
+  const auto withdraw = [](auto &values, std::size_t start,
+                           std::optional<std::size_t> end) {
+    if (!end || *end < start || *end > values.size()) {
+      values.resize(start);
+      return;
+    }
+    values.erase(values.begin() + static_cast<std::ptrdiff_t>(start),
+                 values.begin() + static_cast<std::ptrdiff_t>(*end));
+  };
+  withdraw(loanFlow.lifetimeVariables, evaluation.lifetimeVariableStart,
+           evaluation.lifetimeVariableEnd);
+  withdraw(loanFlow.lifetimeObligations, evaluation.lifetimeObligationStart,
+           evaluation.lifetimeObligationEnd);
+  withdraw(loanFlow.lifetimeTypeObligations, evaluation.lifetimeTypeObligationStart,
+           evaluation.lifetimeTypeObligationEnd);
+  withdraw(loanFlow.lifetimeOrigins, evaluation.lifetimeOriginStart,
+           evaluation.lifetimeOriginEnd);
   // The published value keeps its checked result type. Its inference regions
   // remain body variables (unconstrained: static data is valid for any
   // region), so the destination that receives it stays in scope.
@@ -5103,6 +5119,13 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     evaluation.edgeEnd = summary.edges.size();
     evaluation.unknownEnd = summary.unknown.size();
     evaluation.useEnd = summary.borrowUses.size();
+    if (evaluation.lifetimeBlock == loanFlow.lifetimeBlock &&
+        evaluation.lifetimeExpression == loanFlow.lifetimeExpression) {
+      evaluation.lifetimeVariableEnd = loanFlow.lifetimeVariables.size();
+      evaluation.lifetimeObligationEnd = loanFlow.lifetimeObligations.size();
+      evaluation.lifetimeTypeObligationEnd = loanFlow.lifetimeTypeObligations.size();
+      evaluation.lifetimeOriginEnd = loanFlow.lifetimeOrigins.size();
+    }
     requestSession.programExpressionCache.programExpressionEffects
         .insert_or_assign(&expr, evaluation);
   }
