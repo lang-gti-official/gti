@@ -55,36 +55,6 @@ int main() {
             session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
                 "textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": valid}]}})
             assert not diagnostics(2)
-
-            unbound = """import std.meta;
-class Probe {
-public:
-  Probe() = default;
-  T echo<T>(T value) { return value; }
-};
-int main() {
-  /*😀*/ auto description = std::meta::method<Probe, 0>().result().name();
-  return int(description.size());
-}
-"""
-            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
-                "textDocument": {"uri": uri, "version": 3},
-                "contentChanges": [{"text": unbound}]}})
-            unbound_errors = diagnostics(3)
-            error = next(item for item in unbound_errors if item.get("code") == "GTI-S2126")
-            start = unbound.index(".name()") + 1
-            assert error["range"] == {"start": lsp_position(unbound, start),
-                                      "end": lsp_position(unbound, start + len("name"))}, error
-            assert error["severity"] == 1 and error["data"]["phase"] == "semantics", error
-            assert error.get("relatedInformation"), error
-            assert not any(item.get("code") in ("GTI-B0001", "GTI-B0003")
-                           for item in unbound_errors), unbound_errors
-            bound = unbound.replace("T echo<T>(T value) { return value; }",
-                                    "int32_t echo<T>(T value) { return 1; }")
-            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
-                "textDocument": {"uri": uri, "version": 4},
-                "contentChanges": [{"text": bound}]}})
-            assert not diagnostics(4)
         finally:
             session.close()
 

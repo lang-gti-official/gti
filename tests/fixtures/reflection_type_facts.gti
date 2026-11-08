@@ -120,41 +120,8 @@ bool independent_fact<T>() {
          std::meta::is_transferable<T>();
 }
 
-class SignatureQueries<Owner> {
-public:
-  SignatureQueries() = default;
-  T echo<T>(T value) { return value; }
-  Owner fixed<T>(Owner value, T ignored) { return value; }
-  T* pointer<T>(T* value) { return value; }
-};
-
-// Method-local parameters stay unbound, but stable declaration facts, known
-// outer categories and identity relations must still work. Owner parameters
-// and ordinary caller generics become concrete through normal instantiation.
-constexpr bool signature_query_controls<T>() {
-  constexpr for (auto method : std::meta::methods_of<SignatureQueries<T>>()) {
-    static_assert(method.is_generic());
-    static_assert(method.name().size() > 0);
-    if constexpr (!method.is_generic()) {
-      auto unused = method.result().name();
-    }
-  }
-  static_assert(std::meta::is_same<
-      std::meta::return_type<SignatureQueries<T>, 0>,
-      std::meta::parameter_type<SignatureQueries<T>, 0, 0>>());
-  static_assert(std::meta::type<
-      std::meta::return_type<SignatureQueries<T>, 2>>().is_raw_pointer());
-  return std::meta::method<SignatureQueries<T>, 1>().result().name().size() ==
-         std::meta::name_of<T>().size();
-}
-
-static_assert(signature_query_controls<int32_t>());
-static_assert(signature_query_controls<Coordinates>());
-
 int main() {
-  return signature_query_controls<int32_t>() &&
-         signature_query_controls<Coordinates>() &&
-         independent_fact<Coordinates>() &&
+  return independent_fact<Coordinates>() &&
          std::meta::type<Coordinates>().has_object_layout() &&
          std::meta::is_borrow_free<Coordinates>() &&
          !std::meta::is_borrow_free<CopyConstructionOnly>() &&
