@@ -1,0 +1,1 @@
+Revert the unreleased GTI-S2126 reflection diagnostic from #308: it also fired after unrelated errors, for example after a `transform_error` mapper returning `void` had already failed its static assertion, breaking `expected_transform_error` and `thread_local_semantic` in full validation.
