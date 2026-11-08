@@ -711,11 +711,16 @@ inline std::optional<LifetimeRequirementFormula> lambdaEnvironmentLifetimeRequir
   if (!canonical.hasLambdaShape() || !actual.hasLambdaShape() ||
       !validLambdaEnvironmentContract(environment, canonical.lifetimeArguments))
     return std::nullopt;
+  // The environment contract speaks in the recorded body's frame; select the
+  // instance's enclosing type arguments in both the slots and the formula.
+  const auto selected = lambdaEnclosingTypeSelection(canonical, actual);
   const auto bindings = matchUniversalTypeLifetimes(
-      canonical, actual, environment.parameters);
+      selectLambdaEnclosingTypes(canonical, selected), actual, environment.parameters);
   auto formula = lifetimeContractRequirements(environment);
   if (!bindings || !formula)
     return std::nullopt;
+  for (auto &node : formula->nodes)
+    node.type = selectLambdaEnclosingTypes(std::move(node.type), selected);
   const auto region = [&](Lifetime value) {
     for (const auto binding : *bindings)
       if (binding.first == value)
@@ -741,15 +746,20 @@ struct LambdaCallableLifetimeTarget {
 // slots before proving invocation implication. A fixed slot cannot stand for
 // a fresh invocation quantifier, even if its current actual value coincides.
 inline std::optional<LambdaCallableLifetimeTarget> lambdaCallableLifetimeTarget(
-    const SemanticType &canonical, const SemanticType &actual,
+    const SemanticType &recorded, const SemanticType &actual,
     const LifetimeSignatureContract &invocation,
     const LifetimeSignatureContract &environment,
     const CallableLifetimeSignature &requested) {
+  const SemanticType canonical = instantiateLambdaEnclosingTypes(recorded, actual);
   if (!canonical.hasLambdaShape() || !actual.hasLambdaShape() ||
       !validLambdaEnvironmentContract(environment, canonical.lifetimeArguments) ||
       !composeLambdaLifetimeContract(environment, invocation))
     return std::nullopt;
-  const auto fixed = matchUniversalTypeLifetimes(canonical, actual, environment.parameters);
+  // An environment-free closure fixes no slot. Its canonical type may be the
+  // generic body's while `actual` is an instance's, so there is nothing to match.
+  const auto fixed = environment.parameters.empty()
+      ? std::optional<std::vector<LifetimeBinding>>(std::in_place)
+      : matchUniversalTypeLifetimes(canonical, actual, environment.parameters);
   auto bindings = callableLifetimeTargetBindings(*canonical.lambdaReturnType(),
       canonical.lambdaParameterTypes(), invocation, requested.signature);
   if (!fixed || !bindings)
@@ -788,7 +798,15 @@ inline std::optional<LambdaCallableLifetimeTarget> lambdaCallableLifetimeTarget(
         return std::nullopt;
     }
   }
-  auto mappedEnvironment = substituteLifetimeContract(environment, *bindings);
+  auto selectedEnvironment = environment;
+  {
+    const auto selected = lambdaEnclosingTypeSelection(recorded, actual);
+    for (auto &bound : selectedEnvironment.typeBounds)
+      bound.type = selectLambdaEnclosingTypes(std::move(bound.type), selected);
+    for (auto &node : selectedEnvironment.requirements.nodes)
+      node.type = selectLambdaEnclosingTypes(std::move(node.type), selected);
+  }
+  auto mappedEnvironment = substituteLifetimeContract(selectedEnvironment, *bindings);
   if (!mappedEnvironment ||
       !validLambdaEnvironmentContract(*mappedEnvironment, mappedEnvironment->parameters))
     return std::nullopt;

@@ -300,6 +300,59 @@ inline std::optional<std::vector<LifetimeBinding>> matchTypeLifetimeSlots(
 
 } // namespace lifetime_detail
 
+// A closure recorded in a generic body names its enclosing type parameters,
+// while an instance's closure type carries the selected enclosing arguments.
+// The selection maps each recorded enclosing type parameter to its argument;
+// regions inside those arguments are copied from `actual`, so they match only
+// themselves. Packs are left as recorded.
+using LambdaEnclosingTypeSelection =
+    std::vector<std::pair<GenericParameterId, SemanticType>>;
+
+inline LambdaEnclosingTypeSelection lambdaEnclosingTypeSelection(
+    const SemanticType &universal, const SemanticType &actual) {
+  LambdaEnclosingTypeSelection selected;
+  if (!universal.hasLambdaShape() || !actual.hasLambdaShape() ||
+      universal.lambdaEnclosingClassTypes.size() != actual.lambdaEnclosingClassTypes.size() ||
+      universal.lambdaEnclosingFunctionTypes.size() != actual.lambdaEnclosingFunctionTypes.size())
+    return selected;
+  const auto collect = [&](const std::vector<SemanticType> &patterns,
+                           const std::vector<SemanticType> &actuals) {
+    for (std::size_t index = 0; index < patterns.size(); ++index)
+      if (patterns[index].kind == SemanticType::TypeParameter &&
+          patterns[index].genericParameterId != 0 &&
+          actuals[index].kind != SemanticType::TypeParameter)
+        selected.emplace_back(patterns[index].genericParameterId, actuals[index]);
+  };
+  collect(universal.lambdaEnclosingClassTypes, actual.lambdaEnclosingClassTypes);
+  collect(universal.lambdaEnclosingFunctionTypes, actual.lambdaEnclosingFunctionTypes);
+  return selected;
+}
+
+inline SemanticType selectLambdaEnclosingTypes(SemanticType type,
+                                               const LambdaEnclosingTypeSelection &selected) {
+  if (selected.empty())
+    return type;
+  const auto replace = [&](auto &&self, SemanticType &current, std::size_t depth) -> void {
+    if (depth >= 256)
+      return;
+    if (current.kind == SemanticType::TypeParameter)
+      for (const auto &[parameter, argument] : selected)
+        if (current.genericParameterId == parameter) {
+          current = argument;
+          return;
+        }
+    lifetime_detail::children(current, [&](SemanticType &child) { self(self, child, depth + 1); });
+  };
+  replace(replace, type, 0);
+  return type;
+}
+
+inline SemanticType instantiateLambdaEnclosingTypes(SemanticType universal,
+                                                    const SemanticType &actual) {
+  const auto selected = lambdaEnclosingTypeSelection(universal, actual);
+  return selectLambdaEnclosingTypes(std::move(universal), selected);
+}
+
 // Exact structural matching for a universal declaration view. This only
 // identifies a substitution; callers must separately prove all its bounds.
 inline std::optional<std::vector<LifetimeBinding>> matchUniversalTypeLifetimes(

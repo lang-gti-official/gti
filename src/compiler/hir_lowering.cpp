@@ -492,6 +492,41 @@ private:
     return result;
   }
 
+  // Initializer-only bodies (declaration-field initializers, and generated or
+  // defaulted constructors that run them) have no source body facts: each
+  // initializer was checked in the class initializer model. Their body
+  // inventory is exactly those checked call applications; MIR re-proves each.
+  void synthesizeInitializerLifetimeBody(HirBody &body) {
+    if (!(body.lifetimeBody == HirLifetimeBody{}))
+      return;
+    HirLifetimeBody facts{.complete = true};
+    const auto append = [](auto &values, const auto &value) {
+      if (std::find(values.begin(), values.end(), value) == values.end())
+        values.push_back(value);
+    };
+    for (const auto &value : body.values) {
+      const auto &application = value.lifetimeApplication;
+      if (application.bindings.empty() && application.variables.empty() &&
+          application.obligations.empty() && application.typeObligations.empty() &&
+          application.origins.empty())
+        continue;
+      facts.complete = facts.complete && application.complete;
+      for (const auto variable : application.variables)
+        append(facts.variables, variable);
+      for (const auto bound : application.obligations)
+        append(facts.obligations, bound);
+      for (const auto &bound : application.typeObligations)
+        append(facts.typeObligations, bound);
+      for (const auto &origin : application.origins)
+        append(facts.origins, origin);
+    }
+    if (facts.variables.empty() && facts.obligations.empty() &&
+        facts.typeObligations.empty() && facts.origins.empty())
+      return;
+    ensurePlaceDomain(body);
+    body.lifetimeBody = std::move(facts);
+  }
+
   void lowerLifetimeBody(const SemanticLifetimeBody *facts, HirBody &body) {
     if (!facts)
       return;
@@ -2391,6 +2426,7 @@ private:
     output.program.classes[index].fields = std::move(fields);
     finalizeLifetimes(fieldInitializers, *model, fieldBindings);
     lowerLoans(*model, fieldInitializers);
+    synthesizeInitializerLifetimeBody(fieldInitializers);
     finishInitializerSourceDebug(fieldInitializers);
     output.program.classes[index].fieldInitializers =
         std::move(fieldInitializers);
@@ -2459,6 +2495,7 @@ private:
     output.program.classes[index].staticFields = std::move(staticFields);
     finalizeLifetimes(staticFieldInitializers, *model, staticFieldBindings);
     lowerLoans(*model, staticFieldInitializers);
+    synthesizeInitializerLifetimeBody(staticFieldInitializers);
     finishInitializerSourceDebug(staticFieldInitializers);
     output.program.classes[index].staticFieldInitializers =
         std::move(staticFieldInitializers);
@@ -3426,6 +3463,7 @@ private:
     if (!snapshot.generatedDefault && snapshot.source->body())
       lowerLifetimeBody(bodyModel.findLifetimeBody(*snapshot.source->body()),
                         body);
+    synthesizeInitializerLifetimeBody(body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
     output.program.constructors[index].parameterBindings =

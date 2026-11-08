@@ -726,6 +726,19 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
   for (auto &bound : concreteFunction.lifetimeContract.typeBounds)
     bound.type = substituteType(bound.type, substitution);
   concreteFunction.returnType = canonical->returnType;
+  if (concreteFunction.returnType.kind == SemanticType::Reference &&
+      concreteFunction.returnType.arguments.size() == 1 &&
+      !containsOpenTypeParameter(concreteFunction.returnType.arguments.front()) &&
+      !typeTraits(concreteFunction.returnType.arguments.front()).containsBorrowedState) {
+    // The concrete referent stores no references: see subsumedByPhysicalShell.
+    if (std::getenv("GTI_TRACE_SUBSUME") && function->declaration) // TEMP-TRACE
+      std::fprintf(stderr, "[subsume-inst] %s line=%u fields=%zu complete=%zu\n", function->declaration->name().lexeme.c_str(), static_cast<unsigned>(function->declaration->name().line), concreteFunction.returnBorrowFields.size(), concreteFunction.completeReturnBorrow ? concreteFunction.completeReturnBorrow->dependencies.size() : 0); // TEMP-TRACE
+    if (!std::getenv("GTI_NO_SUBSUME")) // TEMP-TRACE bisect
+      removeShellSubsumedSuppliers(concreteFunction.returnBorrowFields);
+    if (concreteFunction.completeReturnBorrow)
+      if (!std::getenv("GTI_NO_SUBSUME")) // TEMP-TRACE bisect
+        removeShellSubsumedSuppliers(concreteFunction.completeReturnBorrow->dependencies);
+  }
   concreteFunction.parameterTypes = canonical->parameterTypes;
   concreteFunction.requirements = canonical->requirements;
   concreteFunction.lifetimeContract = canonical->lifetimeContract;
@@ -9284,10 +9297,20 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         continue;
       }
       const auto *receiver = exprAs<Get>(expr.callee().get());
+      // As for a single candidate: through an overloaded `p->method()`, the
+      // receiver is the selected operator-> result (the member expression).
+      bool projectedReceiver = false;
+      if (receiver && receiver->access().kind == TokenKind::ARROW)
+        for (const auto *found : {semanticModel.findOperator(*receiver),
+                                  semanticModel.findProjectionOperator(*receiver)})
+          projectedReceiver = projectedReceiver ||
+                              (found && found->kind == OverloadedOperator::Arrow);
       if (!applyCallLifetimeContract(
               resolved, argumentsFor(candidateArguments), expr.paren(),
               resolved.ownerClass != 0 && !resolved.staticMember && receiver
-                  ? receiver->object().get() : nullptr, false))
+                  ? (projectedReceiver ? static_cast<const Expr *>(receiver)
+                                       : receiver->object().get())
+                  : nullptr, false))
         continue;
       bool exact = true;
       std::vector<std::size_t> checkedArguments;

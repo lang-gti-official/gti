@@ -765,8 +765,10 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
     }
     const auto resolve = [&](Lifetime &region) {
       if (!isHole(region)) {
-        if (!region.declarationRegion())
+        if (!region.declarationRegion()) {
           valid = false;
+          if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[norm] non-declaration region %d:%llu in kind=%d\n", static_cast<int>(region.kind), (unsigned long long)region.id, static_cast<int>(type.kind)); // TEMP-TRACE
+        }
         return;
       }
       if (input) {
@@ -857,9 +859,13 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
       appendUnique(contract.typeBounds, bound);
   } else {
     valid = false;
+    if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[norm] requirements formula failed\n"); // TEMP-TRACE
   }
-  for (const auto &parameter : parameterTypes)
-    valid = collectNominalFormationAssumptions(parameter, contract) && valid;
+  for (const auto &parameter : parameterTypes) {
+    const bool formed = collectNominalFormationAssumptions(parameter, contract); // TEMP-TRACE
+    if (!formed && std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[norm] formation failed kind=%d %s\n", static_cast<int>(parameter.kind), typeSpelling(parameter).c_str()); // TEMP-TRACE
+    valid = formed && valid;
+  }
   valid = collectNominalFormationAssumptions(returnType, contract) && valid;
   contract.complete = valid;
   return {.contract = std::move(contract), .ambiguousResult = ambiguousResult};
@@ -1138,6 +1144,41 @@ auto SemanticVisitor::Impl::requireLifetimeRelationship(
   return true;
 }
 
+// Region names are memoized per (token, slot) so re-analysis is stable, but
+// desugared steps (a range loop's begin, end, dereference and element) share
+// one token. One (place, source) origin keeps its region for the whole body,
+// including speculative applications later withdrawn; a region already naming
+// another origin is skipped instead of merging distinct origins.
+auto SemanticVisitor::Impl::localOriginRegion(const Token &token,
+                                              const SemanticLoanPlace &place,
+                                              const Expr *source, std::size_t &slot)
+    -> Lifetime {
+  if (std::getenv("GTI_NO_ORIGIN_MEMO")) // TEMP-TRACE bisect
+    return Lifetime::local(inferredLifetime(token, std::numeric_limits<std::size_t>::max() - slot++).id); // TEMP-TRACE
+  auto &memo = loanFlow.originRegionMemo;
+  if (const auto known = std::find_if(memo.begin(), memo.end(),
+          [&](const SemanticLifetimeOrigin &origin) {
+            return origin.place == place && origin.source == source;
+          });
+      known != memo.end())
+    return known->region;
+  const auto witnessedElsewhere = [&](Lifetime candidate) {
+    const auto other = [&](const SemanticLifetimeOrigin &origin) {
+      return origin.region == candidate &&
+             !(origin.place == place && origin.source == source);
+    };
+    return std::any_of(memo.begin(), memo.end(), other) ||
+           std::any_of(loanFlow.lifetimeOrigins.begin(), loanFlow.lifetimeOrigins.end(), other);
+  };
+  auto region = Lifetime::local(
+      inferredLifetime(token, std::numeric_limits<std::size_t>::max() - slot++).id);
+  for (std::size_t attempt = 0; attempt < 4096 && witnessedElsewhere(region); ++attempt)
+    region = Lifetime::local(
+        inferredLifetime(token, std::numeric_limits<std::size_t>::max() - slot++).id);
+  memo.push_back({.region = region, .place = place, .source = source});
+  return region;
+}
+
 auto SemanticVisitor::Impl::recordReferenceLifetimeBinding(
     const SemanticType &reference, const ExprPtr &initializer) -> void {
   if (!initializer || reference.kind != SemanticType::Reference ||
@@ -1148,8 +1189,8 @@ auto SemanticVisitor::Impl::recordReferenceLifetimeBinding(
     const auto place = retainedLoanPlace(initializer);
     source = lifetimeOfOriginPlace(place);
     if (!source.specified() && place.valid()) {
-      source = Lifetime::local(inferredLifetime(
-          expressionToken(initializer), std::numeric_limits<std::size_t>::max()).id);
+      std::size_t slot = 0;
+      source = localOriginRegion(expressionToken(initializer), place, initializer.get(), slot);
       appendUnique(loanFlow.lifetimeOrigins,
                    SemanticLifetimeOrigin{.region = source, .place = place,
                                           .source = initializer.get()});
@@ -1514,8 +1555,7 @@ auto SemanticVisitor::Impl::applyCallLifetimeContract(
       if (origin.place == place && origin.source == source)
         return origin.region;
     const Token token = source && place.valid() ? expressionToken(*source) : site;
-    const auto region = Lifetime::local(
-        inferredLifetime(token, std::numeric_limits<std::size_t>::max() - originSlot++).id);
+    const auto region = localOriginRegion(token, place, source, originSlot);
     appendUnique(application.origins,
                  SemanticLifetimeOrigin{.region = region, .place = place,
                                         .source = source});
@@ -1729,6 +1769,9 @@ auto SemanticVisitor::Impl::finalizeLifetimeBody() -> void {
                             .obligations = loanFlow.lifetimeObligations,
                             .typeObligations = loanFlow.lifetimeTypeObligations,
                             .origins = loanFlow.lifetimeOrigins};
+  if (std::getenv("GTI_TRACE_SEM_ORIGINS")) // TEMP-TRACE
+    for (const auto &origin : body.origins) // TEMP-TRACE
+      std::fprintf(stderr, "[sem-origin] name=%s region=%d:%llu root=%llu proj=%zu source=%p line=%u\n", semanticModel.database().findSymbol(origin.place.root) ? semanticModel.database().findSymbol(origin.place.root)->name.c_str() : "-", static_cast<int>(origin.region.kind), (unsigned long long)origin.region.id, (unsigned long long)origin.place.root, origin.place.projections.size(), (const void *)origin.source, origin.source ? static_cast<unsigned>(expressionToken(*origin.source).line) : 0u); // TEMP-TRACE
   const bool valid = validateLifetimeConstraints();
   body.complete = valid && !loanFlow.deferredGenericFlow;
   if (!valid && !loanFlow.deferredGenericFlow) {

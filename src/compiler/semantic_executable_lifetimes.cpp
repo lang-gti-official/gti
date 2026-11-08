@@ -304,15 +304,21 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
     if (pattern && (pattern->kind == SemanticType::TypeParameter ||
                     pattern->kind == SemanticType::TypePack))
       pattern = nullptr;
-    if (type.hasLambdaShape()) {
-      const auto *lambda = semanticModel.findLambda(type.lambdaId);
-      if (!lambda && instanceBaseModel)
-        lambda = instanceBaseModel->findLambda(type.lambdaId);
+    const auto *lambda = type.hasLambdaShape() ? semanticModel.findLambda(type.lambdaId)
+                                               : nullptr;
+    if (type.hasLambdaShape() && !lambda && instanceBaseModel)
+      lambda = instanceBaseModel->findLambda(type.lambdaId);
+    // An environment-free lambda has no declared environment slot to
+    // canonicalize. Its actual type (possibly a generic instance's) is kept;
+    // any regions in its enclosing types are lifted below like any type's.
+    if (type.hasLambdaShape() && !(lambda && lambda->environmentLifetimes.empty())) {
+      const auto universalType = lambda ? instantiateLambdaEnclosingTypes(lambda->type, type)
+                                        : SemanticType(SemanticType::Unknown);
       const auto environment = lambda && lambda->type.hasLambdaShape()
-          ? matchUniversalTypeLifetimes(lambda->type, type, lambda->environmentLifetimes)
+          ? matchUniversalTypeLifetimes(universalType, type, lambda->environmentLifetimes)
           : std::nullopt;
       if (!environment || environment->size() != lambda->environmentLifetimes.size()) {
-        { valid = false; if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-lift] invalid at %d\n", __LINE__); } // TEMP-TRACE
+        { valid = false; if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-lift] invalid at %d lambda=%d env=%d envSize=%zu declared=%zu universal=%s actual=%s\n", __LINE__, lambda != nullptr, environment.has_value(), environment ? environment->size() : 0, lambda ? lambda->environmentLifetimes.size() : 0, lambda ? typeSpelling(lambda->type).c_str() : "", typeSpelling(type).c_str()); } // TEMP-TRACE
         return;
       }
       std::vector<LifetimeBinding> liftedEnvironment;
@@ -339,7 +345,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
         // independently of equality between separate actual capture regions.
         bound.emplace_back(universal, universal);
       }
-      const auto canonical = substituteTypeLifetimes(lambda->type, liftedEnvironment);
+      const auto canonical = substituteTypeLifetimes(universalType, liftedEnvironment);
       if (!canonical) {
         { valid = false; if (std::getenv("GTI_TRACE_LIFETIME_REQ")) std::fprintf(stderr, "[exec-lift] invalid at %d\n", __LINE__); } // TEMP-TRACE
         return;
@@ -544,6 +550,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
   if (!result.lifetimeContract.valid()) {
     if (std::getenv("GTI_TRACE_LIFETIME_REQ")) { // TEMP-TRACE
       const auto &c = result.lifetimeContract; // TEMP-TRACE
+      std::fprintf(stderr, "[exec-canon] fn=%s base-complete=%d\n", function && function->declaration ? function->declaration->name().lexeme.c_str() : "-", function ? function->lifetimeContract.complete : -1); // TEMP-TRACE
       std::fprintf(stderr, "[exec-canon] invalid contract complete=%d origin=%d params=%zu receiver=%d:%llu typeBounds=%zu nodes=%zu ambiguous=%d\n", c.complete, static_cast<int>(c.origin), c.parameters.size(), static_cast<int>(c.receiver.kind), (unsigned long long)c.receiver.id, c.typeBounds.size(), c.requirements.nodes.size(), normalized.ambiguousResult); // TEMP-TRACE
       for (const auto p : c.parameters) std::fprintf(stderr, "[exec-canon]   param %d:%llu\n", static_cast<int>(p.kind), (unsigned long long)p.id); // TEMP-TRACE
       for (const auto &b : c.typeBounds) std::fprintf(stderr, "[exec-canon]   tb region %d:%llu\n", static_cast<int>(b.region.kind), (unsigned long long)b.region.id); // TEMP-TRACE

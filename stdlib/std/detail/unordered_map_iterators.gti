@@ -112,11 +112,13 @@ public:
   bool operator==(unordered_map_iterator<K, V>& other) { return this.current == other.current; }
 };
 
-class unordered_map_entry_projection<K, V> {
-  mut unordered_map_nodes<K, V>& nodes;
+// The node storage region is named so a mutable iterator can lend this exact
+// projection: a mutable reference keeps its referent's regions invariant.
+class unordered_map_entry_projection<K, V, lifetime storage> {
+  mut unordered_map_nodes<K, V>&<storage> nodes;
   mut size_t current;
 public:
-  unordered_map_entry_projection(mut unordered_map_nodes<K, V>& nodes,
+  unordered_map_entry_projection(mut unordered_map_nodes<K, V>&<storage> nodes,
                              size_t position) : nodes(nodes), current(position) {}
   map_entry<K, V>& read_entry() {
     gti_internal::require_container_argument(this.current < this.nodes.size());
@@ -141,19 +143,19 @@ public:
   }
 };
 
-class unordered_map_mut_iterator<K, V> {
-  mut unordered_map_entry_projection<K, V> projection;
+class unordered_map_mut_iterator<K, V, lifetime storage> {
+  mut unordered_map_entry_projection<K, V, storage> projection;
 public:
-  unordered_map_mut_iterator(mut unordered_map_nodes<K, V>& nodes,
+  unordered_map_mut_iterator(mut unordered_map_nodes<K, V>&<storage> nodes,
                              size_t position)
-      : projection(unordered_map_entry_projection<K, V>(nodes, position)) {}
+      : projection(unordered_map_entry_projection<K, V, storage>(nodes, position)) {}
   map_entry<K, V>& operator*() { return this.projection.read_entry(); }
-  mut unordered_map_entry_projection<K, V>& operator*() mut {
+  mut unordered_map_entry_projection<K, V, storage>& operator*() mut {
     gti_internal::require_container_argument(this.projection.index() < this.projection.limit());
     return this.projection;
   }
   map_entry<K, V>& operator->() { return *this; }
-  mut unordered_map_entry_projection<K, V>& operator->() mut { return *this; }
+  mut unordered_map_entry_projection<K, V, storage>& operator->() mut { return *this; }
   K& key() { return this.projection.key(); }
   void operator++() mut { this.projection.advance(); }
   bool operator!=(unordered_map_sentinel end) { return this.projection.index() != end.position(); }

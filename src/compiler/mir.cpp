@@ -10617,6 +10617,8 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
             (elementLoan->parent != range.rangeLoan && !physicalProxy))) ||
           (physicalCursor != nullptr && !physicalProxy &&
            !range.materializesElementValue)))) {
+      if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+        std::fprintf(stderr, "[range-loan] rangeLoan=%llu access=%d elementAccess=%d escapes=%d elementLoanId=%llu elementLoan=%d elAccess=%d elEscapes=%d elParent=%llu physicalCursor=%d proxy=%d materializes=%d\n", (unsigned long long)rangeLoan->id, static_cast<int>(rangeLoan->access), static_cast<int>(range.elementAccess), rangeLoan->escapes, (unsigned long long)range.elementLoan, elementLoan != nullptr, elementLoan ? static_cast<int>(elementLoan->access) : -1, elementLoan ? elementLoan->escapes : 0, elementLoan ? (unsigned long long)elementLoan->parent : 0ull, physicalCursor != nullptr, static_cast<int>(physicalProxy), range.materializesElementValue); // TEMP-TRACE
       return failure(body, owner,
                      "range iteration contains an incoherent or escaping "
                      "range/element loan");

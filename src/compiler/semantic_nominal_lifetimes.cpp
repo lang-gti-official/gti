@@ -282,6 +282,10 @@ auto SemanticVisitor::Impl::nominalFormationRequirements(
       const auto *lambda = semanticModel.findLambda(current.lambdaId);
       if (!lambda && instanceBaseModel)
         lambda = instanceBaseModel->findLambda(current.lambdaId);
+      // An environment-free closure has no environment slot to form; its
+      // recorded type may be a generic body's while `current` is an instance.
+      if (lambda && lambda->environmentLifetimes.empty())
+        return true;
       const auto formula = lambda ? lambdaEnvironmentLifetimeRequirements(
           lambda->type, current, lambda->environmentContract) : std::nullopt;
       // Only fixed environment WF escapes the closure's invocation scope.

@@ -592,6 +592,22 @@ bool resolveOrigins(Facts &application, const MirBody &body) {
       if (!selected || place.id < selected->id)
         selected = &place;
     }
+    // A keyed origin may name its owner through a retained alias (a range
+    // element's iterator) that lowers to no place of its own. Its exact
+    // source expression still designates one lowered place: use it.
+    if (!selected && origin.key.valid() && origin.source != 0) {
+      bool ambiguous = false;
+      for (const auto &place : body.places) {
+        if (place.sourceValue != origin.source || place.id == 0)
+          continue;
+        if (selected && !(selected->key && place.key && *selected->key == *place.key))
+          ambiguous = true;
+        if (!selected || place.id < selected->id)
+          selected = &place;
+      }
+      if (ambiguous)
+        selected = nullptr;
+    }
     if (!selected || selected->id == 0 ||
         (origin.place != 0 && origin.place != selected->id)) {
       if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { // TEMP-TRACE
@@ -606,9 +622,10 @@ bool resolveOrigins(Facts &application, const MirBody &body) {
           if ((place.root == MirPlaceRootKind::This && place.projections.empty()) || // TEMP-TRACE
               (origin.source && place.sourceValue == origin.source) || // TEMP-TRACE
               (origin.key.valid() && place.key && place.key->root == origin.key.root)) // TEMP-TRACE
-            std::fprintf(stderr, "[origin]   place=%llu root=%d projections=%zu hasKey=%d keyEq=%d\n", // TEMP-TRACE
+          { std::string kp; if (place.key) for (const auto &pp : place.key->projections) kp += std::to_string(static_cast<int>(pp.kind)) + "/" + std::to_string(pp.field) + "/i" + std::to_string(pp.index) + "/s" + std::to_string(pp.selection) + "/b" + std::to_string(pp.baseOwner) + " "; if (place.key) kp += " dom=" + std::to_string(place.key->domain.snapshot) + ":" + std::to_string(place.key->domain.body) + ":" + std::to_string(place.key->domain.revision) + " odom=" + std::to_string(origin.key.domain.snapshot) + ":" + std::to_string(origin.key.domain.body) + ":" + std::to_string(origin.key.domain.revision) + " oproj=" + (origin.key.projections.empty() ? std::string("-") : std::to_string(origin.key.projections.front().selection) + "/b" + std::to_string(origin.key.projections.front().baseOwner) + "/i" + std::to_string(origin.key.projections.front().index)); // TEMP-TRACE
+            std::fprintf(stderr, "[origin]   place=%llu root=%d projections=%zu hasKey=%d keyEq=%d keyproj=[%s] keyrecv=%d keyroot=%llu\n", // TEMP-TRACE
                          (unsigned long long)place.id, static_cast<int>(place.root), place.projections.size(), // TEMP-TRACE
-                         place.key ? 1 : 0, place.key && *place.key == origin.key ? 1 : 0); // TEMP-TRACE
+                         place.key ? 1 : 0, place.key && *place.key == origin.key ? 1 : 0, kp.c_str(), place.key ? place.key->receiver : 0, place.key ? (unsigned long long)place.key->root : 0ull); } // TEMP-TRACE
       } // TEMP-TRACE
       return false;
     }
@@ -915,7 +932,7 @@ instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
       !application.typeObligations.empty() || !application.origins.empty();
   if (!regionSignature && !contractRequirements && !applicationRequirements) {
     if (contract != LifetimeSignatureContract{} && !contract.valid())
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
     // Legacy region-free MIR has no lifetime substitution to prove. Preserve
     // its exact signature; this cannot erase a region or an incomplete bound.
     return MirInstantiatedLifetimeSignature{
@@ -925,24 +942,24 @@ instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
   if (!contract.valid() || !contract.requirements.resolved() || !application.complete ||
       application.bindings.size() != contract.parameters.size() ||
       !scopedDeclarationType(returnType, contract.parameters))
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   for (const auto &type : parameterTypes)
     if (!scopedDeclarationType(type, contract.parameters))
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   for (const auto &bound : contract.typeBounds)
     if (!scopedDeclarationType(bound.type, contract.parameters))
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   for (const auto &node : contract.requirements.nodes)
     if (node.kind == LifetimeRequirementNode::Kind::Type &&
         !scopedDeclarationType(node.type, contract.parameters))
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   for (std::size_t index = 0; index < application.variables.size(); ++index) {
     const auto variable = application.variables[index];
     if (variable.kind != Lifetime::Kind::Inference || !variable.specified() ||
         std::find(application.variables.begin(),
                   application.variables.begin() + index,
                   variable) != application.variables.begin() + index)
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   }
   for (std::size_t index = 0; index < application.bindings.size(); ++index) {
     const auto [parameter, actual] = application.bindings[index];
@@ -955,7 +972,7 @@ instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
         (actual.kind == Lifetime::Kind::Inference &&
          std::find(application.variables.begin(), application.variables.end(),
                    actual) == application.variables.end()))
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   }
   for (const auto bound : contract.bounds) {
     const LifetimeBound required{
@@ -964,7 +981,7 @@ instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
     if (std::find(application.obligations.begin(),
                   application.obligations.end(),
                   required) == application.obligations.end())
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   }
   for (const auto &bound : contract.typeBounds) {
     // The call's actual argument discharges a bound implied by a reference
@@ -974,22 +991,22 @@ instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
       continue;
     auto type = substituteTypeLifetimes(bound.type, application.bindings);
     if (!type)
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
     const LifetimeTypeBound required{
         std::move(*type), applyLifetime(bound.region, application.bindings)};
     if (std::find(application.typeObligations.begin(),
                   application.typeObligations.end(),
                   required) == application.typeObligations.end())
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { std::fprintf(stderr, "[ims] fail at %d required kind=%d class=%llu lambda=%llu regions=%zu ref=%d:%llu region=%d:%llu\n", __LINE__, static_cast<int>(required.type.kind), (unsigned long long)required.type.classId, (unsigned long long)required.type.lambdaId, required.type.lifetimeArguments.size(), static_cast<int>(required.type.referenceLifetime.kind), (unsigned long long)required.type.referenceLifetime.id, static_cast<int>(required.region.kind), (unsigned long long)required.region.id); for (const auto &have : application.typeObligations) { std::fprintf(stderr, "[ims]   have kind=%d class=%llu lambda=%llu regions=%zu region=%d:%llu eqErased=%d\n", static_cast<int>(have.type.kind), (unsigned long long)have.type.classId, (unsigned long long)have.type.lambdaId, have.type.lifetimeArguments.size(), static_cast<int>(have.region.kind), (unsigned long long)have.region.id, eraseTypeLifetimes(have.type) == eraseTypeLifetimes(required.type)); for (auto r : have.type.lifetimeArguments) std::fprintf(stderr, "[ims]     arg %d:%llu\n", static_cast<int>(r.kind), (unsigned long long)r.id); } for (auto r : required.type.lifetimeArguments) std::fprintf(stderr, "[ims]   req arg %d:%llu\n", static_cast<int>(r.kind), (unsigned long long)r.id); for (const auto &a : required.type.arguments) std::fprintf(stderr, "[ims]   req targ kind=%d gp=%llu\n", static_cast<int>(a.kind), (unsigned long long)a.genericParameterId); for (const auto &have : application.typeObligations) for (const auto &a : have.type.arguments) std::fprintf(stderr, "[ims]   have targ kind=%d gp=%llu\n", static_cast<int>(a.kind), (unsigned long long)a.genericParameterId); if (receiverOwner) { std::fprintf(stderr, "[ims]   owner class=%llu\n", (unsigned long long)receiverOwner->classId); for (const auto &a : receiverOwner->arguments) std::fprintf(stderr, "[ims]   owner targ kind=%d\n", static_cast<int>(a.kind)); } std::fprintf(stderr, "[ims]   contract receiver=%d:%llu bound.region=%d:%llu\n", static_cast<int>(contract.receiver.kind), (unsigned long long)contract.receiver.id, static_cast<int>(bound.region.kind), (unsigned long long)bound.region.id); } return std::nullopt; } // TEMP-TRACE
   }
   auto result = substituteTypeLifetimes(returnType, application.bindings);
   if (!result)
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
   MirInstantiatedLifetimeSignature signature{.returnType = std::move(*result)};
   for (const auto &parameter : parameterTypes) {
     auto type = substituteTypeLifetimes(parameter, application.bindings);
     if (!type)
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
     signature.parameterTypes.push_back(std::move(*type));
   }
   return signature;
@@ -1427,7 +1444,13 @@ verifyMirLifetimeBodyFactsForCase(const MirProgram &program, const MirBody &body
                     [&](const auto &previous) {
                       return previous.region == origin.region;
                     }))
+    {
+      if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { // TEMP-TRACE
+        std::fprintf(stderr, "[origin-unique] index=%zu region=%d:%llu keyValid=%d keyDomain=%d place=%llu source=%llu\n", index, static_cast<int>(origin.region.kind), (unsigned long long)origin.region.id, origin.key.valid(), origin.key.valid() && origin.key.domain == body.placeDomain, (unsigned long long)origin.place, (unsigned long long)origin.source); // TEMP-TRACE
+        for (const auto &other : facts.origins) std::fprintf(stderr, "[origin-unique]   region=%d:%llu place=%llu source=%llu root=%llu\n", static_cast<int>(other.region.kind), (unsigned long long)other.region.id, (unsigned long long)other.place, (unsigned long long)other.source, (unsigned long long)other.key.root); // TEMP-TRACE
+      } // TEMP-TRACE
       reject("MIR local lifetime has no unique body-owned origin witness");
+    }
   }
   const auto known = [&](Lifetime region) {
     if (!region.specified())
@@ -1813,9 +1836,12 @@ public:
           stage->operands.front().place)
         if (const auto *place = body.findPlace(stage->operands.front().place)) {
           const auto known = declaredPlaceRegion(*place);
-          if (known.specified())
-            return graph.proves(known, target);
-          return originPlaceProves(*place, target) || loanSubobjectProves(*place, target);
+          if (known.specified() && graph.proves(known, target))
+            return true;
+          if (!known.specified() &&
+              (originPlaceProves(*place, target) || loanSubobjectProves(*place, target)))
+            return true;
+          return aliasReferentProves(*place, target);
         }
     if (actual->kind == MirOperandKind::Value)
       if (const auto *stage = definition(actual->value);
@@ -1879,8 +1905,12 @@ public:
             selected = known;
           }
         }
-      if (selected)
-        return graph.proves(*selected, target);
+      if (selected) {
+        if (graph.proves(*selected, target))
+          return true;
+        const auto *place = actual->place ? body.findPlace(actual->place) : nullptr;
+        return place && aliasReferentProves(*place, target);
+      }
     }
     // A selected stored reference may use its carrier's abstract entry place
     // for origin bookkeeping. That place's outer storage region does not name
@@ -1898,10 +1928,12 @@ public:
         if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
           std::fprintf(stderr, "[borrowedOperand]  place p%llu known=%d:%llu origin=%d sub=%d\n", (unsigned long long)place->id, static_cast<int>(known.kind), (unsigned long long)known.id, originPlaceProves(*place, target), loanSubobjectProves(*place, target)); // TEMP-TRACE
         if (known.specified())
-          return graph.proves(known, target);
+          return graph.proves(known, target) || aliasReferentProves(*place, target);
         if (originPlaceProves(*place, target))
           return true;
         if (loanSubobjectProves(*place, target))
+          return true;
+        if (aliasReferentProves(*place, target))
           return true;
       }
     if (actual->kind == MirOperandKind::Loan)
@@ -2212,6 +2244,49 @@ private:
     return false;
   }
 
+  // The exact referent of a reference binding that carries one body-local
+  // loan (possibly a reborrow) is that loan's borrowed place. Semantics may check a desugared call
+  // (a range loop's begin/end over its hidden range alias) against that
+  // place's own origin; the loan's liveness is verified separately.
+  bool aliasReferentProves(const MirPlace &place, Lifetime target) const {
+    if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+      std::fprintf(stderr, "[alias] enter place=p%llu root=%d binding=%llu proj=%zu kind0=%d\n", (unsigned long long)place.id, static_cast<int>(place.root), (unsigned long long)place.binding, place.projections.size(), place.projections.empty() ? -1 : static_cast<int>(place.projections.front().kind)); // TEMP-TRACE
+    if (place.root != MirPlaceRootKind::Binding || !place.binding ||
+        place.projections.size() != 1 ||
+        place.projections.front().kind != MirProjectionKind::Dereference)
+      return false;
+    const MirLoan *carried = nullptr;
+    for (const auto &loan : body.loans)
+      if (std::find(loan.carriers.begin(), loan.carriers.end(), place.binding) !=
+          loan.carriers.end()) {
+        if (carried)
+          return false;
+        carried = &loan;
+      }
+    if (std::getenv("GTI_TRACE_MIR_ORIGIN") && carried) // TEMP-TRACE
+      std::fprintf(stderr, "[alias] carried loan=%llu kind=%d escapes=%d entry=%d parent=%llu extra=%zu source=p%llu fields=%zu\n", (unsigned long long)carried->id, static_cast<int>(carried->kind), carried->escapes, carried->entry, (unsigned long long)carried->parent, carried->additionalDependencies.size(), (unsigned long long)carried->source, carried->designatedFields.size()); // TEMP-TRACE
+    // A binding bound to a call's reference result (a range element from
+    // `*it`) designates that result's referent: the call loan's own proof.
+    if (carried && carried->kind == MirLoanKind::CallResult && !carried->escapes &&
+        !carried->entry)
+      return loanProves(carried->id, target, 0);
+    if (!carried || carried->kind != MirLoanKind::Local || carried->escapes ||
+        carried->entry || !carried->designatedFields.empty() ||
+        !carried->additionalDependencies.empty())
+      return false;
+    const auto *source = body.findPlace(carried->source);
+    if (source) {
+      // The borrowed place's own declared region (a stored reference field's
+      // referent) or exact origin is the proof, exactly as for that place.
+      const auto known = declaredPlaceRegion(*source);
+      if (known.specified())
+        return graph.proves(known, target);
+    }
+    if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+      std::fprintf(stderr, "[alias] place=p%llu loan=%llu source=p%llu proves=%d target=%d:%llu\n", (unsigned long long)place.id, (unsigned long long)carried->id, (unsigned long long)carried->source, source && originPlaceProves(*source, target), static_cast<int>(target.kind), (unsigned long long)target.id); // TEMP-TRACE
+    return source && originPlaceProves(*source, target);
+  }
+
   // A loan's referent, and any inline field chain over it, lives in exactly
   // that loan's region; a dereference, index or payload selection needs its
   // own proof.
@@ -2277,6 +2352,12 @@ private:
                     ? loanProves(dependency.parent, target, depth + 1)
                     : false) &&
                proved;
+    // A call result whose referent lives in a retained stored group (an
+    // iterator's element in its range's storage) is also valid wherever that
+    // group's own source is; semantics witnesses that retained place.
+    if (!proved && loan->kind == MirLoanKind::CallResult && loan->storedDependency &&
+        loan->additionalDependencies.empty())
+      proved = loanProves(loan->storedDependency, target, depth + 1);
     return proved;
   }
   const MirProgram &program;
@@ -2459,6 +2540,13 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
                                  instruction.callInputKind == HirCallInputKind::MutableTemporaryBorrow ? 0 : 1;
             proved = relations.types(source, expected, variance, 0, true);
           }
+          if (!proved && std::getenv("GTI_TRACE_MIR_ORIGIN")) { // TEMP-TRACE
+            const auto *pl = input.place ? body.findPlace(input.place) : nullptr; // TEMP-TRACE
+            for (const auto &o : body.lifetimeBody.origins) { const auto *op = body.findPlace(o.place); std::fprintf(stderr, "[cin-or] region=%d:%llu place=p%llu root=%d binding=%llu proj=%zu source=%llu keyroot=%llu\n", static_cast<int>(o.region.kind), (unsigned long long)o.region.id, (unsigned long long)o.place, op ? static_cast<int>(op->root) : -1, op ? (unsigned long long)op->binding : 0ull, op ? op->projections.size() : 0, (unsigned long long)o.source, op && op->key ? (unsigned long long)op->key->root : 0ull); } // TEMP-TRACE
+            for (const auto &edge : body.lifetimeBody.obligations) std::fprintf(stderr, "[cin-ob] %d:%llu >= %d:%llu\n", static_cast<int>(edge.longer.kind), (unsigned long long)edge.longer.id, static_cast<int>(edge.shorter.kind), (unsigned long long)edge.shorter.id); // TEMP-TRACE
+            for (const auto &b : body.blocks) for (const auto &i : b.instructions) if (i.loan == 3 && i.kind == MirInstructionKind::Call) { const auto sig = appliedTargetSignature(program, i); std::fprintf(stderr, "[cin-sig] loan3 producer inst=%llu ret=%d:%llu\n", (unsigned long long)i.id, sig ? static_cast<int>(sig->returnType.referenceLifetime.kind) : -1, sig ? (unsigned long long)sig->returnType.referenceLifetime.id : 0ull); } // TEMP-TRACE
+            std::fprintf(stderr, "[cin] inst=%llu prevStage=%d actualKind=%d actualRef=%d:%llu expectedKind=%d expectedRef=%d:%llu inputKind=%d place=p%llu root=%d binding=%llu proj=%zu callInputKind=%d\n", (unsigned long long)instruction.id, previousStage, static_cast<int>(actual->kind), static_cast<int>(actual->referenceLifetime.kind), (unsigned long long)actual->referenceLifetime.id, static_cast<int>(expected.kind), static_cast<int>(expected.referenceLifetime.kind), (unsigned long long)expected.referenceLifetime.id, static_cast<int>(input.kind), (unsigned long long)input.place, pl ? static_cast<int>(pl->root) : -1, pl ? (unsigned long long)pl->binding : 0ull, pl ? pl->projections.size() : 0, static_cast<int>(instruction.callInputKind)); // TEMP-TRACE
+          } // TEMP-TRACE
           if (!proved)
             reject("MIR call-input stage does not prove its original source lifetime conversion",
                    block.id, instruction.id);
@@ -2585,6 +2673,8 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
         if (!signature || (instruction.intrinsic != IntrinsicKind::FunctionPointerInvoke &&
                            !referenceErasureIntrinsic(instruction.intrinsic) &&
                            !instruction.nativeCalleeType && instruction.lifetimeApplication.callableSignature)) {
+          if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+            std::fprintf(stderr, "[cover] inst=%llu signature=%d callableSignature=%d lambda=%d fn=%d\n", (unsigned long long)instruction.id, signature.has_value(), instruction.lifetimeApplication.callableSignature.has_value(), instruction.lambdaTarget.has_value(), instruction.functionTarget.has_value()); // TEMP-TRACE
           reject("MIR call lifetime substitution does not cover its exact "
                  "target contract",
                  block.id, instruction.id);
@@ -2688,7 +2778,10 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
         if (instruction.functionTarget) {
           const auto *target =
               program.findFunctionInstance(*instruction.functionTarget);
+          // A consuming receiver is moved in, not borrowed: no caller loan
+          // supplies `this`. Its object regions are the owner-type check below.
           if (target && target->lifetimeContract.receiver.specified() &&
+              target->receiverMutability != ReceiverMutability::Consuming &&
               (!instruction.receiver ||
                !relations.borrowedOperand(
                    *instruction.receiver,

@@ -6451,10 +6451,14 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
         while (const auto *group = exprAs<Grouping>(object))
           object = group->expression().get();
       }
+      if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+        std::fprintf(stderr, "[inline-call] line=%d inlineField=%d call=%d region=%d\n", expressionToken(value).line, inlineField, object && exprAs<Call>(object) != nullptr, object && borrowedExpressionLifetime(object).specified()); // TEMP-TRACE
       if (inlineField && object && exprAs<Call>(object) &&
           borrowedExpressionLifetime(object).specified())
         return;
     }
+    if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+      std::fprintf(stderr, "[inline-gate] line=%d complete=%d owner=%d region=%d access=%d\n", expressionToken(value).line, completeResult.has_value(), ownerShaped(dependencies), region.specified(), static_cast<int>(valueInfo->access)); // TEMP-TRACE
     if (std::getenv("GTI_TRACE_LIFETIME_REQ")) { // TEMP-TRACE
       std::fprintf(stderr, "[retown] line=%d complete=%d deps=%zu\n", expressionToken(value).line, completeResult.has_value(), dependencies.size()); // TEMP-TRACE
       for (const auto &d : dependencies) // TEMP-TRACE
@@ -9500,8 +9504,12 @@ auto SemanticVisitor::Impl::seedExternalLambdaTypes(
     if (type.kind == SemanticType::Lambda) {
       const LambdaInfo *lambda = sourceModel.findLambda(type.lambdaId);
       if (lambda != nullptr && lambda->declaration != nullptr) {
+        // An environment-free closure has no region slot to preserve; its
+        // recorded type may be a generic body's while `type` is an instance.
         if (!lambda->type.hasLambdaShape() ||
-            !matchUniversalTypeLifetimes(lambda->type, type, lambda->environmentLifetimes)) {
+            (!lambda->environmentLifetimes.empty() &&
+             !matchUniversalTypeLifetimes(instantiateLambdaEnclosingTypes(lambda->type, type),
+                                          type, lambda->environmentLifetimes))) {
           report(lambda->declaration->bracket(),
                  "The concrete callable type does not preserve its closure lifetime environment.",
                  "GTI-S2127");
@@ -9509,7 +9517,36 @@ auto SemanticVisitor::Impl::seedExternalLambdaTypes(
         }
         // The value's environment remains on its type. Imported body metadata
         // retains declaration universals; a call supplies the fixed bindings.
-        semanticModel.record(*lambda->declaration, *lambda);
+        // Only the enclosing type parameters a generic body recorded are
+        // selected for this instance; lifetime universals stay as declared.
+        const auto selected = lambdaEnclosingTypeSelection(lambda->type, type);
+        if (selected.empty()) {
+          semanticModel.record(*lambda->declaration, *lambda);
+        } else {
+          LambdaInfo concrete = *lambda;
+          const auto select = [&](SemanticType &value) {
+            value = selectLambdaEnclosingTypes(std::move(value), selected);
+          };
+          select(concrete.type);
+          select(concrete.returnType);
+          for (auto &parameter : concrete.parameterTypes)
+            select(parameter);
+          for (auto &capture : concrete.captures) {
+            select(capture.type);
+            capture.traits = typeTraits(capture.type);
+          }
+          for (auto *contract : {&concrete.lifetimeContract, &concrete.environmentContract}) {
+            for (auto &bound : contract->typeBounds)
+              select(bound.type);
+            for (auto &node : contract->requirements.nodes)
+              select(node.type);
+          }
+          std::vector<SemanticType> captureTypes;
+          for (const auto &capture : concrete.captures)
+            captureTypes.push_back(capture.type);
+          concrete.traits = lambdaTraitsForCaptures(captureTypes);
+          semanticModel.record(*concrete.declaration, std::move(concrete));
+        }
       }
     }
     for (const SemanticType &argument : type.arguments) {

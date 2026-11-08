@@ -4014,6 +4014,22 @@ private:
             consider(projected, place->access);
         }
       }
+      // A class's checked pointee accessor (an overloaded `operator*` on the
+      // receiver, as in `return *this`) reaches storage that class owns: the
+      // semantic path ends at the handle with a Dereference that has no MIR
+      // projection on a class. Its supplier is that whole receiver place.
+      if (selected == 0 && dependency.place.receiver &&
+          !dependency.place.projections.empty() &&
+          std::all_of(dependency.place.projections.begin(),
+                      dependency.place.projections.end(), [](const auto &projection) {
+                        return projection.kind == PlaceProjectionKind::Dereference;
+                      }))
+        for (const auto &place : output.places)
+          if (place.root == MirPlaceRootKind::This && place.projections.empty() &&
+              place.type.kind == SemanticType::Class) {
+            selected = place.id;
+            break;
+          }
       if (selected == 0)
         for (const auto &place : output.places)
           if (place.root != MirPlaceRootKind::Value &&
@@ -4030,6 +4046,18 @@ private:
     }
     if (selected == 0 || ambiguous)
       return std::nullopt;
+    // The referent of an earlier call's reference result (`a.f().g()`) is
+    // that call loan's own source under that loan. Spell it exactly as the
+    // independent replay reads a loan-rooted place.
+    if (parent == 0)
+      if (const auto *place = output.findPlace(selected);
+          place && place->root == MirPlaceRootKind::Loan && place->projections.empty())
+        if (const auto *loan = output.findLoan(place->loan);
+            loan && loan->kind == MirLoanKind::CallResult && !loan->escapes &&
+            loan->additionalDependencies.empty() && loan->source != 0) {
+          selected = loan->source;
+          parent = loan->id;
+        }
     return MirLoanDependency{.source = selected,
                              .parent = parent,
                              .designatedFields = dependency.designatedFields,
@@ -17334,6 +17362,10 @@ private:
                                function->returnBorrowAccess, producer);
                 output.loans[normalized - 1].storedDependency =
                     output.loans[borrow.loan - 1].storedDependency;
+                // Every permitted supplier of the nested call's complete set
+                // is published with it, not only the primary source.
+                output.loans[normalized - 1].additionalDependencies =
+                    output.loans[borrow.loan - 1].additionalDependencies;
                 // A nested reference-returning call carries the exact referent
                 // in its CallResult loan while sourcePlace names the owner used
                 // for semantic conflict checks. Publish the former into the

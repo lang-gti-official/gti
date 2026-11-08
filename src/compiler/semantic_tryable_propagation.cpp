@@ -318,6 +318,37 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
     requireFunctionDefinition(conformance.operations[index].overloads.front(),
                               site);
   }
+  // Each step is an ordinary call on the operand, so its own declaration
+  // regions (such as the test's reference parameter) are instantiated at
+  // this site exactly as a written call would instantiate them.
+  const std::array<AnalyzedCallArgument, 1> stepInput{
+      AnalyzedCallArgument{.type = operandType, .expression = &expr.right()}};
+  const auto instantiateStep = [&](std::size_t index, ResolvedCallInfo &call) {
+    CallableCandidate candidate = conformance.operations[index].overloads.front();
+    candidate.returnType = call.returnType;
+    candidate.parameterTypes = call.parameterTypes;
+    candidate.lifetimeArguments = call.lifetimeArguments;
+    // The block's own requirements were proved by the conformance match
+    // above for this binding; only the step's regions remain to instantiate.
+    candidate.requirements.clear();
+    // Type-outlives bounds speak about the block's type parameters; select
+    // them with the same binding as the step's signature.
+    const GenericSubstitution substitution = nominalSubstitution(
+        candidate.record().genericParameters, {.types = match->binding});
+    for (auto &bound : candidate.lifetimeContract.typeBounds)
+      bound.type = substituteType(bound.type, substitution);
+    if (!applyCallLifetimeContract(candidate, stepInput, site))
+      return false;
+    commitLifetimeApplication(candidate.lifetimeApplication);
+    call.returnType = candidate.returnType;
+    call.parameterTypes = candidate.parameterTypes;
+    call.lifetimeApplication = candidate.lifetimeApplication;
+    return true;
+  };
+  if (!instantiateStep(*hasValue, *test) ||
+      !instantiateStep(*takeValue, *output) ||
+      !instantiateStep(*takeResidual, *residual))
+    return SemanticType::Unknown;
   const bool borrowedResult =
       output->returnType.kind == SemanticType::Reference;
   std::optional<SemanticBorrowDependencySet> outputDependencies;

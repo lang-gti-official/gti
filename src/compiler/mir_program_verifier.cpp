@@ -19,6 +19,7 @@
 #include "mir_verification_support.h"
 
 #include <algorithm>
+#include <iostream> // TEMP-TRACE
 #include <functional>
 #include <iterator>
 #include <limits>
@@ -16128,6 +16129,21 @@ completeBorrowSourcePath(const MirProgram &program,
       return loans != bindingLoans.end() && loans->second.size() == 1
           ? fromReferenceLoan(state, loans->second.front()) : Fact{};
     }
+    // An inline field chain of a local reference binding's referent lives in
+    // that referent's storage: its owner is this exact subobject under the
+    // binding's single capability.
+    if (place->root == MirPlaceRootKind::Binding &&
+        (!parameters || std::find(parameters->begin(), parameters->end(), place->binding) == parameters->end()) &&
+        place->projections.size() >= 2 &&
+        place->projections.front().kind == MirProjectionKind::Dereference &&
+        std::all_of(std::next(place->projections.begin()), place->projections.end(),
+                    [](const auto &projection) { return projection.kind == MirProjectionKind::Field; }))
+      if (const auto loans = bindingLoans.find(place->binding);
+          loans != bindingLoans.end() && loans->second.size() == 1)
+        if (const auto *loan = body.findLoan(loans->second.front());
+            loan && !loan->escapes && loan->additionalDependencies.empty())
+          return MirBorrowDependencySet{
+              .dependencies = {{.source = id, .parent = loan->id, .access = place->access}}};
     if (auto fact = storedFormalReferent(*place))
       return fact;
     if (auto fact = storedLocalReferent(state, *place))
@@ -16315,14 +16331,50 @@ completeBorrowSourcePath(const MirProgram &program,
     };
     return declared(a.field) && declared(b.field);
   };
+  // A mutable call can change only writable fields, and the whole value only
+  // when the object is assignable. The receiver's stored references through
+  // immutable fields of a non-assignable object keep their entry contents.
   const auto invalidate = [&](State &state, MirPlaceId id) {
     if (!id || id > identities.size())
       return;
     const auto &key = identities[id - 1];
+    const auto preserved = [&](std::size_t index) {
+      const auto *place = body.findPlace(index + 1);
+      const auto &fact = state.places[index];
+      if (key.ambiguous || !place || !fact || place->root != MirPlaceRootKind::This ||
+          !place->projections.empty() || !fact->possibleAlternatives.empty() ||
+          fact->dependencies.empty())
+        return false;
+      SemanticType type = place->type;
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+        type = SemanticType(type.arguments.front());
+      const auto instance = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const auto &candidate) {
+            return eraseTypeLifetimes(candidate.type) == eraseTypeLifetimes(type);
+          });
+      if (instance == program.classInstances().end() ||
+          instance->traits.copyAssignable || instance->traits.moveAssignable)
+        return false;
+      return std::all_of(fact->dependencies.begin(), fact->dependencies.end(),
+                         [&](const MirLoanDependency &dependency) {
+        if (dependency.designatedFields.empty() ||
+            dependency.designatedFields.front().kind != PlaceProjectionKind::Field)
+          return false;
+        const auto field = std::find_if(
+            instance->declaredFields.begin(), instance->declaredFields.end(),
+            [&](const auto &info) {
+              return info.symbol == dependency.designatedFields.front().field;
+            });
+        return field != instance->declaredFields.end() &&
+               field->access == AccessMode::ReadOnly;
+      });
+    };
     for (std::size_t index = 0; index < identities.size(); ++index)
       if (key.ambiguous || (sameRoot(key, identities[index]) &&
                             !disjointRecordSubobjects(key, identities[index])))
-        state.places[index].reset();
+        if (!preserved(index))
+          state.places[index].reset();
     if (key.ambiguous) {
       for (auto &fact : state.values)
         fact.reset();
@@ -17221,12 +17273,19 @@ completeBorrowSourcePath(const MirProgram &program,
       // alternatives cannot retain an external checked loan. This is a
       // positive typed-layout proof, not inference from absent annotations or
       // unknown storage. Place/reference results are deliberately excluded.
+      // A type argument region (a view's declared lifetime) is a borrow even
+      // without a reference field, so only a region-free or 'static value is
+      // proved loan-free here; the region checker owns the others.
       const auto inventory =
           findStoredCarrierReferenceInventory(program, instruction.info.type);
       const auto alternatives =
           findStoredCarrierAlternativeInventory(program, instruction.info.type);
+      const auto regions = freeTypeLifetimes(instruction.info.type);
       if (inventory && inventory->empty() && alternatives &&
-          alternatives->empty())
+          alternatives->empty() &&
+          std::all_of(regions.begin(), regions.end(), [](Lifetime region) {
+            return region == Lifetime::staticLifetime();
+          }))
         result = MirBorrowDependencySet{};
     }
     // These are fact invalidations only: existing availability, lifecycle and
@@ -17816,6 +17875,17 @@ completeBorrowSourcePath(const MirProgram &program,
       });
 }
 
+// The result's referent stores no references (LT-4 shell subsumption applies).
+[[nodiscard]] bool mirReferentStoresNoReferences(const MirProgram &program,
+                                                 const SemanticType &result) {
+  if (result.kind != SemanticType::Reference || result.arguments.size() != 1)
+    return false;
+  // Payload alternatives without references add no stored supplier; the
+  // semantic rule is the referent's borrowed state, i.e. its reference paths.
+  const auto inventory = findStoredCarrierReferenceInventory(program, result.arguments.front());
+  return inventory && inventory->empty();
+}
+
 [[nodiscard]] bool permitsCompleteBorrowMapping(
     const MirProgram &program, const MirFunctionInstance &function, const BorrowedFieldOrigin &allowed,
     const BorrowedFieldOrigin &actual) {
@@ -17830,6 +17900,15 @@ completeBorrowSourcePath(const MirProgram &program,
       !std::equal(allowed.sourceFields.begin(), allowed.sourceFields.end(),
                   actual.sourceFields.begin()))
     return false;
+  // A permitted borrow of the input's whole physical shell keeps every stored
+  // loan that shell carries live; callers retain them as the result loan's
+  // stored dependency. An observed stored path of that same input is
+  // therefore subsumed (the LT-4 receiver default), not a separate owner.
+  if (allowed.origin == BorrowOriginKind::Receiver &&
+      allowed.sourceFields.empty() && allowed.sourceConditions.empty() &&
+      !actual.sourceFields.empty() &&
+      mirReferentStoresNoReferences(program, function.returnType) && !std::getenv("GTI_NO_SUBSUME")) // TEMP-TRACE bisect
+    return true;
   const auto allowedSource = completeBorrowSourcePath(program, function, allowed);
   const auto actualSource = completeBorrowSourcePath(program, function, actual);
   // A permitted physical subobject may be refined, but crossing another
@@ -18102,6 +18181,7 @@ normalizedCompleteReturnBorrow(const MirProgram &program,
 // Reconstruct the declaration's complete scalar supplier inventory, separately
 // from body returns. A body may use fewer suppliers; publication may not narrow
 // the lifetime contract that callers must retain.
+
 [[nodiscard]] std::optional<std::vector<BorrowedFieldOrigin>>
 declaredScalarLifetimeSuppliers(const MirProgram &program,
                                  const MirFunctionInstance &function) {
@@ -18157,6 +18237,9 @@ declaredScalarLifetimeSuppliers(const MirProgram &program,
       return std::nullopt;
     }
   }
+  if (mirReferentStoresNoReferences(program, function.returnType))
+    if (!std::getenv("GTI_NO_SUBSUME")) // TEMP-TRACE bisect
+      removeShellSubsumedSuppliers(required);
   return required;
 }
 
@@ -19321,6 +19404,22 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
         valid = loan.kind == MirLoanKind::Stored && !loan.escapes &&
                 loan.producedBy == producer.hirValue && fact &&
                 loanDependencies(loan) == fact->dependencies;
+        if (!valid && std::getenv("GTI_TRACE_MIR_BODY")) { // TEMP-TRACE
+          std::cerr << "[prove] loan=" << loan.id << " kind=" << int(loan.kind)
+                    << " escapes=" << loan.escapes << " producedBy=" << loan.producedBy
+                    << " hir=" << producer.hirValue << " fact=" << bool(fact) << "\n";
+          const auto dump = [](const char *tag, const std::vector<MirLoanDependency> &items) {
+            for (const auto &item : items)
+              std::cerr << "  " << tag << " src=" << item.source << " parent=" << item.parent
+                        << " rc=" << item.referenceContents.has_value()
+                        << " fields=" << item.designatedFields.size()
+                        << " access=" << int(item.access)
+                        << " conds=" << item.conditions.size() << "\n";
+          };
+          dump("loan", loanDependencies(loan));
+          if (fact)
+            dump("fact", fact->dependencies);
+        }
         if (valid)
           evidence = fact;
       } else if (producer.kind == MirInstructionKind::CallInput &&
@@ -19454,6 +19553,20 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
                                 });
       }
     }
+    if (std::getenv("GTI_TRACE_NEEDS_PROOF")) // TEMP-TRACE
+      std::cerr << "[needs] owner=" << owner << " loan=" << loan.id << " kind=" << int(loan.kind)
+                << " parent=" << loan.parent << " src=" << loan.source << " needs=" << needsProof
+                << " producer=" << [&] {
+                     const auto found = loanProducers.find(loan.id);
+                     if (found == loanProducers.end() || !found->second) return std::string("none");
+                     const auto &p = *found->second;
+                     std::string text = std::to_string(int(p.kind)) + "/i" + std::to_string(p.id);
+                     if (p.result && *p.result <= flow.values.size()) {
+                       const auto &f = flow.values[*p.result - 1];
+                       text += f ? " fact-deps=" + std::to_string(f->dependencies.size()) : " fact=null";
+                     }
+                     return text;
+                   }() << "\n";
     if (needsProof && !proveGuarded(proveGuarded, loan))
       return verificationFailure(body, owner,
                                  std::string(guarded(loan) ? "conditional loan " : "complete loan ") +
@@ -23406,7 +23519,10 @@ verifyMirProgramContracts(const MirProgram &program) {
         } else if (signature.lambdaTarget) {
           const MirLambdaInstance *target =
               program.findLambda(*signature.lambdaTarget);
-          if (target == nullptr || target->type != callableType) {
+          // Identity is the closure's shape; its regions are the exact
+          // lifetime application proved above, under either naming.
+          if (target == nullptr ||
+              eraseTypeLifetimes(target->type) != eraseTypeLifetimes(callableType)) {
             rejectCallableContract(prefix +
                                    "does not match an exact lambda target");
           }
@@ -25694,10 +25810,13 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
             producer && producer->functionTarget
                 ? program.findFunctionInstance(*producer->functionTarget)
                 : nullptr;
+        // Nominal identity and the selected declaration's shape; regions
+        // (the result's receiver region) are proved by the lifetime checks.
         const auto nominal = std::find_if(
             program.classInstances().begin(), program.classInstances().end(),
             [&](const auto &instance) {
-              return instance.type == iteration.elementType;
+              return eraseTypeLifetimes(instance.type) ==
+                     eraseTypeLifetimes(iteration.elementType);
             });
         // Body verification owns exact cursor and producer identities; the
         // program catalog independently owns the nominal result's traits and
@@ -25707,9 +25826,9 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
             selected->declaration != iteration.dereferenceFunction ||
             selected->overloadedOperator != OverloadedOperator::Dereference ||
             !selected->parameterTypes.empty() ||
-            selected->returnType !=
-                SemanticType::referenceTo(iteration.elementType,
-                                          iteration.elementAccess) ||
+            eraseTypeLifetimes(selected->returnType) !=
+                eraseTypeLifetimes(SemanticType::referenceTo(iteration.elementType,
+                                                             iteration.elementAccess)) ||
             selected->returnBorrowOrigin != BorrowOriginKind::Receiver ||
             nominal == program.classInstances().end() ||
             producer->info.traits != nominal->traits)

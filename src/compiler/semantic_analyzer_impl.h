@@ -1424,6 +1424,10 @@ private:
     std::vector<LifetimeBound> lifetimeObligations;
     std::vector<LifetimeTypeBound> lifetimeTypeObligations;
     std::vector<SemanticLifetimeOrigin> lifetimeOrigins;
+    // Every local region ever named in this body for one (place, source)
+    // origin, including speculative applications later withdrawn. Keeps
+    // one region per origin and never two origins per region.
+    std::vector<SemanticLifetimeOrigin> originRegionMemo;
     // Local views given text a lambda capture provided, local views each
     // copies into, and escapes of such text or of local views that held
     // ownerless text when checked (`finalizeCapturedText`).
@@ -3414,6 +3418,8 @@ private:
       const Token &site, const Expr *receiver = nullptr, bool diagnose = true,
       const SemanticLoanPlace *receiverPlace = nullptr);
   void commitLifetimeApplication(const SemanticLifetimeApplication &application);
+  [[nodiscard]] Lifetime localOriginRegion(const Token &token, const SemanticLoanPlace &place,
+                                           const Expr *source, std::size_t &slot);
   void finalizeLifetimeBody();
   [[nodiscard]] LifetimeBounds currentLifetimeBounds(
       const LifetimeSignatureContract *assumptionCase = nullptr) const;

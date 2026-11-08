@@ -6982,6 +6982,10 @@ auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
                 !sameLifetimeConversionShape(info->type, cleared.returnType))))
       return;
     const auto normalized = normalizedCompleteReturnBorrow(cleared, *complete, nullptr, returned->value().get());
+    if (std::getenv("GTI_TRACE_LIFETIME_REQ")) { // TEMP-TRACE
+      std::fprintf(stderr, "[ret-collect] fn=%s line=%u returnLine=%u completeDeps=%zu normalized=%d\n", syntax->name().lexeme.c_str(), static_cast<unsigned>(syntax->name().line), static_cast<unsigned>(returned->keyword().line), complete->dependencies.size(), normalized.has_value()); // TEMP-TRACE
+      if (normalized) for (const auto &d : normalized->dependencies) std::fprintf(stderr, "[ret-collect]   origin=%d src=%zu\n", static_cast<int>(d.origin), d.sourceFields.size()); // TEMP-TRACE
+    } // TEMP-TRACE
     // This source contract is still checked independently against executable
     // MIR return/call facts. Collecting it does not bypass payload admission,
     // ordinary escape checking, or the conditional loan proofs.
@@ -8159,6 +8163,11 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
       if (summary.origin == BorrowOriginKind::None)
         summary.origin = BorrowOriginKind::Argument;
     }
+    if (returnType.arguments.size() == 1 &&
+        !containsOpenTypeParameter(returnType.arguments.front()) &&
+        !typeTraits(returnType.arguments.front()).containsBorrowedState)
+      if (!std::getenv("GTI_NO_SUBSUME")) // TEMP-TRACE bisect
+        { const auto before = summary.fields.size(); removeShellSubsumedSuppliers(summary.fields); if (std::getenv("GTI_TRACE_SUBSUME") && before != summary.fields.size()) std::fprintf(stderr, "[subsume-decl] removed %zu\n", before - summary.fields.size()); } // TEMP-TRACE
     if (summary.fields.size() == 1 && summary.fields.front().sourceFields.empty() &&
         summary.fields.front().sourceConditions.empty()) {
       // Keep the proven one-owner fast path; several suppliers use the full
@@ -13493,12 +13502,21 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     if (sourceLoan == nullptr) {
       return;
     }
+    // A multi-origin reference is re-selected through the reference binding
+    // that retains it. A stored reference field of another root (the
+    // receiver's `this.members`) keeps the ordinary stored-field path.
+    const auto selectedRoot = semanticPlace(expression).root;
+    const bool selectableBinding = selectedRoot != nullptr &&
+                                   selectedRoot->type.kind == SemanticType::Reference &&
+                                   selectedRoot->retainedLoan != 0;
     if (((sourceLoan->referenceSelection && sourceLoan->referenceSelection->kind ==
                                                ReferenceSelectionKind::StoredExternalReference) ||
-         !sourceLoan->additionalDependencies.empty()) &&
+         (!sourceLoan->additionalDependencies.empty() && selectableBinding)) &&
         carrier->type.kind == SemanticType::Reference) {
       const auto selectedPlace = semanticPlace(expression);
       auto dependencies = selectedReferenceDependencies(selectedPlace);
+      if (std::getenv("GTI_TRACE_LIFETIME_REQ")) // TEMP-TRACE
+        std::fprintf(stderr, "[sel-reborrow] deps=%d selection=%d sameSource=%d fields=%zu proj=%zu transfer=%d extra=%zu placeProj=%zu\n", dependencies.has_value(), sourceLoan->referenceSelection.has_value(), sourceLoan->referenceSelection && sourceLoan->referenceSelection->source == expression, sourceLoan->referenceSelection ? sourceLoan->referenceSelection->fields.size() : 0, selectedPlace.projections.size(), static_cast<int>(source->transfer), sourceLoan->additionalDependencies.size(), sourceLoan->place.projections.size()); // TEMP-TRACE
       if (!dependencies ||
           (sourceLoan->referenceSelection && !selectedPlace.projections.empty()) ||
           source->transfer) {
@@ -17591,6 +17609,12 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
     // A projected transfer depends on the writable owning binding required
     // above, so it is a mutable use of that binding for GTI-S2096.
     recordMutableBindingUse(toolingSymbolFor(*place.root));
+    // An unknown type is a deferred (symbolic pack) or already-reported
+    // value; its concrete instance owns the movability check.
+    if (valueType.kind == SemanticType::Unknown) {
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (!typeTraits(valueType).movable) {
       report(expressionToken(argument),
              "std::move requires a movable value, but type '" +
@@ -17698,6 +17722,12 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
            "std::move cannot consume a reference; move the owning value "
            "instead.",
            "GTI-S2018");
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  if (symbol->type.kind == SemanticType::Unknown) {
+    // Deferred (symbolic pack call) or already-reported initializer: the
+    // concrete instance owns the movability check.
     currentType = SemanticType::Unknown;
     return;
   }
