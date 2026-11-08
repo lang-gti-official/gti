@@ -9822,8 +9822,8 @@ private:
           // Semantics names an accessor-reached receiver by its owner place.
           // The executable receiver is the referent of that accessor's call
           // result, so the dependency is a child of that exact result loan.
-          if (selected.parent == 0 &&
-              value.borrowDependencies->dependencies.size() == 1) {
+          if (std::getenv("GTI_TRACE_ACC")) { const auto *rp = originCall.receiver ? output.findPlace(originCall.receiver->place) : nullptr; std::fprintf(stderr, "[acc] v%llu parent=%llu src=p%llu deps=%zu origin=%d recvKind=%d recvPlace=p%llu root=%d proj=%zu k0=%d\n", (unsigned long long)value.id, (unsigned long long)selected.parent, (unsigned long long)selected.source, value.borrowDependencies->dependencies.size(), static_cast<int>(value.borrowOrigin), originCall.receiver ? static_cast<int>(originCall.receiver->kind) : -1, originCall.receiver ? (unsigned long long)originCall.receiver->place : 0ull, rp ? static_cast<int>(rp->root) : -1, rp ? rp->projections.size() : 0, rp && !rp->projections.empty() ? static_cast<int>(rp->projections.front().kind) : -1); } // TEMP-TRACE
+          if (value.borrowDependencies->dependencies.size() == 1) {
             MirLoanId inputLoan = 0;
             if (value.borrowOrigin == BorrowOriginKind::Receiver &&
                 originCall.receiver) {
@@ -9833,6 +9833,16 @@ private:
                   receiverPlace->root == MirPlaceRootKind::Loan &&
                   receiverPlace->projections.empty())
                 inputLoan = receiverPlace->loan;
+              else if (receiverPlace &&
+                       receiverPlace->root == MirPlaceRootKind::Binding &&
+                       receiverPlace->projections.size() == 1 &&
+                       receiverPlace->projections.front().kind ==
+                           MirProjectionKind::Dereference)
+                // A receiver reached through a local reference alias is a
+                // child of the alias's own loan.
+                if (const auto carried = bindingLoans.find(receiverPlace->binding);
+                    carried != bindingLoans.end())
+                  inputLoan = carried->second;
             } else if (value.borrowOrigin == BorrowOriginKind::Argument &&
                        value.borrowArgument < originCall.operands.size() &&
                        value.borrowArgument < value.parameterTypes.size() &&
@@ -9840,10 +9850,24 @@ private:
                            SemanticType::Reference) {
               inputLoan = operandLoan(originCall.operands[value.borrowArgument]);
             }
+            // The semantic parent is absent or one of the accessor's own
+            // ancestors: the executable receiver is that accessor's result.
+            const auto ancestor = [&](MirLoanId candidate, MirLoanId of) {
+              std::unordered_set<MirLoanId> seen;
+              for (const auto *link = output.findLoan(of);
+                   link && link->parent && seen.insert(link->id).second;
+                   link = output.findLoan(link->parent))
+                if (link->parent == candidate)
+                  return true;
+              return false;
+            };
             if (const auto *accessor = output.findLoan(inputLoan);
-                accessor && accessor->kind == MirLoanKind::CallResult &&
+                accessor && (accessor->kind == MirLoanKind::CallResult ||
+                             accessor->kind == MirLoanKind::Local) &&
                 accessor->additionalDependencies.empty() &&
                 accessor->source == selected.source &&
+                selected.parent != accessor->id &&
+                (selected.parent == 0 || ancestor(selected.parent, accessor->id)) &&
                 loanIsActive(scopes, accessor->id))
               selected.parent = accessor->id;
           }
