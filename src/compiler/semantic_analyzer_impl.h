@@ -1208,6 +1208,11 @@ private:
     bool arrowCallee = false;
   };
 
+  // Each range-for sentinel declaration and the iterator it follows. The
+  // endpoint call is evaluated while an exclusive cursor is parked (MIR
+  // ParkRangeCursor/RestoreRangeCursor), so its loan is inactive meanwhile.
+  std::unordered_map<const VariableDecl *, const VariableDecl *>
+      rangeSentinelIterators;
   struct LoanFlowRecord {
     SemanticLoanId id = 0;
     std::size_t region = 0;

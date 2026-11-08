@@ -1,3 +1,5 @@
+#include <execinfo.h> // TEMP-TRACE
+#include <cstdio> // TEMP-TRACE
 #include "gti/semantic_model.h"
 #include "gti/generic_type_patterns.h"
 #include "gti/lifetime_types.h"
@@ -3085,6 +3087,7 @@ void SemanticModel::recordLoan(SemanticLoanInfo info) {
   if (info.id == 0) {
     return;
   }
+  if (const char *want = std::getenv("GTI_TRACE_LOAN_BT"); want && std::to_string(info.id) == want) { void *frames[12]; int n = backtrace(frames, 12); std::fprintf(stderr, "[loan-bt] id=%llu kind=%d storage=%d\n", (unsigned long long)info.id, static_cast<int>(info.kind), info.protectsStorage); backtrace_symbols_fd(frames, n, 2); } // TEMP-TRACE
   if (retainedLoans.size() < info.id) {
     retainedLoans.resize(info.id);
   }

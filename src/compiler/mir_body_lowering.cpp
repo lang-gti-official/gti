@@ -9631,6 +9631,7 @@ private:
         // primary supplier and keep the group as the stored edge, the parent
         // of each external path selected through it.
         MirLoanId receiverGroup = 0;
+        bool rangeCursorElement = false;
         if (std::getenv("GTI_TRACE_LCBD2") && value.borrowFields.size() > 1) { const auto rv = receiverValue(value); const auto rp = rv ? placeForValue(*rv) : MirPlaceId{0}; const auto *pl = output.findPlace(rp); std::fprintf(stderr, "[fix77pre] v%llu src=p%llu parent=%llu m0src=%zu recv=p%llu root=%d proj=%zu:", (unsigned long long)value.id, (unsigned long long)published.source, (unsigned long long)published.parent, value.borrowFields.front().sourceFields.size(), (unsigned long long)rp, pl ? static_cast<int>(pl->root) : -1, pl ? pl->projections.size() : 0); for (const auto &l : output.loans) if (l.kind == MirLoanKind::Stored && l.source == rp) std::fprintf(stderr, " stored%llu(entry=%d)", (unsigned long long)l.id, l.entry); for (const auto &l : output.loans) if (l.entry) { const auto *sp = output.findPlace(l.source); std::fprintf(stderr, " entry%llu(kind=%d src=p%llu root=%d proj=%zu sd=%llu)", (unsigned long long)l.id, static_cast<int>(l.kind), (unsigned long long)l.source, sp ? static_cast<int>(sp->root) : -1, sp ? sp->projections.size() : 0, (unsigned long long)l.storedDependency); } if (pl && pl->root == MirPlaceRootKind::Binding) if (auto b = bindingLoans.find(pl->binding); b != bindingLoans.end()) std::fprintf(stderr, " bl=%llu", (unsigned long long)b->second); std::fprintf(stderr, "\n"); } // TEMP-TRACE
         if (const auto &front = value.borrowFields.front();
             value.borrowFields.size() > 1 &&
@@ -9641,6 +9642,7 @@ private:
           const auto place = receiver ? placeForValue(*receiver) : MirPlaceId{0};
           const auto *carrier = output.findPlace(place);
           const auto &group = output.loans[published.parent - 1];
+          if (std::getenv("GTI_TRACE_LCBD2")) for (const auto &pl : output.places) if (pl.id <= 12) std::fprintf(stderr, "[place] p%llu root=%d binding=%llu loan=%llu proj=%zu%s type=%d\n", (unsigned long long)pl.id, static_cast<int>(pl.root), (unsigned long long)pl.binding, (unsigned long long)pl.loan, pl.projections.size(), pl.projections.empty() ? "" : (pl.projections.front().kind == MirProjectionKind::Dereference ? " deref" : " field"), static_cast<int>(pl.type.kind)); // TEMP-TRACE
           if (std::getenv("GTI_TRACE_LCBD2")) { std::fprintf(stderr, "[fix77] v%llu place=p%llu root=%d proj=%zu group=%llu kind=%d entry=%d gsrc=p%llu psrc=p%llu carriers:", (unsigned long long)value.id, (unsigned long long)place, carrier ? static_cast<int>(carrier->root) : -1, carrier ? carrier->projections.size() : 0, (unsigned long long)group.id, static_cast<int>(group.kind), group.entry, (unsigned long long)group.source, (unsigned long long)published.source); for (auto c : group.carriers) std::fprintf(stderr, " b%llu", (unsigned long long)c); std::fprintf(stderr, " binding=b%llu sd=%llu\n", carrier ? (unsigned long long)carrier->binding : 0ull, (unsigned long long)group.storedDependency); } // TEMP-TRACE
           if (carrier && carrier->root == MirPlaceRootKind::Binding &&
               carrier->projections.empty() &&
@@ -9653,6 +9655,42 @@ private:
             published.source = place;
             published.parent = 0;
             published.storedDependency = group.id;
+          } else if (carrier && carrier->root == MirPlaceRootKind::Binding &&
+                     carrier->projections.empty() &&
+                     isRangeIteratorBinding(carrier->binding) &&
+                     group.kind == MirLoanKind::Local &&
+                     group.access == AccessMode::Mutable &&
+                     value.borrowFields.size() == 2 &&
+                     std::find(group.carriers.begin(), group.carriers.end(),
+                               carrier->binding) != group.carriers.end()) {
+            // An exclusive range cursor rides on the mutable range loan and
+            // has no Stored group: its stored supplier is the complete
+            // dependency its begin call published, already a child of that
+            // range loan. Keep it primary, so the element stays a child of
+            // the range loan, and the cursor's own storage as the other
+            // supplier.
+            const HirStatement *initializer = nullptr;
+            for (const auto &statement : source.statements)
+              if (statement.binding && *statement.binding == carrier->binding &&
+                  statement.value)
+                initializer = &statement;
+            const auto initialValue =
+                initializer ? mirValueFor(*initializer->value) : MirValueId{0};
+            const auto *contents =
+                initialValue ? output.findValue(initialValue) : nullptr;
+            if (contents && contents->borrowDependencies &&
+                contents->borrowDependencies->possibleAlternatives.empty() &&
+                contents->borrowDependencies->dependencies.size() == 1 &&
+                contents->borrowDependencies->dependencies.front().parent ==
+                    group.id) {
+              const auto &stored =
+                  contents->borrowDependencies->dependencies.front();
+              published.source = stored.source;
+              published.parent = group.id;
+              published.additionalDependencies.push_back(
+                  {.source = place, .access = published.access});
+              rangeCursorElement = true;
+            }
           }
         } else if (const auto &front = value.borrowFields.front();
                    value.borrowFields.size() > 1 &&
@@ -9705,8 +9743,8 @@ private:
             }
           }
         }
-        for (std::size_t index = 1; index < value.borrowFields.size();
-             ++index) {
+        for (std::size_t index = rangeCursorElement ? value.borrowFields.size() : 1;
+             index < value.borrowFields.size(); ++index) {
           const auto &mapping = value.borrowFields[index];
           HirValue selected = value;
           selected.borrowOrigin = mapping.origin;

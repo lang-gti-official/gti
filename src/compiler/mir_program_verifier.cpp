@@ -16493,14 +16493,23 @@ completeBorrowSourcePath(const MirProgram &program,
           !alternatives->empty())
         return std::nullopt;
     }
-    const auto found = bindingLoans.find(key.binding);
-    if (found == bindingLoans.end() || found->second.size() != 1)
-      return std::nullopt;
-    const auto *group = body.findLoan(found->second.front());
     const auto &fact = state.places[id - 1];
-    if (!group || group->kind != MirLoanKind::Stored || group->escapes ||
-        !group->conditions.empty() || !fact ||
-        !fact->possibleAlternatives.empty())
+    if (!fact || !fact->possibleAlternatives.empty() ||
+        fact->dependencies.empty())
+      return std::nullopt;
+    const auto found = bindingLoans.find(key.binding);
+    const auto *group = found != bindingLoans.end() && found->second.size() == 1
+        ? body.findLoan(found->second.front()) : nullptr;
+    // A cursor sharing its exclusive range loan has no Stored group of its
+    // own; its reconstructed pre-call contents are the only class-region
+    // sources the call can store back.
+    if (!group || group->kind != MirLoanKind::Stored)
+      return std::all_of(fact->dependencies.begin(), fact->dependencies.end(),
+                         [](const auto &dependency) {
+                           return dependency.conditions.empty();
+                         })
+          ? fact : Fact{};
+    if (group->escapes || !group->conditions.empty())
       return std::nullopt;
     // A formal's typed entry group is rooted at the formal itself; its exact
     // entry reconstruction already names the group (retainedCarrierInput).
@@ -16544,6 +16553,14 @@ completeBorrowSourcePath(const MirProgram &program,
     const auto *group = body.findLoan(found->second.front());
     if (!group || group->escapes)
       return std::nullopt;
+    // An exclusive range cursor carries the range loan itself rather than a
+    // Stored group of its own; its contents are its reconstructed value.
+    if (group->kind == MirLoanKind::Local &&
+        std::any_of(body.rangeIterations.begin(), body.rangeIterations.end(),
+                    [&](const MirRangeIteration &range) {
+                      return range.iterator == id && range.rangeLoan == group->id;
+                    }))
+      return fact;
     if (group->kind != MirLoanKind::Stored) {
       // A reference formal has a physical Parameter capability and a
       // separate Stored entry for its referent's fields. Reading its contents

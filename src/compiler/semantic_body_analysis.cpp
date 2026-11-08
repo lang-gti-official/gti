@@ -3389,6 +3389,9 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
   loanFlow.statementBoundaries.push_back({.region = loanFlow.currentRegion,
                                           .order = loanFlow.currentOrder,
                                           .statement = syntax});
+  if (stmt.sentinelBinding() != nullptr && stmt.iteratorBinding() != nullptr)
+    rangeSentinelIterators.insert_or_assign(stmt.sentinelBinding(),
+                                            stmt.iteratorBinding());
   beginScope();
   // Protocol selection needs the checked owner type. Keep both parts in the
   // same statement region so ordinary range loans retain their original
@@ -6929,6 +6932,32 @@ auto SemanticVisitor::Impl::visitConceptDecl(const ConceptDecl &stmt) -> void {
 }
 auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     -> void {
+  // A mutable range's endpoint is evaluated with its exclusive cursor parked:
+  // the cursor and its descendants are unusable (and so cannot conflict)
+  // until the endpoint call completes. MIR verifies the exact read-only,
+  // argument-free, non-borrowing endpoint call and its restore.
+  std::vector<SemanticLoanId> parkedCursor;
+  if (const auto found = rangeSentinelIterators.find(&stmt);
+      found != rangeSentinelIterators.end())
+    if (const Symbol *iterator = resolve(found->second->name());
+        iterator != nullptr && iterator->retainedLoan != 0)
+      if (const auto *cursor = semanticModel.findLoan(iterator->retainedLoan);
+          cursor != nullptr && cursor->access == AccessMode::Mutable)
+        for (auto &[id, flow] : loanFlow.records)
+          if (flow.active && (id == cursor->id || loanIsAncestor(cursor->id, id))) {
+            flow.active = false;
+            parkedCursor.push_back(id);
+          }
+  struct CursorRestore {
+    Impl &self;
+    std::vector<SemanticLoanId> &loans;
+    ~CursorRestore() {
+      for (const auto id : loans)
+        if (const auto found = self.loanFlow.records.find(id);
+            found != self.loanFlow.records.end())
+          found->second.active = true;
+    }
+  } restoreCursor{*this, parkedCursor};
   const DeclarationOrderScope declarationOrder{*this, stmt};
   const SourceDebugRegionGuard sourceRegion{*this, stmt};
   const std::size_t declarationDiagnosticStart = diagnostics.size();
