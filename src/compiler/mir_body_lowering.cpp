@@ -13036,7 +13036,14 @@ private:
       } else if (instruction.operation == MirOperation::PayloadExtract) {
         if (const auto subject = payloadSwitchSubjects.find(operand);
             subject != payloadSwitchSubjects.end()) {
-          instruction.operands.push_back(subject->second);
+          // Matching only reads the discriminant; a mutable payload binding
+          // selects its payload through write access to the same place.
+          MirOperand selected = subject->second;
+          if (selected.kind == MirOperandKind::BorrowRead &&
+              value->payloadExtractionKind == PayloadExtractionKind::BorrowValue &&
+              value->info.access == AccessMode::Mutable)
+            selected.kind = MirOperandKind::BorrowWrite;
+          instruction.operands.push_back(selected);
           continue;
         }
         const HirValue *sourceValue = findValue(operand);
@@ -13047,9 +13054,13 @@ private:
             (sourceValue->info.traits.drop == DropKind::Lexical ||
              value->info.category == ValueCategory::Place)) {
           emitPlaceDependencies(operand);
-          instruction.operands.push_back({.kind = MirOperandKind::BorrowRead,
-                                          .place = sourcePlace,
-                                          .type = sourceValue->info.type});
+          instruction.operands.push_back(
+              {.kind = value->payloadExtractionKind == PayloadExtractionKind::BorrowValue &&
+                               value->info.access == AccessMode::Mutable
+                           ? MirOperandKind::BorrowWrite
+                           : MirOperandKind::BorrowRead,
+               .place = sourcePlace,
+               .type = sourceValue->info.type});
         } else {
           instruction.operands.push_back(valueOperand(operand));
         }

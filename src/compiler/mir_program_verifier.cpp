@@ -9499,8 +9499,17 @@ verifyMirPayloadEnums(const MirProgram &program) {
                   successors.end())
                 continue;
               ++incoming;
-              if (terminator.kind != MirTerminatorKind::Switch ||
-                  !terminator.value || *terminator.value != operand ||
+              // The switch reads the discriminant; a mutable payload binding
+              // extracts through write access to that same subject place.
+              const bool sameSubject =
+                  terminator.value &&
+                  (*terminator.value == operand ||
+                   (terminator.value->kind == MirOperandKind::BorrowRead &&
+                    operand.kind == MirOperandKind::BorrowWrite &&
+                    terminator.value->place == operand.place &&
+                    terminator.value->type == operand.type &&
+                    value->info.access == AccessMode::Mutable));
+              if (terminator.kind != MirTerminatorKind::Switch || !sameSubject ||
                   terminator.target == block.id) {
                 guarded = false;
                 continue;
@@ -9594,6 +9603,8 @@ verifyMirPayloadEnums(const MirProgram &program) {
                       (loan.kind == MirLoanKind::Local ||
                        (loan.kind == MirLoanKind::Return && loan.escapes));
             }
+            if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+              std::fprintf(stderr, "[payload-table] guarded=%d incoming=%zu subject=%d key=%d operandKind=%d valueAccess=%d subjectAccess=%d lifecycle=%zu borrowed=%d exact=%d\n", guarded, (std::size_t)incoming, subject != nullptr, subject && subject->key ? 1 : 0, static_cast<int>(operand.kind), static_cast<int>(value->info.access), subject ? static_cast<int>(subject->access) : -1, instruction.lifecycle.size(), borrowed, exact); // TEMP-TRACE
             exact = exact && borrowed;
           }
         }
@@ -15612,6 +15623,8 @@ completeBorrowSourcePath(const MirProgram &program,
     const auto &selection = *loan->referenceSelection;
     if (selection.kind == ReferenceSelectionKind::PhysicalPayload) {
       const auto *source = mir_detail::physicalPayloadSelectionSource(program, body, selection);
+      if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+        std::fprintf(stderr, "[selected] loan=%llu source=%d same=%d adds=%zu fields=%zu conds=%zu access=%d refAccess=%d\n", (unsigned long long)id, source != nullptr, source && loan->source == source->id, loan->additionalDependencies.size(), loan->designatedFields.size(), loan->conditions.size(), static_cast<int>(loan->access), static_cast<int>(selection.reference.referenceAccess)); // TEMP-TRACE
       if (!source || loan->source != source->id || !loan->additionalDependencies.empty() ||
           !loan->designatedFields.empty() || !loan->conditions.empty() ||
           (loan->access == AccessMode::Mutable &&
@@ -16019,6 +16032,10 @@ completeBorrowSourcePath(const MirProgram &program,
                                  ? AccessMode::Mutable
                                  : AccessMode::ReadOnly}}};
       }
+      if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { // TEMP-TRACE
+        std::string d; if (fact) for (const auto &x : fact->dependencies) d += " p" + std::to_string(x.source) + "/acc" + std::to_string(static_cast<int>(x.access)) + "/parent" + std::to_string(x.parent); // TEMP-TRACE
+        std::fprintf(stderr, "[retfact] owner=%zu loan=%llu operandKind=%d fact=%s alts=%zu claimedSource=p%llu access=%d\n", (std::size_t)owner, (unsigned long long)id, static_cast<int>(producer->operands.front().kind), fact ? d.c_str() : "unknown", fact ? fact->possibleAlternatives.size() : 0, (unsigned long long)loan->source, static_cast<int>(loan->access)); // TEMP-TRACE
+      } // TEMP-TRACE
       if (!fact || fact->dependencies.empty() ||
           !fact->possibleAlternatives.empty())
         return std::nullopt;

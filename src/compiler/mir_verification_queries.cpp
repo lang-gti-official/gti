@@ -626,6 +626,8 @@ const MirPlace *physicalPayloadSelectionSource(
       *extract->payloadIndex >= variant.payloadSymbols.size())
     return nullptr;
   const auto field = view->instantiate(variant.payloadTypes[*extract->payloadIndex]);
+  if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+    std::fprintf(stderr, "[payload-src] field=%d fieldEq=%d refEq=%d cat=%d valueAccess=%d operandKind=%d refAccess=%d fieldsEq=%d condsEq=%d\n", field.has_value(), field && *field == value->info.type, field && *field == selection.reference.arguments.front(), static_cast<int>(value->info.category), static_cast<int>(value->info.access), static_cast<int>(operand.kind), static_cast<int>(selection.reference.referenceAccess), selection.fields == BorrowPath{fieldProjection(variant.payloadSymbols[*extract->payloadIndex])}, selection.conditions == std::vector<BorrowDependencyCondition>{{.enumeration = operand.type, .variant = *extract->enumVariant}}); // TEMP-TRACE
   if (!field || field->kind == SemanticType::Reference ||
       *field != value->info.type || *field != selection.reference.arguments.front() ||
       value->info.category != ValueCategory::Place ||
