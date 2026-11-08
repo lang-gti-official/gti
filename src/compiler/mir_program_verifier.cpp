@@ -23739,7 +23739,11 @@ verifyMirProgramContracts(const MirProgram &program) {
         if (forwarding.parameterIndex >= target.parameterTypes.size() ||
             targetContract == target.callableParameters.end() ||
             targetContract->boundary != CallableBoundary::Confined ||
-            forwardedType == nullptr || *forwardedType != callableType) {
+            forwardedType == nullptr ||
+            // Capability identity is the callable's shape; the call site's
+            // lifetime verification proves the forwarded regions.
+            eraseTypeLifetimes(*forwardedType) != eraseTypeLifetimes(callableType)) {
+          if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[fwd] idx=%d contract=%d confined=%d typed=%d eq=%d erasedEq=%d\n", forwarding.parameterIndex < target.parameterTypes.size(), targetContract != target.callableParameters.end(), targetContract != target.callableParameters.end() && targetContract->boundary == CallableBoundary::Confined, forwardedType != nullptr, forwardedType && *forwardedType == callableType, forwardedType && eraseTypeLifetimes(*forwardedType) == eraseTypeLifetimes(callableType)); // TEMP-TRACE
           rejectCallableContract(prefix +
                                  "does not match a confined target parameter");
         }
@@ -24364,7 +24368,7 @@ verifyMirProgramContracts(const MirProgram &program) {
                     // stage.
         const std::size_t stage = instruction.constructorInitializer;
         if (stage > instance.initializers.size()) {
-          exactInitializerStages = false;
+          { exactInitializerStages = false; if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[ctorstage-false] owner=%zu line %d\n", (std::size_t)instance.id, __LINE__); } // TEMP-TRACE-CTOR
           continue;
         }
         ++initializerStageCounts[stage - 1];
@@ -24372,7 +24376,7 @@ verifyMirProgramContracts(const MirProgram &program) {
             instance.initializers[stage - 1];
         if (instruction.kind == MirInstructionKind::InitializeBase) {
           if (baseStage != nullptr)
-            exactInitializerStages = false;
+            { exactInitializerStages = false; if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[ctorstage-false] owner=%zu line %d\n", (std::size_t)instance.id, __LINE__); } // TEMP-TRACE-CTOR
           baseStage = &instruction;
           baseStageBlock = block.id;
           const MirPlace *destination =
@@ -24730,7 +24734,11 @@ verifyMirProgramContracts(const MirProgram &program) {
             instruction.operands.size() == 1 && sourceValue != nullptr &&
             sourceValue->sourceValue == initializer.arguments.front() &&
             sourceValue->info.type == instruction.operands.front().type &&
+            // A region-only difference is the stored value's lifetime
+            // conversion, which the MIR lifetime verifier proves separately.
             (instruction.operands.front().type == initializer.targetType ||
+             eraseTypeLifetimes(instruction.operands.front().type) ==
+                 eraseTypeLifetimes(initializer.targetType) ||
              isImplicitScalarInitializationConversion(
                  initializer.targetType, instruction.operands.front().type)) &&
             instruction.info.type == initializer.targetType &&
@@ -24741,6 +24749,7 @@ verifyMirProgramContracts(const MirProgram &program) {
             destination->projections.front().field == initializer.field &&
             destination->sourceValue == initializer.arguments.front() &&
             destination->type == initializer.targetType;
+        if (!exactInitializerStages && std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[ctorfield] owner=%zu field=%d inst=%d kind=%d src=%d svEq=%d opTypeEq=%d opTarget=%d infoEq=%d dest=%d destSv=%d destType=%d destTypeErased=%d\n", (std::size_t)instance.id, field != nullptr, static_cast<int>(instruction.id), static_cast<int>(instruction.kind), sourceValue != nullptr, sourceValue && sourceValue->sourceValue == initializer.arguments.front(), sourceValue && sourceValue->info.type == instruction.operands.front().type, !instruction.operands.empty() && instruction.operands.front().type == initializer.targetType, instruction.info.type == initializer.targetType, destination != nullptr, destination && destination->sourceValue == initializer.arguments.front(), destination && destination->type == initializer.targetType, destination && eraseTypeLifetimes(destination->type) == eraseTypeLifetimes(initializer.targetType)); // TEMP-TRACE
       }
     }
     if (baseStage != nullptr) {
@@ -24778,7 +24787,7 @@ verifyMirProgramContracts(const MirProgram &program) {
           if (loan != nullptr)
             pendingPlaces.push_back(loan->source);
           else
-            exactInitializerStages = false;
+            { exactInitializerStages = false; if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[ctorstage-false] owner=%zu line %d\n", (std::size_t)instance.id, __LINE__); } // TEMP-TRACE-CTOR
         }
       };
       for (std::size_t index = 0; index < instance.initializers.size(); ++index) {
@@ -24808,7 +24817,7 @@ verifyMirProgramContracts(const MirProgram &program) {
               pendingPlaces.push_back(publication->loan->source);
             }
           } else {
-            exactInitializerStages = false;
+            { exactInitializerStages = false; if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[ctorstage-false] owner=%zu line %d\n", (std::size_t)instance.id, __LINE__); } // TEMP-TRACE-CTOR
           }
         }
         for (const auto argument : initializer.arguments) {
@@ -24830,7 +24839,7 @@ verifyMirProgramContracts(const MirProgram &program) {
             continue;
           const auto *place = instance.body.findPlace(id);
           if (place == nullptr) {
-            exactInitializerStages = false;
+            { exactInitializerStages = false; if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[ctorstage-false] owner=%zu line %d\n", (std::size_t)instance.id, __LINE__); } // TEMP-TRACE-CTOR
             continue;
           }
           if (place->value != 0)
@@ -24869,7 +24878,7 @@ verifyMirProgramContracts(const MirProgram &program) {
             value == nullptr ? nullptr
                              : instance.body.findBlock(value->definitionBlock);
         if (value == nullptr || block == nullptr) {
-          exactInitializerStages = false;
+          { exactInitializerStages = false; if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[ctorstage-false] owner=%zu line %d\n", (std::size_t)instance.id, __LINE__); } // TEMP-TRACE-CTOR
           continue;
         }
         if (const auto *definition = linearDefinition(instance.body, id)) {
@@ -24892,7 +24901,7 @@ verifyMirProgramContracts(const MirProgram &program) {
         if (parameter == block->parameters.end() || !dominance ||
             !dominance->dominates(completed, block->id) ||
             block->id == baseStageBlock) {
-          exactInitializerStages = false;
+          { exactInitializerStages = false; if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[ctorstage-false] owner=%zu line %d\n", (std::size_t)instance.id, __LINE__); } // TEMP-TRACE-CTOR
           continue;
         }
         const auto ordinal =
@@ -24902,7 +24911,7 @@ verifyMirProgramContracts(const MirProgram &program) {
           if (target != block->id)
             return;
           if (ordinal >= arguments.size())
-            exactInitializerStages = false;
+            { exactInitializerStages = false; if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[ctorstage-false] owner=%zu line %d\n", (std::size_t)instance.id, __LINE__); } // TEMP-TRACE-CTOR
           else
             enqueueOperand(arguments[ordinal]);
         };
@@ -24982,7 +24991,7 @@ verifyMirProgramContracts(const MirProgram &program) {
         continue;
       }
       if (full.constructorInitializer > instance.initializers.size()) {
-        exactInitializerStages = false;
+        { exactInitializerStages = false; if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[ctorstage-false] owner=%zu line %d\n", (std::size_t)instance.id, __LINE__); } // TEMP-TRACE-CTOR
         continue;
       }
       ++initializerBoundaryCounts[full.constructorInitializer - 1];
@@ -25003,7 +25012,7 @@ verifyMirProgramContracts(const MirProgram &program) {
         continue;
       }
       if (initializer.explicitArgumentCount > initializer.arguments.size()) {
-        exactInitializerStages = false;
+        { exactInitializerStages = false; if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[ctorstage-false] owner=%zu line %d\n", (std::size_t)instance.id, __LINE__); } // TEMP-TRACE-CTOR
       }
       const auto field =
           constructorOwner == nullptr
@@ -25049,6 +25058,8 @@ verifyMirProgramContracts(const MirProgram &program) {
       // not scalar-stage markers: reference, nested-construction, and
       // generated-default initializers can legitimately publish one. Only the
       // non-borrowing cleanup-free form requires a matching Initialize stage.
+      if (std::getenv("GTI_TRACE_LCBD2") && (!constructorOwner || field == constructorOwner->declaredFields.end())) std::fprintf(stderr, "[ctorstage] owner=%zu init=%zu nofield owner=%d kind=%d stages=%zu bounds=%zu\n", (std::size_t)instance.id, initializerIndex, constructorOwner != nullptr, static_cast<int>(initializer.kind), initializerStageCounts[initializerIndex], initializerBoundaryCounts[initializerIndex]); // TEMP-TRACE
+      if (std::getenv("GTI_TRACE_LCBD2") && constructorOwner && field != constructorOwner->declaredFields.end()) { const auto inst = exactCallableOwner ? callableOwnerView->instantiate(field->type) : std::nullopt; std::fprintf(stderr, "[ctorstage] owner=%zu init=%zu stages=%zu bounds=%zu cleanupFree=%d owning=%d exactOwner=%d typeEq=%d erasedEq=%d drop=%d storesRef=%d ctorTarget=%d gen=%d args=%zu\n", (std::size_t)instance.id, initializerIndex, initializerStageCounts[initializerIndex], initializerBoundaryCounts[initializerIndex], explicitCleanupFreeField, explicitOwningField, exactCallableOwner, inst == std::optional<SemanticType>(initializer.targetType), inst && eraseTypeLifetimes(*inst) == eraseTypeLifetimes(initializer.targetType), static_cast<int>(field->dropKind), initializer.storesReference, initializer.constructorTarget.has_value(), initializer.generatedDefault, initializer.arguments.size()); } // TEMP-TRACE
       if ((explicitCleanupFreeField &&
            (initializerStageCounts[initializerIndex] != 1 ||
             initializerBoundaryCounts[initializerIndex] != 1)) ||
@@ -25058,7 +25069,7 @@ verifyMirProgramContracts(const MirProgram &program) {
           (!explicitCleanupFreeField && !explicitOwningField &&
            (initializerStageCounts[initializerIndex] != 0 ||
             initializerBoundaryCounts[initializerIndex] > 1))) {
-        exactInitializerStages = false;
+        { exactInitializerStages = false; if (std::getenv("GTI_TRACE_LCBD2")) std::fprintf(stderr, "[ctorstage-false] owner=%zu line %d\n", (std::size_t)instance.id, __LINE__); } // TEMP-TRACE-CTOR
       }
     }
     if (!exactInitializerStages) {

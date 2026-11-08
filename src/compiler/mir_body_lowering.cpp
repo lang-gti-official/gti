@@ -9692,6 +9692,24 @@ private:
                   {.source = place, .access = published.access});
               rangeCursorElement = true;
             }
+          } else if (const MirLoanId carrierId =
+                         group.parent ? group.parent : group.storedDependency;
+                     group.kind == MirLoanKind::Local &&
+                     group.source == published.source && carrierId != 0 &&
+                     carrierId <= output.loans.size()) {
+            // A receiver reached through a local reference alias reborrows
+            // its carrier: the alias keeps the physical supplier, and the
+            // carrier's own Stored group parents the stored paths.
+            const auto &carrierGroup = output.loans[carrierId - 1];
+            const auto *aliased = output.findPlace(published.source);
+            if (carrierGroup.kind == MirLoanKind::Stored &&
+                (carrierGroup.source == published.source ||
+                 (aliased && aliased->root == MirPlaceRootKind::Binding &&
+                  aliased->projections.empty() &&
+                  std::find(carrierGroup.carriers.begin(),
+                            carrierGroup.carriers.end(),
+                            aliased->binding) != carrierGroup.carriers.end())))
+              receiverGroup = carrierGroup.id;
           }
         } else if (const auto &front = value.borrowFields.front();
                    value.borrowFields.size() > 1 &&
