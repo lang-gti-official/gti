@@ -5662,8 +5662,12 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         // multi-supplier loan retains every owner of that parent through the
         // parent edge; compare the parent's complete supplier set instead.
         const auto *resultParent =
-            actualSources.size() == 1 && loan->parent ? body.findLoan(loan->parent)
-                                                      : nullptr;
+            actualSources.size() == 1 && loan->parent &&
+                    instruction.kind == MirInstructionKind::Call &&
+                    instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+                    loan->additionalDependencies.empty()
+                ? body.findLoan(loan->parent)
+                : nullptr;
         const auto parentSources = resultParent && resultParent->kind == MirLoanKind::CallResult &&
                                            !resultParent->additionalDependencies.empty()
                                        ? concreteDependencies(*resultParent)

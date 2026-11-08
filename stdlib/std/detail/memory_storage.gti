@@ -646,9 +646,12 @@ export expected<std::detail::raw_allocation, std::alloc_errc> try_allocate_objec
   }
 }
 
-export expected<void, std::alloc_errc> try_allocate_sparse<T, Lease>(
-    mut Lease& objects, mut Lease& metadata, mut sparse_slots<T>& destination,
-    uint64_t count, uint64_t minimum) requires sparse_element<T> && byte_lease<Lease> {
+// The two leases are independent fields: each keeps its own regions (LT-5),
+// so they are separate type parameters rather than one shared Lease.
+export expected<void, std::alloc_errc> try_allocate_sparse<T, Lease, MetadataLease>(
+    mut Lease& objects, mut MetadataLease& metadata, mut sparse_slots<T>& destination,
+    uint64_t count, uint64_t minimum)
+    requires sparse_element<T> && byte_lease<Lease> && byte_lease<MetadataLease> {
   // Sparse ownership needs two regions. Publication is last; a failed second
   // request returns the first region through its own lease.
   if (destination.capacity() != uint64_t(0)) {
