@@ -4091,17 +4091,20 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
       return type;
     }
     const std::uint64_t position = type.valueArguments[1].value;
+    // A reflected declaration parameter is a type shape. Its elided or named
+    // regions belong to the callable's own contract and are out of scope in
+    // the reflecting body (RFC 0004: regions are not type identities).
     if (info.compilerType == CompilerTypeKind::MetaConstructorParameterType) {
       const std::optional<MetaConstructorFacts> facts = metaConstructorFacts(
           type.arguments.front(), type.valueArguments[0].value);
       return facts && position < facts->parameterTypes.size()
-                 ? facts->parameterTypes[position]
+                 ? eraseTypeLifetimes(facts->parameterTypes[position])
                  : type;
     }
     const std::optional<MetaMethodFacts> facts =
         metaMethodFacts(type.arguments.front(), type.valueArguments[0].value);
     return facts && position < facts->parameterTypes.size()
-               ? facts->parameterTypes[position]
+               ? eraseTypeLifetimes(facts->parameterTypes[position])
                : type;
   }
   case CompilerTypeKind::MetaListFirst:

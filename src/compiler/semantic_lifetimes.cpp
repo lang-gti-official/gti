@@ -735,6 +735,15 @@ auto SemanticVisitor::Impl::normalizeLifetimeSignature(
   const auto normalize = [&](auto &&self, SemanticType &type, bool input,
                              Lifetime resultRegion,
                              std::vector<GenericParameterId> *quantified) -> void {
+    // A compile-time type descriptor stores nothing of its argument; that
+    // argument's regions are neither inputs nor results of this signature.
+    if (type.kind == SemanticType::Class)
+      if (const auto *descriptor = classInfo(type);
+          descriptor && descriptor->compilerType == CompilerTypeKind::MetaType) {
+        for (auto &argument : type.arguments)
+          argument = eraseTypeLifetimes(std::move(argument));
+        return;
+      }
     if (isLifetimeInvocationSignature(type) ||
         type.kind == SemanticType::FunctionItem) {
       if (dependentCallablePattern(type))

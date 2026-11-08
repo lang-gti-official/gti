@@ -16093,7 +16093,9 @@ auto SemanticVisitor::Impl::metaQueryConstant(
     }
     switch (*index) {
     case 0: {
-      if (subject == *attribute)
+      // Reflected type identity is the type shape: lifetime regions are not
+      // type identities or dispatch keys (RFC 0004 LT-5).
+      if (eraseTypeLifetimes(subject) == eraseTypeLifetimes(*attribute))
         return ConstantValue{true};
       if (containsOpenTypeParameter(subject) ||
           containsOpenTypeParameter(*attribute)) {
@@ -16132,7 +16134,7 @@ auto SemanticVisitor::Impl::metaQueryConstant(
         }
         return std::nullopt;
       }
-      return ConstantValue{subject == *attribute};
+      return ConstantValue{eraseTypeLifetimes(subject) == eraseTypeLifetimes(*attribute)};
     }
     case 1: {
       if (containsOpenTypeParameter(subject) ||

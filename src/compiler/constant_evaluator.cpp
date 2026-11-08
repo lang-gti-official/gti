@@ -1,3 +1,4 @@
+#include "gti/lifetime_types.h"
 #include "gti/semantic_core.h"
 
 #include <algorithm>
@@ -19,8 +20,10 @@ ConstantEvaluation convertConstantToType(const ConstantValue &value,
                      .failure = ConstantEvaluationFailure::UnsupportedType};
   }
   if (const auto *aggregate = std::get_if<ConstantAggregateValue>(&value)) {
+    // A constant value has no lifetime meaning: its exact type identity is
+    // the type shape (regions are proved for the program, not the value).
     if (aggregate->value == nullptr || aggregate->value->exactType == nullptr ||
-        *aggregate->value->exactType != target) {
+        eraseTypeLifetimes(*aggregate->value->exactType) != eraseTypeLifetimes(target)) {
       return {.failure = ConstantEvaluationFailure::UnsupportedType};
     }
     if (target.kind == SemanticType::Enum && target.enumId != 0 &&

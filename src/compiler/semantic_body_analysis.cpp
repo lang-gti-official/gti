@@ -5802,7 +5802,14 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
   // this same selection and ownership check.
   const bool deferredInitialization =
       !instanceAnalysisActive && containsOpenTypeParameter(currentReturnType);
-  if (!contextualInitialization && !deferredInitialization &&
+  // A compile-time type descriptor stores nothing of its argument; that
+  // argument's regions cannot make two descriptors different values.
+  const bool sameTypeDescriptor =
+      currentReturnType.kind == SemanticType::Class && valueType.kind == SemanticType::Class &&
+      currentReturnType.classId == valueType.classId && classInfo(currentReturnType) &&
+      classInfo(currentReturnType)->compilerType == CompilerTypeKind::MetaType &&
+      eraseTypeLifetimes(currentReturnType) == eraseTypeLifetimes(valueType);
+  if (!contextualInitialization && !deferredInitialization && !sameTypeDescriptor &&
       !isOwnershipAssignable(currentReturnType, valueType, stmt.value())) {
     const ImplicitReturnMoveStatus implicitMove =
         analyzeImplicitReturnMove(stmt.value(), currentReturnType, valueType);
@@ -14914,6 +14921,8 @@ auto SemanticVisitor::Impl::constexprFailure(const Token &location,
                                              ConstantEvaluationFailure failure,
                                              std::string detail)
     -> ConstexprEvaluation {
+  if (std::getenv("GTI_TRACE_CONSTEXPR_IF")) // TEMP-TRACE
+    std::fprintf(stderr, "[cxfail] line=%u lexeme=%s failure=%d %s\n", static_cast<unsigned>(location.line), location.lexeme.c_str(), static_cast<int>(failure), detail.c_str()); // TEMP-TRACE
   return {
       .failure = failure, .location = location, .detail = std::move(detail)};
 }
