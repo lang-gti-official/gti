@@ -859,8 +859,22 @@ MirVerificationResult verifyLifetimeAssumptionCases(
     return MirVerificationResult{{MirVerificationError{
         .bodyKind = body.kind, .owner = owner, .message = std::move(message)}}};
   };
-  if (!scopedLifetimeContract(declared))
+  if (!scopedLifetimeContract(declared)) {
+    if (std::getenv("GTI_TRACE_SCOPED")) { // TEMP-TRACE
+      const auto dump = [](auto &&self, const SemanticType &t, int d) -> void { // TEMP-TRACE
+        std::fprintf(stderr, "%*s kind=%d class=%u refLt=%d:%u lts=", d*2, "", (int)t.kind, (unsigned)t.classId, (int)t.referenceLifetime.kind, (unsigned)t.referenceLifetime.id); // TEMP-TRACE
+        for (auto r : t.lifetimeArguments) std::fprintf(stderr, "%d:%u,", (int)r.kind, (unsigned)r.id); // TEMP-TRACE
+        std::fprintf(stderr, "\n"); // TEMP-TRACE
+        lifetime_detail::children(t, [&](const SemanticType &c) { self(self, c, d+1); }); // TEMP-TRACE
+      }; // TEMP-TRACE
+      std::fprintf(stderr, "[scoped] owner=%zu params=", owner); // TEMP-TRACE
+      for (auto r : declared.parameters) std::fprintf(stderr, "%d:%u,", (int)r.kind, (unsigned)r.id); // TEMP-TRACE
+      std::fprintf(stderr, "\n"); // TEMP-TRACE
+      for (const auto &b : declared.typeBounds) dump(dump, b.type, 1); // TEMP-TRACE
+      for (const auto &n : declared.requirements.nodes) if (n.kind == LifetimeRequirementNode::Kind::Type) dump(dump, n.type, 1); // TEMP-TRACE
+    } // TEMP-TRACE
     return reject("MIR lifetime contract contains a malformed or out-of-scope type region");
+  }
   if (!declared.requirements.resolved())
     return reject("MIR callable retains an unresolved semantic lifetime predicate");
   if (declared.requirements.nodes.empty())

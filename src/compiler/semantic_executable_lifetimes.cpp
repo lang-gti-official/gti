@@ -120,6 +120,7 @@ auto SemanticVisitor::Impl::importMemberCallableScopes(
         auto name = site;
         name.lexeme = "_invocation" + std::to_string(ordinal + 1);
         name.generated = true;
+        if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[exec-id] %llu invocation\n", (unsigned long long)registry.nextId); // TEMP-TRACE
         descriptors.push_back({.id = registry.nextId--, .name = std::move(name),
                                .lifetime = true, .implicit = true});
       }
@@ -269,6 +270,7 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
     Token name = site;
     name.lexeme = "_instance" + std::to_string(ordinal + 1);
     name.generated = true;
+    if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[exec-id] %llu instance owner=%zu kind=%d\n", (unsigned long long)registry.nextId, (size_t)ownerId, (int)key.kind); // TEMP-TRACE
     descriptors.push_back({.id = registry.nextId--,
                            .name = std::move(name), .lifetime = true,
                            .implicit = true});
@@ -411,8 +413,16 @@ auto SemanticVisitor::Impl::canonicalizeExecutableInstance(
     children(type.lambdaEnclosingFunctionTypes,
              pattern ? &pattern->lambdaEnclosingFunctionTypes : nullptr);
   };
+  // An exact specialization binds no regions in its key; its members see the
+  // closed key, never a lifted caller region.
+  const bool exactOwner = ownerId && classInfo(ownerId).exactSpecializationPrimary;
+  if (exactOwner)
+    for (auto &type : result.classTypes)
+      type = closeTypeLifetimes(std::move(type));
   for (std::size_t index = 0; index < result.classTypes.size(); ++index) {
     result.classLifetimeParameters.emplace_back();
+    if (exactOwner)
+      continue;
     lift(lift, result.classTypes[index], {}, result.classLifetimeParameters.back(),
          ownerPatterns.empty() ? nullptr : &ownerPatterns[index]);
   }

@@ -4825,8 +4825,14 @@ auto SemanticVisitor::Impl::selectExactClassSpecialization(
                           }) &&
                candidate.valueArguments == key.valueArguments;
       });
-  if (found != exactClassSpecializations.end())
+  if (found != exactClassSpecializations.end()) {
     type.classId = found->specialization;
+    // An exact specialization binds no regions, so the caller's regions in
+    // its key carry no meaning. Close them so the instance never names a
+    // region that is out of scope in the specialization's members.
+    for (SemanticType &argument : type.arguments)
+      argument = closeTypeLifetimes(std::move(argument));
+  }
   return type;
 }
 
@@ -5010,7 +5016,10 @@ auto SemanticVisitor::Impl::registerClassSpecializations(
     primaryId = selectClassDefinition(*primaryId, resolved.types);
     std::vector<SemanticType> typeArguments = resolved.types;
     for (SemanticType &argument : typeArguments) {
-      argument = canonicalExactSpecializationType(std::move(argument));
+      // A specialization key binds no regions: an elided region in its
+      // header (`formatter<string_view>`) names no caller, so close it.
+      argument = closeTypeLifetimes(
+          canonicalExactSpecializationType(std::move(argument)));
       if (!isConcreteExactSpecializationType(argument)) {
         reportExactSpecializationError(
             *declaration,

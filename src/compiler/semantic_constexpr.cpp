@@ -1,4 +1,6 @@
 #include "semantic_analyzer_impl.h"
+#include <cstdio>
+#include <cstdlib>
 
 #include "gti/failure_metadata.h"
 #include "gti/hir.h"
@@ -1062,7 +1064,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     const std::optional<ConstantValue> &receiver, const Token &callSite,
     ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
   if (sourceGraph == nullptr || sources == nullptr) {
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1065); return std::nullopt; }
   }
   // Nested required constants use the canonical completed catalog, never the
   // caller's partially analyzed instance delta, whatever kind of instance is
@@ -1084,7 +1086,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       (construction && !construction->generatedDefault &&
        (!constexprConstructorsAnalyzed.contains(construction->declaration) ||
         !declaredBeforeCurrent(construction->declaration)))) {
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1087); return std::nullopt; }
   }
   const std::size_t enclosingDepth = context.work->stagingDepth;
   const void *const stagedTarget =
@@ -1278,14 +1280,14 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
             callSite, ConstantEvaluationFailure::UnsupportedExpression,
             "The concrete constexpr instance failed semantic analysis.");
       }
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1281); return std::nullopt; }
     }
     appendStagedWarnings(hir.diagnostics);
     if (hir.program.requiresNativeObjectLayout())
       semanticModel.requireNativeObjectLayout();
     const auto *entry = sourceGraph->findUnit(sourceGraph->entryUnit());
     if (entry == nullptr) {
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1288); return std::nullopt; }
     }
     auto metadata = [&] {
       const PhaseTimeScope metadataScope("constexpr-staged-failure-metadata");
@@ -1293,14 +1295,14 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                                             entry->path);
     }();
     if (!metadata.valid()) {
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1296); return std::nullopt; }
     }
     auto mir = [&] {
       const PhaseTimeScope mirScope("constexpr-staged-mir-lower");
       return MirLowerer().lower(hir.program, metadata.metadata);
     }();
     if (!mir.valid()) {
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_STAGED")) { std::fprintf(stderr,"[staged-null] %d\n",1303); for (const auto &e : mir.errors) std::fprintf(stderr,"  [staged-mir] kind=%d owner=%u blk=%u inst=%u %s\n",(int)e.body.kind,(unsigned)e.body.owner,(unsigned)e.block,(unsigned)e.instruction,e.message.c_str()); } return std::nullopt; }
     }
     MirBodyAddress root;
     if (construction) {
@@ -1415,7 +1417,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   if (result.failure == ConstantEvaluationFailure::UnsupportedExpression ||
       result.failure == ConstantEvaluationFailure::UnsupportedType) {
     if (!requiresMir)
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1418); return std::nullopt; }
     // The compatibility walker does not own reference or receiver mutation.
     // Retrying a value-copy interpretation could silently lose a caller write.
     result.detail =
@@ -1476,7 +1478,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
         }
       }
     }
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1479); return std::nullopt; }
   };
   if (result) {
     if (recordable && StagedConstantResults::reusable(*result.value))

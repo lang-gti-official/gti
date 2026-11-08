@@ -4262,6 +4262,16 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                                         *targetOwner) &&
                !isMirExactReceiverPresentation(program, instruction,
                                                receiverType))) {
+            if (std::getenv("GTI_TRACE_SCOPED")) { // TEMP-TRACE
+              const auto dump = [](auto &&self, const SemanticType &t, int d) -> void { // TEMP-TRACE
+                std::fprintf(stderr, "%*s kind=%d class=%u refLt=%d:%u lts=", d*2, "", (int)t.kind, (unsigned)t.classId, (int)t.referenceLifetime.kind, (unsigned)t.referenceLifetime.id); // TEMP-TRACE
+                for (auto r : t.lifetimeArguments) std::fprintf(stderr, "%d:%u,", (int)r.kind, (unsigned)r.id); // TEMP-TRACE
+                std::fprintf(stderr, "\n"); // TEMP-TRACE
+                lifetime_detail::children(t, [&](const SemanticType &c) { self(self, c, d+1); }); // TEMP-TRACE
+              }; // TEMP-TRACE
+              std::fprintf(stderr, "[unrelated] receiver:\n"); dump(dump, receiverType, 1); // TEMP-TRACE
+              std::fprintf(stderr, "[unrelated] target:\n"); if (targetOwner) dump(dump, *targetOwner, 1); // TEMP-TRACE
+            } // TEMP-TRACE
             return verificationFailure(body, owner,
                                        "ordinary member receiver is unrelated "
                                        "to its exact target owner",
