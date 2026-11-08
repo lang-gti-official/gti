@@ -13252,7 +13252,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
         if (dependency.parent != 0)
           recordSemanticLoanUseForLoan(dependency.parent);
       }
-      if (dependencies.size() == 1 && primary.parent == 0)
+      if (dependencies.size() == 1)
         retainTextShellOwner(expression, id);
       semanticModel.recordBindingLoan(binding, id);
       return;
@@ -14297,18 +14297,39 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
 // the same edge for an adapter over a local view shell.
 void SemanticVisitor::Impl::retainTextShellOwner(const Expr *expression,
                                                  SemanticLoanId id) {
-  const auto *construction = semanticModel.findConstruction(*expression);
-  if (construction == nullptr ||
-      construction->borrowOrigin != BorrowOriginKind::Argument)
+  // Only a class carrier stores a reference to the shell; a text result
+  // relays the view's contents and keeps the owner directly.
+  const auto *carrierType = semanticModel.findType(*expression);
+  if (carrierType == nullptr || carrierType->kind != SemanticType::Class)
     return;
   const ExprPtr *source = storedBorrowSource(expression);
-  const auto *type = source && *source ? semanticModel.findType(**source) : nullptr;
+  const auto *recorded = source && *source ? semanticModel.findType(**source) : nullptr;
   const auto *loan = semanticModel.findLoan(id);
-  if (type == nullptr || loan == nullptr ||
-      (type->kind != SemanticType::StringView &&
-       type->kind != SemanticType::CString) ||
-      loan->storedDependency != 0 || loan->place.root == 0 ||
-      loan->place.receiver || !loan->place.projections.empty())
+  if (recorded == nullptr || loan == nullptr)
+    return;
+  const SemanticType &type = recorded->kind == SemanticType::Reference &&
+                                     recorded->arguments.size() == 1
+                                 ? recorded->arguments.front() : *recorded;
+  if ((type.kind != SemanticType::StringView &&
+       type.kind != SemanticType::CString) ||
+      loan->storedDependency != 0)
+    return;
+  const auto record = [&](SemanticLoanId owner) {
+    SemanticLoanInfo updated = *loan;
+    updated.storedDependency = owner;
+    semanticModel.recordLoan(std::move(updated));
+    recordSemanticLoanUseForLoan(owner);
+  };
+  // A shell reached through a reference is a child of that reference's loan,
+  // which already names the shell's owner.
+  if (loan->parent != 0) {
+    if (const auto *parent = semanticModel.findLoan(loan->parent);
+        parent != nullptr && parent->storedDependency != 0)
+      record(parent->storedDependency);
+    return;
+  }
+  if (loan->place.root == 0 || loan->place.receiver ||
+      !loan->place.projections.empty())
     return;
   const SymbolId shell = loan->place.root;
   SemanticLoanId owner = 0;
@@ -14325,12 +14346,8 @@ void SemanticVisitor::Impl::retainTextShellOwner(const Expr *expression,
       return;
     owner = candidate;
   }
-  if (owner == 0)
-    return;
-  SemanticLoanInfo updated = *loan;
-  updated.storedDependency = owner;
-  semanticModel.recordLoan(std::move(updated));
-  recordSemanticLoanUseForLoan(owner);
+  if (owner != 0)
+    record(owner);
 }
 
 auto SemanticVisitor::Impl::recordSemanticLoanUseForLoan(SemanticLoanId loan)

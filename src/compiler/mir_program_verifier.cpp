@@ -5534,7 +5534,9 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                        ownerlessTextField || ownerlessAccessorText);
         if ((loan->storedDependency == 0 && !independentText) ||
             !loan->additionalSources().empty() ||
-            !instruction.borrowArguments.empty())
+            !(instruction.borrowArguments.empty() ||
+              (instruction.borrowArguments.size() == 1 &&
+               instruction.borrowArguments.front() == instruction.borrowArgument)))
           return verificationFailure(
               body, owner,
               "carrier reference result requires one exact stored dependency",

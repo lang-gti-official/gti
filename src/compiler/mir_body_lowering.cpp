@@ -9492,7 +9492,12 @@ private:
       } else if (kind == MirLoanKind::Stored && shellArgument != nullptr &&
                  (shellArgument->info.traits.containsBorrowedState ||
                   storesCarrierReference(value)) &&
-                 shellReferenceInput && value.borrowArguments.empty() &&
+                 shellReferenceInput &&
+                 // A one-supplier list naming the primary argument is the
+                 // same contract.
+                 (value.borrowArguments.empty() ||
+                  (value.borrowArguments.size() == 1 &&
+                   value.borrowArguments.front() == value.borrowArgument)) &&
                  value.borrowFields.size() <= 1 &&
                  (value.borrowFields.empty() ||
                   value.borrowFields.front().sourceFields.empty())) {
