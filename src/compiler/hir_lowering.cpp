@@ -415,12 +415,16 @@ private:
         if (prior.region != origin.region || prior.place != place || !prior.source)
           continue;
         const auto *source = body.findValue(prior.source);
-        if (!source)
+        if (!source) {
+          if (std::getenv("GTI_TRACE_HIR_VALID")) std::fprintf(stderr, "[origin-src] prior source missing\n"); // TEMP-TRACE
           return nullptr;
+        }
         if (source->source != origin.source)
           continue;
-        if (witness && witness->id != source->id)
+        if (witness && witness->id != source->id) {
+          if (std::getenv("GTI_TRACE_HIR_VALID")) std::fprintf(stderr, "[origin-src] two same-source witnesses %llu %llu current=%llu kind=%d\n", (unsigned long long)witness->id, (unsigned long long)source->id, (unsigned long long)current->id, static_cast<int>(current->kind)); // TEMP-TRACE
           return nullptr;
+        }
         witness = source;
       }
     if (std::getenv("GTI_TRACE_HIR_VALID") && witness && witness->id != current->id) // TEMP-TRACE
@@ -471,9 +475,11 @@ private:
       const auto place = qualifyPlace(origin.place, body.placeDomain);
       if (origin.source != nullptr) {
         const auto *value = lifetimeOriginSource(origin, place, body);
-        if (value == nullptr)
+        // A compile-time-only expression (a `constexpr for` sequence) has no
+        // evaluated HIR value; its origin is the exact checked place alone.
+        if (value == nullptr && !(origin.place.valid() && !body.valueForSource(*origin.source)))
           invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-        else
+        else if (value != nullptr)
           source = value->id;
       }
       if (!origin.place.valid() && source == 0)

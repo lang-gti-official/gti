@@ -3814,6 +3814,14 @@ auto SemanticVisitor::Impl::rewriteCompilerType(SemanticType type) const
   }
   const ClassInfo &info = classInfo(type.classId);
   switch (info.compilerType) {
+  case CompilerTypeKind::MetaType: {
+    // A type descriptor reflects a type shape and stores nothing of it. Its
+    // argument's lifetime regions are not part of its identity, so every
+    // spelling of one shape names one descriptor instance (RFC 0004).
+    for (auto &argument : type.arguments)
+      argument = eraseTypeLifetimes(std::move(argument));
+    return type;
+  }
   case CompilerTypeKind::MetaFieldList: {
     const ClassId list = compilerTypeClass(CompilerTypeKind::MetaList);
     const ClassId field = compilerTypeClass(CompilerTypeKind::MetaField);

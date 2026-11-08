@@ -16050,10 +16050,14 @@ auto SemanticVisitor::Impl::metaQueryAcceptsOpenSubject(
 // The constant a concrete reflection query denotes, or nullopt when the field
 // index is out of range (the caller reports it).
 auto SemanticVisitor::Impl::metaQueryConstant(
-    IntrinsicKind intrinsic, const SemanticType &subject,
-    const std::optional<SemanticType> &attribute,
+    IntrinsicKind intrinsic, const SemanticType &regionSubject,
+    const std::optional<SemanticType> &regionAttribute,
     std::optional<std::uint64_t> index,
     std::optional<std::uint64_t> second) const -> std::optional<ConstantValue> {
+  // Reflection observes type shapes; lifetime regions are not reflected.
+  const SemanticType subject = eraseTypeLifetimes(regionSubject);
+  const std::optional<SemanticType> attribute =
+      regionAttribute ? std::optional(eraseTypeLifetimes(*regionAttribute)) : std::nullopt;
   const auto unsignedConstant = [](std::uint64_t value) {
     return ConstantValue{ConstantInteger{
         .magnitude = value, .domain = CheckedIntegerDomain{.width = 64}}};

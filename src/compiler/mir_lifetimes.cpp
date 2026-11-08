@@ -1452,15 +1452,26 @@ verifyMirLifetimeBodyFactsForCase(const MirProgram &program, const MirBody &body
   };
   const auto checkTypeRegions = [&](const SemanticType &type) {
     for (const auto region : freeTypeLifetimes(type))
-      if (!known(region))
+      if (!known(region)) {
+        if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+          { std::string ps; for (const auto p : contract.parameters) ps += " " + std::to_string(p.id); // TEMP-TRACE
+          std::fprintf(stderr, "[scope] region=%d:%llu typeKind=%d class=%llu params=[%s] vars=%zu ret=%d\n", static_cast<int>(region.kind), (unsigned long long)region.id, static_cast<int>(type.kind), (unsigned long long)type.classId, ps.c_str(), facts.variables.size(), &type == &body.returnType); } // TEMP-TRACE
         reject(
             "MIR body type contains an unallocated or out-of-scope lifetime");
+      }
   };
   checkTypeRegions(body.returnType);
   for (const auto &place : body.places)
     checkTypeRegions(place.type);
-  for (const auto &value : body.values)
+  for (const auto &value : body.values) {
+    if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
+      for (const auto region : freeTypeLifetimes(value.info.type)) // TEMP-TRACE
+        if (!known(region)) { // TEMP-TRACE
+          const auto *def = [&]() -> const MirInstruction * { for (const auto &b : body.blocks) for (const auto &i : b.instructions) if (i.id == value.definition) return &i; return nullptr; }(); // TEMP-TRACE
+          std::fprintf(stderr, "[scope-value] v%llu hir=%llu def kind=%d fn=%d callInputRole=%d intrinsic=%d\n", (unsigned long long)value.id, (unsigned long long)value.sourceValue, def ? static_cast<int>(def->kind) : -1, def && def->functionTarget ? 1 : 0, def && def->callInputRole ? static_cast<int>(*def->callInputRole) : -1, def ? static_cast<int>(def->intrinsic) : -1); // TEMP-TRACE
+        } // TEMP-TRACE
     checkTypeRegions(value.info.type);
+  }
   LifetimeBounds assumptions;
   for (const auto bound : contract.bounds)
     if (!assumptions.assume(bound.longer, bound.shorter))

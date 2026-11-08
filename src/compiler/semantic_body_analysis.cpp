@@ -1413,6 +1413,8 @@ auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
     -> void {
   const PhaseTimeScope timeScope("constexpr-for");
   const SemanticType sequenceType = analyze(stmt.sequence());
+  if (std::getenv("GTI_TRACE_CONSTEXPR_IF")) // TEMP-TRACE
+    std::fprintf(stderr, "[cfor] line=%u seq=%s elements=%d instance=%d\n", static_cast<unsigned>(stmt.forKeyword().line), typeSpelling(sequenceType).c_str(), sequenceType != SemanticType::Unknown && compileTimeSequenceElements(sequenceType).has_value(), instanceAnalysisActive); // TEMP-TRACE
   if (sequenceType == SemanticType::Unknown) {
     semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
     return;
@@ -15961,7 +15963,8 @@ auto SemanticVisitor::Impl::evaluateConstexprNode(const Expr &source,
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
     if (resolved == nullptr) {
       return constexprFailure(call->paren(),
-                              ConstantEvaluationFailure::UnsupportedExpression);
+                              ConstantEvaluationFailure::UnsupportedExpression,
+                              std::getenv("GTI_TRACE_CONSTEXPR_IF") ? "[TRACE unresolved call] callee=" + expressionToken(call->callee()).lexeme + " instance=" + std::to_string(instanceAnalysisActive) + " exprType=" + typeSpelling(semanticModel.typeOf(*call)) : std::string{}); // TEMP-TRACE
     }
     if (resolved->intrinsic == IntrinsicKind::StringViewSize ||
         resolved->intrinsic == IntrinsicKind::StringViewEmpty) {
