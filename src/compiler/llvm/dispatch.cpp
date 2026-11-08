@@ -1,3 +1,4 @@
+#include "gti/lifetime_types.h"
 #include "dispatch.h"
 #include "../class_hierarchy_lifetimes.h"
 #include "reachability.h"
@@ -29,10 +30,20 @@ SemanticType receiverType(const MirInstruction &instruction) {
   return type;
 }
 
+// Each declaration in a virtual family owns its signature regions; the
+// representation contract is their region-erased shape.
+bool sameErasedTypes(const std::vector<SemanticType> &left,
+                     const std::vector<SemanticType> &right) {
+  return std::equal(left.begin(), left.end(), right.begin(), right.end(),
+                    [](const SemanticType &a, const SemanticType &b) {
+                      return eraseTypeLifetimes(a) == eraseTypeLifetimes(b);
+                    });
+}
+
 bool sameCallContract(const MirFunctionInstance &left,
                       const MirFunctionInstance &right) {
-  return left.returnType == right.returnType &&
-         left.parameterTypes == right.parameterTypes &&
+  return eraseTypeLifetimes(left.returnType) == eraseTypeLifetimes(right.returnType) &&
+         sameErasedTypes(left.parameterTypes, right.parameterTypes) &&
          left.receiverMutability == right.receiverMutability &&
          left.overloadedOperator == right.overloadedOperator &&
          left.requiresUnsafe == right.requiresUnsafe &&
@@ -637,8 +648,15 @@ VirtualCallPlan Dispatch::planCall(const MirInstruction &instruction) {
       instruction.tracksCaller != selected->tracksCaller ||
       selected->requiresUnsafe != (instruction.unsafeOperation ==
                                    UnsafeOperationKind::DeclaredUnsafeCall) ||
-      instruction.parameterTypes != selected->parameterTypes ||
-      resultContract != selected->returnType ||
+      // Representation is region-independent; the MIR lifetime verifier
+      // proves the applied signature's regions.
+      !std::equal(instruction.parameterTypes.begin(),
+                  instruction.parameterTypes.end(),
+                  selected->parameterTypes.begin(), selected->parameterTypes.end(),
+                  [](const SemanticType &left, const SemanticType &right) {
+                    return eraseTypeLifetimes(left) == eraseTypeLifetimes(right);
+                  }) ||
+      eraseTypeLifetimes(resultContract) != eraseTypeLifetimes(selected->returnType) ||
       instruction.definedFailure.propagation !=
           FailurePropagationKind::VirtualCall)
     throw std::invalid_argument(
@@ -667,8 +685,9 @@ VirtualCallPlan Dispatch::planCall(const MirInstruction &instruction) {
       throw std::logic_error(
           "LLVM named member lost its concrete sealed root family");
     const auto abi = rootAbi(root->id);
-    if (root->returnType != selected->returnType ||
-        root->parameterTypes != selected->parameterTypes ||
+    if (eraseTypeLifetimes(root->returnType) !=
+            eraseTypeLifetimes(selected->returnType) ||
+        !sameErasedTypes(root->parameterTypes, selected->parameterTypes) ||
         root->receiverMutability != selected->receiverMutability ||
         root->overloadedOperator != selected->overloadedOperator ||
         (contract &&

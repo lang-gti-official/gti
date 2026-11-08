@@ -6308,7 +6308,28 @@ auto SemanticVisitor::Impl::mergeDeclaredMember(ClassInfo &owner,
         diagnostics.emplace_back(std::move(diagnostic));
         validOverride = false;
       }
-      if (candidate.returnType != base.returnType) {
+      // Each method's elided output region is its own receiver/parameter
+      // region; the override relation compares types up to a consistent
+      // positional renaming of those signature regions.
+      const bool sameReturnUpToRegions = [&] {
+        if (candidate.returnType == base.returnType)
+          return true;
+        const auto mine = freeTypeLifetimes(candidate.returnType);
+        const auto theirs = freeTypeLifetimes(base.returnType);
+        if (mine.size() != theirs.size())
+          return false;
+        std::vector<std::pair<Lifetime, Lifetime>> bindings;
+        for (std::size_t index = 0; index < mine.size(); ++index) {
+          if (mine[index].kind != theirs[index].kind &&
+              (mine[index].kind == Lifetime::Kind::Static ||
+               theirs[index].kind == Lifetime::Kind::Static))
+            return false;
+          bindings.emplace_back(mine[index], theirs[index]);
+        }
+        const auto renamed = substituteTypeLifetimes(candidate.returnType, bindings);
+        return renamed && *renamed == base.returnType;
+      }();
+      if (!sameReturnUpToRegions) {
         Diagnostic diagnostic =
             makeDiagnostic("GTI-S2042", DiagnosticPhase::Semantics,
                            candidate.declaration->returnType().name.last(),

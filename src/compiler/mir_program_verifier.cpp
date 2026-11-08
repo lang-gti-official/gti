@@ -17273,9 +17273,12 @@ completeBorrowSourcePath(const MirProgram &program,
         result =
             projectCompleteBorrowPayloadSet(program, instruction, *carrier);
     } else if (instruction.kind == MirInstructionKind::Call &&
-               instruction.dispatch == CallDispatch::Static &&
+               (instruction.dispatch == CallDispatch::Static ||
+                instruction.dispatch == CallDispatch::Virtual) &&
                instruction.intrinsic == IntrinsicKind::None &&
                instruction.functionTarget && !instruction.neverReturns) {
+      // A virtual call's result is described by the dispatched declaration's
+      // complete contract, which every override is verified to satisfy.
       const auto *target =
           program.findFunctionInstance(*instruction.functionTarget);
       const auto *summary =
@@ -18479,6 +18482,14 @@ public:
     if (function && !retainsDeclaredSuppliers(*function)) {
       states[id - 1] = State::Complete;
       return nullptr;
+    }
+    // A pure virtual declaration has no reachable return: its declared
+    // contract is the summary every override is verified against.
+    if (function && function->completeReturnBorrow && function->pureVirtual &&
+        wellFormed(*function, *function->completeReturnBorrow)) {
+      summaries[id - 1] = *function->completeReturnBorrow;
+      states[id - 1] = State::Complete;
+      return &*summaries[id - 1];
     }
     if (function && function->completeReturnBorrow) {
       auto observed = reconstruct(*function, flows[id - 1]);

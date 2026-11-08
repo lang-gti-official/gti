@@ -8184,9 +8184,11 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
     if (selected && *sourceOperator == OverloadedOperator::NotEqual &&
         expr.oper().generated &&
         (selected->parameterTypes.size() != 1 ||
-         (selected->parameterTypes.front() != rightType &&
-          selected->parameterTypes.front() !=
-              SemanticType::referenceTo(rightType, AccessMode::ReadOnly)))) {
+         (eraseTypeLifetimes(selected->parameterTypes.front()) !=
+              eraseTypeLifetimes(rightType) &&
+          eraseTypeLifetimes(selected->parameterTypes.front()) !=
+              eraseTypeLifetimes(SemanticType::referenceTo(
+                  rightType, AccessMode::ReadOnly))))) {
       report(expr.oper(),
              "Range iterator operator!= must accept its sentinel by "
              "value or read-only reference.",
