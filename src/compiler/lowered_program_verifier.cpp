@@ -1354,8 +1354,11 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
           if (candidate != nullptr &&
               candidate->exactSpecializationPrimary == type.classId &&
               candidate->exactTypeArguments == type.arguments &&
-              candidate->exactValueArguments == type.valueArguments)
-            return SemanticType::classType(candidate->id);
+              candidate->exactValueArguments == type.valueArguments) {
+            // A selected specialization keeps its actual public arguments.
+            type.classId = candidate->id;
+            return type;
+          }
         }
       }
       return type;
