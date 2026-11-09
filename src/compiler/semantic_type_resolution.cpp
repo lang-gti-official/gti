@@ -6460,6 +6460,26 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
           if (const auto place = retainedLoanPlace(call->arguments()[1]); place.valid())
             dependencies = {SemanticLoanDependency{.place = place,
                                                    .access = AccessMode::Mutable}};
+    // LT-4 at the returning body: a result in this method's receiver region
+    // is covered by the receiver itself. A receiver subobject lives exactly
+    // as long as the receiver, and a receiver-rooted stored path reaches
+    // storage whose region outlives it (nominal well-formedness), so both
+    // are proved by the whole receiver place.
+    if (function->ownerClass != 0 && !function->staticMember &&
+        function->lifetimeContract.receiver.specified() &&
+        function->returnType.referenceLifetime == function->lifetimeContract.receiver)
+      for (auto &dependency : dependencies)
+        if (dependency.place.receiver && dependency.place.root == 0 &&
+            (!dependency.designatedFields.empty() || !dependency.place.projections.empty()) &&
+            dependency.conditions.empty() &&
+            (function->returnType.referenceAccess == AccessMode::ReadOnly ||
+             (function->declaration && function->declaration->receiverMutability() == ReceiverMutability::Mutable))) {
+          auto receiver = dependency.place;
+          receiver.projections.clear();
+          dependency = SemanticLoanDependency{
+              .place = std::move(receiver),
+              .access = function->returnType.referenceAccess};
+        }
     const auto ownerShaped = [&](const auto &candidates) {
       return !candidates.empty() &&
              std::all_of(candidates.begin(), candidates.end(), [&](const auto &dependency) {
