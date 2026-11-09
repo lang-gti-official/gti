@@ -458,6 +458,7 @@ public:
                   : 0;
           const bool explicitOwningFieldStage =
               owningStageSource != 0 && temporaryIsActive(owningStageSource);
+          if (std::getenv("GTI_TRACE_SCP") && initializer.kind == ConstructorInitializerTargetKind::Field) std::fprintf(stderr, "[fieldinit] field=%llu cleanupFree=%d owning=%d eligible=%d source=%llu storesRef=%d ctorTarget=%d typeEq=%d erasedEq=%d\n", (unsigned long long)initializer.field, explicitCleanupFreeFieldStage, explicitOwningFieldStage, constructorRollbackStageEligible(initializer), (unsigned long long)owningStageSource, initializer.storesReference, initializer.constructorTarget.has_value(), constructorOwner && field != constructorOwner->fields.end() && callableOwner && substituteTypeLifetimes(field->info.type, callableOwner->bindings) == std::optional<SemanticType>(initializer.targetType), constructorOwner && field != constructorOwner->fields.end() && eraseTypeLifetimes(field->info.type) == eraseTypeLifetimes(initializer.targetType)); // TEMP-TRACE
           // A lexical aggregate temporary can already carry a transfer token
           // even when its fields require no active cleanup. Its owning stage
           // is the sole publication; never initialize the same field twice.
@@ -502,13 +503,18 @@ public:
                 output.findDropObligation(owningStageSource);
             const MirDropObligationId rollback =
                 output.dropObligations.size() + 1;
+            // The rollback destroys the field object, whose declared type may
+            // name its regions differently from the source temporary.
+            MirDropType rollbackType =
+                sourceDrop == nullptr ? MirDropType{} : sourceDrop->dropType;
+            if (sourceDrop != nullptr)
+              rollbackType.type = initializer.targetType;
             output.dropObligations.push_back(
                 {.id = rollback,
                  .constructionOrder = rollback,
                  .kind = MirDropObligationKind::ConstructionRollback,
                  .place = destination,
-                 .dropType = sourceDrop == nullptr ? MirDropType{}
-                                                   : sourceDrop->dropType});
+                 .dropType = std::move(rollbackType)});
             MirInstruction initialize{
                 .kind = MirInstructionKind::Initialize,
                 .hirValue = initializer.arguments.front(),
@@ -1253,8 +1259,12 @@ private:
       return false;
     }
     const HirValue *argument = findValue(initializer.arguments.front());
+    if (std::getenv("GTI_TRACE_SCP") && argument) std::fprintf(stderr, "[rollback] field=%llu drop=%d typeEq=%d erasedEq=%d\n", (unsigned long long)initializer.field, argument->dropObligation.has_value(), argument->info.type == initializer.targetType, eraseTypeLifetimes(argument->info.type) == eraseTypeLifetimes(initializer.targetType)); // TEMP-TRACE
+    // Semantics proved the initializer's region conversion; the staged
+    // rollback concerns the object, whose representation regions never change.
     if (argument == nullptr || !argument->dropObligation ||
-        argument->info.type != initializer.targetType) {
+        eraseTypeLifetimes(argument->info.type) !=
+            eraseTypeLifetimes(initializer.targetType)) {
       return false;
     }
     const auto owner = std::find_if(program.classInstances().begin(),

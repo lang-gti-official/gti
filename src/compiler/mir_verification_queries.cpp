@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include "mir_verification_queries.h"
 #include "gti/mir_dominance.h"
 #include "gti/borrow_conditions.h"
@@ -959,6 +961,8 @@ bool storedCarrierConstructorPublication(const MirBody &body, const MirLoan &loa
       input->conditions != loan.conditions ||
       input->additionalDependencies != loan.additionalDependencies)
     return false;
+  if (std::getenv("GTI_TRACE_SCP")) { std::fprintf(stderr, "[scp] loan=%llu operandValue=%llu field=%llu\n", (unsigned long long)loan.id, (unsigned long long)operand.value, (unsigned long long)loan.storedPath.front().field); for (std::size_t position = 0; position < publicationBlock->instructions.size() && position < publicationPosition + 6; ++position) { const auto &i = publicationBlock->instructions[position]; const auto *d = i.destination ? body.findPlace(*i.destination) : nullptr; std::fprintf(stderr, "[scp]   i%llu kind=%d hir=%llu ctorInit=%d result=%llu dest=%d root=%d proj=%zu field=%llu op0=%llu\n", (unsigned long long)i.id, (int)i.kind, (unsigned long long)i.hirValue, (int)i.constructorInitializer, (unsigned long long)i.result.value_or(0), d != nullptr, d ? (int)d->root : -1, d ? d->projections.size() : 0, d && !d->projections.empty() ? (unsigned long long)d->projections.front().field : 0ull, i.operands.empty() ? 0ull : (unsigned long long)i.operands.front().value); } } // TEMP-TRACE
+  if (std::getenv("GTI_TRACE_SCP")) for (const auto &b : body.blocks) for (const auto &i : b.instructions) if (i.kind == MirInstructionKind::Initialize || i.kind == MirInstructionKind::Move || i.kind == MirInstructionKind::Assign) { const auto *d = i.destination ? body.findPlace(*i.destination) : nullptr; std::fprintf(stderr, "[scp-all] bb%llu i%llu kind=%d hir=%llu ctorInit=%d root=%d proj=%zu field=%llu op0=%llu opkind=%d\n", (unsigned long long)b.id, (unsigned long long)i.id, (int)i.kind, (unsigned long long)i.hirValue, (int)i.constructorInitializer, d ? (int)d->root : -1, d ? d->projections.size() : 0, d && !d->projections.empty() ? (unsigned long long)d->projections.front().field : 0ull, i.operands.empty() ? 0ull : (unsigned long long)i.operands.front().value, i.operands.empty() ? -1 : (int)i.operands.front().kind); } // TEMP-TRACE
   const MirInstruction *initialization = nullptr;
   for (std::size_t position = 0; position < publicationPosition; ++position) {
     const auto &instruction = publicationBlock->instructions[position];
