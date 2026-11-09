@@ -18423,30 +18423,77 @@ normalizedCompleteReturnBorrow(const MirProgram &program,
     structural.index = 0;
     if (structural != typed)
       return false;
-    const auto *value = body.findValue(actual.index);
-    const auto domain = value ? constantIntegerDomain(value->info.type) : std::nullopt;
-    if (!value || !domain || value->info.category != ValueCategory::Value ||
-        std::count_if(body.values.begin(), body.values.end(), [&](const auto &candidate) {
-          return candidate.id == actual.index;
-        }) != 1)
-      return false;
-    const MirInstruction *definition = nullptr;
-    for (const auto &block : body.blocks)
-      for (const auto &candidate : block.instructions)
-        if (candidate.result == actual.index) {
-          if (definition || block.id != value->definitionBlock ||
-              candidate.id != value->definition)
-            return false;
-          definition = &candidate;
-        }
-    const auto *literal = definition && definition->literal
-        ? std::get_if<std::uint64_t>(&*definition->literal) : nullptr;
-    return definition && !definition->tombstone &&
-        definition->kind == MirInstructionKind::Compute &&
-        definition->operation == MirOperation::Literal &&
-        definition->info == value->info && definition->operands.empty() &&
-        literal && *literal == *typed.constantIndex &&
-        checkedIntegerFits({.magnitude = *literal}, *domain);
+    // The index is a unique typed literal, or checked integer arithmetic and
+    // conversions over such literals (for example a substituted `N - 1`).
+    // Every step must be exact: wrapping or a negative result is no proof.
+    const auto constant = [&](auto &&self, MirValueId id,
+                              std::size_t depth) -> std::optional<std::uint64_t> {
+      const auto *value = body.findValue(id);
+      const auto domain = value ? constantIntegerDomain(value->info.type) : std::nullopt;
+      if (depth > 16 || !value || !domain ||
+          value->info.category != ValueCategory::Value ||
+          std::count_if(body.values.begin(), body.values.end(), [&](const auto &candidate) {
+            return candidate.id == id;
+          }) != 1)
+        return std::nullopt;
+      const MirInstruction *definition = nullptr;
+      for (const auto &block : body.blocks)
+        for (const auto &candidate : block.instructions)
+          if (candidate.result == id) {
+            if (definition || block.id != value->definitionBlock ||
+                candidate.id != value->definition)
+              return std::nullopt;
+            definition = &candidate;
+          }
+      if (!definition || definition->tombstone ||
+          definition->kind != MirInstructionKind::Compute ||
+          definition->info != value->info)
+        return std::nullopt;
+      const auto input = [&](const MirOperand &operand) -> std::optional<std::uint64_t> {
+        if (operand.kind == MirOperandKind::Value)
+          return self(self, operand.value, depth + 1);
+        return std::nullopt;
+      };
+      std::optional<std::uint64_t> result;
+      switch (definition->operation) {
+      case MirOperation::Literal:
+        if (definition->operands.empty() && definition->literal)
+          if (const auto *literal = std::get_if<std::uint64_t>(&*definition->literal))
+            result = *literal;
+        break;
+      case MirOperation::Identity:
+      case MirOperation::Convert:
+        if (definition->operands.size() == 1)
+          result = input(definition->operands.front());
+        break;
+      case MirOperation::Add:
+      case MirOperation::Subtract:
+      case MirOperation::Multiply: {
+        if (definition->operands.size() != 2)
+          break;
+        const auto left = input(definition->operands[0]);
+        const auto right = input(definition->operands[1]);
+        std::uint64_t value = 0;
+        if (!left || !right ||
+            (definition->operation == MirOperation::Add &&
+             __builtin_add_overflow(*left, *right, &value)) ||
+            (definition->operation == MirOperation::Subtract &&
+             __builtin_sub_overflow(*left, *right, &value)) ||
+            (definition->operation == MirOperation::Multiply &&
+             __builtin_mul_overflow(*left, *right, &value)))
+          break;
+        result = value;
+        break;
+      }
+      default:
+        break;
+      }
+      if (!result || !checkedIntegerFits({.magnitude = *result}, *domain))
+        return std::nullopt;
+      return result;
+    };
+    const auto index = constant(constant, actual.index, 0);
+    return index && *index == *typed.constantIndex;
   };
   FunctionBorrowDependencySummary result{.possibleAlternatives =
                                              complete.possibleAlternatives};

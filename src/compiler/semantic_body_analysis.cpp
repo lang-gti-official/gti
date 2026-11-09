@@ -12899,9 +12899,11 @@ auto SemanticVisitor::Impl::visitMemberRequirementExpr(
       arguments.push_back(typeOf(*argument));
     }
     recordMemberRequirementReceiver(expr, SemanticType::Unknown);
+    if (std::getenv("GTI_TRACE_RQ")) { std::fprintf(stderr, "[rq] diag=%zu", diagnostics.size() - before); for (std::size_t i = before; i < diagnostics.size(); ++i) std::fprintf(stderr, " {%s %s}", diagnostics[i].code.c_str(), diagnostics[i].message.c_str()); std::fprintf(stderr, "\n"); } // TEMP-TRACE
     if (diagnostics.size() != before)
       return;
     const bool satisfied = expressionRequirementSatisfied(expr, arguments);
+    if (std::getenv("GTI_TRACE_RQ")) { std::fprintf(stderr, "[rq] satisfied=%d open=%d", satisfied, std::any_of(arguments.begin(), arguments.end(), containsOpenTypeParameter)); for (const auto &a : arguments) std::fprintf(stderr, " %s", typeSpelling(a).c_str()); std::fprintf(stderr, "\n"); } // TEMP-TRACE
     // A symbolic argument does not erase a proof already available from the
     // checked declaration/constraint environment. Absence of a proof is not
     // false, however: a concrete substitution may add the missing operation.

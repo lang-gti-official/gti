@@ -7070,6 +7070,7 @@ private:
         if (const auto *value = std::get_if<bool>(&*constant))
           literal = Literal{*value};
       }
+      if (std::getenv("GTI_TRACE_RQ")) std::fprintf(stderr, "[rq-hir] closure=%d found=%d classArgs=%zu\n", (int)constantClosure, model.findConstant(*raw).has_value(), classArguments.size()); // TEMP-TRACE
     } else if (exprAs<LayoutQuery>(raw) != nullptr) {
       kind = HirValueKind::LayoutQuery;
       if (const std::optional<ConstantValue> constant =

@@ -1105,7 +1105,7 @@ std::optional<LifetimeSignatureContract>
 expandedLifetimeAssumptions(const MirProgram &program,
                             const LifetimeSignatureContract &source) {
   if (!scopedLifetimeContract(source))
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_ELA")) std::fprintf(stderr, "[ela] unscoped params=%zu bounds=%zu\n", source.parameters.size(), source.typeBounds.size()); return std::nullopt; } // TEMP-TRACE
   LifetimeSignatureContract result = source;
   const auto addType = [&](const SemanticType &type, Lifetime region) {
     const LifetimeTypeBound bound{type, region};
@@ -1140,8 +1140,11 @@ expandedLifetimeAssumptions(const MirProgram &program,
       continue; // Opaque types retain an exact bound, never their arguments'.
     if (type.kind == SemanticType::Class) {
       const auto owner = mirClassLifetimeView(program, type);
+      // A nominal this program never instantiates (a type-level query over
+      // `I` whose body uses no I value) keeps its exact bound opaque, like a
+      // type parameter: fewer derived premises can only reject more.
       if (!owner)
-        return std::nullopt;
+        continue;
       for (const auto &field : owner->instance->declaredFields) {
         const auto instantiated = owner->instantiate(field.type);
         if (!instantiated)
@@ -1160,7 +1163,8 @@ expandedLifetimeAssumptions(const MirProgram &program,
     if (type.kind == SemanticType::Enum) {
       const auto enumeration = mirEnumLifetimeView(program, type);
       if (!enumeration)
-        return std::nullopt;
+        continue; // Uninstantiated nominal: an opaque exact bound, as above.
+
       if (enumeration->payload)
         for (const auto &variant : enumeration->payload->variants)
           for (const auto &field : variant.payloadTypes) {
@@ -1465,6 +1469,7 @@ verifyMirLifetimeBodyFactsForCase(const MirProgram &program, const MirBody &body
   }
   const auto expanded = expandedLifetimeAssumptions(program, declaredContract);
   if (!expanded) {
+    if (std::getenv("GTI_TRACE_ELA")) { const auto *fn = body.kind == MirBodyKind::Function ? program.findFunctionInstance(owner) : nullptr; std::fprintf(stderr, "[ela-body] kind=%d owner=%zu decl=%llu functions=%zu classes=%zu\n", (int)body.kind, owner, fn ? (unsigned long long)fn->declaration : 0ull, program.functionInstances().size(), program.classInstances().size()); } // TEMP-TRACE
     reject("MIR declaration type-outlives assumptions have no exact structural "
            "inventory");
     return result;

@@ -1283,6 +1283,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1281); return std::nullopt; }
     }
     appendStagedWarnings(hir.diagnostics);
+    if (std::getenv("GTI_TRACE_ELA")) { std::fprintf(stderr, "[ela-staged] hirClasses=%zu functions=%zu\n", hir.program.classInstances().size(), hir.program.functionInstances().size()); for (const auto &c : hir.program.classInstances()) std::fprintf(stderr, "[ela-staged]   class decl=%llu\n", (unsigned long long)c.type.classId); } // TEMP-TRACE
     if (hir.program.requiresNativeObjectLayout())
       semanticModel.requireNativeObjectLayout();
     const auto *entry = sourceGraph->findUnit(sourceGraph->entryUnit());

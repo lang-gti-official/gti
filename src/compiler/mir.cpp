@@ -14949,7 +14949,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                        instruction.receiver ? (validOperand(*instruction.receiver) ? 1 : 0) : 2, // TEMP-TRACE
                        instruction.loan ? (validLoan(*instruction.loan) ? 1 : 0) : 2, // TEMP-TRACE
                        instruction.result ? (validValue(*instruction.result) ? 1 : 0) : 2, badOperand, // TEMP-TRACE
-                       invalidLoanValueEvidence ? 1 : 0, validInstructionShape(instruction) ? 1 : 0); // TEMP-TRACE
+                       invalidLoanValueEvidence ? 1 : 0, validInstructionShape(instruction) ? 1 : 0); std::fprintf(stderr, "[shape]   operation=%d typeKind=%d ops=%zu literal=%d intrinsic=%d\n", (int)instruction.operation, (int)instruction.info.type.kind, instruction.operands.size(), instruction.literal.has_value(), (int)instruction.intrinsic); // TEMP-TRACE
           if (badOperand >= 0) { const auto &op = instruction.operands[badOperand]; // TEMP-TRACE
             std::fprintf(stderr, "[shape]   operand kind=%d place=%llu value=%llu loan=%llu typeKind=%d\n", static_cast<int>(op.kind), // TEMP-TRACE
                          (unsigned long long)op.place, (unsigned long long)op.value, (unsigned long long)op.loan, static_cast<int>(op.type.kind)); } // TEMP-TRACE
