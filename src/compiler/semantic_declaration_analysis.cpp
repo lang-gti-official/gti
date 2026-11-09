@@ -4827,11 +4827,13 @@ auto SemanticVisitor::Impl::selectExactClassSpecialization(
       });
   if (found != exactClassSpecializations.end()) {
     type.classId = found->specialization;
-    // An exact specialization binds no regions, so the caller's regions in
-    // its key carry no meaning. Close them so the instance never names a
-    // region that is out of scope in the specialization's members.
-    for (SemanticType &argument : type.arguments)
-      argument = closeTypeLifetimes(std::move(argument));
+    // An exact specialization binds no regions of its key (region names are
+    // not dispatch keys) and its members are checked against the closed key.
+    // Executable code therefore uses that closed instance; declaration
+    // metadata keeps the actual regions it was written with.
+    if (loanFlow.lifetimeBlock != nullptr || loanFlow.lifetimeExpression != nullptr)
+      for (SemanticType &argument : type.arguments)
+        argument = closeTypeLifetimes(std::move(argument));
   }
   return type;
 }

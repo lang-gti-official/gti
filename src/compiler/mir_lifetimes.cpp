@@ -8,6 +8,23 @@
 
 namespace lang {
 namespace {
+// An owner instance with no lifted regions and no region parameters binds no
+// regions of its type arguments (an exact specialization): a receiver of the
+// same erased shape is that owner whatever regions its arguments spell.
+[[nodiscard]] bool regionFreeOwnerMatches(const MirProgram &program,
+                                                 const SemanticType &receiver,
+                                                 const SemanticType &owner) {
+  if (receiver.kind != SemanticType::Class || owner.kind != SemanticType::Class ||
+      eraseTypeLifetimes(receiver) != eraseTypeLifetimes(owner))
+    return false;
+  for (const auto &instance : program.classInstances())
+    if (instance.type == owner)
+      return instance.liftedLifetimes.empty() &&
+             instance.lifetimeContract.parameters.empty() &&
+             owner.lifetimeArguments.empty();
+  return false;
+}
+
 bool scopedDeclarationType(const SemanticType &type,
                            std::span<const Lifetime> declaration,
                            std::vector<Lifetime> quantified,
@@ -2923,6 +2940,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
               actualOwner = SemanticType(actualOwner->arguments.front());
             if (!actualOwner || !expectedOwner ||
                 ((containsLifetimeMetadata(*actualOwner) || containsLifetimeMetadata(*expectedOwner)) &&
+                 !regionFreeOwnerMatches(program, *actualOwner, *expectedOwner) &&
                  !relations.types(*actualOwner, *expectedOwner,
                                   target->receiverMutability == ReceiverMutability::Mutable ? 0 : 1,
                                   0, true)))

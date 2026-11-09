@@ -3302,6 +3302,24 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
          !findStoredCarrierReferences(program, type).empty();
 }
 
+
+// An owner instance with no lifted regions and no region parameters binds no
+// regions of its type arguments (an exact specialization): a receiver of the
+// same erased shape is that owner whatever regions its arguments spell.
+[[nodiscard]] bool regionFreeOwnerMatches(const MirProgram &program,
+                                                 const SemanticType &receiver,
+                                                 const SemanticType &owner) {
+  if (receiver.kind != SemanticType::Class || owner.kind != SemanticType::Class ||
+      eraseTypeLifetimes(receiver) != eraseTypeLifetimes(owner))
+    return false;
+  for (const auto &instance : program.classInstances())
+    if (instance.type == owner)
+      return instance.liftedLifetimes.empty() &&
+             instance.lifetimeContract.parameters.empty() &&
+             owner.lifetimeArguments.empty();
+  return false;
+}
+
 [[nodiscard]] bool isCarrierReferenceResult(const MirProgram &program,
                                             const MirInstruction &instruction);
 
@@ -4269,6 +4287,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             receiverType = SemanticType(receiverType.arguments.front());
           if (!targetOwner ||
               (!equivalentLifetimeTypes(receiverType, *targetOwner) &&
+               !regionFreeOwnerMatches(program, receiverType, *targetOwner) &&
                !mirPublicBaseConversion(program, receiverType,
                                         *targetOwner) &&
                !isMirExactReceiverPresentation(program, instruction,

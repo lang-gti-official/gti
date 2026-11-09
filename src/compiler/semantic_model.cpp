@@ -1629,10 +1629,6 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
       type.arguments = key.arguments;
     if (type.valueArguments.empty())
       type.valueArguments = key.valueArguments;
-    // An exact specialization binds no regions; see
-    // selectExactClassSpecialization in semantic analysis.
-    for (SemanticType &argument : type.arguments)
-      argument = closeTypeLifetimes(std::move(argument));
   }
   return type;
 }
