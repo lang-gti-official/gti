@@ -9810,6 +9810,17 @@ private:
                             carrierGroup.carriers.end(),
                             aliased->binding) != carrierGroup.carriers.end())))
               receiverGroup = carrierGroup.id;
+          } else if (((group.kind == MirLoanKind::Parameter && group.entry) ||
+                      group.kind == MirLoanKind::CallResult) &&
+                     group.source == published.source &&
+                     group.storedDependency != 0 &&
+                     group.storedDependency <= output.loans.size() &&
+                     output.loans[group.storedDependency - 1].kind == MirLoanKind::Stored) {
+            // A receiver reached through a reference (a formal or a returned
+            // reference) keeps its physical supplier under that reference's
+            // loan; the referent's stored paths are selected through the
+            // reference's own stored contents group.
+            receiverGroup = group.storedDependency;
           }
         } else if (const auto &front = value.borrowFields.front();
                    value.borrowFields.size() > 1 &&
