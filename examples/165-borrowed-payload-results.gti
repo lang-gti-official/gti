@@ -142,26 +142,27 @@ Status inspect_borrowed_parse(int& owner, bool fail) {
 
 // A source class can retain the enum's complete conditional dependency. Its
 // empty alternative needs no dummy reference. Consuming the class does not
-// consume the external owner named by the successful alternative.
-enum ReadingSlot { ready(int& value), empty };
-class StoredReading {
-  mut ReadingSlot slot;
+// consume the external owner named by the successful alternative, so the
+// result names that stored region rather than the consumed receiver's.
+enum ReadingSlot<lifetime data> { ready(int&<data> value), empty };
+class StoredReading<lifetime data> {
+  mut ReadingSlot<data> slot;
 public:
-  implicit StoredReading(int& owner) : slot(ReadingSlot::ready(owner)) {}
-  StoredReading() : slot(ReadingSlot::empty) {}
+  implicit StoredReading(int&<data> owner) : slot(ReadingSlot<data>::ready(owner)) {}
+  StoredReading() : slot(ReadingSlot<data>::empty) {}
   // A slot passed by value keeps its caller's owner in the field, whether the
   // constructor moves it, as here, or copies it with slot(slot).
-  StoredReading(ReadingSlot slot) : slot(std::move(slot)) {}
+  StoredReading(ReadingSlot<data> slot) : slot(std::move(slot)) {}
   bool has_value() {
     switch (this.slot) {
       case ReadingSlot::ready: return true;
       case ReadingSlot::empty: return false;
     }
   }
-  int& take() && {
+  int&<data> take() && {
     switch (this.slot) {
-      case ReadingSlot::ready(auto& value): return value;
-      case ReadingSlot::empty: std::panic("empty reading");
+      case ReadingSlot<data>::ready(auto& value): return value;
+      case ReadingSlot<data>::empty: std::panic("empty reading");
     }
   }
 };

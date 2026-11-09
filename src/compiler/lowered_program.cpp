@@ -1,3 +1,4 @@
+#include "gti/lifetime_types.h"
 #include "gti/lowered_program.h"
 #include "lowered_program_closure.h"
 
@@ -136,7 +137,20 @@ LoweredProgram::findEnumDeclarationRow(const SemanticType &type) const {
       return &declaration;
     }
   }
-  return nullptr;
+  // Lifetime regions never change an enum's representation (RFC 0004): a
+  // region-carrying use selects the one declaration of the same erased shape.
+  const SemanticType erased = eraseTypeLifetimes(type);
+  const LoweredDeclaration *match = nullptr;
+  for (const LoweredDeclaration &declaration : declarations_) {
+    if (const auto *payload =
+            std::get_if<LoweredEnumDeclaration>(&declaration.payload);
+        payload != nullptr && eraseTypeLifetimes(payload->type) == erased) {
+      if (match != nullptr)
+        return nullptr;
+      match = &declaration;
+    }
+  }
+  return match;
 }
 
 const LoweredEnumDeclaration *

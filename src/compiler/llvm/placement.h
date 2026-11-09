@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../mir_lifetimes.h"
 #include "gti/mir.h"
 
 #include <cstddef>
@@ -20,7 +21,12 @@ namespace lang::native_llvm {
 [[nodiscard]] inline bool addressValue(const MirProgram &program,
                                        const SemanticType &type) {
   return type.kind == SemanticType::Class ||
-         (type.kind == SemanticType::Enum && program.findPayloadEnum(type)) ||
+         // A region-carrying use selects its payload descriptor through the
+         // exact lifetime view, as every other LLVM enum query does.
+         (type.kind == SemanticType::Enum && [&] {
+           const auto view = mirEnumLifetimeView(program, type);
+           return view && view->payload != nullptr;
+         }()) ||
          type.kind == SemanticType::Lambda ||
          (type.kind == SemanticType::Array && type.arguments.size() == 1 &&
           addressValue(program, type.arguments[0]));
