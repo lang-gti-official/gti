@@ -8825,8 +8825,14 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       .ephemeralBorrowArguments = std::move(ephemeralBorrowArguments),
       .callableArguments = std::move(callableArguments),
       .argumentReceiver = argumentReceiver};
-  if (syntaxIntrinsic(function.record().intrinsic))
+  if (syntaxIntrinsic(function.record().intrinsic)) {
     resolved.intrinsic = function.record().intrinsic;
+    // A syntax builder copies its spelling into owned tokens. With a
+    // region-free result there is no relationship for MIR to check, and the
+    // operation has no executable target contract to check one against.
+    if (eraseTypeLifetimes(resolved.returnType) == resolved.returnType)
+      resolved.lifetimeApplication = {};
+  }
   for (std::size_t index = 0; index < call.arguments().size(); ++index) {
     const auto *construction =
         semanticModel.findContextualConstruction(*call.arguments()[index]);

@@ -2784,9 +2784,10 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
               !application.obligations.empty() ||
               !application.typeObligations.empty() ||
               !application.origins.empty())
+            { if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[notarget] inst=%llu kind=%d op=%d intrinsic=%d bindings=%zu vars=%zu obl=%zu tobl=%zu origins=%zu\n", (unsigned long long)instruction.id, (int)instruction.kind, (int)instruction.operation, (int)instruction.intrinsic, application.bindings.size(), application.variables.size(), application.obligations.size(), application.typeObligations.size(), application.origins.size()); // TEMP-TRACE
             reject("MIR lifetime application has no independently checkable "
                    "target contract",
-                   block.id, instruction.id);
+                   block.id, instruction.id); } // TEMP-TRACE
           continue;
         }
         const auto signature = appliedTargetSignature(program, instruction);

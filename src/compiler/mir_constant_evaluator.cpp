@@ -2725,10 +2725,12 @@ private:
     }
     if (parameters.size() != args.size() ||
         instruction.operands.size() != args.size() ||
-        instruction.info.type != resultType)
+        eraseTypeLifetimes(instruction.info.type) != eraseTypeLifetimes(resultType))
       throw SyntaxError("Invalid procedural intrinsic signature.");
+    // Regions never change a procedural operand's representation.
     for (std::size_t i = 0; i < args.size(); ++i)
-      if (instruction.operands[i].type != parameters[i] ||
+      if (eraseTypeLifetimes(instruction.operands[i].type) !=
+              eraseTypeLifetimes(parameters[i]) ||
           !exactValue(args[i], parameters[i]))
         throw SyntaxError("Invalid procedural intrinsic argument type.");
     const auto argument = [&](std::size_t i) -> const ConstantValue & {

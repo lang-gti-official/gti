@@ -15796,7 +15796,19 @@ private:
                 !accessorReferent)
               candidate->source = existing->source;
             retainedLoan = existing->id;
+          } else if (existing != nullptr && candidate != nullptr &&
+                     initializer != nullptr &&
+                     !loanIsActive(scopes, existing->id) &&
+                     candidate->producedBy == initializer->id &&
+                     existing->access == candidate->access &&
+                     binding->info.type.kind != SemanticType::Reference) {
+            // This owner identity's previous carrier was already consumed
+            // (moved into this very call, e.g. std::next(std::move(it))). The
+            // call's own result loan now carries the same external owners.
+            output.loans[existing->id - 1].semanticLoan = 0;
+            semanticLoans.insert_or_assign(semanticLoan, retainedLoan);
           } else {
+            if (std::getenv("GTI_TRACE_LCBD2") && existing && candidate) std::fprintf(stderr, "[bindfail] existing=%llu kind=%d access=%d active=%d sd=%llu | candidate=%llu kind=%d access=%d sd=%llu parent=%llu bindingRef=%d\n", (unsigned long long)existing->id, (int)existing->kind, (int)existing->access, loanIsActive(scopes, existing->id), (unsigned long long)existing->storedDependency, (unsigned long long)candidate->id, (int)candidate->kind, (int)candidate->access, (unsigned long long)candidate->storedDependency, (unsigned long long)candidate->parent, binding->info.type.kind == SemanticType::Reference); // TEMP-TRACE
             { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           }
         } else if (found == semanticLoans.end()) {
