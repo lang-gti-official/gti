@@ -3492,9 +3492,18 @@ private:
             (instruction.kind == MirInstructionKind::Compute &&
              (instruction.operation == MirOperation::NativeCallback ||
               instruction.operation == MirOperation::Closure))) {
-          instruction.lifetimeArguments = source->lifetimeArguments;
+          // A `?` result is its take_value call emitted under the
+          // propagation's identity; the call's region application is the
+          // step's own.
+          const HirValue *applied = source;
+          if (source->kind == HirValueKind::Propagation && source->propagation &&
+              instruction.kind == MirInstructionKind::Call)
+            if (const HirValue *step = findValue(source->propagation->output))
+              applied = step;
+          instruction.lifetimeArguments = applied->lifetimeArguments;
           instruction.lifetimeApplication =
-              lowerMirLifetimeApplication(source->lifetimeApplication);
+              lowerMirLifetimeApplication(applied->lifetimeApplication);
+          if (std::getenv("GTI_TRACE_SCOPED") && instruction.functionTarget) std::fprintf(stderr, "[mcall] fn=%llu hir=%llu complete=%d bindings=%zu\n", (unsigned long long)*instruction.functionTarget, (unsigned long long)instruction.hirValue, source->lifetimeApplication.complete, source->lifetimeApplication.bindings.size()); // TEMP-TRACE
         }
         const bool neutralValueStage =
             instruction.kind == MirInstructionKind::CallInput &&

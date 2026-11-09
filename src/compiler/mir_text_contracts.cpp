@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include "mir_text_contracts.h"
 
 #include "mir_verification_queries.h"
@@ -3127,6 +3129,7 @@ MirVerificationResult TextContracts::verify() {
     // A function's relays are what its returns derive (L-OWN-02); a caller
     // publishes nothing a callee does not derive, and a derived relay must be
     // declared or the caller would treat that text as ownerless.
+    if (std::getenv("GTI_TRACE_SCOPED")) { std::fprintf(stderr, "[text] fn=%llu decl=%llu relays=%zu published=%zu req=%zu declared=%zu params=%zu\n", (unsigned long long)function.id, (unsigned long long)function.declaration, relays[function.id - 1].size(), function.publishedTextFields.size(), requirements[function.id - 1].size(), function.ownerlessTextParameters.size(), function.parameterTypes.size()); for (auto r : requirements[function.id - 1]) std::fprintf(stderr, "[text]   req %zu\n", r); for (auto r : function.ownerlessTextParameters) std::fprintf(stderr, "[text]   decl %zu text=%d\n", (std::size_t)r, r < function.parameterTypes.size() && textType(function.parameterTypes[r])); } // TEMP-TRACE
     if (!std::equal(relays[function.id - 1].begin(),
                     relays[function.id - 1].end(),
                     function.publishedTextFields.begin(),

@@ -1872,9 +1872,12 @@ public:
                          !event.failureCleanup;
                 }) != 1)
           return false;
+        if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { std::fprintf(stderr, "[prep] place=%llu hir=%llu target=%d:%llu\n", (unsigned long long)place->id, (unsigned long long)stage->hirValue, (int)target.kind, (unsigned long long)target.id); for (const auto &origin : body.lifetimeBody.origins) if (origin.place == place->id || origin.source == stage->hirValue) std::fprintf(stderr, "[prep]   origin place=%llu source=%llu region=%d:%llu proves=%d\n", (unsigned long long)origin.place, (unsigned long long)origin.source, (int)origin.region.kind, (unsigned long long)origin.region.id, graph.proves(origin.region, target)); } // TEMP-TRACE
+        // Semantics may key this exact staged value's origin to the place it
+        // is moved or copied from; the transfer keeps the value's regions.
         return std::any_of(body.lifetimeBody.origins.begin(), body.lifetimeBody.origins.end(),
             [&](const MirLifetimeOrigin &origin) {
-              return origin.place == place->id && origin.source == stage->hirValue &&
+              return origin.source == stage->hirValue && origin.place != 0 &&
                      graph.proves(origin.region, target);
             });
       }
@@ -2782,6 +2785,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
                            !instruction.nativeCalleeType && instruction.lifetimeApplication.callableSignature)) {
           if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
             std::fprintf(stderr, "[cover] inst=%llu signature=%d callableSignature=%d lambda=%d fn=%d\n", (unsigned long long)instruction.id, signature.has_value(), instruction.lifetimeApplication.callableSignature.has_value(), instruction.lambdaTarget.has_value(), instruction.functionTarget.has_value()); // TEMP-TRACE
+          if (std::getenv("GTI_TRACE_SCOPED") && instruction.functionTarget) if (const auto *t = program.findFunctionInstance(*instruction.functionTarget)) { const auto *self = body.kind == MirBodyKind::Function ? program.findFunctionInstance(owner) : nullptr; std::fprintf(stderr, "[cover] target decl=%llu ret=%d owner-body-decl=%llu\n", (unsigned long long)t->declaration, (int)t->returnType.kind, self ? (unsigned long long)self->declaration : 0ull); } // TEMP-TRACE
           if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[cover] inst=%llu sig=%d callable=%d fn=%llu lambda=%d ctor=%d intrinsic=%d\n", (unsigned long long)instruction.id, signature.has_value(), instruction.lifetimeApplication.callableSignature.has_value(), instruction.functionTarget ? (unsigned long long)*instruction.functionTarget : 0ull, instruction.lambdaTarget.has_value(), instruction.constructorTarget.has_value(), (int)instruction.intrinsic); // TEMP-TRACE
           reject("MIR call lifetime substitution does not cover its exact "
                  "target contract",

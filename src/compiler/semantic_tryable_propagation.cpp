@@ -171,10 +171,40 @@ auto SemanticVisitor::Impl::selectResidualReturn(
     diagnostics.emplace_back(std::move(diagnostic));
     return false;
   }
+  // Like a written construction, bind the executable constructor
+  // instance's lifted regions and apply its contract to the residual.
+  const auto canonical = canonicalizeExecutableInstance(
+      {.kind = InstanceAnalysisKind::Constructor, .declaration = selected.id,
+       .classTypes = target.arguments, .classValues = target.valueArguments});
+  if (!canonical || canonical->parameterTypes.size() != 1)
+    return reject(returned + ", whose residual constructor has no checked "
+                             "executable instance.",
+                  "Handle the failure explicitly instead of applying '?'.");
+  CallableCandidate lifetimeCandidate;
+  auto universalOwner = openClassType(owner->id);
+  universalOwner.arguments = canonical->classTypes;
+  universalOwner.valueArguments = target.valueArguments;
+  lifetimeCandidate.returnType = std::move(universalOwner);
+  lifetimeCandidate.parameterTypes = canonical->parameterTypes;
+  lifetimeCandidate.lifetimeApplication.bindings = canonical->lifetimeApplication.bindings;
+  lifetimeCandidate.ownerClass = owner->id;
+  lifetimeCandidate.dispatchOwner = target;
+  lifetimeCandidate.dispatchOwner.arguments = canonical->classTypes;
+  lifetimeCandidate.lifetimeContract = canonical->lifetimeContract;
+  lifetimeCandidate.requirements = canonical->requirements;
+  const std::array<AnalyzedCallArgument, 1> residualInput{
+      AnalyzedCallArgument{.type = residualType}};
+  if (!applyCallLifetimeContract(lifetimeCandidate, residualInput, site, nullptr, false))
+    return reject(returned + ", which does not satisfy its residual "
+                             "constructor's lifetime contract.",
+                  "Handle the failure explicitly instead of applying '?'.");
+  commitLifetimeApplication(lifetimeCandidate.lifetimeApplication);
   construction = ResolvedConstructionInfo{.constructor = selected.id,
                                           .declaration = selected.declaration,
                                           .constructedType = target,
-                                          .parameterTypes = {residualType},
+                                          .lifetimeApplication =
+                                              lifetimeCandidate.lifetimeApplication,
+                                          .parameterTypes = lifetimeCandidate.parameterTypes,
                                           .kind = ConstructorKind::Ordinary};
   return true;
 }
@@ -347,6 +377,7 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
     if (!applyCallLifetimeContract(candidate, stepInput, site))
       return false;
     commitLifetimeApplication(candidate.lifetimeApplication);
+    if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[step] fn=%llu complete=%d bindings=%zu\n", (unsigned long long)candidate.id, candidate.lifetimeApplication.complete, candidate.lifetimeApplication.bindings.size()); // TEMP-TRACE
     call.returnType = candidate.returnType;
     call.parameterTypes = candidate.parameterTypes;
     call.lifetimeApplication = candidate.lifetimeApplication;

@@ -2596,6 +2596,7 @@ private:
     if (declaration == nullptr || !requirePrimaryBody(*declaration)) {
       return nullptr;
     }
+    if (std::getenv("GTI_TRACE_SCOPED") && declaration->declaration) std::fprintf(stderr, "[hfn] id=%llu decl=%llu name=%s\n", (unsigned long long)id, (unsigned long long)declaration->id, std::string(declaration->declaration->name().lexeme).c_str()); // TEMP-TRACE
     std::vector<SemanticType> classArguments;
     std::vector<CompileTimeValue> classValueArguments;
     if (snapshot.owner && *snapshot.owner <= output.program.classes.size()) {
@@ -6116,6 +6117,7 @@ private:
       const HirFunctionInstanceId instance = enqueueFunction(
           *target, {}, {}, call.typeArguments, call.valueArguments,
           call.returnType, call.parameterTypes, site);
+      if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[hstep] next=%llu fn=%llu inst=%llu complete=%d bindings=%zu\n", (unsigned long long)nextValueId, (unsigned long long)call.function, (unsigned long long)instance, call.lifetimeApplication.complete, call.lifetimeApplication.bindings.size()); // TEMP-TRACE
       if (instance == 0) {
         invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
         return std::nullopt;
