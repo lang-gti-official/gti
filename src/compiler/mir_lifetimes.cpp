@@ -328,6 +328,11 @@ MirVerificationResult verifyMirNominalLifetimeRecipes(const MirProgram &program)
       });
     };
     collectQuantified(collectQuantified, type);
+    // A nominal owner's contract never assumes a nested callable binder.
+    for (const auto id : quantified)
+      if (std::find(contract.parameters.begin(), contract.parameters.end(),
+                    Lifetime::parameter(id)) != contract.parameters.end())
+        return false;
     std::vector<GenericParameterId> seen;
     for (const auto &parameter : lifted) {
       if (!parameter.id || !parameter.lifetime || !parameter.implicit || parameter.value ||

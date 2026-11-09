@@ -6530,13 +6530,16 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       for (const auto &d : dependencies) // TEMP-TRACE
         std::fprintf(stderr, "[retown]  valid=%d fields=%zu conds=%zu access=%d parent=%llu contents=%d root=%s recv=%d proj=%zu\n", d.place.valid(), d.designatedFields.size(), d.conditions.size(), static_cast<int>(d.access), (unsigned long long)d.parent, d.referenceContents.has_value(), semanticModel.database().findSymbol(d.place.root) ? semanticModel.database().findSymbol(d.place.root)->name.c_str() : "-", d.place.receiver, d.place.projections.size()); // TEMP-TRACE
     } // TEMP-TRACE
-    // A local object owner ends with this call: report the escape itself.
+    // A whole local object owner ends with this call: report the escape
+    // itself. A subobject of a local is an ordinary owner whose region cannot
+    // satisfy the declared result (GTI-S2127 below).
     if (std::any_of(dependencies.begin(), dependencies.end(), [&](const auto &dependency) {
           const auto *symbol = dependency.place.receiver
                                    ? nullptr
                                    : semanticModel.database().findSymbol(dependency.place.root);
           return symbol != nullptr && symbol->kind == SymbolKind::LocalVariable &&
-                 symbol->type.kind != SemanticType::Reference;
+                 symbol->type.kind != SemanticType::Reference &&
+                 dependency.place.projections.empty();
         })) {
       report(expressionToken(value),
              "Returned reference refers to a local object that does not outlive "
