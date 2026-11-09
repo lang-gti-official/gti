@@ -805,9 +805,11 @@ bool scopedDeclarationType(const SemanticType &type,
     return false;
   for (const auto id : type.quantifiedLifetimes) {
     const auto region = Lifetime::parameter(id);
+    // A binder may shadow a declaration region (a scoped callable result
+    // projects an item's binder into the enclosing contract); inside the
+    // quantified type the binder is the region named. Re-binding an
+    // already quantified name is still malformed.
     if (!region.specified() ||
-        std::find(declaration.begin(), declaration.end(), region) !=
-            declaration.end() ||
         std::find(quantified.begin(), quantified.end(), region) !=
             quantified.end())
       return false;
@@ -905,16 +907,16 @@ MirVerificationResult verifyLifetimeAssumptionCases(
   if (!scopedLifetimeContract(declared)) {
     if (std::getenv("GTI_TRACE_SCOPED")) { // TEMP-TRACE
       const auto dump = [](auto &&self, const SemanticType &t, int d) -> void { // TEMP-TRACE
-        std::fprintf(stderr, "%*s kind=%d class=%u refLt=%d:%u lts=", d*2, "", (int)t.kind, (unsigned)t.classId, (int)t.referenceLifetime.kind, (unsigned)t.referenceLifetime.id); // TEMP-TRACE
+        std::fprintf(stderr, "%*s kind=%d class=%u refLt=%d:%llu q=%zu lts=", d*2, "", (int)t.kind, (unsigned)t.classId, (int)t.referenceLifetime.kind, (unsigned long long)t.referenceLifetime.id, t.quantifiedLifetimes.size()); for (auto q : t.quantifiedLifetimes) std::fprintf(stderr, "[q%llu]", (unsigned long long)q); // TEMP-TRACE
         for (auto r : t.lifetimeArguments) std::fprintf(stderr, "%d:%u,", (int)r.kind, (unsigned)r.id); // TEMP-TRACE
         std::fprintf(stderr, "\n"); // TEMP-TRACE
         lifetime_detail::children(t, [&](const SemanticType &c) { self(self, c, d+1); }); // TEMP-TRACE
       }; // TEMP-TRACE
       std::fprintf(stderr, "[scoped] owner=%zu params=", owner); // TEMP-TRACE
-      for (auto r : declared.parameters) std::fprintf(stderr, "%d:%u,", (int)r.kind, (unsigned)r.id); // TEMP-TRACE
+      for (auto r : declared.parameters) std::fprintf(stderr, "%d:%llu,", (int)r.kind, (unsigned long long)r.id); // TEMP-TRACE
       std::fprintf(stderr, "\n"); // TEMP-TRACE
-      for (const auto &b : declared.typeBounds) dump(dump, b.type, 1); // TEMP-TRACE
-      for (const auto &n : declared.requirements.nodes) if (n.kind == LifetimeRequirementNode::Kind::Type) dump(dump, n.type, 1); // TEMP-TRACE
+      for (const auto &b : declared.typeBounds) { std::fprintf(stderr, "[scoped] bound region=%d:%llu ok=%d\n", (int)b.region.kind, (unsigned long long)b.region.id, scopedDeclarationType(b.type, declared.parameters)); dump(dump, b.type, 1); } // TEMP-TRACE
+      for (const auto &n : declared.requirements.nodes) if (n.kind == LifetimeRequirementNode::Kind::Type) { std::fprintf(stderr, "[scoped] node ok=%d\n", scopedDeclarationType(n.type, declared.parameters)); dump(dump, n.type, 1); } // TEMP-TRACE
     } // TEMP-TRACE
     return reject("MIR lifetime contract contains a malformed or out-of-scope type region");
   }
