@@ -5551,7 +5551,12 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         const bool independentText =
             source && (independentlyStaticTextBinding(program, body, *source) ||
                        ownerlessTextField || ownerlessAccessorText);
-        if ((loan->storedDependency == 0 && !independentText) ||
+        // A reference formal's own loan may carry the contents identity.
+        const auto *formalParent = loan->parent ? body.findLoan(loan->parent) : nullptr;
+        const bool parentCarriesDependency =
+            formalParent != nullptr && formalParent->kind == MirLoanKind::Parameter &&
+            formalParent->entry && formalParent->storedDependency != 0;
+        if ((loan->storedDependency == 0 && !independentText && !parentCarriesDependency) ||
             !loan->additionalSources().empty() ||
             !(instruction.borrowArguments.empty() ||
               (instruction.borrowArguments.size() == 1 &&
@@ -7137,7 +7142,14 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
          ownerlessTextPayload || exactParent))
       continue;
     if ((expected == 0 || loan.storedDependency != expected) && std::getenv("GTI_TRACE_LCBD2")) { std::fprintf(stderr, "[shell-sd] owner=%zu loan=%llu kind=%d src=p%llu parent=%llu sd=%llu expected=%llu depsrc=p%llu root=%d\n", owner, (unsigned long long)loan.id, static_cast<int>(loan.kind), (unsigned long long)loan.source, (unsigned long long)loan.parent, (unsigned long long)loan.storedDependency, (unsigned long long)expected, (unsigned long long)dependencySource->id, static_cast<int>(dependencySource->root)); for (const auto &l : body.loans) std::fprintf(stderr, "   loan%llu kind=%d entry=%d src=p%llu parent=%llu sd=%llu\n", (unsigned long long)l.id, static_cast<int>(l.kind), l.entry, (unsigned long long)l.source, (unsigned long long)l.parent, (unsigned long long)l.storedDependency); } // TEMP-TRACE
-    if (expected == 0 || loan.storedDependency != expected)
+    // A shell reached through a reference formal keeps its contents identity
+    // on that formal's own loan: the parent names the stored dependency.
+    const auto *parentLoan = loan.parent ? body.findLoan(loan.parent) : nullptr;
+    const bool parentCarriesDependency =
+        expected != 0 && loan.storedDependency == 0 && parentLoan != nullptr &&
+        parentLoan->kind == MirLoanKind::Parameter && parentLoan->entry &&
+        parentLoan->storedDependency == expected;
+    if ((expected == 0 || loan.storedDependency != expected) && !parentCarriesDependency)
       return verificationFailure(
           body, owner,
           "carrier shell loan does not preserve its exact stored dependency");
@@ -20013,7 +20025,7 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
     }
     if (std::getenv("GTI_TRACE_NEEDS_PROOF")) // TEMP-TRACE
       std::cerr << "[needs] owner=" << owner << " loan=" << loan.id << " kind=" << int(loan.kind)
-                << " parent=" << loan.parent << " src=" << loan.source << " needs=" << needsProof
+                << " parent=" << loan.parent << " sd=" << loan.storedDependency << " df=" << loan.designatedFields.size() << " esc=" << loan.escapes << " src=" << loan.source << " needs=" << needsProof
                 << " producer=" << [&] {
                      const auto found = loanProducers.find(loan.id);
                      if (found == loanProducers.end() || !found->second) return std::string("none");
