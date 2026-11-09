@@ -17,12 +17,14 @@ export concept memory_resource<R> = requires(R& resource, layout request) {
 
 /// Reusable checked shared borrow of an explicitly trusted resource.
 /// It retains the provider's lifetime, not ownership or synchronization rights.
-export class resource_ref<memory_resource R> {
-  R& resource;
+// The provider's region is named: get() returns the stored reference itself,
+// not a reborrow bounded by this handle (LT-4).
+export class resource_ref<memory_resource R, lifetime provider> {
+  R&<provider> resource;
 public:
-  resource_ref(gti_internal::resource_binding token, R& resource)
+  resource_ref(gti_internal::resource_binding token, R&<provider> resource)
       : resource(resource) {}
-  R& get() { return this.resource; }
+  R&<provider> get() { return this.resource; }
 };
 
 /// The caller proves the provider contract for every future use through this

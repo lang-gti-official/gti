@@ -247,11 +247,11 @@ public:
     return this.element_count == 0;
   }
 
-  T& front() {
+  T&<storage> front() {
     return this.at(size_t(0));
   }
 
-  T& back() {
+  T&<storage> back() {
     mut size_t index = size_t(0);
     if (this.element_count > 0) {
       index = this.element_count - 1;
@@ -259,20 +259,20 @@ public:
     return this.at(index);
   }
 
-  T& at(size_t index) {
+  T&<storage> at(size_t index) {
     gti_internal::index_bounds_check(index, this.element_count);
     unsafe { return this.get_unchecked(index); }
   }
 
   /// The caller proves index < size(); the view's owner loan is retained.
-  unsafe T& get_unchecked(size_t index) {
+  unsafe T&<storage> get_unchecked(size_t index) {
     unsafe {
       return this.data.read_unchecked(
           gti_internal::integer_wrapping_add(this.first_position, index));
     }
   }
 
-  T& operator[](size_t index) {
+  T&<storage> operator[](size_t index) {
     return this.at(index);
   }
 

@@ -71,8 +71,10 @@ class paired_span_iterator<std::storage_element L, std::storage_element R, uint6
     this.current_position = position;
   }
 public:
-  paired_span_iterator(paired_span<L, R>&<storage> source, size_t position)
-      : element(paired_span_element<L, R, storage>(source, position)), current_position(position) {
+  // The cursor stores the exact element it starts from, so its anonymous
+  // view regions are the element's own (initializer provenance).
+  paired_span_iterator(paired_span_element<L, R, storage> start, size_t position)
+      : element(start), current_position(position) {
     if constexpr (Reverse != 0) {
       if (position != size_t(0)) { this.element.select(position - size_t(1)); }
     }
@@ -152,17 +154,23 @@ public:
   }
 
   detail::paired_span_iterator<L, R> begin() {
-    return detail::paired_span_iterator<L, R>(this, size_t(0));
+    return detail::paired_span_iterator<L, R>(
+        detail::paired_span_element<L, R>(this, size_t(0)), size_t(0));
   }
   detail::paired_span_sentinel end() { return detail::paired_span_sentinel(this.size()); }
   detail::paired_span_iterator<L, R> end_iterator() {
-    return detail::paired_span_iterator<L, R>(this, this.size());
+    return detail::paired_span_iterator<L, R>(
+        detail::paired_span_element<L, R>(this, this.size()), this.size());
   }
   detail::paired_span_iterator<L, R> cbegin() { return this.begin(); }
   detail::paired_span_sentinel cend() { return this.end(); }
-  const_reverse_iterator rbegin() { return const_reverse_iterator(this, this.size()); }
+  const_reverse_iterator rbegin() {
+    return const_reverse_iterator(detail::paired_span_element<L, R>(this, this.size()), this.size());
+  }
   detail::paired_span_sentinel rend() { return detail::paired_span_sentinel(size_t(0)); }
-  const_reverse_iterator rend_iterator() { return const_reverse_iterator(this, size_t(0)); }
+  const_reverse_iterator rend_iterator() {
+    return const_reverse_iterator(detail::paired_span_element<L, R>(this, size_t(0)), size_t(0));
+  }
   const_reverse_iterator crbegin() { return this.rbegin(); }
   detail::paired_span_sentinel crend() { return this.rend(); }
 
