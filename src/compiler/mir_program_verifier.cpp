@@ -23070,6 +23070,7 @@ verifyMirProgramContracts(const MirProgram &program) {
     }
     if (instance.traits.relocation !=
         mirTypeRelocationKind(program, instance.type)) {
+      if (std::getenv("GTI_TRACE_SCOPED")) { std::fprintf(stderr, "[reloc] inst=%llu decl=%llu traits=%d derived=%d move=%d bcs=%d lcb=%d cap=%d fields=", (unsigned long long)instance.id, (unsigned long long)instance.declaration, (int)instance.traits.relocation, (int)mirTypeRelocationKind(program, instance.type), (int)instance.moveConstructor, instance.traits.containsBorrowedState, instance.lifecycleBoundBorrowCarrier, (int)instance.compilerCapability); for (const auto &f : instance.declaredFields) std::fprintf(stderr, "%d/%d ", (int)f.type.kind, (int)mirTypeRelocationKind(program, f.type)); std::fprintf(stderr, "\n"); } // TEMP-TRACE
       result.errors.push_back(
           {.bodyKind = MirBodyKind::FieldInitializers,
            .owner = instance.id,

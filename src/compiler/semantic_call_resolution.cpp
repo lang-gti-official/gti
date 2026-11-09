@@ -5928,6 +5928,7 @@ auto SemanticVisitor::Impl::checkedConsumingReturnBorrow(
     return std::nullopt;
   const auto complete = completeFunctionReturnBorrow(function, typeArguments,
                                                      valueArguments, site);
+  if (std::getenv("GTI_TRACE_CFRB")) { std::fprintf(stderr, "[ccrb] complete=%d deps=%zu ret=%s owner=%s\n", complete.has_value(), complete ? complete->dependencies.size() : 0, typeSpelling(function.returnType).c_str(), typeSpelling(function.dispatchOwner).c_str()); if (complete) for (auto &d : complete->dependencies) std::fprintf(stderr, "[ccrb]   origin=%d param=%zu fields=%zu\n", (int)d.origin, d.parameter, d.sourceFields.size()); } // TEMP-TRACE
   if (!complete || (function.returnType.kind == SemanticType::Reference &&
                     complete->dependencies.empty()))
     return std::nullopt;
@@ -5948,6 +5949,7 @@ auto SemanticVisitor::Impl::checkedConsumingReturnBorrow(
     bool external = false;
     for (const auto &step : source.sourceFields) {
       const auto selected = borrowedPathElement(type, step);
+      if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[ccrb]   step from=%s -> %s\n", typeSpelling(type).c_str(), selected ? typeSpelling(*selected).c_str() : "null"); // TEMP-TRACE
       if (!selected)
         return std::nullopt;
       type = *selected;
@@ -7787,6 +7789,7 @@ auto SemanticVisitor::Impl::resolveOperator(
         publication, *consumingBorrow, concreteArguments,
         receiverState ? nullptr : &receiver);
     if (!consumingDependencies) {
+      if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[ccrb] site 7792\n"); // TEMP-TRACE
       reportConsumingBorrowedResult(selected, token);
       return std::nullopt;
     }
@@ -9003,7 +9006,7 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       }
       semanticModel.clearBorrowDependencySet(call);
       if (consumingResultCarriesBorrow(function))
-        reportConsumingBorrowedResult(function, call.paren());
+        { if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[ccrb] site 9008\n"); reportConsumingBorrowedResult(function, call.paren()); } // TEMP-TRACE
     }
   }
   recordSelectedCallOccurrence(call, std::move(resolved));

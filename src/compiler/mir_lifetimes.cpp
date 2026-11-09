@@ -1004,7 +1004,7 @@ instantiateMirLifetimeSignature(const LifetimeSignatureContract &contract,
   if (!contract.valid() || !contract.requirements.resolved() || !application.complete ||
       application.bindings.size() != contract.parameters.size() ||
       !scopedDeclarationType(returnType, contract.parameters))
-    { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
+    { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d valid=%d resolved=%d complete=%d bindings=%zu params=%zu scoped=%d\n", __LINE__, contract.valid(), contract.requirements.resolved(), application.complete, application.bindings.size(), contract.parameters.size(), scopedDeclarationType(returnType, contract.parameters)); if (std::getenv("GTI_TRACE_MIR_ORIGIN")) { for (auto r : contract.parameters) std::fprintf(stderr, "[ims]   param %d:%llu\n", (int)r.kind, (unsigned long long)r.id); for (auto b : application.bindings) std::fprintf(stderr, "[ims]   bind %d:%llu -> %d:%llu\n", (int)b.first.kind, (unsigned long long)b.first.id, (int)b.second.kind, (unsigned long long)b.second.id); std::fprintf(stderr, "[ims]   retKind=%d params=%zu\n", (int)returnType.kind, parameterTypes.size()); } return std::nullopt; } // TEMP-TRACE
   for (const auto &type : parameterTypes)
     if (!scopedDeclarationType(type, contract.parameters))
       { if (std::getenv("GTI_TRACE_MIR_ORIGIN")) std::fprintf(stderr, "[ims] fail at %d\n", __LINE__); return std::nullopt; } // TEMP-TRACE
@@ -2782,6 +2782,7 @@ static MirVerificationResult verifyMirLifetimeApplicationsForCase(
                            !instruction.nativeCalleeType && instruction.lifetimeApplication.callableSignature)) {
           if (std::getenv("GTI_TRACE_MIR_ORIGIN")) // TEMP-TRACE
             std::fprintf(stderr, "[cover] inst=%llu signature=%d callableSignature=%d lambda=%d fn=%d\n", (unsigned long long)instruction.id, signature.has_value(), instruction.lifetimeApplication.callableSignature.has_value(), instruction.lambdaTarget.has_value(), instruction.functionTarget.has_value()); // TEMP-TRACE
+          if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[cover] inst=%llu sig=%d callable=%d fn=%llu lambda=%d ctor=%d intrinsic=%d\n", (unsigned long long)instruction.id, signature.has_value(), instruction.lifetimeApplication.callableSignature.has_value(), instruction.functionTarget ? (unsigned long long)*instruction.functionTarget : 0ull, instruction.lambdaTarget.has_value(), instruction.constructorTarget.has_value(), (int)instruction.intrinsic); // TEMP-TRACE
           reject("MIR call lifetime substitution does not cover its exact "
                  "target contract",
                  block.id, instruction.id);

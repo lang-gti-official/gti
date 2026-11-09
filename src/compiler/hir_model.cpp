@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "gti/hir.h"
 #include "gti/concrete_formals.h"
 #include "gti/instance_analysis_cache.h"
@@ -2690,11 +2691,13 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           construction->kind != ConstructorKind::Ordinary ||
           (owner->traits.containsBorrowedState && !expectedDependencies) ||
           target->declaration != construction->constructor ||
-          owner->type != construction->constructedType ||
-          value->info != ExpressionInfo{.type = owner->type,
-                                        .category = ValueCategory::Value,
-                                        .access = AccessMode::ReadOnly,
-                                        .traits = expectedTraits} ||
+          // The instance's regions are its own canonical slots; the
+          // construction's are the use site's. Identity is the erased shape.
+          eraseTypeLifetimes(owner->type) != eraseTypeLifetimes(construction->constructedType) ||
+          eraseTypeLifetimes(value->info.type) != eraseTypeLifetimes(owner->type) ||
+          value->info.category != ValueCategory::Value ||
+          value->info.access != AccessMode::ReadOnly ||
+          value->info.traits != expectedTraits ||
           value->dependentTextPublication !=
               construction->dependentTextPublication ||
           value->parameterTypes != construction->parameterTypes ||
@@ -2717,6 +2720,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           (!unstagedOwnerHandle &&
            (!value->callPlan || value->callPlan->receiver ||
             value->callPlan->arguments.size() != value->operands.size()))) {
+        if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[ctxcons] ownerType=%d erasedOwner=%d info=%d infoTypeErased=%d params=%d paramsErased=%d origin=%d barg=%d bacc=%d bargs=%d bfields=%d bdeps=%d expDeps=%d plan=%d target=%d\n", owner->type == construction->constructedType, eraseTypeLifetimes(owner->type) == eraseTypeLifetimes(construction->constructedType), value->info == ExpressionInfo{.type = owner->type, .category = ValueCategory::Value, .access = AccessMode::ReadOnly, .traits = expectedTraits}, eraseTypeLifetimes(value->info.type) == eraseTypeLifetimes(owner->type), value->parameterTypes == construction->parameterTypes, value->parameterTypes.size() == construction->parameterTypes.size(), value->borrowOrigin == construction->borrowOrigin, value->borrowArgument == construction->borrowArgument, value->borrowAccess == construction->borrowAccess, value->borrowArguments == construction->borrowArguments, value->borrowFields == construction->borrowFields, value->borrowDependencies == expectedDependencies, expectedDependencies.has_value(), (bool)value->callPlan, target->declaration == construction->constructor); // TEMP-TRACE
         result.errors.emplace_back(
             "contextual construction HIR value differs from its semantic "
             "construction");

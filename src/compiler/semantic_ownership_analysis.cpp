@@ -1,3 +1,4 @@
+#include <functional>
 #include <execinfo.h> // TEMP-TRACE
 #include "semantic_analyzer_impl.h"
 #include "gti/borrow_conditions.h"
@@ -5326,7 +5327,7 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
       std::any_of(function.dispatchOwner.valueArguments.begin(),
                   function.dispatchOwner.valueArguments.end(),
                   [](const auto &value) { return value.kind != CompileTimeValue::UInt64; }))
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[cfrb] null %d\n", 5329); return std::nullopt; } // TEMP-TRACE
   InstanceAnalysisKey key{.kind = InstanceAnalysisKind::Function,
                            .declaration = function.id,
                            .classTypes = function.dispatchOwner.arguments,
@@ -5335,7 +5336,7 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
                            .values = valueArguments};
   const auto canonical = canonicalizeExecutableInstance(key);
   if (!canonical || !function.lifetimeApplication.complete)
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[cfrb] null %d\n", 5338); return std::nullopt; } // TEMP-TRACE
   // The query/cache owns the universal type/value instance. Caller regions
   // never choose a body, cache key or a negative summary-cache result.
   key.classTypes = canonical->classTypes;
@@ -5343,7 +5344,7 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
   const auto &bindings = function.lifetimeApplication.bindings;
   const auto actualResult = substituteTypeLifetimes(canonical->returnType, bindings);
   if (!actualResult || !equivalentLifetimeTypes(*actualResult, function.returnType))
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[cfrb] null %d\n", 5346); return std::nullopt; } // TEMP-TRACE
   // Declaration/body identities retain grouped packs. Application parameters
   // name executable leaf ordinals; compare only this invocation through the
   // shared expansion rule, without changing the query's canonical signature.
@@ -5354,22 +5355,25 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
   for (const auto &parameter : function.parameterTypes)
     SemanticType::appendExpandedArgument(appliedParameters, parameter);
   if (canonicalParameters.size() != appliedParameters.size())
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[cfrb] null %d\n", 5357); return std::nullopt; } // TEMP-TRACE
   for (std::size_t index = 0; index < canonicalParameters.size(); ++index) {
     const auto actual = substituteTypeLifetimes(canonicalParameters[index], bindings);
     if (!actual || !equivalentLifetimeTypes(*actual, appliedParameters[index]))
-      return std::nullopt;
+      { if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[cfrb] null %d\n", 5361); return std::nullopt; } // TEMP-TRACE
   }
   if (canonical->ownerType != SemanticType::Unknown) {
     const auto actual = substituteTypeLifetimes(canonical->ownerType, bindings);
-    if (!actual || !equivalentLifetimeTypes(*actual, function.dispatchOwner))
-      return std::nullopt;
+    // A dispatch owner selected from a conformance names the executable
+    // instance's lifted regions; this application binds them.
+    const auto dispatch = substituteTypeLifetimes(function.dispatchOwner, bindings);
+    if (!actual || !dispatch || !equivalentLifetimeTypes(*actual, *dispatch))
+      { if (std::getenv("GTI_TRACE_CFRB")) { std::fprintf(stderr, "[cfrb] null 5366 owner=%s actual=%s dispatch=%s\n", typeSpelling(canonical->ownerType).c_str(), actual ? typeSpelling(*actual).c_str() : "-", typeSpelling(function.dispatchOwner).c_str()); auto rid=[](const SemanticType &t){ std::string r; std::function<void(const SemanticType&)> f=[&](const SemanticType &x){ if (x.kind==SemanticType::Reference) r+=std::to_string((int)x.referenceLifetime.kind)+":"+std::to_string((unsigned long long)x.referenceLifetime.id)+" "; for (auto &a : x.arguments) f(a);}; f(t); return r;}; std::fprintf(stderr, "[cfrb]   ids owner=%s actual=%s dispatch=%s\n", rid(canonical->ownerType).c_str(), actual ? rid(*actual).c_str() : "-", rid(function.dispatchOwner).c_str()); for (auto b : bindings) std::fprintf(stderr, "[cfrb]   bind %d:%llu -> %d:%llu\n", (int)b.first.kind, (unsigned long long)b.first.id, (int)b.second.kind, (unsigned long long)b.second.id); } return std::nullopt; } // TEMP-TRACE
   }
   const auto *declaration = semanticModel.findFunction(function.id);
   if (!declaration && instanceBaseModel)
     declaration = instanceBaseModel->findFunction(function.id);
   if (!declaration)
-    return std::nullopt;
+    { if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[cfrb] null %d\n", 5372); return std::nullopt; } // TEMP-TRACE
   std::optional<FunctionBorrowDependencySummary> summary;
   const bool concrete = !key.classTypes.empty() || !key.classValues.empty() ||
                         !key.types.empty() || !key.values.empty();
@@ -5381,6 +5385,7 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
     summary = completeBorrowQuery(key, canonical->returnType,
                                   canonical->parameterTypes,
                                   function.declaration->name(), site);
+  if (std::getenv("GTI_TRACE_CFRB")) { auto r = summary ? instantiateBorrowSummaryLifetimes(*summary, bindings) : std::nullopt; std::fprintf(stderr, "[cfrb] tail %s summary=%d inst=%d\n", "fn", summary.has_value(), r.has_value()); } // TEMP-TRACE
   return summary ? instantiateBorrowSummaryLifetimes(*summary, bindings) : std::nullopt;
 }
 
@@ -5527,6 +5532,7 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
         entry->result = analyzed->completeBorrow;
     } else {
       const auto *analyzed = analysis.model.findFunction(key.declaration);
+      if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[cbq] analyzed=%d ret=%d result=%s got=%s complete=%d\n", analyzed != nullptr, analyzed && analyzed->returnType == result, typeSpelling(result).c_str(), analyzed ? typeSpelling(analyzed->returnType).c_str() : "-", analyzed && analyzed->completeReturnBorrow.has_value()); // TEMP-TRACE
       if (analyzed && analyzed->returnType == result &&
           std::equal(parameters.begin(), parameters.end(),
                      analyzed->parameterTypes.begin(),
@@ -5537,6 +5543,8 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
     // A worker's resource exhaustion is a compilation diagnostic, not an
     // unproved-but-otherwise-valid result. Preserve its original source span
     // while unwinding the demanded query chain.
+    for (const auto &diagnostic : analysis.diagnostics)
+      if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[cbq] invalid %s %s\n", diagnostic.code.c_str(), diagnostic.message.c_str()); // TEMP-TRACE
     for (const auto &diagnostic : analysis.diagnostics)
       if (diagnostic.code == "GTI-S2105")
         diagnostics.push_back(diagnostic);
@@ -6306,7 +6314,11 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
       actual = {.type = receiver && *receiver ? semanticModel.typeOf(**receiver)
                                              : SemanticType::Unknown,
                 .expression = receiver};
-      formal = resolved.dispatchOwner;
+      // A conformance-selected owner names the executable instance's lifted
+      // regions; the call's application binds them to the caller's regions.
+      formal = substituteTypeLifetimes(resolved.dispatchOwner,
+                                       resolved.lifetimeApplication.bindings)
+                   .value_or(resolved.dispatchOwner);
       physical = resolved.receiverMode != CallReceiverMode::Consuming &&
                  resolved.receiverMode != CallReceiverMode::None;
     }
@@ -6372,6 +6384,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
       externalConditions = *conditions;
       externalType = path.reference.arguments.front();
     }
+    if (std::getenv("GTI_TRACE_CFRB")) { std::fprintf(stderr, "[icba] origin=%d formal=%s inv=%d input=%d prefix=%d amb=%d physical=%d srcFields=%zu\n", (int)mapping.origin, typeSpelling(formal).c_str(), inventory.has_value(), input.has_value(), externalPrefix.has_value(), ambiguous, physical, mapping.sourceFields.size()); if (input) for (auto &d : input->dependencies) std::fprintf(stderr, "[icba]   in df=%zu cond=%zu\n", d.designatedFields.size(), d.conditions.size()); if (externalPrefix) std::fprintf(stderr, "[icba]   prefix=%zu conds=%zu\n", externalPrefix->size(), externalConditions.size()); auto sd = storedBorrowDependencies(actual); std::fprintf(stderr, "[icba]   stored=%zu\n", sd.size()); for (auto &d : sd) std::fprintf(stderr, "[icba]   st df=%zu cond=%zu\n", d.designatedFields.size(), d.conditions.size()); } // TEMP-TRACE
     if (ambiguous || (!physical && !externalPrefix))
       continue;
     const auto &inputGuard =
@@ -6391,8 +6404,12 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
     std::size_t prefix = 0;
     SemanticType projectedType = formal;
     if (externalPrefix) {
-      if (!input && (!externalConditions.empty() || !mapping.sourceConditions.empty()))
-        continue;
+      // Without a complete alternative set, a guarded path is supplied only
+      // by a stored dependency carrying that exact path and guard (for
+      // example a by-value carrier parameter's declared external region).
+      // Such evidence keeps the alternative possible; it never proves one
+      // impossible.
+      const bool guarded = !externalConditions.empty() || !mapping.sourceConditions.empty();
       prefix = externalPrefix->size();
       projectedType = externalType;
       // Ordinary records and closure environments can retain exact external
@@ -6405,6 +6422,8 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
         if (dependency.designatedFields == *externalPrefix &&
             dependency.conditions == externalConditions)
           sources.push_back(dependency);
+      if (!input && guarded && sources.empty())
+        continue;
       // A scalar result is a new reborrow of the input carrier's external
       // permission, not a whole-carrier ownership transfer. Retain that
       // exact live authority so an exclusive input cannot become a competing
@@ -6436,7 +6455,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
             const Expr *origin = loan->origin ? loan->origin : loan->entry ? argument->get() : nullptr;
             const auto *info = origin ? semanticModel.findExpression(*origin) : nullptr;
             if (!info)
-              return std::nullopt;
+              { if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[icba] ret noinfo\n"); return std::nullopt; } // TEMP-TRACE
             auto originalType = info->type;
             if (const auto *contextual = semanticModel.findContextualConstruction(*origin);
                 contextual && contextual->contextualBorrowDependencies)
@@ -6449,7 +6468,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
             const auto to = storedBorrowAlternativeInventory(formal);
             const auto transport = from && to ? BorrowConditionTransport::between(*from, *to) : std::nullopt;
             if (!viewed || *viewed != formal || !validateLifetimeConstraints(obligations) || !transport)
-              return std::nullopt;
+              { if (std::getenv("GTI_TRACE_CFRB")) for (auto &o : obligations) std::fprintf(stderr, "[icba]   obl %d:%llu : %d:%llu\n", (int)o.longer.kind, (unsigned long long)o.longer.id, (int)o.shorter.kind, (unsigned long long)o.shorter.id); for (auto b : resolved.lifetimeApplication.bindings) std::fprintf(stderr, "[icba]   bind %d:%llu -> %d:%llu\n", (int)b.first.kind, (unsigned long long)b.first.id, (int)b.second.kind, (unsigned long long)b.second.id); std::fprintf(stderr, "[icba] ret view viewed=%d eq=%d transport=%d orig=%s formal=%s\n", viewed.has_value(), viewed && *viewed == formal, transport.has_value(), typeSpelling(originalType).c_str(), typeSpelling(formal).c_str()); return std::nullopt; } // TEMP-TRACE
             for (auto &candidate : retainedDependencies) {
               auto conditions = transport->apply(candidate.conditions);
               if (!conditions)
@@ -6477,7 +6496,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
                             [&](const auto &candidate) { return matches(source, candidate); }))
               source.parent = loan->id;
             else if (guardedRetained)
-              return std::nullopt;
+              { if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[icba] ret nomatch\n"); return std::nullopt; } // TEMP-TRACE
           }
         }
       }
@@ -6600,6 +6619,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
         for (auto &source : sources)
           source.access = AccessMode::ReadOnly;
     }
+    if (std::getenv("GTI_TRACE_CFRB")) std::fprintf(stderr, "[icba]   sources=%zu prefix=%zu\n", sources.size(), prefix); // TEMP-TRACE
     if (sources.empty())
       continue;
     // An ordinary subfield of a known referent retains that referent's owner.
@@ -6645,6 +6665,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
       availability[index] = Availability::Available;
   }
   const auto domain = restrictCompleteBorrowResultDomain(summary, availability);
+  if (std::getenv("GTI_TRACE_CFRB")) { std::fprintf(stderr, "[icba] end status=%d", (int)domain.status); for (std::size_t i = 0; i < availability.size(); ++i) std::fprintf(stderr, " a%zu=%d/%zu", i, (int)availability[i], supplying[i].size()); std::fprintf(stderr, "\n"); } // TEMP-TRACE
   if (noNormalResult)
     *noNormalResult = domain.status == BorrowResultDomainStatus::NoNormalResult;
   if (domain.status != BorrowResultDomainStatus::Known)

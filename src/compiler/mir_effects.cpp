@@ -2354,7 +2354,16 @@ RelocationKind relocationKind(const MirProgram &program,
       return result;
     }
     if (candidate.kind == SemanticType::Enum) {
-      if (const auto *enumeration = program.findPayloadEnum(candidate)) {
+      // Layout is region-free: an enum instance of the same erased shape
+      // describes this storage when no exact instance exists.
+      const MirPayloadEnum *enumeration = program.findPayloadEnum(candidate);
+      if (enumeration == nullptr)
+        for (const auto &other : program.payloadEnums())
+          if (eraseTypeLifetimes(other.type) == eraseTypeLifetimes(candidate)) {
+            enumeration = &other;
+            break;
+          }
+      if (enumeration != nullptr) {
         if (std::find(enums.begin(), enums.end(), candidate) != enums.end())
           return RelocationKind::Unavailable;
         enums.push_back(candidate);
@@ -2372,12 +2381,13 @@ RelocationKind relocationKind(const MirProgram &program,
     if (candidate.kind != SemanticType::Class)
       return semanticTraits(candidate).relocation;
     const MirClassInstance *owner = nullptr;
+    // Instances differing only in region shape share one layout; prefer the
+    // exact instance, otherwise any equivalent one describes the storage.
     for (const auto &instance : program.classInstances()) {
       if (!equivalentLifetimeTypes(instance.type, candidate))
         continue;
-      if (owner != nullptr)
-        return RelocationKind::Unavailable;
-      owner = &instance;
+      if (owner == nullptr || instance.type == candidate)
+        owner = &instance;
     }
     if (owner == nullptr || !visiting.insert(owner->id).second)
       return RelocationKind::Unavailable;

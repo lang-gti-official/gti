@@ -4,6 +4,7 @@
 #include "gti/process_memory_runtime.h"
 #include "gti/program_request.h"
 #include "gti/semantic_core.h"
+#include "gti/lifetime_types.h"
 #include "gti/source_debug.h"
 
 #include <functional>
@@ -94,8 +95,13 @@ struct BorrowDependencyCondition {
   SemanticType enumeration = SemanticType::Unknown;
   std::size_t variant = 0;
 
-  friend bool operator==(const BorrowDependencyCondition &,
-                         const BorrowDependencyCondition &) = default;
+  // A guard is a tag test: lifetime regions never select a variant, so two
+  // guards on the same subobject, enumeration shape and variant are equal.
+  friend bool operator==(const BorrowDependencyCondition &left,
+                         const BorrowDependencyCondition &right) {
+    return left.subobject == right.subobject && left.variant == right.variant &&
+           eraseTypeLifetimes(left.enumeration) == eraseTypeLifetimes(right.enumeration);
+  }
 };
 
 struct BorrowAlternativePath {

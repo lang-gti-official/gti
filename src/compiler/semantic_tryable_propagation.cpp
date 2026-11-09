@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 // Prefix `?` through the standard `std::tryable` protocol concept.
 //
 // Every operand, including the prelude's `expected`, must satisfy
@@ -337,6 +339,11 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
         candidate.record().genericParameters, {.types = match->binding});
     for (auto &bound : candidate.lifetimeContract.typeBounds)
       bound.type = substituteType(bound.type, substitution);
+    // Like a written call, bind the executable instance's lifted regions
+    // (for example a `static` region in the operand's type arguments).
+    std::vector<SemanticType> stepTypes = match->binding;
+    if (!universalizeFunctionCandidate(candidate, stepTypes, {}, {}))
+      return false;
     if (!applyCallLifetimeContract(candidate, stepInput, site))
       return false;
     commitLifetimeApplication(candidate.lifetimeApplication);
@@ -356,13 +363,28 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
     auto candidate = conformance.operations[*takeValue].overloads.front();
     candidate.returnType = output->returnType;
     candidate.parameterTypes = output->parameterTypes;
-    const auto complete =
-        completeFunctionReturnBorrow(candidate, output->typeArguments,
-                                     output->valueArguments, tokenSpan(site));
+    // Select the step's executable instance exactly as the step did, then
+    // use the step's instantiated application as this call's region binding.
+    std::vector<SemanticType> stepTypes =
+        output->typeArguments.empty() ? match->binding : output->typeArguments;
+    std::optional<FunctionBorrowDependencySummary> complete;
+    const bool universal = universalizeFunctionCandidate(candidate, stepTypes, {}, {});
+    if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[s2086u] %d\n", universal); // TEMP-TRACE
+    if (universal) {
+      candidate.returnType = output->returnType;
+      candidate.parameterTypes = output->parameterTypes;
+      candidate.lifetimeApplication = output->lifetimeApplication;
+      if (auto actualOwner = substituteTypeLifetimes(
+              candidate.dispatchOwner, candidate.lifetimeApplication.bindings))
+        candidate.dispatchOwner = std::move(*actualOwner);
+      complete = completeFunctionReturnBorrow(candidate, stepTypes,
+                                              output->valueArguments, tokenSpan(site));
+    }
     const std::vector<const ExprPtr *> actualArguments{&expr.right()};
     if (complete)
       outputDependencies = instantiateCompleteBorrowArguments(
           *output, *complete, actualArguments);
+    if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[s2086c] complete=%d deps=%d\n", complete.has_value(), outputDependencies.has_value()); // TEMP-TRACE
   }
   const SemanticType resultType =
       borrowedResult && output->returnType.arguments.size() == 1
@@ -377,6 +399,7 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
       residualType.kind == SemanticType::Reference ||
       residualType == SemanticType::Void ||
       typeTraits(residualType).containsBorrowedState) {
+    if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[s2086] borrowed=%d origin=%d barg=%zu deps=%d storedPath=%d resultBorrowed=%d residualRef=%d residualVoid=%d residualBorrowed=%d\n", borrowedResult, (int)output->borrowOrigin, output->borrowArgument, outputDependencies.has_value(), storedReferencePath(operandType).has_value(), typeTraits(resultType).containsBorrowedState, residualType.kind == SemanticType::Reference, residualType == SemanticType::Void, typeTraits(residualType).containsBorrowedState); // TEMP-TRACE
     return reject("Error propagation through '" + operand +
                       "' needs an owned value or a reference transferred "
                       "from its operand's exact external dependency, and a "
