@@ -7891,6 +7891,52 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
                    "GTI-S2045");
         }
     };
+    // A reference that reaches a field only as a generic type argument
+    // (`Carrier<int&, E>`) is not an ordinary declared reference field, so it
+    // is not a checked stored-reference path.
+    {
+      // Only an anonymous field slot: a class that names the region of the
+      // referenced argument declares that relationship explicitly.
+      const auto anonymousSlot = [&](Lifetime region) {
+        return region.kind == Lifetime::Kind::Parameter &&
+               std::any_of(owner.genericParameters.begin(), owner.genericParameters.end(),
+                           [&](const auto &parameter) {
+                             return parameter.lifetime && parameter.implicit &&
+                                    parameter.id == region.id;
+                           });
+      };
+      const auto referenceArgument = [&](const auto &self, const SemanticType &type) -> bool {
+        if (type.kind == SemanticType::Reference)
+          return false;
+        if ((type.kind == SemanticType::Class || type.kind == SemanticType::Enum) &&
+            std::any_of(type.arguments.begin(), type.arguments.end(),
+                        [&](const SemanticType &argument) {
+                          return argument.kind == SemanticType::Reference &&
+                                 anonymousSlot(argument.referenceLifetime);
+                        }))
+          return true;
+        return std::any_of(type.arguments.begin(), type.arguments.end(),
+                           [&](const SemanticType &argument) { return self(self, argument); });
+      };
+      bool rejected = false;
+      for (const FieldInfo &field : owner.fields) {
+        if (field.declaration == nullptr || field.declaration->type().reference)
+          continue;
+        const auto member = owner.members.find(field.declaration->name().lexeme);
+        if (member != owner.members.end() &&
+            typeTraits(member->second.symbol.type).containsBorrowedState &&
+            referenceArgument(referenceArgument, member->second.symbol.type)) {
+          report(field.declaration->name(),
+                 "Borrowed field state must use checked stored-reference paths "
+                 "through ordinary nominal fields; fallible and other non-nominal "
+                 "carriers cannot be stored as fields.",
+                 "GTI-S2045");
+          rejected = true;
+        }
+      }
+      if (rejected)
+        continue;
+    }
     if (std::any_of(
             dependencies.begin(), dependencies.end(),
             [](const auto &path) { return !path.conditions.empty(); })) {
