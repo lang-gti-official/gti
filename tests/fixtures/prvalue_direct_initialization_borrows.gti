@@ -27,8 +27,11 @@ public:
   Update(int& step, mut int& value) : step(step), value(value) {}
   void apply() mut { this.value += this.step; }
 };
-Update update_view(int& step, mut int& value) { return Update(step, value); }
-Update update_relay(int& step, mut int& value) {
+// Two borrowed inputs supply the result: the signature names their region.
+Update<a> update_view<lifetime a>(int&<a> step, mut int&<a> value) {
+  return Update(step, value);
+}
+Update<a> update_relay<lifetime a>(int&<a> step, mut int&<a> value) {
   return Update(update_view(step, value));
 }
 
