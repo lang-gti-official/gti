@@ -3022,10 +3022,29 @@ private:
   struct GenericReturnBorrowContract {
     BorrowOriginKind origin = BorrowOriginKind::None;
     std::size_t parameter = 0;
+    // Every supplying parameter of an explicit multi-supplier lifetime
+    // contract (RFC 0004); empty for a single origin.
+    std::vector<std::size_t> parameters;
     AccessMode access = AccessMode::ReadOnly;
     bool ambiguous = false;
     bool missing = false;
   };
+  // RFC 0004: the result contract a declaration writes in lifetime syntax.
+  struct ExplicitLifetimeResult {
+    enum class Kind { None, This, Static, Region };
+    Kind kind = Kind::None;
+    std::string region;
+    // The region is a binder of the enclosing class: a stored region.
+    bool classBinder = false;
+    // Expanded parameter positions whose written regions supply the result.
+    std::vector<std::size_t> parameters;
+  };
+  [[nodiscard]] ExplicitLifetimeResult
+  explicitLifetimeResult(const FunctionDecl &syntax,
+                         std::span<const SemanticType> parameterTypes,
+                         ClassId ownerClass) const;
+  // A `[[borrowed_from]]` attribute or a result written with a region.
+  [[nodiscard]] static bool hasExplicitBorrowContract(const FunctionDecl &syntax);
   // The contract an explicit borrowed_from selects for one substitution of a
   // generic-result declaration: None when the substituted result is not a
   // checked reference or conditional reference-bearing result, otherwise the

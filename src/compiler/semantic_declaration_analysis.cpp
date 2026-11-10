@@ -10046,6 +10046,7 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
       updated.returnBorrowOrigin = contract.origin;
       updated.returnBorrowParameter = contract.parameter;
       updated.returnBorrowAccess = contract.access;
+      updated.returnBorrowParameters = contract.parameters;
       updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
       semanticModel.record(*declaration, updated);
       publishFunctionBorrowSummary(updated, candidateIndex);
@@ -11004,7 +11005,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .returnBorrowOrigin = declaration.returnBorrowOrigin,
       .explicitReturnBorrowOrigin =
           declaration.syntax != nullptr &&
-          declaration.syntax->hasFunctionAttribute("borrowed_from"),
+          hasExplicitBorrowContract(*declaration.syntax),
       .returnBorrowParameter = declaration.returnBorrowParameter,
       .returnBorrowAccess = declaration.returnBorrowAccess,
       .returnBorrowParameters = declaration.returnBorrowParameters,
@@ -11032,7 +11033,7 @@ auto SemanticVisitor::Impl::publishCallableDeclaration(
           candidate.staticMember, candidate.record().intrinsic);
   const bool candidateOwnsBorrow =
       candidate.returnBorrowOrigin != BorrowOriginKind::None ||
-      function.hasFunctionAttribute("borrowed_from");
+      hasExplicitBorrowContract(function);
   declaration->qualifiedName =
       qualifiedName(qualifiedScope, function.name().lexeme);
   declaration->namespaceScope = namespaceScope;

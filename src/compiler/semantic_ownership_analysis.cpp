@@ -6763,20 +6763,20 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
   FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
       function.returnType, function.parameterTypes, function.ownerClass,
       function.staticMember, function.record().intrinsic);
-  if (function.declaration != nullptr) {
-    if (const auto *attribute =
-            function.declaration->findFunctionAttribute("borrowed_from")) {
-      // Resolve source spelling to the existing declaration-relative origin.
-      // Malformed contracts are diagnosed at the declaration, never inferred
-      // afresh by HIR/MIR or the backend.
-      (void)attribute;
-      const auto contract = genericReturnBorrowContract(
-          *function.declaration, function.returnType, function.parameterTypes,
-          function.ownerClass, function.staticMember);
+  if (function.declaration != nullptr &&
+      hasExplicitBorrowContract(*function.declaration)) {
+    // Resolve source spelling to the existing declaration-relative origin.
+    // Malformed contracts are diagnosed at the declaration, never inferred
+    // afresh by HIR/MIR or the backend.
+    const auto contract = genericReturnBorrowContract(
+        *function.declaration, function.returnType, function.parameterTypes,
+        function.ownerClass, function.staticMember);
+    if (contract.origin != BorrowOriginKind::None ||
+        function.declaration->hasFunctionAttribute("borrowed_from"))
       summary = {.origin = contract.origin,
                  .parameter = contract.parameter,
-                 .access = contract.access};
-    }
+                 .access = contract.access,
+                 .parameters = contract.parameters};
   }
   function.returnBorrowOrigin = summary.origin;
   function.returnBorrowParameter = summary.parameter;
@@ -6799,7 +6799,42 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
     bool staticMember) const -> GenericReturnBorrowContract {
   GenericReturnBorrowContract contract;
   const auto *attribute = syntax.findFunctionAttribute("borrowed_from");
-  if (attribute == nullptr || !attribute->argument)
+  if (attribute == nullptr) {
+    // RFC 0004: a result written with a region states its suppliers in the
+    // signature. It translates into the same core contract.
+    const auto lifetime = explicitLifetimeResult(syntax, parameterTypes, ownerClass);
+    const bool reference = returnType.kind == SemanticType::Reference &&
+                           returnType.arguments.size() == 1;
+    contract.access = reference ? returnType.referenceAccess : AccessMode::ReadOnly;
+    switch (lifetime.kind) {
+    case ExplicitLifetimeResult::Kind::None:
+    case ExplicitLifetimeResult::Kind::Static:
+      return contract;
+    case ExplicitLifetimeResult::Kind::This:
+      if (ownerClass != 0 && !staticMember)
+        contract.origin = BorrowOriginKind::Receiver;
+      else
+        contract.missing = true;
+      return contract;
+    case ExplicitLifetimeResult::Kind::Region:
+      if (lifetime.classBinder) {
+        if (ownerClass != 0 && !staticMember)
+          contract.origin = BorrowOriginKind::Receiver;
+        return contract;
+      }
+      if (lifetime.parameters.empty()) {
+        contract.missing = true;
+        return contract;
+      }
+      contract.origin = BorrowOriginKind::Argument;
+      contract.parameter = lifetime.parameters.front();
+      if (lifetime.parameters.size() > 1)
+        contract.parameters = lifetime.parameters;
+      return contract;
+    }
+    return contract;
+  }
+  if (!attribute->argument)
     return contract;
   const bool reference = returnType.kind == SemanticType::Reference &&
                          returnType.arguments.size() == 1;

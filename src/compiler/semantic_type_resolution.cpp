@@ -5882,6 +5882,12 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   if (isParameterDerivedBorrow(value, source)) {
     return;
   }
+  // An explicit multi-supplier lifetime contract (RFC 0004) permits any of
+  // its named suppliers, never an unnamed parameter or other storage.
+  for (const auto supplier : function->returnBorrowParameters)
+    if (supplier < function->bodyDeclaration()->parameters().size() &&
+        isParameterDerivedBorrow(value, function->bodyDeclaration()->parameters()[supplier]))
+      return;
   const std::string sourceKind =
       function->returnBorrowParameter < function->parameterTypes.size() &&
               function->parameterTypes[function->returnBorrowParameter]
