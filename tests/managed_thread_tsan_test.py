@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
 from sanitizer_support import SKIP_RETURN_CODE, scaled_timeout, thread_sanitizer_enabled
 
 REPOSITORY = pathlib.Path(__file__).resolve().parent.parent
@@ -35,7 +36,8 @@ WRAPPING_ATOMIC_MARKERS = INSTRUMENTED_MARKERS + ("__tsan_atomic64",)
 
 # Fixtures whose accepted source owners use LLVM-only wrapping atomics. The
 # frozen C++ backend rejects them before emitting anything; that rejection is
-# pinned alongside the sanitized LLVM execution.
+# pinned alongside the sanitized LLVM execution when GTI_TEST_BACKENDS selects
+# the C++ backend.
 SOURCE_OWNER_FIXTURES = frozenset({
     "shared_mutex_threads", "transfer_function_threads",
     "shared_ownership_threads", "weak_ownership_threads",
@@ -260,7 +262,7 @@ def main() -> int:
             )
             return SKIP_RETURN_CODE
 
-        if source_owner:
+        if source_owner and cpp_modes():
             rejected = execute([str(compiler), "--backend", "cpp",
                                 "--execution-profile", "concurrent", "-O1",
                                 str(source), "-o", str(root / "cpp-rejection")])

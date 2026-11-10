@@ -11,7 +11,7 @@ import tempfile
 import time
 
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT
-from backend_modes import native_modes
+from backend_modes import cpp_modes, native_modes
 
 
 def main() -> int:
@@ -67,7 +67,8 @@ def main() -> int:
                     f"stdout={executed.stdout}\nstderr={executed.stderr}"
                 )
             print(f"encoding runtime: {label} passed", flush=True)
-        for backend in ("llvm", "cpp"):
+        # The C++ backend runs only when GTI_TEST_BACKENDS selects it.
+        for backend in ("llvm", *(("cpp",) if cpp_modes() else ())):
             binary = root / f"utf8-exhaustive-{backend}"
             exhaustive = repository / "tests/fixtures/utf8_scalar_exhaustive.gti"
             subprocess.run(

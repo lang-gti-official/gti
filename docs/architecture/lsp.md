@@ -676,7 +676,7 @@ binder (`lifetime a` in function, class, alias, concept and conformance lists,
 patterns or requirement parameters) and the binder each written region name
 denotes (`gti/lifetime_names.h`). A binder is visible throughout its
 declaration, including a result type written before the binder list. Semantics
-reports an unresolved name as `GTI-S2126` and, with tooling occurrences, records
+reports an unresolved name as `GTI-S2128` and, with tooling occurrences, records
 each binder as a `LifetimeParameter` symbol whose uses are its occurrences, so
 semantic tokens, hover (`lifetime a`), definition, references, rename and
 completion after `&<` follow the parser's resolution rather than spelling.

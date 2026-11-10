@@ -1,0 +1,786 @@
+#include "gti/cpp_backend.h"
+#include "gti/cpp_emitter.h"
+#include "gti/frontend.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_verifier.h"
+#include "gti/optimizer.h"
+
+#include "cpp_backend_test_support.h"
+
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace {
+
+constexpr std::string_view marker = "// GTI verified-MIR body: scalar-cfg-v1";
+
+int failures = 0;
+
+void expect(bool condition, std::string_view message) {
+  if (!condition) {
+    std::cerr << "FAIL: " << message << '\n';
+    ++failures;
+  }
+}
+
+std::string readFile(const std::filesystem::path &path) {
+  std::ifstream input(path);
+  return std::string(std::istreambuf_iterator<char>(input),
+                     std::istreambuf_iterator<char>());
+}
+
+std::size_t count(std::string_view text, std::string_view needle) {
+  std::size_t result = 0;
+  for (std::size_t position = text.find(needle); position != std::string::npos;
+       position = text.find(needle, position + needle.size())) {
+    ++result;
+  }
+  return result;
+}
+
+std::string_view functionDefinition(std::string_view generated,
+                                    std::string_view sourceName) {
+  const std::string needle = std::string{"_"} + std::string{sourceName} + "(";
+  std::size_t definition = std::string_view::npos;
+  for (std::size_t name = generated.find(needle);
+       name != std::string_view::npos;
+       name = generated.find(needle, name + needle.size())) {
+    const std::size_t lineEnd = generated.find('\n', name);
+    const std::size_t brace = generated.find(" {\n", name);
+    if (brace != std::string_view::npos &&
+        (lineEnd == std::string_view::npos || brace < lineEnd)) {
+      definition = brace;
+      break;
+    }
+  }
+  const std::size_t end = definition == std::string_view::npos
+                              ? definition
+                              : generated.find("\n  }", definition);
+  return definition == std::string_view::npos || end == std::string_view::npos
+             ? std::string_view{}
+             : generated.substr(definition, end + 4 - definition);
+}
+
+const lang::HirFunctionInstance *
+findHirFunction(const lang::HirProgram &program, std::string_view name) {
+  const auto found = std::find_if(
+      program.functionInstances().begin(), program.functionInstances().end(),
+      [name](const lang::HirFunctionInstance &instance) {
+        return instance.source != nullptr &&
+               instance.source->name().lexeme == name;
+      });
+  return found == program.functionInstances().end() ? nullptr : &*found;
+}
+
+const lang::MirFunctionInstance *findMirFunction(const lang::HirProgram &hir,
+                                                 const lang::MirProgram &mir,
+                                                 std::string_view name) {
+  const lang::HirFunctionInstance *function = findHirFunction(hir, name);
+  return function == nullptr ? nullptr : mir.findFunctionInstance(function->id);
+}
+
+lang::MirFunctionInstance *findMirFunction(const lang::HirProgram &hir,
+                                           lang::MirProgram &mir,
+                                           std::string_view name) {
+  const lang::HirFunctionInstance *function = findHirFunction(hir, name);
+  if (function == nullptr) {
+    return nullptr;
+  }
+  auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      mir.functionInstances());
+  const auto found =
+      std::find_if(functions.begin(), functions.end(),
+                   [&](const lang::MirFunctionInstance &candidate) {
+                     return candidate.id == function->id;
+                   });
+  return found == functions.end() ? nullptr : &*found;
+}
+
+bool hasOperation(const lang::MirFunctionInstance *function,
+                  lang::MirOperation operation) {
+  if (function == nullptr) {
+    return false;
+  }
+  for (const lang::MirBlock &block : function->body.blocks) {
+    if (std::any_of(block.instructions.begin(), block.instructions.end(),
+                    [operation](const lang::MirInstruction &instruction) {
+                      return instruction.operation == operation;
+                    })) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool hasInstructionKind(const lang::MirFunctionInstance *function,
+                        lang::MirInstructionKind kind) {
+  if (function == nullptr) {
+    return false;
+  }
+  for (const lang::MirBlock &block : function->body.blocks) {
+    if (std::any_of(block.instructions.begin(), block.instructions.end(),
+                    [kind](const lang::MirInstruction &instruction) {
+                      return instruction.kind == kind;
+                    })) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool hasTerminator(const lang::MirFunctionInstance *function,
+                   lang::MirTerminatorKind kind) {
+  return function != nullptr &&
+         std::any_of(function->body.blocks.begin(), function->body.blocks.end(),
+                     [kind](const lang::MirBlock &block) {
+                       return block.terminator.kind == kind;
+                     });
+}
+
+bool hasBackedge(const lang::MirFunctionInstance *function) {
+  if (function == nullptr) {
+    return false;
+  }
+  for (const lang::MirBlock &block : function->body.blocks) {
+    const lang::MirTerminator &terminator = block.terminator;
+    if ((terminator.kind == lang::MirTerminatorKind::Goto ||
+         terminator.kind == lang::MirTerminatorKind::Branch) &&
+        terminator.target != 0 && terminator.target <= block.id) {
+      return true;
+    }
+    if (terminator.kind == lang::MirTerminatorKind::Branch &&
+        terminator.elseTarget != 0 && terminator.elseTarget <= block.id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+lang::OptimizedProgram optimize(const lang::FrontendResult &frontend,
+                                lang::OptimizationLevel level,
+                                const lang::OptimizationResult &compatibility) {
+  return lang::OptimizationPipeline().run({.hir = frontend.hir,
+                                           .mir = frontend.mir,
+                                           .level = level,
+                                           .compatibility = &compatibility});
+}
+
+lang::BackendArtifact
+emit(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
+     const lang::OptimizationResult &compatibility,
+     const std::vector<lang::MirTransformRecord> &transformations = {}) {
+  static_cast<void>(compatibility);
+  return gti_test::emitCpp(frontend, frontend.mir, mir, transformations);
+}
+
+void expectEmissionRejected(const lang::FrontendResult &frontend,
+                            const lang::MirProgram &mir,
+                            const lang::OptimizationResult &compatibility,
+                            std::string_view message) {
+  bool rejected = false;
+  try {
+    (void)emit(frontend, mir, compatibility);
+  } catch (const std::logic_error &) {
+    rejected = true;
+  }
+  expect(rejected, message);
+}
+
+void expectSelectedDefinitions(std::string_view generated) {
+  constexpr std::string_view selected[] = {
+      "cfg_not",
+      "cfg_char",
+      "cfg_bits",
+      "cfg_less",
+      "cfg_choose",
+      "cfg_local",
+      "cfg_switch",
+      "cfg_short",
+      "cfg_loop",
+      "cfg_fold",
+      "cfg_grouped_local",
+      "cfg_comma_local",
+      "cfg_grouped_condition",
+      // A read through a reference parameter has no failure source, so the
+      // structural failure-freedom proof selects the plain form.
+      "compatibility_reference",
+  };
+  for (const std::string_view name : selected) {
+    expect(functionDefinition(generated, name).find(marker) !=
+               std::string_view::npos,
+           std::string{"the selected scalar CFG body should carry the MIR "
+                       "authority marker: "} +
+               std::string{name});
+  }
+
+  constexpr std::string_view failureSelected[] = {
+      "compatibility_checked",
+      "compatibility_call_target",
+      "compatibility_call",
+  };
+  constexpr std::string_view failureMarker =
+      "// GTI verified-MIR body: scalar-cfg-failure-v1";
+  for (const std::string_view name : failureSelected) {
+    expect(
+        functionDefinition(generated, std::string{name} + "__gti_mir_failure")
+                    .find(failureMarker) != std::string_view::npos &&
+            functionDefinition(generated, name).empty(),
+        std::string{"the closed component should emit only its explicit "
+                    "failure-form MIR sibling: "} +
+            std::string{name});
+  }
+}
+
+// Finds one deferred member definition. The emitted name carries a mangling
+// prefix and a call site can share a line with an opening brace, so the match
+// requires the qualified `Owner::` spelling on the definition line itself.
+std::string_view memberDefinition(std::string_view generated,
+                                  std::string_view sourceName) {
+  const std::string needle = std::string{"_"} + std::string{sourceName} + "(";
+  for (std::size_t name = generated.find(needle);
+       name != std::string_view::npos;
+       name = generated.find(needle, name + needle.size())) {
+    const std::size_t lineStart = generated.rfind('\n', name);
+    const std::size_t lineEnd = generated.find('\n', name);
+    const std::size_t brace = generated.find(" {\n", name);
+    const std::string_view line = generated.substr(
+        lineStart == std::string_view::npos ? 0 : lineStart + 1,
+        lineEnd - (lineStart == std::string_view::npos ? 0 : lineStart + 1));
+    if (line.find("::") == std::string_view::npos) {
+      continue;
+    }
+    if (brace != std::string_view::npos &&
+        (lineEnd == std::string_view::npos || brace < lineEnd)) {
+      const std::size_t end = generated.find("\n  }", brace);
+      return end == std::string_view::npos
+                 ? std::string_view{}
+                 : generated.substr(brace, end - brace + 4);
+    }
+  }
+  return {};
+}
+
+void testSelectedFamily(const std::filesystem::path &fixture) {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze(fixture.string(), readFile(fixture));
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "the scalar CFG backend fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  expect(
+      hasOperation(findMirFunction(frontend.hir, frontend.mir, "cfg_not"),
+                   lang::MirOperation::LogicalNot) &&
+          hasOperation(findMirFunction(frontend.hir, frontend.mir, "cfg_bits"),
+                       lang::MirOperation::BitwiseXor) &&
+          hasOperation(findMirFunction(frontend.hir, frontend.mir, "cfg_less"),
+                       lang::MirOperation::Less),
+      "the fixture should retain logical, bitwise, and comparison scalar "
+      "MIR operations");
+  expect(
+      hasTerminator(findMirFunction(frontend.hir, frontend.mir, "cfg_choose"),
+                    lang::MirTerminatorKind::Branch) &&
+          hasTerminator(
+              findMirFunction(frontend.hir, frontend.mir, "cfg_switch"),
+              lang::MirTerminatorKind::Switch) &&
+          hasTerminator(
+              findMirFunction(frontend.hir, frontend.mir, "cfg_short"),
+              lang::MirTerminatorKind::Branch),
+      "the fixture should retain branch, switch, and short-circuit CFG "
+      "terminators");
+  const lang::MirFunctionInstance *local =
+      findMirFunction(frontend.hir, frontend.mir, "cfg_local");
+  expect(hasInstructionKind(local, lang::MirInstructionKind::Initialize) &&
+             hasInstructionKind(local, lang::MirInstructionKind::Assign),
+         "the fixture should retain scalar local initialization and "
+         "assignment");
+  expect(hasBackedge(findMirFunction(frontend.hir, frontend.mir, "cfg_loop")),
+         "the fixture should retain a verified loop backedge");
+  expect(hasOperation(findMirFunction(frontend.hir, frontend.mir, "cfg_fold"),
+                      lang::MirOperation::Identity),
+         "the O0 fixture should retain grouped scalar identities for the "
+         "optimizer authority check");
+
+  const lang::OptimizationPipeline pipeline;
+  const lang::OptimizationResult o0Compatibility =
+      pipeline.run(frontend.hir, lang::OptimizationLevel::O0);
+  const lang::OptimizationResult o1Compatibility =
+      pipeline.run(frontend.hir, lang::OptimizationLevel::O1);
+  const lang::OptimizationResult o3Compatibility =
+      pipeline.run(frontend.hir, lang::OptimizationLevel::O3);
+  const lang::OptimizedProgram o0 =
+      optimize(frontend, lang::OptimizationLevel::O0, o0Compatibility);
+  const lang::OptimizedProgram o1 =
+      optimize(frontend, lang::OptimizationLevel::O1, o1Compatibility);
+  const lang::OptimizedProgram o3 =
+      optimize(frontend, lang::OptimizationLevel::O3, o3Compatibility);
+  expect(o0.valid() && lang::verifyMirProgram(o0.mir).valid() && o1.valid() &&
+             lang::verifyMirProgram(o1.mir).valid() && o3.valid() &&
+             lang::verifyMirProgram(o3.mir).valid(),
+         "the scalar CFG production MIR should verify at O0, O1, and O3");
+  if (!o0.valid() || !o1.valid() || !o3.valid()) {
+    return;
+  }
+
+  const lang::BackendArtifact o0Artifact =
+      emit(frontend, o0.mir, o0Compatibility);
+  const lang::BackendArtifact o1Artifact =
+      emit(frontend, o1.mir, o1Compatibility, o1.report.transformations);
+  const lang::BackendArtifact o3Artifact =
+      emit(frontend, o3.mir, o3Compatibility, o3.report.transformations);
+  const lang::BackendArtifact o1WithO0Compatibility =
+      emit(frontend, o1.mir, o0Compatibility, o1.report.transformations);
+  expectSelectedDefinitions(o0Artifact.contents);
+  expectSelectedDefinitions(o1Artifact.contents);
+  expectSelectedDefinitions(o3Artifact.contents);
+
+  const lang::LoweredProgramBuild missingSource =
+      lang::LoweredProgramBuilder().build(frontend.program, frontend.semantics,
+                                          frontend.hir, lang::MirProgram{},
+                                          o0.mir, o0.report.transformations,
+                                          lang::TargetInfo::host());
+  expect(!missingSource.valid(),
+         "LoweredProgram construction must fail closed without canonical "
+         "pre-optimization MIR");
+
+  const std::string_view o0Fold =
+      functionDefinition(o0Artifact.contents, "cfg_fold");
+  const std::string_view o1Fold =
+      functionDefinition(o1Artifact.contents, "cfg_fold");
+  const std::string_view o3Fold =
+      functionDefinition(o3Artifact.contents, "cfg_fold");
+  expect(!o0Fold.empty() && o0Fold != o1Fold,
+         "the marked CFG body should reflect the O1 identity-fold rewrite");
+  expect(!o1Fold.empty() && o1Fold == o3Fold,
+         "O1 and O3 should emit the same verified grouped-literal CFG body");
+  expect(functionDefinition(o1WithO0Compatibility.contents, "cfg_fold") ==
+             o1Fold,
+         "verified optimized CFG MIR should control the selected body even "
+         "when compatibility emission retains its O0 optimization result");
+
+  lang::MirProgram swapped = o0.mir;
+  const lang::HirFunctionInstance *choose =
+      findHirFunction(frontend.hir, "cfg_choose");
+  lang::MirBlock *branch = nullptr;
+  if (choose != nullptr) {
+    auto &functions = const_cast<std::vector<lang::MirFunctionInstance> &>(
+        swapped.functionInstances());
+    if (choose->id > 0 && choose->id <= functions.size()) {
+      for (lang::MirBlock &block : functions[choose->id - 1].body.blocks) {
+        if (block.terminator.kind == lang::MirTerminatorKind::Branch) {
+          branch = &block;
+          break;
+        }
+      }
+    }
+  }
+  expect(branch != nullptr,
+         "the branch-authority fixture should locate cfg_choose's MIR branch");
+  if (branch == nullptr) {
+    return;
+  }
+  std::swap(branch->terminator.target, branch->terminator.elseTarget);
+  expect(lang::verifyMirProgram(swapped).valid(),
+         "swapping two type-compatible branch successors should remain valid "
+         "MIR");
+  if (lang::verifyMirProgram(swapped).valid()) {
+    expectEmissionRejected(
+        frontend, swapped, o0Compatibility,
+        "scalar-cfg-v1 must reject a branch-successor swap that has no "
+        "optimizer rewrite provenance");
+  }
+
+  lang::MirProgram substitutedOperation = o0.mir;
+  lang::MirFunctionInstance *less =
+      findMirFunction(frontend.hir, substitutedOperation, "cfg_less");
+  lang::MirInstruction *comparison = nullptr;
+  if (less != nullptr) {
+    for (lang::MirBlock &block : less->body.blocks) {
+      const auto found = std::find_if(
+          block.instructions.begin(), block.instructions.end(),
+          [](const lang::MirInstruction &instruction) {
+            return instruction.operation == lang::MirOperation::Less;
+          });
+      if (found != block.instructions.end()) {
+        comparison = &*found;
+        break;
+      }
+    }
+  }
+  expect(comparison != nullptr,
+         "the operation-authority fixture should locate cfg_less's MIR "
+         "comparison");
+  if (comparison != nullptr) {
+    comparison->operation = lang::MirOperation::Greater;
+    expect(lang::verifyMirProgram(substitutedOperation).valid(),
+           "a same-domain comparison substitution should remain valid generic "
+           "MIR");
+    if (lang::verifyMirProgram(substitutedOperation).valid()) {
+      expectEmissionRejected(
+          frontend, substitutedOperation, o0Compatibility,
+          "scalar-cfg-v1 must reject a same-typed operation substitution that "
+          "has no optimizer rewrite provenance");
+    }
+  }
+}
+
+// The scalar-cfg family now admits an ordinary non-static, non-virtual,
+// non-operator, read-only member of one concrete non-generic class. Emission
+// stays keyed per source declaration, so the concrete-owner requirement and
+// every graceful decline below are part of the family contract.
+void testConcreteMemberSelection() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("mir-scalar-cfg-member.gti", R"(
+class Chooser {
+  mut int stored;
+
+public:
+  Chooser(int input) : stored(input) {}
+  int mask(bool pick, int left, int right) {
+    mut int result = 0;
+    if (pick) {
+      result = left & right;
+    } else {
+      result = left | right;
+    }
+    return result;
+  }
+  bool same(int left, int right) { return left == right; }
+  int reads_this() { return this.stored; }
+  void store(int next) mut { this.stored = next; }
+  bool same_as(Chooser& other) { return this.stored == other.stored; }
+  bool twins_with(Chooser& other) { return this.same_as(other); }
+  void bump(int next) mut { this.store(next); }
+};
+
+int main() {
+  mut Chooser chooser = Chooser(3);
+  if (chooser.mask(true, 6, 3) != 2 or !chooser.same(4, 4) or
+      chooser.reads_this() != 3) {
+    return 1;
+  }
+  chooser.store(9);
+  if (chooser.reads_this() != 9) {
+    return 2;
+  }
+  mut Chooser twin = Chooser(9);
+  if (!chooser.same_as(twin)) {
+    return 3;
+  }
+  if (!chooser.twins_with(twin)) {
+    return 4;
+  }
+  chooser.bump(11);
+  if (chooser.reads_this() != 11) {
+    return 5;
+  }
+  return 0;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the concrete-member fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::OptimizedProgram optimized =
+      optimize(frontend, lang::OptimizationLevel::O0, compatibility);
+  expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
+         "the concrete-member fixture should retain valid MIR");
+  if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
+    return;
+  }
+  const lang::BackendArtifact artifact = emit(
+      frontend, optimized.mir, compatibility, optimized.report.transformations);
+  expect(memberDefinition(artifact.contents, "mask").find(marker) !=
+             std::string_view::npos,
+         "a this-free read-only member of a concrete class should emit from "
+         "verified MIR");
+  expect(memberDefinition(artifact.contents, "same").find(marker) !=
+             std::string_view::npos,
+         "a second eligible member of the same class should emit from "
+         "verified MIR");
+  expect(memberDefinition(artifact.contents, "reads_this").find(marker) !=
+             std::string_view::npos,
+         "a read-only member reading one scalar field through `this` should "
+         "emit from verified MIR");
+  expect(memberDefinition(artifact.contents, "reads_this")
+                 .find("(*this).stored") != std::string_view::npos,
+         "the emitted field place should bind by reference to the live "
+         "member spelling");
+  const std::string_view storeBody =
+      memberDefinition(artifact.contents, "store");
+  expect(storeBody.find(marker) != std::string_view::npos,
+         "a mutable-receiver member storing to one scalar field should emit "
+         "from verified MIR");
+  expect(storeBody.find("auto &__gti_mir_p_") != std::string_view::npos &&
+             storeBody.find("const auto &__gti_mir_p_") ==
+                 std::string_view::npos &&
+             storeBody.find(" = (*this).stored;") != std::string_view::npos,
+         "the mutable receiver must bind its field place as a non-const "
+         "reference to the live member");
+  const std::string_view sameBody =
+      memberDefinition(artifact.contents, "same_as");
+  expect(sameBody.find(marker) != std::string_view::npos &&
+             sameBody.find("= &__gti_mir_arg_0;") != std::string_view::npos &&
+             sameBody.find("(*__gti_mir_p_") != std::string_view::npos,
+         "a reference parameter should bind its pointer carrier and read "
+         "the other object's field through the dereference chain (ADR 018)");
+  // The two call-forwarding members call only failure-free members, so the
+  // structural failure-freedom proof selects their plain form, which stages
+  // the same receiver-call vocabulary.
+  const std::string_view twinsBody =
+      memberDefinition(artifact.contents, "twins_with");
+  expect(twinsBody.find(marker) != std::string_view::npos &&
+             twinsBody.find("stages a borrowed place") !=
+                 std::string_view::npos &&
+             twinsBody.find("(*this).::__gti_program::") !=
+                 std::string_view::npos &&
+             twinsBody.find("((*__gti_mir_p_") != std::string_view::npos,
+         "a receiver-carrying call should spell its staged borrowed places "
+         "as the receiver expression and the qualified member name");
+  expect(artifact.contents.find("scalar-cfg-v1 constructor-instance") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "Chooser::Chooser(std::int32_t __gti_mir_arg_0) : "
+                 "stored(__gti_mir_arg_0) {") != std::string::npos,
+         "the concrete constructor should spell its verified field "
+         "initializer in the native initializer list and emit its body from "
+         "general MIR");
+  expect(artifact.contents.find("scalar-cfg-v1 field-initializers-instance") !=
+                 std::string::npos &&
+             artifact.contents.find(
+                 "scalar-cfg-v1 static-field-initializers-instance") !=
+                 std::string::npos,
+         "the concrete class's passive initializer bodies should publish "
+         "their verified schedule and verified-empty markers");
+  const std::string_view bumpBody = memberDefinition(artifact.contents, "bump");
+  expect(
+      bumpBody.find(marker) != std::string_view::npos &&
+          bumpBody.find("stages a borrowed place") != std::string_view::npos &&
+          bumpBody.find("(*this).::__gti_program::") != std::string_view::npos,
+      "a mutable-receiver call should stage its write borrow and spell "
+      "the qualified member name exactly like the read form");
+  expect(functionDefinition(artifact.contents, "entry__gti_mir_failure")
+                 .find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
+             std::string_view::npos,
+         "the hosted entry should join the failure component through its "
+         "explicit transformed body");
+  expect(count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                  "constructor-instance") == 1 &&
+             count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                      "field-initializers-instance") == 1 &&
+             count(artifact.contents,
+                   "// GTI verified-MIR body: scalar-cfg-v1 "
+                   "static-field-initializers-instance") == 1 &&
+             count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                      "module-instance") == 1,
+         "the concrete constructor, initializer bodies, and empty module "
+         "body should each carry their family marker exactly once");
+}
+
+// A member access whose object is a by-value parameter rather than `this`
+// reads through that parameter's lifetime slot. The body cannot fail, so its
+// plain form emits the read from verified MIR.
+void testForeignObjectFieldReadEmitsFromMir() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("mir-scalar-cfg-foreign-field.gti", R"(
+class Holder {
+public:
+  int stored;
+  Holder(int input) : stored(input) {}
+};
+
+class Reader {
+public:
+  Reader() {}
+  int read_other(Holder holder) { return holder.stored; }
+};
+
+int main() {
+  Holder holder = Holder(4);
+  Reader reader = Reader();
+  return reader.read_other(holder) - 4;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the foreign-field fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::OptimizedProgram optimized =
+      optimize(frontend, lang::OptimizationLevel::O0, compatibility);
+  expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
+         "the foreign-field fixture should retain valid MIR");
+  if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
+    return;
+  }
+  const lang::BackendArtifact artifact = emit(
+      frontend, optimized.mir, compatibility, optimized.report.transformations);
+  const std::string_view readBody =
+      memberDefinition(artifact.contents, "read_other");
+  expect(readBody.find(marker) != std::string_view::npos &&
+             readBody.find(".get().stored;") != std::string_view::npos,
+         "a field read on a by-value parameter object reads through its "
+         "lifetime slot from verified MIR");
+}
+
+// Calls are admitted per body: an eligible call names a static
+// proved-failure-free source free function, and the callee's own authority is
+// decided independently, so no closed-graph selection is required and no
+// failure channel can cross into a differently-emitted neighbor.
+void testPerBodyCallSelection() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("mir-scalar-cfg-per-body-call.gti", R"(
+int mask_bits(int left, int right) { return left & right; }
+
+int checked_add(int left, int right) { return left + right; }
+
+class Widget {
+  int stored;
+
+public:
+  Widget(int input) : stored(input) {}
+  int combined(int other) { return mask_bits(this.stored, other); }
+  int risky(int other) { return checked_add(this.stored, other); }
+};
+
+int main() {
+  Widget widget = Widget(6);
+  if (widget.combined(3) == 2 and widget.risky(1) == 7) {
+    return 0;
+  }
+  return 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the per-body call fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::OptimizedProgram optimized =
+      optimize(frontend, lang::OptimizationLevel::O0, compatibility);
+  expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
+         "the per-body call fixture should retain valid MIR");
+  if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
+    return;
+  }
+  const lang::BackendArtifact artifact = emit(
+      frontend, optimized.mir, compatibility, optimized.report.transformations);
+  expect(memberDefinition(artifact.contents, "combined").find(marker) !=
+             std::string_view::npos,
+         "a member calling a proved-failure-free free function should emit "
+         "from verified MIR without closed-graph selection");
+  expect(functionDefinition(artifact.contents, "mask_bits").find(marker) !=
+             std::string_view::npos,
+         "the called free function keeps its own independent body authority");
+  expect(memberDefinition(artifact.contents, "risky").find(marker) ==
+             std::string_view::npos,
+         "a call to a may-raise target must decline gracefully to "
+         "compatibility rather than fail closed");
+}
+
+void testGenericOwnerMemberStaysCompatibility() {
+  const lang::FrontendResult frontend =
+      lang::Frontend().analyze("mir-scalar-cfg-generic-owner.gti", R"(
+class Wrap<T> {
+  T stored;
+
+public:
+  Wrap(T input) : stored(input) {}
+  bool matches(int left, int right) { return left == right; }
+};
+
+int main() {
+  Wrap<int> wrap = Wrap<int>(1);
+  return wrap.matches(2, 2) ? 0 : 1;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "the generic-owner fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const lang::OptimizedProgram optimized =
+      optimize(frontend, lang::OptimizationLevel::O0, compatibility);
+  expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
+         "the generic-owner fixture should retain valid MIR");
+  if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
+    return;
+  }
+  // A member of a generic owner publishes per admitted concrete instance on a
+  // GTI-owned ordinary class. The declaration-keyed substituted-body hazard
+  // that once regressed examples 07/17 does not apply to the per-instance
+  // form, and C++ performs no template selection for the executable route.
+  const lang::BackendArtifact artifact = emit(
+      frontend, optimized.mir, compatibility, optimized.report.transformations);
+  expect(memberDefinition(artifact.contents, "matches").find(marker) !=
+             std::string_view::npos,
+         "the generic owner's admitted member instance should emit one "
+         "concrete verified-MIR body");
+  expect(functionDefinition(artifact.contents, "entry__gti_mir_failure")
+                 .find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
+             std::string_view::npos,
+         "the generic-owner fixture's hosted entry should join the failure "
+         "component through its explicit transformed body");
+  expect(artifact.contents.find("class __gti_type_") != std::string::npos &&
+             artifact.contents.find("_Wrap") != std::string::npos &&
+             artifact.contents.find("::__gti_member_") != std::string::npos &&
+             artifact.contents.find(
+                 "template <> bool __gti_program::Wrap<std::int32_t>::") ==
+                 std::string::npos,
+         "the admitted member should publish on its ordinary GTI-owned "
+         "concrete owner");
+  // The generic owner's per-instance initializer bodies are verified
+  // passive (no field carries an initializer stage and the static body is
+  // empty), so each emits from MIR alongside the member specialization.
+  expect(count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                  "field-initializers-instance") == 1,
+         "the generic owner's field-initializer body should emit from "
+         "verified MIR");
+  expect(count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
+                                  "static-field-initializers-instance") == 1,
+         "the generic owner's static-initializer body should emit from "
+         "verified MIR");
+}
+
+} // namespace
+
+int main(int argc, char **argv) {
+  if (argc != 2) {
+    std::cerr << "usage: gti_mir_backend_scalar_cfg_tests <fixture>\n";
+    return 2;
+  }
+  testSelectedFamily(std::filesystem::path(argv[1]));
+  testConcreteMemberSelection();
+  testForeignObjectFieldReadEmitsFromMir();
+  testPerBodyCallSelection();
+  testGenericOwnerMemberStaysCompatibility();
+  return failures == 0 ? 0 : 1;
+}

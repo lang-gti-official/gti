@@ -5,19 +5,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
-import platform
 import subprocess
-import sys
 
-from backend_modes import cpp_standard, is_cpp_mode, native_modes, optimization_level
+from backend_modes import (cpp_standard, is_cpp_mode, native_modes, optimization_level,
+                           selected_backends)
 
 
 def host_default_backend() -> str:
-    """The backend `gti` builds with on this host when none is selected."""
-    machine = platform.machine().lower()
-    promoted = ((sys.platform == "darwin" and machine in {"arm64", "aarch64"}) or
-                (sys.platform.startswith("linux") and machine in {"x86_64", "amd64"}))
-    return "llvm" if promoted else "cpp"
+    """The backend `gti` builds with when none is selected: LLVM everywhere."""
+    return "llvm"
+
+
+def cpp_selected() -> bool:
+    """Whether GTI_TEST_BACKENDS selects the frozen C++ backend."""
+    return selected_backends() in ("cpp", "both")
+
+
+def selected_endpoints(endpoints) -> tuple["Endpoint", ...]:
+    """A harness's endpoints, keeping C++ ones only when the policy selects C++."""
+    return tuple(endpoint for endpoint in endpoints
+                 if endpoint.backend != "cpp" or cpp_selected())
 
 
 @dataclass(frozen=True)

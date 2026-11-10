@@ -211,11 +211,16 @@ class IndependentLSP(unittest.TestCase):
             component.pack(root / 'input', root / 'repeat', PLAN)
             for file in (root / 'out').iterdir():
                 self.assertEqual(file.read_bytes(), (root / 'repeat' / file.name).read_bytes())
-            releases = []; commands = []; fail = [True]
+            releases = []; commands = []; fail = [True]; lag = [0]; sleeps = []
             def api(path):
-                # Mirror GitHub: the listing includes drafts, a tag lookup
-                # never finds one, and a release is readable by its id.
-                if '/releases?' in path: return releases
+                # Mirror GitHub: the listing includes drafts but lags a new
+                # one, a tag lookup never finds one, and a release is
+                # readable by its id.
+                if '/releases?' in path:
+                    if lag[0]:
+                        lag[0] -= 1
+                        return releases[:-1]
+                    return releases
                 if '/git/ref/' in path: return {'object':{'sha':SHA}}
                 if '/releases/tags/' in path:
                     found = [r for r in releases if r['tag_name'] == path.rsplit('/', 1)[1] and not r['draft']]
@@ -229,6 +234,7 @@ class IndependentLSP(unittest.TestCase):
                 if args[2] == 'create':
                     releases.append(dict(id=900 + len(releases), tag_name=args[3], target_commitish=SHA,
                                          draft=True, assets=[]))
+                    lag[0] = 2
                 elif args[2] == 'upload':
                     if fail[0] and releases[0]['assets']:
                         fail[0] = False
@@ -238,9 +244,10 @@ class IndependentLSP(unittest.TestCase):
                 elif args[2] == 'edit': releases[0]['draft'] = False
                 else: raise AssertionError(args)
             with patch.object(component.subprocess, 'run', command), patch.object(artifacts, 'release_evidence',
-                    return_value={'run_id':'7','run_attempt':'2'}):
+                    return_value={'run_id':'7','run_attempt':'2'}), patch.object(component.time, 'sleep', sleeps.append):
                 with self.assertRaises(subprocess.CalledProcessError):
                     component.publish(root / 'out', PLAN, api)
+                self.assertEqual(sleeps, list(component.DRAFT_LISTING_DELAYS[:2]))
                 self.assertTrue(releases[0]['draft'])
                 self.assertTrue(component.publish(root / 'out', PLAN, api))
                 self.assertFalse(releases[0]['draft'])

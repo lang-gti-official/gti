@@ -1,5 +1,7 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
+#include "gti/mir.h"
+#include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -33,10 +35,35 @@ int main() {
         std::cerr << d.code << ": " << d.message << '\n';
       return;
     }
-    const std::string cpp = gti_test::emitCpp(result).contents;
-    expect(cpp.find("__gti_operator_conversion") != std::string::npos ||
-               cpp.find("__gti_operator_bool") != std::string::npos,
-           message + " (the selected operator must be emitted as a call)");
+    expect(lang::verifyMirProgram(result.mir).valid(),
+           message + " (the selected operator must produce verified MIR)");
+    bool called = false;
+    for (const lang::MirBodyAddress address :
+         lang::enumerateMirBodyAddresses(result.mir)) {
+      const lang::MirBody *body = lang::findMirBody(result.mir, address);
+      if (body == nullptr)
+        continue;
+      for (const auto &block : body->blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.kind != lang::MirInstructionKind::Call ||
+              !instruction.functionTarget)
+            continue;
+          const auto *target =
+              result.mir.findFunctionInstance(*instruction.functionTarget);
+          called |= target != nullptr && target->overloadedOperator &&
+                    (*target->overloadedOperator ==
+                         lang::OverloadedOperator::Conversion ||
+                     *target->overloadedOperator ==
+                         lang::OverloadedOperator::ContextualBool);
+        }
+    }
+    expect(called,
+           message + " (the selected operator must be lowered as a call)");
+    std::string error;
+    expect(gti_test::llvmEmits(result, lang::OptimizationLevel::O0,
+                               lang::TargetInfo::host(), &error),
+           message + " (the selected operator must reach native emission: " +
+               error + ")");
   };
   // The located owning diagnostic, its code and a fragment of its wording.
   const auto rejected = [&](const std::string &source, const char *code,

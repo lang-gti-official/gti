@@ -2826,6 +2826,18 @@ form the exact field value generically.
 
 ### 3.12.6 Callables, Parameters And Source Locations
 
+Reflecting a method describes its declaration; it does not instantiate the
+method's own generic parameters. A result or parameter type can therefore
+remain symbolic even when the enclosing class is concrete. Queries that
+require that unresolved type's concrete identity or properties, such as
+`result().name()` or `result().is_void()` for a result declared as a method's
+own `T`, are rejected with `GTI-S2126` when an instantiated query body still
+cannot produce a constant. Test `is_generic()` and use `if constexpr` to omit
+queries on such signatures. Generic methods with independent result types
+remain inspectable. Stable declaration facts, proven type-identity relations
+and known outer categories (for example, a raw pointer `T*`) also remain
+available; ordinary caller and owner generics still defer until substitution.
+
 `std::meta::methods_of<T>()` is a list of `std::meta::method<T, I>`
 metaobjects over the methods `T` declares, in declaration order, operators and
 static methods included and constructors and destructors excluded;

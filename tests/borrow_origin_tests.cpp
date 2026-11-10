@@ -1,7 +1,22 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
 #include "gti/mir_lowering.h"
 
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
+
 namespace {
+// The shipped native backend accepts the verified program.
+void expectNativeEmission(const lang::FrontendResult &frontend,
+                          std::string_view message) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  if (!emitted)
+    std::cerr << "LLVM emission: " << error << '\n';
+  expect(emitted, message);
+}
+
 void checkStaticReturnAlternatives() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/borrow_static_return_alternative.gti";
@@ -17,8 +32,8 @@ void checkStaticReturnAlternatives() {
   }
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "mixed static and dependent return MIR verifies");
-  expect(!gti_test::emitCpp(frontend).contents.empty(),
-         "mixed return alternatives reach the production backend");
+  expectNativeEmission(
+      frontend, "mixed return alternatives reach the production backend");
   std::size_t literals = 0;
   std::size_t dependent = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
@@ -107,8 +122,8 @@ void checkStoredViewReturns() {
   }
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "stored view return MIR verifies");
-  expect(!gti_test::emitCpp(frontend).contents.empty(),
-         "stored view returns reach the production backend");
+  expectNativeEmission(frontend,
+                       "stored view returns reach the production backend");
   const auto missingLoan = [](const lang::MirProgram &program) {
     const auto result = lang::verifyMirProgram(program);
     return std::any_of(
@@ -324,13 +339,8 @@ void checkReferents() {
     }
     expect(lang::verifyMirProgram(frontend.mir).valid(),
            "exact referent MIR independently verifies");
-    try {
-      expect(!gti_test::emitCpp(frontend).contents.empty(),
-             "exact referent reaches production representation");
-    } catch (const std::logic_error &error) {
-      expect(false, std::string("exact referent emission: ") + error.what());
-    }
-    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+    expectNativeEmission(frontend,
+                         "exact referent reaches production representation");
     std::size_t checked = 0;
     for (const auto &function : frontend.mir.functionInstances())
       for (const auto &block : function.body.blocks)
@@ -371,11 +381,6 @@ void checkReferents() {
             expect(
                 !lang::verifyMirProgram(malformed).valid(),
                 "borrow return rejects forged address, authority, or access");
-            expect(
-                !lang::CppMirBodyEmitter(malformed, rows)
-                     .supportsFailureBodyText(
-                         {lang::MirBodyKind::Function, function.id}),
-                "representation admission rejects forged borrow publication");
           }
         }
     // A reference selected through an accessor call relays that call's loan
@@ -436,7 +441,6 @@ void checkProjectedParameterOrigins() {
          "projected parameter and captured-reference origins publish exactly");
   if (!frontend.canGenerateCode())
     return;
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
   std::size_t publications = 0;
   for (const auto &function : frontend.mir.functionInstances())
     for (const auto &block : function.body.blocks)
@@ -478,17 +482,12 @@ void checkProjectedParameterOrigins() {
           expect(!lang::verifyMirProgram(malformed).valid(),
                  "projected parameter rejects forged physical origin " +
                      std::to_string(mutation));
-          expect(!lang::CppMirBodyEmitter(malformed, rows)
-                      .supportsFailureBodyText(
-                          {lang::MirBodyKind::Function, function.id}),
-                 "representation rejects forged projected origin " +
-                     std::to_string(mutation));
         }
       }
   expect(publications == 2,
          "plain and fallible projected-parameter returns have origin controls");
   std::cout << "projected parameter origins: " << publications * 6
-            << " mutations checked by MIR and C++ admission\n";
+            << " mutations rejected by MIR verification\n";
 }
 
 void checkDirectProjectedReturnOrigins() {
@@ -501,7 +500,6 @@ void checkDirectProjectedReturnOrigins() {
          "direct field aliases return their exact caller-owned referent");
   if (!frontend.canGenerateCode())
     return;
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
   std::size_t changedAddresses = 0;
   std::size_t changedSuffixes = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
@@ -546,10 +544,6 @@ void checkDirectProjectedReturnOrigins() {
           expect(!lang::verifyMirProgram(malformed).valid(),
                  "return cannot substitute another same-type alias of the "
                  "same owner for the selected source expression");
-          expect(!lang::CppMirBodyEmitter(malformed, rows)
-                      .supportsFailureBodyText(
-                          {lang::MirBodyKind::Function, function.id}),
-                 "representation rejects substituted return aliases");
         }
       }
     for (const auto &place : function.body.places) {
@@ -604,10 +598,6 @@ void checkDirectProjectedReturnOrigins() {
                    std::to_string(mutation) + " at " +
                    std::to_string(function.id) + ":" +
                    std::to_string(place.id));
-        expect(!lang::CppMirBodyEmitter(malformed, rows)
-                    .supportsFailureBodyText(
-                        {lang::MirBodyKind::Function, function.id}),
-               "representation rejects forged executed field paths");
       }
     }
   }
@@ -676,13 +666,7 @@ void checkOwnedFieldPlaces() {
     }
     expect(lang::verifyMirProgram(frontend.mir).valid(),
            "owned field borrow verifies");
-    try {
-      expect(!gti_test::emitCpp(frontend).contents.empty(),
-             "owned field borrow emits");
-    } catch (const std::logic_error &error) {
-      expect(false, error.what());
-    }
-    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+    expectNativeEmission(frontend, "owned field borrow emits");
     std::size_t checked = 0;
     for (const auto &function : frontend.mir.functionInstances())
       for (const auto &block : function.body.blocks)
@@ -707,10 +691,6 @@ void checkOwnedFieldPlaces() {
                 candidate.operands.front().place = owner->source;
           expect(!lang::verifyMirProgram(malformed).valid(),
                  "borrow initializer cannot substitute owner for referent");
-          expect(!lang::CppMirBodyEmitter(malformed, rows)
-                      .supportsFailureBodyText(
-                          {lang::MirBodyKind::Function, function.id}),
-                 "representation independently rejects the wrong address");
         }
     expect(checked != 0,
            "owned field fixture retains a distinct accessor address");
@@ -783,9 +763,8 @@ void checkNestedReadonlyReferences() {
     }
     expect(lang::verifyMirProgram(frontend.mir).valid(),
            "nested read-only loan flow independently verifies");
-    expect(!gti_test::emitCpp(frontend).contents.empty(),
-           "nested read-only reference reaches production emission");
-    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+    expectNativeEmission(
+        frontend, "nested read-only reference reaches production emission");
     std::size_t checked = 0;
     for (const auto &function : frontend.mir.functionInstances())
       for (const auto &block : function.body.blocks)
@@ -840,11 +819,6 @@ void checkNestedReadonlyReferences() {
                    "nested reference rejects forged provenance, type, access "
                    "or parent-use operation " +
                        std::to_string(mutation));
-            expect(!lang::CppMirBodyEmitter(malformed, rows)
-                        .supportsFailureBodyText(
-                            {lang::MirBodyKind::Function, function.id}),
-                   "representation rejects forged nested reference " +
-                       std::to_string(mutation));
           }
         }
     expect(mutableParent ? checked != 0 : checked == 0,
@@ -883,14 +857,13 @@ void checkNestedReadonlyReferences() {
     }
   }
   std::cout << "nested references: " << publications << " publications, "
-            << publications * 7
-            << " mutations checked by MIR and C++ admission\n";
+            << publications * 7 << " mutations rejected by MIR verification\n";
 }
 
 // A reference selected from a payload enum held in a local carrier sources a
 // place rooted at the carrier's field-less Stored dependency. That place is
-// provenance: the address comes from the exact PayloadExtract. Admission must
-// reject it once the selection loses its extract or the place is evaluated.
+// provenance: the address comes from the exact PayloadExtract. Verification
+// must reject it once the selection loses its extract.
 void checkLocalCarrierSelections() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/borrowed_enum_local_selection.gti";
@@ -906,14 +879,8 @@ void checkLocalCarrierSelections() {
   }
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "local carrier selection MIR verifies");
-  try {
-    expect(!gti_test::emitCpp(frontend).contents.empty(),
-           "local carrier selections reach the production backend");
-  } catch (const std::logic_error &error) {
-    expect(false,
-           std::string("local carrier selection emission: ") + error.what());
-  }
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  expectNativeEmission(frontend,
+                       "local carrier selections reach the production backend");
   std::size_t owners = 0;
   std::size_t evaluated = 0;
   for (const auto &function : frontend.mir.functionInstances())
@@ -932,8 +899,6 @@ void checkLocalCarrierSelections() {
           stored->storedField != 0 || selection == function.body.loans.end())
         continue;
       ++owners;
-      expect(supportsSelectedBodyText(frontend.mir, rows, function.id),
-             "a provenance-only carrier owner is representable");
       // The selected binding's referent read, redirected to the owner place.
       const auto read = [&](const lang::MirInstruction &instruction) {
         const auto *operand =
@@ -949,33 +914,33 @@ void checkLocalCarrierSelections() {
                    lang::MirProjectionKind::Dereference &&
                operand->type == place.type;
       };
-      for (unsigned mutation = 0; mutation < 2; ++mutation) {
-        auto malformed = frontend.mir;
-        auto *body = &const_cast<lang::MirFunctionInstance *>(
-                          malformed.findFunctionInstance(function.id))
-                          ->body;
-        bool changed = mutation == 0;
-        if (mutation == 0)
-          body->loans[selection->id - 1].referenceSelection.reset();
-        for (auto &block : body->blocks)
-          for (auto &instruction : block.instructions)
-            if (mutation == 1 && !changed && read(instruction)) {
-              instruction.operands.front().place = place.id;
-              changed = true;
-            }
-        if (!changed)
-          continue;
-        evaluated += mutation;
-        expect(!supportsSelectedBodyText(malformed, rows, function.id),
-               "a carrier owner place cannot become a runtime address " +
-                   std::to_string(mutation));
-      }
+      // Losing the selection's PayloadExtract leaves the owner place an
+      // unproved address; MIR verification rejects it.
+      auto malformed = frontend.mir;
+      auto *body = &const_cast<lang::MirFunctionInstance *>(
+                        malformed.findFunctionInstance(function.id))
+                        ->body;
+      body->loans[selection->id - 1].referenceSelection.reset();
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "a carrier selection cannot lose its exact payload extract");
+      // Each owner's referent is read through the selected binding. MIR
+      // verification does not yet reject redirecting that read to the
+      // provenance-only owner place; cpp_mir_borrow_origin keeps the C++
+      // admission check for that mutation.
+      evaluated +=
+          std::any_of(function.body.blocks.begin(), function.body.blocks.end(),
+                      [&](const lang::MirBlock &block) {
+                        return std::any_of(block.instructions.begin(),
+                                           block.instructions.end(), read);
+                      })
+              ? 1
+              : 0;
     }
   expect(owners >= 10 && evaluated >= 10,
          "fixture exercises call-result, constructed, parameter, generic, "
          "class-field and mutable local carriers");
-  std::cout << "local carrier selections: " << owners << " owners, "
-            << owners + evaluated << " mutations checked by C++ admission\n";
+  std::cout << "local carrier selections: " << owners << " owners, " << owners
+            << " selection mutations rejected by MIR verification\n";
 }
 
 // Each reference selected from one carrier names its own external owner. A
@@ -996,12 +961,8 @@ void checkSelectionOwners() {
   }
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "owner selection MIR verifies");
-  try {
-    expect(!gti_test::emitCpp(frontend).contents.empty(),
-           "owner selections reach the production backend");
-  } catch (const std::logic_error &error) {
-    expect(false, std::string("owner selection emission: ") + error.what());
-  }
+  expectNativeEmission(frontend,
+                       "owner selections reach the production backend");
   std::size_t additional = 0;
   for (const auto &function : frontend.mir.functionInstances())
     for (const auto &loan : function.body.loans) {
@@ -1059,22 +1020,10 @@ void checkReferenceCallSwitchSubjects() {
   }
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "reference-call switch subject MIR verifies");
-  try {
-    expect(!gti_test::emitCpp(frontend).contents.empty(),
-           "reference-call switch subjects reach the production backend");
-  } catch (const lang::BackendUnsupportedError &error) {
-    // The frozen C++ backend cannot represent a text call result that
-    // carries a borrow dependency and says so (GTI-B0003); LLVM executes it.
-    expect(std::string(error.what())
-                   .find("borrow-dependent text call results require the LLVM "
-                         "backend") != std::string::npos,
-           std::string(
-               "reference-call switch emission: unexpected C++ limitation: ") +
-               error.what());
-  } catch (const std::logic_error &error) {
-    expect(false,
-           std::string("reference-call switch emission: ") + error.what());
-  }
+  // The frozen C++ backend cannot represent a borrow-dependent text call
+  // result (cpp_mir_borrow_origin checks its GTI-B0003 limit); LLVM does.
+  expectNativeEmission(
+      frontend, "reference-call switch subjects reach the production backend");
   const auto endsBeforeUse = [](const lang::MirProgram &program) {
     const auto result = lang::verifyMirProgram(program);
     return std::any_of(

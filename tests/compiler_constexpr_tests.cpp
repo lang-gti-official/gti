@@ -6,6 +6,247 @@
 
 namespace {
 
+// Backend-neutral oracles: assertions about emitted programs are made on the
+// verified MIR (and the shipped LLVM backend), never on generated C++ text.
+[[maybe_unused]] const lang::MirFunctionInstance *
+mirFunctionNamed(const lang::FrontendResult &frontend,
+                 const lang::MirProgram &program,
+                 std::string_view qualifiedName) {
+  for (const lang::MirFunctionInstance &function :
+       program.functionInstances()) {
+    const lang::FunctionInfo *info =
+        frontend.semantics.findFunction(function.declaration);
+    if (info != nullptr && info->qualifiedName == qualifiedName) {
+      return &function;
+    }
+  }
+  return nullptr;
+}
+
+[[maybe_unused]] const lang::MirFunctionInstance *
+mirFunctionNamed(const lang::FrontendResult &frontend,
+                 std::string_view qualifiedName) {
+  return mirFunctionNamed(frontend, frontend.mir, qualifiedName);
+}
+
+[[maybe_unused]] const lang::MirClassInstance *
+mirClassNamed(const lang::FrontendResult &frontend,
+              std::string_view qualifiedName) {
+  for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
+    const lang::ClassTypeInfo *info =
+        frontend.semantics.findClassType(instance.declaration);
+    if (info != nullptr && info->qualifiedName == qualifiedName) {
+      return &instance;
+    }
+  }
+  return nullptr;
+}
+
+template <typename Predicate>
+[[maybe_unused]] bool anyMirInstruction(const lang::MirBody &body,
+                                        Predicate predicate) {
+  for (const lang::MirBlock &block : body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (!instruction.tombstone && predicate(instruction)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Every executable body of `program`: functions, constructors, destructors,
+// lambdas, class field initializers and the merged program module.
+template <typename Visitor>
+[[maybe_unused]] void forEachMirBody(const lang::MirProgram &program,
+                                     Visitor visitor) {
+  visitor(program.module());
+  for (const auto &function : program.functionInstances())
+    visitor(function.body);
+  for (const auto &constructor : program.constructorInstances())
+    visitor(constructor.body);
+  for (const auto &destructor : program.destructorInstances())
+    visitor(destructor.body);
+  for (const auto &lambda : program.lambdaInstances())
+    visitor(lambda.body);
+  for (const auto &instance : program.classInstances()) {
+    visitor(instance.fieldInitializers);
+    visitor(instance.staticFieldInitializers);
+  }
+}
+
+template <typename Predicate>
+[[maybe_unused]] bool anyProgramInstruction(const lang::MirProgram &program,
+                                            Predicate predicate) {
+  bool found = false;
+  forEachMirBody(program, [&](const lang::MirBody &body) {
+    found = found || anyMirInstruction(body, predicate);
+  });
+  return found;
+}
+
+[[maybe_unused]] bool isMirIntegerLiteral(const lang::MirInstruction &item,
+                                          std::uint64_t magnitude) {
+  if (item.operation != lang::MirOperation::Literal || !item.literal)
+    return false;
+  const auto *value = std::get_if<std::uint64_t>(&*item.literal);
+  return value != nullptr && *value == magnitude;
+}
+
+[[maybe_unused]] bool hasMirIntegerLiteral(const lang::MirBody &body,
+                                           std::uint64_t magnitude) {
+  return anyMirInstruction(body, [&](const lang::MirInstruction &item) {
+    return isMirIntegerLiteral(item, magnitude);
+  });
+}
+
+[[maybe_unused]] bool hasMirIntegerLiteral(const lang::MirProgram &program,
+                                           std::uint64_t magnitude) {
+  return anyProgramInstruction(program, [&](const lang::MirInstruction &item) {
+    return isMirIntegerLiteral(item, magnitude);
+  });
+}
+
+// Text reaching the program as a MIR string literal or a constant program
+// storage initializer.
+[[maybe_unused]] bool mirContainsText(const lang::MirProgram &program,
+                                      std::string_view text) {
+  const bool literal =
+      anyProgramInstruction(program, [&](const lang::MirInstruction &item) {
+        const auto *value =
+            item.literal ? std::get_if<std::string>(&*item.literal) : nullptr;
+        return value != nullptr && value->find(text) != std::string::npos;
+      });
+  const auto &steps = program.programInitializationPlan().steps;
+  return literal ||
+         std::any_of(steps.begin(), steps.end(), [&](const auto &step) {
+           const auto *value =
+               step.dataConstant ? std::get_if<std::string>(&*step.dataConstant)
+                                 : nullptr;
+           return value != nullptr && value->find(text) != std::string::npos;
+         });
+}
+
+// The defined-failure outcomes an instruction's checked operation can raise.
+[[maybe_unused]] std::vector<lang::DefinedFailureOutcome>
+mirFailureOutcomes(const lang::MirProgram &program,
+                   const lang::MirInstruction &instruction) {
+  std::vector<lang::DefinedFailureOutcome> outcomes;
+  for (const lang::FailureSiteId site : instruction.localFailureSites) {
+    for (const lang::FailureSiteDescriptor &descriptor :
+         program.failureMetadata().sites()) {
+      if (descriptor.id == site) {
+        outcomes.insert(outcomes.end(), descriptor.outcomes.begin(),
+                        descriptor.outcomes.end());
+      }
+    }
+  }
+  return outcomes;
+}
+
+// A Compute of `operation` whose checked evaluation can raise exactly the
+// given defined failure (and, when `type` is not Unknown, in that domain).
+[[maybe_unused]] bool hasCheckedMirOperation(
+    const lang::MirProgram &program, const lang::MirBody &body,
+    lang::MirOperation operation, lang::DefinedFailureCode code,
+    lang::DefinedFailureDetail detail,
+    const lang::SemanticType &type = lang::SemanticType::Unknown) {
+  return anyMirInstruction(body, [&](const lang::MirInstruction &item) {
+    if (item.operation != operation ||
+        (type != lang::SemanticType::Unknown && item.info.type != type))
+      return false;
+    const auto outcomes = mirFailureOutcomes(program, item);
+    return std::any_of(outcomes.begin(), outcomes.end(), [&](auto outcome) {
+      return outcome.code == code && outcome.detail == detail;
+    });
+  });
+}
+
+[[maybe_unused]] bool hasCheckedMirOperation(
+    const lang::MirProgram &program, lang::MirOperation operation,
+    lang::DefinedFailureCode code, lang::DefinedFailureDetail detail,
+    const lang::SemanticType &type = lang::SemanticType::Unknown) {
+  bool found = false;
+  forEachMirBody(program, [&](const lang::MirBody &body) {
+    found = found || hasCheckedMirOperation(program, body, operation, code,
+                                            detail, type);
+  });
+  return found;
+}
+
+// A Compute of `operation` with no checked failure: it lowers directly.
+[[maybe_unused]] bool hasUncheckedMirOperation(const lang::MirBody &body,
+                                               lang::MirOperation operation) {
+  return anyMirInstruction(body, [&](const lang::MirInstruction &item) {
+    return item.kind == lang::MirInstructionKind::Compute &&
+           item.operation == operation && item.localFailureSites.empty();
+  });
+}
+
+[[maybe_unused]] bool hasUncheckedMirOperation(const lang::MirProgram &program,
+                                               lang::MirOperation operation) {
+  bool found = false;
+  forEachMirBody(program, [&](const lang::MirBody &body) {
+    found = found || hasUncheckedMirOperation(body, operation);
+  });
+  return found;
+}
+
+[[maybe_unused]] bool
+callsMirFunction(const lang::MirBody &body,
+                 const lang::MirFunctionInstance *callee) {
+  return callee != nullptr &&
+         anyMirInstruction(body, [&](const lang::MirInstruction &item) {
+           return item.kind == lang::MirInstructionKind::Call &&
+                  item.functionTarget == callee->id;
+         });
+}
+
+[[maybe_unused]] const lang::MirProgramInitializationStep *
+mirStorageStep(const lang::FrontendResult &frontend,
+               const lang::MirProgram &program,
+               std::string_view qualifiedName) {
+  for (const auto &step : program.programInitializationPlan().steps) {
+    const lang::SymbolRecord *symbol =
+        frontend.semantics.database().findSymbol(step.symbol);
+    if (symbol != nullptr && symbol->qualifiedName == qualifiedName) {
+      return &step;
+    }
+  }
+  return nullptr;
+}
+
+[[maybe_unused]] const lang::MirProgramInitializationStep *
+mirStorageStep(const lang::FrontendResult &frontend,
+               std::string_view qualifiedName) {
+  return mirStorageStep(frontend, frontend.mir, qualifiedName);
+}
+
+// The exact constant integer a program-storage step publishes as data.
+[[maybe_unused]] bool
+storesMirInteger(const lang::MirProgramInitializationStep *step, bool negative,
+                 std::uint64_t magnitude) {
+  const auto *value =
+      step == nullptr || !step->dataConstant
+          ? nullptr
+          : std::get_if<lang::ConstantInteger>(&*step->dataConstant);
+  return value != nullptr && value->negative == negative &&
+         value->magnitude == magnitude;
+}
+
+// True when the shipped native backend accepts the program; reports why not.
+[[maybe_unused]] bool
+llvmAccepts(const lang::FrontendResult &frontend,
+            lang::OptimizationLevel level = lang::OptimizationLevel::O0,
+            const lang::TargetInfo &target = lang::TargetInfo::host()) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(frontend, level, target, &error);
+  if (!emitted) {
+    std::cerr << "LLVM emission failed: " << error << '\n';
+  }
+  return emitted;
+}
+
 // Exhaustion cases written against a 4096-step request budget keep that
 // budget explicitly; the default is far larger (see testCompileLimits).
 constexpr std::size_t smallStepBudget = 4096;
@@ -128,42 +369,111 @@ int main() {
   }
   expect(valid, "in-range literals and widening conversions should be valid");
 
-  const std::string generated = emitAnalyzedSource(source);
-  expect(
-      generated.find("#include <cstdint>") != std::string::npos &&
-          generated.find("std::int8_t minimum8;") != std::string::npos &&
-          generated.find("std::int16_t widened16;") != std::string::npos &&
-          generated.find("std::int32_t default32;") != std::string::npos &&
-          generated.find("std::int64_t maximum64;") != std::string::npos &&
-          generated.find("std::int64_t minimum64;") != std::string::npos &&
-          generated.find("std::uint8_t maximum_u8;") != std::string::npos &&
-          generated.find("std::uint16_t widened_u16;") != std::string::npos &&
-          generated.find("std::uint32_t default_u32;") != std::string::npos &&
-          generated.find("std::uint64_t maximum_u64;") != std::string::npos &&
-          generated.find("std::uint32_t hexadecimal_pattern;") !=
-              std::string::npos &&
-          generated.find("std::uint8_t binary_pattern;") != std::string::npos &&
-          generated.find("std::array<std::uint8_t, 4>") != std::string::npos &&
-          generated.find("static_cast<std::uint8_t>(1)") != std::string::npos &&
-          generated.find("static_cast<std::uint8_t>(4)") != std::string::npos &&
-          generated.find("program-initialization-v1 module-instance 0") !=
-              std::string::npos &&
-          generated.find("static_cast<std::int8_t>(-127 - 1)") !=
-              std::string::npos &&
-          generated.find("static_cast<std::int16_t>(-32767 - 1)") !=
-              std::string::npos &&
-          generated.find("static_cast<std::int64_t>("
-                         "-9223372036854775807 - 1)") != std::string::npos &&
-          generated.find("static_cast<std::uint64_t>("
-                         "18446744073709551615ULL)") != std::string::npos &&
-          generated.find("::__gti_program::hexadecimal_pattern = ") !=
-              std::string::npos &&
-          generated.find("::__gti_program::binary_pattern = ") !=
-              std::string::npos &&
-          generated.find("::__gti_program::__gti_program_initialize(") !=
-              std::string::npos &&
-          generated.find("int main()") != std::string::npos,
-      "integer widths should lower to cstdint types while main stays valid");
+  const lang::FrontendResult lowered = analyzeEmissionFixture(source);
+  const lang::MirBody &programModule = lowered.mir.module();
+  // The declared storage type of one namespace global and the MIR producer of
+  // the value its initializer stores.
+  const auto storageType = [&](std::string_view name) {
+    const lang::MirProgramInitializationStep *step =
+        mirStorageStep(lowered, name);
+    const lang::MirPlace *place =
+        step == nullptr ? nullptr : programModule.findPlace(step->storagePlace);
+    return place == nullptr ? lang::SemanticType(lang::SemanticType::Unknown)
+                            : place->type;
+  };
+  const auto producerOf =
+      [&](const lang::MirInstruction *consumer,
+          std::size_t operand) -> const lang::MirInstruction * {
+    if (consumer == nullptr || consumer->operands.size() <= operand)
+      return nullptr;
+    const lang::MirValue *value =
+        programModule.findValue(consumer->operands[operand].value);
+    const lang::MirBlock *block =
+        value == nullptr ? nullptr
+                         : programModule.findBlock(value->definitionBlock);
+    if (block == nullptr)
+      return nullptr;
+    for (const lang::MirInstruction &instruction : block->instructions) {
+      if (instruction.id == value->definition)
+        return &instruction;
+    }
+    return nullptr;
+  };
+  const auto storedValue =
+      [&](std::string_view name) -> const lang::MirInstruction * {
+    const lang::MirProgramInitializationStep *step =
+        mirStorageStep(lowered, name);
+    const lang::MirBlock *block =
+        step == nullptr ? nullptr : programModule.findBlock(step->entryBlock);
+    if (block == nullptr)
+      return nullptr;
+    for (const lang::MirInstruction &instruction : block->instructions) {
+      if (instruction.id == step->storageInitialization)
+        return producerOf(&instruction, 0);
+    }
+    return nullptr;
+  };
+  const auto storesLiteral = [&](std::string_view name, std::uint64_t magnitude,
+                                 const lang::SemanticType &type) {
+    const lang::MirInstruction *value = storedValue(name);
+    return value != nullptr && isMirIntegerLiteral(*value, magnitude) &&
+           value->info.type == type;
+  };
+  // The exact signed minimum: an unchecked negation evaluated in the
+  // declared domain of the literal's magnitude.
+  const auto storesNegatedLiteral = [&](std::string_view name,
+                                        std::uint64_t magnitude,
+                                        const lang::SemanticType &type) {
+    const lang::MirInstruction *value = storedValue(name);
+    const lang::MirInstruction *operand = producerOf(value, 0);
+    return value != nullptr && value->operation == lang::MirOperation::Negate &&
+           value->info.type == type && value->localFailureSites.empty() &&
+           operand != nullptr && isMirIntegerLiteral(*operand, magnitude);
+  };
+  expect(storageType("minimum8") == lang::SemanticType::Int8 &&
+             storageType("widened16") == lang::SemanticType::Int16 &&
+             storageType("default32") == lang::SemanticType::Int32 &&
+             storageType("maximum64") == lang::SemanticType::Int64 &&
+             storageType("minimum64") == lang::SemanticType::Int64 &&
+             storageType("maximum_u8") == lang::SemanticType::UInt8 &&
+             storageType("widened_u16") == lang::SemanticType::UInt16 &&
+             storageType("default_u32") == lang::SemanticType::UInt32 &&
+             storageType("maximum_u64") == lang::SemanticType::UInt64 &&
+             storageType("hexadecimal_pattern") == lang::SemanticType::UInt32 &&
+             storageType("binary_pattern") == lang::SemanticType::UInt8 &&
+             storageType("signed_widening") == lang::SemanticType::Int64,
+         "integer widths should lower to exactly typed program storage");
+  expect(storesNegatedLiteral("minimum8", 128, lang::SemanticType::Int8) &&
+             storesNegatedLiteral("minimum64", 9223372036854775808ULL,
+                                  lang::SemanticType::Int64) &&
+             storesLiteral("maximum_u64", 18446744073709551615ULL,
+                           lang::SemanticType::UInt64) &&
+             storesLiteral("hexadecimal_pattern", 0xA5A5,
+                           lang::SemanticType::UInt32) &&
+             storesLiteral("binary_pattern", 0b10100101,
+                           lang::SemanticType::UInt8),
+         "boundary and patterned literals should initialize program storage "
+         "with their exact values in the declared domain");
+  const lang::MirFunctionInstance *fixedWidthMain =
+      mirFunctionNamed(lowered, "main");
+  expect(fixedWidthMain != nullptr &&
+             anyMirInstruction(fixedWidthMain->body,
+                               [](const lang::MirInstruction &item) {
+                                 return isMirIntegerLiteral(item, 1) &&
+                                        item.info.type ==
+                                            lang::SemanticType::UInt8;
+                               }) &&
+             anyMirInstruction(fixedWidthMain->body,
+                               [](const lang::MirInstruction &item) {
+                                 return isMirIntegerLiteral(item, 4) &&
+                                        item.info.type ==
+                                            lang::SemanticType::UInt8;
+                               }) &&
+             lowered.mir.programInitializationPlan().units.size() >= 1 &&
+             mirStorageStep(lowered, "binary_pattern") != nullptr &&
+             llvmAccepts(lowered),
+         "byte arrays should hold exactly typed elements while program "
+         "initialization runs before a valid main");
 
   auto invalidTokens = lexer.scan(R"(
 int8_t too_high = 128;
@@ -259,20 +569,62 @@ bool matches_boundaries(int8_t narrow, int32_t wide, int64_t widest) {
           sawInt64Operand || value.info.type == lang::SemanticType::Int64;
     }
   }
-  const std::string generated = gti_test::emitCppText(valid);
   expect(valid.canGenerateCode() && sawInt8Operand && sawInt32Operand &&
              sawInt64Operand,
          "signed literal operands should adopt the other integer operand's "
          "exact type through HIR");
-  expect(generated.find("mir_checked_negate_v1<std::int8_t>") !=
-                 std::string::npos &&
-             generated.find("static_cast<std::int32_t>(-2147483647 - 1)") !=
-                 std::string::npos &&
-             generated.find(
-                 "static_cast<std::int64_t>(-9223372036854775807 - 1)") !=
-                 std::string::npos,
-         "the C++ backend should cast the complete signed literal "
-         "expression into its frontend-selected domain");
+  const lang::MirFunctionInstance *boundaries =
+      mirFunctionNamed(valid, "matches_boundaries");
+  const auto negatesLiteral = [&](const lang::SemanticType &type,
+                                  std::uint64_t magnitude, bool checked) {
+    if (boundaries == nullptr)
+      return false;
+    const lang::MirBody &body = boundaries->body;
+    return anyMirInstruction(body, [&](const lang::MirInstruction &item) {
+      if (item.operation != lang::MirOperation::Negate ||
+          item.info.type != type || item.operands.size() != 1)
+        return false;
+      const auto outcomes = mirFailureOutcomes(valid.mir, item);
+      const bool raisesOverflow = std::any_of(
+          outcomes.begin(), outcomes.end(), [](lang::DefinedFailureOutcome o) {
+            return o.code == lang::DefinedFailureCode::IntegerOverflow &&
+                   o.detail == lang::DefinedFailureDetail::Negation;
+          });
+      if (raisesOverflow != checked)
+        return false;
+      // The negated operand is the source magnitude, possibly through a
+      // same-valued identity (grouping) conversion.
+      lang::MirValueId operand = item.operands.front().value;
+      for (int depth = 0; depth < 3; ++depth) {
+        const lang::MirValue *value = body.findValue(operand);
+        const lang::MirBlock *block =
+            value == nullptr ? nullptr : body.findBlock(value->definitionBlock);
+        if (block == nullptr)
+          return false;
+        const lang::MirInstruction *producer = nullptr;
+        for (const lang::MirInstruction &candidate : block->instructions) {
+          if (candidate.id == value->definition)
+            producer = &candidate;
+        }
+        if (producer == nullptr)
+          return false;
+        if (isMirIntegerLiteral(*producer, magnitude))
+          return true;
+        if (producer->operation != lang::MirOperation::Identity ||
+            producer->operands.size() != 1)
+          return false;
+        operand = producer->operands.front().value;
+      }
+      return false;
+    });
+  };
+  expect(negatesLiteral(lang::SemanticType::Int8, 1, true) &&
+             negatesLiteral(lang::SemanticType::Int32, 2147483648ULL, false) &&
+             negatesLiteral(lang::SemanticType::Int64, 9223372036854775808ULL,
+                            false) &&
+             llvmAccepts(valid),
+         "MIR should negate the complete signed literal expression in its "
+         "frontend-selected domain, checked only where it can overflow");
 
   const std::string invalidSource = R"(
 int main() {
@@ -480,42 +832,44 @@ int main() {
              negativeZeroValue->bits == 0x80000000U,
          "semantic bindings should retain exact binary32 constexpr bits");
 
-  const lang::OptimizationResult optimized = lang::OptimizationPipeline().run(
-      frontend.hir, lang::OptimizationLevel::O1);
-  const std::string generated = gti_test::emitCppText(
-      frontend, lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-      lang::OptimizationLevel::O1, &optimized);
-  expect(generated.find("std::bit_cast<float>(std::uint32_t{0x3e99999aU})") !=
-                 std::string::npos &&
-             generated.find("std::numeric_limits<float>::is_iec559") !=
-                 std::string::npos &&
-             generated.find("__gti_strict_ieee754 == 1") != std::string::npos &&
-             generated.find("discarded_float_branch_is_not_analyzed") ==
-                 std::string::npos,
-         "the backend should emit exact binary32 constants, require an IEEE "
-         "host, and erase unselected constexpr branches");
+  const auto hasFloatBits = [](const lang::MirProgram &program,
+                               std::uint32_t bits) {
+    const auto &steps = program.programInitializationPlan().steps;
+    return anyProgramInstruction(
+               program,
+               [bits](const lang::MirInstruction &item) {
+                 const auto *value =
+                     item.literal
+                         ? std::get_if<lang::BinaryFloat>(&*item.literal)
+                         : nullptr;
+                 return value != nullptr && value->bits == bits;
+               }) ||
+           std::any_of(steps.begin(), steps.end(), [bits](const auto &step) {
+             const auto *value =
+                 step.dataConstant
+                     ? std::get_if<lang::BinaryFloat>(&*step.dataConstant)
+                     : nullptr;
+             return value != nullptr && value->bits == bits;
+           });
+  };
+  const lang::OptimizedProgram optimized =
+      gti_test::optimizeProgram(frontend, lang::OptimizationLevel::O1);
+  expect(hasFloatBits(optimized.mir, 0x3e99999aU) &&
+             llvmAccepts(frontend, lang::OptimizationLevel::O1),
+         "the backend should receive exact binary32 constants with the "
+         "unselected constexpr branch already erased");
 
   const lang::FrontendResult ordinary = lang::Frontend().analyze(
       "fold-float.gti",
       "int main() { float rounded = float(16777217); "
       "float sum = 0.1 + 0.2; float mixed = 0.5 + 1; "
       "if (sum > rounded or mixed == 0.0) { return 1; } return 0; }");
-  const lang::OptimizationResult ordinaryOptimized =
-      lang::OptimizationPipeline().run(ordinary.hir,
-                                       lang::OptimizationLevel::O1);
-  const std::string ordinaryGenerated = gti_test::emitCppText(
-      ordinary, lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-      lang::OptimizationLevel::O1, &ordinaryOptimized);
+  const lang::OptimizedProgram ordinaryOptimized =
+      gti_test::optimizeProgram(ordinary, lang::OptimizationLevel::O1);
   expect(ordinary.canGenerateCode() &&
-             ordinaryGenerated.find(
-                 "std::bit_cast<float>(std::uint32_t{0x4b800000U})") !=
-                 std::string::npos &&
-             ordinaryGenerated.find(
-                 "std::bit_cast<float>(std::uint32_t{0x3e99999aU})") !=
-                 std::string::npos &&
-             ordinaryGenerated.find(
-                 "std::bit_cast<float>(std::uint32_t{0x3fc00000U})") !=
-                 std::string::npos,
+             hasFloatBits(ordinaryOptimized.mir, 0x4b800000U) &&
+             hasFloatBits(ordinaryOptimized.mir, 0x3e99999aU) &&
+             hasFloatBits(ordinaryOptimized.mir, 0x3fc00000U),
          "ordinary O1 folding should use APFloat for integer-to-float "
          "conversion and binary32 arithmetic, not only constexpr bindings");
 }
@@ -566,28 +920,40 @@ int main() {
              textBinding->traits.copyable,
          "string views should remain trivial copyable values in semantics");
 
-  const lang::OptimizationResult optimized =
-      lang::OptimizationPipeline().run(valid.hir, lang::OptimizationLevel::O1);
-  const std::string generated = gti_test::emitCppText(
-      valid, lang::CppStandard::Cpp23, lang::TargetInfo::host(),
-      lang::OptimizationLevel::O1, &optimized);
-  expect(generated.find("using string_view = std::string_view;") !=
-                 std::string::npos &&
-             generated.find("char8_t{71}") != std::string::npos &&
-             generated.find("std::string_view{\"GTI\\000text\", 8}") !=
-                 std::string::npos &&
-             generated.find(
-                 "::gti_internal::backend::mir_checked_string_view_at_v1") !=
-                 std::string::npos &&
-             generated.find("static_cast<std::uint8_t>(") !=
-                 std::string::npos &&
-             generated.find("program-initialization-v1 module-instance 0") !=
-                 std::string::npos &&
-             generated.find("::__gti_program::literal_chars_match = ") !=
-                 std::string::npos &&
-             generated.find("::__gti_program::__gti_program_initialize(") !=
-                 std::string::npos,
-         "the C++ backend should preserve counted text and exact code units");
+  const lang::OptimizedProgram optimized =
+      gti_test::optimizeProgram(valid, lang::OptimizationLevel::O1);
+  const lang::MirBody &textModule = optimized.mir.module();
+  const bool countedText =
+      anyMirInstruction(textModule, [](const lang::MirInstruction &item) {
+        const auto *value =
+            item.literal ? std::get_if<std::string>(&*item.literal) : nullptr;
+        return value != nullptr && *value == std::string("GTI\0text", 8) &&
+               item.info.type == lang::SemanticType::StringView;
+      });
+  const bool exactCodeUnit =
+      anyMirInstruction(textModule, [](const lang::MirInstruction &item) {
+        const auto *value =
+            item.literal ? std::get_if<lang::CharacterLiteral>(&*item.literal)
+                         : nullptr;
+        return value != nullptr && value->value == 71 &&
+               item.info.type == lang::SemanticType::Char;
+      });
+  const bool checkedViewIndex = hasCheckedMirOperation(
+      optimized.mir, textModule, lang::MirOperation::Index,
+      lang::DefinedFailureCode::IndexOutOfBounds,
+      lang::DefinedFailureDetail::StringView, lang::SemanticType::Char);
+  const bool codeUnitConversion =
+      anyMirInstruction(textModule, [](const lang::MirInstruction &item) {
+        return item.operation == lang::MirOperation::Convert &&
+               item.info.type == lang::SemanticType::UInt8;
+      });
+  const lang::MirProgramInitializationStep *literalMatch =
+      mirStorageStep(valid, optimized.mir, "literal_chars_match");
+  expect(countedText && exactCodeUnit && checkedViewIndex &&
+             codeUnitConversion && literalMatch != nullptr &&
+             llvmAccepts(valid, lang::OptimizationLevel::O1),
+         "MIR should preserve counted text, exact code units and checked "
+         "view indexing through program initialization");
 
   const lang::FrontendResult invalidView = lang::Frontend().analyze(
       "invalid-string-view.gti",
@@ -720,7 +1086,6 @@ int main() {
          "std::string should be an ordinary source-defined owner over char "
          "storage");
 
-  const std::string generated = gti_test::emitCppText(valid);
   bool checkedMutableCharacters = false;
   for (const auto &function : valid.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
@@ -733,18 +1098,27 @@ int main() {
       }
     }
   }
-  expect(generated.find("class string") != std::string::npos &&
-             generated.find("class terminated_prefix_owner") !=
-                 std::string::npos &&
-             generated.find("prefix_owner<char8_t>") != std::string::npos &&
-             generated.find("string(const string &other) = delete;") !=
-                 std::string::npos &&
-             generated.find("string(string &&) = default;") !=
-                 std::string::npos &&
-             checkedMutableCharacters &&
-             generated.find("native_pointer_value(") != std::string::npos &&
-             generated.find("::gti_internal::backend::prefix_storage<") ==
-                 std::string::npos,
+  const lang::MirClassInstance *stringClass =
+      mirClassNamed(valid, "std::string");
+  const bool characterPrefixOwner = std::any_of(
+      valid.mir.classInstances().begin(), valid.mir.classInstances().end(),
+      [&](const lang::MirClassInstance &instance) {
+        const lang::ClassTypeInfo *info =
+            valid.semantics.findClassType(instance.declaration);
+        return info != nullptr &&
+               info->qualifiedName == "std::detail::prefix_owner" &&
+               instance.type.arguments.size() == 1 &&
+               instance.type.arguments.front() == lang::SemanticType::Char;
+      });
+  expect(stringClass != nullptr &&
+             stringClass->copyConstructor ==
+                 lang::SpecialMemberStatus::Deleted &&
+             stringClass->moveConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             mirClassNamed(valid, "std::detail::terminated_prefix_owner") !=
+                 nullptr &&
+             characterPrefixOwner && checkedMutableCharacters &&
+             llvmAccepts(valid),
          "std::string lowering should retain nominal move-only lifecycle and "
          "checked mutable storage access");
 
@@ -868,15 +1242,26 @@ int main() {
          "source-defined formatting should use two verified ordered folds for "
          "counting and appending all three arguments in the concrete integral "
          "pack");
-  const std::string formattedGenerated = gti_test::emitCppText(formattedOutput);
-  expect(formattedGenerated.find("std::format(") == std::string::npos &&
-             formattedGenerated.find("std::vformat") == std::string::npos &&
-             formattedGenerated.find("count_format_argument") !=
-                 std::string::npos &&
-             formattedGenerated.find("append_selected_format_argument") !=
-                 std::string::npos,
+  const auto reachesLibraryFunction = [&](std::string_view suffix) {
+    return std::any_of(
+        formattedOutput.mir.functionInstances().begin(),
+        formattedOutput.mir.functionInstances().end(),
+        [&](const lang::MirFunctionInstance &function) {
+          const lang::FunctionInfo *info =
+              formattedOutput.semantics.findFunction(function.declaration);
+          return info != nullptr &&
+                 function.definitionKind == lang::MirDefinitionKind::Source &&
+                 info->qualifiedName.size() >= suffix.size() &&
+                 info->qualifiedName.compare(info->qualifiedName.size() -
+                                                 suffix.size(),
+                                             suffix.size(), suffix) == 0;
+        });
+  };
+  expect(reachesLibraryFunction("count_format_argument") &&
+             reachesLibraryFunction("append_selected_format_argument") &&
+             llvmAccepts(formattedOutput),
          "formatting should lower as ordinary GTI library calls rather than a "
-         "native C++ formatting shortcut");
+         "native formatting shortcut");
 
   const lang::FrontendResult invalidFloatOutput = lang::Frontend().analyze(
       entry, "int main() { std::print(1.5); return 0; }",
@@ -958,10 +1343,27 @@ int main() {
          "recursive analysis of an assignment operand should preserve its "
          "resolved symbol and produce the owning type diagnostic");
 
-  const std::string generated = emitAnalyzedSource(validSource);
-  expect(generated.find("&&") != std::string::npos &&
-             generated.find("||") != std::string::npos,
-         "both logical spellings should lower to short-circuit C++ operators");
+  const lang::FrontendResult lowered = analyzeEmissionFixture(validSource);
+  const lang::MirFunctionInstance *choose = mirFunctionNamed(lowered, "choose");
+  const std::size_t chooseBranches =
+      choose == nullptr
+          ? 0
+          : static_cast<std::size_t>(std::count_if(
+                choose->body.blocks.begin(), choose->body.blocks.end(),
+                [](const lang::MirBlock &block) {
+                  return block.terminator.kind ==
+                         lang::MirTerminatorKind::Branch;
+                }));
+  expect(chooseBranches == 2 &&
+             !anyMirInstruction(choose->body,
+                                [](const lang::MirInstruction &item) {
+                                  return item.operation ==
+                                             lang::MirOperation::BitwiseAnd ||
+                                         item.operation ==
+                                             lang::MirOperation::BitwiseOr;
+                                }) &&
+             llvmAccepts(lowered),
+         "both logical spellings should lower to short-circuit MIR branches");
 
   auto invalidTokens =
       lexer.scan("int main() { if (1 && true) { return 0; } return 1; }");
@@ -1099,23 +1501,30 @@ int main() {
   expect(valid,
          "valid integer bitwise and modulo operations should type-check");
 
-  const std::string generated = emitAnalyzedSource(validSource);
-  expect(generated.find("::gti_internal::backend::mir_checked_remainder_v1") !=
-                 std::string::npos &&
-             generated.find(
-                 "::gti_internal::backend::mir_checked_shift_left_v1") !=
-                 std::string::npos &&
-             generated.find(
-                 "::gti_internal::backend::mir_checked_shift_right_v1") !=
-                 std::string::npos,
-         "modulo and shifts should lower through checked integer helpers");
-  expect(generated.find(" & __gti_mir_v_") != std::string::npos &&
-             generated.find(" ^ __gti_mir_v_") != std::string::npos &&
-             generated.find(" | __gti_mir_v_") != std::string::npos,
-         "ordinary bitwise operators should lower directly");
-  expect(generated.find("modulo by zero") != std::string::npos &&
-             generated.find("std::bit_cast") != std::string::npos,
-         "generated helpers should define invalid modulo and shift behavior");
+  const lang::FrontendResult lowered = analyzeEmissionFixture(validSource);
+  expect(
+      hasCheckedMirOperation(lowered.mir, lang::MirOperation::Remainder,
+                             lang::DefinedFailureCode::ModuloByZero,
+                             lang::DefinedFailureDetail::IntegerModulo) &&
+          hasCheckedMirOperation(lowered.mir, lang::MirOperation::ShiftLeft,
+                                 lang::DefinedFailureCode::NegativeShiftCount,
+                                 lang::DefinedFailureDetail::LeftShift) &&
+          hasCheckedMirOperation(lowered.mir, lang::MirOperation::ShiftLeft,
+                                 lang::DefinedFailureCode::ShiftCountOutOfRange,
+                                 lang::DefinedFailureDetail::LeftShift) &&
+          hasCheckedMirOperation(lowered.mir, lang::MirOperation::ShiftRight,
+                                 lang::DefinedFailureCode::NegativeShiftCount,
+                                 lang::DefinedFailureDetail::RightShift),
+      "modulo and shifts should lower through checked integer operations "
+      "that define invalid modulo and shift behavior");
+  expect(
+      hasUncheckedMirOperation(lowered.mir, lang::MirOperation::BitwiseAnd) &&
+          hasUncheckedMirOperation(lowered.mir,
+                                   lang::MirOperation::BitwiseXor) &&
+          hasUncheckedMirOperation(lowered.mir,
+                                   lang::MirOperation::BitwiseOr) &&
+          llvmAccepts(lowered),
+      "ordinary bitwise operators should lower directly");
 
   auto invalidTokens = lexer.scan(R"(
 float decimal = 1.0;
@@ -1241,33 +1650,36 @@ int main() {
   expect(valid.canGenerateCode() && valid.diagnostics.empty(),
          "checked arithmetic and every compound assignment should validate");
 
-  const std::string generated = gti_test::emitCppText(valid);
-  const std::vector<std::string_view> checkedHelpers = {
-      "backend::mir_checked_add_v1<",
-      "backend::mir_checked_subtract_v1<",
-      "backend::mir_checked_multiply_v1<",
-      "backend::mir_checked_divide_v1<",
-      "backend::mir_checked_remainder_v1<",
-      "backend::mir_checked_shift_left_v1<",
-      "backend::mir_checked_shift_right_v1<",
-      "backend::mir_checked_negate_v1<",
+  using Code = lang::DefinedFailureCode;
+  using Detail = lang::DefinedFailureDetail;
+  using Operation = lang::MirOperation;
+  const struct {
+    Operation operation;
+    Code code;
+    Detail detail;
+  } checkedOperations[] = {
+      {Operation::Add, Code::IntegerOverflow, Detail::Addition},
+      {Operation::Subtract, Code::IntegerOverflow, Detail::Subtraction},
+      {Operation::Multiply, Code::IntegerOverflow, Detail::Multiplication},
+      {Operation::Divide, Code::IntegerOverflow, Detail::Division},
+      {Operation::Divide, Code::DivisionByZero, Detail::IntegerDivision},
+      {Operation::Remainder, Code::ModuloByZero, Detail::IntegerModulo},
+      {Operation::ShiftLeft, Code::ShiftCountOutOfRange, Detail::LeftShift},
+      {Operation::ShiftRight, Code::ShiftCountOutOfRange, Detail::RightShift},
+      {Operation::Negate, Code::IntegerOverflow, Detail::Negation},
   };
-  expect(std::all_of(checkedHelpers.begin(), checkedHelpers.end(),
-                     [&](std::string_view helper) {
-                       return generated.find(helper) != std::string::npos;
+  expect(std::all_of(std::begin(checkedOperations), std::end(checkedOperations),
+                     [&](const auto &checked) {
+                       return hasCheckedMirOperation(
+                           valid.mir, checked.operation, checked.code,
+                           checked.detail);
                      }) &&
-             generated.find(" & __gti_mir_v_") != std::string::npos &&
-             generated.find(" | __gti_mir_v_") != std::string::npos &&
-             generated.find(" ^ __gti_mir_v_") != std::string::npos,
-         "arithmetic and mutation should lower through checked GTI helpers");
-  expect(generated.find("integer addition overflow") != std::string::npos &&
-             generated.find("integer subtraction overflow") !=
-                 std::string::npos &&
-             generated.find("integer multiplication overflow") !=
-                 std::string::npos &&
-             generated.find("integer division overflow") != std::string::npos &&
-             generated.find("division by zero") != std::string::npos,
-         "generated arithmetic helpers should carry stable failure reasons");
+             hasUncheckedMirOperation(valid.mir, Operation::BitwiseAnd) &&
+             hasUncheckedMirOperation(valid.mir, Operation::BitwiseOr) &&
+             hasUncheckedMirOperation(valid.mir, Operation::BitwiseXor) &&
+             llvmAccepts(valid),
+         "arithmetic and mutation should lower through checked GTI operations "
+         "with stable defined-failure reasons");
 
   const lang::OptimizationResult optimized =
       lang::OptimizationPipeline().run(valid.hir, lang::OptimizationLevel::O1);
@@ -4851,22 +5263,32 @@ int main() {
          "MIR verification should reject an aggregate constant whose exact "
          "field inventory was forged after semantic analysis");
 
-  const std::string generated = gti_test::emitCppText(frontend);
-  expect(
-      generated.find(
-          "constexpr std::uint64_t extent = static_cast<std::uint64_t>(4)") !=
-              std::string::npos &&
-          generated.find("static constexpr std::uint64_t count = "
-                         "static_cast<std::uint64_t>(4)") !=
-              std::string::npos &&
-          generated.find("constexpr std::uint64_t factorial_value = "
-                         "static_cast<std::uint64_t>(120)") !=
-              std::string::npos &&
-          generated.find("// GTI verified-MIR body:") != std::string::npos &&
-          generated.find("inactive_branch_is_not_analyzed") ==
-              std::string::npos,
-      "the C++ backend should emit computed constexpr values and keep "
-      "static constexpr fields inline while erasing inactive branches");
+  const lang::MirProgramInitializationStep *extentStep =
+      mirStorageStep(frontend, "extent");
+  const lang::MirProgramInitializationStep *countStep =
+      mirStorageStep(frontend, "Limits::count");
+  const lang::MirProgramInitializationStep *factorialStep =
+      mirStorageStep(frontend, "factorial_value");
+  const auto isConstantData =
+      [](const lang::MirProgramInitializationStep *step) {
+        return step != nullptr &&
+               step->dataInitialization ==
+                   lang::MirProgramDataInitializationKind::Constant;
+      };
+  expect(isConstantData(extentStep) && storesMirInteger(extentStep, false, 4) &&
+             isConstantData(countStep) &&
+             countStep->storageKind == lang::ProgramStorageKind::StaticField &&
+             storesMirInteger(countStep, false, 4) &&
+             isConstantData(factorialStep) &&
+             storesMirInteger(factorialStep, false, 120) &&
+             storesMirInteger(mirStorageStep(frontend, "fibonacci_value"),
+                              false, 55) &&
+             storesMirInteger(mirStorageStep(frontend, "doubled"), false, 42) &&
+             lang::verifyMirProgram(frontend.mir).valid() &&
+             llvmAccepts(frontend),
+         "computed constexpr values should reach the backend as constant "
+         "program data, with static constexpr fields as static storage, "
+         "while inactive branches are erased");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-constexpr.gti", R"(
@@ -5033,12 +5455,11 @@ int main() {
   expect(!assertionReachedHir,
          "successful static assertions should be erased before HIR");
 
-  const std::string generated = gti_test::emitCppText(valid);
-  expect(generated.find("must never reach native C++") == std::string::npos &&
-             generated.find("discarded constexpr assertion") ==
-                 std::string::npos,
-         "source static assertions and their messages must not be emitted to "
-         "the C++ backend");
+  expect(!mirContainsText(valid.mir, "must never reach native C++") &&
+             !mirContainsText(valid.mir, "discarded constexpr assertion") &&
+             llvmAccepts(valid),
+         "source static assertions and their messages must not reach the "
+         "backend");
 
   const std::string formatted = lang::Formatter().format(
       "static_assert(sizeof(int32_t)==uint64_t(4),\"layout\");");
@@ -5468,27 +5889,57 @@ int main() {
          "HIR functions should distinguish static methods from internal "
          "namespace functions");
 
-  const std::string generated = gti_test::emitCppText(frontend);
+  const auto staticStep = [&](std::string_view name,
+                              lang::ProgramStorageKind kind) {
+    const lang::MirProgramInitializationStep *step =
+        mirStorageStep(frontend, name);
+    return step != nullptr && step->storageKind == kind ? step : nullptr;
+  };
+  const auto initializesWith =
+      [&](const lang::MirProgramInitializationStep *step,
+          std::uint64_t magnitude) {
+        const lang::MirBlock *block =
+            step == nullptr ? nullptr
+                            : frontend.mir.module().findBlock(step->entryBlock);
+        return block != nullptr &&
+               std::any_of(block->instructions.begin(),
+                           block->instructions.end(),
+                           [&](const lang::MirInstruction &item) {
+                             return isMirIntegerLiteral(item, magnitude);
+                           });
+      };
+  const lang::MirClassInstance *managed = mirClassNamed(frontend, "Managed");
+  const lang::MirClassInstance *counterInstance =
+      mirClassNamed(frontend, "Counter");
   expect(
-      generated.find("static const std::int32_t answer;") !=
-              std::string::npos &&
-          generated.find("inline const std::int32_t Counter::answer = "
-                         "static_cast<std::int32_t>(42)") !=
-              std::string::npos &&
-          generated.find("static std::int32_t count;") != std::string::npos &&
-          generated.find("inline std::int32_t Counter::count = "
-                         "static_cast<std::int32_t>(0)") != std::string::npos &&
-          generated.find("inline const ::__gti_program::Empty Empty::value = "
-                         "::__gti_program::Empty{}") != std::string::npos &&
-          generated.find("inline std::int32_t Managed::live = "
-                         "static_cast<std::int32_t>(0)") != std::string::npos &&
-          generated.find("live(std::move(other.live))") == std::string::npos &&
-          generated.find("static std::int32_t __gti_fn_") !=
-              std::string::npos &&
-          generated.find("detail::__gti_static_") != std::string::npos &&
-          generated.find("__gti_static_") != std::string::npos,
-      "the C++ backend should emit inline class statics and uniquely named "
-      "qualified internal-linkage declarations");
+      initializesWith(
+          staticStep("Counter::answer", lang::ProgramStorageKind::StaticField),
+          42) &&
+          initializesWith(staticStep("Counter::count",
+                                     lang::ProgramStorageKind::StaticField),
+                          0) &&
+          staticStep("Empty::value", lang::ProgramStorageKind::StaticField) !=
+              nullptr &&
+          initializesWith(staticStep("Managed::live",
+                                     lang::ProgramStorageKind::StaticField),
+                          0) &&
+          initializesWith(staticStep("file_value",
+                                     lang::ProgramStorageKind::NamespaceGlobal),
+                          7) &&
+          initializesWith(staticStep("detail::namespace_value",
+                                     lang::ProgramStorageKind::NamespaceGlobal),
+                          5),
+      "class statics and internal-linkage globals should lower as distinct "
+      "program storage with their own initializers");
+  expect(managed != nullptr && managed->declaredFields.empty() &&
+             counterInstance != nullptr &&
+             counterInstance->declaredFields.size() == 1 &&
+             mirFunctionNamed(frontend, "add_file_value") != nullptr &&
+             mirFunctionNamed(frontend, "detail::read_namespace_value") !=
+                 nullptr &&
+             llvmAccepts(frontend),
+         "static members should stay out of object layout and moves while "
+         "internal-linkage declarations reach the backend");
 
   const lang::FrontendResult localStatic = lang::Frontend().analyze(
       "local-static.gti", "int main() { static int value = 1; return value; }");
@@ -6299,28 +6750,20 @@ int main() { return selected_value() + local_state(); }
     expect(configured.canGenerateCode() && configured.diagnostics.empty(),
            "boolean target/flag conditions and source-order define changes "
            "should compile without diagnostics");
-    const std::string configuredCpp = gti_test::emitCppText(configured);
-    expect(configuredCpp.find("static_cast<std::int32_t>(11)") !=
-                   std::string::npos &&
-               configuredCpp.find("static_cast<std::int32_t>(7)") !=
-                   std::string::npos &&
-               configuredCpp.find("static_cast<std::int32_t>(22)") ==
-                   std::string::npos &&
-               configuredCpp.find("inactive definition leaked") ==
-                   std::string::npos &&
-               configuredCpp.find("#define LOCAL") == std::string::npos &&
-               configuredCpp.find("#define EXTERNAL") == std::string::npos,
+    expect(hasMirIntegerLiteral(configured.mir, 11) &&
+               hasMirIntegerLiteral(configured.mir, 7) &&
+               !hasMirIntegerLiteral(configured.mir, 22) &&
+               !hasMirIntegerLiteral(configured.mir, 9) &&
+               !mirContainsText(configured.mir, "inactive definition leaked") &&
+               llvmAccepts(configured),
            "only selected configuration branches should reach the backend");
 
     const lang::FrontendResult unconfigured = lang::Frontend().analyze(
         "configuration-selection.gti", selectionSource);
     expect(unconfigured.canGenerateCode() && unconfigured.diagnostics.empty(),
            "the same source should compile under an empty external define set");
-    const std::string unconfiguredCpp = gti_test::emitCppText(unconfigured);
-    expect(unconfiguredCpp.find("static_cast<std::int32_t>(22)") !=
-                   std::string::npos &&
-               unconfiguredCpp.find("static_cast<std::int32_t>(11)") ==
-                   std::string::npos,
+    expect(hasMirIntegerLiteral(unconfigured.mir, 22) &&
+               !hasMirIntegerLiteral(unconfigured.mir, 11),
            "external define sets should deterministically change selection");
 
     const lang::FrontendResult invalidInactiveBranch = lang::Frontend().analyze(
@@ -6420,35 +6863,35 @@ export int imported_value() { return 0; }
   lang::SemanticVisitor appleSemantic(apple);
   expect(appleSemantic.check(program),
          "inactive branches should not participate in Apple semantics");
-  const std::string appleCpp = emitAnalyzedSource(source, apple);
-  const auto appleProgramStart = appleCpp.find("namespace __gti_program {");
-  expect(
-      appleCpp.find("static_cast<std::int32_t>(101)") != std::string::npos &&
-          appleCpp.find("static_cast<std::int32_t>(64)") != std::string::npos &&
-          appleCpp.find("std::int32_t bits;") != std::string::npos &&
-          appleCpp.find("PlatformInfo::PlatformInfo()") != std::string::npos &&
-          appleCpp.find("missing_name") == std::string::npos &&
-          appleCpp.find("#include <expected>") == std::string::npos &&
-          appleCpp.find("#include <gti/runtime.hpp>") == std::string::npos &&
-          appleProgramStart != std::string::npos &&
-          appleCpp.find("#if", appleProgramStart) == std::string::npos,
-      "Apple lowering should emit only active branches without C++ macros");
+  const lang::FrontendResult appleLowered =
+      analyzeEmissionFixture(source, apple);
+  const lang::MirClassInstance *applePlatform =
+      mirClassNamed(appleLowered, "PlatformInfo");
+  expect(hasMirIntegerLiteral(appleLowered.mir, 101) &&
+             hasMirIntegerLiteral(appleLowered.mir, 64) &&
+             !hasMirIntegerLiteral(appleLowered.mir, 202) &&
+             !hasMirIntegerLiteral(appleLowered.mir, 303) &&
+             mirFunctionNamed(appleLowered, "nested_value") != nullptr &&
+             mirFunctionNamed(appleLowered, "inactive_error") == nullptr &&
+             mirFunctionNamed(appleLowered, "inactive_runtime") == nullptr &&
+             applePlatform != nullptr &&
+             applePlatform->declaredFields.size() == 1,
+         "Apple lowering should lower only active branches");
 
   const lang::TargetInfo windows{"windows", "pc", "x86_64"};
   lang::SemanticVisitor windowsSemantic(windows);
   expect(windowsSemantic.check(program),
          "Windows should select the elif and else branches");
-  const std::string windowsCpp = emitAnalyzedSource(source, windows);
-  expect(windowsCpp.find("static_cast<std::int32_t>(202)") !=
-                 std::string::npos &&
-             windowsCpp.find("std::int32_t bits;") != std::string::npos &&
-             windowsCpp.find("PlatformInfo::PlatformInfo()") !=
-                 std::string::npos &&
-             windowsCpp.find("static_cast<std::int32_t>(32)") !=
-                 std::string::npos &&
-             windowsCpp.find("nested_value") == std::string::npos &&
-             windowsCpp.find("static_cast<std::int32_t>(101)") ==
-                 std::string::npos,
+  const lang::FrontendResult windowsLowered =
+      analyzeEmissionFixture(source, windows);
+  const lang::MirClassInstance *windowsPlatform =
+      mirClassNamed(windowsLowered, "PlatformInfo");
+  expect(hasMirIntegerLiteral(windowsLowered.mir, 202) &&
+             hasMirIntegerLiteral(windowsLowered.mir, 32) &&
+             windowsPlatform != nullptr &&
+             windowsPlatform->declaredFields.size() == 1 &&
+             mirFunctionNamed(windowsLowered, "nested_value") == nullptr &&
+             !hasMirIntegerLiteral(windowsLowered.mir, 101),
          "target selection should distinguish vendor, OS, and architecture");
 
   auto malformedTokens = lexer.scan(R"(
@@ -6510,12 +6953,14 @@ int main() {
   lang::SemanticVisitor allowedSemantic(allowed);
   expect(allowedSemantic.check(errorProgram),
          "inactive #error directives should not affect semantics");
-  const std::string allowedCpp = emitAnalyzedSource(errorSource, allowed);
-  const auto allowedProgramStart = allowedCpp.find("namespace __gti_program {");
-  // Backend-private ABI guards are independent of folded source directives.
-  expect(allowedProgramStart != std::string::npos &&
-             allowedCpp.find("#error", allowedProgramStart) ==
-                 std::string::npos,
+  // Emission is checked on the host, which is never the "blocked" OS, so the
+  // LLVM step compiles for the target the fixture was analyzed for.
+  const lang::FrontendResult allowedLowered =
+      analyzeEmissionFixture(errorSource);
+  expect(!mirContainsText(allowedLowered.mir, "is not supported") &&
+             !mirContainsText(allowedLowered.mir, "is unavailable") &&
+             !mirContainsText(allowedLowered.mir, "No entry point") &&
+             llvmAccepts(allowedLowered),
          "source #error directives should never leak into program output");
 
   const lang::TargetInfo blocked{"blocked", "test", "test"};

@@ -1,6 +1,11 @@
-#include "../src/compiler/cpp_mir_representation_snapshot.h"
-#include "../src/compiler/cpp_representation.h"
-#include "cpp_backend_test_support.h"
+// Backend-neutral proofs for generic and owning payload enums: exact MIR
+// catalogue identity, verifier rejection of forged MIR, sealed lowered rows,
+// and native emission through the shipped backend. C++ representation checks
+// for the same fixtures live in cpp_mir_generic_payload_enum_tests.cpp.
+
+#include "llvm_backend_test_support.h"
+
+#include "gti/frontend.h"
 #include "gti/lowered_program_printer.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
@@ -44,6 +49,15 @@ int main() {
       std::cerr << "FAIL: " << message << '\n';
       ++failures;
     }
+  };
+  const auto emits = [&](const lang::FrontendResult &program,
+                         const char *message) {
+    std::string error;
+    const bool emitted = gti_test::llvmEmits(
+        program, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+    if (!emitted)
+      std::cerr << error << '\n';
+    expect(emitted, message);
   };
   const auto frontend = lang::Frontend().analyze("generic-enum-backend.gti", R"(
 struct Box<T> { mut T value; };
@@ -171,10 +185,10 @@ int main() {
          "MIR rejects forged recursive enum layout before deriving cleanup");
   const auto lowered =
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
-  const auto leftName = lang::cppConcreteEnumName(lowered, left.type);
-  const auto rightName = lang::cppConcreteEnumName(lowered, right.type);
-  expect(leftName && rightName && leftName != rightName,
-         "native representation names preserve exact generic identity");
+  const auto *leftRow = lowered.findEnumDeclarationRow(left.type);
+  const auto *rightRow = lowered.findEnumDeclarationRow(right.type);
+  expect(leftRow && rightRow && leftRow != rightRow,
+         "lowered declaration rows preserve exact generic identity");
   const auto serialized = lang::LoweredProgramPrinter().print(lowered);
   expect(serialized.starts_with("lowered-program-v35") &&
              lang::MirPrinter().print(frontend.mir).starts_with("mir-v121"),
@@ -209,33 +223,8 @@ int main() {
            "tagged carrier selection cannot forge cleanup or native operation "
            "availability independently of sealed MIR traits");
   }
-  auto rows =
-      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
-  expect(rows.enums.size() == 2 && rows.enums[0].type != rows.enums[1].type,
-         "detached representation rows preserve both enum instances");
-  for (auto &row : rows.enums) {
-    if (row.type == right.type)
-      row.type = left.type;
-  }
-  // The emitter keeps a reference to its map, so the map must outlive it.
-  const lang::CppMirBodyEmissionMap rejectedMap(rows);
-  const lang::CppMirBodyEmitter rejected(frontend.mir, rejectedMap);
-  expect(
-      !rejected
-           .analyze({lang::MirBodyKind::Function,
-                     frontend.mir.functionInstances().front().id})
-           .ready(),
-      "production emission rejects cross-instance copied representation rows");
-  for (const auto standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    const auto artifact = gti_test::emitCpp(frontend, standard);
-    expect(leftName && rightName &&
-               artifact.contents.find("struct " + *leftName) !=
-                   std::string::npos &&
-               artifact.contents.find("struct " + *rightName) !=
-                   std::string::npos,
-           "production verified-MIR emission defines both concrete layouts");
-  }
+  emits(frontend, "production verified-MIR emission accepts both concrete "
+                  "layouts");
   const auto compositionLibrary =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto composed = lang::Frontend().analyze(
@@ -346,47 +335,17 @@ int main() {
     for (const auto &diagnostic : cleanupForwarding.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   if (cleanupForwarding.canGenerateCode()) {
-    const auto text = gti_test::emitCpp(cleanupForwarding).contents;
-    for (const auto &instance : cleanupForwarding.hir.classInstances()) {
-      const auto name = instance.source->name().lexeme;
-      if (name != "Single" && name != "Multiple" && name != "WithDestructor")
-        continue;
-      const auto start = text.find("constexpr (__gti_cleanup_instance == " +
-                                   std::to_string(instance.id) + ")");
-      const auto end = text.find("else { static_assert", start);
-      expect(start != std::string::npos && end != std::string::npos,
-             "each exact class cleanup descriptor has an emitted adapter");
-      if (start == std::string::npos || end == std::string::npos)
-        continue;
-      const auto adapter = text.substr(start, end - start);
-      expect((adapter.find("mir_cleanup_sequence_v1 sequence") ==
-              std::string::npos) == (name == "Single"),
-             "only a destructor-free singleton class recipe tail-forwards");
-      if (name == "Single")
-        expect(
-            adapter.find("(record, unwinding);") != std::string::npos,
-            "singleton cleanup forwards the original record and unwind mode");
-    }
-    for (const auto &enumeration : cleanupForwarding.mir.payloadEnums()) {
-      const auto cleanup =
-          lang::mirUniqueCleanupType(cleanupForwarding.mir, enumeration.type);
-      expect(cleanup.has_value(),
+    for (const auto &instance : cleanupForwarding.mir.classInstances())
+      if (instance.requiresActiveCleanup)
+        expect(lang::mirUniqueCleanupType(cleanupForwarding.mir, instance.type)
+                   .has_value(),
+               "each owning class has a complete cleanup recipe");
+    for (const auto &enumeration : cleanupForwarding.mir.payloadEnums())
+      expect(lang::mirUniqueCleanupType(cleanupForwarding.mir, enumeration.type)
+                 .has_value(),
              "an owned enum has a complete cleanup recipe");
-      if (!cleanup)
-        continue;
-      const auto expression = lang::cppMirCleanupValueExpression(
-          cleanupForwarding.mir, *cleanup, "value", "record", "unwinding");
-      const bool singletonAlternatives = enumeration.variants.size() == 3;
-      expect((expression.find("mir_cleanup_sequence_v1") ==
-              std::string::npos) == singletonAlternatives,
-             "distinct singleton alternatives forward, but two simultaneous "
-             "children retain ordered secondary-failure handling");
-      if (singletonAlternatives)
-        expect(
-            expression.find("(record, unwinding)") != std::string::npos &&
-                expression.find("return true;") != std::string::npos,
-            "enum forwarding retains incoming failure state and empty success");
-    }
+    emits(cleanupForwarding,
+          "single and multiple-action cleanup wrappers reach native emission");
   }
   const auto projected =
       lang::Frontend().analyze("projected-enum-borrow.gti", R"(
@@ -534,13 +493,8 @@ int main() {
   expect(nested.canGenerateCode(),
          "returned owning enum arguments retain exact MIR cleanup identity");
   if (nested.canGenerateCode()) {
-    for (const auto standard :
-         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      const auto artifact = gti_test::emitCpp(nested, standard);
-      expect(
-          !artifact.contents.empty(),
+    emits(nested,
           "a returned owning enum is transported directly into another call");
-    }
   } else {
     for (const auto &diagnostic : nested.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -587,8 +541,8 @@ int main() {
     }
     expect(distinct,
            "raw pointee identity stays separate from a checked carrier origin");
-    expect(!gti_test::emitCpp(rawPointee).contents.empty(),
-           "the raw pointer boundary retains verified-MIR production emission");
+    emits(rawPointee,
+          "the raw pointer boundary retains verified-MIR production emission");
   } else {
     for (const auto &diagnostic : rawPointee.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -629,12 +583,8 @@ int main() {
         std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
       continue;
     }
-    for (const auto standard :
-         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      expect(!gti_test::emitCpp(field, standard).contents.empty(),
-             "owning enum field discriminants and payload reads use exact "
-             "checked place emission");
-    }
+    emits(field, "owning enum field discriminants and payload reads use "
+                 "exact checked place emission");
   }
   for (const std::string declaration :
        {"enum E { item(P value), empty };",
@@ -672,11 +622,8 @@ int main() {
         std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
       continue;
     }
-    for (const auto standard :
-         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      expect(!gti_test::emitCpp(passive, standard).contents.empty(),
-             "fused passive class publications do not invent SSA storage");
-    }
+    emits(passive,
+          "fused passive class publications do not invent SSA storage");
   }
   const auto sibling =
       lang::Frontend().analyze("same-typed-payload-siblings.gti", R"(
@@ -876,11 +823,8 @@ int main() { return 0; }
                !lang::verifyMirProgram(recursive).valid(),
            "an actual repeated exact enum instance remains a rejected layout "
            "cycle");
-    for (const auto standard :
-         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      expect(!gti_test::emitCpp(finite, standard).contents.empty(),
-             "finite alternating class/enum layouts reach verified emission");
-    }
+    emits(finite,
+          "finite alternating class/enum layouts reach verified emission");
   } else {
     for (const auto &diagnostic : finite.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -909,34 +853,29 @@ int main() { return 0; }
            "actual enum alternatives retain their concrete class layout");
     const auto aliasLowered =
         gti_test::lowerProgram(aliases, aliases.mir, aliases.mir);
-    for (const auto standard :
-         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      const auto text = gti_test::emitCpp(aliases, standard).contents;
-      bool classForwardOnly = false;
-      for (const auto &row : aliasLowered.declarations()) {
-        const auto *alias =
-            std::get_if<lang::LoweredTypeAliasDeclaration>(&row.payload);
-        if (alias == nullptr)
-          continue;
-        if (alias->type.kind == lang::SemanticType::Enum) {
-          const auto name =
-              lang::cppConcreteEnumName(aliasLowered, alias->type);
-          expect(name &&
-                     text.find("struct " + *name + " {") != std::string::npos,
-                 "enum-only aliases publish their exact concrete enum rows");
-        } else if (alias->type.kind == lang::SemanticType::Class) {
-          const auto name =
-              lang::cppConcreteClassName(aliasLowered, alias->type);
-          expect(name &&
-                     text.find("struct " + *name + ";") != std::string::npos &&
-                     text.find("struct " + *name + " {") == std::string::npos,
-                 "class aliases publish forward identities, never layouts");
-          classForwardOnly = true;
-        }
+    bool classForwardOnly = false;
+    for (const auto &row : aliasLowered.declarations()) {
+      const auto *alias =
+          std::get_if<lang::LoweredTypeAliasDeclaration>(&row.payload);
+      if (alias == nullptr)
+        continue;
+      if (alias->type.kind == lang::SemanticType::Enum) {
+        expect(aliasLowered.findEnumDeclarationRow(alias->type) != nullptr &&
+                   aliasLowered.mir().findPayloadEnum(alias->type) != nullptr,
+               "enum-only aliases publish their exact concrete enum rows");
+      } else if (alias->type.kind == lang::SemanticType::Class) {
+        expect(std::none_of(aliasLowered.mir().classInstances().begin(),
+                            aliasLowered.mir().classInstances().end(),
+                            [&](const auto &instance) {
+                              return instance.type == alias->type;
+                            }),
+               "class aliases publish identities, never layouts");
+        classForwardOnly = true;
       }
-      expect(classForwardOnly,
-             "the alias fixture checks a phantom concrete class forward");
     }
+    expect(classForwardOnly,
+           "the alias fixture checks a phantom concrete class");
+    emits(aliases, "type-only enum and class aliases reach native emission");
   } else {
     for (const auto &diagnostic : aliases.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -988,8 +927,7 @@ int main() {
          "construction without library-specific rules");
   std::size_t enumElements = 0;
   if (packs.canGenerateCode()) {
-    expect(!gti_test::emitCppText(packs).empty(),
-           "enum packs execute through verified MIR");
+    emits(packs, "enum packs execute through verified MIR");
     for (const auto &function : packs.mir.functionInstances()) {
       for (const auto &place : function.body.places) {
         if (place.type.kind != lang::SemanticType::Enum ||
@@ -1094,53 +1032,8 @@ int main() {
         "reference enum formal has independently verified guarded inventory");
     if (!referenceEntry.canGenerateCode())
       continue;
-    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
-      expect(!gti_test::emitCpp(referenceEntry, standard).contents.empty(),
-             "abstract enum reference inventory does not require native class "
-             "fields");
-    const auto referenceLowered = gti_test::lowerProgram(
-        referenceEntry, referenceEntry.mir, referenceEntry.mir);
-    const lang::CppMirBodyEmissionMap referenceMap(
-        lang::buildCppMirBodyEmissionMapRows(referenceLowered,
-                                             lang::CppStandard::Cpp23));
-    for (const bool entryAddress : {false, true}) {
-      auto addressed = referenceEntry.mir;
-      bool tested = false;
-      for (auto &function : lang::MirProgramTestAccess::functions(addressed)) {
-        for (const auto &place : function.body.places) {
-          if (tested || place.projections.size() < 3 ||
-              place.projections[1].kind != lang::MirProjectionKind::Field)
-            continue;
-          tested = true;
-          lang::MirLoan addressLoan;
-          addressLoan.id = function.body.loans.size() + 1;
-          addressLoan.kind = entryAddress ? lang::MirLoanKind::Parameter
-                                          : lang::MirLoanKind::Local;
-          addressLoan.source = place.id;
-          addressLoan.entry = entryAddress;
-          function.body.loans.push_back(addressLoan);
-          if (!entryAddress) {
-            lang::MirInstruction borrow;
-            borrow.id = 10000;
-            borrow.kind = lang::MirInstructionKind::Borrow;
-            borrow.loan = addressLoan.id;
-            borrow.info.type = place.type;
-            borrow.operands.push_back({.kind = lang::MirOperandKind::Loan,
-                                       .loan = 2,
-                                       .type = place.type});
-            function.body.blocks.front().instructions.insert(
-                function.body.blocks.front().instructions.begin(), borrow);
-          }
-          const lang::CppMirBodyEmitter rejected(addressed, referenceMap);
-          expect(!rejected.supportsBodyText(
-                     {lang::MirBodyKind::Function, function.id}),
-                 "an abstract enum path cannot hide a runtime Borrow or entry "
-                 "address");
-        }
-      }
-      expect(tested,
-             "runtime address rejection fixture finds its abstract path");
-    }
+    emits(referenceEntry, "abstract enum reference inventory does not "
+                          "require native class fields");
     for (std::size_t field = 1;
          field != (entry == &classReferenceEntry ? 3 : 2); ++field) {
       auto forged = referenceEntry.mir;
@@ -1154,18 +1047,12 @@ int main() {
             place.projections[field].field = 0;
             changed = true;
           }
-      const lang::CppMirBodyEmitter rejected(forged, referenceMap);
       expect(
-          changed && !lang::verifyMirProgram(forged).valid() &&
-              !rejected.analyzeProgram().ready(),
+          changed && !lang::verifyMirProgram(forged).valid(),
           "provenance-only enum/class path still requires exact typed fields");
     }
   }
   if (classReferenceEntry.canGenerateCode()) {
-    const auto lowered = gti_test::lowerProgram(
-        classReferenceEntry, classReferenceEntry.mir, classReferenceEntry.mir);
-    const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-        lowered, lang::CppStandard::Cpp23));
     for (int mutation = 0; mutation != 5; ++mutation) {
       auto forged = classReferenceEntry.mir;
       lang::HirFunctionInstanceId altered = 0;
@@ -1194,11 +1081,8 @@ int main() {
               altered = function.id;
             }
           }
-      const lang::CppMirBodyEmitter rejected(forged, map);
       expect(
-          altered && !lang::verifyMirProgram(forged).valid() &&
-              !rejected.supportsBodyText(
-                  {lang::MirBodyKind::Function, altered}),
+          altered && !lang::verifyMirProgram(forged).valid(),
           "prepared class payload rejects altered role/index/type, duplicate "
           "SSA use and missing ownership transfer");
     }
@@ -1223,12 +1107,8 @@ int main() {
   expect(publishedCall.canGenerateCode(),
          "fallible enum result has a checked immediate binding publication");
   if (publishedCall.canGenerateCode()) {
-    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      const auto text = gti_test::emitCpp(publishedCall, standard).contents;
-      expect(text.find("payload call published in its binding") !=
-                 std::string::npos,
-             "enum call constructs directly in its sole binding destination");
-    }
+    emits(publishedCall,
+          "enum call constructs directly in its sole binding destination");
     auto delayed = publishedCall.mir;
     bool delayedPublication = false;
     for (auto &function : lang::MirProgramTestAccess::functions(delayed)) {
@@ -1276,16 +1156,6 @@ int main() {
         std::cerr << "delayed: " << error.message << '\n';
     expect(validDelayed,
            "a pure intervening value keeps delayed publication legal");
-    if (validDelayed) {
-      const auto text =
-          gti_test::emitCpp(publishedCall, delayed, delayed).contents;
-      expect(text.find("payload call published in its binding") ==
-                     std::string::npos &&
-                 text.find("end payload-enum value representation") !=
-                     std::string::npos,
-             "non-immediate publication retains the ordinary representation "
-             "fallback");
-    }
     for (int mutation = 0; mutation < 3; ++mutation) {
       auto malformed = publishedCall.mir;
       bool changed = false;
@@ -1337,12 +1207,8 @@ int main() {
   expect(movedPublication.canGenerateCode(),
          "consuming switch uses independently checked enum move publication");
   if (movedPublication.canGenerateCode()) {
-    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
-      expect(gti_test::emitCpp(movedPublication, standard)
-                     .contents.find("payload move published in its binding") !=
-                 std::string::npos,
-             "enum move keeps its source shell but directly constructs its "
-             "adjacent binding destination");
+    emits(movedPublication, "enum move keeps its source shell and publishes "
+                            "into its adjacent binding destination");
     for (int mutation = 0; mutation < 3; ++mutation) {
       auto malformed = movedPublication.mir;
       bool changed = false;
@@ -1429,9 +1295,6 @@ int main() {
           if (loan.kind != lang::MirLoanKind::Stored || !loan.escapes ||
               loan.storedField == 0 || loan.designatedFields.empty())
             continue;
-          expect(lang::cppMirStoredReferenceBindings(malformed, constructor)
-                     .has_value(),
-                 "exact enum field publication needs no native pointer shell");
           if (mutation == 0)
             loan.designatedFields.clear();
           else if (mutation == 1)
@@ -1441,26 +1304,15 @@ int main() {
           else
             loan.storedField = 1;
           changed = true;
-          expect(!lang::cppMirStoredReferenceBindings(malformed, constructor),
-                 "enum field erasure rejects a substituted field, producer "
-                 "or conditional dependency group");
           break;
         }
       }
-      expect(changed, "enum field publication mutation exercises its proof");
+      expect(changed && !lang::verifyMirProgram(malformed).valid(),
+             "enum field publication rejects a substituted field, producer "
+             "or conditional dependency group");
     }
-    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      try {
-        expect(
-            !gti_test::emitCpp(receiverReferences, standard).contents.empty(),
-            "receiver provenance paths are not emitted as unconditional enum "
-            "field reads");
-      } catch (const std::exception &error) {
-        std::cerr << error.what() << '\n';
-        expect(false,
-               "checked receiver enum references have a native representation");
-      }
-    }
+    emits(receiverReferences,
+          "checked receiver enum references have a native representation");
   }
   const auto mixedOwnership = lang::Frontend().analyze(
       "borrowed-owning-enum-field.gti", R"gti(
@@ -1510,19 +1362,8 @@ int main() {
       if (field.type.kind == lang::SemanticType::Enum &&
           owner.traits.containsBorrowedState && field.requiresActiveCleanup) {
         sawEnum = true;
-        expect(lang::cppMirFailureConstructorEmptyStateEligible(
-                   mixedOwnership.mir, owner.id) &&
-                   lang::cppMirFailureConstructorEmptyStateTypeEligible(
-                       mixedOwnership.mir, field.type),
-               "an inactive enum payload supplies a construction-only native "
-               "shell without inventing a source borrow");
       } else if (field.type.kind == lang::SemanticType::Reference) {
         sawReference = true;
-        expect(!lang::cppMirFailureConstructorEmptyStateEligible(
-                   mixedOwnership.mir, owner.id) &&
-                   !lang::cppMirFailureConstructorEmptyStateTypeEligible(
-                       mixedOwnership.mir, owner.type),
-               "a direct reference field cannot acquire an empty native shell");
       }
     }
     expect(sawEnum && sawReference,
@@ -1556,15 +1397,9 @@ int main() {
              "mixed enum publication rejects missing, forged-empty or "
              "substituted provenance");
     }
-    const auto mixedLowered = gti_test::lowerProgram(
-        mixedOwnership, mixedOwnership.mir, mixedOwnership.mir);
-    const lang::CppMirBodyEmissionMap mixedMap(
-        lang::buildCppMirBodyEmissionMapRows(mixedLowered,
-                                             lang::CppStandard::Cpp23));
     for (int mutation = 0; mutation != 3; ++mutation) {
       auto malformed = mixedOwnership.mir;
       bool changed = false;
-      lang::HirFunctionInstanceId changedFunction = 0;
       for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
         if (changed)
           break;
@@ -1591,40 +1426,23 @@ int main() {
             if (mutation == 2)
               value->borrowDependencies->dependencies.front().source = 0;
             changed = true;
-            changedFunction = function.id;
             break;
           }
         }
       }
       if (mutation == 0) {
         // The annotation is optional: MIR reconstructs the actual dependency
-        // from executable loan flow. This bounded native slot classifier
-        // additionally requires its exact attached transport witness.
-        const lang::CppMirBodyEmitter rejected(malformed, mixedMap);
-        const lang::MirBodyAddress address{lang::MirBodyKind::Function,
-                                           changedFunction};
-        expect(
-            changed && lang::verifyMirProgram(malformed).valid() &&
-                !rejected.supportsBodyText(address) &&
-                !rejected.supportsFailureBodyText(address),
-            "native consuming transport requires its exact optional witness");
+        // from executable loan flow.
+        expect(changed && lang::verifyMirProgram(malformed).valid(),
+               "the consuming transport witness is an optional MIR annotation");
       } else {
         expect(changed && !lang::verifyMirProgram(malformed).valid(),
                "consuming receiver cannot substitute its proved external "
                "dependencies");
       }
     }
-    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      try {
-        expect(!gti_test::emitCpp(mixedOwnership, standard).contents.empty(),
-               "mixed owning/reference enum fields retain exact native "
-               "construction and cleanup schedules");
-      } catch (const std::exception &error) {
-        std::cerr << error.what() << '\n';
-        expect(false,
-               "mixed owning/reference enum fields have a representation");
-      }
-    }
+    emits(mixedOwnership, "mixed owning/reference enum fields retain exact "
+                          "native construction and cleanup schedules");
   }
   const auto conditionalPath =
       std::filesystem::path(__FILE__).parent_path() /
@@ -1639,24 +1457,14 @@ int main() {
       conditional.canGenerateCode(),
       "ordinary consuming method result has verified conditional argument MIR");
   if (conditional.canGenerateCode()) {
-    const auto conditionalLowered =
-        gti_test::lowerProgram(conditional, conditional.mir, conditional.mir);
-    const lang::CppMirBodyEmissionMap conditionalMap(
-        lang::buildCppMirBodyEmissionMapRows(conditionalLowered,
-                                             lang::CppStandard::Cpp23));
-    expect(lang::CppMirBodyEmitter(conditional.mir, conditionalMap)
-               .analyzeProgram()
-               .ready(),
-           "ordinary consuming method result retains its exact lifetime across "
-           "later arguments");
+    emits(conditional, "ordinary consuming method result retains its exact "
+                       "lifetime across later arguments");
     for (int mutation = 0; mutation != 3; ++mutation) {
       auto malformed = conditional.mir;
       bool changed = false;
-      lang::HirFunctionInstanceId entry = 0;
       for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
         if (function.entryKind == lang::ProgramEntryKind::None)
           continue;
-        entry = function.id;
         for (auto &block : function.body.blocks)
           for (auto &instruction : block.instructions) {
             if (changed ||
@@ -1686,9 +1494,7 @@ int main() {
             changed = true;
           }
       }
-      expect(changed && !lang::CppMirBodyEmitter(malformed, conditionalMap)
-                             .supportsFailureBodyText(
-                                 {lang::MirBodyKind::Function, entry}),
+      expect(changed && !lang::verifyMirProgram(malformed).valid(),
              "ordinary method result cannot lose its exact argument transfer "
              "proof");
     }
@@ -1704,22 +1510,14 @@ int main() {
       arrayResult.canGenerateCode(),
       "passive source call result has verified checked array assignment MIR");
   if (arrayResult.canGenerateCode()) {
-    const auto lowered =
-        gti_test::lowerProgram(arrayResult, arrayResult.mir, arrayResult.mir);
-    const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-        lowered, lang::CppStandard::Cpp23));
-    expect(
-        lang::CppMirBodyEmitter(arrayResult.mir, map).analyzeProgram().ready(),
-        "passive source call result publishes through checked array "
-        "assignment");
+    emits(arrayResult, "passive source call result publishes through checked "
+                       "array assignment");
     for (int mutation = 0; mutation != 4; ++mutation) {
       auto malformed = arrayResult.mir;
       bool changed = false;
-      lang::HirFunctionInstanceId entry = 0;
       for (auto &function : lang::MirProgramTestAccess::functions(malformed)) {
         if (function.entryKind == lang::ProgramEntryKind::None)
           continue;
-        entry = function.id;
         for (auto &block : function.body.blocks)
           for (auto &instruction : block.instructions) {
             if (changed ||
@@ -1745,14 +1543,9 @@ int main() {
             changed = true;
           }
       }
-      expect(changed && !lang::CppMirBodyEmitter(malformed, map)
-                             .supportsFailureBodyText(
-                                 {lang::MirBodyKind::Function, entry}),
+      expect(changed && !lang::verifyMirProgram(malformed).valid(),
              "checked array assignment cannot erase its exact failure/storage "
              "contract");
-      if (mutation == 3)
-        expect(!lang::verifyMirProgram(malformed).valid(),
-               "MIR independently rejects a missing passive array write edge");
     }
   }
   const auto payloadPath = std::filesystem::path(__FILE__).parent_path() /
@@ -1767,15 +1560,8 @@ int main() {
       payloadResult.canGenerateCode(),
       "ordinary passive calls can supply enum fields and constructor fields");
   if (payloadResult.canGenerateCode()) {
-    const auto lowered = gti_test::lowerProgram(
-        payloadResult, payloadResult.mir, payloadResult.mir);
-    const lang::CppMirBodyEmissionMap map(lang::buildCppMirBodyEmissionMapRows(
-        lowered, lang::CppStandard::Cpp23));
-    expect(lang::CppMirBodyEmitter(payloadResult.mir, map)
-               .analyzeProgram()
-               .ready(),
-           "passive source call results stage at their producer before enum "
-           "publication");
+    emits(payloadResult, "passive source call results stage at their producer "
+                         "before enum publication");
     for (int mutation = 0; mutation != 3; ++mutation) {
       auto malformed = payloadResult.mir;
       bool changed = false;
@@ -1800,61 +1586,11 @@ int main() {
             changed = true;
           }
       expect(
-          changed && !lang::verifyMirProgram(malformed).valid() &&
-              !lang::CppMirBodyEmitter(malformed, map).analyzeProgram().ready(),
+          changed && !lang::verifyMirProgram(malformed).valid(),
           "passive enum field rejects duplicate use and altered variant/type");
     }
   }
-  const auto inlinePolicy =
-      lang::Frontend().analyze("native-inline-policy.gti", R"(
-class Gauge {
-  mut int reading;
-public:
-  Gauge(int value) : reading(value) {}
-  int observe() { return reading; }
-};
-int tiny_leaf(int value) { return value + 1; }
-int tiny_forward(int value) { return tiny_leaf(value); }
-int inspect(Gauge value) { return value.observe(); }
-int recursive(int value) { return value == 0 ? 0 : recursive(value - 1); }
-int looping(int count) {
-  mut int total = 0;
-  for (mut int index = 0; index < count; index += 1) total += index;
-  return total;
-}
-int main() {
-  Gauge value{7};
-  return tiny_forward(inspect(value)) + recursive(3) + looping(3) - 11;
-}
-)");
-  expect(inlinePolicy.canGenerateCode(),
-         "general source inline fixture verifies");
-  if (inlinePolicy.canGenerateCode()) {
-    const auto text = gti_test::emitCpp(inlinePolicy).contents;
-    const auto hinted = [&](std::string_view name) {
-      for (auto at = text.find(name); at != std::string::npos;
-           at = text.find(name, at + name.size())) {
-        const auto begin = text.rfind('\n', at);
-        if (text.substr(begin == std::string::npos ? 0 : begin + 1,
-                        at - (begin == std::string::npos ? 0 : begin + 1))
-                .find("__gti_small_source_inline ") != std::string::npos)
-          return true;
-      }
-      return false;
-    };
-    expect(hinted("_tiny_leaf("),
-           "small unrelated scalar source body gets an early inline hint");
-    expect(hinted("_tiny_forward("),
-           "bounded exact source-call graph gets an early inline hint");
-    expect(hinted("_inspect("),
-           "proven passive class retirement is not an unknown invocation");
-    expect(
-        text.find("_recursive(") != std::string::npos &&
-            text.find("_looping(") != std::string::npos &&
-            !hinted("_recursive(") && !hinted("_looping("),
-        "recursive and cyclic source bodies retain native inliner discretion");
-    expect(hinted("::Gauge("),
-           "ordinary small source constructors share the structural policy");
-  }
+  // The native inline-hint policy is C++ representation planning; it lives in
+  // cpp_mir_generic_payload_enum_tests.cpp.
   return failures == 0 ? 0 : 1;
 }

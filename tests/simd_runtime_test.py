@@ -33,10 +33,17 @@ def main() -> int:
         dormant = root / "dormant.gti"
         dormant.write_text("import std.simd;\nint main() { return 0; }\n")
         dormant_cpp = root / "dormant.cpp"
-        success(run([str(compiler), str(dormant), "--emit-cpp", "-o", str(dormant_cpp)], environment),
-                "dormant SIMD include")
-        if "inline void simd_binary" in dormant_cpp.read_text():
-            raise AssertionError("unused SIMD imports must not emit native SIMD support")
+        if cpp_modes():
+            # C++-text check, only when the policy selects the C++ backend.
+            success(run([str(compiler), str(dormant), "--emit-cpp", "-o", str(dormant_cpp)], environment),
+                    "dormant SIMD include")
+            if "inline void simd_binary" in dormant_cpp.read_text():
+                raise AssertionError("unused SIMD imports must not emit native SIMD support")
+        else:
+            built = root / "dormant"
+            success(run([str(compiler), str(dormant), "-o", str(built)], environment),
+                    "dormant SIMD import")
+            success(run([str(built)], environment), "dormant SIMD run")
         modes = native_modes()
         if cpp_modes():
             # C++-text checks: the scalar reference implementation and host
@@ -114,7 +121,11 @@ int main() {
         predefines = (run([native, "-dM", "-E", "-x", "c++", os.devnull], environment).stdout
                       if native else "")
         vector_host = "__clang__" in predefines or "__GNUC__" in predefines
-        if native and vector_host and machine in {"arm64", "aarch64", "x86_64", "amd64"}:
+        # The instruction inspection compiles the emitted C++ text, so it runs
+        # only when the backend policy selects the C++ backend.
+        if not cpp_modes():
+            print("native instruction inspection of the C++ text runs under the C++ profile only")
+        elif native and vector_host and machine in {"arm64", "aarch64", "x86_64", "amd64"}:
             probe = root / "codegen.gti"
             probe.write_text('''import std.simd;
 extern "C" { float simd_input(float x); }

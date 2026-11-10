@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -152,7 +153,7 @@ private:
   TargetInfo targetInfo;
   OptimizationLevel optimizationLevel;
   CppStandard backendStandard;
-  BackendKind selectedBackend = BackendKind::Cpp;
+  BackendKind selectedBackend = BackendKind::Llvm;
   LlvmInstrumentationMode instrumentationMode = LlvmInstrumentationMode::None;
   std::vector<PackageSourceRoot> packageSourceRootSet;
   ConfigurationFlags configuredFlags;
@@ -252,6 +253,12 @@ compileWithBackend(const CompilationRequest &request, Backend &backend,
 compileWithBackend(const CompilationRequest &request, CompilationInputs inputs,
                    Backend &backend, ProgressObserver *progress = nullptr);
 
+// The frozen C++ backend is compiled in only with GTI_ENABLE_CPP_BACKEND.
+// Selecting it in a toolchain without it is a configuration error the CLI
+// and project planning report before compilation starts.
+[[nodiscard]] bool cppBackendAvailable() noexcept;
+[[nodiscard]] std::string_view cppBackendUnavailableMessage() noexcept;
+
 [[nodiscard]] CompilationResult
 compileToCpp(const CompilationRequest &request,
              ProgressObserver *progress = nullptr);
@@ -260,9 +267,8 @@ compileToCpp(const CompilationRequest &request,
 compileToCpp(const CompilationRequest &request, CompilationInputs inputs,
              ProgressObserver *progress = nullptr);
 
-// Selects the executable backend recorded by the immutable request. The C++
-// backend remains the default; inspection backends retain their explicit
-// entry points below.
+// Selects the executable backend recorded by the immutable request. LLVM is
+// the default; inspection backends retain their explicit entry points below.
 [[nodiscard]] CompilationResult
 compileToSelectedBackend(const CompilationRequest &request,
                          ProgressObserver *progress = nullptr);

@@ -138,6 +138,32 @@ local ok, problem = xpcall(function()
   assert(not treesitter.setup(toolchain, { cwd = projects.stable }))
   assert(parser_loads == 1 and parser_warning:find("different or unavailable", 1, true),
     "a second selected grammar must not reuse the first silently")
+  -- Tree-sitter consumers such as rainbow delimiters attach from their own
+  -- FileType handlers, which may be registered before the plugin's. The
+  -- managed grammar must already be registered when they run.
+  do
+    parser_loads = 0
+    local loads_seen_by_consumer
+    local consumer_group = vim.api.nvim_create_augroup("gti_test_consumer", { clear = true })
+    vim.api.nvim_create_autocmd("FileType", {
+      group = consumer_group,
+      pattern = "gti",
+      callback = function() loads_seen_by_consumer = parser_loads end,
+    })
+    vim.filetype.add({ extension = { gti = "gti" } })
+    vim.cmd("filetype on")
+    local managed = dofile(repository .. "/lua/gti/treesitter.lua")
+    assert(managed.setup(toolchain))
+    local source = projects.nightly .. "/src/consumer.gti"
+    file(source, { "int main() { return 0; }" })
+    vim.cmd("edit " .. vim.fn.fnameescape(source))
+    assert(vim.bo.filetype == "gti", "the test file must be detected as GTI")
+    assert(loads_seen_by_consumer == 1,
+      "the managed grammar must be registered before other FileType consumers attach")
+    vim.cmd("bwipeout!")
+    vim.api.nvim_del_augroup_by_id(consumer_group)
+    pcall(vim.api.nvim_del_augroup_by_name, "gti_treesitter_managed")
+  end
   -- Exercise the user command itself with two projects and an unrelated
   -- editor cwd. Its selection must agree with the attached client's root.
   local commands = {}

@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -59,48 +59,49 @@ def main() -> int:
             ):
                 return fail(f"run {mode}", executed)
 
-        generated_path = root / "issue-123.cpp"
-        emitted = run(
-            [
-                str(compiler),
-                str(positive),
-                "-O0",
-                "--std",
-                "c++23",
-                "--emit-cpp",
-                "-o",
-                str(generated_path),
-            ]
-        )
-        if emitted.returncode != 0:
-            return fail("emit C++23/O0", emitted)
-        generated = generated_path.read_text(encoding="utf8")
-        # The consuming value() of the source-defined expected constructs the
-        # extracted payload directly in the argument's prepared slot.
-        extraction_call = (
-            r"_value__gti_mir_failure\(UINT32_C\(\d+\), "
-            r"(__gti_mir_p_\d+)\.construction_address\(\)"
-        )
-        extraction = re.search(extraction_call, generated)
-        if extraction is None:
-            sys.stderr.write(
-                "generated C++ lost the owning Expected extraction slot\n"
+        # Emitted C++ text is evidence for the C++ profile only (backend_modes).
+        for _label, cpp_flags, _native in cpp_text_modes():
+            generated_path = root / "issue-123.cpp"
+            emitted = run(
+                [
+                    str(compiler),
+                    str(positive),
+                    "-O0",
+                    *cpp_flags,
+                    "--emit-cpp",
+                    "-o",
+                    str(generated_path),
+                ]
             )
-            return 1
-        slot = extraction.group(1)
-        if (
-            len(
-                re.findall(extraction_call, generated)
+            if emitted.returncode != 0:
+                return fail("emit C++23/O0", emitted)
+            generated = generated_path.read_text(encoding="utf8")
+            # The consuming value() of the source-defined expected constructs the
+            # extracted payload directly in the argument's prepared slot.
+            extraction_call = (
+                r"_value__gti_mir_failure\(UINT32_C\(\d+\), "
+                r"(__gti_mir_p_\d+)\.construction_address\(\)"
             )
-            != 1
-            or generated.count(f"std::move({slot}.get())") != 1
-            or generated.count(f"{slot}.destroy();") != 1
-        ):
-            sys.stderr.write(
-                "generated C++ duplicated owning extraction construction, "
-                "consumption, or cleanup\n"
-            )
-            return 1
+            extraction = re.search(extraction_call, generated)
+            if extraction is None:
+                sys.stderr.write(
+                    "generated C++ lost the owning Expected extraction slot\n"
+                )
+                return 1
+            slot = extraction.group(1)
+            if (
+                len(
+                    re.findall(extraction_call, generated)
+                )
+                != 1
+                or generated.count(f"std::move({slot}.get())") != 1
+                or generated.count(f"{slot}.destroy();") != 1
+            ):
+                sys.stderr.write(
+                    "generated C++ duplicated owning extraction construction, "
+                    "consumption, or cleanup\n"
+                )
+                return 1
 
         failed_executable = root / "failure"
         built_failure = run(

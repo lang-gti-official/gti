@@ -1,6 +1,7 @@
 #include "compiler_test_fixture.h"
 
 #include "gti/mir_effects.h"
+#include "llvm_backend_test_support.h"
 
 #include <functional>
 
@@ -150,37 +151,11 @@ void testPolymorphicStorageContract() {
          "the slot is a move-only, move-assignable, cleanup-inert structural "
          "owner, never a bitwise-relocated polymorphic object");
 
-  const lang::BackendArtifact artifact = gti_test::emitCpp(frontend);
-  const std::size_t begin = artifact.contents.find(
-      "template <typename Interface, std::size_t Bytes, std::size_t Align>\n"
-      "class polymorphic_storage {");
-  const std::size_t end = artifact.contents.find(
-      "inline bool polymorphic_storage_has_value(", begin);
-  const std::string representation =
-      begin == std::string::npos || end == std::string::npos
-          ? std::string{}
-          : artifact.contents.substr(begin, end - begin);
-  const std::size_t tableBegin =
-      artifact.contents.find("polymorphic_storage_operations_for{");
-  const std::string table = tableBegin == std::string::npos
-                                ? std::string{}
-                                : artifact.contents.substr(tableBegin, 600);
-  expect(!representation.empty() &&
-             representation.find("alignas(Align) std::byte bytes_[Bytes]") !=
-                 std::string::npos &&
-             representation.find("operations_->relocate(") !=
-                 std::string::npos &&
-             representation.find("memcpy") == std::string::npos &&
-             representation.find("operator new") == std::string::npos &&
-             table.find("mir_object_relocate_v1(") != std::string::npos &&
-             artifact.contents.find(
-                 "::gti_internal::backend::polymorphic_storage_construct(") !=
-                 std::string::npos &&
-             artifact.contents.find(
-                 "::gti_internal::backend::polymorphic_storage_read_mut(") !=
-                 std::string::npos,
-         "the C++ slot relocates through each payload's generated move and "
-         "never byte-copies or allocates a polymorphic payload");
+  std::string nativeError;
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &nativeError),
+         "the shipped backend emits the verified slot program natively" +
+             (nativeError.empty() ? std::string{} : ": " + nativeError));
 
   const auto rejects =
       [&](const char *label,

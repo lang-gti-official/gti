@@ -11,6 +11,7 @@ import tempfile
 import time
 
 from backend_execution import Endpoint, execute
+from backend_modes import cpp_modes
 
 
 def main():
@@ -29,7 +30,8 @@ def main():
     records = []
     source = root / "tests/fixtures/llvm_payload_kernel.gti"
     with tempfile.TemporaryDirectory(prefix="gti-llvm-payload-cost-") as directory:
-        for backend, standard in (("cpp", "c++23"), ("llvm", None)):
+        # The C++ comparison record exists only when GTI_TEST_BACKENDS selects C++.
+        for backend, standard in ((("cpp", "c++23"),) if cpp_modes() else ()) + (("llvm", None),):
             case = Path(directory) / backend
             start = time.perf_counter()
             result = execute(gti, root, case, source,

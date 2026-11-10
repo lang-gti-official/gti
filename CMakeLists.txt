@@ -11,6 +11,10 @@ endif()
 project("gti" VERSION "${GTI_PROJECT_VERSION}" LANGUAGES C CXX)
 
 option(GTI_BUILD_LSP "Build the GTI language server" ON)
+# The C++ backend is frozen and separated from default builds, tests, CI and
+# releases (docs/decisions/031-native-llvm-backend-foundation.md). Only the
+# hand-dispatched cpp-backend.yml workflow builds it.
+option(GTI_ENABLE_CPP_BACKEND "Build the frozen C++ backend and its tests" OFF)
 option(GTI_BUNDLE_LLVM "Download and build pinned LLVM support libraries" OFF)
 option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
 option(GTI_BUILD_FUZZERS
@@ -695,33 +699,35 @@ target_include_directories(
 )
 target_compile_features("gti_compiler" PUBLIC cxx_std_20)
 
-add_library(
-  "gti_cpp_backend" STATIC
-  "src/compiler/cpp_backend.cpp"
-  "src/compiler/cpp_emitter.cpp"
-  "src/compiler/cpp_failure_support_writer.cpp"
-  "src/compiler/cpp_mir_control_flow.cpp"
-  "src/compiler/cpp_representation.cpp"
-  "src/compiler/cpp_mir_body_emitter.cpp"
-  "src/compiler/cpp_mir_body_emission_plan.cpp"
-  "src/compiler/cpp_mir_body_text_writer.cpp"
-  "src/compiler/cpp_mir_program_plan.cpp"
-  "src/compiler/cpp_mir_representation_snapshot.cpp"
-  "src/compiler/cpp_program_emission_plan.cpp"
-  "src/compiler/cpp_program_emission_planner.cpp"
-  "src/compiler/cpp_program_text_writer.cpp"
-  "src/compiler/cpp_support_preamble.cpp"
-)
-target_include_directories(
-  "gti_cpp_backend"
-  PUBLIC
-    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
-)
-target_include_directories("gti_cpp_backend" SYSTEM PRIVATE
-                           ${GTI_LLVM_INCLUDE_DIRS})
-target_compile_features("gti_cpp_backend" PUBLIC cxx_std_20)
-target_link_libraries("gti_cpp_backend" PUBLIC gti_compiler)
+if(GTI_ENABLE_CPP_BACKEND)
+  add_library(
+    "gti_cpp_backend" STATIC
+    "src/compiler/cpp_backend.cpp"
+    "src/compiler/cpp_emitter.cpp"
+    "src/compiler/cpp_failure_support_writer.cpp"
+    "src/compiler/cpp_mir_control_flow.cpp"
+    "src/compiler/cpp_representation.cpp"
+    "src/compiler/cpp_mir_body_emitter.cpp"
+    "src/compiler/cpp_mir_body_emission_plan.cpp"
+    "src/compiler/cpp_mir_body_text_writer.cpp"
+    "src/compiler/cpp_mir_program_plan.cpp"
+    "src/compiler/cpp_mir_representation_snapshot.cpp"
+    "src/compiler/cpp_program_emission_plan.cpp"
+    "src/compiler/cpp_program_emission_planner.cpp"
+    "src/compiler/cpp_program_text_writer.cpp"
+    "src/compiler/cpp_support_preamble.cpp"
+  )
+  target_include_directories(
+    "gti_cpp_backend"
+    PUBLIC
+      "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+      "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+  )
+  target_include_directories("gti_cpp_backend" SYSTEM PRIVATE
+                             ${GTI_LLVM_INCLUDE_DIRS})
+  target_compile_features("gti_cpp_backend" PUBLIC cxx_std_20)
+  target_link_libraries("gti_cpp_backend" PUBLIC gti_compiler)
+endif()
 
 add_library(
   "gti_llvm_backend" STATIC
@@ -940,8 +946,12 @@ target_compile_features("gti_driver" PUBLIC cxx_std_20)
 target_link_libraries(
   "gti_driver"
   PUBLIC gti_project_services
-  PRIVATE gti_cpp_backend gti_llvm_backend gti_bindgen gti_runtime
+  PRIVATE gti_llvm_backend gti_bindgen gti_runtime
 )
+if(GTI_ENABLE_CPP_BACKEND)
+  target_link_libraries("gti_driver" PRIVATE gti_cpp_backend)
+  target_compile_definitions("gti_driver" PRIVATE GTI_HAS_CPP_BACKEND=1)
+endif()
 add_dependencies("gti_driver" "gti_runtime" "gti_build_identity_refresh")
 target_compile_definitions(
   "gti_driver"
@@ -1082,15 +1092,19 @@ endif()
 install(TARGETS gti RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
         COMPONENT gti_toolchain)
 set_target_properties(gti_compiler PROPERTIES EXPORT_NAME compiler)
-set_target_properties(gti_cpp_backend PROPERTIES EXPORT_NAME cpp_backend)
 set_target_properties(gti_llvm_backend PROPERTIES EXPORT_NAME llvm_backend)
 set_target_properties(gti_driver PROPERTIES EXPORT_NAME driver)
 set_target_properties(gti_project_services PROPERTIES EXPORT_NAME project_services)
 set_target_properties(gti_bindgen PROPERTIES EXPORT_NAME bindgen)
 set_target_properties(gti_runtime PROPERTIES EXPORT_NAME runtime)
+set(gti_installed_libraries
+  gti_compiler gti_llvm_backend gti_driver gti_project_services gti_bindgen gti_runtime)
+if(GTI_ENABLE_CPP_BACKEND)
+  set_target_properties(gti_cpp_backend PROPERTIES EXPORT_NAME cpp_backend)
+  list(APPEND gti_installed_libraries gti_cpp_backend)
+endif()
 install(
-  TARGETS gti_compiler gti_cpp_backend gti_llvm_backend gti_driver gti_project_services gti_bindgen
-          gti_runtime
+  TARGETS ${gti_installed_libraries}
   EXPORT GTITargets
   ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   COMPONENT gti_toolchain

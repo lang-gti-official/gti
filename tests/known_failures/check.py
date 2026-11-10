@@ -15,6 +15,7 @@ from __future__ import annotations
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 
 def main() -> int:
@@ -25,9 +26,13 @@ def main() -> int:
     directory = pathlib.Path(__file__).resolve().parent
 
     fixed = []
+    scratch = tempfile.TemporaryDirectory(prefix="gti-known-failures-")
     for source in sorted(directory.glob("*.gti")):
+        # The shipped (LLVM) backend builds each reproducer, so a backend
+        # internal error or limitation is observed as well as a frontend one.
         result = subprocess.run(
-            [str(gti), "--emit-cpp", str(source), "-o", "/dev/null"],
+            [str(gti), "--backend", "llvm", str(source), "-o",
+             str(pathlib.Path(scratch.name) / source.stem)],
             capture_output=True,
             text=True,
             timeout=120,

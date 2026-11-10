@@ -1,6 +1,19 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
 
 namespace {
+
+// The shipped backend accepts the verified program and emits native code.
+void expectNativeEmission(const lang::FrontendResult &frontend,
+                          std::string_view message) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  expect(emitted, error.empty() ? std::string(message)
+                                : std::string(message) + ": " + error);
+}
 
 // expected<T, E> is the prelude's ordinary source class.
 bool isExpected(const lang::FrontendResult &frontend,
@@ -76,8 +89,6 @@ void testPublication() {
          "passive expected publication has valid frontend MIR");
   if (!frontend.canGenerateCode())
     return;
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
-  const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
   std::size_t copies = 0;
   std::size_t moves = 0;
   std::size_t wrappers = 0;
@@ -94,10 +105,6 @@ void testPublication() {
       continue;
     const lang::MirBodyAddress address{lang::MirBodyKind::Function,
                                        function.id};
-    const auto text = function.mayRaiseDefinedFailure
-                          ? emitter.emitFailureBodyText(address, "passive", 1)
-                          : emitter.emitBodyText(address, "passive", 1);
-    expect(text.emitted(), "passive publication body emits: " + name);
     if (name != "main") {
       ++wrappers;
       expect(isExpected(frontend, function.returnType),
@@ -126,17 +133,8 @@ void testPublication() {
               uses.front().kind != lang::MirValueUseKind::Terminator)
             continue;
           ++wrappedCalls;
-          const auto slot =
-              "__gti_mir_p_" + std::to_string(*stage->destination);
           expect(!call.successResultDrop && !call.successResultDestination,
                  "passive call does not invent a semantic result obligation");
-          // A fallible wrapper moves the slot into its out-parameter; a
-          // failure-free wrapper constructs its returned prvalue from it.
-          expect(text.text.find(function.mayRaiseDefinedFailure
-                                    ? "std::move(" + slot + ".take())"
-                                    : "(" + slot + ".take())") !=
-                     std::string::npos,
-                 "Expected return reads its completed payload slot");
           for (int mutation = 0; mutation != 2; ++mutation) {
             auto malformed = frontend.mir;
             auto *changed = lang::findMirBody(malformed, address);
@@ -161,14 +159,6 @@ void testPublication() {
             expect(
                 !lang::verifyMirProgram(malformed).valid(),
                 "MIR rejects mismatched call staging or payload return type");
-            const lang::CppMirBodyEmitter rejected(malformed, rows);
-            expect(
-                !rejected.analyze(address).ready() ||
-                    !(function.mayRaiseDefinedFailure
-                          ? rejected.supportsFailureBodyText(address)
-                          : rejected.supportsBodyText(address)),
-                "passive call publication fails closed on altered authority: " +
-                    name + " mutation " + std::to_string(mutation));
           }
           if (!call.lifecycle.empty()) {
             ++preparedHandoffs;
@@ -191,12 +181,6 @@ void testPublication() {
               expect(!lang::verifyMirProgram(malformed).valid(),
                      "MIR rejects missing, conditional, mismatched or "
                      "duplicate prepared input handoff");
-              const lang::CppMirBodyEmitter rejected(malformed, rows);
-              expect(!(function.mayRaiseDefinedFailure
-                           ? rejected.supportsFailureBodyText(address)
-                           : rejected.supportsBodyText(address)),
-                     "payload result representation requires exact prepared "
-                     "input transfers");
             }
           }
           const auto *returned = function.body.findBlock(uses.front().block);
@@ -218,15 +202,6 @@ void testPublication() {
               expect(!lang::verifyMirProgram(malformed).valid(),
                      "MIR rejects malformed passive local retirement before "
                      "Return");
-              // The retired local is an ordinary class value; its drop
-              // lifecycle forgeries are rejected by body analysis.
-              const lang::CppMirBodyEmitter rejected(malformed, rows);
-              expect(!rejected.analyze(address).ready() ||
-                         !(function.mayRaiseDefinedFailure
-                               ? rejected.supportsFailureBodyText(address)
-                               : rejected.supportsBodyText(address)),
-                     "payload return representation rejects altered local "
-                     "retirement");
             }
           }
         }
@@ -246,13 +221,9 @@ void testPublication() {
           if (!call.successResultDestination)
             continue;
           ++moves;
-          expect(text.text.find("_" + std::string(accessor) +
-                                "__gti_mir_failure(") != std::string::npos &&
-                     text.text.find(
-                         "__gti_mir_p_" +
-                         std::to_string(*call.successResultDestination) +
-                         ".construction_address()") != std::string::npos,
-                 "move-only payload retains the consuming checked helper");
+          expect(call.definedFailure.propagation !=
+                     lang::FailurePropagationKind::None,
+                 "move-only payload retains the consuming checked accessor");
           continue;
         }
         // A read-only accessor returns a reference; the copy reads it into
@@ -288,9 +259,9 @@ void testPublication() {
                    receiver->operands.front().kind ==
                        lang::MirOperandKind::BorrowWrite,
                "payload copy leaves the Expected receiver borrowed");
-        expect(text.text.find("_" + std::string(accessor) +
-                              "__gti_mir_failure(") != std::string::npos,
-               "payload copy uses a checked placement helper");
+        expect(call.definedFailure.propagation !=
+                   lang::FailurePropagationKind::None,
+               "payload copy uses the checked accessor");
         const auto &initialize = *publication;
         expect(initialize.lifecycle.size() == 1,
                "exact sole destination is initialized on success");
@@ -336,26 +307,20 @@ void testPublication() {
                 hit = true;
               }
           expect(hit, "copy mutation hits its intended authority record");
-          // The destination is optional MIR metadata: without it, publication
-          // needs a different representation. Receiver spelling likewise has
-          // its exact type checked by representation admission. Lifecycle and
+          // The destination is optional MIR metadata and receiver spelling is
+          // checked by backend representation admission (frozen C++ suite:
+          // cpp_mir_expected_passive_publication). Lifecycle and
           // failure-edge corruption must be rejected by MIR verification.
           if (mutation != 0 && mutation != 5)
             expect(!lang::verifyMirProgram(malformed).valid(),
                    "MIR rejects malformed checked payload publication: " +
                        std::to_string(mutation));
-          const lang::CppMirBodyEmitter rejected(malformed, rows);
-          expect(!rejected.analyze(address).ready() ||
-                     !rejected.supportsFailureBodyText(address),
-                 "emission admission rejects malformed payload publication: " +
-                     std::to_string(mutation));
-          // The copy is an ordinary member call's published result, with no
-          // result-specific emission route, so the combined admission check
-          // above is the representation's whole authority.
         }
       }
     }
   }
+  expectNativeEmission(frontend,
+                       "passive expected publication reaches native emission");
   expect(copies == 9 && moves == 1 && wrappers == 4,
          "test reaches all nine copies, one consuming extraction and four "
          "wrappers");
@@ -376,8 +341,6 @@ void testPassiveErrorCleanup() {
          "passive errors cross surrounding fallible cleanup in verified MIR");
   if (!frontend.canGenerateCode())
     return;
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
-  const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
   std::size_t wrappers = 0;
   std::size_t cleanupInvokes = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
@@ -388,8 +351,6 @@ void testPassiveErrorCleanup() {
       continue;
     const lang::MirBodyAddress address{lang::MirBodyKind::Function,
                                        function.id};
-    expect(emitter.supportsFailureBodyText(address),
-           "passive constructed/copied error snapshots emit before cleanup");
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
         // unexpected(e) is the prelude's source factory function.
@@ -417,13 +378,11 @@ void testPassiveErrorCleanup() {
         expect(!lang::verifyMirProgram(malformed).valid(),
                "passive return cannot erase payload identity or surrounding "
                "cleanup");
-        const lang::CppMirBodyEmitter rejected(malformed, rows);
-        expect(!rejected.analyze(address).ready() ||
-                   !rejected.supportsFailureBodyText(address),
-               "passive error representation fails closed on corrupted MIR");
       }
     }
   }
+  expectNativeEmission(frontend, "passive constructed/copied error snapshots "
+                                 "emit before cleanup");
   expect(
       wrappers == 2 && cleanupInvokes > 0,
       "passive error tests cover direct/copy producers and fallible cleanup");
@@ -436,6 +395,6 @@ int main() {
   testPassiveErrorCleanup();
   if (failures != 0)
     return 1;
-  std::cout << "passive expected publication mutations passed\n";
+  std::cout << "passive expected publication MIR mutations passed\n";
   return 0;
 }

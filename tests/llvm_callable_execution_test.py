@@ -11,6 +11,7 @@ import tempfile
 import time
 
 from backend_execution import Endpoint, execute, require_cpp_wrapping_rejection
+from backend_modes import cpp_modes
 from llvm_evidence_manifest import build_manifest
 
 
@@ -48,14 +49,16 @@ LLVM_ONLY_FAILURE_CASES = {
         "later callable wrapper initializer failed",
     ),
 }
-ENDPOINTS = (
-    Endpoint("cpp", "O3", "c++23"),
+LLVM_ENDPOINTS = (
     Endpoint("llvm", "O0"),
     Endpoint("llvm", "O1"),
     Endpoint("llvm", "O2"),
     Endpoint("llvm", "O3"),
 )
-LLVM_ENDPOINTS = ENDPOINTS[1:]
+# The frozen C++ backend's differential endpoint runs only when
+# GTI_TEST_BACKENDS selects C++.
+CPP_ENDPOINTS = (Endpoint("cpp", "O3", "c++23"),) if cpp_modes() else ()
+ENDPOINTS = CPP_ENDPOINTS + LLVM_ENDPOINTS
 
 
 def evidence_case_names() -> tuple[str, ...]:
@@ -163,10 +166,7 @@ def cost_evidence(gti: Path, root: Path, work: Path, env: dict[str, str]):
         "mixed": "llvm_callable_cost",
     }.items():
         observations[family] = {}
-        for endpoint in (
-            Endpoint("cpp", "O3", "c++23"),
-            Endpoint("llvm", "O3"),
-        ):
+        for endpoint in (*CPP_ENDPOINTS, Endpoint("llvm", "O3")):
             source = root / "tests" / "fixtures" / f"{fixture}.gti"
             result = execute(
                 gti,

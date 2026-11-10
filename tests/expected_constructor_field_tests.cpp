@@ -1,6 +1,21 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
 
-using namespace gti_test::cpp_mir_body_emitter_fixture;
+namespace {
+
+// The shipped backend accepts the verified MIR program.
+void expectBackendAccepts(
+    const lang::FrontendResult &frontend, const std::string &message,
+    const lang::TargetInfo &target = lang::TargetInfo::host()) {
+  std::string error;
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         message + " (MIR verifies)");
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0, target,
+                             &error),
+         message + (error.empty() ? "" : ": " + error));
+}
+
+} // namespace
 
 // expected<T, E> is the prelude's ordinary source class.
 bool isExpected(const lang::SemanticModel &semantics,
@@ -54,9 +69,9 @@ int main() {
     return 1;
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "field publication and rollback have independently valid MIR");
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
-  const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
-  std::size_t checked = 0, mutations = 0;
+  expectBackendAccepts(frontend, "typed success, error and passive field "
+                                 "alternatives compile");
+  std::size_t checked = 0;
   for (const auto &constructor : frontend.mir.constructorInstances()) {
     const lang::MirInstruction *publication = nullptr;
     for (const auto &block : constructor.body.blocks)
@@ -76,149 +91,35 @@ int main() {
     if (!publication)
       continue;
     ++checked;
-    expect(
-        emitter.supportsFailureBodyText(
-            {.kind = lang::MirBodyKind::Constructor, .owner = constructor.id}),
-        "all three field forms use the exact transformed constructor");
-    const auto reject = [&](auto mutate, std::string_view reason) {
-      auto broken = frontend.mir;
-      auto *changed = const_cast<lang::MirConstructorInstance *>(
-          broken.findConstructorInstance(constructor.id));
-      lang::MirInstruction *initialize = nullptr;
-      for (auto &block : changed->body.blocks)
-        for (auto &instruction : block.instructions)
-          if (instruction.id == publication->id)
-            initialize = &instruction;
-      expect(initialize != nullptr, "mutation retains exact publication ID");
-      if (!initialize)
-        return;
-      mutate(*changed, *initialize);
-      (void)lang::rebuildMirValueUses(changed->body);
-      expect(
-          !lang::CppMirBodyEmitter(broken, rows)
-               .supportsFailureBodyText({.kind = lang::MirBodyKind::Constructor,
-                                         .owner = constructor.id}),
-          reason);
-      ++mutations;
-    };
-    reject(
-        [](auto &ctor, auto &initialize) {
-          ctor.initializers[initialize.constructorInitializer - 1].field =
-              ctor.initializers.back().field;
-        },
-        "field publication rejects a different selected declaration");
-    reject(
-        [](auto &, auto &initialize) { ++initialize.constructorInitializer; },
-        "field publication rejects a forged initializer index");
-    reject([](auto &,
-              auto &initialize) { initialize.lifecycle.back().target = 0; },
-           "field publication requires exact rollback activation");
-    reject(
-        [](auto &ctor, auto &initialize) {
-          auto *drop = const_cast<lang::MirDropObligation *>(
-              ctor.body.findDropObligation(initialize.lifecycle.back().target));
-          drop->kind = lang::MirDropObligationKind::Binding;
-        },
-        "field publication cannot invent a local-binding lifetime");
-    reject(
-        [](auto &ctor, auto &initialize) {
-          auto *field = const_cast<lang::MirPlace *>(
-              ctor.body.findPlace(*initialize.destination));
-          field->initiallyAvailable = true;
-        },
-        "field publication cannot replace an already live field");
-    reject(
-        [](auto &ctor, auto &initialize) {
-          for (auto &expression : ctor.body.fullExpressions)
-            if (expression.constructorInitializer ==
-                initialize.constructorInitializer)
-              expression.roots.clear();
-        },
-        "field publication retains its exact source expression boundary");
-    {
-      // The field is constructed in place only when its Initialize is the
-      // first step on the constructor's success edge. A valid intervening
-      // staging step cannot be bypassed: publication then moves the sealed
-      // result slot after that step instead of writing the field early.
-      auto delayed = frontend.mir;
-      auto &body = const_cast<lang::MirConstructorInstance *>(
-                       delayed.findConstructorInstance(constructor.id))
-                       ->body;
-      lang::MirInstructionId maximum = 0;
-      const lang::MirInstruction *literal = nullptr;
-      for (const auto &block : body.blocks)
-        for (const auto &instruction : block.instructions) {
-          maximum = std::max(maximum, instruction.id);
-          if (literal == nullptr &&
-              instruction.kind == lang::MirInstructionKind::Compute &&
-              instruction.operation == lang::MirOperation::Literal &&
-              instruction.result)
-            literal = &instruction;
-        }
-      bool inserted = false;
-      for (auto &block : body.blocks) {
-        const auto at =
-            std::find_if(block.instructions.begin(), block.instructions.end(),
-                         [&](const auto &instruction) {
-                           return instruction.id == publication->id;
-                         });
-        if (literal == nullptr || at == block.instructions.end())
-          continue;
-        lang::MirInstruction step = *literal;
-        lang::MirValue value = *body.findValue(*literal->result);
-        step.id = maximum + 1;
-        value.id = body.values.size() + 1;
-        value.definitionBlock = block.id;
-        value.definition = step.id;
-        step.result = value.id;
-        block.instructions.insert(at, step);
-        body.values.push_back(value);
-        inserted = true;
-        break;
-      }
-      (void)lang::rebuildMirValueUses(body);
-      const std::string field = std::to_string(*publication->destination);
-      const std::string text =
-          lang::CppMirBodyEmitter(delayed, rows)
-              .emitFailureBodyText({.kind = lang::MirBodyKind::Constructor,
-                                    .owner = constructor.id},
-                                   "delayed-field", 1)
-              .text;
-      expect(inserted && lang::verifyMirProgram(delayed).valid() &&
-                 text.find("in-place constructor field reparent into p" +
-                           field + "\n") == std::string::npos &&
-                 text.find("__gti_mir_p_" + field + " = std::move(") !=
-                     std::string::npos,
-             "field publication cannot bypass an intervening staging "
-             "boundary");
-      ++mutations;
-    }
-    if (publication->lifecycle.front().source != 0)
-      reject([](auto &,
-                auto &initialize) { initialize.lifecycle.front().source = 0; },
-             "owning publication cannot lose its source transfer");
+    // The publication is the field's exact selected initializer, writes a
+    // field that is not yet live inside its own full-expression boundary
+    // and activates the field's rollback obligation, not a local binding.
+    const auto *field = constructor.body.findPlace(*publication->destination);
+    const lang::MirDropObligation *rollback =
+        publication->lifecycle.empty()
+            ? nullptr
+            : constructor.body.findDropObligation(
+                  publication->lifecycle.back().target);
+    expect(publication->constructorInitializer != 0 &&
+               publication->constructorInitializer <=
+                   constructor.initializers.size(),
+           "field publication names its selected initializer");
+    expect(field != nullptr && !field->initiallyAvailable,
+           "field publication cannot replace an already live field");
+    expect(rollback != nullptr &&
+               rollback->kind != lang::MirDropObligationKind::Binding,
+           "field publication activates exact field rollback, not a "
+           "local-binding lifetime");
+    expect(std::any_of(constructor.body.fullExpressions.begin(),
+                       constructor.body.fullExpressions.end(),
+                       [&](const auto &expression) {
+                         return expression.constructorInitializer ==
+                                    publication->constructorInitializer &&
+                                !expression.roots.empty();
+                       }),
+           "field publication retains its exact source expression boundary");
   }
   expect(checked == 3, "all three unrelated field alternatives were checked");
-  // Every alternative, passive included, now publishes an owned class value.
-  expect(mutations == 24, "every bounded field shape has negative proofs");
-  const bool ready = emitter.analyzeProgram().ready();
-  expect(ready, "the entire source program has complete backend coverage");
-  if (ready) {
-    const auto optimized = lang::OptimizationPipeline().run(
-        frontend.hir, lang::OptimizationLevel::O0);
-    const auto artifact =
-        gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimized);
-    std::size_t count = 0, offset = 0;
-    const std::string marker =
-        "// GTI MIR in-place constructor field reparent into p";
-    while ((offset = artifact.contents.find(marker, offset)) !=
-           std::string::npos) {
-      ++count;
-      offset += marker.size();
-    }
-    expect(count == 3,
-           "native field publication never uses a fictitious local slot");
-  }
   std::size_t plainProducerControls = 0, plainProducerMutations = 0;
   for (const std::string_view payload :
        {"class Payload<T> { public: int marker = 1; ~Payload() {}  public: "
@@ -240,12 +141,9 @@ int main() { Wrapped<int> value{}; return 0; }
            "generic generated and explicit payload field controls analyze");
     if (!control.canGenerateCode())
       continue;
-    const lang::CppMirBodyEmissionMap controlRows(
-        buildRows(control, control.mir));
-    expect(lang::CppMirBodyEmitter(control.mir, controlRows)
-               .analyzeProgram()
-               .ready(),
-           "generated and explicit zero-argument payloads retain execution");
+    expectBackendAccepts(
+        control,
+        "generated and explicit zero-argument payloads retain execution");
     for (const auto &ctor : control.mir.constructorInstances()) {
       for (const auto &block : ctor.body.blocks) {
         for (const auto &instruction : block.instructions) {
@@ -292,13 +190,9 @@ int main() { Wrapped<int> value{}; return 0; }
                     producer.lifecycle.clear();
                 }
             // The payload reaches the field as the prepared argument of the
-            // implicit expected constructor; MIR verification inside the
-            // emitter's analysis checks its exact constructor owner.
-            const lang::CppMirBodyEmitter brokenEmitter(broken, controlRows);
-            const lang::MirBodyAddress address{
-                .kind = lang::MirBodyKind::Constructor, .owner = ctor.id};
-            expect(!brokenEmitter.supportsFailureBodyText(address) ||
-                       !brokenEmitter.analyze(address).ready(),
+            // implicit expected constructor; MIR verification checks its
+            // exact constructor owner and local activation.
+            expect(!lang::verifyMirProgram(broken).valid(),
                    wrongTarget
                        ? "plain payload retains its selected constructor"
                        : "plain payload retains its local activation");

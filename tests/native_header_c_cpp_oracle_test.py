@@ -349,7 +349,7 @@ extern "C" NativePoint cpp_apply_offset(NativePoint value, Offset offset) {
         if not default_header.is_file():
             raise RuntimeError("default native-header output path was not created")
         conflicting = run(
-            [gti, source_path, "--emit-native-header", "--emit-cpp"],
+            [gti, source_path, "--emit-native-header", "--emit-mir"],
             cwd=root,
             expected=64,
         )

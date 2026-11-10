@@ -1,4 +1,3 @@
-#include "../src/compiler/cpp_mir_representation_snapshot.h"
 #include "compiler_test_fixture.h"
 #include "gti/mir_editor.h"
 
@@ -32,8 +31,10 @@ void accepted(std::string source, const char *message) {
   if (result.canGenerateCode()) {
     expect(lang::verifyMirProgram(result.mir).valid(),
            "query preserves valid MIR");
-    expect(!gti_test::emitCpp(result).contents.empty(),
-           "query reaches native emission");
+    std::string error;
+    expect(gti_test::llvmEmits(result, lang::OptimizationLevel::O0,
+                               lang::TargetInfo::host(), &error),
+           "query reaches native emission: " + error);
   }
 }
 
@@ -332,17 +333,17 @@ int main() {
     for (const auto &function : projected.mir.functionInstances()) {
       const auto *declaration =
           lowered.findFunctionDeclaration(function.declaration);
-      if (!declaration || declaration->genericParameters.empty())
-        continue;
-      const auto signature = lang::cppMirCallableTemplateSignature(
-          lowered, *declaration, function);
-      if (!signature)
+      if (!declaration || declaration->genericParameters.empty() ||
+          function.definitionKind != lang::MirDefinitionKind::Source)
         continue;
       signatureChecked = true;
-      auto substituted = function;
-      substituted.returnType = lang::SemanticType::Bool;
-      expect(!lang::cppMirCallableTemplateSignature(lowered, *declaration,
-                                                    substituted),
+      auto malformed = projected.mir;
+      auto &functions = lang::MirProgramTestAccess::functions(malformed);
+      auto &changed = *std::find_if(
+          functions.begin(), functions.end(),
+          [&](const auto &item) { return item.id == function.id; });
+      changed.returnType = lang::SemanticType::Bool;
+      expect(!lang::verifyMirProgram(malformed).valid(),
              "projection cannot justify a substituted concrete MIR result");
     }
     expect(signatureChecked,
@@ -363,7 +364,7 @@ int main() {
 )");
   expect(owned.canGenerateCode(), "class callback result initializes a local");
   if (owned.canGenerateCode()) {
-    expect(!gti_test::emitCpp(owned).contents.empty(),
+    expect(gti_test::llvmEmits(owned),
            "class callback publishes into its checked slot");
     bool checked = false;
     for (const auto &function : owned.mir.functionInstances()) {

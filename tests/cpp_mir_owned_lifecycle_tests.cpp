@@ -1,0 +1,819 @@
+#include "gti/cpp_backend.h"
+#include "gti/frontend.h"
+#include "gti/mir_editor.h"
+#include "gti/mir_effects.h"
+#include "gti/mir_printer.h"
+#include "gti/mir_verifier.h"
+#include "gti/optimizer.h"
+
+#include "cpp_backend_test_support.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <vector>
+
+namespace {
+
+constexpr std::string_view marker = "// GTI verified-MIR body: scalar-cfg-v1 ";
+constexpr std::string_view failureMarker =
+    "// GTI verified-MIR body: scalar-cfg-failure-v1 ";
+int failures = 0;
+
+void expect(bool condition, std::string_view message) {
+  if (!condition) {
+    std::cerr << "FAIL: " << message << '\n';
+    ++failures;
+  }
+}
+
+std::string readFile(const std::filesystem::path &path) {
+  std::ifstream input(path);
+  return std::string(std::istreambuf_iterator<char>(input),
+                     std::istreambuf_iterator<char>());
+}
+
+bool hasBodyMarker(std::string_view generated, std::string_view kind,
+                   std::uint64_t instance) {
+  return generated.find(std::string(marker) + std::string(kind) + "-instance " +
+                        std::to_string(instance)) != std::string_view::npos;
+}
+
+bool hasFailureBodyMarker(std::string_view generated, std::string_view kind,
+                          std::uint64_t instance) {
+  return generated.find(std::string(failureMarker) + std::string(kind) +
+                        "-instance " + std::to_string(instance)) !=
+         std::string_view::npos;
+}
+
+const lang::HirFunctionInstance *
+findHirFunction(const lang::HirProgram &program, std::string_view name) {
+  const auto found = std::find_if(
+      program.functionInstances().begin(), program.functionInstances().end(),
+      [name](const auto &function) {
+        return function.source != nullptr &&
+               function.source->name().lexeme == name;
+      });
+  return found == program.functionInstances().end() ? nullptr : &*found;
+}
+
+const lang::HirClassInstance *findHirClass(const lang::HirProgram &program,
+                                           std::string_view name) {
+  const auto found = std::find_if(
+      program.classInstances().begin(), program.classInstances().end(),
+      [name](const auto &instance) {
+        return instance.source != nullptr &&
+               instance.source->name().lexeme == name;
+      });
+  return found == program.classInstances().end() ? nullptr : &*found;
+}
+
+lang::MirFunctionInstance *findFunction(const lang::HirProgram &hir,
+                                        lang::MirProgram &mir,
+                                        std::string_view name) {
+  const auto *source = findHirFunction(hir, name);
+  if (source == nullptr) {
+    return nullptr;
+  }
+  auto &values = const_cast<std::vector<lang::MirFunctionInstance> &>(
+      mir.functionInstances());
+  const auto found =
+      std::find_if(values.begin(), values.end(),
+                   [&](auto &item) { return item.id == source->id; });
+  return found == values.end() ? nullptr : &*found;
+}
+
+const lang::MirFunctionInstance *findFunction(const lang::HirProgram &hir,
+                                              const lang::MirProgram &mir,
+                                              std::string_view name) {
+  return findFunction(hir, const_cast<lang::MirProgram &>(mir), name);
+}
+
+lang::MirConstructorInstance *findConstructor(const lang::HirProgram &hir,
+                                              lang::MirProgram &mir,
+                                              std::string_view ownerName) {
+  const auto *owner = findHirClass(hir, ownerName);
+  if (owner == nullptr) {
+    return nullptr;
+  }
+  auto &values = const_cast<std::vector<lang::MirConstructorInstance> &>(
+      mir.constructorInstances());
+  const auto found =
+      std::find_if(values.begin(), values.end(),
+                   [&](auto &item) { return item.owner == owner->id; });
+  return found == values.end() ? nullptr : &*found;
+}
+
+const lang::MirConstructorInstance *
+findConstructor(const lang::HirProgram &hir, const lang::MirProgram &mir,
+                std::string_view ownerName) {
+  return findConstructor(hir, const_cast<lang::MirProgram &>(mir), ownerName);
+}
+
+lang::MirDestructorInstance *findDestructor(const lang::HirProgram &hir,
+                                            lang::MirProgram &mir,
+                                            std::string_view ownerName) {
+  const auto *owner = findHirClass(hir, ownerName);
+  if (owner == nullptr || !owner->destructor) {
+    return nullptr;
+  }
+  auto &values = const_cast<std::vector<lang::MirDestructorInstance> &>(
+      mir.destructorInstances());
+  const auto found =
+      std::find_if(values.begin(), values.end(),
+                   [&](auto &item) { return item.id == *owner->destructor; });
+  return found == values.end() ? nullptr : &*found;
+}
+
+const lang::MirDestructorInstance *findDestructor(const lang::HirProgram &hir,
+                                                  const lang::MirProgram &mir,
+                                                  std::string_view ownerName) {
+  return findDestructor(hir, const_cast<lang::MirProgram &>(mir), ownerName);
+}
+
+template <typename Body>
+auto instructionsOf(Body &body, lang::MirInstructionKind kind) {
+  using Instruction =
+      std::conditional_t<std::is_const_v<std::remove_reference_t<Body>>,
+                         const lang::MirInstruction, lang::MirInstruction>;
+  std::vector<Instruction *> result;
+  for (auto &block : body.blocks) {
+    for (auto &instruction : block.instructions) {
+      if (instruction.kind == kind) {
+        result.push_back(&instruction);
+      }
+    }
+  }
+  return result;
+}
+
+lang::BackendArtifact emit(const lang::FrontendResult &frontend,
+                           const lang::MirProgram &mir,
+                           const lang::OptimizationResult &compatibility) {
+  static_cast<void>(compatibility);
+  return gti_test::emitCpp(frontend, frontend.mir, mir);
+}
+
+bool rejected(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
+              const lang::OptimizationResult &compatibility) {
+  try {
+    (void)emit(frontend, mir, compatibility);
+    return false;
+  } catch (const std::logic_error &) {
+    return true;
+  }
+}
+
+void expectRejected(const lang::FrontendResult &frontend,
+                    const lang::OptimizationResult &compatibility,
+                    std::string_view description, const auto &mutation) {
+  lang::MirProgram changed = frontend.mir;
+  mutation(changed);
+  expect(rejected(frontend, changed, compatibility), description);
+}
+
+void expectRejectedVerified(const lang::FrontendResult &frontend,
+                            const lang::OptimizationResult &compatibility,
+                            std::string_view description,
+                            const auto &mutation) {
+  lang::MirProgram changed = frontend.mir;
+  mutation(changed);
+  const lang::MirVerificationResult verification =
+      lang::verifyMirProgram(changed);
+  if (!verification.valid()) {
+    for (const auto &error : verification.errors) {
+      std::cerr << "unexpected generic rejection: " << error.message << '\n';
+    }
+  }
+  expect(verification.valid(),
+         std::string(description) +
+             " should remain generically valid so source coherence owns the "
+             "rejection");
+  expect(rejected(frontend, changed, compatibility), description);
+}
+
+void testFamily(const std::filesystem::path &fixture) {
+  const std::filesystem::path standardLibrary =
+      fixture.parent_path().parent_path().parent_path() / "stdlib";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      fixture.string(), readFile(fixture), {standardLibrary / "prelude.gti"},
+      {}, {standardLibrary});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "the owned lifecycle fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const lang::MirDefinedFailureEffects effects =
+      lang::deriveMirDefinedFailureEffects(frontend.mir);
+  expect(effects.functions.size() == frontend.mir.functionInstances().size() &&
+             effects.constructors.size() ==
+                 frontend.mir.constructorInstances().size() &&
+             effects.destructors.size() ==
+                 frontend.mir.destructorInstances().size(),
+         "the effect closure should cover all executable instance kinds");
+
+  const auto *consume = findFunction(frontend.hir, frontend.mir, "consume");
+  const auto *run = findFunction(frontend.hir, frontend.mir, "run_scopes");
+  const auto *constructor =
+      findConstructor(frontend.hir, frontend.mir, "ScopeFlag");
+  const auto *destructor =
+      findDestructor(frontend.hir, frontend.mir, "ScopeFlag");
+  expect(consume != nullptr && run != nullptr && constructor != nullptr &&
+             destructor != nullptr && !consume->mayRaiseDefinedFailure &&
+             !run->mayRaiseDefinedFailure &&
+             !constructor->mayRaiseDefinedFailure &&
+             !destructor->mayRaiseDefinedFailure,
+         "the ScopeFlag graph should be proved failure-free from MIR");
+  if (consume == nullptr || run == nullptr || constructor == nullptr ||
+      destructor == nullptr) {
+    return;
+  }
+
+  const auto stages =
+      instructionsOf(constructor->body, lang::MirInstructionKind::Initialize);
+  const lang::MirPlace *stagePlace =
+      stages.size() == 1 && stages.front()->destination
+          ? constructor->body.findPlace(*stages.front()->destination)
+          : nullptr;
+  expect(stages.size() == 1 && stages.front()->constructorInitializer == 1 &&
+             stages.front()->operands.size() == 1 && stagePlace != nullptr &&
+             stagePlace->root == lang::MirPlaceRootKind::This &&
+             stagePlace->projections.size() == 1 &&
+             stagePlace->projections.front().kind ==
+                 lang::MirProjectionKind::Field,
+         "the constructor should retain one exact this.field initializer "
+         "stage");
+
+  const auto constructs =
+      instructionsOf(run->body, lang::MirInstructionKind::Construct);
+  const auto moves = instructionsOf(run->body, lang::MirInstructionKind::Move);
+  const auto inputs =
+      instructionsOf(run->body, lang::MirInstructionKind::CallInput);
+  const auto calls = instructionsOf(run->body, lang::MirInstructionKind::Call);
+  const auto drops = instructionsOf(run->body, lang::MirInstructionKind::Drop);
+  const auto initializes =
+      instructionsOf(run->body, lang::MirInstructionKind::Initialize);
+  const auto scalarInitialize =
+      std::find_if(initializes.begin(), initializes.end(), [&](const auto *op) {
+        const lang::MirPlace *destination =
+            op->destination ? run->body.findPlace(*op->destination) : nullptr;
+        return destination != nullptr &&
+               destination->type == lang::SemanticType::Int32;
+      });
+  const auto parameterDrops =
+      instructionsOf(consume->body, lang::MirInstructionKind::Drop);
+  const auto movedInput =
+      std::find_if(inputs.begin(), inputs.end(), [](auto *op) {
+        return op->callInputKind == lang::HirCallInputKind::MoveValue;
+      });
+  expect(constructs.size() == 2 && moves.size() == 1 &&
+             movedInput != inputs.end() &&
+             (*movedInput)->preparedParameterDrop &&
+             (*movedInput)->lifecycle.size() == 1 && calls.size() == 1 &&
+             std::count_if(calls.front()->lifecycle.begin(),
+                           calls.front()->lifecycle.end(),
+                           [](const auto &event) {
+                             return event.kind ==
+                                    lang::MirLifecycleEventKind::TransferOut;
+                           }) == 1 &&
+             drops.size() >= 2 && parameterDrops.size() == 1 &&
+             scalarInitialize != initializes.end(),
+         "construction, MoveValue staging, transfer, and normal cleanup must "
+         "all remain explicit");
+  expect(std::all_of(constructs.begin(), constructs.end(),
+                     [&](auto *op) {
+                       return op->constructorTarget == constructor->id &&
+                              op->definedFailure.propagation ==
+                                  lang::FailurePropagationKind::None;
+                     }),
+         "proved constructors should use exact targets without failure edges");
+
+  const std::string dump = lang::MirPrinter().print(frontend.mir);
+  expect(dump.starts_with("mir-v121 ") &&
+             dump.find("constructor-initializer=1") != std::string::npos,
+         "MIR v24 should print the new initializer-stage authority");
+
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const std::string generated =
+      emit(frontend, frontend.mir, compatibility).contents;
+  expect(hasBodyMarker(generated, "function", consume->id) &&
+             hasBodyMarker(generated, "function", run->id) &&
+             hasBodyMarker(generated, "constructor", constructor->id) &&
+             hasBodyMarker(generated, "destructor", destructor->id),
+         "two free functions, one constructor, and one destructor should be "
+         "emitted by the general MIR route");
+  expect(generated.find("mir_lifetime_slot<") != std::string::npos &&
+             generated.find("__gti_mir_p_") != std::string::npos &&
+             generated.find("__gti_mir_v_") != std::string::npos &&
+             generated.find(".construct(") != std::string::npos &&
+             generated.find(".destroy();") != std::string::npos &&
+             generated.find("std::move(__gti_mir_p_") != std::string::npos,
+         "emission must consume MIR places, values, construction, moves, and "
+         "explicit drops");
+  if (scalarInitialize != initializes.end()) {
+    expect(generated.find("__gti_mir_p_" +
+                          std::to_string(*(*scalarInitialize)->destination) +
+                          " = ") != std::string::npos,
+           "a selected scalar local must use scalar MIR initialization rather "
+           "than a class lifetime-slot move");
+  }
+
+  expectRejected(frontend, compatibility,
+                 "constructor summary drift must fail closed",
+                 [&](lang::MirProgram &changed) {
+                   findConstructor(frontend.hir, changed, "ScopeFlag")
+                       ->mayRaiseDefinedFailure = true;
+                 });
+  expectRejected(frontend, compatibility,
+                 "destructor summary drift must fail closed",
+                 [&](lang::MirProgram &changed) {
+                   findDestructor(frontend.hir, changed, "ScopeFlag")
+                       ->mayRaiseDefinedFailure = true;
+                 });
+  expectRejected(
+      frontend, compatibility,
+      "missing constructor-stage identity must be rejected",
+      [&](lang::MirProgram &changed) {
+        auto *item = findConstructor(frontend.hir, changed, "ScopeFlag");
+        instructionsOf(item->body, lang::MirInstructionKind::Initialize)
+            .front()
+            ->constructorInitializer = 0;
+      });
+  expectRejected(
+      frontend, compatibility,
+      "wrong constructor field identity must be rejected",
+      [&](lang::MirProgram &changed) {
+        auto *item = findConstructor(frontend.hir, changed, "ScopeFlag");
+        auto *stage =
+            instructionsOf(item->body, lang::MirInstructionKind::Initialize)
+                .front();
+        item->body.places[*stage->destination - 1].projections.front().field +=
+            1;
+      });
+  expectRejected(
+      frontend, compatibility,
+      "a duplicate constructor initializer stage must be rejected",
+      [&](lang::MirProgram &changed) {
+        auto *item = findConstructor(frontend.hir, changed, "ScopeFlag");
+        auto &instructions = item->body.blocks.front().instructions;
+        const auto stage = std::find_if(
+            instructions.begin(), instructions.end(),
+            [](const auto &op) { return op.constructorInitializer == 1; });
+        lang::MirInstruction duplicate = *stage;
+        duplicate.id =
+            std::max_element(instructions.begin(), instructions.end(),
+                             [](const auto &left, const auto &right) {
+                               return left.id < right.id;
+                             })
+                ->id +
+            1;
+        instructions.insert(std::next(stage), std::move(duplicate));
+        (void)lang::rebuildMirValueUses(item->body);
+      });
+  expectRejected(
+      frontend, compatibility,
+      "destructor operation retargeting must be rejected",
+      [&](lang::MirProgram &changed) {
+        auto *item = findDestructor(frontend.hir, changed, "ScopeFlag");
+        const auto computes =
+            instructionsOf(item->body, lang::MirInstructionKind::Compute);
+        const auto operation =
+            std::find_if(computes.begin(), computes.end(), [](const auto *op) {
+              return op->operation == lang::MirOperation::BitwiseOr;
+            });
+        (*operation)->operation = lang::MirOperation::BitwiseXor;
+      });
+  expectRejected(
+      frontend, compatibility,
+      "destructor literal retargeting must be rejected",
+      [&](lang::MirProgram &changed) {
+        auto *item = findDestructor(frontend.hir, changed, "ScopeFlag");
+        const auto computes =
+            instructionsOf(item->body, lang::MirInstructionKind::Compute);
+        const auto literal =
+            std::find_if(computes.begin(), computes.end(), [](const auto *op) {
+              return op->operation == lang::MirOperation::Literal;
+            });
+        (*literal)->literal = lang::Literal{std::uint64_t{1}};
+      });
+  expectRejected(
+      frontend, compatibility, "destructor global retargeting must be rejected",
+      [&](lang::MirProgram &changed) {
+        auto *item = findDestructor(frontend.hir, changed, "ScopeFlag");
+        auto first =
+            std::find_if(item->body.places.begin(), item->body.places.end(),
+                         [](const auto &place) {
+                           return place.root == lang::MirPlaceRootKind::Symbol;
+                         });
+        const auto other = std::find_if(
+            std::next(first), item->body.places.end(), [&](const auto &place) {
+              return place.root == lang::MirPlaceRootKind::Symbol &&
+                     place.symbol != first->symbol;
+            });
+        first->symbol = other->symbol;
+      });
+  expectRejected(
+      frontend, compatibility, "destructor field retargeting must be rejected",
+      [&](lang::MirProgram &changed) {
+        auto *item = findDestructor(frontend.hir, changed, "ScopeFlag");
+        auto field =
+            std::find_if(item->body.places.begin(), item->body.places.end(),
+                         [](const auto &place) {
+                           return place.root == lang::MirPlaceRootKind::This &&
+                                  !place.projections.empty();
+                         });
+        field->projections.front().field += 1;
+      });
+  expectRejected(
+      frontend, compatibility,
+      "destructor true and false CFG edges must not be swapped",
+      [&](lang::MirProgram &changed) {
+        auto *item = findDestructor(frontend.hir, changed, "ScopeFlag");
+        auto branch = std::find_if(
+            item->body.blocks.begin(), item->body.blocks.end(),
+            [](const auto &block) {
+              return block.terminator.kind == lang::MirTerminatorKind::Branch;
+            });
+        std::swap(branch->terminator.target, branch->terminator.elseTarget);
+      });
+  expectRejectedVerified(
+      frontend, compatibility,
+      "selected function operation retargeting must fail source coherence",
+      [&](lang::MirProgram &changed) {
+        auto *item = findFunction(frontend.hir, changed, "run_scopes");
+        const auto computes =
+            instructionsOf(item->body, lang::MirInstructionKind::Compute);
+        const auto comparison =
+            std::find_if(computes.begin(), computes.end(), [](const auto *op) {
+              return op->operation == lang::MirOperation::NotEqual;
+            });
+        (*comparison)->operation = lang::MirOperation::Equal;
+      });
+  expectRejectedVerified(
+      frontend, compatibility,
+      "selected function branch successors must remain source coherent",
+      [&](lang::MirProgram &changed) {
+        auto *item = findFunction(frontend.hir, changed, "run_scopes");
+        const auto branch = std::find_if(
+            item->body.blocks.begin(), item->body.blocks.end(),
+            [](const auto &block) {
+              return block.terminator.kind == lang::MirTerminatorKind::Branch;
+            });
+        std::swap(branch->terminator.target, branch->terminator.elseTarget);
+      });
+  expectRejectedVerified(
+      frontend, compatibility,
+      "selected function global places must remain tied to their HIR symbol",
+      [&](lang::MirProgram &changed) {
+        auto *item = findFunction(frontend.hir, changed, "run_scopes");
+        auto first =
+            std::find_if(item->body.places.begin(), item->body.places.end(),
+                         [](const auto &place) {
+                           return place.root == lang::MirPlaceRootKind::Symbol;
+                         });
+        const auto other = std::find_if(
+            std::next(first), item->body.places.end(), [&](const auto &place) {
+              return place.root == lang::MirPlaceRootKind::Symbol &&
+                     place.symbol != first->symbol;
+            });
+        first->symbol = other->symbol;
+      });
+  expectRejectedVerified(
+      frontend, compatibility,
+      "selected function Return values must remain tied to the HIR root",
+      [&](lang::MirProgram &changed) {
+        auto *item = findFunction(frontend.hir, changed, "run_scopes");
+        auto finalReturn = std::find_if(
+            item->body.blocks.rbegin(), item->body.blocks.rend(),
+            [](const auto &block) {
+              return block.terminator.kind == lang::MirTerminatorKind::Return &&
+                     block.terminator.value.has_value();
+            });
+        finalReturn->terminator.value =
+            lang::MirOperand{.kind = lang::MirOperandKind::Value,
+                             .value = item->body.values.front().id,
+                             .type = lang::SemanticType::Int32};
+        (void)lang::rebuildMirValueUses(item->body);
+      });
+  expectRejected(
+      frontend, compatibility,
+      "copy-forging a moved parameter stage must be rejected",
+      [&](lang::MirProgram &changed) {
+        auto *item = findFunction(frontend.hir, changed, "run_scopes");
+        auto changedInputs =
+            instructionsOf(item->body, lang::MirInstructionKind::CallInput);
+        auto moved = std::find_if(
+            changedInputs.begin(), changedInputs.end(), [](auto *op) {
+              return op->callInputKind == lang::HirCallInputKind::MoveValue;
+            });
+        (*moved)->callInputKind = lang::HirCallInputKind::CopyValue;
+      });
+  expectRejected(frontend, compatibility,
+                 "missing prepared-parameter transfer must be rejected",
+                 [&](lang::MirProgram &changed) {
+                   auto *item =
+                       findFunction(frontend.hir, changed, "run_scopes");
+                   instructionsOf(item->body, lang::MirInstructionKind::Call)
+                       .front()
+                       ->lifecycle.clear();
+                 });
+  expectRejected(frontend, compatibility,
+                 "call-target drift inside the closed graph must be rejected",
+                 [&](lang::MirProgram &changed) {
+                   auto *item =
+                       findFunction(frontend.hir, changed, "run_scopes");
+                   instructionsOf(item->body, lang::MirInstructionKind::Call)
+                       .front()
+                       ->functionTarget = item->id;
+                 });
+  expectRejected(
+      frontend, compatibility, "Drop-target drift must be rejected",
+      [&](lang::MirProgram &changed) {
+        auto *item = findFunction(frontend.hir, changed, "run_scopes");
+        auto changedDrops =
+            instructionsOf(item->body, lang::MirInstructionKind::Drop);
+        changedDrops.front()->destination = changedDrops.back()->destination;
+      });
+  expectRejected(
+      frontend, compatibility, "a removed reachable Drop must be rejected",
+      [&](lang::MirProgram &changed) {
+        auto *item = findFunction(frontend.hir, changed, "consume");
+        for (auto &block : item->body.blocks) {
+          const auto drop =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [](const auto &op) {
+                             return op.kind == lang::MirInstructionKind::Drop;
+                           });
+          if (drop != block.instructions.end()) {
+            block.instructions.erase(drop);
+            break;
+          }
+        }
+        (void)lang::rebuildMirValueUses(item->body);
+      });
+  expectRejected(
+      frontend, compatibility,
+      "constructor retargeting outside the selected class must "
+      "fail closed",
+      [&](lang::MirProgram &changed) {
+        auto *item = findFunction(frontend.hir, changed, "run_scopes");
+        const auto *other =
+            findConstructor(frontend.hir, changed, "CompatibilityDefaultField");
+        instructionsOf(item->body, lang::MirInstructionKind::Construct)
+            .front()
+            ->constructorTarget = other->id;
+      });
+}
+
+void testSameTypedConstructorSwapAndCheckedFallback(
+    const std::filesystem::path &fixture) {
+  const std::filesystem::path standardLibrary =
+      fixture.parent_path().parent_path().parent_path() / "stdlib";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      fixture.string(), readFile(fixture), {standardLibrary / "prelude.gti"},
+      {}, {standardLibrary});
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
+  expect(frontend.canGenerateCode(),
+         "the same-typed constructor and checked-cleanup fixture should pass "
+         "the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  const auto *pair = findConstructor(frontend.hir, frontend.mir, "PairFlag");
+  const auto *pairDestructor =
+      findDestructor(frontend.hir, frontend.mir, "PairFlag");
+  const auto *usePair = findFunction(frontend.hir, frontend.mir, "use_pair");
+  const auto *wrapper =
+      findFunction(frontend.hir, frontend.mir, "pair_wrapper");
+  const auto *checked =
+      findDestructor(frontend.hir, frontend.mir, "CheckedCleanup");
+  expect(pair != nullptr && !pair->mayRaiseDefinedFailure &&
+             pairDestructor != nullptr && usePair != nullptr &&
+             wrapper != nullptr && checked != nullptr &&
+             checked->mayRaiseDefinedFailure,
+         "the exact PairFlag lifecycle should be failure-free while checked "
+         "cleanup remains failure-capable");
+
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  std::optional<lang::BackendArtifact> baseline;
+  try {
+    baseline = emit(frontend, frontend.mir, compatibility);
+  } catch (const std::logic_error &error) {
+    std::cerr << "checked-cleanup fallback unexpectedly failed: "
+              << error.what() << '\n';
+  }
+  expect(baseline.has_value(),
+         "a valid failure-capable destructor must emit through verified MIR");
+  if (baseline && pair != nullptr && pairDestructor != nullptr &&
+      usePair != nullptr && wrapper != nullptr) {
+    expect(
+        hasBodyMarker(baseline->contents, "function", usePair->id) &&
+            hasBodyMarker(baseline->contents, "function", wrapper->id) &&
+            hasBodyMarker(baseline->contents, "constructor", pair->id) &&
+            hasBodyMarker(baseline->contents, "destructor", pairDestructor->id),
+        "PairFlag's function, reverse scalar caller, constructor, and "
+        "destructor should all use the general MIR route");
+  }
+
+  expectRejected(
+      frontend, compatibility,
+      "same-typed constructor arguments must not be swapped",
+      [&](lang::MirProgram &changed) {
+        auto *constructor = findConstructor(frontend.hir, changed, "PairFlag");
+        auto stages = instructionsOf(constructor->body,
+                                     lang::MirInstructionKind::Initialize);
+        std::sort(stages.begin(), stages.end(),
+                  [](const auto *left, const auto *right) {
+                    return left->constructorInitializer <
+                           right->constructorInitializer;
+                  });
+        std::swap(stages[0]->operands.front(), stages[1]->operands.front());
+        (void)lang::rebuildMirValueUses(constructor->body);
+      });
+  expectRejected(frontend, compatibility,
+                 "the reverse caller must not introduce a graph cycle",
+                 [&](lang::MirProgram &changed) {
+                   auto *wrapper =
+                       findFunction(frontend.hir, changed, "pair_wrapper");
+                   instructionsOf(wrapper->body, lang::MirInstructionKind::Call)
+                       .front()
+                       ->functionTarget = wrapper->id;
+                 });
+  expectRejectedVerified(
+      frontend, compatibility,
+      "same-typed constructor CallInput operands must not be duplicated",
+      [&](lang::MirProgram &changed) {
+        auto *function = findFunction(frontend.hir, changed, "use_pair");
+        auto inputs =
+            instructionsOf(function->body, lang::MirInstructionKind::CallInput);
+        std::sort(inputs.begin(), inputs.end(),
+                  [](const auto *left, const auto *right) {
+                    return left->callInputIndex < right->callInputIndex;
+                  });
+        inputs[1]->operands.front() = inputs[0]->operands.front();
+        (void)lang::rebuildMirValueUses(function->body);
+      });
+  expectRejectedVerified(
+      frontend, compatibility,
+      "a reverse caller cannot erase its HIR call edge from selected MIR",
+      [&](lang::MirProgram &changed) {
+        auto *wrapper = findFunction(frontend.hir, changed, "pair_wrapper");
+        auto *call =
+            instructionsOf(wrapper->body, lang::MirInstructionKind::Call)
+                .front();
+        call->kind = lang::MirInstructionKind::Compute;
+        call->callSite = 0;
+        call->parameterTypes.clear();
+        call->functionTarget.reset();
+        call->operation = lang::MirOperation::Literal;
+        call->literal = lang::Literal{std::uint64_t{0}};
+        call->literalProvenance = {.kind =
+                                       lang::MirLiteralProvenanceKind::Source};
+        call->operands.clear();
+        (void)lang::rebuildMirValueUses(wrapper->body);
+      });
+}
+
+void testCommaUsesGeneralMir(const std::filesystem::path &fixture) {
+  const std::filesystem::path standardLibrary =
+      fixture.parent_path().parent_path().parent_path() / "stdlib";
+  const lang::FrontendResult frontend = lang::Frontend().analyze(
+      fixture.string(), readFile(fixture), {standardLibrary / "prelude.gti"},
+      {}, {standardLibrary});
+  expect(frontend.canGenerateCode(),
+         "the lifecycle comma fixture should pass the frontend");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+
+  const auto *plain = findFunction(frontend.hir, frontend.mir, "use_plain");
+  const auto *comma = findFunction(frontend.hir, frontend.mir, "use_comma");
+  const auto *constructor =
+      findConstructor(frontend.hir, frontend.mir, "CommaFlag");
+  const auto *destructor =
+      findDestructor(frontend.hir, frontend.mir, "CommaFlag");
+  const bool hasCommaOperation =
+      comma != nullptr &&
+      std::any_of(comma->body.blocks.begin(), comma->body.blocks.end(),
+                  [](const lang::MirBlock &block) {
+                    return std::any_of(
+                        block.instructions.begin(), block.instructions.end(),
+                        [](const lang::MirInstruction &instruction) {
+                          return instruction.kind ==
+                                     lang::MirInstructionKind::Compute &&
+                                 instruction.operation ==
+                                     lang::MirOperation::Comma;
+                        });
+                  });
+  expect(plain != nullptr && comma != nullptr && constructor != nullptr &&
+             destructor != nullptr && hasCommaOperation,
+         "the comma fixture should retain its functions, lifecycle, and exact "
+         "MIR comma operation");
+  if (plain == nullptr || comma == nullptr || constructor == nullptr ||
+      destructor == nullptr) {
+    return;
+  }
+
+  const lang::OptimizationResult compatibility =
+      lang::OptimizationPipeline().run(frontend.hir,
+                                       lang::OptimizationLevel::O0);
+  const std::string generated =
+      emit(frontend, frontend.mir, compatibility).contents;
+  // The comma body emits in the form its failure effects select.
+  const bool commaBody =
+      comma->mayRaiseDefinedFailure
+          ? hasFailureBodyMarker(generated, "function", comma->id)
+          : hasBodyMarker(generated, "function", comma->id);
+  expect(hasBodyMarker(generated, "function", plain->id) && commaBody &&
+             hasBodyMarker(generated, "constructor", constructor->id) &&
+             hasBodyMarker(generated, "destructor", destructor->id) &&
+             generated.find("owned-lifecycle-call-v1") == std::string::npos,
+         "comma evaluation and its lifecycle must emit from general MIR "
+         "without reviving the retired family route");
+}
+
+void testPassiveCallAssignment(const std::filesystem::path &fixtures) {
+  const auto source = fixtures / "passive_class_call_assignment.gti";
+  const auto library = fixtures.parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      lang::Frontend().analyze(source.string(), readFile(source),
+                               {library / "prelude.gti"}, {}, {library});
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "passive user-class replacement should retain valid source MIR");
+  if (!frontend.canGenerateCode()) {
+    return;
+  }
+  for (const auto level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
+    try {
+      const auto generated = gti_test::emitCppText(
+          frontend, lang::CppStandard::Cpp23, lang::TargetInfo::host(), level);
+      expect(generated.find("std::move(__gti_mir_v_") != std::string::npos &&
+                 generated.find(".construction_address()") != std::string::npos,
+             "ordinary class call replacement must use uninitialized SSA "
+             "staging without an extra source constructor");
+    } catch (const std::logic_error &error) {
+      std::cerr << "passive call replacement unexpectedly failed: "
+                << error.what() << '\n';
+      expect(false, "passive call replacement must emit through verified MIR");
+    }
+  }
+  const auto immutable =
+      lang::Frontend().analyze("passive-immutable.gti", R"(
+struct Block { mut float lanes[4] = {};  public: Block() = default; };
+Block make() { Block result{}; return result; }
+int main() { Block value{}; value = make(); return 0; }
+)",
+                               {library / "prelude.gti"}, {}, {library});
+  expect(!immutable.canGenerateCode() &&
+             std::any_of(immutable.diagnostics.begin(),
+                         immutable.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2002";
+                         }),
+         "passive call staging must not permit immutable destinations");
+}
+
+} // namespace
+
+int main(int argc, char **argv) {
+  if (argc != 2) {
+    std::cerr << "usage: gti_mir_backend_owned_lifecycle_tests <fixture>\n";
+    return 2;
+  }
+  testFamily(argv[1]);
+  testSameTypedConstructorSwapAndCheckedFallback(
+      std::filesystem::path(argv[1]).parent_path() /
+      "mir_backend_owned_lifecycle_ctor_swap.gti");
+  testCommaUsesGeneralMir(std::filesystem::path(argv[1]).parent_path() /
+                          "mir_backend_owned_lifecycle_comma_near_miss.gti");
+  testPassiveCallAssignment(std::filesystem::path(argv[1]).parent_path());
+  if (failures != 0) {
+    std::cerr << failures << " owned lifecycle backend test(s) failed\n";
+    return 1;
+  }
+  return 0;
+}

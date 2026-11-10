@@ -1,7 +1,7 @@
 #include "../src/compiler/llvm/atomics.h"
 #include "../src/compiler/llvm/layout.h"
 #include "../src/compiler/llvm/runtime_abi.h"
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 
 #include <array>
 #include <filesystem>

@@ -27,7 +27,7 @@ auto SemanticVisitor::Impl::recordLifetimeNames(const Program &program)
       report(name,
              "Unknown lifetime '" + name.lexeme +
                  "'; declare it with 'lifetime " + name.lexeme + "'.",
-             "GTI-S2126");
+             "GTI-S2128");
     if (!toolingOccurrences)
       continue;
     for (const Token &binder : names.binders) {

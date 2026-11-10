@@ -13169,7 +13169,7 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
         report(expr.name(),
                "Lifetime '" + expr.name().lexeme +
                    "' names a region, not a value.",
-               "GTI-S2126");
+               "GTI-S2128");
       } else {
         report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
                "GTI-S2001");

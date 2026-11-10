@@ -5,7 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -205,47 +205,50 @@ def main() -> int:
                 )
                 return 1
 
-        emitted_success = root / "success.cpp"
-        emission = run(
-            [str(compiler), str(success_source), "--emit-cpp", "-o", str(emitted_success)]
-        )
-        if emission.returncode != 0:
-            return fail(emission)
-        generated = emitted_success.read_text(encoding="utf8")
-        enum_definition = generated.find("struct holder {")
-        wrapper_definition = generated.find("class wrapper {")
-        required = (
-            ", std::monostate> __gti_value;",
-            "std::move(__gti_mir_p_",
-        )
-        if (
-            enum_definition < 0
-            or wrapper_definition < 0
-            or enum_definition >= wrapper_definition
-            or any(fragment not in generated for fragment in required)
-        ):
-            sys.stderr.write(
-                "generated C++ lost the interleaved type schedule or active "
-                "payload-enum representation\n"
+        # Probes of the frozen C++ backend's text: they run only when
+        # GTI_TEST_BACKENDS selects C++.
+        for _label, cpp_flags, _native in cpp_text_modes():
+            emitted_success = root / "success.cpp"
+            emission = run(
+                [str(compiler), str(success_source), *cpp_flags, "--emit-cpp", "-o", str(emitted_success)]
             )
-            return 1
+            if emission.returncode != 0:
+                return fail(emission)
+            generated = emitted_success.read_text(encoding="utf8")
+            enum_definition = generated.find("struct holder {")
+            wrapper_definition = generated.find("class wrapper {")
+            required = (
+                ", std::monostate> __gti_value;",
+                "std::move(__gti_mir_p_",
+            )
+            if (
+                enum_definition < 0
+                or wrapper_definition < 0
+                or enum_definition >= wrapper_definition
+                or any(fragment not in generated for fragment in required)
+            ):
+                sys.stderr.write(
+                    "generated C++ lost the interleaved type schedule or active "
+                    "payload-enum representation\n"
+                )
+                return 1
 
-        emitted_failure = root / "failure.cpp"
-        emission = run(
-            [str(compiler), str(failure_source), "--emit-cpp", "-o", str(emitted_failure)]
-        )
-        if emission.returncode != 0:
-            return fail(emission)
-        failure_cpp = emitted_failure.read_text(encoding="utf8")
-        if (
-            "mir_empty_state_v1<std::remove_cv_t<decltype(published)>>" not in failure_cpp
-            or "GTI MIR in-place payload-enum field reparent" not in failure_cpp
-        ):
-            sys.stderr.write(
-                "failure-form C++ lost the disengaged shell or exact field "
-                "publication protocol\n"
+            emitted_failure = root / "failure.cpp"
+            emission = run(
+                [str(compiler), str(failure_source), *cpp_flags, "--emit-cpp", "-o", str(emitted_failure)]
             )
-            return 1
+            if emission.returncode != 0:
+                return fail(emission)
+            failure_cpp = emitted_failure.read_text(encoding="utf8")
+            if (
+                "mir_empty_state_v1<std::remove_cv_t<decltype(published)>>" not in failure_cpp
+                or "GTI MIR in-place payload-enum field reparent" not in failure_cpp
+            ):
+                sys.stderr.write(
+                    "failure-form C++ lost the disengaged shell or exact field "
+                    "publication protocol\n"
+                )
+                return 1
 
         rejected = run(
             [str(compiler), str(unsupported_source), "-o", str(root / "rejected")]

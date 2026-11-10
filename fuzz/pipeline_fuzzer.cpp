@@ -3,17 +3,17 @@
 //
 // Every bounded input is analyzed twice through fresh production snapshots.
 // Acceptance, complete diagnostics, cross-phase facts, optimization state,
-// structured rejection, and MIR/C++ artifacts must be deterministic. Every
+// structured rejection, and MIR/LLVM artifacts must be deterministic. Every
 // diagnostic range is checked against the SourceManager that owns it. An
-// accepted input must produce coherent nonempty MIR and C++ artifacts, carry
+// accepted input must produce coherent nonempty MIR and LLVM artifacts, carry
 // an explicit lowered-program rejection, or carry a classified bounded backend
 // limitation. Unclassified backend exceptions remain fuzz failures.
 // Native compilation and execution remain out of process.
 
 #include "fuzz_support.h"
 
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/llvm_backend.h"
 #include "gti/lowered_program_builder.h"
 #include "gti/mir_backend.h"
 #include "gti/mir_printer.h"
@@ -39,7 +39,7 @@ struct Observation {
   std::string disposition;
   std::string rejection;
   std::string mirArtifact;
-  std::string cppArtifact;
+  std::string llvmArtifact;
 };
 
 void appendString(std::ostringstream &output, std::string_view value) {
@@ -260,9 +260,8 @@ Observation observe(std::string_view source, lang::OptimizationLevel level,
   result.disposition = "emitted";
   try {
     result.mirArtifact = lang::MirBackend().generate(*lowered.program).contents;
-    result.cppArtifact = lang::CppBackend(lang::CppStandard::Cpp23)
-                             .generate(*lowered.program)
-                             .contents;
+    result.llvmArtifact =
+        lang::LlvmBackend().generate(*lowered.program).contents;
   } catch (const lang::BackendUnsupportedError &exception) {
     result.disposition = "backend-unsupported";
     result.rejection = exception.what();
@@ -292,7 +291,7 @@ void requireClassified(const Observation &observation) {
   }
   if (observation.disposition == "backend-unsupported") {
     if (observation.rejection.empty() || observation.mirArtifact.empty() ||
-        !observation.cppArtifact.empty()) {
+        !observation.llvmArtifact.empty()) {
       gti_fuzz::fail("pipeline",
                      "backend limitation has incomplete classification");
     }
@@ -301,7 +300,7 @@ void requireClassified(const Observation &observation) {
   if (observation.disposition != "emitted") {
     gti_fuzz::fail("pipeline", "accepted input has no classified outcome");
   }
-  if (observation.mirArtifact.empty() || observation.cppArtifact.empty()) {
+  if (observation.mirArtifact.empty() || observation.llvmArtifact.empty()) {
     gti_fuzz::fail("pipeline", "accepted input produced an empty artifact");
   }
 }
@@ -337,10 +336,10 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t *data,
     second.disposition.clear();
   }
   if (gti_fuzz::injectProperty(data, size, "pipeline-empty-artifact")) {
-    second.cppArtifact.clear();
+    second.llvmArtifact.clear();
   }
   if (gti_fuzz::injectProperty(data, size, "pipeline-artifact")) {
-    second.cppArtifact += "injected";
+    second.llvmArtifact += "injected";
   }
 
   if (first.accepted != second.accepted) {
@@ -360,7 +359,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t *data,
     gti_fuzz::fail("pipeline", "classified outcome is not deterministic");
   }
   if (first.mirArtifact != second.mirArtifact ||
-      first.cppArtifact != second.cppArtifact) {
+      first.llvmArtifact != second.llvmArtifact) {
     gti_fuzz::fail("pipeline", "backend artifacts are not deterministic");
   }
   return 0;

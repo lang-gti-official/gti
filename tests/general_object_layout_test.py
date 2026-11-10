@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
+
 
 def main():
     compiler = Path(sys.argv[1]).resolve()
@@ -27,6 +29,10 @@ def main():
                                         text=True, timeout=30)
                 assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), result
                 print(f"general object layout: {source.name} {level} passed", flush=True)
+            if not cpp_modes():
+                continue
+            # The C++ backend's declared limitation, pinned only under the C++
+            # profile (GTI_TEST_BACKENDS).
             binary.write_bytes(b"preserve existing artifact")
             rejected = subprocess.run(
                 [str(compiler), str(source), "--backend", "cpp", "-o", str(binary)],

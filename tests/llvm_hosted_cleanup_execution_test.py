@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
 from llvm_hosted_cleanup_evidence_test import (
     TRACE_PATH, anchor_controls, install_trace_module, inventory, transformed_sources, validate_inventory,
 )
@@ -98,10 +99,13 @@ def check(result, arguments, executable, library, failures, markers=False):
 
 def main():
     gti, root, build = (Path(value).resolve() for value in sys.argv[1:4])
-    endpoints = [("cpp", "O3"), ("llvm", "O0"), ("llvm", "O3")]
+    known = [("cpp", "O3"), ("llvm", "O0"), ("llvm", "O3")]
+    # The C++ comparator runs by default only when GTI_TEST_BACKENDS selects it;
+    # an explicit `cpp:O3` argument still requests it.
+    endpoints = [endpoint for endpoint in known if endpoint[0] == "llvm" or cpp_modes()]
     if len(sys.argv) == 5:
         backend, level = sys.argv[4].split(":")
-        if (backend, level) not in endpoints:
+        if (backend, level) not in known:
             raise ValueError("unknown cleanup endpoint")
         endpoints = [(backend, level)]
     evidence = Path(tempfile.mkdtemp(prefix="llvm-hosted-source-cleanup-", dir=build))

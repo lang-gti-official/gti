@@ -1,12 +1,11 @@
 #include "gti/backend.h"
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/llvm_backend.h"
 #include "gti/lowered_program.h"
 #include "gti/mir_backend.h"
 #include "gti/native_header.h"
 
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -77,11 +76,10 @@ int main() { return 0; }
 
   const lang::LoweredProgram original =
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
-  lang::CppBackend cpp;
   lang::LlvmBackend llvm;
   lang::MirBackend mir;
   lang::NativeHeaderBackend nativeHeader;
-  expect(!cpp.generate(original).contents.empty() &&
+  expect(!llvm.generate(original).contents.empty() &&
              !mir.generate(original).contents.empty() &&
              !nativeHeader.generate(original).contents.empty(),
          "all executable backend implementations should accept the same "
@@ -94,7 +92,6 @@ int main() { return 0; }
   lang::LoweredProgramTestAccess::changeProgramKind(wrongKind);
   expect(!lang::verifyLoweredProgram(wrongKind).empty(),
          "a forged program kind must fail the complete verifier");
-  expectRejected(cpp, wrongKind, "program kind without an embedding plan");
   expectRejected(llvm, wrongKind, "program kind without an embedding plan");
   expectRejected(mir, wrongKind, "program kind without an embedding plan");
   expectRejected(nativeHeader, wrongKind,
@@ -106,7 +103,6 @@ int main() { return 0; }
          "the backend mutation fixture should contain declarations");
   if (!declarations.empty()) {
     declarations.front().name += "_forged";
-    expectRejected(cpp, staleSeal, "stale construction seal");
     expectRejected(llvm, staleSeal, "stale construction seal");
     expectRejected(mir, staleSeal, "stale construction seal");
     expectRejected(nativeHeader, staleSeal, "stale construction seal");
@@ -119,7 +115,6 @@ int main() { return 0; }
          "the backend mutation fixture should contain generated items");
   if (!generated.empty()) {
     generated.pop_back();
-    expectRejected(cpp, missingGeneratedItem, "missing generated item");
     expectRejected(llvm, missingGeneratedItem, "missing generated item");
     expectRejected(mir, missingGeneratedItem, "missing generated item");
     expectRejected(nativeHeader, missingGeneratedItem,

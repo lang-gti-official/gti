@@ -186,6 +186,13 @@ counts the omissions and `FrontendWorkMetrics::hirOmittedInstanceBodies`
 reports them. Class instances are never omitted: lowered bodies of the file's
 own instances reference their layout.
 
+A function instance whose concrete reanalysis reports an error is likewise
+processed up to its body and then stops: its diagnostics are reported, but the
+body is not lowered and the lowering is marked invalid. A failed expression
+keeps no instance record, so lowering it would read the primary body's facts
+through the instance delta and admit instances that still name this instance's
+own generic parameters; their analyses would only repeat the failure.
+
 The LSP clears the option because it never reads HIR bodies, only the
 diagnostics of HIR and MIR. The frontend applies it to analysis through HIR
 and through MIR alike; code generation needs every body and never clears it.
@@ -1286,6 +1293,16 @@ roots without rebuilding the body index per initializer. Verification compares
 the owner inventory, roots, concrete binding/types and source membership. Missing
 regions, sibling-instance facts and foreign roots are rejected. Accepted facts
 remain private owned witnesses until a later phase strips the syntax anchors.
+
+## Lifetime Erasure
+
+Every HIR type is lifetime-erased by the one canonical erasure function. That
+covers instance keys, value and binding types, and class, callable and
+constructor instances. HIR carries each callable's signature lifetime contract
+as declaration metadata for MIR. It carries no per-value lifetime application,
+origin or region fact. Two instantiations that differ only in lifetime
+arguments are one instance. `GTI_COMPILER_VALIDATION` asserts erasure when HIR
+publishes an instance.
 
 ## Boundary
 

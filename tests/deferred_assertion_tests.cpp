@@ -1,8 +1,8 @@
-#include "cpp_backend_test_support.h"
 #include "gti/ast_clone.h"
 #include "gti/lexer.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
+#include "lowered_program_test_support.h"
 
 #include <filesystem>
 #include <iostream>

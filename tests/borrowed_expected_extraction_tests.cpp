@@ -1,6 +1,6 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -293,16 +293,10 @@ int main() {
   }
   check(borrowedExtractions >= 8,
         "MIR mutations exercise both propagation and expect extraction paths");
-  for (const auto standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    try {
-      check(!gti_test::emitCppText(result, standard).empty(),
-            "borrow extraction uses the production backend in both standards");
-    } catch (const std::exception &error) {
-      std::cerr << error.what() << '\n';
-      check(false, "borrow extraction fits the verified backend vocabulary");
-    }
-  }
+  std::string error;
+  check(gti_test::llvmEmits(result, lang::OptimizationLevel::O0,
+                            lang::TargetInfo::host(), &error),
+        "borrow extraction uses the production backend: " + error);
 }
 
 void testNegative() {

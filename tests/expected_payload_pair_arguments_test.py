@@ -15,8 +15,8 @@ if __name__ == "__main__":
     if "--list-modes" not in sys.argv:
         with tempfile.TemporaryDirectory(prefix="gti-expected-pair-negative-") as temporary:
             result = subprocess.run(
-                [str(pathlib.Path(sys.argv[1]).resolve()), str(rejected), "--emit-cpp",
-                 "-o", str(pathlib.Path(temporary) / "rejected.cpp")],
+                [str(pathlib.Path(sys.argv[1]).resolve()), str(rejected), "--emit-mir",
+                 "-o", str(pathlib.Path(temporary) / "rejected.mir")],
                 text=True, capture_output=True, timeout=120)
             assert result.returncode != 0 and "GTI-S2018" in result.stderr, result
             assert "GTI-B0001" not in result.stderr, result

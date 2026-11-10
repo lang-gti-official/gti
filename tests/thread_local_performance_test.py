@@ -113,7 +113,7 @@ def main() -> None:
             path.write_text(source)
             binaries = {name: root / f"{kind}-{name}" for name in ("gti", "cpp")}
             commands = {
-                "gti": [str(compiler), str(path), "--std", "c++23", "-O3",
+                "gti": [str(compiler), str(path), "--backend", "llvm", "-O3",
                         "--progress=never", "-o", str(binaries["gti"]), "--",
                         str(fixtures / "thread_local_benchmark_support.cpp")],
                 "cpp": [str(cxx), "-std=c++23", "-O3", "-pthread",

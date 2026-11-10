@@ -1,11 +1,10 @@
-#include "../src/compiler/cpp_mir_body_emitter.h"
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -40,6 +39,17 @@ bool hasCode(const lang::FrontendResult &result, std::string_view code) {
   return std::any_of(
       result.diagnostics.begin(), result.diagnostics.end(),
       [&](const auto &diagnostic) { return diagnostic.code == code; });
+}
+
+// The shipped backend accepts the verified program; reports why it did not.
+bool emitsNative(const lang::FrontendResult &frontend,
+                 lang::OptimizationLevel level = lang::OptimizationLevel::O0) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, level, frontend.semantics.analysisSeal().target, &error);
+  if (!emitted)
+    std::cerr << "native emission: " << error << '\n';
+  return emitted;
 }
 
 const std::string source = R"(
@@ -403,6 +413,9 @@ int main() {
 }
 
 void testFailureFreeConstructorPublication() {
+  // The C++ emitter's constructed-field publication proof for this fixture is
+  // frozen in cpp_mir_cthread; the verified MIR facts it consumes and native
+  // emission remain here.
   const auto frontend = analyze(R"(
 import std.atomic;
 struct Gate {
@@ -434,13 +447,15 @@ int main() {
         constructor.body.failureRecords.size() != 2)
       continue;
     ++checked;
-    const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
-        frontend.mir, constructor);
-    expect(bindings.size() == 2 && lang::cppMirConstructorStatusCannotFail(
-                                       frontend.mir, constructor.id),
+    expect(std::all_of(constructor.initializers.begin(),
+                       constructor.initializers.end(),
+                       [](const auto &initializer) {
+                         return initializer.targetType.kind ==
+                                lang::SemanticType::Class;
+                       }),
            "two no-failure member constructions retain declaration-order "
            "publication");
-    for (int mutation = 0; mutation < 8; ++mutation) {
+    for (int mutation = 0; mutation < 3; ++mutation) {
       auto malformed = frontend.mir;
       auto *changed = const_cast<lang::MirConstructorInstance *>(
           malformed.findConstructorInstance(constructor.id));
@@ -449,132 +464,23 @@ int main() {
       auto *alternate = const_cast<lang::MirBlock *>(
           body.findBlock(entry->terminator.elseTarget));
       auto &invoke = entry->instructions.back();
-      switch (mutation) {
-      case 0:
-        alternate->instructions.push_back(
-            {.kind = lang::MirInstructionKind::Lifecycle});
-        break;
-      case 1:
+      if (mutation == 0)
         alternate->terminator.failureRecord = 0;
-        break;
-      case 2:
-        entry->terminator.target = body.entry;
-        break;
-      case 3:
+      else if (mutation == 1)
         invoke.constructorTarget.reset();
-        break;
-      case 4: {
-        auto *target = const_cast<lang::MirConstructorInstance *>(
-            malformed.findConstructorInstance(*invoke.constructorTarget));
-        target->body.blocks.front()
-            .instructions.front()
-            .definedFailure.propagation =
-            lang::FailurePropagationKind::DirectCall;
-        break;
-      }
-      case 5:
-        std::swap(changed->initializers[0], changed->initializers[1]);
-        break;
-      case 6:
-        invoke.parameterTypes.clear();
-        break;
-      case 7:
+      else
         body.failureRecords.front().producerInstruction = 0;
-        break;
-      }
-      expect(
-          lang::cppMirConstructedFieldInitializerBindings(malformed, *changed)
-              .empty(),
-          "cleanup, foreign failure, loops, missing targets, unknown failure, "
-          "field order, argument shape and failure identity must fail closed");
-      if (mutation != 5)
-        expect(!lang::cppMirConstructorStatusCannotFail(malformed, changed->id),
-               "malformed or genuinely unknown failure cannot become "
-               "no-failure status");
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "missing failure identity or construction target is rejected");
     }
   }
   expect(checked == 1,
          "the user-defined two-field constructor must exercise the proof");
-  std::size_t passiveCleanup = 0;
-  for (const auto &constructor : frontend.mir.constructorInstances()) {
-    if (constructor.parameterTypes.size() != 1 ||
-        constructor.parameterTypes.front().kind != lang::SemanticType::Class ||
-        constructor.body.failureRecords.size() != 1)
-      continue;
-    ++passiveCleanup;
-    expect(lang::cppMirConstructedFieldInitializerBindings(frontend.mir,
-                                                           constructor)
-                   .size() == 1,
-           "a user-defined passive tag retains its exact shell cleanup");
-    for (int mutation = 0; mutation < 10; ++mutation) {
-      auto malformed = frontend.mir;
-      auto *changed = const_cast<lang::MirConstructorInstance *>(
-          malformed.findConstructorInstance(constructor.id));
-      auto &body = changed->body;
-      const auto *entry = body.findBlock(body.entry);
-      auto *alternate = const_cast<lang::MirBlock *>(
-          body.findBlock(entry->terminator.elseTarget));
-      auto &retire = alternate->instructions.front();
-      auto &event = retire.lifecycle.front();
-      auto *drop = const_cast<lang::MirDropObligation *>(
-          body.findDropObligation(event.source));
-      auto &boundary =
-          body.cleanupBoundaries
-              [alternate->instructions.back().cleanupBoundaryEnd - 1];
-      switch (mutation) {
-      case 0:
-        drop->dropType.requiresActiveCleanup = true;
-        break;
-      case 1:
-        drop->dropType.destructor = 1;
-        break;
-      case 2:
-        changed->parameterBindings.clear();
-        break;
-      case 3:
-        drop->initiallyActive = false;
-        break;
-      case 4:
-        event.failureCleanup = false;
-        break;
-      case 5:
-        event.conditional = true;
-        break;
-      case 6:
-        event.target = drop->id;
-        break;
-      case 7:
-        boundary.kind = lang::MirCleanupBoundaryKind::Normal;
-        break;
-      case 8:
-        boundary.obligations.clear();
-        break;
-      case 9:
-        retire.definedFailure.propagation =
-            lang::FailurePropagationKind::Destructor;
-        break;
-      }
-      expect(
-          lang::cppMirConstructedFieldInitializerBindings(malformed, *changed)
-                  .empty() &&
-              !lang::cppMirConstructorStatusCannotFail(malformed, changed->id),
-          "active/user cleanup, non-parameter drops, lifecycle mismatch and "
-          "missing failure-boundary authority cannot be ignored");
-    }
-  }
-  expect(passiveCleanup == 1, "the unrelated passive-parameter constructor "
-                              "must exercise cleanup proof");
-  for (const auto standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    for (const auto level :
-         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
-      expect(!gti_test::emitCppText(frontend, standard,
-                                    frontend.semantics.analysisSeal().target,
-                                    level)
-                  .empty(),
-             "local and global user-defined immobile fields have production "
-             "emission");
-    }
+  for (const auto level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
+    expect(emitsNative(frontend, level),
+           "local and global user-defined immobile fields have production "
+           "emission");
   }
   const auto fallible = analyze(R"(
 struct Checked {
@@ -595,11 +501,7 @@ int main() { Wrapper value{3}; return value.value.value; }
         constructor.initializers.front().targetType.kind ==
             lang::SemanticType::Class) {
       ++rejected;
-      expect(!lang::cppMirConstructorStatusCannotFail(fallible.mir,
-                                                      constructor.id) &&
-                 lang::cppMirConstructedFieldInitializerBindings(fallible.mir,
-                                                                 constructor)
-                     .empty(),
+      expect(!constructor.body.failureRecords.empty(),
              "real nested overflow must retain its failure/publication route");
     }
   }
@@ -685,14 +587,12 @@ int main() {
   for (const auto level :
        {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
         lang::OptimizationLevel::O3}) {
-    const auto generated =
-        gti_test::emitCppText(frontend, lang::CppStandard::Cpp23,
-                              frontend.semantics.analysisSeal().target, level);
-    expect(generated.find("gti_rt_once_enter_v1(&__gti_native_callback_") !=
-                   std::string::npos &&
-               generated.find("gti_rt_once_leave_v1(&__gti_native_callback_") !=
-                   std::string::npos &&
-               generated.find("// GTI verified-MIR body:") != std::string::npos,
+    const auto lowered = gti_test::lowerOptimizedProgram(
+        frontend, level, frontend.semantics.analysisSeal().target);
+    expect(lowered.mir().nativeCallbackAdapters().size() == 1 &&
+               lowered.mir().nativeCallbackAdapters().front().cThreadCallback ==
+                   lang::CThreadCallbackKind::OnceInitializer &&
+               emitsNative(frontend, level),
            "production once thunk consumes verified role at every optimization "
            "level");
   }
@@ -773,16 +673,13 @@ void testPipeline() {
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, target);
   expect(lang::verifyLoweredProgram(lowered).empty(),
          "detached lowered contract verifies");
-  const auto generated =
-      gti_test::emitCppText(frontend, lang::CppStandard::Cpp23, target);
-  expect(generated.find("#include <gti/cthread.h>") != std::string::npos,
-         "the concurrent runtime contract selects its native boundary header");
-  expect(
-      generated.find("gti_rt_cthread_enter_v1(&__gti_native_callback_") !=
-              std::string::npos &&
-          generated.find("gti_rt_cthread_leave_v1(&__gti_native_callback_") !=
-              std::string::npos,
-      "production thunk consumes verified attachment policy");
+  expect(lowered.mir().requiresCThreadRuntime(),
+         "the concurrent runtime contract selects its native boundary");
+  expect(lowered.mir().nativeCallbackAdapters().size() == 1 &&
+             lowered.mir().nativeCallbackAdapters().front().cThreadCallback ==
+                 lang::CThreadCallbackKind::ThreadEntry &&
+             emitsNative(frontend),
+         "production thunk consumes verified attachment policy");
 
   auto changed = frontend.mir;
   auto &adapters = const_cast<std::vector<lang::MirNativeCallbackAdapter> &>(
@@ -881,12 +778,10 @@ void testDiagnostics() {
              imported.mir.hostedStartupPlan()->cThreadBegin == 0,
          "default-profile import/yield does not initialize the thread service");
   if (imported.canGenerateCode()) {
-    const auto text =
-        gti_test::emitCppText(imported, lang::CppStandard::Cpp23,
-                              imported.semantics.analysisSeal().target);
-    expect(
-        text.find("#include <gti/cthread.h>") == std::string::npos,
-        "default-profile yield does not require the callback boundary header");
+    expect(!imported.mir.requiresCThreadRuntime() &&
+               imported.mir.nativeCallbackAdapters().empty() &&
+               emitsNative(imported),
+           "default-profile yield does not require the callback boundary");
   }
   const auto safe = analyze(R"(
 import std.cthread;

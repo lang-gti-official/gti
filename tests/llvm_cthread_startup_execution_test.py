@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from backend_modes import cpp_modes
 from llvm_evidence_manifest import build_manifest
 
 
@@ -39,7 +40,8 @@ def main():
         print(json.dumps(evidence_manifest(Path(sys.argv[2]).resolve()), sort_keys=True))
         return
     gti, root = (Path(value).resolve() for value in sys.argv[1:3])
-    endpoints = [Endpoint("cpp", "O3", "c++23"),
+    # The C++ endpoint joins only when GTI_TEST_BACKENDS selects the C++ backend.
+    endpoints = [*([Endpoint("cpp", "O3", "c++23")] if cpp_modes() else []),
                  *(Endpoint("llvm", f"O{level}") for level in range(4))]
     with tempfile.TemporaryDirectory(prefix="gti-cthread-startup-") as temporary:
         for name, fixture in fixtures().items():

@@ -1,4 +1,22 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
+
+namespace {
+// The shipped backend boundary: verified lowering of `optimized` followed by
+// native emission. True when either step rejects the input.
+bool backendRejects(const lang::FrontendResult &frontend,
+                    const lang::MirProgram &optimized) {
+  try {
+    (void)lang::LlvmBackend().generate(
+        gti_test::lowerProgram(frontend, frontend.mir, optimized));
+  } catch (const std::exception &) {
+    return true;
+  }
+  return false;
+}
+} // namespace
 
 int main() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
@@ -9,7 +27,6 @@ int main() {
   expect(frontend.canGenerateCode(), "class field values have verified MIR");
   if (!frontend.canGenerateCode())
     return 1;
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
   std::size_t assignments = 0;
   std::size_t defaultStages = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
@@ -50,7 +67,7 @@ int main() {
                   if (mutation == 1 && candidate.id == stage->id)
                     candidate.lifecycle.clear();
                 }
-              expect(!supportsSelectedBodyText(malformed, rows, function.id),
+              expect(!lang::verifyMirProgram(malformed).valid(),
                      "default construction staging rejects wrong construction "
                      "kind or missing activation");
             }
@@ -65,9 +82,6 @@ int main() {
             destination == nullptr || destination->projections.empty())
           continue;
         ++assignments;
-        expect(supportsSelectedBodyText(frontend.mir, rows, function.id),
-               "field assignment bodies admit coherent text in their "
-               "selected form");
         for (int mutation = 0; mutation != 2; ++mutation) {
           auto malformed = frontend.mir;
           auto *changed = const_cast<lang::MirFunctionInstance *>(
@@ -78,7 +92,9 @@ int main() {
             place->projections.back().field = 999999;
           else
             place->type = lang::SemanticType::Unknown;
-          expect(!supportsSelectedBodyText(malformed, rows, function.id),
+          // MIR verification alone accepts this forgery; the verified
+          // lowering every backend consumes must reject it.
+          expect(backendRejects(frontend, malformed),
                  "field transport rejects forged concrete field identity/type");
         }
       }
@@ -128,27 +144,10 @@ int main() {
                "two-field schedule in declaration order");
         if (!exactSchedule)
           continue;
-        const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
-                                           constructor.id};
-        expect(lang::CppMirBodyEmitter(frontend.mir, rows)
-                   .supportsFailureBodyText(address),
-               "nested generated defaults admit their exact constructor "
-               "publication");
-        const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
-            frontend.mir, constructor);
-        const auto text =
-            lang::CppMirBodyEmitter(frontend.mir, rows)
-                .emitFailureBodyText(address, "nested-default", 1);
-        expect(bindings.size() == 1 && constructor.initializers.size() == 1 &&
-                   bindings.front().field ==
-                       constructor.initializers.front().field &&
-                   bindings.front().fieldType == owner->type &&
-                   bindings.front().constructor == selected->id &&
-                   bindings.front().constructInstruction == producer.id &&
-                   text.emitted() &&
-                   text.text.find("constructed field initializer publishes in "
-                                  "the member initializer list") !=
-                       std::string::npos,
+        // The consumer's single initializer publishes the exact nested field
+        // through the generated target constructed by `producer`.
+        expect(constructor.initializers.size() == 1 &&
+                   constructor.initializers.front().targetType == owner->type,
                "the exact nested field and generated target publish through "
                "the verified constructor binding rather than SSA defaulting");
         for (int mutation = 0; mutation != 2; ++mutation) {
@@ -171,10 +170,7 @@ int main() {
                 nested.functionTarget = 999999; // not a generated default
               }
             }
-          expect(changedProducer &&
-                     (!lang::verifyMirProgram(malformed).valid() ||
-                      !lang::CppMirBodyEmitter(malformed, rows)
-                           .supportsFailureBodyText(address)),
+          expect(changedProducer && !lang::verifyMirProgram(malformed).valid(),
                  "nested default proof rejects cycles and unresolved source "
                  "calls");
         }
@@ -183,14 +179,12 @@ int main() {
   }
   expect(nestedDefaults == 1,
          "fixture proves one recursive passive declaration default");
-  try {
-    const auto cpp = gti_test::emitCppText(frontend);
-    expect(!cpp.empty(),
-           "verified generated field schedules retain complete production "
-           "emission");
-  } catch (const std::exception &error) {
-    expect(false, error.what());
-  }
+  std::string error;
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &error),
+         "verified generated field schedules retain complete production "
+         "emission: " +
+             error);
   if (failures)
     return 1;
   std::cout << "class field value MIR and representation proofs passed\n";

@@ -7,7 +7,7 @@ at -O3), as rustc tests its non-primary codegen backends: never per change,
 never as a per-feature differential against the primary backend.
 
 GTI_TEST_BACKENDS selects the set: ``llvm`` (the default, and what every CI
-gate and full validation run uses), ``cpp`` (the scheduled C++ job) or
+gate and full validation run uses), ``cpp`` (the hand-dispatched C++ job) or
 ``both`` (local differential runs). Harness mode tables call ``native_modes``
 instead of listing standards and optimisation levels themselves, so this
 policy has one definition. A harness never spells ``--std``, a C++ standard

@@ -1,10 +1,272 @@
 #include "../src/compiler/semantic_diagnostics.h"
 #include "compiler_test_fixture.h"
-#include "native_symbol_spelling.h"
 #include "private_stdlib_fixture.h"
 #include "temporary_directory.h"
 
 namespace {
+
+// Backend-neutral MIR lookups. Declaration emission facts are asserted on the
+// verified MIR a backend consumes, never on generated backend text.
+const lang::HirFunctionInstance *
+hirFunctionNamed(const lang::FrontendResult &frontend, std::string_view name) {
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    if (function.source != nullptr && function.source->name().lexeme == name)
+      return &function;
+  }
+  return nullptr;
+}
+
+const lang::MirFunctionInstance *
+mirFunctionNamed(const lang::FrontendResult &frontend, std::string_view name) {
+  const lang::HirFunctionInstance *function = hirFunctionNamed(frontend, name);
+  return function == nullptr ? nullptr
+                             : frontend.mir.findFunctionInstance(function->id);
+}
+
+std::vector<const lang::MirFunctionInstance *>
+mirFunctionsNamed(const lang::FrontendResult &frontend, std::string_view name) {
+  std::vector<const lang::MirFunctionInstance *> result;
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    if (function.source == nullptr || function.source->name().lexeme != name)
+      continue;
+    if (const lang::MirFunctionInstance *instance =
+            frontend.mir.findFunctionInstance(function.id))
+      result.push_back(instance);
+  }
+  return result;
+}
+
+// The unique MIR function instance `name` owned by class instance `owner`.
+const lang::MirFunctionInstance *
+mirMethodNamed(const lang::FrontendResult &frontend,
+               const lang::MirClassInstance *owner, std::string_view name) {
+  if (owner == nullptr)
+    return nullptr;
+  const lang::MirFunctionInstance *found = nullptr;
+  for (const lang::MirFunctionInstance *function :
+       mirFunctionsNamed(frontend, name)) {
+    if (function->owner != owner->id)
+      continue;
+    if (found != nullptr)
+      return nullptr;
+    found = function;
+  }
+  return found;
+}
+
+std::vector<const lang::MirClassInstance *>
+mirClassesNamed(const lang::FrontendResult &frontend, std::string_view name) {
+  std::vector<const lang::MirClassInstance *> result;
+  for (const lang::HirClassInstance &owner : frontend.hir.classInstances()) {
+    if (owner.source == nullptr || owner.source->name().lexeme != name)
+      continue;
+    if (const lang::MirClassInstance *instance =
+            frontend.mir.findClassInstance(owner.id))
+      result.push_back(instance);
+  }
+  return result;
+}
+
+const lang::MirClassInstance *
+mirClassNamed(const lang::FrontendResult &frontend, std::string_view name) {
+  const auto classes = mirClassesNamed(frontend, name);
+  return classes.empty() ? nullptr : classes.front();
+}
+
+template <typename Predicate>
+bool anyMirInstruction(const lang::MirBody &body, Predicate predicate) {
+  for (const lang::MirBlock &block : body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (!instruction.tombstone && predicate(instruction))
+        return true;
+    }
+  }
+  return false;
+}
+
+// Every executable MIR body of the program, including class field
+// initializers and the module body.
+template <typename Visitor>
+void forEachMirBody(const lang::MirProgram &program, Visitor visitor) {
+  visitor(program.module());
+  for (const lang::MirFunctionInstance &function : program.functionInstances())
+    visitor(function.body);
+  for (const lang::MirConstructorInstance &constructor :
+       program.constructorInstances())
+    visitor(constructor.body);
+  for (const lang::MirDestructorInstance &destructor :
+       program.destructorInstances())
+    visitor(destructor.body);
+  for (const lang::MirLambdaInstance &lambda : program.lambdaInstances())
+    visitor(lambda.body);
+  for (const lang::MirClassInstance &owner : program.classInstances()) {
+    visitor(owner.fieldInitializers);
+    visitor(owner.staticFieldInitializers);
+  }
+}
+
+template <typename Predicate>
+std::size_t countMirInstructions(const lang::MirProgram &program,
+                                 Predicate predicate) {
+  std::size_t count = 0;
+  forEachMirBody(program, [&](const lang::MirBody &body) {
+    for (const lang::MirBlock &block : body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (!instruction.tombstone && predicate(instruction))
+          ++count;
+      }
+    }
+  });
+  return count;
+}
+
+// A source function whose definition is a verified-MIR body the backend
+// consumes directly.
+bool hasSourceMirBody(const lang::MirFunctionInstance *function) {
+  return function != nullptr &&
+         function->definitionKind == lang::MirDefinitionKind::Source &&
+         !function->body.blocks.empty();
+}
+
+// A place rooted at the current object and projecting `field`.
+bool isThisFieldPlace(const lang::MirPlace &place) {
+  return place.root == lang::MirPlaceRootKind::This &&
+         !place.projections.empty() &&
+         place.projections.front().kind == lang::MirProjectionKind::Field;
+}
+
+// The body loads a value out of a place matching `predicate`.
+template <typename Predicate>
+bool loadsFromPlace(const lang::MirBody &body, Predicate predicate) {
+  return anyMirInstruction(body, [&](const lang::MirInstruction &instruction) {
+    if (instruction.kind != lang::MirInstructionKind::Load)
+      return false;
+    for (const lang::MirOperand &operand : instruction.operands) {
+      const lang::MirPlace *place = body.findPlace(operand.place);
+      if (place != nullptr && predicate(*place))
+        return true;
+    }
+    return false;
+  });
+}
+
+// The body explicitly constructs an instance of `owner` through a selected
+// constructor with `arguments` explicit operands.
+bool constructsThrough(const lang::FrontendResult &frontend,
+                       const lang::MirBody &body,
+                       const lang::MirClassInstance *owner,
+                       std::size_t arguments) {
+  return owner != nullptr &&
+         anyMirInstruction(body, [&](const lang::MirInstruction &instruction) {
+           if (instruction.kind != lang::MirInstructionKind::Construct ||
+               !instruction.constructorTarget)
+             return false;
+           const lang::MirConstructorInstance *selected =
+               frontend.mir.findConstructorInstance(
+                   *instruction.constructorTarget);
+           return selected != nullptr && selected->owner == owner->id &&
+                  instruction.operands.size() == arguments;
+         });
+}
+
+// The body calls a MIR function instance accepted by `predicate`.
+template <typename Predicate>
+bool callsFunction(const lang::FrontendResult &frontend,
+                   const lang::MirBody &body, Predicate predicate) {
+  return anyMirInstruction(body, [&](const lang::MirInstruction &instruction) {
+    if (instruction.kind != lang::MirInstructionKind::Call ||
+        !instruction.functionTarget)
+      return false;
+    const lang::MirFunctionInstance *target =
+        frontend.mir.findFunctionInstance(*instruction.functionTarget);
+    return target != nullptr && predicate(*target);
+  });
+}
+
+// Any executable body of the program calls a function accepted by
+// `predicate`.
+template <typename Predicate>
+bool programCallsFunction(const lang::FrontendResult &frontend,
+                          Predicate predicate) {
+  bool found = false;
+  forEachMirBody(frontend.mir, [&](const lang::MirBody &body) {
+    found = found || callsFunction(frontend, body, predicate);
+  });
+  return found;
+}
+
+// The overloaded operator `kind` declared by class instance `owner` whose
+// first parameter refers to an instance of class `parameterClass` (any
+// parameter when empty).
+std::vector<const lang::MirFunctionInstance *>
+mirOperators(const lang::FrontendResult &frontend,
+             const lang::MirClassInstance *owner, lang::OverloadedOperator kind,
+             std::string_view parameterClass = {}) {
+  std::vector<const lang::MirFunctionInstance *> result;
+  if (owner == nullptr)
+    return result;
+  const auto parameterClasses = mirClassesNamed(frontend, parameterClass);
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    if (function.owner != owner->id || function.overloadedOperator != kind)
+      continue;
+    if (!parameterClass.empty()) {
+      if (function.parameterTypes.empty())
+        continue;
+      lang::SemanticType parameter = function.parameterTypes.front();
+      while (parameter.kind == lang::SemanticType::Reference &&
+             parameter.arguments.size() == 1) {
+        lang::SemanticType referent = parameter.arguments.front();
+        parameter = std::move(referent);
+      }
+      if (std::none_of(parameterClasses.begin(), parameterClasses.end(),
+                       [&](const lang::MirClassInstance *candidate) {
+                         return candidate->type == parameter;
+                       }))
+        continue;
+    }
+    result.push_back(&function);
+  }
+  return result;
+}
+
+// The first lowered declaration of `kind` named `name`.
+const lang::LoweredDeclaration *
+loweredDeclarationNamed(const lang::LoweredProgram &program,
+                        lang::LoweredDeclarationKind kind,
+                        std::string_view name) {
+  for (const lang::LoweredDeclaration &declaration : program.declarations())
+    if (declaration.kind == kind && declaration.name == name)
+      return &declaration;
+  return nullptr;
+}
+
+// The shipped backend accepts the verified program.
+bool shippedBackendAccepts(
+    const lang::FrontendResult &frontend,
+    const lang::TargetInfo &target = lang::TargetInfo::host()) {
+  std::string error;
+  const bool emitted =
+      frontend.canGenerateCode() &&
+      lang::verifyMirProgram(frontend.mir).valid() &&
+      gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0, target,
+                          &error);
+  if (!emitted && !error.empty())
+    std::cerr << "LLVM emission failed: " << error << '\n';
+  return emitted;
+}
+
+// The shipped backend emits a native object whose symbol table names the
+// exact native `symbol`.
+bool nativeObjectNames(const lang::FrontendResult &frontend,
+                       std::string_view symbol) {
+  if (!shippedBackendAccepts(frontend))
+    return false;
+  const lang::BackendArtifact object = gti_test::emitLlvm(frontend);
+  return object.contents.find(symbol) != std::string::npos;
+}
 
 void testConstructorTextStorageContracts() {
   const std::string declarations = R"gti(
@@ -953,11 +1215,14 @@ int main() {
   expect(foundThisValue,
          "typed HIR should preserve the current-object expression");
 
-  const std::string generated = gti_test::emitCppText(frontend);
-  expect(generated.find("const auto &__gti_mir_p_") != std::string::npos &&
-             generated.find("= (*this).value;") != std::string::npos &&
-             generated.find("// GTI verified-MIR body:") != std::string::npos,
-         "the C++ backend should lower GTI this as a checked object receiver");
+  const lang::MirFunctionInstance *read = mirFunctionNamed(frontend, "read");
+  expect(hasSourceMirBody(read) &&
+             std::any_of(read->body.places.begin(), read->body.places.end(),
+                         isThisFieldPlace) &&
+             loadsFromPlace(read->body, isThisFieldPlace) &&
+             shippedBackendAccepts(frontend),
+         "GTI this should lower as a checked object receiver: a verified MIR "
+         "body loads the field through a This-rooted place");
 
   const lang::FrontendResult invalid = lang::Frontend().analyze(
       "invalid-this.gti", "int main() { return this.value; }");
@@ -1047,18 +1312,28 @@ int main() {
                          }),
          "immutable fields retain read-only MIR identity and execute their "
          "defaults through the selected generated constructor");
-  const std::string generated = gti_test::emitCppText(classFrontend);
-  expect(generated.find("class Vault;") != std::string::npos &&
-             generated.find("struct Reading;") != std::string::npos &&
-             generated.find("class Vault {") != std::string::npos &&
-             generated.find("struct Reading {") != std::string::npos &&
-             generated.find("std::int32_t __gti_fn_") != std::string::npos &&
-             generated.find("_reveal() const;") != std::string::npos &&
-             generated.find("private:\n    std::int32_t hidden;") !=
-                 std::string::npos &&
-             generated.find("= (*this).hidden;") != std::string::npos,
-         "emitter should preserve declaration kinds, access labels, and "
-         "frontend-owned field immutability");
+  const lang::MirClassInstance *vaultInstance =
+      mirClassNamed(classFrontend, "Vault");
+  const lang::MirFunctionInstance *reveal =
+      mirFunctionNamed(classFrontend, "reveal");
+  const lang::MirFunctionInstance *total =
+      mirFunctionNamed(classFrontend, "total");
+  expect(vaultInstance != nullptr &&
+             vaultInstance->kind == lang::ClassKind::Class &&
+             reading != classFrontend.mir.classInstances().end() &&
+             reading->kind == lang::ClassKind::Struct &&
+             hasSourceMirBody(reveal) &&
+             reveal->receiverMutability == lang::ReceiverMutability::ReadOnly &&
+             hasSourceMirBody(total) &&
+             total->receiverMutability == lang::ReceiverMutability::ReadOnly &&
+             loadsFromPlace(total->body,
+                            [](const lang::MirPlace &place) {
+                              return isThisFieldPlace(place) &&
+                                     place.access == lang::AccessMode::ReadOnly;
+                            }) &&
+             shippedBackendAccepts(classFrontend),
+         "MIR should preserve declaration kinds, read-only receivers, and "
+         "frontend-owned field immutability for the backend");
 
   auto invalidTokens = lexer.scan(R"(
 class A {
@@ -1354,12 +1629,19 @@ int main() {
          "LoweredProgram should contain only flattened ordinary fields and no "
          "mutable-group declaration");
 
-  const std::string generated =
-      gti_test::emitCppText(frontend, lang::CppStandard::Cpp23, target);
-  expect(generated.find("std::int32_t first") != std::string::npos &&
-             generated.find("std::int32_t second") != std::string::npos &&
-             generated.find("mutable_field_group") == std::string::npos,
-         "the C++ backend should consume flattened field declarations only");
+  const lang::MirClassInstance *counterInstance =
+      mirClassNamed(frontend, "Counter");
+  expect(counterInstance != nullptr &&
+             counterInstance->declaredFields.size() == 3 &&
+             counterInstance->declaredFields[0].access ==
+                 lang::AccessMode::Mutable &&
+             counterInstance->declaredFields[1].access ==
+                 lang::AccessMode::Mutable &&
+             counterInstance->declaredFields[2].access ==
+                 lang::AccessMode::ReadOnly &&
+             shippedBackendAccepts(frontend, target),
+         "the backend should consume flattened ordinary field declarations "
+         "only");
 
   const std::string formatted = lang::Formatter().format(
       "struct Sample{private:mut{int first=0;int second=1;}int id=2; public: "
@@ -1705,73 +1987,90 @@ int main() {
   expect(mirCopies == 2 && mirMoves == 2,
          "MIR construct instructions should retain copy and move identity");
 
-  const lang::BackendArtifact generatedArtifact =
-      gti_test::emitCpp(validFrontend, validFrontend.mir, validFrontend.mir,
-                        lang::OptimizationPipeline().run(
-                            validFrontend.hir, lang::OptimizationLevel::O0));
-  const std::string &generated = generatedArtifact.contents;
-  const std::string &lifecycleGenerated = generatedArtifact.contents;
-  expect(generated.find("explicit Counter(const std::int32_t initial);") !=
-                 std::string::npos &&
-             generated.find("Counter::Counter(std::int32_t __gti_mir_arg_0) : "
-                            "value(__gti_mir_arg_0)") != std::string::npos,
+  const lang::MirClassInstance *counterInstance =
+      mirClassNamed(validFrontend, "Counter");
+  const lang::MirClassInstance *originInstance =
+      mirClassNamed(validFrontend, "Origin");
+  const lang::MirClassInstance *valueInstance =
+      mirClassNamed(validFrontend, "LifecycleValue");
+  const lang::MirClassInstance *moveOnlyInstance =
+      mirClassNamed(validFrontend, "MoveOnlyPolicy");
+  std::size_t counterSourceConstructors = 0;
+  bool counterFieldInitialization = true;
+  for (const lang::MirConstructorInstance &constructor :
+       validFrontend.mir.constructorInstances()) {
+    if (counterInstance == nullptr || constructor.owner != counterInstance->id)
+      continue;
+    ++counterSourceConstructors;
+    counterFieldInitialization =
+        counterFieldInitialization &&
+        constructor.definitionKind == lang::MirDefinitionKind::Source &&
+        !constructor.generatedDefault &&
+        std::any_of(
+            constructor.initializers.begin(), constructor.initializers.end(),
+            [](const lang::MirConstructorInitializer &initializer) {
+              return initializer.kind ==
+                         lang::ConstructorInitializerTargetKind::Field &&
+                     !initializer.arguments.empty();
+            });
+  }
+  expect(counterSourceConstructors == 3 && counterFieldInitialization,
          "constructor overloads should lower explicitly with field "
          "initialization");
-  expect(generated.find("std::int32_t __gti_fn_") != std::string::npos &&
-             generated.find("_read() const") != std::string::npos,
+  const lang::MirFunctionInstance *readMethod =
+      mirFunctionNamed(validFrontend, "read");
+  const lang::MirFunctionInstance *advanceMethod =
+      mirFunctionNamed(validFrontend, "advance");
+  expect(hasSourceMirBody(readMethod) && readMethod->receiverMutability ==
+                                             lang::ReceiverMutability::ReadOnly,
          "methods should lower as read-only by default");
-  expect(generated.find("_advance(const std::int32_t amount) const") ==
-                 std::string::npos &&
-             generated.find("_advance(const std::int32_t amount)") !=
-                 std::string::npos,
-         "mutable receiver methods should lower without C++ const");
-  const std::string originSlotPrefix =
-      "mir_lifetime_slot<::__gti_program::Origin> ";
-  const std::size_t originSlotAt = generated.find(originSlotPrefix);
-  const std::size_t originSlotNameAt =
-      originSlotAt == std::string::npos
-          ? std::string::npos
-          : originSlotAt + originSlotPrefix.size();
-  const std::size_t originSlotNameEnd =
-      originSlotNameAt == std::string::npos
-          ? std::string::npos
-          : generated.find(';', originSlotNameAt);
-  const std::string originSlot =
-      originSlotNameEnd == std::string::npos
-          ? std::string{}
-          : generated.substr(originSlotNameAt,
-                             originSlotNameEnd - originSlotNameAt);
-  expect(!originSlot.empty() &&
-             generated.find(originSlot + ".construct();", originSlotNameEnd) !=
-                 std::string::npos,
+  expect(hasSourceMirBody(advanceMethod) &&
+             advanceMethod->receiverMutability ==
+                 lang::ReceiverMutability::Mutable,
+         "mutable receiver methods should lower with a mutable receiver");
+  const lang::MirFunctionInstance *constructorMain =
+      mirFunctionNamed(validFrontend, "main");
+  expect(constructorMain != nullptr && originInstance != nullptr &&
+             anyMirInstruction(constructorMain->body,
+                               [&](const lang::MirInstruction &instruction) {
+                                 if (instruction.kind !=
+                                         lang::MirInstructionKind::Construct ||
+                                     !instruction.constructorTarget)
+                                   return false;
+                                 const lang::MirConstructorInstance *selected =
+                                     validFrontend.mir.findConstructorInstance(
+                                         *instruction.constructorTarget);
+                                 return selected != nullptr &&
+                                        selected->owner == originInstance->id &&
+                                        selected->generatedDefault;
+                               }),
          "generated default construction should remain explicit at the call "
          "site");
-  expect(
-      lifecycleGenerated.find("Origin();") != std::string::npos &&
-          lifecycleGenerated.find("Origin::Origin()") != std::string::npos &&
-          lifecycleGenerated.find("Counter(const Counter &other) = default;") !=
-              std::string::npos &&
-          lifecycleGenerated.find("Counter(Counter &&) = default;") !=
-              std::string::npos &&
-          lifecycleGenerated.find(
-              "Counter &operator=(const Counter &other) = default;") !=
-              std::string::npos &&
-          lifecycleGenerated.find(
-              "Counter &operator=(Counter &&) = default;") !=
-              std::string::npos &&
-          lifecycleGenerated.find("~Counter() noexcept = default;") !=
-              std::string::npos &&
-          lifecycleGenerated.find(
-              "LifecycleValue(const LifecycleValue &other) = default;") !=
-              std::string::npos &&
-          lifecycleGenerated.find(
-              "LifecycleValue(LifecycleValue &&) = default;") !=
-              std::string::npos &&
-          lifecycleGenerated.find(
-              "MoveOnlyPolicy(const MoveOnlyPolicy &other) = delete;") !=
-              std::string::npos,
-      "the backend should explicitly emit compiler-generated special "
-      "members");
+  expect(counterInstance != nullptr && originInstance != nullptr &&
+             valueInstance != nullptr && moveOnlyInstance != nullptr &&
+             originInstance->defaultConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             counterInstance->copyConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             counterInstance->moveConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             counterInstance->copyAssignment ==
+                 lang::SpecialMemberStatus::Generated &&
+             counterInstance->moveAssignment ==
+                 lang::SpecialMemberStatus::Generated &&
+             counterInstance->destructorStatus ==
+                 lang::SpecialMemberStatus::Generated &&
+             valueInstance->copyConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             valueInstance->moveConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             moveOnlyInstance->copyConstructor ==
+                 lang::SpecialMemberStatus::Deleted &&
+             moveOnlyInstance->moveConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             shippedBackendAccepts(validFrontend),
+         "MIR should carry explicit compiler-generated special-member "
+         "availability to the backend");
 
   const std::string invalidSource = R"(
 class MissingInitialization {
@@ -2036,13 +2335,20 @@ int main() {
          "separate static and receiver method bodies retain canonical identity "
          "and defaults");
   if (frontend.canGenerateCode()) {
-    const auto artifact =
-        gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
-                          lang::OptimizationPipeline().run(
-                              frontend.hir, lang::OptimizationLevel::O0));
-    expect(!artifact.contents.empty(),
-           "split methods must seal as one canonical class member, not "
-           "namespace functions");
+    const lang::MirFunctionInstance *splitRead =
+        mirFunctionNamed(frontend, "read");
+    const lang::MirFunctionInstance *splitAdd =
+        mirFunctionNamed(frontend, "add");
+    const lang::MirClassInstance *splitCounter =
+        mirClassNamed(frontend, "Counter");
+    expect(
+        splitCounter != nullptr && hasSourceMirBody(splitRead) &&
+            splitRead->owner == splitCounter->id && !splitRead->staticMember &&
+            hasSourceMirBody(splitAdd) && splitAdd->owner == splitCounter->id &&
+            splitAdd->receiverMutability == lang::ReceiverMutability::Mutable &&
+            shippedBackendAccepts(frontend),
+        "split methods must seal as one canonical class member, not "
+        "namespace functions");
     lang::HirProgram forged = frontend.hir;
     auto &instances = const_cast<std::vector<lang::HirFunctionInstance> &>(
         forged.functionInstances());
@@ -2396,12 +2702,8 @@ concept Number<T> = std::numeric<T>;
   expect(hirStatic && hirDirect && mirStatic && mirDirect,
          "HIR and MIR must preserve static identity and receiver-free direct "
          "calls, not rediscover purity from the owner kind");
-  const auto artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
-                        lang::OptimizationPipeline().run(
-                            frontend.hir, lang::OptimizationLevel::O0));
-  expect(!artifact.contents.empty(),
-         "verified static and pure instance functions must reach the C++ "
+  expect(shippedBackendAccepts(frontend),
+         "verified static and pure instance functions must reach the native "
          "artifact; runtime coverage verifies native signatures independently");
 
   const auto rejected = [](std::string_view source, std::string_view code) {
@@ -2807,62 +3109,58 @@ int main() {
   expect(baseStages == 1,
          "Sprite should initialize its Entity base exactly once");
 
-  const lang::BackendArtifact generatedArtifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir,
-                        lang::OptimizationPipeline().run(
-                            frontend.hir, lang::OptimizationLevel::O0));
-  const std::string &generated = generatedArtifact.contents;
-  constexpr std::string_view nameIdDefinition =
-      "std::int32_t Sprite::name_id() const {";
-  const std::size_t firstNameIdDefinition = generated.find(nameIdDefinition);
-  // The verified base stage now uses the status-result constructor overload,
-  // not a plain C++ base call. Derive both tags from selected MIR identities.
-  const std::string selectedBaseDefinition =
-      spriteConstructor != nullptr && entityConstructor != nullptr
-          ? "Sprite::Sprite(::gti_internal::backend::mir_failure_constructor_"
-            "tag_v1<" +
-                std::to_string(spriteConstructor->id) +
-                ">, std::int32_t __gti_mir_arg_0, bool "
-                "*__gti_mir_constructor_success, ::gti_failure_record_v2 "
-                "*__gti_mir_failure_record) : ::__gti_program::Entity("
-                "::gti_internal::backend::mir_failure_constructor_tag_v1<" +
-                std::to_string(entityConstructor->id) +
-                ">{}, __gti_mir_arg_0, __gti_mir_constructor_success, "
-                "__gti_mir_failure_record)"
-          : std::string{};
-  expect(
-      generated.find(
-          "class Sprite : public ::__gti_program::Entity, public "
-          "::__gti_program::Renderable, public ::__gti_program::Named") !=
-              std::string::npos &&
-          generated.find("virtual std::int32_t render(") != std::string::npos &&
-          generated.find("render(const std::int32_t frame) const override") !=
-              std::string::npos &&
-          generated.find("virtual std::int32_t class_only() const = 0;") !=
-              std::string::npos &&
-          generated.find("class_only() const override") != std::string::npos &&
-          generated.find(" = 0;") != std::string::npos &&
-          generated.find("virtual ~Renderable() noexcept = default;") !=
-              std::string::npos &&
-          generated.find("explicit Sprite(const std::int32_t id);") !=
-              std::string::npos &&
-          !selectedBaseDefinition.empty() &&
-          generated.find(selectedBaseDefinition) != std::string::npos &&
-          generated.find("virtual bool read__gti_mir_failure(") !=
-              std::string::npos &&
-          generated.find("read__gti_mir_failure(std::int32_t "
-                         "*__gti_mir_out_result") != std::string::npos &&
-          generated.find("_Box::read(std::add_pointer_t<std::int32_t> "
-                         "__gti_mir_out_result) const") != std::string::npos &&
-          firstNameIdDefinition != std::string::npos &&
-          generated.find(nameIdDefinition,
-                         firstNameIdDefinition + nameIdDefinition.size()) ==
-              std::string::npos &&
-          generated.find("static_cast<const ::__gti_program::Entity &>") !=
-              std::string::npos,
-      "the C++ backend should emit inheritance, pure contracts, overrides, "
-      "base construction, polymorphic destruction, and GTI-selected virtual "
-      "overloads");
+  const lang::MirClassInstance *renderableMir =
+      mirClassNamed(frontend, "Renderable");
+  const lang::MirClassInstance *entityMir = mirClassNamed(frontend, "Entity");
+  const lang::MirClassInstance *contractMir =
+      mirClassNamed(frontend, "ClassContract");
+  const lang::MirClassInstance *implementationMir =
+      mirClassNamed(frontend, "ClassImplementation");
+  const lang::MirClassInstance *boxMir = mirClassNamed(frontend, "Box");
+  const lang::MirFunctionInstance *pureContract =
+      mirMethodNamed(frontend, contractMir, "class_only");
+  const lang::MirFunctionInstance *contractOverride =
+      mirMethodNamed(frontend, implementationMir, "class_only");
+  const lang::MirFunctionInstance *spriteRender =
+      mirMethodNamed(frontend, spriteMir, "render");
+  const lang::MirFunctionInstance *spriteNameId =
+      mirMethodNamed(frontend, spriteMir, "name_id");
+  const lang::MirFunctionInstance *boxReadMir =
+      mirMethodNamed(frontend, boxMir, "read");
+  const lang::MirFunctionInstance *inheritedTick =
+      mirMethodNamed(frontend, spriteMir, "inherited_tick");
+  expect(renderableMir != nullptr && renderableMir->abstract &&
+             renderableMir->polymorphic &&
+             renderableMir->kind == lang::ClassKind::Interface &&
+             pureContract != nullptr && pureContract->pureVirtual &&
+             pureContract->virtualMethod && contractOverride != nullptr &&
+             contractOverride->overrideMethod &&
+             hasSourceMirBody(contractOverride) &&
+             hasSourceMirBody(spriteRender) && spriteRender->overrideMethod &&
+             spriteRender->virtualMethod && hasSourceMirBody(spriteNameId) &&
+             spriteNameId->overrideMethod && hasSourceMirBody(boxReadMir) &&
+             boxReadMir->overrideMethod,
+         "MIR should carry pure contracts, overrides, polymorphic interface "
+         "destruction, and exactly one name_id definition to the backend");
+  expect(entityMir != nullptr && hasSourceMirBody(inheritedTick) &&
+             anyMirInstruction(inheritedTick->body,
+                               [&](const lang::MirInstruction &instruction) {
+                                 if (instruction.kind !=
+                                         lang::MirInstructionKind::Call ||
+                                     !instruction.functionTarget)
+                                   return false;
+                                 const lang::MirFunctionInstance *target =
+                                     frontend.mir.findFunctionInstance(
+                                         *instruction.functionTarget);
+                                 return target != nullptr &&
+                                        target->owner == entityMir->id &&
+                                        target->parameterTypes.size() == 1 &&
+                                        target->parameterTypes.front().kind ==
+                                            lang::SemanticType::Float;
+                               }) &&
+             shippedBackendAccepts(frontend),
+         "the backend should receive inheritance, base construction, and the "
+         "GTI-selected inherited virtual overload from MIR");
 
   const std::string formatted = lang::Formatter().format(
       "interface Renderable{int render(int frame);};"
@@ -3316,18 +3614,16 @@ int main() {
              boxedValue->constructorTarget.has_value(),
          "HIR should retain direct initialization and its constructor edge");
 
-  const std::string generated = gti_test::emitCppText(frontend);
-  expect(generated.find("mir_lifetime_slot<::__gti_program::__gti_type_") !=
-                 std::string::npos &&
-             generated.find(".construct(__gti_mir_v_") != std::string::npos &&
-             generated.find("mir_lifetime_slot<::__gti_program::Holder>") !=
-                 std::string::npos &&
-             generated.find(".construct();") != std::string::npos &&
-             generated.find("mir_lifetime_slot<::__gti_program::Pair>") !=
-                 std::string::npos &&
-             generated.find("Pair::Pair(std::int32_t __gti_mir_arg_0, "
-                            "std::int32_t __gti_mir_arg_1)") !=
-                 std::string::npos,
+  const lang::MirFunctionInstance *braceMain =
+      mirFunctionNamed(frontend, "main");
+  expect(hasSourceMirBody(braceMain) &&
+             constructsThrough(frontend, braceMain->body,
+                               mirClassNamed(frontend, "Box"), 1) &&
+             constructsThrough(frontend, braceMain->body,
+                               mirClassNamed(frontend, "Holder"), 0) &&
+             constructsThrough(frontend, braceMain->body,
+                               mirClassNamed(frontend, "Pair"), 2) &&
+             shippedBackendAccepts(frontend),
          "the backend should lower braces through explicit constructor calls");
 
   const lang::FrontendResult invalid =
@@ -3548,41 +3844,63 @@ int main() {
   expect(validFrontend.canGenerateCode(),
          "generic substitution and exact inference should validate");
 
-  const std::string generated = gti_test::emitCppText(validFrontend);
-  expect(generated.find("_Box;") != std::string::npos &&
-             generated.find("_Box {") != std::string::npos &&
-             generated.find("template <typename T>\n  class Box") ==
-                 std::string::npos,
-         "a selected nameable generic class should lower with matching "
-         "GTI-owned concrete forward and full declarations");
-  expect(generated.find("__gti_inst_") != std::string::npos &&
-             containsMangledFunction(generated, "", "identity",
-                                     "(std::int32_t __gti_mir_arg_0)") &&
-             containsMangledFunction(generated, "", "identity",
-                                     "(std::string_view __gti_mir_arg_0)") &&
-             containsMangledFunction(generated, "", "unbox", ""),
-         "nameable generic functions should lower as GTI-selected concrete "
-         "functions");
+  const auto genericBoxes = mirClassesNamed(validFrontend, "Box");
+  expect(genericBoxes.size() == 1 &&
+             genericBoxes.front()->type.kind == lang::SemanticType::Class,
+         "a selected nameable generic class should lower as one GTI-owned "
+         "concrete class instance");
+  const auto identities = mirFunctionsNamed(validFrontend, "identity");
+  const auto unboxes = mirFunctionsNamed(validFrontend, "unbox");
+  const auto concreteGeneric = [](const lang::MirFunctionInstance *function) {
+    return hasSourceMirBody(function) && function->typeArguments.size() == 1 &&
+           function->typeArguments.front().kind != lang::SemanticType::Unknown;
+  };
   expect(
-      generated.find("mir_lifetime_slot<::__gti_program::__gti_type_") !=
-              std::string::npos &&
-          generated.find("_identity(__gti_mir_v_") != std::string::npos &&
-          generated.find("_Box::__gti_member_") != std::string::npos &&
-          generated.find("_set(") != std::string::npos &&
-          containsMangledFunction(generated, "", "identity", "(__gti_mir_v_") &&
-          generated.find("_set(__gti_mir_v_") != std::string::npos,
-      "applied types and explicit generic calls should lower recursively");
-  const auto sourceNamespace = generated.find("namespace __gti_program {");
-  expect(sourceNamespace != std::string::npos,
-         "concrete source declarations retain their GTI program namespace");
-  expect(generated.find(".template __gti_fn_") == std::string::npos &&
-             generated.find("_Box::__gti_member_") != std::string::npos &&
-             generated.find("_echo(__gti_mir_v_") != std::string::npos &&
-             sourceNamespace != std::string::npos &&
-             generated.find("template <> ", sourceNamespace) ==
-                 std::string::npos,
-         "the backend should emit the concrete selected generic method "
-         "without reopening C++ dependent-template lookup");
+      identities.size() == 2 &&
+          std::all_of(identities.begin(), identities.end(), concreteGeneric) &&
+          identities[0]->typeArguments != identities[1]->typeArguments &&
+          unboxes.size() == 1 && concreteGeneric(unboxes.front()),
+      "nameable generic functions should lower as GTI-selected concrete "
+      "functions");
+  const lang::MirFunctionInstance *genericMain =
+      mirFunctionNamed(validFrontend, "main");
+  const auto callsInstance =
+      [&](const lang::MirFunctionInstance *caller,
+          const std::vector<const lang::MirFunctionInstance *> &targets) {
+        return caller != nullptr &&
+               anyMirInstruction(
+                   caller->body, [&](const lang::MirInstruction &instruction) {
+                     return instruction.kind ==
+                                lang::MirInstructionKind::Call &&
+                            instruction.functionTarget &&
+                            std::any_of(targets.begin(), targets.end(),
+                                        [&](const auto *target) {
+                                          return target->id ==
+                                                 *instruction.functionTarget;
+                                        });
+                   });
+      };
+  const auto sets = mirFunctionsNamed(validFrontend, "set");
+  const auto echoes = mirFunctionsNamed(validFrontend, "echo");
+  expect(hasSourceMirBody(genericMain) && !genericBoxes.empty() &&
+             constructsThrough(validFrontend, genericMain->body,
+                               genericBoxes.front(), 1) &&
+             callsInstance(genericMain, identities) &&
+             callsInstance(genericMain, sets) && sets.size() == 1 &&
+             sets.front()->owner == genericBoxes.front()->id,
+         "applied types and explicit generic calls should lower recursively");
+  expect(!echoes.empty() &&
+             std::all_of(echoes.begin(), echoes.end(),
+                         [&](const lang::MirFunctionInstance *echo) {
+                           return concreteGeneric(echo) &&
+                                  !genericBoxes.empty() &&
+                                  echo->owner == genericBoxes.front()->id;
+                         }) &&
+             callsInstance(genericMain, echoes) &&
+             callsInstance(mirFunctionNamed(validFrontend, "relay"), echoes) &&
+             shippedBackendAccepts(validFrontend),
+         "the backend should receive the concrete selected generic method "
+         "without reopening dependent-template lookup");
 
   auto invalidTokens = lexer.scan(R"(
 class Duplicate<T, T> { public: Duplicate() = default; };
@@ -3712,17 +4030,15 @@ int main() {
   expect(frontend.canGenerateCode(),
          "a dormant dependent generic carrier should validate");
 
-  const std::string generated = gti_test::emitCppText(frontend);
-  expect(
-      concreteBackendSymbols(generated, "__gti_type_", "Leaf").size() == 1 &&
-          generated.find("template <typename T>\n  class Leaf;") !=
-              std::string::npos &&
-          generated.find("template <typename T>\n  class Leaf {") !=
-              std::string::npos &&
-          generated.find("template <typename T>\n  class DormantCarrier {") !=
-              std::string::npos,
-      "a retained native carrier should close over every dependent generic "
-      "family while concrete calls keep their direct representation");
+  const auto leaves = mirClassesNamed(frontend, "Leaf");
+  expect(leaves.size() == 1 &&
+             mirClassesNamed(frontend, "DormantCarrier").empty() &&
+             constructsThrough(frontend,
+                               mirFunctionNamed(frontend, "main")->body,
+                               leaves.front(), 1) &&
+             shippedBackendAccepts(frontend),
+         "a dormant dependent generic carrier should not be instantiated while "
+         "concrete calls keep their direct concrete instance");
 }
 
 void testUninstantiatedGenericSignatureClosure() {
@@ -3765,8 +4081,8 @@ int main() { return 0; }
   expect(
       frontend.hir.functionInstances().size() == 1,
       "signature discovery must not instantiate an unused generic method body");
-  const auto generated = gti_test::emitCppText(frontend);
-  expect(concreteBackendSymbols(generated, "__gti_type_", "Result").size() == 4,
+  expect(mirClassesNamed(frontend, "Result").size() == 4 &&
+             shippedBackendAccepts(frontend),
          "each concrete declaration signature type must have a representation "
          "identity");
 }
@@ -3788,17 +4104,18 @@ int main() { Owner<int> owner{}; auto value = owner.result(42); return value.lea
   expect(frontend.canGenerateCode(), "dependent carrier closure must verify");
   if (!frontend.canGenerateCode())
     return;
-  const auto generated = gti_test::emitCppText(frontend);
-  expect(
-      concreteBackendSymbols(generated, "__gti_type_", "Owner").empty() &&
-          concreteBackendSymbols(generated, "__gti_type_", "Wrapper").empty() &&
-          concreteBackendSymbols(generated, "__gti_type_", "Leaf").empty(),
-      "dependent owner result and transitive field must share native "
-      "template representation with concrete MIR signatures");
-  expect(
-      concreteBackendSymbols(generated, "__gti_type_", "Independent").size() ==
-          1,
-      "fully concrete signature references must retain direct representation");
+  const auto concreteInstances = [&](std::string_view name) {
+    const auto classes = mirClassesNamed(frontend, name);
+    return classes.size() == 1 &&
+           classes.front()->type.kind == lang::SemanticType::Class;
+  };
+  expect(concreteInstances("Owner") && concreteInstances("Wrapper") &&
+             concreteInstances("Leaf") && shippedBackendAccepts(frontend),
+         "dependent owner result and transitive field must close as concrete "
+         "MIR class instances of the selected application");
+  expect(concreteInstances("Independent"),
+         "fully concrete signature references must retain a direct concrete "
+         "class instance");
 }
 
 void testExactQualifiedClassSpecializations() {
@@ -3882,26 +4199,24 @@ int main() {
          "class identities");
 
   if (frontend.canGenerateCode()) {
-    const std::string generated = gti_test::emitCppText(frontend);
-    const std::size_t firstValue = generated.find("_Value {");
-    const std::size_t secondValue =
-        firstValue == std::string::npos
-            ? std::string::npos
-            : generated.find("_Value {", firstValue + 1);
-    const std::size_t firstCount = generated.find("_Count {");
-    const std::size_t secondCount =
-        firstCount == std::string::npos
-            ? std::string::npos
-            : generated.find("_Count {", firstCount + 1);
-    expect(generated.find("_Value;") != std::string::npos &&
-               firstValue != std::string::npos &&
-               secondValue != std::string::npos &&
-               firstCount != std::string::npos &&
-               secondCount != std::string::npos &&
-               generated.find("Value<std::") == std::string::npos &&
-               generated.find("Count<") == std::string::npos,
-           "the C++ representation should emit ordinary concrete classes for "
-           "both primary applications and selected exact specializations");
+    const auto values = mirClassesNamed(frontend, "Value");
+    const auto counts = mirClassesNamed(frontend, "Count");
+    expect(values.size() == 2 && counts.size() == 2 &&
+               values[0]->declaration != values[1]->declaration &&
+               counts[0]->declaration != counts[1]->declaration &&
+               std::all_of(values.begin(), values.end(),
+                           [&](const lang::MirClassInstance *value) {
+                             return hasSourceMirBody(
+                                 mirMethodNamed(frontend, value, "read"));
+                           }) &&
+               std::all_of(counts.begin(), counts.end(),
+                           [&](const lang::MirClassInstance *count) {
+                             return hasSourceMirBody(
+                                 mirMethodNamed(frontend, count, "read"));
+                           }) &&
+               shippedBackendAccepts(frontend),
+           "MIR should carry ordinary concrete classes for both primary "
+           "applications and selected exact specializations");
   }
 
   const std::string formatted = lang::Formatter().format(
@@ -4081,7 +4396,7 @@ int main() {
          "concrete HIR should preserve integer contextual typing and the "
          "ordinary integer source of a floating comparison");
   if (valid.canGenerateCode())
-    expect(!gti_test::emitCppText(valid).empty(),
+    expect(shippedBackendAccepts(valid),
            "numeric literal instances must pass verified MIR emission");
 
   const std::string outOfRangeSource = R"(
@@ -4258,24 +4573,53 @@ int main() {
                      .lexeme == "ordered",
          "the AST should retain the qualified generic constraint path");
 
-  const std::string generated = gti_test::emitCppText(valid);
+  const auto minimums = mirFunctionsNamed(valid, "minimum");
+  const auto multiplies = mirFunctionsNamed(valid, "multiply");
+  const auto checkedMultiply = [](const lang::MirFunctionInstance *function) {
+    return hasSourceMirBody(function) &&
+           function->typeArguments ==
+               std::vector<lang::SemanticType>{lang::SemanticType::Int32} &&
+           anyMirInstruction(
+               function->body, [](const lang::MirInstruction &instruction) {
+                 return instruction.kind == lang::MirInstructionKind::Compute &&
+                        instruction.operation == lang::MirOperation::Multiply &&
+                        !instruction.definedFailure.localOrigins.empty();
+               });
+  };
   expect(
-      generated.find("template <typename T>\n  T __gti_fn_") ==
-              std::string::npos &&
-          containsMangledFunction(generated, "", "minimum",
-                                  "(std::int32_t __gti_mir_arg_0, std::int32_t "
-                                  "__gti_mir_arg_1)") &&
-          generated.find("_minimum<std::int32_t>(") == std::string::npos &&
-          generated.find("mir_checked_multiply_v1<std::int32_t>") !=
-              std::string::npos &&
-          generated.find("requires __gti_std::") == std::string::npos,
+      minimums.size() == 1 && hasSourceMirBody(minimums.front()) &&
+          minimums.front()->typeArguments ==
+              std::vector<lang::SemanticType>{lang::SemanticType::Int32} &&
+          minimums.front()->parameterTypes ==
+              std::vector<lang::SemanticType>{lang::SemanticType::Int32,
+                                              lang::SemanticType::Int32} &&
+          std::any_of(multiplies.begin(), multiplies.end(), checkedMultiply) &&
+          shippedBackendAccepts(valid),
       "constraints should remain frontend metadata while generic numeric "
-      "conversions lower through checked backend casts");
-  expect(generated.find("static_cast<std::uint64_t>(0)") != std::string::npos &&
-             generated.find("static_cast<std::uint8_t>(3)") !=
-                 std::string::npos,
-         "the C++ backend should explicitly preserve contextual generic "
-         "integer literal types");
+      "operations lower as concrete checked MIR operations");
+  const auto literalOfType = [&](std::string_view function,
+                                 lang::SemanticType type,
+                                 std::uint64_t magnitude) {
+    const auto instances = mirFunctionsNamed(valid, function);
+    return std::any_of(
+        instances.begin(), instances.end(),
+        [&](const lang::MirFunctionInstance *instance) {
+          return anyMirInstruction(
+              instance->body, [&](const lang::MirInstruction &instruction) {
+                const auto *value =
+                    instruction.literal
+                        ? std::get_if<std::uint64_t>(&*instruction.literal)
+                        : nullptr;
+                return instruction.operation == lang::MirOperation::Literal &&
+                       value != nullptr && *value == magnitude &&
+                       instruction.info.type == type;
+              });
+        });
+  };
+  expect(literalOfType("is_zero", lang::SemanticType::UInt64, 0) &&
+             literalOfType("low_bits", lang::SemanticType::UInt8, 3),
+         "MIR should explicitly preserve contextual generic integer literal "
+         "types");
 
   lang::FrontendResult capabilities = lang::Frontend().analyze(
       "exact-generic-capabilities.gti", R"(
@@ -4415,19 +4759,41 @@ int main() {
          "intrinsic with one exact, failure-free constructor target through "
          "HIR and MIR");
 
-  const std::string capabilityCpp = gti_test::emitCppText(capabilities);
-  // The failure-free default_value<Rank> publishes its exact default
-  // construction as its plain return expression.
-  expect(capabilityCpp.find("operator<(") != std::string::npos &&
-             capabilityCpp.find("operator>=(") != std::string::npos &&
-             capabilityCpp.find("return ::__gti_program::Rank();") !=
-                 std::string::npos &&
-             capabilityCpp.find("constructor-instance " +
-                                std::to_string(defaultRankConstructor)) !=
-                 std::string::npos &&
-             capabilityCpp.find("concept ") == std::string::npos,
-         "the C++ backend should emit selected relational methods and generic "
-         "default construction without C++ concepts");
+  const lang::MirClassInstance *rankMir = mirClassNamed(capabilities, "Rank");
+  const auto rankOperator =
+      [&](lang::OverloadedOperator kind) -> const lang::MirFunctionInstance * {
+    for (const lang::MirFunctionInstance &function :
+         capabilities.mir.functionInstances()) {
+      if (rankMir != nullptr && function.owner == rankMir->id &&
+          function.overloadedOperator == kind)
+        return &function;
+    }
+    return nullptr;
+  };
+  const lang::MirFunctionInstance *rankLess =
+      rankOperator(lang::OverloadedOperator::Less);
+  const auto earlierRank = mirFunctionsNamed(capabilities, "earlier");
+  const auto defaultValues = mirFunctionsNamed(capabilities, "default_value");
+  expect(hasSourceMirBody(rankLess) &&
+             hasSourceMirBody(
+                 rankOperator(lang::OverloadedOperator::GreaterEqual)) &&
+             std::any_of(earlierRank.begin(), earlierRank.end(),
+                         [&](const lang::MirFunctionInstance *earlier) {
+                           return anyMirInstruction(
+                               earlier->body,
+                               [&](const lang::MirInstruction &instruction) {
+                                 return instruction.kind ==
+                                            lang::MirInstructionKind::Call &&
+                                        instruction.functionTarget ==
+                                            rankLess->id;
+                               });
+                         }) &&
+             defaultValues.size() == 1 &&
+             constructsThrough(capabilities, defaultValues.front()->body,
+                               rankMir, 0) &&
+             shippedBackendAccepts(capabilities),
+         "the backend should receive selected relational methods and generic "
+         "default construction as exact MIR targets without concepts");
 
   lang::FrontendResult invalid = lang::Frontend().analyze(
       "invalid-constrained-generics.gti", R"(
@@ -4672,7 +5038,7 @@ int main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   }
   expect(valid.canGenerateCode() && lang::verifyMirProgram(valid.mir).valid() &&
-             !gti_test::emitCppText(valid).empty(),
+             shippedBackendAccepts(valid),
          "construction-only user cursors and stronger symbolic contracts "
          "should satisfy move construction without requiring assignment");
 
@@ -4992,34 +5358,14 @@ int main() {
                  policyHover->notes.end(),
          "class hover should present compiler-owned capability policy facts");
 
-  const std::string generated = gti_test::emitCppText(valid);
-  const std::size_t emittedProgram =
-      generated.find("namespace __gti_program {");
-  const std::string_view generatedProgram =
-      emittedProgram == std::string::npos
-          ? std::string_view(generated)
-          : std::string_view(generated).substr(emittedProgram);
-  const std::size_t constrainedCallableBody =
-      generatedProgram.find("// GTI verified-MIR body: deduced-callable");
-  const std::size_t constrainedCallable =
-      constrainedCallableBody == std::string_view::npos
-          ? std::string_view::npos
-          : generatedProgram.rfind("inspect_transfer", constrainedCallableBody);
-  expect(constrainedCallableBody != std::string_view::npos &&
-             constrainedCallable != std::string_view::npos &&
-             constrainedCallableBody - constrainedCallable < 512,
+  const auto inspections = mirFunctionsNamed(valid, "inspect_transfer");
+  expect(inspections.size() == 1 && hasSourceMirBody(inspections.front()) &&
+             inspections.front()->parameterTypes.size() == 1 &&
+             inspections.front()->parameterTypes.front().kind ==
+                 lang::SemanticType::Lambda &&
+             shippedBackendAccepts(valid),
          "frontend-checked generic constraints should retain a verified-MIR "
-         "source-template body for an unnameable callable instance");
-  // Source-defined reflection methods such as is_transferable/is_shareable
-  // are ordinary declarations. Policy attributes and source concept spellings
-  // must not become backend traits or constraints.
-  expect(generatedProgram.find("unsafe_transfer") == std::string_view::npos &&
-             generatedProgram.find("no_transfer") == std::string_view::npos &&
-             generatedProgram.find("std::transferable<") ==
-                 std::string_view::npos &&
-             generatedProgram.find("std::shareable<") == std::string_view::npos,
-         "capability policy and constraints should remain frontend facts, not "
-         "emitted C++ traits or spellings");
+         "concrete body for an unnameable callable instance");
 
   const std::string invalidSource = R"(
 import std.memory;
@@ -5525,7 +5871,7 @@ int main() {
   expect(reformatted.canGenerateCode(),
          "formatting member requirements must preserve parsing and semantics");
   if (valid.canGenerateCode()) {
-    expect(!gti_test::emitCppText(valid).empty(),
+    expect(shippedBackendAccepts(valid),
            "direct unnamed requirements and unevaluated parameter metadata "
            "must survive verified LoweredProgram publication");
   }
@@ -5847,7 +6193,7 @@ int main() { mut Processor p{}; int input = 7; mut int output = 0;
   expect(valid.canGenerateCode(),
          "exact mutable receiver and parameter contracts must lower");
   if (valid.canGenerateCode())
-    expect(!gti_test::emitCppText(valid).empty(),
+    expect(shippedBackendAccepts(valid),
            "concrete structural calls must reach verified MIR emission");
   const std::string formatted = lang::Formatter().format(contract + good);
   expect(lang::Formatter().format(formatted) == formatted &&
@@ -6050,12 +6396,17 @@ int main() {
          "concept uses should expose their canonical composition and semantic "
          "definition identity");
 
-  const std::string generated = gti_test::emitCppText(valid);
-  expect(generated.find("concept arithmetic_value") == std::string::npos &&
-             generated.find("concept signed_arithmetic") == std::string::npos &&
-             generated.find("template <typename T>") != std::string::npos,
-         "concepts should remain frontend validity metadata and not delegate "
-         "constraint checking to the C++ backend");
+  const auto concreteInt32 = [&](std::string_view name) {
+    const auto instances = mirFunctionsNamed(valid, name);
+    return instances.size() == 1 && hasSourceMirBody(instances.front()) &&
+           instances.front()->typeArguments ==
+               std::vector<lang::SemanticType>{lang::SemanticType::Int32};
+  };
+  expect(concreteInt32("twice") && concreteInt32("forward") &&
+             concreteInt32("numeric_identity") && shippedBackendAccepts(valid),
+         "concepts should remain frontend validity metadata: the backend "
+         "receives only concrete checked instances, never a constraint to "
+         "re-check");
 
   lang::FrontendResult concreteFailure = lang::Frontend().analyze(
       "source-concept-failure.gti", R"(
@@ -7009,16 +7360,30 @@ T invalid_forward<Iterator, Sentinel, std::numeric T>(
       "the callee's exact structural contract with owned public application "
       "context and no compiler-private leaf context");
 
-  const std::string generated = gti_test::emitCppText(valid);
-  expect(
-      generated.find("concept compatible_sentinel") == std::string::npos &&
-          generated.find("requires __gti_std::") == std::string::npos &&
-          generated.find("__gti_operator_dereference") != std::string::npos &&
-          generated.find("__gti_operator_pre_increment") != std::string::npos &&
-          generated.find("__gti_operator_not_equal") != std::string::npos &&
-          generated.find("// GTI verified-MIR body:") != std::string::npos,
-      "the C++ backend should emit already-validated operator calls, not "
-      "GTI concepts or trailing requires clauses");
+  const lang::MirClassInstance *numberIterator =
+      mirClassNamed(valid, "NumberIterator");
+  const auto localAccumulations = mirFunctionsNamed(valid, "local_accumulate");
+  const auto callsIteratorOperator =
+      [&](const lang::MirFunctionInstance *caller,
+          lang::OverloadedOperator kind) {
+        const auto operators = mirOperators(valid, numberIterator, kind);
+        return operators.size() == 1 &&
+               callsFunction(valid, caller->body,
+                             [&](const lang::MirFunctionInstance &target) {
+                               return &target == operators.front();
+                             });
+      };
+  expect(localAccumulations.size() == 1 &&
+             hasSourceMirBody(localAccumulations.front()) &&
+             callsIteratorOperator(localAccumulations.front(),
+                                   lang::OverloadedOperator::Dereference) &&
+             callsIteratorOperator(localAccumulations.front(),
+                                   lang::OverloadedOperator::PreIncrement) &&
+             callsIteratorOperator(localAccumulations.front(),
+                                   lang::OverloadedOperator::NotEqual) &&
+             shippedBackendAccepts(valid),
+         "the backend should receive already-validated operator calls in "
+         "verified MIR, not GTI concepts or trailing requires clauses");
 
   const lang::FrontendResult exactSentinelBridges = lang::Frontend().analyze(
       "exact-sentinel-bridges.gti", R"(
@@ -7115,36 +7480,50 @@ int main() {
   expect(exactSentinelBridges.canGenerateCode(),
          "an inherited exact sentinel operation should remain valid beside a "
          "derived convertible overload and mutable-sentinel overload");
-  const std::string exactBridgeCpp =
-      gti_test::emitCppText(exactSentinelBridges);
-  expect(
-      exactBridgeCpp.find("::gti_internal::backend::exact_type<const "
-                          "::__gti_program::DerivedEnd &>") !=
-              std::string::npos &&
-          exactBridgeCpp.find("::gti_internal::backend::exact_type<const "
-                              "::__gti_program::BaseEnd &>") !=
-              std::string::npos &&
-          exactBridgeCpp.find("::gti_internal::backend::exact_type<"
-                              "::__gti_program::OtherEnd &>") ==
-              std::string::npos &&
-          exactBridgeCpp.find(
-              "friend const std::int32_t & __gti_operator_dereference("
-              "const IteratorContract &__gti_receiver)") != std::string::npos &&
-          exactBridgeCpp.find(
-              "_dynamic_step__gti_mir_failure("
-              "::__gti_program::IteratorContract & __gti_mir_arg_0, "
-              "const ::__gti_program::DerivedEnd & __gti_mir_arg_1") !=
-              std::string_view::npos &&
-          exactBridgeCpp.find(
-              "exact_type<const ::__gti_program::__gti_type_") !=
-              std::string::npos &&
-          exactBridgeCpp.find("_GenericComparable &>") != std::string::npos &&
-          exactBridgeCpp.find("_GenericComparable & __gti_argument_0") !=
-              std::string::npos &&
-          exactBridgeCpp.find("GenericComparable<void, 0>") ==
-              std::string::npos,
-      "sentinel bridges should tag exact read-only parameter types and "
-      "must not expose mutable-sentinel overloads");
+  const lang::FrontendResult &bridges = exactSentinelBridges;
+  const auto baseExact =
+      mirOperators(bridges, mirClassNamed(bridges, "BaseIterator"),
+                   lang::OverloadedOperator::NotEqual, "DerivedEnd");
+  const auto derivedConvertible =
+      mirOperators(bridges, mirClassNamed(bridges, "DerivedIterator"),
+                   lang::OverloadedOperator::NotEqual, "BaseEnd");
+  const auto derivedMutable =
+      mirOperators(bridges, mirClassNamed(bridges, "DerivedIterator"),
+                   lang::OverloadedOperator::NotEqual, "OtherEnd");
+  const auto contractNotEqual =
+      mirOperators(bridges, mirClassNamed(bridges, "IteratorContract"),
+                   lang::OverloadedOperator::NotEqual, "DerivedEnd");
+  const auto genericNotEqual =
+      mirOperators(bridges, mirClassNamed(bridges, "GenericComparable"),
+                   lang::OverloadedOperator::NotEqual, "GenericComparable");
+  const auto isOneOf =
+      [](const std::vector<const lang::MirFunctionInstance *> &candidates) {
+        return [&candidates](const lang::MirFunctionInstance &target) {
+          return std::find(candidates.begin(), candidates.end(), &target) !=
+                 candidates.end();
+        };
+      };
+  const lang::MirFunctionInstance *bridgeMain =
+      mirFunctionNamed(bridges, "main");
+  const auto dynamicSteps = mirFunctionsNamed(bridges, "dynamic_step");
+  const lang::MirFunctionInstance *differs =
+      mirFunctionNamed(bridges, "differs");
+  expect(baseExact.size() == 1 && derivedConvertible.size() == 1 &&
+             derivedMutable.size() == 1 && contractNotEqual.size() == 1 &&
+             genericNotEqual.size() == 1 && hasSourceMirBody(bridgeMain) &&
+             callsFunction(bridges, bridgeMain->body, isOneOf(baseExact)) &&
+             !programCallsFunction(bridges, isOneOf(derivedConvertible)) &&
+             !programCallsFunction(bridges, isOneOf(derivedMutable)) &&
+             dynamicSteps.size() == 1 &&
+             callsFunction(bridges, dynamicSteps.front()->body,
+                           isOneOf(contractNotEqual)) &&
+             hasSourceMirBody(differs) &&
+             callsFunction(bridges, differs->body, isOneOf(genericNotEqual)) &&
+             baseExact.front()->parameterTypes.front().kind ==
+                 lang::SemanticType::Reference &&
+             shippedBackendAccepts(bridges),
+         "sentinel bridges should select the exact read-only inherited "
+         "operation and must not reach mutable-sentinel overloads");
 
   const lang::FrontendResult invalid = lang::Frontend().analyze(
       "invalid-structural-requires.gti", R"(
@@ -7982,7 +8361,7 @@ void testPackSpecialMemberConstruction() {
       std::cerr << diagnostic.message << '\n';
     return;
   }
-  expect(!gti_test::emitCppText(result).empty(),
+  expect(shippedBackendAccepts(result),
          "special-member pack construction must emit from verified MIR");
   std::size_t copies = 0;
   std::size_t moves = 0;
@@ -8056,7 +8435,7 @@ T construct<T, Args...>(Args... args) { return T(args...); }
 int main() { Item item = construct<Item>(Item(7)); return item.value() - 7; }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(trivial.canGenerateCode() && !gti_test::emitCppText(trivial).empty(),
+  expect(trivial.canGenerateCode() && shippedBackendAccepts(trivial),
          "cleanup-free pack movement must not require an active result drop");
 
   const auto reused = lang::Frontend().analyze("reused-special-pack.gti", R"(
@@ -8450,26 +8829,26 @@ int main() {
          "verified MIR should make the move of owner-tied iterator "
          "temporaries into constructor parameters explicit");
 
-  const std::string generated = gti_test::emitCppText(valid);
-  // Private backend support may use C++ representation constraints. The
-  // source constructor contract itself must remain resolved by GTI.
-  const std::size_t emittedProgram =
-      generated.find("namespace __gti_program {");
-  expect(
-      generated.find("explicit Capture(std::int32_t __gti_mir_arg_0);") !=
-              std::string::npos &&
-          generated.find("explicit Capture(bool __gti_mir_arg_0);") !=
-              std::string::npos &&
-          concreteBackendSymbols(generated, "__gti_type_", "Tagged").size() ==
-              1 &&
-          generated.find("Capture(T value)") == std::string::npos &&
-          generated.find("string(Iterator first, Sentinel last)") ==
-              std::string::npos &&
-          emittedProgram != std::string::npos &&
-          generated.find("requires std::", emittedProgram) == std::string::npos,
-      "the backend should emit each selected constructor as an ordinary "
-      "concrete overload without delegating GTI inference or constraints to "
-      "C++");
+  const lang::MirClassInstance *captureMir = mirClassNamed(valid, "Capture");
+  bool integerCapture = false;
+  bool booleanCapture = false;
+  for (const lang::MirConstructorInstance &constructor :
+       valid.mir.constructorInstances()) {
+    if (captureMir == nullptr || constructor.owner != captureMir->id ||
+        constructor.definitionKind != lang::MirDefinitionKind::Source)
+      continue;
+    integerCapture = integerCapture || constructor.parameterTypes ==
+                                           std::vector<lang::SemanticType>{
+                                               lang::SemanticType::Int32};
+    booleanCapture = booleanCapture || constructor.parameterTypes ==
+                                           std::vector<lang::SemanticType>{
+                                               lang::SemanticType::Bool};
+  }
+  expect(integerCapture && booleanCapture &&
+             mirClassesNamed(valid, "Tagged").size() == 1 &&
+             shippedBackendAccepts(valid),
+         "the backend should receive each selected constructor as an ordinary "
+         "concrete overload without delegating GTI inference or constraints");
 
   const auto analyze = [&](std::string_view name, std::string text) {
     return lang::Frontend().analyze(std::filesystem::path(name),
@@ -8839,27 +9218,26 @@ int main() {
          "tooling reference to its declaration after registration-time "
          "normalization");
 
-  const std::string generated = gti_test::emitCppText(valid);
-  expect(
-      concreteBackendSymbols(generated, "__gti_type_", "StaticArray").size() ==
-              2 &&
-          concreteBackendSymbols(generated, "__gti_type_", "WrappedArray")
-                  .size() == 1 &&
-          concreteBackendSymbols(generated, "__gti_type_", "DefaultArray")
-                  .size() == 1 &&
-          generated.find("std::array<std::int32_t, 4> values") !=
-              std::string::npos &&
-          generated.find("std::array<std::int32_t, 8> values") !=
-              std::string::npos &&
-          generated.find(
-              "template <typename T, std::size_t N>\n  class StaticArray") ==
-              std::string::npos &&
-          generated.find("typename T =") == std::string::npos &&
-          generated.find("template <typename T, std::size_t N =") ==
-              std::string::npos,
-      "the C++ backend should give each GTI-selected mixed type/value "
-      "application an ordinary concrete class and should not rely on "
-      "native template selection or defaults");
+  const auto staticArrays = mirClassesNamed(valid, "StaticArray");
+  bool mirFour = false;
+  bool mirEight = false;
+  for (const lang::MirClassInstance *instance : staticArrays) {
+    if (instance->declaredFields.empty())
+      continue;
+    const lang::SemanticType &storage = instance->declaredFields.front().type;
+    if (storage.kind != lang::SemanticType::Array ||
+        storage.arrayLengthParameterId != 0)
+      continue;
+    mirFour = mirFour || storage.arrayLength == 4;
+    mirEight = mirEight || storage.arrayLength == 8;
+  }
+  expect(staticArrays.size() == 2 && mirFour && mirEight &&
+             mirClassesNamed(valid, "WrappedArray").size() == 1 &&
+             mirClassesNamed(valid, "DefaultArray").size() == 1 &&
+             shippedBackendAccepts(valid),
+         "the backend should receive each GTI-selected mixed type/value "
+         "application as an ordinary concrete class with substituted extents "
+         "and no native template selection or defaults");
 
   lang::Lexer lexer;
   lang::Parser invalidParser(lexer.scan(R"(
@@ -9271,19 +9649,37 @@ int main() {
          "the HIR-to-MIR boundary should reject a forged function value "
          "argument before backend planning");
 
-  const std::string generated = gti_test::emitCppText(frontend);
-  expect(generated.find("std::initializer_list") == std::string::npos &&
-             generated.find("template <std::size_t N>\n  bool __gti_fn_") ==
-                 std::string::npos &&
-             generated.find("std::array<std::int32_t, 3>{__gti_mir_v_") !=
-                 std::string::npos &&
-             generated.find("std::array<std::int32_t, 2>{__gti_mir_v_") !=
-                 std::string::npos &&
-             containsMangledFunction(
-                 generated, "", "total",
-                 "__gti_mir_failure(std::array<std::int32_t, 3>"),
-         "the backend should materialize an explicit std::array value and "
-         "never delegate list semantics to C++ overload resolution");
+  const auto isInt32Array = [](const lang::SemanticType &type,
+                               std::uint64_t length) {
+    return type.kind == lang::SemanticType::Array &&
+           type.arrayLengthParameterId == 0 && type.arrayLength == length &&
+           type.arguments.size() == 1 &&
+           type.arguments.front() == lang::SemanticType::Int32;
+  };
+  const lang::MirFunctionInstance *arrayMain =
+      mirFunctionNamed(frontend, "main");
+  const auto materializesArray = [&](std::uint64_t length) {
+    return hasSourceMirBody(arrayMain) &&
+           anyMirInstruction(
+               arrayMain->body, [&](const lang::MirInstruction &instruction) {
+                 return instruction.operation ==
+                            lang::MirOperation::Aggregate &&
+                        isInt32Array(instruction.info.type, length);
+               });
+  };
+  const auto totals = mirFunctionsNamed(frontend, "total");
+  expect(materializesArray(3) && materializesArray(2) &&
+             std::any_of(totals.begin(), totals.end(),
+                         [&](const lang::MirFunctionInstance *total) {
+                           return hasSourceMirBody(total) &&
+                                  total->parameterTypes.size() == 1 &&
+                                  isInt32Array(total->parameterTypes.front(),
+                                               3);
+                         }) &&
+             shippedBackendAccepts(frontend),
+         "MIR should materialize an explicit fixed-array value and pass it to "
+         "a concrete extent instance, never delegating list semantics to "
+         "backend overload resolution");
 
   const std::string invalidSource = R"(
 int scalar(int value) { return value; }
@@ -9460,24 +9856,27 @@ int main() {
          "final function type packs should infer, forward, and preserve exact "
          "concrete MIR parameter roles across equivalent pack groupings");
 
-  // None of these forwarding bodies can fail, so each concrete instance
-  // lowers in its plain form.
-  const std::string generated = gti_test::emitCppText(valid);
-  expect(containsMangledFunction(
-             generated, "", "consume",
-             "(std::int32_t __gti_mir_arg_0, bool __gti_mir_arg_1, "
-             "std::string_view __gti_mir_arg_2"),
-         "variadic declarations and forwarding should lower explicitly");
-  expect(containsMangledFunction(
-             generated, "", "consume",
-             "(std::int32_t __gti_mir_arg_0, std::int32_t __gti_mir_arg_1, "
-             "bool __gti_mir_arg_2, std::string_view __gti_mir_arg_3"),
+  using lang::SemanticType;
+  const auto hasConcreteInstance =
+      [&](std::string_view name, const std::vector<SemanticType> &parameters) {
+        const auto instances = mirFunctionsNamed(valid, name);
+        return std::any_of(instances.begin(), instances.end(),
+                           [&](const lang::MirFunctionInstance *instance) {
+                             return hasSourceMirBody(instance) &&
+                                    instance->parameterTypes == parameters;
+                           });
+      };
+  expect(
+      hasConcreteInstance("consume", {SemanticType::Int32, SemanticType::Bool,
+                                      SemanticType::StringView}),
+      "variadic declarations and forwarding should lower explicitly");
+  expect(hasConcreteInstance("consume",
+                             {SemanticType::Int32, SemanticType::Int32,
+                              SemanticType::Bool, SemanticType::StringView}),
          "a final symbolic pack should compose with concrete pack elements");
-  expect(generated.find("Rest... __gti_mir_arg_1") == std::string::npos &&
-             containsMangledFunction(
-                 generated, "", "first",
-                 "(std::int32_t __gti_mir_arg_0, bool __gti_mir_arg_1, "
-                 "std::string_view __gti_mir_arg_2"),
+  expect(hasConcreteInstance("first", {SemanticType::Int32, SemanticType::Bool,
+                                       SemanticType::StringView}) &&
+             shippedBackendAccepts(valid),
          "fixed generic arguments and explicit pack elements should lower in "
          "source order");
 
@@ -9784,14 +10183,20 @@ int main() {
          "MIR verification should reject a lowered pack call whose exact "
          "parameter signature was forged");
 
-  const std::string foldGenerated = gti_test::emitCppText(foldFrontend);
-  expect(resolvedFold != nullptr &&
-             containsMangledFunction(foldGenerated, "", "touch",
-                                     "__gti_mir_failure(__gti_mir_p_") &&
-             foldGenerated.find("_touch(count, values), ...") ==
-                 std::string::npos,
-         "the C++ backend should emit the one compiler-selected fold target "
-         "instead of asking native overload resolution to choose per element");
+  const auto touches = mirFunctionsNamed(foldFrontend, "touch");
+  expect(resolvedFold != nullptr && mirFoldCalls.size() == 3 &&
+             std::all_of(mirFoldCalls.begin(), mirFoldCalls.end(),
+                         [&](const lang::MirInstruction *call) {
+                           return std::any_of(
+                               touches.begin(), touches.end(),
+                               [&](const lang::MirFunctionInstance *touch) {
+                                 return call->functionTarget == touch->id &&
+                                        hasSourceMirBody(touch);
+                               });
+                         }) &&
+             shippedBackendAccepts(foldFrontend),
+         "the backend should receive the one compiler-selected fold target "
+         "instead of choosing per element by native overload resolution");
 
   const std::string invalidFoldSource = R"(
 void overloaded<T>(T& value) {}
@@ -9921,33 +10326,69 @@ int main() {
          "method overload selection should choose the receiver-qualified "
          "declaration exactly");
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  // The checked integer pow keeps its failure form; unchecked float
-  // multiplication cannot fail, so the float overload is plain.
-  expect(
-      artifact.contents.find(
-          "::__gti_program::math::__gti_fn_1_pow__gti_mir_failure(") !=
-              std::string::npos &&
-          artifact.contents.find("::__gti_program::math::__gti_fn_2_pow(") !=
-              std::string::npos &&
-          concreteBackendSymbols(artifact.contents, "__gti_type_", "Selector")
-                  .size() == 1 &&
-          concreteBackendSymbols(artifact.contents, "__gti_member_", "apply")
-                  .size() == 2,
-      "the C++ backend should emit the function identity selected by GTI");
-  expect(artifact.contents.find("mir_checked_convert_v1<std::uint64_t>(") !=
-                 std::string::npos &&
-             artifact.contents.find("mir_checked_convert_v1<std::int32_t>(") !=
-                 std::string::npos &&
-             artifact.contents.find(
-                 "std::bit_cast<float>(std::uint32_t{0x40000000U})") !=
-                 std::string::npos,
-         "explicit conversions and float literals should lower to matching C++ "
-         "types");
+  using lang::SemanticType;
+  const auto pows = mirFunctionsNamed(frontend, "pow");
+  const auto powWith =
+      [&](SemanticType type) -> const lang::MirFunctionInstance * {
+    for (const lang::MirFunctionInstance *function : pows)
+      if (function->parameterTypes == std::vector<SemanticType>{type, type})
+        return function;
+    return nullptr;
+  };
+  const lang::MirFunctionInstance *integerPow = powWith(SemanticType::UInt64);
+  const lang::MirFunctionInstance *floatPow = powWith(SemanticType::Float);
+  const lang::MirFunctionInstance *overloadMain =
+      mirFunctionNamed(frontend, "main");
+  const auto selectors = mirClassesNamed(frontend, "Selector");
+  std::size_t selectorApplies = 0;
+  bool calledEveryApply =
+      selectors.size() == 1 && hasSourceMirBody(overloadMain);
+  for (const lang::MirFunctionInstance *apply :
+       mirFunctionsNamed(frontend, "apply")) {
+    if (selectors.size() != 1 || apply->owner != selectors.front()->id)
+      continue;
+    ++selectorApplies;
+    calledEveryApply =
+        calledEveryApply &&
+        callsFunction(frontend, overloadMain->body,
+                      [&](const lang::MirFunctionInstance &target) {
+                        return &target == apply;
+                      });
+  }
+  expect(hasSourceMirBody(integerPow) && hasSourceMirBody(floatPow) &&
+             integerPow != floatPow && integerPow->mayRaiseDefinedFailure &&
+             !floatPow->mayRaiseDefinedFailure &&
+             callsFunction(frontend, overloadMain->body,
+                           [&](const lang::MirFunctionInstance &target) {
+                             return &target == integerPow;
+                           }) &&
+             callsFunction(frontend, overloadMain->body,
+                           [&](const lang::MirFunctionInstance &target) {
+                             return &target == floatPow;
+                           }) &&
+             selectorApplies == 2 && calledEveryApply,
+         "MIR should call the exact function identity selected by GTI, with "
+         "checked integer and failure-free float overloads");
+  const auto converts = [&](SemanticType type) {
+    return hasSourceMirBody(overloadMain) &&
+           anyMirInstruction(overloadMain->body,
+                             [&](const lang::MirInstruction &instruction) {
+                               return instruction.operation ==
+                                          lang::MirOperation::Convert &&
+                                      instruction.info.type == type;
+                             });
+  };
+  expect(converts(SemanticType::UInt64) && converts(SemanticType::Int32) &&
+             anyMirInstruction(overloadMain->body,
+                               [](const lang::MirInstruction &instruction) {
+                                 return instruction.operation ==
+                                            lang::MirOperation::Literal &&
+                                        instruction.info.type ==
+                                            SemanticType::Float;
+                               }) &&
+             shippedBackendAccepts(frontend),
+         "explicit conversions and float literals should lower to matching "
+         "typed MIR operations");
 
   lang::Lexer lexer;
   auto invalidTokens = lexer.scan(R"(
@@ -10198,28 +10639,62 @@ int main() {
              lang::semanticTraits(moveOnlyArray).movable,
          "fixed arrays should inherit element copy and move traits");
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(
-      artifact.contents.find("const std::array<std::uint32_t, 2048> video = "
-                             "std::array<std::uint32_t, 2048>{}") !=
-              std::string::npos &&
-          artifact.contents.find("std::array<std::int32_t, 5> __gti_mir_p_") !=
-              std::string::npos &&
-          artifact.contents.find("std::array<std::array<std::int32_t, 3>, 2> "
-                                 "__gti_mir_p_") != std::string::npos &&
-          artifact.contents.find("mir_checked_array_read_v1") !=
-              std::string::npos &&
-          artifact.contents.find("mir_checked_array_write_v1") !=
-              std::string::npos &&
-          artifact.contents.find("mir_checked_add_v1<std::int32_t>") !=
-              std::string::npos &&
-          artifact.contents.find("static_cast<std::uint64_t>") !=
-              std::string::npos,
-      "the C++ backend should preserve array values and checked operations");
+  const lang::SemanticType int5 =
+      lang::SemanticType::arrayOf(lang::SemanticType::Int32, 5);
+  const lang::SemanticType matrix = lang::SemanticType::arrayOf(
+      lang::SemanticType::arrayOf(lang::SemanticType::Int32, 3), 2);
+  const lang::SemanticType video =
+      lang::SemanticType::arrayOf(lang::SemanticType::UInt32, 2048);
+  const lang::LoweredProgram arrayProgram =
+      gti_test::lowerOptimizedProgram(frontend);
+  const bool videoStorage = std::any_of(
+      arrayProgram.declarations().begin(), arrayProgram.declarations().end(),
+      [&](const lang::LoweredDeclaration &declaration) {
+        const auto *storage =
+            std::get_if<lang::LoweredStorageDeclaration>(&declaration.payload);
+        return declaration.name == "video" && storage != nullptr &&
+               storage->type == video && storage->hasInitializer;
+      });
+  const lang::MirFunctionInstance *arrayMain =
+      mirFunctionNamed(frontend, "main");
+  const auto hasPlaceOfType = [&](const lang::SemanticType &type) {
+    return hasSourceMirBody(arrayMain) &&
+           std::any_of(arrayMain->body.places.begin(),
+                       arrayMain->body.places.end(),
+                       [&](const lang::MirPlace &place) {
+                         return place.type == type && place.projections.empty();
+                       });
+  };
+  const auto indexedPlace = [&](const lang::MirPlace &place) {
+    return !place.projections.empty() &&
+           place.projections.back().kind == lang::MirProjectionKind::Index;
+  };
+  const bool checkedIndexedWrite =
+      hasSourceMirBody(arrayMain) &&
+      anyMirInstruction(
+          arrayMain->body, [&](const lang::MirInstruction &instruction) {
+            const lang::MirPlace *destination =
+                instruction.destination
+                    ? arrayMain->body.findPlace(*instruction.destination)
+                    : nullptr;
+            return instruction.kind == lang::MirInstructionKind::Assign &&
+                   destination != nullptr && indexedPlace(*destination);
+          });
+  const bool checkedIndexedAdd =
+      hasSourceMirBody(arrayMain) &&
+      anyMirInstruction(
+          arrayMain->body, [](const lang::MirInstruction &instruction) {
+            return instruction.kind == lang::MirInstructionKind::Compute &&
+                   instruction.operation == lang::MirOperation::Add &&
+                   instruction.info.type == lang::SemanticType::Int32 &&
+                   !instruction.definedFailure.localOrigins.empty();
+          });
+  expect(videoStorage && hasPlaceOfType(int5) && hasPlaceOfType(matrix) &&
+             loadsFromPlace(arrayMain->body, indexedPlace) &&
+             checkedIndexedWrite && checkedIndexedAdd &&
+             shippedBackendAccepts(frontend),
+         "MIR should preserve array values, storage extents, and checked "
+         "indexed reads, writes, and arithmetic for the backend");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-arrays.gti", R"(
@@ -10383,36 +10858,16 @@ int main() {
          "the dynamic array write must terminate its block with an Invoke "
          "whose failure successor consumes the checked write status");
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::size_t status = artifact.contents.find(
-      " = ::gti_internal::backend::mir_checked_array_write_v1(");
-  const std::size_t variable =
-      status == std::string::npos
-          ? std::string::npos
-          : artifact.contents.rfind("__gti_mir_failure_status_", status);
-  const std::string consumer =
-      variable == std::string::npos
-          ? std::string()
-          : "if (" + artifact.contents.substr(variable, status - variable) +
-                ".code == GTI_FAILURE_CODE_NONE_V1)";
-  expect(status != std::string::npos && variable != std::string::npos &&
-             !consumer.empty() &&
-             artifact.contents.find(consumer, status) != std::string::npos,
-         "the emitted checked array write must branch on its failure status "
-         "instead of discarding it");
+  expect(shippedBackendAccepts(frontend),
+         "the backend should accept the checked array write together with "
+         "its MIR failure successor");
 }
 
 // A chained fixed-array element access with a dynamic nonterminal index is one
-// checked access with one bounds site. The emitter used to admit a nonterminal
-// index only when it was a compile-time in-bounds constant and declined the
-// body otherwise, so `matrix[row][column]` with a runtime row raised GTI-B0001
-// on the read form as well as the write form. The chained text now owns a
-// bound per dimension: the failure form guards each dynamic nonterminal index
-// before the terminal checked helper runs.
+// checked MIR access with a bounds site over the complete projected place, and
+// the backend must accept it rather than decline the body (GTI-B0001). The
+// C++ emitter's per-dimension guard text is checked in
+// cpp_mir_declarations_emission_tests.cpp.
 void testFixedArrayChainedDynamicIndex() {
   const std::string source = R"(
 int main() {
@@ -10434,65 +10889,56 @@ int main() {
     return;
   }
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  // The emitter reports a declined body by throwing, which is what raises
-  // GTI-B0001 through the driver. Catching it keeps the regression a readable
-  // failure instead of an abort.
-  lang::BackendArtifact artifact;
-  std::string declined;
-  try {
-    artifact =
-        gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  } catch (const std::exception &error) {
-    declined = error.what();
-  }
-  expect(declined.empty(),
-         "a chained dynamic element access should stay inside the complete "
-         "C++ text vocabulary");
-
-  const std::size_t entry =
-      artifact.contents.rfind("bool __gti_entry__gti_mir_failure(");
-  const std::string body = entry == std::string::npos
-                               ? std::string()
-                               : artifact.contents.substr(entry);
-  const auto occurrences = [&](const std::string &needle) {
-    std::size_t count = 0;
-    for (std::size_t at = body.find(needle); at != std::string::npos;
-         at = body.find(needle, at + needle.size())) {
-      ++count;
-    }
-    return count;
+  const lang::MirFunctionInstance *chainedMain =
+      mirFunctionNamed(frontend, "main");
+  const auto boundsChecked = [&](const lang::MirInstruction &instruction) {
+    return std::any_of(
+        instruction.localFailureSites.begin(),
+        instruction.localFailureSites.end(), [&](lang::FailureSiteId id) {
+          const lang::FailureSiteDescriptor *site =
+              frontend.mir.failureMetadata().findSite(id);
+          return site != nullptr &&
+                 std::any_of(
+                     site->outcomes.begin(), site->outcomes.end(),
+                     [](const lang::DefinedFailureOutcome &outcome) {
+                       return outcome.code ==
+                              lang::DefinedFailureCode::IndexOutOfBounds;
+                     });
+        });
   };
-  const std::string guard =
-      " = ::gti_internal::backend::mir_checked_array_bound_v1(";
-  const std::string read =
-      " = ::gti_internal::backend::mir_checked_array_read_v1(";
-  const std::string write =
-      " = ::gti_internal::backend::mir_checked_array_write_v1(";
-  // Each row is checked before evaluating its column. The terminal access
-  // still guards its complete projected place; its retained row guard is not
-  // a substitute for the earlier, independently routed selection check.
-  expect(!body.empty() && occurrences(guard) == 4 && occurrences(read) == 1 &&
-             occurrences(write) == 1,
-         "read and write each retain an early row preflight plus the terminal "
-         "access's complete chained guards");
-
-  const std::size_t guardAt = body.find(guard);
-  const std::size_t statusAt =
-      guardAt == std::string::npos
-          ? std::string::npos
-          : body.rfind("__gti_mir_failure_status_", guardAt);
-  const std::string status = statusAt == std::string::npos
-                                 ? std::string()
-                                 : body.substr(statusAt, guardAt - statusAt);
-  const std::size_t writeAt = body.find(write);
-  expect(!status.empty() && writeAt != std::string::npos && guardAt < writeAt &&
-             body.find("if (" + status + ".code == GTI_FAILURE_CODE_NONE_V1) {",
-                       guardAt) < writeAt,
-         "the guard should open the success branch the terminal checked "
-         "helper runs inside");
+  const auto chainedPlace = [](const lang::MirPlace &place) {
+    return place.projections.size() == 2 &&
+           place.projections[0].kind == lang::MirProjectionKind::Index &&
+           place.projections[1].kind == lang::MirProjectionKind::Index;
+  };
+  const auto checkedChainedAccess = [&](lang::MirInstructionKind kind) {
+    return hasSourceMirBody(chainedMain) &&
+           anyMirInstruction(
+               chainedMain->body, [&](const lang::MirInstruction &instruction) {
+                 if (instruction.kind != kind || !boundsChecked(instruction))
+                   return false;
+                 if (instruction.destination) {
+                   const lang::MirPlace *destination =
+                       chainedMain->body.findPlace(*instruction.destination);
+                   if (destination != nullptr && chainedPlace(*destination))
+                     return true;
+                 }
+                 return std::any_of(
+                     instruction.operands.begin(), instruction.operands.end(),
+                     [&](const lang::MirOperand &operand) {
+                       const lang::MirPlace *place =
+                           chainedMain->body.findPlace(operand.place);
+                       return place != nullptr && chainedPlace(*place);
+                     });
+               });
+  };
+  expect(checkedChainedAccess(lang::MirInstructionKind::Load) &&
+             checkedChainedAccess(lang::MirInstructionKind::Assign),
+         "a chained dynamic element read and write should each be one "
+         "bounds-checked MIR access over the complete projected place");
+  expect(shippedBackendAccepts(frontend),
+         "a chained dynamic element access should be accepted by the backend "
+         "rather than declined");
 }
 
 void testLocalTypeInference() {
@@ -10583,21 +11029,24 @@ int main() {
          "instantiated HIR should retain the concrete type of an inferred "
          "generic local");
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O1);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(artifact.contents.find("bool __gti_entry__gti_mir_failure(") !=
-                 std::string::npos &&
-             artifact.contents.find("std::int32_t __gti_mir_p_") !=
-                 std::string::npos &&
-             artifact.contents.find("std::string_view __gti_mir_p_") !=
-                 std::string::npos &&
-             artifact.contents.find("std::array<std::int32_t, 2> "
-                                    "__gti_mir_p_") != std::string::npos,
-         "the C++ backend should lower inferred locals to their concrete MIR "
-         "representations");
+  const lang::MirFunctionInstance *inferredMain =
+      mirFunctionNamed(frontend, "main");
+  const auto bindingOfType = [&](const lang::SemanticType &type) {
+    return hasSourceMirBody(inferredMain) &&
+           std::any_of(inferredMain->body.places.begin(),
+                       inferredMain->body.places.end(),
+                       [&](const lang::MirPlace &place) {
+                         return place.root == lang::MirPlaceRootKind::Binding &&
+                                place.projections.empty() && place.type == type;
+                       });
+  };
+  expect(bindingOfType(lang::SemanticType::Int32) &&
+             bindingOfType(lang::SemanticType::StringView) &&
+             bindingOfType(
+                 lang::SemanticType::arrayOf(lang::SemanticType::Int32, 2)) &&
+             gti_test::llvmEmits(frontend, lang::OptimizationLevel::O1),
+         "inferred locals should lower to their concrete MIR representations "
+         "and reach the backend");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-auto.gti", R"(
@@ -10908,29 +11357,33 @@ int main() {
          "MIR should initialize and destroy each hidden owner once while "
          "visible names remain projected places");
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  const std::unordered_set<std::string> pairTypes =
-      concreteBackendSymbols(artifact.contents, "__gti_type_", "Pair");
-  const std::string pairLifetime =
-      pairTypes.size() == 1
-          ? "mir_lifetime_slot<::__gti_program::" + *pairTypes.begin() + ">"
-          : std::string();
-  expect(artifact.contents.find("bool __gti_entry__gti_mir_failure(") !=
-                 std::string::npos &&
-             artifact.contents.find("std::array<std::int32_t, 2> "
-                                    "__gti_mir_p_") != std::string::npos &&
-             !pairLifetime.empty() &&
-             artifact.contents.find(pairLifetime) != std::string::npos &&
-             artifact.contents.find(".get().first") != std::string::npos &&
-             artifact.contents.find(".get().second") != std::string::npos &&
-             artifact.contents.find("const auto [left, right]") ==
-                 std::string::npos,
-         "the C++ backend should represent validated structured bindings as "
-         "MIR projections without relying on C++ decomposition declarations");
+  std::unordered_set<lang::SymbolId> loadedPairFields;
+  if (mirMain != nullptr && pairStatement != nullptr) {
+    loadsFromPlace(mirMain->body, [&](const lang::MirPlace &place) {
+      if (place.root == lang::MirPlaceRootKind::Binding &&
+          place.binding == *pairStatement->binding &&
+          place.projections.size() == 1 &&
+          place.projections.front().kind == lang::MirProjectionKind::Field)
+        loadedPairFields.insert(place.projections.front().field);
+      return false;
+    });
+  }
+  expect(loadedPairFields.size() == 2 && mirMain != nullptr &&
+             loadsFromPlace(mirMain->body,
+                            [&](const lang::MirPlace &place) {
+                              return arrayStatement != nullptr &&
+                                     place.root ==
+                                         lang::MirPlaceRootKind::Binding &&
+                                     place.binding ==
+                                         *arrayStatement->binding &&
+                                     !place.projections.empty() &&
+                                     place.projections.front().kind ==
+                                         lang::MirProjectionKind::Index;
+                            }) &&
+             shippedBackendAccepts(frontend),
+         "the backend should read validated structured bindings through MIR "
+         "projections of their hidden owners, not a decomposition "
+         "declaration");
 
   const std::string formatted = lang::Formatter().format(
       "int main(){int values[2]={1,2};auto[left,right]=values;return left;}");
@@ -11107,24 +11560,54 @@ Result main() {
   expect(semantic.check(program),
          "type aliases should canonicalize before semantic checks");
 
-  const std::string generated = emitAnalyzedSource(source);
+  const lang::FrontendResult aliasFrontend = analyzeEmissionFixture(source);
+  const auto boxType = [&](lang::SemanticType argument) {
+    for (const lang::HirClassInstance &instance :
+         aliasFrontend.hir.classInstances())
+      if (instance.source != nullptr &&
+          instance.source->name().lexeme == "Box" &&
+          instance.typeArguments == std::vector<lang::SemanticType>{argument})
+        return instance.type;
+    return lang::SemanticType(lang::SemanticType::Unknown);
+  };
+  std::unordered_map<std::string, lang::SemanticType> loweredAliases;
+  if (aliasFrontend.canGenerateCode()) {
+    const lang::LoweredProgram aliasProgram =
+        gti_test::lowerOptimizedProgram(aliasFrontend);
+    for (const lang::LoweredDeclaration &declaration :
+         aliasProgram.declarations()) {
+      if (const auto *alias = std::get_if<lang::LoweredTypeAliasDeclaration>(
+              &declaration.payload))
+        loweredAliases.emplace(declaration.name, alias->type);
+    }
+  }
+  const auto aliasIs = [&](const std::string &name,
+                           const lang::SemanticType &type) {
+    const auto found = loweredAliases.find(name);
+    return found != loweredAliases.end() && found->second == type &&
+           type.kind != lang::SemanticType::Unknown;
+  };
+  const lang::MirFunctionInstance *aliasMain =
+      mirFunctionNamed(aliasFrontend, "main");
   expect(
-      generated.find("using LaterSize = std::uint64_t;") != std::string::npos &&
-          generated.find("using Triple = std::array<std::int32_t, 3>;") !=
-              std::string::npos &&
-          generated.find("using IntBox = "
-                         "::__gti_program::Box<std::int32_t>;") !=
-              std::string::npos &&
-          generated.find("using value_type = T;") != std::string::npos &&
-          generated.find("using TraitValue = std::int32_t;") !=
-              std::string::npos &&
-          generated.find("static_cast<std::uint64_t>(3)") !=
-              std::string::npos &&
-          generated.find("using Completion = "
-                         "::__gti_program::Box<bool>;") != std::string::npos &&
-          generated.find("int main()") != std::string::npos,
-      "the C++ backend should emit canonical, declaration-order-independent "
-      "aliases");
+      aliasIs("LaterSize", lang::SemanticType::UInt64) &&
+          aliasIs("Triple",
+                  lang::SemanticType::arrayOf(lang::SemanticType::Int32, 3)) &&
+          aliasIs("IntBox", boxType(lang::SemanticType::Int32)) &&
+          aliasIs("TraitValue", lang::SemanticType::Int32) &&
+          aliasIs("Completion", boxType(lang::SemanticType::Bool)) &&
+          hasSourceMirBody(aliasMain) &&
+          aliasMain->returnType == lang::SemanticType::Int32 &&
+          anyMirInstruction(
+              aliasMain->body,
+              [](const lang::MirInstruction &instruction) {
+                return (instruction.operation == lang::MirOperation::Convert ||
+                        instruction.operation == lang::MirOperation::Literal) &&
+                       instruction.info.type == lang::SemanticType::UInt64;
+              }) &&
+          shippedBackendAccepts(aliasFrontend),
+      "the lowered program should carry canonical, declaration-order-"
+      "independent aliases and MIR should use their canonical types");
 
   const lang::FrontendResult frontend =
       lang::Frontend().analyze("class-type-aliases.gti", source);
@@ -11461,24 +11944,65 @@ int main() {
   expect(semantic.check(program),
          "qualified calls and namespace aliases should resolve");
 
-  const std::string generated = emitAnalyzedSource(source);
-  expect(generated.find("namespace engine {") != std::string::npos &&
-             generated.find("namespace graphics {") != std::string::npos,
-         "emitter should preserve nested namespaces");
-  expect(generated.find("namespace gfx = engine::graphics;") !=
-             std::string::npos,
-         "emitter should preserve namespace aliases");
-  expect(containsMangledFunction(generated,
-                                 "::__gti_program::engine::graphics::Renderer ",
-                                 "createRenderer", "();") &&
-             generated.find("namespace gfx = engine::graphics;") !=
-                 std::string::npos,
-         "qualified types should parse and emit through namespace aliases");
-  expect(containsMangledFunction(generated, "engine::graphics::", "render",
-                                 "();") &&
-             containsMangledFunction(
-                 generated, "engine::graphics::", "renderTwice", "();"),
-         "emitter should preserve qualified calls");
+  const lang::FrontendResult namespaced = analyzeEmissionFixture(source);
+  if (namespaced.canGenerateCode()) {
+    const lang::LoweredProgram namespaceProgram =
+        gti_test::lowerOptimizedProgram(namespaced);
+    using Kind = lang::LoweredDeclarationKind;
+    const lang::LoweredDeclaration *engine =
+        loweredDeclarationNamed(namespaceProgram, Kind::Namespace, "engine");
+    const lang::LoweredDeclaration *graphics =
+        loweredDeclarationNamed(namespaceProgram, Kind::Namespace, "graphics");
+    expect(engine != nullptr && graphics != nullptr &&
+               graphics->parent == engine->id,
+           "the lowered program should preserve nested namespaces");
+    const lang::LoweredDeclaration *alias =
+        loweredDeclarationNamed(namespaceProgram, Kind::NamespaceAlias, "gfx");
+    const auto *aliasPayload =
+        alias == nullptr ? nullptr
+                         : std::get_if<lang::LoweredNamespaceAliasDeclaration>(
+                               &alias->payload);
+    expect(aliasPayload != nullptr &&
+               aliasPayload->target ==
+                   std::vector<std::string>{"engine", "graphics"},
+           "the lowered program should preserve namespace aliases");
+    const lang::LoweredDeclaration *createRenderer = loweredDeclarationNamed(
+        namespaceProgram, Kind::Function, "createRenderer");
+    const auto *createPayload =
+        createRenderer == nullptr
+            ? nullptr
+            : std::get_if<lang::LoweredFunctionDeclaration>(
+                  &createRenderer->payload);
+    const lang::MirClassInstance *renderer =
+        mirClassNamed(namespaced, "Renderer");
+    expect(createPayload != nullptr && renderer != nullptr &&
+               createPayload->returnType == renderer->type,
+           "qualified types should resolve through namespace aliases");
+    const auto renders = mirFunctionsNamed(namespaced, "render");
+    const lang::MirFunctionInstance *renderTwice =
+        mirFunctionNamed(namespaced, "renderTwice");
+    const lang::MirFunctionInstance *namespacedMain =
+        mirFunctionNamed(namespaced, "main");
+    const auto isRender = [&](const lang::MirFunctionInstance &target) {
+      return renders.size() == 1 && &target == renders.front();
+    };
+    expect(hasSourceMirBody(namespacedMain) && hasSourceMirBody(renderTwice) &&
+               callsFunction(namespaced, namespacedMain->body, isRender) &&
+               callsFunction(namespaced, namespacedMain->body,
+                             [&](const lang::MirFunctionInstance &target) {
+                               return &target == renderTwice;
+                             }) &&
+               countMirInstructions(
+                   namespaced.mir,
+                   [&](const lang::MirInstruction &instruction) {
+                     return instruction.kind ==
+                                lang::MirInstructionKind::Call &&
+                            renders.size() == 1 &&
+                            instruction.functionTarget == renders.front()->id;
+                   }) == 3 &&
+               shippedBackendAccepts(namespaced),
+           "qualified calls should select the namespaced functions");
+  }
 
   auto invalidTokens = lexer.scan(R"(
 namespace engine {}
@@ -11728,23 +12252,30 @@ int main() {
              mirSocket->externalSymbol == "socket",
          "MIR should retain C linkage for future backend consumption");
 
-  const std::string generated = gti_test::emitCppText(frontend);
-  const auto socketName = gti_test::nativeSpelling(generated, "socket");
-  const auto closeName = gti_test::nativeSpelling(generated, "close");
-  expect(
-      generated.find("extern \"C\" {") != std::string::npos &&
-          socketName != "socket" && closeName != "close" &&
-          generated.find("std::int32_t " + socketName +
-                         "(std::int32_t domain, std::int32_t type, "
-                         "std::int32_t protocol)") != std::string::npos &&
-          generated.find("std::int32_t " + closeName +
-                         "(std::int32_t descriptor)") != std::string::npos,
-      "private C prototypes retain exact native symbols and scalar ABI types");
-  expect(generated.find(socketName + "(__gti_mir_v_") != std::string::npos &&
-             generated.find(closeName + "(__gti_mir_v_") != std::string::npos &&
-             generated.find("__gti_fn_") == std::string::npos,
+  const lang::MirFunctionInstance *externMain =
+      mirFunctionNamed(frontend, "main");
+  const auto callsCSymbol = [](const lang::FrontendResult &program,
+                               const lang::MirFunctionInstance *caller,
+                               std::string_view symbol,
+                               std::size_t parameters) {
+    return hasSourceMirBody(caller) &&
+           callsFunction(program, caller->body,
+                         [&](const lang::MirFunctionInstance &target) {
+                           return target.linkage == lang::LanguageLinkage::C &&
+                                  target.externalSymbol == symbol &&
+                                  target.parameterTypes ==
+                                      std::vector<lang::SemanticType>(
+                                          parameters,
+                                          lang::SemanticType::Int32);
+                         });
+  };
+  expect(callsCSymbol(frontend, externMain, "socket", 3) &&
+             callsCSymbol(frontend, externMain, "close", 1),
          "resolved C calls use the exact prototype identities bound to native "
-         "symbols");
+         "symbols and scalar ABI types");
+  expect(nativeObjectNames(frontend, "socket") &&
+             nativeObjectNames(frontend, "close"),
+         "the native object should reference the exact C symbols");
 
   const lang::FrontendResult linkedName =
       lang::Frontend().analyze("extern-c-link-name.gti", R"(
@@ -11777,15 +12308,9 @@ int main() { return cli11::app_create(42) - 42; }
              linkedMir->externalSymbol == "gti_cli11_app_create",
          "semantic, HIR, and MIR identities should retain the source and link "
          "names independently");
-  const std::string linkedCpp = gti_test::emitCppText(linkedName);
-  const auto linkedSymbol =
-      gti_test::nativeSpelling(linkedCpp, "gti_cli11_app_create");
-  expect(linkedSymbol != "gti_cli11_app_create" &&
-             linkedCpp.find("std::int32_t " + linkedSymbol +
-                            "(std::int32_t value)") != std::string::npos &&
-             linkedCpp.find("::__gti_program::cli11::" + linkedSymbol + "(") !=
-                 std::string::npos &&
-             linkedCpp.find(" app_create(") == std::string::npos,
+  expect(callsCSymbol(linkedName, mirFunctionNamed(linkedName, "main"),
+                      "gti_cli11_app_create", 1) &&
+             nativeObjectNames(linkedName, "gti_cli11_app_create"),
          "the backend should declare and call only the selected native link "
          "symbol");
 
@@ -11800,15 +12325,12 @@ int main() { return platform::invoke_close(-1); }
   expect(lateDeclaration.canGenerateCode(),
          "namespace-scoped C declarations should resolve before their source "
          "position");
-  const std::string lateCpp = gti_test::emitCppText(lateDeclaration);
-  const std::size_t latePrototype = lateCpp.find("extern \"C\" {");
-  const auto lateClose = gti_test::nativeSpelling(lateCpp, "close");
-  const std::size_t lateCall =
-      lateCpp.find("::__gti_program::platform::" + lateClose + "(__gti_mir_v_");
-  expect(latePrototype != std::string::npos && lateCall != std::string::npos &&
-             lateClose != "close" && latePrototype < lateCall,
-         "the backend should forward namespace-scoped C prototypes before "
-         "earlier callers");
+  expect(callsCSymbol(lateDeclaration,
+                      mirFunctionNamed(lateDeclaration, "invoke_close"),
+                      "close", 1) &&
+             nativeObjectNames(lateDeclaration, "close"),
+         "a namespace-scoped C prototype should bind earlier callers to the "
+         "native symbol");
 
   const lang::FrontendResult ordinaryPrototype =
       lang::Frontend().analyze("ordinary-prototype.gti", R"(
@@ -11817,16 +12339,21 @@ int main() { return native_like(7); }
 )");
   expect(ordinaryPrototype.canGenerateCode(),
          "ordinary GTI bodyless functions should remain valid declarations");
-  const std::string ordinaryCpp = gti_test::emitCppText(ordinaryPrototype);
-  expect(
-      ordinaryCpp.find("extern \"C\"") == std::string::npos &&
-          containsMangledFunction(ordinaryCpp, "std::int32_t ", "native_like",
-                                  "(const std::int32_t value);") &&
-          containsMangledFunction(ordinaryCpp, "", "native_like",
-                                  "(__gti_mir_v_") &&
-          ordinaryCpp.find("native_like__gti_mir_failure") == std::string::npos,
-      "ordinary prototypes should retain GTI mangling unless linkage is "
-      "explicitly C");
+  const lang::MirFunctionInstance *nativeLike =
+      mirFunctionNamed(ordinaryPrototype, "native_like");
+  expect(nativeLike != nullptr &&
+             nativeLike->linkage == lang::LanguageLinkage::Gti &&
+             nativeLike->externalSymbol.empty() &&
+             nativeLike->definitionKind ==
+                 lang::MirDefinitionKind::Declaration &&
+             callsFunction(ordinaryPrototype,
+                           mirFunctionNamed(ordinaryPrototype, "main")->body,
+                           [&](const lang::MirFunctionInstance &target) {
+                             return &target == nativeLike;
+                           }) &&
+             lang::verifyMirProgram(ordinaryPrototype.mir).valid(),
+         "ordinary prototypes should retain GTI linkage unless linkage is "
+         "explicitly C");
 
   const lang::FrontendResult runtime =
       analyzeTrustedStandalonePreludeFixture("extern-runtime.gti", R"(
@@ -11857,19 +12384,16 @@ int main() {
 )");
   expect(runtime.canGenerateCode(),
          "counted text buffers should support runtime C ABI migration");
-  const std::string runtimeCpp = gti_test::emitCppText(runtime);
-  const auto writeSymbol =
-      gti_test::nativeSpelling(runtimeCpp, "gti_rt_write_stdout");
-  expect(
-      runtimeCpp.find("#include <gti/c_abi.h>") != std::string::npos &&
-          writeSymbol != "gti_rt_write_stdout" &&
-          runtimeCpp.find("#include <gti/runtime.hpp>") == std::string::npos &&
-          runtimeCpp.find("std::int32_t " + writeSymbol +
-                          "(::gti_c_string_view value)") != std::string::npos &&
-          runtimeCpp.find("::gti_internal::backend::to_c_string_view("
-                          "__gti_mir_v_") != std::string::npos,
-      "text views should cross C linkage through the explicit public "
-      "counted-buffer ABI");
+  const lang::MirFunctionInstance *writeStdout =
+      mirFunctionNamed(runtime, "gti_rt_write_stdout");
+  expect(writeStdout != nullptr &&
+             writeStdout->linkage == lang::LanguageLinkage::C &&
+             writeStdout->parameterTypes.size() == 1 &&
+             writeStdout->parameterTypes.front() ==
+                 lang::SemanticType::StringView &&
+             nativeObjectNames(runtime, "gti_rt_write_stdout"),
+         "text views should cross C linkage through the explicit public "
+         "counted-buffer ABI");
 
   const lang::FrontendResult shadowedRecord =
       analyzeTrustedStandalonePreludeFixture("shadowed-c-record.gti", R"(
@@ -11886,18 +12410,9 @@ int main() { return native::measure() - 1; }
   expect(shadowedRecord.canGenerateCode(),
          "a GTI namespace should be allowed to reuse the public record's "
          "unqualified spelling");
-  const std::string shadowedRecordCpp = gti_test::emitCppText(shadowedRecord);
-  const auto measureSymbol =
-      gti_test::nativeSpelling(shadowedRecordCpp, "measure_text");
-  expect(measureSymbol != "measure_text" &&
-             shadowedRecordCpp.find(
-                 "inline ::gti_c_string_view to_c_string_view") !=
-                 std::string::npos &&
-             shadowedRecordCpp.find("std::int32_t " + measureSymbol +
-                                    "(::gti_c_string_view value)") !=
-                 std::string::npos,
-         "C ABI text lowering should name the global public record even when "
-         "a source namespace shadows it");
+  expect(nativeObjectNames(shadowedRecord, "measure_text"),
+         "C ABI text lowering should not be confused by a source namespace "
+         "that shadows the public record spelling");
 
   const lang::FrontendResult legacyRuntime =
       analyzeTrustedStandalonePreludeFixture("legacy-runtime.gti", R"(
@@ -11916,11 +12431,13 @@ int main() {
   expect(legacyRuntime.canGenerateCode(),
          "the closed compiler-owned runtime attribute should remain a "
          "compatible internal declaration surface");
-  const std::string legacyRuntimeCpp = gti_test::emitCppText(legacyRuntime);
-  expect(legacyRuntimeCpp.find("#include <gti/runtime.hpp>") !=
-                 std::string::npos &&
-             legacyRuntimeCpp.find("#include <gti/c_abi.h>") ==
-                 std::string::npos,
+  const lang::MirFunctionInstance *legacyWrite =
+      mirFunctionNamed(legacyRuntime, "write_stdout");
+  expect(legacyWrite != nullptr &&
+             legacyWrite->definitionKind ==
+                 lang::MirDefinitionKind::RuntimeBinding &&
+             legacyWrite->linkage == lang::LanguageLinkage::Gti &&
+             lang::verifyMirProgram(legacyRuntime.mir).valid(),
          "legacy runtime bindings should stay separate from public C ABI "
          "lowering");
 
@@ -12168,15 +12685,35 @@ int main() {
   expect(foundResolvedEnumerator,
          "HIR enum references should carry resolved nominal value identity");
 
-  const std::string generated = gti_test::emitCppText(frontend);
-  expect(generated.find("enum class State : std::uint8_t;") !=
-                 std::string::npos &&
-             generated.find("enum class State : std::uint8_t {") !=
-                 std::string::npos &&
-             generated.find("enum class Mode : std::int32_t {") !=
-                 std::string::npos &&
-             generated.find("Running = 4") != std::string::npos,
-         "the C++ backend should emit fixed-backing scoped enums");
+  const lang::HirEnum *modeEnum = frontend.hir.enumDeclarations().size() == 2
+                                      ? &frontend.hir.enumDeclarations().back()
+                                      : nullptr;
+  const lang::MirIntegralEnum *stateMir =
+      stateEnum == nullptr ? nullptr
+                           : frontend.mir.findIntegralEnum(stateEnum->type);
+  const lang::MirIntegralEnum *modeMir =
+      modeEnum == nullptr ? nullptr
+                          : frontend.mir.findIntegralEnum(modeEnum->type);
+  const lang::MirFunctionInstance *nextState =
+      mirFunctionNamed(frontend, "next");
+  expect(stateMir != nullptr &&
+             stateMir->underlyingType == lang::SemanticType::UInt8 &&
+             modeMir != nullptr &&
+             modeMir->underlyingType == lang::SemanticType::Int32 &&
+             stateEnum->enumerators.size() == 3 &&
+             stateEnum->enumerators[1].value ==
+                 lang::EnumConstant{.magnitude = 4} &&
+             hasSourceMirBody(nextState) &&
+             anyMirInstruction(nextState->body,
+                               [](const lang::MirInstruction &instruction) {
+                                 return instruction.operation ==
+                                            lang::MirOperation::EnumConstant &&
+                                        instruction.enumValue ==
+                                            lang::EnumConstant{.magnitude = 4};
+                               }) &&
+             shippedBackendAccepts(frontend),
+         "MIR should carry fixed-backing scoped enums and their exact "
+         "enumerator values to the backend");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-scoped-enums.gti", R"(
@@ -13098,7 +13635,7 @@ int main() {
          "unary class contracts reach constructors, methods, destructors, "
          "forwarding and nested class arguments");
   if (valid.canGenerateCode())
-    expect(!gti_test::emitCppText(valid).empty(),
+    expect(shippedBackendAccepts(valid),
            "concrete structural class contract emits from verified MIR");
   const auto formatted = lang::Formatter().format(
       declarations +

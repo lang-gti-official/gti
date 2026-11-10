@@ -5,7 +5,7 @@
 #include "../src/compiler/llvm/native_c_abi.h"
 #include "../src/compiler/llvm/native_c_contract.h"
 #include "../src/compiler/llvm/reachability.h"
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Constants.h>

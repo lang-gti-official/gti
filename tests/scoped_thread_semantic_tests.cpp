@@ -1,8 +1,8 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 #include "gti/semantic_analyzer.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -576,14 +576,26 @@ void checkProductionLowering() {
     if (std::string_view(name) == "scoped_parallel_cleanup.gti")
       expect(checkedPackCleanup,
              "production cleanup fixture checks exact per-element entry loans");
-    try {
-      const auto artifact =
-          gti_test::emitCpp(result, lang::CppStandard::Cpp23, options.target);
-      expect(artifact.contents.find("managed_thread_scope<") !=
-                 std::string::npos,
-             "production scope roots exact generated adapters");
-    } catch (const std::exception &error) {
-      std::cerr << name << ": " << error.what() << '\n';
+    // Every production scope roots its exact scoped task adapters in MIR.
+    bool rooted = false;
+    bool exact = true;
+    for (const auto &function : result.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions) {
+          if (instruction.intrinsic != lang::IntrinsicKind::ThreadScope)
+            continue;
+          rooted |= !instruction.scopedThreadTasks.empty();
+          for (const auto &task : instruction.scopedThreadTasks) {
+            const auto *adapter =
+                result.mir.findThreadTaskAdapter(task.adapter);
+            exact &= adapter != nullptr && adapter->scoped;
+          }
+        }
+    expect(rooted && exact, "production scope roots exact generated adapters");
+    std::string error;
+    if (!gti_test::llvmEmits(result, lang::OptimizationLevel::O0,
+                             options.target, &error)) {
+      std::cerr << name << ": " << error << '\n';
       for (const auto &function : result.mir.functionInstances())
         if (std::any_of(function.body.blocks.begin(),
                         function.body.blocks.end(), [](const auto &block) {

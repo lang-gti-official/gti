@@ -632,7 +632,7 @@ int main() { int value = 7; Callback<int(int), static> invalid{value}; return 0;
   check("patterned-primary-type-lifetime-name-collision", R"gti(
 struct Callback<R(Args...), lifetime R> {};
 )gti",
-        false, "GTI-S2126");
+        false, "GTI-S2128");
   check("conformance-head-elides-borrowed-nominal-region", R"gti(
 struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
 concept Inspect<T> { int inspect(T& input); };
@@ -1198,10 +1198,10 @@ int&<a> escape<lifetime a>(int&<a> input) { int local = 9; return local; }
   check("unknown-lifetime", R"gti(
 int&<missing> bad(int& input) { return input; }
 )gti",
-        false, "GTI-S2126");
+        false, "GTI-S2128");
   check("lifetime-is-not-runtime-value", R"gti(
 int bad<lifetime a>() { return a; }
 )gti",
-        false, "GTI-S2126");
+        false, "GTI-S2128");
   return failures == 0 ? 0 : 1;
 }

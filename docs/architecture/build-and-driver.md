@@ -886,9 +886,11 @@ Externally supplied native entry points are not a GTI executable contract.
 Direct mode accepts one entry `.gti` source and remains manifest-independent.
 Its source graph produces one whole-program backend artifact: a native object
 from LLVM, or generated C++ and one native compiler invocation from C++.
-`--backend cpp|llvm` selects the immutable executable backend. Without it the
-target's default applies, `defaultBackend(TargetInfo)`: LLVM on macOS arm64 and
-Linux x86_64, C++ elsewhere. The LLVM choice emits native objects for the admitted shapes
+`--backend cpp|llvm` selects the immutable executable backend. Without it
+`defaultBackend(TargetInfo)` applies, which is LLVM on every target. The frozen
+C++ backend exists only in toolchains built with `-DGTI_ENABLE_CPP_BACKEND=ON`;
+elsewhere `--backend cpp`, `--std`, `--keep-cpp` and `--emit-cpp` are usage
+errors. The LLVM choice emits native objects for the admitted shapes
 documented in [backend architecture](backend.md#llvm-scalar-execution).
 Unsupported required shapes report `GTI-B0003` before publication, without a
 C++ fallback. `--std` and `--keep-cpp` are C++-only: without `--backend` they
@@ -1069,8 +1071,9 @@ Syntax, ownership, LSP analysis, and runtime behavior are unchanged.
 `build`, `run`, `test`, and `install` accept `--backend cpp|llvm`. Each profile
 may set `backend = "cpp"|"llvm"`, and an explicit command-line choice overrides
 the selected profile. With neither, C++ retention (`keep-cpp` or `--keep-cpp`)
-or an explicit `--std` selects C++, and otherwise the target's default applies:
-LLVM on macOS arm64 and Linux x86_64, C++ elsewhere. The immutable build plan carries that
+or an explicit `--std` selects C++, and otherwise LLVM applies. A profile that
+selects C++ in a toolchain without the C++ backend fails with `GTI-B1005` at the
+profile. The immutable build plan carries that
 choice into the same executable driver used by direct mode, including parallel
 `--all` children. LLVM intermediates use `.gti.o`, never `.gti.cpp`. C++
 retention and an explicit `--std` are rejected for an explicitly selected LLVM

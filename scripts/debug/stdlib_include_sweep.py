@@ -11,8 +11,9 @@ use path. The script keeps its historical filename for tool compatibility.
     python3 scripts/debug/stdlib_include_sweep.py --gti build/gti
 
 Each module gets a program consisting of one `import` and an empty `main`,
-then compiles through `--emit-cpp`, so a failure is attributable to the module
-alone without spending time in the native toolchain. Results are:
+then compiles through `--emit-mir` (the verified MIR boundary every backend
+consumes), so a failure is attributable to the module alone without spending
+time in the native toolchain. Results are:
 
     ok           the module compiles on its own
     ICE          GTI-B0001 — an internal error from merely importing it
@@ -75,8 +76,8 @@ def classify(gti: Path, directory: Path, module: str, spelling: str) -> tuple[st
     source.write_text(f"import {spelling};\n\nint main() {{\n  return 0;\n}}\n",
                       encoding="utf-8")
     run = subprocess.run(
-        [str(gti), str(source), "-O0", "--std", "c++23", "--emit-cpp",
-         "-o", str(directory / f"{module}.cpp")],
+        [str(gti), str(source), "-O0", "--emit-mir",
+         "-o", str(directory / f"{module}.mir")],
         capture_output=True, text=True, timeout=600)
     if run.returncode == 0:
         return "ok", ""

@@ -1,8 +1,8 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -33,6 +33,65 @@ void diagnostics(const lang::FrontendResult &result) {
   for (const auto &item : result.diagnostics)
     std::cerr << item.code << ": " << item.message << '\n';
 }
+// The shipped backend boundary: verified lowering followed by native
+// emission. True when either step rejects the input.
+bool backendRejects(const lang::FrontendResult &frontend,
+                    const lang::MirProgram &source,
+                    const lang::MirProgram &optimized) {
+  try {
+    (void)lang::LlvmBackend().generate(
+        gti_test::lowerProgram(frontend, source, optimized));
+  } catch (const std::exception &) {
+    return true;
+  }
+  return false;
+}
+bool emitsNative(const lang::FrontendResult &frontend,
+                 lang::OptimizationLevel level = lang::OptimizationLevel::O0) {
+  std::string error;
+  const bool emitted =
+      gti_test::llvmEmits(frontend, level, lang::TargetInfo::host(), &error);
+  if (!emitted)
+    std::cerr << "native emission: " << error << '\n';
+  return emitted;
+}
+// The optimized MIR a backend consumes at `level` performs element lifetimes
+// only through the general unsafe ObjectConstruct/ObjectDestroy operations
+// (`destroys` of them for destruction) and never calls a retired private
+// storage helper.
+bool generalLifetimes(const lang::FrontendResult &frontend,
+                      lang::OptimizationLevel level, std::size_t constructs,
+                      std::size_t destroys) {
+  const auto lowered = gti_test::lowerOptimizedProgram(frontend, level);
+  std::size_t constructed = 0, destroyed = 0;
+  bool retired = false;
+  for (const auto &function : lowered.mir().functionInstances()) {
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.unsafeOperation ==
+            lang::UnsafeOperationKind::ObjectLifetime) {
+          constructed +=
+              instruction.intrinsic == lang::IntrinsicKind::ObjectConstruct;
+          destroyed +=
+              instruction.intrinsic == lang::IntrinsicKind::ObjectDestroy;
+        }
+        const auto *callee = instruction.functionTarget
+                                 ? lowered.mir().findFunctionInstance(
+                                       *instruction.functionTarget)
+                                 : nullptr;
+        const auto *declaration =
+            callee ? frontend.semantics.findFunction(callee->declaration)
+                   : nullptr;
+        retired =
+            retired || (declaration != nullptr &&
+                        (declaration->qualifiedName.find("storage_try_adopt") !=
+                             std::string::npos ||
+                         declaration->qualifiedName.find("allocate_storage") !=
+                             std::string::npos));
+      }
+  }
+  return !retired && constructed >= constructs && destroyed >= destroys;
+}
 template <typename Mutation>
 void forged(const lang::FrontendResult &frontend, Mutation mutation,
             const char *message) {
@@ -49,13 +108,7 @@ void forged(const lang::FrontendResult &frontend, Mutation mutation,
           changed = true;
         }
   expect(changed && !lang::verifyMirProgram(mir).valid(), message);
-  bool rejected = false;
-  try {
-    (void)gti_test::emitCpp(frontend, frontend.mir, mir);
-  } catch (const std::exception &) {
-    rejected = true;
-  }
-  expect(changed && rejected,
+  expect(changed && backendRejects(frontend, frontend.mir, mir),
          "detached backend rejects malformed lifetime authority");
 }
 } // namespace
@@ -113,12 +166,9 @@ int main() {
     expect(count == 1, "exactly one payload destruction operation");
     for (auto level :
          {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
-      const auto cpp = gti_test::emitCppText(frontend, lang::CppStandard::Cpp20,
-                                             lang::TargetInfo::host(), level);
       expect(
-          cpp.find("mir_object_destroy_v1(") != std::string::npos &&
-              cpp.find("mir_storage_") == std::string::npos &&
-              cpp.find("backend::storage<") == std::string::npos,
+          generalLifetimes(frontend, level, 1, 1) &&
+              emitsNative(frontend, level),
           "verified general lifetime operation replaces native sparse helpers");
     }
     forged(
@@ -226,7 +276,7 @@ int main() {
         }
     expect(ordinaryCalls == 2, "both retired call spellings resolve to their "
                                "ordinary declaration identities");
-    expect(!gti_test::emitCppText(ordinary).empty(),
+    expect(emitsNative(ordinary),
            "ordinary declarations with retired names still emit");
   }
   const std::string resourceSource = R"(
@@ -249,10 +299,8 @@ int main() {
   expect(resource.canGenerateCode(),
          "one unsafe resource binding enables safe source-defined storage");
   if (resource.canGenerateCode()) {
-    const auto cpp = gti_test::emitCppText(resource);
-    expect(!cpp.empty() && cpp.find("backend::storage<") == std::string::npos &&
-               cpp.find("mir_storage_") == std::string::npos &&
-               cpp.find("storage_try_adopt(") == std::string::npos,
+    expect(generalLifetimes(resource, lang::OptimizationLevel::O0, 1, 0) &&
+               emitsNative(resource),
            "resource regions use source policy and general object lifetimes");
   }
   auto uncheckedBinding = resourceSource;
@@ -288,11 +336,9 @@ int main() {
   expect(immovable.canGenerateCode(),
          "owner moves without moving fixed-address elements");
   if (immovable.canGenerateCode()) {
-    const auto cpp = gti_test::emitCppText(immovable);
     expect(
-        !cpp.empty() && cpp.find("backend::storage<") == std::string::npos &&
-            cpp.find("mir_storage_") == std::string::npos &&
-            cpp.find("storage_try_adopt(") == std::string::npos,
+        generalLifetimes(immovable, lang::OptimizationLevel::O0, 1, 0) &&
+            emitsNative(immovable),
         "source-defined immovable storage emits without native sparse helpers");
   }
   const auto relocation = analyze(prefix + R"(

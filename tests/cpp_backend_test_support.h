@@ -1,10 +1,17 @@
 #pragma once
 
+// C++-backend emission helpers. Only the frozen C++ backend suites
+// (cpp_mir_*, cpp_debug_artifacts, lowered_program_corpus_census) may include
+// this header; general tests use lowered_program_test_support.h and
+// llvm_backend_test_support.h.
+
 #include "gti/backend.h"
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/lowered_program_builder.h"
 #include "gti/optimizer.h"
+
+#include "lowered_program_test_support.h"
 
 #include <optional>
 #include <stdexcept>
@@ -14,45 +21,14 @@
 
 namespace gti_test {
 
-inline lang::LoweredProgram lowerProgram(
-    const lang::FrontendResult &frontend, const lang::MirProgram &sourceMir,
-    const lang::MirProgram &optimizedMir,
-    const lang::TargetInfo &target = lang::TargetInfo::host(),
-    const std::vector<lang::MirTransformRecord> &transformations = {}) {
-  lang::LoweredProgramBuild lowered = lang::LoweredProgramBuilder().build(
-      frontend.program, frontend.semantics, frontend.hir, sourceMir,
-      optimizedMir, transformations, target);
-  if (!lowered.valid()) {
-    throw std::logic_error(
-        lowered.issues.empty()
-            ? "test fixture did not produce a lowered program"
-            : "test fixture did not produce a lowered program: " +
-                  lowered.issues.front().detail);
-  }
-  return std::move(*lowered.program);
-}
-
 inline lang::BackendArtifact
 emitCpp(const lang::FrontendResult &frontend,
         lang::CppStandard standard = lang::CppStandard::Cpp23,
         lang::TargetInfo target = lang::TargetInfo::host(),
         lang::OptimizationLevel level = lang::OptimizationLevel::O0,
         const lang::OptimizationResult *compatibility = nullptr) {
-  std::optional<lang::OptimizationResult> ownedCompatibility;
-  if (compatibility == nullptr) {
-    ownedCompatibility.emplace(
-        lang::OptimizationPipeline().run(frontend.hir, level));
-    compatibility = &*ownedCompatibility;
-  }
   const lang::OptimizedProgram optimized =
-      lang::OptimizationPipeline().run({.hir = frontend.hir,
-                                        .mir = frontend.mir,
-                                        .level = level,
-                                        .compatibility = compatibility});
-  if (!optimized.valid()) {
-    throw std::logic_error(
-        "test fixture did not produce a coherent optimized MIR program");
-  }
+      optimizeProgram(frontend, level, compatibility);
   const lang::LoweredProgram lowered =
       lowerProgram(frontend, optimized.sourceMir, optimized.mir, target,
                    optimized.report.transformations);

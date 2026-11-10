@@ -1,7 +1,7 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -84,11 +84,10 @@ int main() {
   expect(valid.canGenerateCode(),
          "carrier admits empty immovable and bitwise copy/move");
   if (valid.canGenerateCode()) {
-    try {
-      for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
-        (void)gti_test::emitCppText(valid, standard);
-    } catch (const std::exception &error) {
-      std::cerr << error.what() << '\n';
+    std::string error;
+    if (!gti_test::llvmEmits(valid, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &error)) {
+      std::cerr << error << '\n';
       expect(false, "carrier copy/move has complete MIR emission");
     }
     for (int mutation = 0; mutation < 5; ++mutation) {
@@ -443,7 +442,7 @@ int main() {
              "forged relocation rejected");
       bool rejected = false;
       try {
-        (void)gti_test::emitCpp(relocation, relocation.mir, mir);
+        (void)gti_test::lowerProgram(relocation, relocation.mir, mir);
       } catch (const std::exception &) {
         rejected = true;
       }
@@ -469,10 +468,16 @@ int main() { transfer(nullptr, nullptr, std::size_t(0)); return 0; }
   expect(range.canGenerateCode(),
          "bitwise range relocation forms verified MIR");
   if (range.canGenerateCode()) {
-    const auto emitted = gti_test::emitCppText(range);
-    expect(emitted.find(
-               "::gti_internal::backend::mir_object_relocate_range_v1(") !=
-               std::string::npos,
+    // The bulk relocation is one typed ObjectRelocateRange operation the
+    // shipped backend lowers. The C++ helper spelling lives in
+    // cpp_mir_uninitialized_carrier_tests.cpp.
+    bool bulk = false;
+    for (const auto &function : range.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          bulk |=
+              instruction.intrinsic == lang::IntrinsicKind::ObjectRelocateRange;
+    expect(bulk && gti_test::llvmEmits(range),
            "production MIR emitter consumes bulk relocation");
     for (int mutation = 0; mutation != 7; ++mutation) {
       auto mir = range.mir;
@@ -522,7 +527,7 @@ int main() { transfer(nullptr, nullptr, std::size_t(0)); return 0; }
              "forged range relocation rejected by MIR");
       bool rejected = false;
       try {
-        (void)gti_test::emitCpp(range, range.mir, mir);
+        (void)gti_test::lowerProgram(range, range.mir, mir);
       } catch (const std::exception &) {
         rejected = true;
       }

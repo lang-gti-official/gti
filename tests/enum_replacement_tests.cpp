@@ -1,5 +1,8 @@
 #include "../src/compiler/mir_verification_queries.h"
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
 
 namespace {
 lang::MirInstruction *instruction(lang::MirBody &body,
@@ -32,9 +35,12 @@ void checkReplacementProof() {
          "nonassignable payload permits checked whole-enum replacement");
   if (!frontend.canGenerateCode())
     return;
-  expect(!gti_test::emitCppText(frontend, lang::CppStandard::Cpp23, target)
-              .empty(),
-         "checked replacement has complete native representation");
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "checked replacement produces verified MIR");
+  std::string error;
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0, target,
+                             &error),
+         "checked replacement has complete native representation: " + error);
   // A mutex relocates structurally when its payload does: relocation builds a
   // fresh native mutex and transfers the payload, never copying native
   // identity bytes. A locked mutex is borrowed by its lock token, so it cannot
@@ -89,8 +95,6 @@ void checkReplacementProof() {
       checkStructural(enumeration.type);
   expect(structural >= 3,
          "relocation policy covers public mutex, wrapper and replacing enum");
-  const lang::CppMirBodyEmissionMap map(
-      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23, target));
   std::size_t checked = 0;
   for (const auto &function : frontend.mir.functionInstances())
     for (const auto &block : function.body.blocks)
@@ -136,16 +140,9 @@ void checkReplacementProof() {
             changed->operands.front().type = lang::SemanticType::Int32;
           expect(lang::rebuildMirValueUses(*body),
                  "replacement mutations preserve SSA use records");
-          const lang::MirBodyAddress address{lang::MirBodyKind::Function,
-                                             function.id};
-          const lang::CppMirBodyEmitter emitter(malformed, map);
           const auto label = "replacement mutation " + std::to_string(mutation);
           expect(!lang::verifyMirProgram(malformed).valid(),
                  label + " rejects malformed MIR");
-          expect(!emitter.supportsFailureBodyText(address),
-                 label + " rejects failure-form backend admission");
-          expect(!emitter.supportsBodyText(address),
-                 label + " rejects ordinary backend admission");
         }
       }
   expect(checked == 4, "same/different/empty/nonempty alternatives all retain "

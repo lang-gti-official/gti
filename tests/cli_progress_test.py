@@ -11,6 +11,12 @@ import sys
 import tempfile
 import time
 
+from backend_modes import cpp_modes
+
+# The frozen C++ backend runs only when GTI_TEST_BACKENDS selects it; otherwise
+# every build here goes through the shipped default (LLVM).
+CPP = bool(cpp_modes())
+
 
 def assert_neutral_native_detail(output):
     marker = "Native  compiling and linking"
@@ -60,7 +66,7 @@ def main():
             'manifest-version = 1\n[package]\nname = "progress"\nversion = "0.1.0"\n'
             '[package.native]\ncpp-sources = ["bridge.cpp"]\n'
             '[targets.progress]\nkind = "executable"\nroot = "main.gti"\n'
-            '[profiles.dev]\nkeep-cpp = true\n'
+            + ('[profiles.dev]\nkeep-cpp = true\n' if CPP else '')
         )
         (root / "gti.toml").write_text(manifest)
 
@@ -73,7 +79,8 @@ def main():
 
         help_output = run(["--help"])
         assert "[-- <native compiler arguments>]" in help_output.stdout
-        assert "--emit-cpp" in help_output.stdout and "--keep-cpp" in help_output.stdout
+        if CPP:
+            assert "--emit-cpp" in help_output.stdout and "--keep-cpp" in help_output.stdout
         assert "c++ compiler arguments" not in help_output.stdout
 
         built = run(["build", "--no-cache"])
@@ -87,7 +94,8 @@ def main():
         assert "Finished" not in built.stdout and "Built progress" in built.stdout
         assert "Publishing  executable and build cache" not in built.stderr
         assert "C++" not in built.stdout + built.stderr
-        assert "Kept backend representation" in built.stdout
+        if CPP:
+            assert "Kept backend representation" in built.stdout
         # --verbose restores every backend stage, still without a backend name.
         detailed_build = run(["build", "--no-cache", "--verbose", "--progress=plain"])
         stages = ["Loading", "Parsing", "Checking", "Lowering  HIR", "Lowering  MIR",
@@ -99,12 +107,18 @@ def main():
         assert_neutral_native_detail(detailed_build.stderr)
         executable = next(path for path in (root / "build").rglob("progress*")
                           if path.is_file() and path.name in ["progress", "progress.exe"])
-        generated = next((root / "build").rglob("progress.gti.cpp"))
-        original = executable.read_bytes(), generated.read_bytes()
+        # Under the C++ profile the retained C++ text is part of the published
+        # artifacts whose identity presentation options must not change.
+        generated = next((root / "build").rglob("progress.gti.cpp")) if CPP else None
+
+        def artifacts():
+            return executable.read_bytes(), generated.read_bytes() if generated else None
+
+        original = artifacts()
         quiet = run(["build", "--no-cache", "--progress=never"])
         assert quiet.stderr == "", quiet.stderr
         assert quiet.stdout == built.stdout
-        assert original == (executable.read_bytes(), generated.read_bytes())
+        assert original == artifacts()
 
         # Presentation must not enter the cache identity. First populate it,
         # then change both progress/colour policy and prove compilation skips.
@@ -113,7 +127,7 @@ def main():
         assert "hit; restoring executable" in cached.stderr, cached.stderr
         assert "Parsing" not in cached.stderr and "Native" not in cached.stderr
         assert "Finished" in cached.stderr
-        assert original == (executable.read_bytes(), generated.read_bytes())
+        assert original == artifacts()
 
         executed = run(["run", "--progress=plain"])
         assert executed.stdout == "program-output\n", executed.stdout
@@ -124,7 +138,7 @@ def main():
         assert "Checking" in checked.stderr and "Native" not in checked.stderr
         assert re.search(r"^\s*Checking  progress \(dev,", checked.stderr), checked.stderr
         assert "Building" not in checked.stderr, checked.stderr
-        assert original == (executable.read_bytes(), generated.read_bytes())
+        assert original == artifacts()
         global_policy = run(["--progress=never", "check"])
         assert global_policy.stderr == ""
         overridden = run(["--progress=never", "check", "--progress=plain"])
@@ -142,7 +156,7 @@ def main():
             assert "Building" not in result.stderr, result.stderr
 
         # Direct emit mode is still silent unless progress is requested.
-        direct = run(["main.gti", "--emit-cpp", "-o", "direct.cpp"])
+        direct = run(["main.gti", "--emit-mir", "-o", "direct.mir"])
         assert direct.stderr == ""
         direct = run(["main.gti", "--emit-mir", "-o", "direct.mir", "--progress=plain"])
         assert "Finished" in direct.stderr
@@ -150,12 +164,12 @@ def main():
         direct = run(["main.gti", "--emit-mir", "-o", "direct.mir", "--progress=plain",
                       "--verbose"])
         assert "Emitting  MIR" in direct.stderr and "Finished" in direct.stderr
-        operand = run(["main.gti", "--emit-cpp", "-o", "--progress=never"])
+        operand = run(["main.gti", "--emit-mir", "-o", "--progress=never"])
         assert operand.stderr == "" and (root / "--progress=never").is_file()
         if os.name != "nt":
             spelling = "\u4e2d\u56fd\x1b[31m\nsource.gti"
             (root / spelling).write_text("int main() { return 0; }\n")
-            escaped = run([spelling, "--emit-cpp", "-o", "escaped.cpp",
+            escaped = run([spelling, "--emit-mir", "-o", "escaped.mir",
                            "--progress=plain", "--verbose", "--color=never"])
             assert "\u4e2d\u56fd" in escaped.stderr
             assert "\\x1b[31m\\x0asource.gti" in escaped.stderr

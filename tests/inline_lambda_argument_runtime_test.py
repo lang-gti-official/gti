@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_text_modes
+
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, text=True, capture_output=True, check=False)
@@ -94,23 +96,27 @@ def main() -> int:
             ):
                 return fail(f"run {optimization}", executed)
 
-            emitted = root / f"inline-lambda-{optimization}.cpp"
-            emission = run(
-                [
-                    str(compiler),
-                    str(source),
-                    f"-{optimization}",
-                    "--emit-cpp",
-                    "-o",
-                    str(emitted),
-                ]
-            )
-            if emission.returncode != 0:
-                return fail(f"emit {optimization}", emission)
-            if not validate_emission(
-                emitted.read_text(encoding="utf-8"), optimization
-            ):
-                return 1
+            # Probe of the frozen C++ backend's text: it runs only when
+            # GTI_TEST_BACKENDS selects C++.
+            for _label, cpp_flags, _native in cpp_text_modes():
+                emitted = root / f"inline-lambda-{optimization}.cpp"
+                emission = run(
+                    [
+                        str(compiler),
+                        str(source),
+                        f"-{optimization}",
+                        *cpp_flags,
+                        "--emit-cpp",
+                        "-o",
+                        str(emitted),
+                    ]
+                )
+                if emission.returncode != 0:
+                    return fail(f"emit {optimization}", emission)
+                if not validate_emission(
+                    emitted.read_text(encoding="utf-8"), optimization
+                ):
+                    return 1
     return 0
 
 

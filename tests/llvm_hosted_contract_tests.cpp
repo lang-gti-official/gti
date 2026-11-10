@@ -2,11 +2,11 @@
 #include "../src/compiler/llvm/hosted.h"
 #include "../src/compiler/llvm/runtime_abi.h"
 #include "../src/compiler/mir_verification_queries.h"
-#include "cpp_backend_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
+#include "lowered_program_test_support.h"
 
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/GlobalAlias.h>

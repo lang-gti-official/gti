@@ -1480,7 +1480,7 @@ void testBinderDiagnostics() {
     expect(!result.semanticValid &&
                std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
                            [](const auto &diagnostic) {
-                             return diagnostic.code == "GTI-S2126";
+                             return diagnostic.code == "GTI-S2128";
                            }),
            "invalid lifetime names and parameter kinds produce binder "
            "diagnostics");
@@ -1570,7 +1570,7 @@ int main() { int value = 7; exercise(value, value); return 0; }
                                                  invalid.diagnostics.end(),
                                                  [](const auto &diagnostic) {
                                                    return diagnostic.code ==
-                                                          "GTI-S2126";
+                                                          "GTI-S2128";
                                                  }),
            "explicit call arguments reject wrong kinds and unknown lifetime "
            "names");
@@ -2793,7 +2793,7 @@ int main() { return 0; }
              std::any_of(kindConflict.diagnostics.begin(),
                          kindConflict.diagnostics.end(),
                          [](const auto &diagnostic) {
-                           return diagnostic.code == "GTI-S2126";
+                           return diagnostic.code == "GTI-S2128";
                          }),
          "a projected lifetime name cannot also bind a type");
   for (const char *source :
@@ -2956,7 +2956,7 @@ int main() { return 0; }
   expect(!invalid.semanticValid &&
              std::any_of(invalid.diagnostics.begin(), invalid.diagnostics.end(),
                          [](const auto &diagnostic) {
-                           return diagnostic.code == "GTI-S2126";
+                           return diagnostic.code == "GTI-S2128";
                          }),
          "C-string lifetime slots reject ordinary runtime type arguments");
 }

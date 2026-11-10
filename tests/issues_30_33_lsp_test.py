@@ -25,15 +25,15 @@ int main() { auto result = relay(); return result ? 1 : 0; }
 '''
     path = root / "unexpected.gti"
     path.write_text(source)
-    built = subprocess.run([compiler, str(path), "--emit-cpp", "--color=never",
-                            "-o", str(root / "rejected.cpp")],
+    built = subprocess.run([compiler, str(path), "--emit-mir", "--color=never",
+                            "-o", str(root / "rejected.mir")],
                            capture_output=True, text=True, timeout=30)
     # unexpected(e) is an ordinary source function: copying a move-only payload
     # into its by-value parameter is the general deleted-copy error.
     assert built.returncode == 65 and "GTI-S2018" in built.stderr, built
     assert "would call the deleted copy constructor of 'Error'" in built.stderr, built
     assert "GTI-B0001" not in built.stderr, built
-    assert not (root / "rejected.cpp").exists()
+    assert not (root / "rejected.mir").exists()
     uri = path.as_uri()
     session = LspSession(server)
     try:

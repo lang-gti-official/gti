@@ -5,7 +5,7 @@
 The test recomputes the per-example census from sealed LoweredProgram bodies
 under the default LLVM profile. Every example must still pass frontend/MIR
 verification; the corpus oracle proves native execution. C++ emission is queried
-only when the scheduled C++ profile is explicitly selected. A recorded example
+only when the hand-dispatched C++ profile is explicitly selected. A recorded example
 whose count leaves the census budget
 (tests/census_budget.py: the larger of five bodies or five percent) is an
 advisory finding (tests/advisory_checks.py): it prints a `GTI-ADVISORY:` line

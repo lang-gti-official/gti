@@ -1,4 +1,21 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+namespace {
+
+// The shipped backend accepts the verified MIR program.
+void expectBackendAccepts(
+    const lang::FrontendResult &frontend, const std::string &message,
+    const lang::TargetInfo &target = lang::TargetInfo::host()) {
+  std::string error;
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         message + " (MIR verifies)");
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0, target,
+                             &error),
+         message + (error.empty() ? "" : ": " + error));
+}
+
+} // namespace
 
 void checkContainingClasses() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
@@ -40,45 +57,17 @@ void nonassignable_control() { MutexOuter outer{}; }
          "nonassignable constructor fields have valid MIR");
   if (!frontend.canGenerateCode())
     return;
-  expect(!gti_test::emitCppText(frontend, lang::CppStandard::Cpp23, target)
-              .empty(),
-         "nested nonassignable and active-cleanup fields admit full emission");
-  const lang::CppMirBodyEmissionMap rows(
-      buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23, target));
-  std::size_t emptyProofs = 0;
+  expectBackendAccepts(
+      frontend,
+      "nested nonassignable and active-cleanup fields admit full emission",
+      target);
+  std::size_t nonassignable = 0;
   std::size_t publications = 0;
-  for (const auto &owner : frontend.mir.classInstances()) {
-    if (owner.compilerCapability != lang::CompilerCapabilityTypeKind::None ||
-        owner.traits.moveAssignable || owner.declaredFields.empty() ||
-        !lang::cppMirFailureConstructorEmptyStateTypeEligible(frontend.mir,
-                                                              owner.type))
-      continue;
-    ++emptyProofs;
-    for (int mutation = 0; mutation != 3; ++mutation) {
-      auto malformed = frontend.mir;
-      auto *changed = const_cast<lang::MirClassInstance *>(
-          malformed.findClassInstance(owner.id));
-      // Construction-only empty state recurses through fields, so a class
-      // whose enum fields may carry borrows still qualifies; a direct
-      // reference field does not (docs/architecture/backend.md).
-      if (mutation == 0)
-        changed->declaredFields.front().type = lang::SemanticType::referenceTo(
-            changed->declaredFields.front().type, lang::AccessMode::ReadOnly);
-      else if (mutation == 1)
-        changed->cAbiRecord = true;
-      else
-        changed->declaredFields.front().symbol = 0;
-      expect(!lang::cppMirFailureConstructorEmptyStateTypeEligible(malformed,
-                                                                   owner.type),
-             "construction-only empty state retains borrow, layout and field "
-             "identity checks");
-    }
-  }
+  for (const auto &owner : frontend.mir.classInstances())
+    if (owner.compilerCapability == lang::CompilerCapabilityTypeKind::None &&
+        !owner.traits.moveAssignable && !owner.declaredFields.empty())
+      ++nonassignable;
   for (const auto &constructor : frontend.mir.constructorInstances()) {
-    if (!lang::CppMirBodyEmitter(frontend.mir, rows)
-             .supportsFailureBodyText(
-                 {lang::MirBodyKind::Constructor, constructor.id}))
-      continue;
     for (const auto &block : constructor.body.blocks) {
       for (const auto &instruction : block.instructions) {
         if (instruction.kind != lang::MirInstructionKind::Initialize ||
@@ -89,28 +78,18 @@ void nonassignable_control() { MutexOuter outer{}; }
         if (!field || field->type.kind != lang::SemanticType::Class ||
             field->traits.moveAssignable)
           continue;
+        // A nonassignable class field is published in place by its selected
+        // constructor initializer.
         ++publications;
-        auto malformed = frontend.mir;
-        auto *changed = const_cast<lang::MirConstructorInstance *>(
-            malformed.findConstructorInstance(constructor.id));
-        for (auto &changedBlock : changed->body.blocks)
-          for (auto &changedInstruction : changedBlock.instructions)
-            if (changedInstruction.id == instruction.id)
-              changedInstruction.constructorInitializer = 0;
-        expect(!lang::CppMirBodyEmitter(malformed, rows)
-                    .supportsFailureBodyText(
-                        {lang::MirBodyKind::Constructor, constructor.id}),
-               "in-place publication requires the selected constructor "
-               "initializer");
       }
     }
   }
   // The mutex plus its three ordinary wrappers prove empty construction;
   // the three wrapper fields exercise the fallible publication classifier.
-  expect(emptyProofs >= 4 && publications >= 3,
+  expect(nonassignable >= 4 && publications >= 3,
          "checks cover genuine nonassignable mutex-bearing wrappers alongside "
-         "passive and active source optional fields (empty=" +
-             std::to_string(emptyProofs) +
+         "passive and active source optional fields (nonassignable=" +
+             std::to_string(nonassignable) +
              ", publications=" + std::to_string(publications) + ")");
 }
 
@@ -123,8 +102,8 @@ void checkEnumStorage(const char *fixture, bool owning) {
   expect(frontend.canGenerateCode(), "source optional passes frontend");
   if (!frontend.canGenerateCode())
     return;
-  expect(!gti_test::emitCppText(frontend).empty(),
-         "source optional admits complete production emission");
+  expectBackendAccepts(frontend,
+                       "source optional admits complete production emission");
   expect(
       std::none_of(frontend.mir.classInstances().begin(),
                    frontend.mir.classInstances().end(),
@@ -183,7 +162,9 @@ void checkEnumStorage(const char *fixture, bool owning) {
         expect(owning == !instruction.lifecycle.empty(),
                "enum publication has cleanup exactly when its payload owns "
                "cleanup");
-        for (int mutation = 0; mutation != (owning ? 6 : 4); ++mutation) {
+        // Mutation 0 (a lost initializer) is backend admission's to reject;
+        // cpp_mir_optional_empty_prefix_tests.cpp covers it.
+        for (int mutation = 1; mutation != (owning ? 6 : 4); ++mutation) {
           auto malformed = frontend.mir;
           auto *changed = const_cast<lang::MirConstructorInstance *>(
               malformed.findConstructorInstance(constructor.id));
@@ -195,9 +176,7 @@ void checkEnumStorage(const char *fixture, bool owning) {
               producerBlock.instructions.end(), [&](const auto &candidate) {
                 return candidate.id == instruction.id;
               });
-          if (mutation == 0)
-            publication.constructorInitializer = 0;
-          else if (mutation == 1)
+          if (mutation == 1)
             publication.operands.front().type = lang::SemanticType::Int32;
           else if (mutation == 2)
             publication.operands.push_back(publication.operands.front());
@@ -214,20 +193,9 @@ void checkEnumStorage(const char *fixture, bool owning) {
             publication.lifecycle.front().source = 0;
           expect(lang::rebuildMirValueUses(changed->body),
                  "enum publication mutation retains SSA use records");
-          // A lost initializer is backend admission's to reject: the
-          // vocabulary rejects the owning publication, while body analysis
-          // rejects the passive one.
-          const lang::CppMirBodyEmissionMap rows(
-              buildRows(frontend, frontend.mir));
-          const lang::CppMirBodyEmitter emitter(malformed, rows);
-          const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
-                                             constructor.id};
-          const bool rejected =
-              mutation == 0 ? !(emitter.analyze(address).ready() &&
-                                emitter.supportsFailureBodyText(address))
-                            : !lang::verifyMirProgram(malformed).valid();
+          const bool rejected = !lang::verifyMirProgram(malformed).valid();
           expect(rejected,
-                 "enum publication rejects missing initializer, wrong type, "
+                 "enum publication rejects wrong type, "
                  "extra operand, field identity and cleanup transfer drift "
                  "(mutation " +
                      std::to_string(mutation) + ")");
@@ -249,7 +217,8 @@ void checkFieldReplacement() {
   expect(frontend.canGenerateCode(), "constructor replacements have valid MIR");
   if (!frontend.canGenerateCode())
     return;
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  expectBackendAccepts(frontend, "qualified and unqualified constructor "
+                                 "field replacement compiles");
   std::size_t assignments = 0;
   for (const auto &constructor : frontend.mir.constructorInstances()) {
     const auto &owners = frontend.hir.classInstances();
@@ -267,36 +236,10 @@ void checkFieldReplacement() {
             !instruction.destination || instruction.lifecycle.empty())
           continue;
         ++assignments;
-        expect(lang::CppMirBodyEmitter(frontend.mir, rows)
-                   .supportsFailureBodyText(
-                       {lang::MirBodyKind::Constructor, constructor.id}),
-               "qualified and unqualified replacement share the field proof");
-        auto malformed = frontend.mir;
-        auto *changed = const_cast<lang::MirConstructorInstance *>(
-            malformed.findConstructorInstance(constructor.id));
-        for (auto &changedBlock : changed->body.blocks)
-          for (auto &candidate : changedBlock.instructions)
-            if (candidate.id == instruction.id)
-              candidate.lifecycle.front().source = 0;
-        expect(
-            !lang::CppMirBodyEmitter(malformed, rows)
-                 .supportsFailureBodyText(
-                     {lang::MirBodyKind::Constructor, constructor.id}),
-            "field replacement requires the exact result ownership transfer");
-        malformed = frontend.mir;
-        changed = const_cast<lang::MirConstructorInstance *>(
-            malformed.findConstructorInstance(constructor.id));
-        auto *place = const_cast<lang::MirPlace *>(
-            changed->body.findPlace(*instruction.destination));
-        if (place->root == lang::MirPlaceRootKind::Symbol)
-          place->symbol = 0;
-        else
-          place->projections.front().field = 0;
-        expect(!lang::CppMirBodyEmitter(malformed, rows)
-                    .supportsFailureBodyText(
-                        {lang::MirBodyKind::Constructor, constructor.id}),
-               "an unknown symbol or projection cannot be treated as a "
-               "receiver field");
+        // Replacement transfers the call result's ownership into the field.
+        expect(instruction.lifecycle.front().source != 0,
+               "field replacement records the exact result ownership "
+               "transfer");
       }
     }
   }

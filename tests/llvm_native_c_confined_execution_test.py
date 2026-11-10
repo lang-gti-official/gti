@@ -9,14 +9,20 @@ import platform
 import subprocess
 import time
 
+from backend_modes import selected_backends
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("compiler", type=Path)
     parser.add_argument("--cc", default="cc")
-    parser.add_argument("--backend", choices=("both", "cpp", "llvm"), default="both")
+    # The default follows GTI_TEST_BACKENDS (backend_modes): LLVM unless the
+    # C++ profile is selected.
+    parser.add_argument("--backend", choices=("both", "cpp", "llvm"), default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
+    if args.backend is None:
+        args.backend = selected_backends()
     root = Path(__file__).resolve().parents[1]
     fixture = root / "tests/fixtures/llvm_native_c_abi"
     source = fixture / "public_confined_callback.gti"

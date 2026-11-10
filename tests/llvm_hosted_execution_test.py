@@ -11,6 +11,7 @@ import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from backend_modes import cpp_modes
 from llvm_evidence_manifest import build_manifest
 
 
@@ -232,8 +233,11 @@ def main():
         raise ValueError(f"unknown hosted case: {selection}")
     selected_names = (tuple(HOSTED_CASES) if selection == "all"
                       else HOSTED_GROUPS.get(selection, ()))
+    # The C++ comparator endpoints run only when GTI_TEST_BACKENDS selects
+    # the C++ backend; every case still asserts its exact expected observable.
     endpoints = (
-        Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
+        *((Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"))
+          if cpp_modes() else ()),
         *(Endpoint("llvm", f"O{level}") for level in
           (range(4) if selection in {"all", "reference-return", "text-return", "generated-construction", "union-construction", "scalar-return", "arguments"}
            else (0, 3))),
@@ -289,7 +293,8 @@ def main():
                 raise AssertionError(f"hosted observable drift: {filename}: {observations}")
             levels = "O0-O3" if selection in {"all", "reference-return", "text-return", "generated-construction", "union-construction", "scalar-return", "arguments"} else "O0/O3"
             scope = (f"LLVM {levels}; recorded C++ vocabulary gap {comparator_gaps}"
-                     if comparator_gaps else f"C++20/23 O3 and LLVM {levels}")
+                     if comparator_gaps else
+                     f"C++20/23 O3 and LLVM {levels}" if cpp_modes() else f"LLVM {levels}")
             print(f"{filename}: uninstrumented {scope} passed", flush=True)
         if selection == "scalar-return" and selected_cases != 2:
             raise AssertionError(f"scalar return requires both fixtures, ran {selected_cases}")

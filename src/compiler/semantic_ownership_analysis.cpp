@@ -14695,6 +14695,20 @@ auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
     resolved.typeArguments.push_back(*attribute);
   }
   semanticModel.record(expr, resolved);
+  const auto deferQuery = [&] {
+    // Primary generic bodies are allowed to wait for substitution. An
+    // instantiated body must instead publish a constant: a generic method's
+    // reflected signature can still contain parameters that this instance
+    // does not bind, and no runtime reflection operation can answer for them.
+    if (concreteReanalysis()) {
+      report(expr.paren(),
+             "This reflection query requires concrete generic arguments "
+             "to determine a constant result for '" +
+                 typeSpelling(*subject) +
+                 "'; an unbound generic parameter remains.",
+             "GTI-S2126");
+    }
+  };
   if ((containsOpenTypeParameter(*subject) &&
        !metaQueryAcceptsOpenSubject(intrinsic, *subject)) ||
       (attribute && containsOpenTypeParameter(*attribute) &&
@@ -14703,6 +14717,7 @@ auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
                   [](const CompileTimeValue &index) {
                     return index.kind != CompileTimeValue::UInt64;
                   })) {
+    deferQuery();
     return;
   }
   const std::optional<std::uint64_t> index =
@@ -14713,8 +14728,10 @@ auto SemanticVisitor::Impl::analyzeMetaIntrinsicCall(
       metaQueryConstant(intrinsic, *subject, attribute, index, second);
   if (!constant) {
     if (containsOpenTypeParameter(*subject) ||
-        (attribute && containsOpenTypeParameter(*attribute)))
+        (attribute && containsOpenTypeParameter(*attribute))) {
+      deferQuery();
       return;
+    }
     const auto [code, message] =
         metaQueryFailure(intrinsic, *subject, index, second);
     report(expr.paren(), message, code);

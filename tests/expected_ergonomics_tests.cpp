@@ -1,7 +1,7 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -335,16 +335,12 @@ int main() {
   // One shared instance per selected result type: expected<int, int> and
   // expected<void, int>.
   check(terminalArms == 2, "terminal expect arms are present");
-  for (const auto standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    try {
-      check(!gti_test::emitCppText(result, standard).empty(),
-            "expected operations use the production MIR backend in both "
-            "standards");
-    } catch (const std::exception &error) {
-      std::cerr << error.what() << '\n';
-      check(false, "expected operations fit verified backend vocabulary");
-    }
+  try {
+    check(!gti_test::emitLlvm(result).contents.empty(),
+          "expected operations use the production MIR backend");
+  } catch (const std::exception &error) {
+    std::cerr << error.what() << '\n';
+    check(false, "expected operations fit verified backend vocabulary");
   }
 }
 
@@ -377,15 +373,12 @@ int main() {
         "owned expected results and terminal mappers lower");
   if (!result.canGenerateCode())
     return;
-  for (const auto standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    try {
-      check(!gti_test::emitCppText(result, standard).empty(),
-            "owned expect supports local, return and argument publication");
-    } catch (const std::exception &error) {
-      std::cerr << error.what() << '\n';
-      check(false, "owned expected operations fit verified backend vocabulary");
-    }
+  try {
+    check(!gti_test::emitLlvm(result).contents.empty(),
+          "owned expect supports local, return and argument publication");
+  } catch (const std::exception &error) {
+    std::cerr << error.what() << '\n';
+    check(false, "owned expected operations fit verified backend vocabulary");
   }
 }
 
@@ -412,15 +405,12 @@ int main() { return read(false).value() + read(true).error() - 24; }
   check(result.canGenerateCode(), "moved Expected scalar observer lowers");
   if (!result.canGenerateCode())
     return;
-  for (const auto standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    try {
-      check(!gti_test::emitCppText(result, standard).empty(),
-            "cleanup-free Expected supports scalar and class extraction");
-    } catch (const std::exception &error) {
-      std::cerr << error.what() << '\n';
-      check(false, "moved Expected observer fits verified backend vocabulary");
-    }
+  try {
+    check(!gti_test::emitLlvm(result).contents.empty(),
+          "cleanup-free Expected supports scalar and class extraction");
+  } catch (const std::exception &error) {
+    std::cerr << error.what() << '\n';
+    check(false, "moved Expected observer fits verified backend vocabulary");
   }
 }
 
@@ -456,16 +446,13 @@ int main() { exercise(); return 0; }
   check(result.canGenerateCode(), "fresh owning expected arguments lower");
   if (!result.canGenerateCode())
     return;
-  for (const auto standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    try {
-      check(!gti_test::emitCppText(result, standard).empty(),
-            "fresh expected results transfer directly to source function "
-            "parameters");
-    } catch (const std::exception &error) {
-      std::cerr << error.what() << '\n';
-      check(false, "fresh Expected argument fits verified backend vocabulary");
-    }
+  try {
+    check(!gti_test::emitLlvm(result).contents.empty(),
+          "fresh expected results transfer directly to source function "
+          "parameters");
+  } catch (const std::exception &error) {
+    std::cerr << error.what() << '\n';
+    check(false, "fresh Expected argument fits verified backend vocabulary");
   }
   lang::HirFunctionInstanceId exercise = 0;
   lang::HirFunctionInstanceId producer = 0;

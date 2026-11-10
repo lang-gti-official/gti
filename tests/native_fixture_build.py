@@ -16,7 +16,13 @@ def build_fixture(command, output, *, native_sources=(), native_arguments=(), na
     command = list(map(str, command))
     output = Path(output)
     llvm = "--backend" in command and command[command.index("--backend") + 1] == "llvm"
-    if (not native_sources and not native_suffix) or (llvm and not native_suffix):
+    # Only an explicit C++ selection (``--backend cpp`` or a ``--std`` mode from
+    # backend_modes) or a native suffix, which needs the C++ text, takes the C++
+    # emission path. A command that selects no backend builds with the driver's
+    # default, LLVM, so a fixture never reaches the frozen backend implicitly.
+    cpp = "--std" in command or (
+        "--backend" in command and command[command.index("--backend") + 1] == "cpp")
+    if not native_suffix and (not native_sources or not cpp):
         # The LLVM driver links native sources itself, providers first.
         direct = [*command, "-o", str(output)]
         if native_sources or native_arguments:

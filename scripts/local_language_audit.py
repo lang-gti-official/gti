@@ -150,10 +150,16 @@ def load_manifest() -> list[dict[str, Any]]:
     return cases
 
 
+# Each configuration is (optimization, backend). Every case runs on the
+# shipped LLVM backend; --cpp-emission additionally checks the frozen C++
+# backend's emitted fragments in a toolchain that includes it.
+EMISSION_BACKEND = "llvm"
+
+
 def matrix(full: bool) -> list[tuple[str, str]]:
-    configurations = [("O0", "c++23"), ("O3", "c++23")]
+    configurations = [("O0", "llvm"), ("O3", "llvm")]
     if full:
-        configurations.extend([("O0", "c++20"), ("O3", "c++20")])
+        configurations.extend([("O1", "llvm"), ("O2", "llvm")])
     return configurations
 
 
@@ -163,21 +169,16 @@ def compile_command(
     source: Path,
     output: Path,
     optimization: str,
-    standard: str,
+    backend: str,
     *,
-    emit_cpp: bool = False,
+    emit: bool = False,
 ) -> list[str]:
-    command = [
-        gti,
-        str(source),
-        f"-{optimization}",
-        "--std",
-        standard,
-        "-o",
-        str(output),
-    ]
-    if emit_cpp:
-        command.append("--emit-cpp")
+    command = [gti, str(source), f"-{optimization}"]
+    if backend == "cpp":
+        command.extend(["--std", "c++23"])
+    command.extend(["-o", str(output)])
+    if emit:
+        command.append("--emit-cpp" if backend == "cpp" else "--emit-mir")
     else:
         command.extend(["--cxx", cxx])
     return command
@@ -220,9 +221,10 @@ def verify_emission(
 ) -> None:
     emitted: list[str] = []
     for repetition in range(2):
-        destination = output_root / f"{case['id']}-emit-{repetition}.cpp"
+        suffix = ".cpp" if EMISSION_BACKEND == "cpp" else ".mir"
+        destination = output_root / f"{case['id']}-emit-{repetition}{suffix}"
         command = compile_command(
-            gti, cxx, source, destination, "O0", "c++23", emit_cpp=True
+            gti, cxx, source, destination, "O0", EMISSION_BACKEND, emit=True
         )
         compile_successfully(
             f"{case['id']} emission {repetition + 1}",
@@ -231,10 +233,14 @@ def verify_emission(
             verbose=verbose,
         )
         if not destination.is_file():
-            raise AuditFailure(f"{case['id']} emitted no C++ artifact")
+            raise AuditFailure(f"{case['id']} emitted no artifact")
         emitted.append(destination.read_text(encoding="utf-8"))
     if emitted[0] != emitted[1]:
-        raise AuditFailure(f"{case['id']} generated C++ is nondeterministic")
+        raise AuditFailure(f"{case['id']} emission is nondeterministic")
+    if EMISSION_BACKEND != "cpp":
+        # The recorded fragments name C++ representation details; only the
+        # frozen C++ backend's emission can be checked against them.
+        return
     require_fragments(
         f"{case['id']} generated C++",
         emitted[0],
@@ -270,9 +276,9 @@ def verify_contract_cases(
         kind = case.get("kind")
 
         if kind == "diagnostic":
-            destination = output_root / f"{case_id}.cpp"
+            destination = output_root / f"{case_id}.mir"
             command = compile_command(
-                gti, cxx, source, destination, "O0", "c++23", emit_cpp=True
+                gti, cxx, source, destination, "O0", "llvm", emit=True
             )
             result = run_command(command, timeout=timeout, verbose=verbose)
             assert_no_internal_failure(case_id, result)
@@ -519,7 +525,7 @@ def verify_generated_programs(
                         injected_mismatch == "gti"
                         and name == "original"
                         and optimization == "O0"
-                        and standard == "c++23"
+                        and standard == "llvm"
                     ):
                         snapshot = perturbed_snapshot(snapshot)
                     observed[variant] = snapshot
@@ -601,10 +607,10 @@ def verify_mutations(
     for index in range(count):
         source_text = mutated_source(seeds[index % len(seeds)], generator, index)
         source = mutation_root / f"mutation-{index:03d}.gti"
-        emitted = mutation_root / f"mutation-{index:03d}.cpp"
+        emitted = mutation_root / f"mutation-{index:03d}.mir"
         source.write_text(source_text, encoding="utf-8")
         command = compile_command(
-            gti, cxx, source, emitted, "O0", "c++23", emit_cpp=True
+            gti, cxx, source, emitted, "O0", "llvm", emit=True
         )
         result = run_command(command, timeout=timeout, verbose=verbose)
         assert_no_internal_failure(f"mutation {index}", result)
@@ -612,7 +618,7 @@ def verify_mutations(
             accepted += 1
             if not emitted.is_file() or emitted.stat().st_size == 0:
                 raise AuditFailure(
-                    f"mutation {index} succeeded without emitted C++\n"
+                    f"mutation {index} succeeded without emitted MIR\n"
                     f"--- source ---\n{source_text}"
                 )
             continue
@@ -747,6 +753,12 @@ def parse_arguments() -> argparse.Namespace:
         "--artifacts-dir",
         help="directory to preserve failures under (implies --keep-failures)",
     )
+    parser.add_argument(
+        "--cpp-emission",
+        action="store_true",
+        help="also check recorded C++ emission fragments (needs a toolchain "
+        "built with the frozen C++ backend)",
+    )
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
 
@@ -775,6 +787,8 @@ class _KeepOnFailure:
 
 def main() -> int:
     arguments = parse_arguments()
+    global EMISSION_BACKEND
+    EMISSION_BACKEND = "cpp" if arguments.cpp_emission else "llvm"
     try:
         if arguments.timeout <= 0:
             raise AuditFailure("--timeout must be positive")

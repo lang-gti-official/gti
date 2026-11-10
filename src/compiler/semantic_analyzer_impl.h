@@ -3047,7 +3047,7 @@ private:
   [[nodiscard]] static bool
   hasExplicitBorrowContract(const FunctionDecl &syntax);
   // RFC 0004 declaration rules: every region a signature names is bound
-  // (GTI-S2126), and a result region a function binds has a supplying
+  // (GTI-S2128), and a result region a function binds has a supplying
   // parameter (GTI-S2127).
   void validateSignatureRegions(const FunctionDecl &syntax,
                                 const FunctionInfo &function);

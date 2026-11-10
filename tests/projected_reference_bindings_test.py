@@ -16,12 +16,12 @@ from pathlib import Path
 import sys
 import tempfile
 
-from backend_execution import Endpoint, execute
+from backend_execution import Endpoint, execute, selected_endpoints
 
-BOTH = (Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),
-        Endpoint('llvm', 'O0'), Endpoint('llvm', 'O2'))
+BOTH = selected_endpoints((Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),
+                           Endpoint('llvm', 'O0'), Endpoint('llvm', 'O2')))
 NATIVE = (Endpoint('llvm', 'O0'), Endpoint('llvm', 'O2'))
-CPP = (Endpoint('cpp', 'O0', 'c++20'),)
+CPP = selected_endpoints((Endpoint('cpp', 'O0', 'c++20'),))
 SUCCESS = (0, '', '')
 
 
@@ -56,7 +56,7 @@ def main() -> None:
                 result = run(name, endpoint)
                 if result.error or result.observable != SUCCESS:
                     raise AssertionError(f'{name} {endpoint}: {result}')
-        for endpoint in (BOTH[0], NATIVE[0]):
+        for endpoint in dict.fromkeys((BOTH[0], NATIVE[0])):
             result = run('arrow_step_mutation_conflict', endpoint)
             if result.compile_returncode == 0 or 'GTI-S2017' not in result.stderr:
                 raise AssertionError(f'arrow mutation conflict changed: {result}')

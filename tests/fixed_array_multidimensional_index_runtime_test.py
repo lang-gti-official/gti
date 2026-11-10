@@ -28,6 +28,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_text_modes
+
 REPORT = "runtime error[GTI-R0007]: index_out_of_bounds in fixed_array"
 
 BOUNDS_FIXTURES = (
@@ -162,6 +164,10 @@ def main() -> int:
 
         # The prefix address and terminal read each guard their projected
         # dimensions. Neither may subscript before its own successful check.
+        # This reads the C++ representation, so it runs only when the backend
+        # policy selects the C++ backend (tests/backend_modes.py).
+        if not cpp_text_modes():
+            return 0
         generated_path = root / "chained-read.cpp"
         emitted = run(
             [

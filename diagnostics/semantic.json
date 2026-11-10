@@ -162,8 +162,17 @@
     "arguments": 2
   },
   {
-    "id": "LifetimeBinder",
+    "id": "UnresolvedReflectionQuery",
     "code": "GTI-S2126",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "reflection",
+    "format": "{0}",
+    "arguments": 1
+  },
+  {
+    "id": "LifetimeBinder",
+    "code": "GTI-S2128",
     "phase": "Semantics",
     "severity": "Error",
     "group": "lifetime",

@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -43,29 +43,30 @@ def main() -> int:
             if executed.returncode != 0:
                 return fail(executed)
 
-        emitted_cpp = root / "defaults.cpp"
-        emission = run(
-            [str(compiler), str(source), "--emit-cpp", "-o", str(emitted_cpp)]
-        )
-        if emission.returncode != 0:
-            return fail(emission)
-        generated = emitted_cpp.read_text(encoding="utf8")
-        # GTI expands defaults at each caller. The C++ artifact must therefore
-        # expose only full-arity signatures and never delegate the feature to
-        # implementation-defined C++ default-argument behavior.
-        for name in (
-            "observe",
-            "method",
-            "static_method",
-            "consume",
-            "nested_leaf",
-            "nested_default",
-        ):
-            if re.search(rf"\b{name}\([^)]*=", generated):
-                sys.stderr.write(
-                    f"generated C++ delegated {name}'s default to the backend\n"
-                )
-                return 1
+        for _cpp_label, cpp_flags, _cpp_native in cpp_text_modes():
+            emitted_cpp = root / "defaults.cpp"
+            emission = run(
+                [str(compiler), str(source), *cpp_flags, "--emit-cpp", "-o", str(emitted_cpp)]
+            )
+            if emission.returncode != 0:
+                return fail(emission)
+            generated = emitted_cpp.read_text(encoding="utf8")
+            # GTI expands defaults at each caller. The C++ artifact must therefore
+            # expose only full-arity signatures and never delegate the feature to
+            # implementation-defined C++ default-argument behavior.
+            for name in (
+                "observe",
+                "method",
+                "static_method",
+                "consume",
+                "nested_leaf",
+                "nested_default",
+            ):
+                if re.search(rf"\b{name}\([^)]*=", generated):
+                    sys.stderr.write(
+                        f"generated C++ delegated {name}'s default to the backend\n"
+                    )
+                    return 1
 
         emitted_mir = root / "defaults.mir"
         mir_emission = run(

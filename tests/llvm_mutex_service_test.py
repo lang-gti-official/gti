@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 
+from backend_modes import cpp_modes
 from llvm_evidence_manifest import build_manifest
 
 
@@ -122,7 +123,8 @@ def main():
             source = output / f"reject-{name}.gti"
             source.write_text("import std.mutex;\nint main() { " + body +
                               " return 0; }\n", encoding="utf-8")
-            for backend in ("cpp", "llvm"):
+            # The C++ backend's rejection runs only when the policy selects it.
+            for backend in (("cpp", "llvm") if cpp_modes() else ("llvm",)):
                 artifact = output / f"rejected-{name}-{backend}"
                 artifact.write_bytes(b"preserved")
                 label = f"reject-{name}-{backend}"
@@ -340,7 +342,9 @@ def main():
             run(f"public-array-bounds-{mode}", [array_program],
                 expected=70, failure_mode="array-bounds")
 
-    if args.public_gti:
+    # The C++ differential builds run only when the backend policy selects the
+    # C++ backend (tests/backend_modes.py); the LLVM builds above are unconditional.
+    if args.public_gti and cpp_modes():
         for standard in ("c++20", "c++23"):
             program = output / f"cpp-guard-{standard}"
             run(f"cpp-guard-build-{standard}", [args.public_gti.resolve(),
@@ -368,7 +372,7 @@ def main():
                 raise AssertionError("source owner C++ support boundary changed")
             print("RECORDED C++ LIMITATION: source owners require wrapping atomics", flush=True)
 
-    if args.gti:
+    if args.gti and cpp_modes():
         run("cpp-source-observer", [args.cc, "-std=c17", *flags, "-DGTI_CPP_ORACLE", "-c",
                                      root / "tests/fixtures/llvm_mutex_source_lifecycle.c",
                                      "-o", output / "cpp-source-observer.o"])

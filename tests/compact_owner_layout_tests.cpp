@@ -1,5 +1,6 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
 #include "gti/mir_printer.h"
+#include "lowered_program_test_support.h"
+#include "mir_test_fixture.h"
 
 int main() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /

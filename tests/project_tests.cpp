@@ -1,4 +1,5 @@
 #include "gti/driver/build_script.h"
+#include "gti/driver/compilation.h"
 #include "gti/driver/dependencies.h"
 #include "gti/driver/manifest.h"
 #include "gti/driver/project.h"
@@ -98,7 +99,6 @@ root = "src/main.gti"
          "cpp-standard = \"c++20\"\n"
          "execution-profile = \"concurrent\"\n"
          "disabled-warnings = [\"unused-mut\"]\n"
-         "keep-cpp = true\n"
          "debug-info = true\n"
          "dependency-warnings = false\n"
          "raw-pointer-audit = \"warn\"\n";
@@ -198,14 +198,13 @@ void testDiscoveryParsingAndResolution() {
                    lang::ExecutionProfile::Concurrent &&
                release->warningPolicy.disabledGroups() ==
                    std::vector<std::string>{"unused-mut"} &&
-               release->keepCpp && release->debugInfo &&
+               !release->keepCpp && release->debugInfo &&
                !release->dependencyWarnings,
            "manifest profile fields should refine built-in defaults");
   }
 
   lang::driver::ProjectBuildOverrides overrides;
   overrides.optimization = lang::OptimizationLevel::O3;
-  overrides.cppStandard = lang::CppStandard::Cpp23;
   overrides.executionProfile = lang::ExecutionProfile::SingleThreaded;
   overrides.rawPointerAudit = lang::RawPointerAuditMode::Strict;
   overrides.keepCpp = false;
@@ -227,12 +226,12 @@ void testDiscoveryParsingAndResolution() {
         "build/gti/release/testarch-testvendor-testos";
     expect(plan.entry() == std::filesystem::canonical(source) &&
                plan.output().parent_path() == expectedDirectory &&
+               plan.backend() == lang::BackendKind::Llvm &&
                plan.generatedSource() ==
-                   expectedDirectory / ".gti-intermediate/game.gti.cpp",
+                   expectedDirectory / ".gti-intermediate/game.gti.o",
            "project artifacts should use the deterministic project layout");
     expect(
         plan.optimization() == lang::OptimizationLevel::O3 &&
-            plan.cppStandard() == lang::CppStandard::Cpp23 &&
             plan.target().executionProfile ==
                 lang::ExecutionProfile::SingleThreaded &&
             plan.warnings().disabledGroups() ==
@@ -3809,21 +3808,28 @@ void testBackendProfileAuthority() {
     return resolveProjectBuild(ProjectBuildRequest(
         temporary.root(), "app", "dev", TargetInfo::host(), overrides));
   };
-  // An omitted backend is the target's default: LLVM on arm64 macOS and
-  // x86_64 Linux, C++ elsewhere. Retaining C++ output configures the C++
-  // backend instead.
+  // An omitted backend is LLVM on every target. Retaining C++ output selects
+  // the frozen C++ backend, which only a toolchain built with it provides;
+  // elsewhere the selection is a GTI-B1005 project configuration error.
+  const bool cppAvailable = lang::driver::cppBackendAvailable();
+  const auto selectsMissingCpp = [&](const auto &result) {
+    return !result.succeeded() &&
+           findDiagnostic(result.diagnostics, "GTI-B1005");
+  };
   const auto omitted = resolve();
-  const BackendKind hostDefault = defaultBackend(TargetInfo::host());
-  expect(omitted.succeeded() && omitted.plan->backend() == hostDefault &&
-             omitted.plan->generatedSource().extension() ==
-                 (hostDefault == BackendKind::Llvm ? ".o" : ".cpp"),
-         "omitted backend selects the target's default and its artifact kind");
+  expect(omitted.succeeded() && omitted.plan->backend() == BackendKind::Llvm &&
+             omitted.plan->generatedSource().extension() == ".o",
+         "omitted backend selects LLVM and its object artifact");
   expect(writeFile(manifest, prefix + "keep-cpp = true\n"),
          "C++ retention profile is writable");
   const auto retained = resolve();
-  expect(retained.succeeded() && retained.plan->backend() == BackendKind::Cpp &&
-             retained.plan->generatedSource().extension() == ".cpp",
-         "C++ retention without a backend keeps the C++ backend it configures");
+  expect(cppAvailable
+             ? retained.succeeded() &&
+                   retained.plan->backend() == BackendKind::Cpp &&
+                   retained.plan->generatedSource().extension() == ".cpp"
+             : selectsMissingCpp(retained),
+         "C++ retention without a backend selects the C++ backend it "
+         "configures, or reports that this toolchain omits it");
   expect(writeFile(manifest, prefix + "backend = \"llvm\"\n"),
          "LLVM profile is writable");
   const auto profile = resolve();
@@ -3834,20 +3840,23 @@ void testBackendProfileAuthority() {
   cpp.backend = BackendKind::Cpp;
   const auto overridden = resolve(cpp);
   expect(profile.succeeded() && explicitLlvm.succeeded() &&
-             overridden.succeeded(),
+             (cppAvailable ? overridden.succeeded()
+                           : selectsMissingCpp(overridden)),
          "profile and explicit executable backend policies resolve");
-  if (profile.plan && explicitLlvm.plan && overridden.plan) {
+  if (profile.plan && explicitLlvm.plan) {
     expect(profile.plan->backend() == BackendKind::Llvm &&
                profile.plan->generatedSource().extension() == ".o" &&
-               overridden.plan->backend() == BackendKind::Cpp &&
-               overridden.plan->generatedSource().extension() == ".cpp",
-           "explicit backend overrides the profile before artifact planning");
-    expect(profile.plan->projectModelIdentity() ==
-                   explicitLlvm.plan->projectModelIdentity() &&
-               profile.plan->projectModelIdentity() !=
-                   overridden.plan->projectModelIdentity(),
+               profile.plan->projectModelIdentity() ==
+                   explicitLlvm.plan->projectModelIdentity(),
            "cache policy binds the effective backend, not whether it was "
            "explicit");
+  }
+  if (cppAvailable && profile.plan && overridden.plan) {
+    expect(overridden.plan->backend() == BackendKind::Cpp &&
+               overridden.plan->generatedSource().extension() == ".cpp" &&
+               profile.plan->projectModelIdentity() !=
+                   overridden.plan->projectModelIdentity(),
+           "explicit backend overrides the profile before artifact planning");
   }
   llvm.keepCpp = true;
   expect(!resolve(llvm).succeeded(),
@@ -3858,9 +3867,11 @@ void testBackendProfileAuthority() {
          "LLVM rejects a C++-specific CLI standard");
   expect(writeFile(manifest, prefix + "backend = \"llvm\"\nkeep-cpp = true\n"),
          "conflicting profile is writable");
-  expect(
-      !resolve().succeeded() && resolve(cpp).succeeded(),
-      "effective backend authority decides whether profile retention is valid");
+  expect(!resolve().succeeded() &&
+             (cppAvailable ? resolve(cpp).succeeded()
+                           : selectsMissingCpp(resolve(cpp))),
+         "effective backend authority decides whether profile retention is "
+         "valid");
   llvm.cppStandard.reset();
   expect(resolve(llvm).succeeded(),
          "an explicit retention disable repairs an LLVM profile conflict");

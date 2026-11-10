@@ -20,8 +20,8 @@ endforeach()
 
 target_link_libraries("gti_parser_fuzzer" PRIVATE gti_compiler)
 target_link_libraries("gti_formatter_fuzzer" PRIVATE gti_compiler)
-# gti_cpp_backend links gti_compiler publicly; the pipeline harness needs both.
-target_link_libraries("gti_pipeline_fuzzer" PRIVATE gti_cpp_backend)
+# gti_llvm_backend links gti_compiler publicly; the pipeline harness needs both.
+target_link_libraries("gti_pipeline_fuzzer" PRIVATE gti_llvm_backend)
 target_link_libraries("gti_source_loader_fuzzer" PRIVATE gti_compiler)
 
 # Fixed-corpus smoke: every harness executes its seed corpus under ASan/UBSan

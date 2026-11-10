@@ -1445,7 +1445,7 @@ class ValidationChecks(unittest.TestCase):
         self.assertNotIn("compiler_pipeline", full)
         self.assertNotIn("instance_reuse", full)
         self.assertEqual(full, registered - aggregates - cpp_only)
-        # Only the scheduled C++ set runs the frozen backend's own tests.
+        # Only the hand-dispatched C++ set runs the frozen backend's own tests.
         self.assertEqual(validation.shard_inventory(registered, "cpp"), registered - aggregates)
         # Without the parts, an aggregate stays (no coverage loss on an older tree).
         alone = {"smoke", "compiler_pipeline", "other", *validation.GATE_EXCLUDED}

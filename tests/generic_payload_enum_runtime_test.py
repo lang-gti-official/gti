@@ -362,8 +362,8 @@ int main() {
         for name, (body, code, message) in rejected_cases.items():
             path = root / (name + ".gti")
             path.write_text(prefix + body)
-            rejected = run([str(compiler), str(path), "--emit-cpp",
-                            "-o", str(root / (name + ".cpp"))])
+            rejected = run([str(compiler), str(path), "--emit-mir",
+                            "-o", str(root / (name + ".mir"))])
             if (rejected.returncode == 0 or code not in rejected.stderr or
                     message not in rejected.stderr.lower() or
                     "GTI-B000" in rejected.stderr):
@@ -385,8 +385,8 @@ int main() {
   return 0;
 }
 """)
-        rejected = run([str(compiler), str(assignment), "--emit-cpp",
-                        "-o", str(root / "construction-only-assignment.cpp")])
+        rejected = run([str(compiler), str(assignment), "--emit-mir",
+                        "-o", str(root / "construction-only-assignment.mir")])
         if (rejected.returncode == 0 or "GTI-S2003" not in rejected.stderr or
                 "assign" not in rejected.stderr.lower() or
                 "GTI-B000" in rejected.stderr):

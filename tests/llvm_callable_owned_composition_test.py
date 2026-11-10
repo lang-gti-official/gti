@@ -7,6 +7,7 @@ import sys
 import tempfile
 
 from backend_execution import Endpoint, execute, require_cpp_wrapping_rejection
+from backend_modes import cpp_modes
 
 
 SUCCESS = "llvm_callable_owned_composition"
@@ -45,7 +46,10 @@ def main() -> None:
     env = os.environ.copy()
     with tempfile.TemporaryDirectory(prefix="gti-llvm-callable-owned-") as raw:
         work = Path(raw)
-        for name in (SUCCESS, *FAILURES, *LLVM_ONLY_FAILURES):
+        # The C++ rejection pin runs only under the C++ profile (or when the
+        # C++ oracle is requested explicitly); LLVM execution is unconditional.
+        for name in ((SUCCESS, *FAILURES, *LLVM_ONLY_FAILURES)
+                     if oracle_only or cpp_modes() else ()):
             require_cpp_wrapping_rejection(gti, root / "tests/fixtures" / f"{name}.gti",
                                           work / (name + "-unsupported"), env, CPP)
         if oracle_only:

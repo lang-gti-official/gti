@@ -12,6 +12,7 @@ import sys
 import uuid
 
 
+from backend_modes import cpp_modes
 from llvm_evidence_manifest import build_manifest
 
 NUMERIC_FIXTURE = "tests/fixtures/llvm_optimization/simd_lanes.gti"
@@ -67,7 +68,9 @@ def main():
 
     try:
         source = root / NUMERIC_FIXTURE
-        modes = [("cpp", 3, standard) for standard in ("c++20", "c++23")]
+        # The frozen C++ backend's comparator modes run only when
+        # GTI_TEST_BACKENDS selects C++.
+        modes = [("cpp", 3, standard) for standard in ("c++20", "c++23")] if cpp_modes() else []
         modes += [("llvm", level, None) for level in range(4)]
         for backend, level, standard in (modes if args.profile != "copy-range" else []):
             binary = output / f"simd-{backend}-O{level}-{standard or 'native'}"
@@ -133,7 +136,12 @@ def main():
             assert "GTI-P" not in result.stderr and "GTI-B0003" not in result.stderr, str(output / name)
             assert binary.read_bytes() == marker, "rejection replaced the existing destination"
             manifest["cases"].append({"case": "semantic-rejection", "index": index, "preserved_destination": True})
-        assert len(manifest["cases"]) == {"all": 45, "core": 27, "copy-range": 18}[args.profile]
+        # Per mode: the numeric fixture (not under copy-range) and each failure;
+        # plus one case per semantic rejection. Six modes under GTI_TEST_BACKENDS=both
+        # give the historical 45/27/18.
+        executed = (0 if args.profile == "copy-range" else 1) + len(failures)
+        rejections = 0 if args.profile == "copy-range" else len(declarations)
+        assert len(manifest["cases"]) == len(modes) * executed + rejections
         manifest["status"] = "passed" if args.profile == "all" else f"passed-{args.profile}-only"
         print(f"PASS: {len(manifest['cases'])} SIMD {args.profile} checks; full production gate remains explicit; evidence {output}")
     except BaseException as error:

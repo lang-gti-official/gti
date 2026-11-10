@@ -184,14 +184,14 @@ int main() { return bad(); }
     }
     modes = native_modes()
     if args.quick:
-        modes = [("c++23", "O0", [])]
+        modes = native_modes(levels=("O0",))
     with tempfile.TemporaryDirectory(prefix="gti-ordered-borrow-") as temporary:
         root = pathlib.Path(temporary)
         for name, body in rejected.items():
             path = root / (name + ".gti")
             path.write_text(PREFIX + body)
-            result = run([str(compiler), str(path), "--emit-cpp",
-                          "-o", str(root / (name + ".cpp"))])
+            result = run([str(compiler), str(path), "--emit-mir",
+                          "-o", str(root / (name + ".mir"))])
             if (result.returncode == 0 or "GTI-S2017" not in result.stderr or
                     "GTI-B000" in result.stderr):
                 sys.stderr.write(f"{name}: expected source borrow diagnostic\n" +

@@ -1,4 +1,5 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
 
 int main() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
@@ -12,7 +13,6 @@ int main() {
          "same-class private factories retain valid MIR");
   if (!frontend.canGenerateCode())
     return 1;
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
   std::size_t factories = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     const auto *hir = frontend.hir.findFunctionInstance(function.id);
@@ -21,27 +21,44 @@ int main() {
          hir->source->name().lexeme != "named"))
       continue;
     ++factories;
-    const auto emitted =
-        lang::CppMirBodyEmitter(frontend.mir, rows)
-            .emitFailureBodyText({lang::MirBodyKind::Function, function.id},
-                                 "test", 0);
-    std::istringstream lines(emitted.text);
-    std::string line;
+    // The member's own private, failure-capable constructor is invoked from
+    // the factory body and published only on its Invoke success edge. The C++
+    // lexical-access spelling lives in
+    // cpp_mir_private_constructor_placement_tests.cpp.
     std::size_t constructors = 0;
-    bool lexical = true;
-    while (std::getline(lines, line)) {
-      if (line.find("mir_failure_constructor_tag_v1<") == std::string::npos)
-        continue;
-      ++constructors;
-      lexical &=
-          line.find("::new (static_cast<void *>(") != std::string::npos &&
-          line.find("std::construct_at(") == std::string::npos &&
-          line.find("construct_representation_at(") == std::string::npos;
-    }
-    expect(emitted.emitted() && constructors != 0 && lexical,
-           "failure-tag construction executes in the member's lexical access "
-           "context");
+    bool routed = true;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (!instruction.constructorTarget)
+          continue;
+        const auto *constructor = frontend.mir.findConstructorInstance(
+            *instruction.constructorTarget);
+        const auto &classes = frontend.hir.classInstances();
+        const auto owner =
+            constructor == nullptr
+                ? classes.end()
+                : std::find_if(classes.begin(), classes.end(),
+                               [&](const auto &candidate) {
+                                 return candidate.id == constructor->owner;
+                               });
+        if (owner == classes.end() || !owner->source ||
+            owner->source->name().lexeme != "Secret")
+          continue;
+        ++constructors;
+        routed &= constructor->mayRaiseDefinedFailure &&
+                  block.terminator.kind == lang::MirTerminatorKind::Invoke &&
+                  block.terminator.invokeInstruction == instruction.id;
+      }
+    expect(constructors != 0 && routed,
+           "failure-capable private construction executes in the member's "
+           "own body through its exact Invoke");
   }
+  std::string error;
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &error),
+         "same-class private factories reach native emission");
+  if (!error.empty())
+    std::cerr << error << '\n';
   expect(factories == 2,
          "fixture covers result storage and named-local storage");
   std::string invalid = source;

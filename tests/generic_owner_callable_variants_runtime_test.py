@@ -11,7 +11,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -42,56 +42,57 @@ def main() -> int:
         prefix="gti-generic-owner-callable-"
     ) as temporary:
         root = pathlib.Path(temporary)
-        emitted = root / "fixture.cpp"
-        emission = run(
-            [
-                str(compiler),
-                str(source),
-                "-O0",
-                "--std",
-                "c++23",
-                "--emit-cpp",
-                "-o",
-                str(emitted),
+        # Emitted C++ text is evidence for the C++ profile only (backend_modes).
+        for _label, cpp_flags, _native in cpp_text_modes():
+            emitted = root / "fixture.cpp"
+            emission = run(
+                [
+                    str(compiler),
+                    str(source),
+                    "-O0",
+                    *cpp_flags,
+                    "--emit-cpp",
+                    "-o",
+                    str(emitted),
+                ]
+            )
+            if emission.returncode != 0:
+                return fail("emit C++", emission)
+            text = emitted.read_text()
+            specialized = [
+                line
+                for line in text.splitlines()
+                if "__gti_program::calculator<" in line and "apply" in line
             ]
-        )
-        if emission.returncode != 0:
-            return fail("emit C++", emission)
-        text = emitted.read_text()
-        specialized = [
-            line
-            for line in text.splitlines()
-            if "__gti_program::calculator<" in line and "apply" in line
-        ]
-        if not specialized:
-            sys.stderr.write(
-                "emitted C++ has no concrete-owner callable specialization\n"
-            )
-            return 1
-        if any(re.search(r"\bT\b", line) for line in specialized):
-            sys.stderr.write(
-                "concrete-owner callable specialization leaked source T: "
-                + repr(specialized)
-                + "\n"
-            )
-            return 1
-        selectors = [line for line in text.splitlines()
-                     if "mir_lambda_identity_v<Update>" in line]
-        if not selectors or any(re.search(r"\bT\b", line) for line in selectors):
-            sys.stderr.write(
-                "concrete-owner callable selectors leaked an unbound owner "
-                "parameter or were not exercised: " + repr(selectors) + "\n"
-            )
-            return 1
-        if not any("std::int32_t" in line for line in specialized) or not any(
-            "std::uint8_t" in line for line in specialized
-        ):
-            sys.stderr.write(
-                "callable specializations did not retain both owner types: "
-                + repr(specialized)
-                + "\n"
-            )
-            return 1
+            if not specialized:
+                sys.stderr.write(
+                    "emitted C++ has no concrete-owner callable specialization\n"
+                )
+                return 1
+            if any(re.search(r"\bT\b", line) for line in specialized):
+                sys.stderr.write(
+                    "concrete-owner callable specialization leaked source T: "
+                    + repr(specialized)
+                    + "\n"
+                )
+                return 1
+            selectors = [line for line in text.splitlines()
+                         if "mir_lambda_identity_v<Update>" in line]
+            if not selectors or any(re.search(r"\bT\b", line) for line in selectors):
+                sys.stderr.write(
+                    "concrete-owner callable selectors leaked an unbound owner "
+                    "parameter or were not exercised: " + repr(selectors) + "\n"
+                )
+                return 1
+            if not any("std::int32_t" in line for line in specialized) or not any(
+                "std::uint8_t" in line for line in specialized
+            ):
+                sys.stderr.write(
+                    "callable specializations did not retain both owner types: "
+                    + repr(specialized)
+                    + "\n"
+                )
+                return 1
 
         for mode, flags, native in native_modes():
             executable = root / mode

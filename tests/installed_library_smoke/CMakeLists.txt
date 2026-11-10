@@ -46,12 +46,16 @@ target_link_libraries(gti_installed_runtime_failure_header_smoke
 add_test(NAME installed_runtime_failure_header_coexistence
          COMMAND gti_installed_runtime_failure_header_smoke)
 
-add_executable(gti_installed_cpp_backend_smoke
-               ../cpp_backend_library_smoke.cpp)
-target_link_libraries(gti_installed_cpp_backend_smoke
-                      PRIVATE GTI::cpp_backend)
-add_test(NAME installed_cpp_backend_library
-         COMMAND gti_installed_cpp_backend_smoke)
+# The frozen C++ backend is installed only by SDKs built with
+# GTI_ENABLE_CPP_BACKEND; default SDKs and releases omit it.
+if(TARGET GTI::cpp_backend)
+  add_executable(gti_installed_cpp_backend_smoke
+                 ../cpp_backend_library_smoke.cpp)
+  target_link_libraries(gti_installed_cpp_backend_smoke
+                        PRIVATE GTI::cpp_backend)
+  add_test(NAME installed_cpp_backend_library
+           COMMAND gti_installed_cpp_backend_smoke)
+endif()
 
 add_executable(gti_installed_llvm_backend_smoke
                ../llvm_backend_library_smoke.cpp)
@@ -81,17 +85,17 @@ add_test(NAME installed_layout_query_native_boundary
 
 add_executable(gti_installed_native_record_smoke ../native_record_tests.cpp)
 target_link_libraries(gti_installed_native_record_smoke
-                      PRIVATE GTI::cpp_backend)
+                      PRIVATE GTI::llvm_backend)
 add_test(NAME installed_native_record_pipeline
          COMMAND gti_installed_native_record_smoke)
 
 add_executable(gti_installed_native_header_smoke ../native_header_tests.cpp)
 target_link_libraries(gti_installed_native_header_smoke
-                      PRIVATE GTI::cpp_backend)
+                      PRIVATE GTI::llvm_backend)
 add_test(NAME installed_native_header_pipeline
          COMMAND gti_installed_native_header_smoke)
 
 add_executable(gti_installed_unsafe_function_smoke ../unsafe_function_tests.cpp)
-target_link_libraries(gti_installed_unsafe_function_smoke PRIVATE GTI::cpp_backend)
+target_link_libraries(gti_installed_unsafe_function_smoke PRIVATE GTI::llvm_backend)
 add_test(NAME installed_unsafe_function_contract
          COMMAND gti_installed_unsafe_function_smoke)

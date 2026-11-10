@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -55,52 +55,52 @@ def main() -> int:
             ):
                 return fail(f"run {mode}", executed)
 
-        generated_path = root / "issue-126.cpp"
-        emitted = run(
-            [
-                str(compiler),
-                str(positive),
-                "-O0",
-                "--std",
-                "c++23",
-                "--emit-cpp",
-                "-o",
-                str(generated_path),
-            ]
-        )
-        if emitted.returncode != 0:
-            return fail("emit C++23/O0", emitted)
-        generated = generated_path.read_text(encoding="utf8")
-        entry_start = generated.rfind("bool __gti_entry__gti_mir_failure(")
-        entry_end = generated.find("\n  }", entry_start)
-        if entry_start < 0 or entry_end < 0:
-            sys.stderr.write("generated C++ lost the transformed entry body\n")
-            return 1
-        entry = generated[entry_start:entry_end]
-        copy_match = re.search(r"class copy load (\d+) fuses into assignment", entry)
-        fresh_match = re.search(
-            r"construct (\d+) fuses into checked array assignment", entry
-        )
-        checked_writes = entry.count(
-            " = ::gti_internal::backend::mir_checked_array_write_v1("
-        )
-        if (
-            copy_match is None
-            or fresh_match is None
-            or checked_writes != 3
-            or "stages into fixed-array assignment" not in entry
-            or f"__gti_mir_v_{copy_match.group(1)}" in entry
-            or f"__gti_mir_v_{fresh_match.group(1)}" in entry
-            or "mir_array_copy_assignment_v1" not in entry
-            or "Value value" not in generated
-            or "std::move(value)" not in generated
-            or "static_cast<Stored>(std::move(value))" in generated
-        ):
-            sys.stderr.write(
-                "generated C++ lost the single-write copy/move/fresh array "
-                "assignment representation\n"
+        for _cpp_label, cpp_flags, _cpp_native in cpp_text_modes():
+            generated_path = root / "issue-126.cpp"
+            emitted = run(
+                [
+                    str(compiler),
+                    str(positive),
+                    "-O0",
+                    *cpp_flags,
+                    "--emit-cpp",
+                    "-o",
+                    str(generated_path),
+                ]
             )
-            return 1
+            if emitted.returncode != 0:
+                return fail("emit C++23/O0", emitted)
+            generated = generated_path.read_text(encoding="utf8")
+            entry_start = generated.rfind("bool __gti_entry__gti_mir_failure(")
+            entry_end = generated.find("\n  }", entry_start)
+            if entry_start < 0 or entry_end < 0:
+                sys.stderr.write("generated C++ lost the transformed entry body\n")
+                return 1
+            entry = generated[entry_start:entry_end]
+            copy_match = re.search(r"class copy load (\d+) fuses into assignment", entry)
+            fresh_match = re.search(
+                r"construct (\d+) fuses into checked array assignment", entry
+            )
+            checked_writes = entry.count(
+                " = ::gti_internal::backend::mir_checked_array_write_v1("
+            )
+            if (
+                copy_match is None
+                or fresh_match is None
+                or checked_writes != 3
+                or "stages into fixed-array assignment" not in entry
+                or f"__gti_mir_v_{copy_match.group(1)}" in entry
+                or f"__gti_mir_v_{fresh_match.group(1)}" in entry
+                or "mir_array_copy_assignment_v1" not in entry
+                or "Value value" not in generated
+                or "std::move(value)" not in generated
+                or "static_cast<Stored>(std::move(value))" in generated
+            ):
+                sys.stderr.write(
+                    "generated C++ lost the single-write copy/move/fresh array "
+                    "assignment representation\n"
+                )
+                return 1
 
         rejected = run(
             [

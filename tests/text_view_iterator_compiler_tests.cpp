@@ -1,8 +1,8 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "lowered_program_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -40,7 +40,7 @@ void forged(const lang::FrontendResult &frontend, Mutation mutation,
   expect(changed && !lang::verifyMirProgram(mir).valid(), label);
   bool rejected = false;
   try {
-    (void)gti_test::emitCpp(frontend, frontend.mir, mir);
+    (void)gti_test::lowerProgram(frontend, frontend.mir, mir);
   } catch (const std::exception &) {
     rejected = true;
   }
@@ -63,7 +63,7 @@ void forgedRange(const lang::FrontendResult &frontend, Mutation mutation,
   expect(changed && !lang::verifyMirProgram(mir).valid(), label);
   bool rejected = false;
   try {
-    (void)gti_test::emitCpp(frontend, frontend.mir, mir);
+    (void)gti_test::lowerProgram(frontend, frontend.mir, mir);
   } catch (const std::exception &) {
     rejected = true;
   }

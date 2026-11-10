@@ -80,9 +80,10 @@ int main() {
              terminalFailure && lang::verifyMirProgram(frontend.mir).valid(),
          "optional uses ordinary enum construction/extraction and checked "
          "terminal failure, not private storage");
-  const auto artifact = gti_test::emitCpp(frontend);
-  expect(!artifact.contents.empty(),
-         "source optional reaches production native emission");
+  std::string llvmError;
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &llvmError),
+         "source optional reaches production native emission: " + llvmError);
 
   // The terminal primitive only chooses the failure category. It grants no
   // owner, value, storage or caller-location authority.
@@ -307,10 +308,17 @@ void destroy(int divisor) {
     }
   }
   expect(found, "source reset must use ordinary fallible assignment cleanup");
-  const auto artifact = gti_test::emitCpp(frontend);
-  // The generated support preamble still declares unused legacy templates.
-  // Inspect instantiated MIR, rather than mistaking their text for use.
-  bool ordinaryReset = !artifact.contents.empty();
+  // Inspect instantiated MIR for private optional storage.
+  // Native emission of this program is an LLVM gap (O-LLVM-06); the frozen
+  // C++ suite keeps the emission check (cpp_mir_optional_compiler). The
+  // verified lowered program every backend consumes must still accept it.
+  bool ordinaryReset = true;
+  try {
+    (void)gti_test::lowerOptimizedProgram(frontend);
+  } catch (const std::exception &error) {
+    std::cerr << error.what() << '\n';
+    ordinaryReset = false;
+  }
   for (const auto &instance : frontend.mir.classInstances())
     ordinaryReset &= instance.compilerCapability !=
                      lang::CompilerCapabilityTypeKind::OptionalStorage;

@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 
 from backend_execution import Endpoint, execute
+from backend_modes import cpp_modes
 
 
 def main():
@@ -27,7 +28,8 @@ def main():
     secondary = site("int secondary =")
     primary = site("int primary =")
     outer_secondary = site("int outer_secondary =")
-    endpoints = [Endpoint("cpp", "O3", "c++23"),
+    # The C++ comparator runs only when GTI_TEST_BACKENDS selects it.
+    endpoints = [*(Endpoint("cpp", "O3", "c++23") for _ in cpp_modes()),
                  *(Endpoint("llvm", f"O{level}") for level in range(4))]
     cases = (("success", 1, 1, False, 0, None, None),
              ("tls-first", 0, 1, False, 70, secondary, None),

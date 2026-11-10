@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 
+from backend_modes import cpp_modes
 from project_cli_smoke_test import DEPENDENCY_INJECTING_NATIVE_ENVIRONMENT
 
 
@@ -104,7 +105,10 @@ def main():
         assert not list((producer / "build").rglob("*native*.gti"))
         manifest.write_text(manifest_source)
         run(producer, ["build", "--all", "--release"], "producer-build-all")
-        run(producer, [*producer_command, "--backend", "cpp"], "producer-cpp", False, "requires LLVM")
+        if cpp_modes():
+            # Only a toolchain that carries the C++ backend can name it; the
+            # compiled-library rule is that such a request still requires LLVM.
+            run(producer, [*producer_command, "--backend", "cpp"], "producer-cpp", False, "requires LLVM")
         run(producer, ["run", "numbers", "--release"], "library-is-not-executable", False, "not an executable")
 
         artifact = consumer / "dependencies/numbers.gtilib"

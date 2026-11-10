@@ -1,6 +1,7 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
 
-using namespace gti_test::cpp_mir_body_emitter_fixture;
+using namespace gti_test::mir_fixture;
 
 int main() {
   const auto fixtures = std::filesystem::path(__FILE__).parent_path();
@@ -15,10 +16,13 @@ int main() {
     expect(frontend.canGenerateCode(), "owning constructor packs must verify");
     if (!frontend.canGenerateCode())
       continue;
-    const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
-    const lang::CppMirBodyEmitter emitter(frontend.mir, map);
-    expect(emitter.analyzeProgram().ready(),
-           "constructor pack fields must have complete MIR emission");
+    expect(lang::verifyMirProgram(frontend.mir).valid(),
+           "constructor pack fields must produce verified MIR");
+    std::string error;
+    expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                               lang::TargetInfo::host(), &error),
+           "constructor pack fields must have complete native emission: " +
+               error);
     std::size_t ownedPacks = 0;
     for (const auto &constructor : frontend.mir.constructorInstances()) {
       std::vector<lang::MirDropObligationId> elements;
@@ -33,9 +37,9 @@ int main() {
       if (elements.empty())
         continue;
       ++ownedPacks;
-      expect(emitter.supportsFailureBodyText(
-                 {lang::MirBodyKind::Constructor, constructor.id}),
-             "concrete constructor pack cleanup must use the status ABI");
+      expect(constructor.mayRaiseDefinedFailure,
+             "concrete constructor pack cleanup must carry the MIR "
+             "defined-failure dimension");
       for (const auto id : elements) {
         for (int mutation = 0; mutation < 3; ++mutation) {
           auto malformed = frontend.mir;

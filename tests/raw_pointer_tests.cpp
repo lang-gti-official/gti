@@ -1,11 +1,11 @@
 #include "gti/ast_printer.h"
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/lexer.h"
 #include "gti/mir_effects.h"
+#include "gti/mir_verifier.h"
 #include "gti/support.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -17,6 +17,18 @@
 namespace {
 
 int failures = 0;
+
+// The shipped backend accepts the verified MIR program.
+bool backendAccepts(const lang::FrontendResult &frontend) {
+  std::string error;
+  const bool accepted =
+      lang::verifyMirProgram(frontend.mir).valid() &&
+      gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                          lang::TargetInfo::host(), &error);
+  if (!error.empty())
+    std::cerr << error << '\n';
+  return accepted;
+}
 
 lang::Frontend auditFrontend() {
   lang::FrontendOptions options;
@@ -210,12 +222,10 @@ int main() {
     const lang::MirBody *body = findMirFunction(result, "main");
     expect(body && body->loans.empty(),
            "raw pointer-slot addresses must not create checked loans");
-    const auto artifact = gti_test::emitCpp(result, result.mir, result.mir,
-                                            lang::OptimizationResult{});
-    expect(artifact.contents.find("__gti_native_out_") == std::string::npos &&
-               artifact.contents.find("union raw_address") != std::string::npos,
-           "native calls should use actual pointer slots without contextual "
-           "temporary writeback staging");
+    // Native pointer-slot calls pass the actual slots; the C++ spelling
+    // is covered by cpp_mir_raw_pointer_tests.cpp.
+    expect(backendAccepts(result),
+           "native calls with nested pointer slots compile from verified MIR");
   }
 
   for (const auto &[name, source, code] :
@@ -521,36 +531,14 @@ int main() {
         "MIR places should identify unchecked raw memory projections");
   }
 
-  const lang::OptimizationResult optimizations;
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  expect(artifact.contents.find("owner_access(pointer)") == std::string::npos,
-         "raw dereference must not use checked-owner lowering");
-  const std::size_t mainMarker =
-      artifact.contents.find("scalar-cfg-failure-v1 function-instance");
-  const std::string_view emittedMain =
-      mainMarker == std::string::npos
-          ? std::string_view{}
-          : std::string_view(artifact.contents).substr(mainMarker);
-  expect(emittedMain.find("(*__gti_mir_v_") != std::string_view::npos &&
-             emittedMain.find(").value") != std::string_view::npos &&
-             emittedMain.find("[__gti_mir_v_") != std::string_view::npos &&
-             emittedMain.find("(&__gti_mir_p_") != std::string_view::npos &&
-             emittedMain.find(".get());") != std::string_view::npos,
-         "raw member and index operations should remain native C++ syntax");
-  expect(emittedMain.find("mir_checked_array_read_v1(") !=
-                 std::string_view::npos &&
-             emittedMain.find(".get().pointer, __gti_mir_v_") !=
-                 std::string_view::npos &&
-             emittedMain.find("raw_pointer_slot_copy((*__gti_mir_v_") !=
-                 std::string_view::npos &&
-             emittedMain.find(").pointer, __gti_mir_v_") !=
-                 std::string_view::npos &&
-             emittedMain.find("[static_cast<std::size_t>(0)] = ") !=
-                 std::string_view::npos,
-         "raw-pointer compound field and fixed-array element targets should "
-         "use ordered pointer arithmetic and byte-preserving slot writes "
-         "after any required bounds check");
+  // The C++ syntax of raw member and index operations is covered by
+  // cpp_mir_raw_pointer_tests.cpp; MIR above already distinguishes raw
+  // projections from checked-owner access. LLVM lowering of raw member
+  // access (UnsafeOperationKind.RawMember, O-LLVM-05) is not implemented
+  // yet, so this program is checked at the verified-MIR boundary only.
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "raw member, index and compound pointer operations have verified "
+         "MIR");
 }
 
 void testUnsafeAndPointerDiagnostics() {
@@ -1013,13 +1001,22 @@ int main() {
   }
   expect(valid.canGenerateCode(),
          "opaque void pointer C APIs should work inside unsafe");
-  const lang::OptimizationResult optimizations;
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(valid, valid.mir, valid.mir, optimizations);
-  expect(artifact.contents.find("extern \"C\"") != std::string::npos &&
-             artifact.contents.find("const void*") != std::string::npos,
+  // C prototypes preserve raw pointer and pointee const types.
+  bool readonlyVoidParameter = false;
+  for (const auto &function : valid.mir.functionInstances()) {
+    if (function.linkage != lang::LanguageLinkage::C)
+      continue;
+    for (const auto &parameter : function.parameterTypes)
+      readonlyVoidParameter =
+          readonlyVoidParameter ||
+          (parameter.kind == lang::SemanticType::RawPointer &&
+           parameter.pointerAccess == lang::AccessMode::ReadOnly &&
+           parameter.arguments.size() == 1 &&
+           parameter.arguments.front().kind == lang::SemanticType::Void);
+  }
+  expect(readonlyVoidParameter,
          "C prototypes should preserve raw pointer and pointee const types");
-
+  expect(backendAccepts(valid), "opaque void pointer C APIs compile");
   const lang::FrontendResult outside =
       lang::Frontend().analyze("raw-pointer-c-call-outside.gti", R"(
 extern "C" { void* open(); int32_t scalar(); }

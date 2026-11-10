@@ -71,7 +71,7 @@ def main():
     parser.add_argument("repository", type=Path)
     parser.add_argument("--case", choices=CASES, action="append")
     parser.add_argument("--emit-only", action="store_true",
-                        help="development C++ admission probe; not runtime validation")
+                        help="development MIR admission probe; not runtime validation")
     args = parser.parse_args()
     compiler, repository = args.compiler.resolve(), args.repository.resolve()
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
@@ -81,9 +81,9 @@ def main():
         scratch = Path(directory)
         if args.emit_only:
             for source in sources:
-                run([str(compiler), str(source), "--emit-cpp", "--progress", "never",
-                     "-o", str(scratch / f"{source.stem}.cpp")])
-            print(f"{len(sources)} C++ admission probes passed (no native execution)")
+                run([str(compiler), str(source), "--emit-mir", "--progress", "never",
+                     "-o", str(scratch / f"{source.stem}.mir")])
+            print(f"{len(sources)} MIR admission probes passed (no native execution)")
             return
         for mode, flags, _native in native_modes():
             for source in sources:
