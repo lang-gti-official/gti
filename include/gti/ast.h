@@ -3299,5 +3299,7 @@ private:
 
 // The token that anchors a diagnostic about an expression.
 [[nodiscard]] Token expressionAnchorToken(const Expr &expression);
+// The token naming the place an assignment-like expression writes.
+[[nodiscard]] Token writtenPlaceToken(const Expr &expression);
 
 } // namespace lang

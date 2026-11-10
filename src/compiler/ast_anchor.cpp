@@ -68,4 +68,23 @@ Token expressionAnchorToken(const Expr &expression) {
   return Token{};
 }
 
+Token writtenPlaceToken(const Expr &expression) {
+  switch (expression.exprKind()) {
+  case ExprKind::Assign:
+    return static_cast<const Assign &>(expression).name();
+  case ExprKind::PlaceSet:
+    if (const auto &target = static_cast<const PlaceSet &>(expression).target())
+      return expressionAnchorToken(*target);
+    break;
+  case ExprKind::Grouping:
+    if (const auto &inner =
+            static_cast<const Grouping &>(expression).expression())
+      return writtenPlaceToken(*inner);
+    break;
+  default:
+    break;
+  }
+  return expressionAnchorToken(expression);
+}
+
 } // namespace lang

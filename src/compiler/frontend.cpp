@@ -31,6 +31,99 @@
 namespace lang {
 namespace {
 
+// The source diagnostics of MIR's borrow rejections. `internal` reports that
+// some error was not a classified borrow rejection.
+struct MirBorrowCheck {
+  std::vector<Diagnostic> diagnostics;
+  bool internal = false;
+};
+
+std::string conflictMessage(const MirBorrowRejection &borrow) {
+  if (borrow.instruction == MirInstructionKind::Borrow)
+    return borrow.write || borrow.loanAccess == AccessMode::ReadOnly
+               ? "Cannot create a mutable borrow while an overlapping borrow "
+                 "may still be live."
+               : "Cannot create a read-only borrow while an overlapping "
+                 "mutable borrow may still be live.";
+  if (borrow.write)
+    return "Cannot assign to storage while an overlapping borrow may still "
+           "be live.";
+  return "Cannot read storage while an overlapping mutable borrow may still "
+         "be live.";
+}
+
+constexpr const char *escapeMessage =
+    "A returned borrow does not outlive the function: it depends on storage "
+    "the function owns.";
+
+MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
+                                    const MirProgram &program,
+                                    const HirProgram &hir) {
+  MirBorrowCheck check;
+  const auto add = [&](SourceSpan span, std::string message) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2017", DiagnosticPhase::Semantics, span, std::move(message));
+    if (std::none_of(check.diagnostics.begin(), check.diagnostics.end(),
+                     [&](const Diagnostic &existing) {
+                       return existing.primary == diagnostic.primary &&
+                              existing.message == diagnostic.message;
+                     }))
+      check.diagnostics.push_back(std::move(diagnostic));
+  };
+  for (const MirLoweringError &error : mir.errors) {
+    if (error.borrow.kind == MirBorrowRejectionKind::None || !error.source) {
+      check.internal = true;
+      continue;
+    }
+    add(*error.source, error.borrow.kind == MirBorrowRejectionKind::Escape
+                           ? std::string(escapeMessage)
+                           : conflictMessage(error.borrow));
+  }
+  if (!mir.errors.empty())
+    return check;
+  // Program-level rejections (escapes through a return) anchor at the
+  // returned expression of the function body that publishes them.
+  for (const MirVerificationError &error : verifyMirProgram(program).errors) {
+    if (error.message == "MIR program is marked invalid")
+      continue;
+    std::optional<SourceSpan> span;
+    if (error.borrow.kind == MirBorrowRejectionKind::Escape &&
+        error.bodyKind == MirBodyKind::Function) {
+      const MirFunctionInstance *function = nullptr;
+      for (const auto &candidate : program.functionInstances())
+        if (candidate.id == error.owner)
+          function = &candidate;
+      const HirFunctionInstance *source = nullptr;
+      for (const auto &candidate : hir.functionInstances())
+        if (candidate.id == error.owner)
+          source = &candidate;
+      const MirBlock *block =
+          function ? function->body.findBlock(error.block) : nullptr;
+      const HirValue *returned =
+          block && source ? source->body.findValue(block->terminator.hirValue)
+                          : nullptr;
+      if (returned != nullptr && returned->source != nullptr)
+        if (const Token token = expressionAnchorToken(*returned->source);
+            !token.lexeme.empty())
+          span = tokenSpan(token);
+    }
+    if (!span) {
+      check.internal = true;
+      continue;
+    }
+    add(*span, escapeMessage);
+  }
+  return check;
+}
+
+bool mirBorrowAuthority() {
+  static const bool enabled = [] {
+    const char *mode = std::getenv("GTI_BORROW_AUTHORITY");
+    return mode != nullptr && std::string_view(mode) == "mir";
+  }();
+  return enabled;
+}
+
 // Adds the MIR stage's elapsed time to the caller's work metrics when the
 // stage returns, whichever of its exits it takes.
 class MirStageTimer {
@@ -992,6 +1085,29 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   }
   // Executable lowering needs only what the program roots reach. Lowering the
   // complete program above has already reported every diagnostic.
+  // Every application body is borrow-checked, reachable or not: MIR checks
+  // the complete HIR before code generation narrows it to what roots reach.
+  if (mirBorrowAuthority() && hir.reachable &&
+      !options.retainApplicationBodies) {
+    FailureMetadataBuildResult completeMetadata =
+        FailureMetadataBuilder().build(result.sourceGraph, result.sources,
+                                       result.hir, entryPath);
+    if (completeMetadata.valid()) {
+      MirLoweringResult complete =
+          MirLowerer().lower(result.hir, completeMetadata.metadata);
+      if (!complete.valid()) {
+        MirBorrowCheck check =
+            mirBorrowDiagnostics(complete, complete.program, result.hir);
+        if (!check.diagnostics.empty()) {
+          for (Diagnostic &diagnostic : check.diagnostics)
+            result.diagnostics.push_back(std::move(diagnostic));
+          result.mirValid = false;
+          applyAuditPolicy();
+          return result;
+        }
+      }
+    }
+  }
   if (hir.reachable && !options.retainApplicationBodies) {
     result.hir = std::move(*hir.reachable);
   }
@@ -1040,41 +1156,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   if (!result.mirValid) {
     // MIR is the single authority for body-local borrow validity: its borrow
     // rejections are the program's diagnostics, not internal errors.
-    std::vector<Diagnostic> borrowDiagnostics;
-    bool internal = false;
-    for (const MirLoweringError &error : mir.errors) {
-      if (error.borrow.kind == MirBorrowRejectionKind::None || !error.source) {
-        internal = true;
-        continue;
-      }
-      std::string message;
-      if (error.borrow.kind == MirBorrowRejectionKind::Escape)
-        message = "A returned borrow does not outlive the function: it "
-                  "depends on storage the function owns.";
-      else if (error.borrow.instruction == MirInstructionKind::Borrow)
-        message = error.borrow.write ||
-                          error.borrow.loanAccess == AccessMode::ReadOnly
-                      ? "Cannot create a mutable borrow while an overlapping "
-                        "borrow may still be live."
-                      : "Cannot create a read-only borrow while an "
-                        "overlapping mutable borrow may still be live.";
-      else if (error.borrow.write)
-        message = "Cannot assign to storage while an overlapping borrow may "
-                  "still be live.";
-      else
-        message = "Cannot read storage while an overlapping mutable borrow "
-                  "may still be live.";
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2017", DiagnosticPhase::Semantics, *error.source, message);
-      if (std::none_of(borrowDiagnostics.begin(), borrowDiagnostics.end(),
-                       [&](const Diagnostic &existing) {
-                         return existing.primary == diagnostic.primary &&
-                                existing.message == diagnostic.message;
-                       }))
-        borrowDiagnostics.push_back(std::move(diagnostic));
-    }
-    if (!borrowDiagnostics.empty() && !internal) {
-      for (Diagnostic &diagnostic : borrowDiagnostics)
+    if (MirBorrowCheck check =
+            mirBorrowDiagnostics(mir, result.mir, result.hir);
+        !check.diagnostics.empty() && !check.internal) {
+      for (Diagnostic &diagnostic : check.diagnostics)
         result.diagnostics.push_back(std::move(diagnostic));
       applyAuditPolicy();
       return result;
@@ -1082,56 +1167,6 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     const SourceUnit *entry =
         result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
     const MirVerificationResult verification = verifyMirProgram(result.mir);
-    // Program-level borrow rejections (escapes through a return) anchor at
-    // the returned expression of the function body that publishes them.
-    if (mir.errors.empty()) {
-      bool programInternal = false;
-      std::vector<Diagnostic> escapes;
-      for (const MirVerificationError &error : verification.errors) {
-        if (error.message == "MIR program is marked invalid")
-          continue;
-        std::optional<SourceSpan> span;
-        if (error.borrow.kind == MirBorrowRejectionKind::Escape &&
-            error.bodyKind == MirBodyKind::Function) {
-          const auto *mirFunction = [&]() -> const MirFunctionInstance * {
-            for (const auto &candidate : result.mir.functionInstances())
-              if (candidate.id == error.owner)
-                return &candidate;
-            return nullptr;
-          }();
-          const auto *hirFunction = [&]() -> const HirFunctionInstance * {
-            for (const auto &candidate : result.hir.functionInstances())
-              if (candidate.id == error.owner)
-                return &candidate;
-            return nullptr;
-          }();
-          const MirBlock *block =
-              mirFunction ? mirFunction->body.findBlock(error.block) : nullptr;
-          const HirValue *returned =
-              block && hirFunction
-                  ? hirFunction->body.findValue(block->terminator.hirValue)
-                  : nullptr;
-          if (returned != nullptr && returned->source != nullptr)
-            if (const Token token = expressionAnchorToken(*returned->source);
-                !token.lexeme.empty())
-              span = tokenSpan(token);
-        }
-        if (!span) {
-          programInternal = true;
-          continue;
-        }
-        escapes.push_back(makeDiagnostic(
-            "GTI-S2017", DiagnosticPhase::Semantics, *span,
-            "A returned borrow does not outlive the function: it depends on "
-            "storage the function owns."));
-      }
-      if (!escapes.empty() && !programInternal) {
-        for (Diagnostic &diagnostic : escapes)
-          result.diagnostics.push_back(std::move(diagnostic));
-        applyAuditPolicy();
-        return result;
-      }
-    }
     std::string message =
         "Internal compiler error: failed to construct valid MIR.";
     // One internal failure often reports several verifier errors, and the
