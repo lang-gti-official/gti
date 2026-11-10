@@ -2903,7 +2903,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
 }
 
 [[nodiscard]] bool isCarrierReferenceResult(const MirProgram &program,
-                                            const MirInstruction &instruction);
+                                            const MirInstruction &instruction,
+                                            bool admitErased = false);
 
 [[nodiscard]] MirVerificationResult verifyMirBorrowProducers(
     const MirProgram &program, const MirBody &body, std::size_t owner,
@@ -5794,7 +5795,8 @@ completeBorrowParameterEntryFact(const MirProgram &program, const MirBody &body,
 }
 
 [[nodiscard]] bool isCarrierReferenceResult(const MirProgram &program,
-                                            const MirInstruction &instruction) {
+                                            const MirInstruction &instruction,
+                                            bool admitErased) {
   if ((instruction.kind != MirInstructionKind::Construct &&
        (instruction.kind != MirInstructionKind::Call ||
         instruction.intrinsic != IntrinsicKind::None ||
@@ -5840,7 +5842,16 @@ completeBorrowParameterEntryFact(const MirProgram &program, const MirBody &body,
       parameter.arguments.size() != 1 ||
       !isPotentiallyBorrowedCarrier(program, parameter.arguments.front()))
     return false;
-  return paths.front().reference.arguments == parameter.arguments;
+  // A type-erased reference field stores the same carrier address, with
+  // the same permission, under its erased referent type. Only the shell
+  // dependency proof admits it: the erased shell has no typed field path.
+  const auto &stored = paths.front().reference;
+  if (admitErased && stored.arguments.size() == 1 &&
+      stored.referenceAccess == parameter.referenceAccess &&
+      exactMirCapabilityClass(program, stored.arguments.front(),
+                              CompilerCapabilityTypeKind::ErasedObject))
+    return true;
+  return stored.arguments == parameter.arguments;
 }
 
 // Zero denotes an exact caller-owned receiver/reference source. A nonzero
@@ -5974,7 +5985,11 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
                             place.traits.copyable &&
                             (place.type.kind == SemanticType::StringView ||
                              place.type.kind == SemanticType::CString);
-      if ((place.type != carrierType && !textCopy) ||
+      // A different borrowed carrier may store the entry formal's shell
+      // (a callable reference to it); its publication proves that below.
+      const bool shellCarrier = place.traits.containsBorrowedState &&
+                                place.type.kind == SemanticType::Class;
+      if ((place.type != carrierType && !textCopy && !shellCarrier) ||
           place.initiallyAvailable ||
           (storageType && *storageType != place.type))
         return false;
@@ -6048,6 +6063,27 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
                                      publication.block->id)) ||
         producer->result != value->id || producer->info.type != publishedType)
       return false;
+    // A carrier of another type that stores a reference to the entry
+    // formal's shell retains the entry's external owners through that
+    // shell. Its producer's own fresh Stored loan names the entry as its
+    // exact stored dependency; no field of the entry is copied.
+    if (publishedType != carrierType &&
+        publishedType.kind != SemanticType::StringView &&
+        publishedType.kind != SemanticType::CString) {
+      const MirLoan *shell =
+          producer->loan ? body.findLoan(*producer->loan) : nullptr;
+      if ((producer->kind != MirInstructionKind::Construct &&
+           producer->kind != MirInstructionKind::Call) ||
+          shell == nullptr || shell->kind != MirLoanKind::Stored ||
+          shell->entry || shell->escapes ||
+          shell->storedDependency != entry.id ||
+          shell->producedBy != producer->hirValue ||
+          shell->source != entry.source)
+        return false;
+      visiting.erase(carrier);
+      proven.insert(carrier);
+      return true;
+    }
     // A text relay may publish the exact owner of a reference formal through
     // a checked call result. Its actual argument must be a direct load of that
     // formal's referent; a matching type or declared borrow summary alone is
@@ -6104,16 +6140,28 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
       proven.insert(carrier);
       return true;
     }
+    // A generated copy construction (`T copy{value}`, `T(value)`) reads its
+    // source place exactly as a copying load does; it has no constructor
+    // body that could publish anything else.
+    const bool generatedCopy =
+        producer->kind == MirInstructionKind::Construct &&
+        !producer->constructorTarget &&
+        producer->constructorKind == ConstructorKind::Copy &&
+        producer->operands.size() == 1 &&
+        (producer->operands.front().kind == MirOperandKind::Copy ||
+         producer->operands.front().kind == MirOperandKind::Loan ||
+         producer->operands.front().kind == MirOperandKind::BorrowRead);
     if (producerBlock != publication.block || producer->operands.size() != 1 ||
         (producer->kind != MirInstructionKind::Load &&
-         producer->kind != MirInstructionKind::Move))
+         producer->kind != MirInstructionKind::Move && !generatedCopy))
       return false;
     const MirOperand &operand = producer->operands.front();
     const MirPlace *source = body.findPlace(operand.place);
     const bool moved = producer->kind == MirInstructionKind::Move;
-    if (operand.type != publishedType || source == nullptr ||
-        source->type != publishedType ||
-        operand.kind != (moved ? MirOperandKind::Move : MirOperandKind::Copy) ||
+    if ((!generatedCopy && operand.type != publishedType) ||
+        source == nullptr || source->type != publishedType ||
+        (!generatedCopy && operand.kind != (moved ? MirOperandKind::Move
+                                                  : MirOperandKind::Copy)) ||
         !(moved ? source->traits.movable : source->traits.copyable))
       return false;
     const auto origin =
@@ -6271,7 +6319,7 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                 instruction.borrowArgument <
                     instruction.parameterTypes.size()));
           if (instruction.loan != loan.id ||
-              (!isCarrierReferenceResult(program, instruction) &&
+              (!isCarrierReferenceResult(program, instruction, true) &&
                !textPublication))
             continue;
           // Scalar text publishes its own evaluated value while retaining the
