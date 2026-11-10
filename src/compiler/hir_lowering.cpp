@@ -30,6 +30,7 @@ public:
         reachablePrefixRequested(scope.reachablePrefix),
         entryDeclarations(scope.entryDeclarations),
         completeDeclarations(std::move(scope.completeDeclarations)),
+        borrowCheckedDeclarations(std::move(scope.borrowCheckedDeclarations)),
         omitLibraryOnlyBodies(scope.omitLibraryOnlyBodies),
         trustedUnits(scope.trustedUnits.begin(), scope.trustedUnits.end()),
         trustedSources(scope.trustedSources.begin(),
@@ -181,6 +182,17 @@ public:
           }
         }
       } else {
+        if (borrowCheckedDeclarations) {
+          const StmtList &declarations = source.declarations();
+          for (const auto &[first, count] : *borrowCheckedDeclarations) {
+            const std::size_t end =
+                std::min(declarations.size(), first + count);
+            for (std::size_t index = first; index < end; ++index)
+              seedDeclaration(declarations[index], std::nullopt);
+          }
+          processPendingInstances();
+          borrowCheckedCounts = instanceCounts();
+        }
         seedDeclarations(source.declarations(), std::nullopt);
       }
       processPendingInstances();
@@ -199,6 +211,12 @@ public:
       if (verifyHirProgramPlans(*baseModel, prefix).valid()) {
         output.reachable = std::move(prefix);
       }
+    }
+    if (output.program.valid_ && borrowCheckedCounts &&
+        *borrowCheckedCounts != instanceCounts()) {
+      HirProgram prefix = reachablePrefix(*borrowCheckedCounts);
+      if (verifyHirProgramPlans(*baseModel, prefix).valid())
+        output.borrowChecked = std::move(prefix);
     }
     return std::move(output);
   }
@@ -7871,6 +7889,11 @@ private:
   // `HirLoweringScope`.
   std::optional<std::vector<std::pair<std::size_t, std::size_t>>>
       completeDeclarations;
+  // Declaration ranges lowered before the rest, and the instance counts
+  // they reach; see `HirLoweringScope::borrowCheckedDeclarations`.
+  std::optional<std::vector<std::pair<std::size_t, std::size_t>>>
+      borrowCheckedDeclarations;
+  std::optional<InstanceCounts> borrowCheckedCounts;
   // Library-only instance bodies are analysed but not lowered; see
   // `HirLoweringScope::omitLibraryOnlyBodies`.
   bool omitLibraryOnlyBodies = false;

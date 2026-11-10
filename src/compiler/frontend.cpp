@@ -1211,11 +1211,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       const ProgressScope progress(options.progress,
                                    ProgressPhase::HirLowering);
       HirLoweringScope scope{.reachablePrefix = options.lowerReachableOnly};
-      // Every application body must reach the MIR borrow checker, so its
-      // units are lowered completely whenever lowering is reachability-scoped.
-      if (options.lowerReachableOnly &&
-          (options.lowerLibraryReachableOnly || mirBorrowAuthority()) &&
-          !options.lowerEntryUnitOnly) {
+      if (options.lowerReachableOnly && !options.lowerEntryUnitOnly) {
         std::vector<std::pair<std::size_t, std::size_t>> complete;
         for (const SourceUnit &unit : result.sourceGraph.sourceUnits()) {
           if ((unit.entry || !result.sourceGraph.isCompilerTrusted(unit.id)) &&
@@ -1223,7 +1219,13 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
             complete.emplace_back(unit.declarationStart, unit.declarationCount);
           }
         }
-        scope.completeDeclarations = std::move(complete);
+        // Every application body must reach the MIR borrow checker. When
+        // library declarations are lowered completely too, the application
+        // units are lowered first so the check need not see the rest.
+        if (options.lowerLibraryReachableOnly)
+          scope.completeDeclarations = std::move(complete);
+        else if (mirBorrowAuthority())
+          scope.borrowCheckedDeclarations = std::move(complete);
       }
       if (options.lowerEntryUnitOnly) {
         if (const SourceUnit *entry =
@@ -1349,15 +1351,17 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   // the complete HIR before code generation narrows it to what roots reach.
   if (mirBorrowAuthority() && hir.reachable &&
       !options.retainApplicationBodies) {
+    const HirProgram &checked =
+        hir.borrowChecked ? *hir.borrowChecked : result.hir;
     FailureMetadataBuildResult completeMetadata =
         FailureMetadataBuilder().build(result.sourceGraph, result.sources,
-                                       result.hir, entryPath);
+                                       checked, entryPath);
     if (completeMetadata.valid()) {
       MirLoweringResult complete =
-          MirLowerer().lower(result.hir, completeMetadata.metadata);
+          MirLowerer().lower(checked, completeMetadata.metadata);
       if (!complete.valid()) {
         MirBorrowCheck check =
-            mirBorrowDiagnostics(complete, complete.program, result.hir);
+            mirBorrowDiagnostics(complete, complete.program, checked);
         // A body only this check lowers must not hide an internal failure.
         if (check.internal && check.diagnostics.empty())
           check.diagnostics.push_back(makeDiagnostic(

@@ -1147,6 +1147,10 @@ struct HirLoweringResult {
   // is smaller and verifies. Executable lowering uses it; `program` keeps every
   // concrete instance, whose analysis reported the program's diagnostics.
   std::optional<HirProgram> reachable;
+  // The prefix through `HirLoweringScope::borrowCheckedDeclarations` when it
+  // is smaller than `program` and verifies: what the MIR borrow checker must
+  // see when unreferenced library declarations need not reach MIR.
+  std::optional<HirProgram> borrowChecked;
   std::vector<Diagnostic> diagnostics;
 
   // Discovery stopped at these unchecked primary bodies. This is not usable
@@ -1189,6 +1193,12 @@ struct HirLoweringScope {
   std::optional<std::pair<std::size_t, std::size_t>> entryDeclarations;
   std::optional<std::vector<std::pair<std::size_t, std::size_t>>>
       completeDeclarations;
+  // With a reachable prefix and every declaration lowered completely, these
+  // declaration ranges are lowered first, so `HirLoweringResult::
+  // borrowChecked` holds the reachable instances and theirs without the
+  // remaining ones.
+  std::optional<std::vector<std::pair<std::size_t, std::size_t>>>
+      borrowCheckedDeclarations;
   bool omitLibraryOnlyBodies = false;
   std::vector<SourceUnitId> trustedUnits;
   // Diagnostic paths of compiler-trusted units. An error inside a generic
