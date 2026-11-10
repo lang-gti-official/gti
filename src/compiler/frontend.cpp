@@ -585,6 +585,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
           options.cache ? options.cache->lookupParsed(key) : std::nullopt;
       if (cached) {
         unitDeclarations = std::move(cached->declarations);
+        unit->lifetimeNames = cached->lifetimeNames;
         if (cached->completionContext) {
           result.syntaxCompletion = cached->completionContext;
         }
@@ -625,13 +626,18 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                 result.sourceGraph, unitId);
         syntaxValid = syntaxValid && !parser.hadError();
         unitDeclarations = parsed.takeDeclarations();
+        unit->lifetimeNames =
+            parser.lifetimeNames().empty()
+                ? nullptr
+                : std::make_shared<const LifetimeNames>(parser.lifetimeNames());
         if (options.cache) {
           options.cache->storeParsed(
               key, estimatedInputBytes,
               {.declarations = unitDeclarations,
                .diagnostics = parser.errors(),
                .hadError = parser.hadError(),
-               .completionContext = parser.completionContext()});
+               .completionContext = parser.completionContext(),
+               .lifetimeNames = unit->lifetimeNames});
         }
       }
       unit->declarationCount = unitDeclarations.size();

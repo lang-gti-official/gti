@@ -106,6 +106,10 @@ public:
     return syntaxCompletion;
   }
 
+  [[nodiscard]] const LifetimeNames &lifetimeNames() const {
+    return lifetimeScopes.names;
+  }
+
 private:
   // Resolution belongs to SourceLoader. Retain the directive through parsing
   // so only this source-unit boundary can consume it: an import embedded in a
@@ -133,6 +137,7 @@ private:
     currentClassKind.reset();
     consumedCompletion = false;
     syntaxCompletion.reset();
+    lifetimeScopes = {};
     generatedNameCounter = 0;
     missingTokenError = false;
   }
@@ -2034,17 +2039,91 @@ private:
   }
 
   // Lexical lifetime binders of the declarations being parsed (RFC 0004).
-  std::vector<std::vector<std::string>> lifetimeScopes;
-  struct LifetimeScopeGuard {
-    std::vector<std::vector<std::string>> &scopes;
-    explicit LifetimeScopeGuard(std::vector<std::vector<std::string>> &scopes)
-        : scopes(scopes) {
-      scopes.emplace_back();
+  // A binder is visible throughout the declaration that writes it, including
+  // a result type written before its binder list, so each region name is
+  // resolved when its innermost enclosing scope closes and every binder of
+  // that scope is known.
+  struct LifetimeScopes {
+    struct Pending {
+      Token name;
+      std::size_t depth = 0;
+    };
+    std::vector<std::vector<Token>> binders;
+    std::vector<Pending> pending;
+    LifetimeNames names;
+
+    void close() {
+      const std::size_t depth = binders.size();
+      const std::vector<Token> &scope = binders.back();
+      std::vector<Pending> remaining;
+      for (Pending &use : pending) {
+        if (use.depth < depth) {
+          remaining.push_back(std::move(use));
+          continue;
+        }
+        const auto binder = std::find_if(
+            scope.begin(), scope.end(), [&](const Token &candidate) {
+              return candidate.lexeme == use.name.lexeme;
+            });
+        if (binder != scope.end()) {
+          names.uses.push_back(
+              {.name = std::move(use.name), .binder = *binder});
+        } else if (depth == 1) {
+          names.unknown.push_back(std::move(use.name));
+        } else {
+          use.depth = depth - 1;
+          remaining.push_back(std::move(use));
+        }
+      }
+      pending = std::move(remaining);
+      binders.pop_back();
     }
-    ~LifetimeScopeGuard() { scopes.pop_back(); }
+  };
+  LifetimeScopes lifetimeScopes;
+  struct LifetimeScopeGuard {
+    LifetimeScopes &scopes;
+    explicit LifetimeScopeGuard(LifetimeScopes &scopes) : scopes(scopes) {
+      scopes.binders.emplace_back();
+    }
+    ~LifetimeScopeGuard() { scopes.close(); }
     LifetimeScopeGuard(const LifetimeScopeGuard &) = delete;
     LifetimeScopeGuard &operator=(const LifetimeScopeGuard &) = delete;
   };
+
+  static bool sameToken(const Token &left, const Token &right) {
+    return left.position == right.position && left.source == right.source &&
+           left.lexeme == right.lexeme;
+  }
+
+  // A written region name other than '_', 'static' and 'this'.
+  void noteLifetimeUse(const Token &name) {
+    if (name.kind != TokenKind::IDENTIFIER || name.lexeme == "_")
+      return;
+    if (name.completion) {
+      LifetimeNameCompletion completion{.token = name};
+      for (auto scope = lifetimeScopes.binders.rbegin();
+           scope != lifetimeScopes.binders.rend(); ++scope)
+        for (const Token &binder : *scope)
+          if (std::none_of(completion.visible.begin(), completion.visible.end(),
+                           [&](const Token &seen) {
+                             return seen.lexeme == binder.lexeme;
+                           }))
+            completion.visible.push_back(binder);
+      lifetimeScopes.names.completion = std::move(completion);
+      return;
+    }
+    // Backtracking may parse one written type twice.
+    if (std::any_of(lifetimeScopes.pending.begin(),
+                    lifetimeScopes.pending.end(),
+                    [&](const auto &use) { return sameToken(use.name, name); }))
+      return;
+    if (lifetimeScopes.binders.empty()) {
+      lifetimeScopes.names.unknown.push_back(name);
+      return;
+    }
+    lifetimeScopes.pending.push_back(
+        {.name = name, .depth = lifetimeScopes.binders.size()});
+  }
 
   bool lifetimeParameterAhead() const {
     return check(TokenKind::IDENTIFIER) && peek().lexeme == "lifetime" &&
@@ -2059,7 +2138,7 @@ private:
     if (name.lexeme == "_")
       throw error(name, "A lifetime parameter requires a name; '_' is an "
                         "inferred lifetime argument.");
-    declareLifetimeBinder(name.lexeme);
+    declareLifetimeBinder(name);
     return {.name = std::move(name), .lifetimeKeyword = std::move(keyword)};
   }
 
@@ -2607,7 +2686,10 @@ private:
                     bool allowReferenceAccess = false) {
     const NestingGuard nesting = enterNesting(peek());
     std::optional<LifetimeBinder> binder;
+    // A `for<lifetime ...>` binder scopes the quantified signature it heads.
+    std::optional<LifetimeScopeGuard> binderScope;
     if (match({TokenKind::FOR})) {
+      binderScope.emplace(lifetimeScopes);
       Token keyword = previous();
       Token open = consume(TokenKind::LESS,
                            "Expect '<' after a lifetime binder's 'for'.");
@@ -2625,6 +2707,7 @@ private:
           throw error(name, "A lifetime parameter requires a name; '_' is an "
                             "inferred lifetime argument.");
         }
+        declareLifetimeBinder(name);
         parameters.push_back(
             {.keyword = std::move(parameterKeyword), .name = std::move(name)});
       } while (match({TokenKind::COMMA}));
@@ -2674,6 +2757,7 @@ private:
         }
         Token close = consumeGenericClose(
             "Expect '>' after the reference lifetime argument.");
+        noteLifetimeUse(name);
         type.referenceLifetime = LifetimeArgument{.open = std::move(open),
                                                   .name = std::move(name),
                                                   .close = std::move(close)};
@@ -2876,6 +2960,8 @@ private:
           lifetimeBinderInScope(argument.name.last().lexeme)
               ? GenericArgumentSyntax::Lifetime
               : GenericArgumentSyntax::UnresolvedIdentifier;
+      if (argument.genericArgumentSyntax == GenericArgumentSyntax::Lifetime)
+        noteLifetimeUse(argument.name.last());
     }
     return argument;
   }
@@ -2901,8 +2987,10 @@ private:
     for (auto &argument : type.arguments) {
       if (argument.genericArgumentSyntax ==
               GenericArgumentSyntax::UnresolvedIdentifier &&
-          lifetimeBinderInScope(argument.name.last().lexeme))
+          lifetimeBinderInScope(argument.name.last().lexeme)) {
         argument.genericArgumentSyntax = GenericArgumentSyntax::Lifetime;
+        noteLifetimeUse(argument.name.last());
+      }
       reclassifyLateLifetimeArguments(argument);
     }
     auto moved = takeLifetimeArguments(type.arguments);
@@ -2916,9 +3004,20 @@ private:
     }
   }
 
-  void declareLifetimeBinder(const std::string &name) {
-    if (!lifetimeScopes.empty())
-      lifetimeScopes.back().push_back(name);
+  void declareLifetimeBinder(const Token &name) {
+    if (lifetimeScopes.binders.empty())
+      return;
+    // A pattern region was first parsed as a use of its own name.
+    std::erase_if(lifetimeScopes.pending,
+                  [&](const auto &use) { return sameToken(use.name, name); });
+    auto &scope = lifetimeScopes.binders.back();
+    if (std::any_of(scope.begin(), scope.end(), [&](const Token &binder) {
+          return sameToken(binder, name);
+        }))
+      return;
+    // Semantics merges a binder parsed again after backtracking by its span.
+    lifetimeScopes.names.binders.push_back(name);
+    scope.push_back(name);
   }
 
   // A class argument pattern such as `int&<source>` binds `source`.
@@ -2937,14 +3036,16 @@ private:
     if (pattern.referenceLifetime &&
         pattern.referenceLifetime->name.kind == TokenKind::IDENTIFIER &&
         pattern.referenceLifetime->name.lexeme != "_")
-      declareLifetimeBinder(pattern.referenceLifetime->name.lexeme);
+      declareLifetimeBinder(pattern.referenceLifetime->name);
     for (const auto &argument : pattern.arguments)
       declarePatternLifetimeBinders(argument);
   }
 
   [[nodiscard]] bool lifetimeBinderInScope(const std::string &name) const {
-    for (const auto &scope : lifetimeScopes)
-      if (std::find(scope.begin(), scope.end(), name) != scope.end())
+    for (const auto &scope : lifetimeScopes.binders)
+      if (std::any_of(scope.begin(), scope.end(), [&](const Token &binder) {
+            return binder.lexeme == name;
+          }))
         return true;
     return false;
   }
@@ -5503,6 +5604,10 @@ const std::vector<ParseDiagnostic> &Parser::errors() const {
 const std::optional<SyntaxCompletionContext> &
 Parser::completionContext() const {
   return impl->completionContext();
+}
+
+const LifetimeNames &Parser::lifetimeNames() const {
+  return impl->lifetimeNames();
 }
 
 } // namespace lang

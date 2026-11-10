@@ -3,6 +3,7 @@
 #include "gti/source_owner.h"
 
 #include "gti/diagnostic.h"
+#include "gti/lifetime_names.h"
 #include "gti/token.h"
 
 #include <algorithm>
@@ -125,6 +126,9 @@ struct SourceUnit {
   std::vector<SourceSpan> exportedNamespaces;
   std::size_t declarationStart = 0;
   std::size_t declarationCount = 0;
+  // The parser's lexical resolution of this unit's region names; null when
+  // the unit writes none.
+  std::shared_ptr<const LifetimeNames> lifetimeNames;
   std::optional<std::string> standardLibraryName;
   // Present for application units loaded through a manifest-owned package
   // graph. Package provenance is never compiler trust; it supplies stable

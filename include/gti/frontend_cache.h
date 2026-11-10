@@ -95,6 +95,7 @@ struct CachedParsedUnit {
   std::vector<Diagnostic> diagnostics;
   bool hadError = false;
   std::optional<SyntaxCompletionContext> completionContext;
+  std::shared_ptr<const LifetimeNames> lifetimeNames;
 };
 
 // A process-local, thread-safe LRU shared by compatible frontend invocations.
