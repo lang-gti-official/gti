@@ -569,11 +569,7 @@ GATE_EXCLUDED = {
 # in the hand-dispatched C++ job (cpp-backend.yml, GTI_TEST_BACKENDS=cpp),
 # never in the gate or in full validation. Harness-driven C++ modes are selected by GTI_TEST_BACKENDS in
 # tests/backend_modes.py; these are the CTest entries that exist only for it.
-# The benchmark and compile-time harnesses still compare generated C++ and so
-# measure the frozen backend; they stay here until they are ported to LLVM.
-CPP_ONLY_PREFIXES = ("cpp_mir_", "cpp_debug_artifacts", "lowered_program_corpus_census",
-                     "benchmark_harness", "runtime_performance_workloads",
-                     "compile_time_harness")
+CPP_ONLY_PREFIXES = ("cpp_mir_", "cpp_debug_artifacts", "lowered_program_corpus_census")
 # macOS does not repeat the Linux inventory. It runs the `darwin` set from
 # tests/ci_darwin_tests.json: what differs on the platform. Linux proves the
 # rest once. See AGENTS.md "Validation".

@@ -380,7 +380,7 @@ foreach(suite IN LISTS gti_throughput_tests)
   # CPP_ONLY_PREFIXES, which test_throughput_registration keeps in step) run
   # only in a build with GTI_ENABLE_CPP_BACKEND, which only the hand-dispatched
   # C++ job configures; elsewhere they are disabled.
-  if(suite MATCHES "^(cpp_mir_|cpp_debug_artifacts|lowered_program_corpus_census|benchmark_harness|runtime_performance_workloads|compile_time_harness)")
+  if(suite MATCHES "^(cpp_mir_|cpp_debug_artifacts|lowered_program_corpus_census)")
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "cpp-backend")
     if(NOT GTI_ENABLE_CPP_BACKEND)
       set_property(TEST "${suite}" PROPERTY DISABLED TRUE)
