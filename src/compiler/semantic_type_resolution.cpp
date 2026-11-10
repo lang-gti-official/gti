@@ -5933,6 +5933,11 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
     }
     return;
   }
+  // A signature `static` result names no exact place (RFC 0004); MIR proves
+  // that each returned loan is rooted in static storage.
+  if (function->returnBorrowOrigin == BorrowOriginKind::Global &&
+      !function->returnBorrowPlace)
+    return;
   if (function->returnBorrowOrigin == BorrowOriginKind::Global) {
     const SemanticPlace source = semanticPlace(value);
     const BorrowOriginPlace actual{
@@ -6626,9 +6631,11 @@ auto SemanticVisitor::Impl::hasStableBorrowStorage(
   }
   if (const auto *call = exprAs<Call>(expression)) {
     const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+    // A signature `static` result (RFC 0004) names no place, but its
+    // referent is static storage all the same.
     if (resolved != nullptr &&
         resolved->borrowOrigin == BorrowOriginKind::Global &&
-        resolved->borrowPlace && resolved->borrowPlace->valid()) {
+        (!resolved->borrowPlace || resolved->borrowPlace->valid())) {
       return true;
     }
     if (resolved != nullptr &&

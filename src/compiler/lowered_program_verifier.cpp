@@ -572,8 +572,7 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     if ((payload->returnBorrowOrigin == BorrowOriginKind::Argument &&
          payload->returnBorrowParameter >= payload->parameters.size()) ||
         (payload->returnBorrowOrigin == BorrowOriginKind::Global &&
-         (!payload->returnBorrowPlace ||
-          !payload->returnBorrowPlace->valid()))) {
+         payload->returnBorrowPlace && !payload->returnBorrowPlace->valid())) {
       return invalid(
           "function declaration has an invalid return-borrow origin");
     }

@@ -10157,12 +10157,24 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
         updated.staticMember, updated.intrinsic);
     // A result written `static` never elides to a parameter: only static
     // storage, which the body's global-origin inference proves, supplies it.
-    if (const FunctionDecl *syntax = updated.bodyDeclaration();
-        syntax != nullptr &&
-        explicitLifetimeResult(*syntax, updated.parameterTypes,
+    const FunctionDecl *resultSyntax = updated.bodyDeclaration();
+    const bool staticResult =
+        resultSyntax != nullptr &&
+        explicitLifetimeResult(*resultSyntax, updated.parameterTypes,
                                updated.ownerClass)
-                .kind == ExplicitLifetimeResult::Kind::Static)
+                .kind == ExplicitLifetimeResult::Kind::Static;
+    if (staticResult)
       summary = FunctionReturnBorrowSummary{.access = summary.access};
+    // RFC 0004: under signature contracts a free or static function's
+    // read-only `T&<static>` result is itself the contract. It names no exact
+    // place; MIR proves that every returned loan is rooted in immutable
+    // static storage. A body returning one exact place still refines it.
+    if (staticResult && signatureContractDefaults() &&
+        (updated.ownerClass == 0 || updated.staticMember) &&
+        updated.returnType.kind == SemanticType::Reference &&
+        updated.returnType.referenceAccess == AccessMode::ReadOnly &&
+        updated.intrinsic == IntrinsicKind::None)
+      summary.origin = BorrowOriginKind::Global;
     // Text-view relays (L-OWN-02) keep their own derivation until text views
     // get a signature rule; stored-field refinement is body inference.
     if (const std::optional<FunctionReturnBorrowSummary> dynamicText =

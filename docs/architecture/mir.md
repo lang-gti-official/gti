@@ -4518,7 +4518,15 @@ A global-origin function summary and every matching call instruction retain
 one `BorrowOriginPlace`. Lowering materializes a symbol-rooted MIR place with
 the summarized projections and creates the call-result loan from it. The
 verifier rejects missing, forged, mismatched, receiver/argument-attached, or
-wrong-return places. Unretained loans must still reach their selected
+wrong-return places. Under signature contracts (RFC 0004) a free or static
+function's read-only `T&<static>` result that does not return one exact place
+is a `Global` summary without a place: the declaration is the contract. Each
+return then proves that its loan, every ancestor, stored dependency and
+additional dependency is rooted in immutable, non-thread-local namespace or
+static-field storage; any other root is an escape. At the call, the result loan
+is a root whose source is the call's own returned reference value, so reads
+load through the returned address and no caller place is conflict-tracked.
+Unretained loans must still reach their selected
 full-expression `EndBorrow`; retained mutable loans follow the semantic lexical
 endpoint. The MIR profile remains metadata: mutable process-wide storage is
 rejected by semantics in the concurrent profile rather than reinterpreted by

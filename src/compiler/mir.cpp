@@ -14538,7 +14538,11 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                 return std::nullopt;
               path.push_back(runtime->projections[index].field);
             }
-            if (retained->designatedFields == path)
+            // A compact single-origin carrier names no field: each of its
+            // stored references holds that one source.
+            if (retained->designatedFields == path ||
+                (retained->designatedFields.empty() &&
+                 retained->additionalDependencies.empty()))
               return retained->source;
             for (const auto &dependency : retained->additionalDependencies)
               if (dependency.designatedFields == path &&

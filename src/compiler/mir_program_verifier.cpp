@@ -4912,6 +4912,32 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
               : CanonicalPlace{.ambiguous = true};
       const CanonicalPlace actualPlace =
           canonicalBorrowOrigin(body, loan->source, bindingLoans, shellResult);
+      if (instruction.borrowOrigin == BorrowOriginKind::Global &&
+          !instruction.borrowPlace) {
+        // A signature `static` result (RFC 0004): the callee proved static
+        // storage, so the loan is a root whose referent is exactly this
+        // call's returned reference, and no caller place owns it.
+        const auto *callee =
+            instruction.functionTarget
+                ? program.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        const MirPlace *referent = body.findPlace(loan->source);
+        if (callee == nullptr ||
+            callee->returnBorrowOrigin != BorrowOriginKind::Global ||
+            callee->returnBorrowPlace || !instruction.result ||
+            loan->kind != MirLoanKind::CallResult || loan->entry ||
+            loan->parent != 0 || loan->storedDependency != 0 ||
+            !loan->additionalDependencies.empty() || referent == nullptr ||
+            referent->root != MirPlaceRootKind::Value ||
+            referent->value != *instruction.result ||
+            !referent->projections.empty())
+          return verificationFailure(
+              body, owner,
+              "static call-result loan is not rooted at its returned "
+              "reference",
+              block.id, instruction.id);
+        continue;
+      }
       if (instruction.borrowOrigin == BorrowOriginKind::Global) {
         if (!instruction.borrowPlace ||
             !sameGlobalBorrowPlace(*instruction.borrowPlace, actualPlace)) {
@@ -6976,6 +7002,60 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
   return result;
 }
 
+// RFC 0004: a declared `static` reference result with no exact summarized
+// place. The returned loan, its ancestors and every stored dependency must
+// each be rooted in immutable namespace or static-field storage. Thread-local
+// storage ends with its thread, and callers retain no owner to protect a
+// mutable global, so neither lives for `static` here.
+[[nodiscard]] bool
+staticStorageLoan(const MirProgram &program, const MirBody &body,
+                  const MirLoan &returned,
+                  const std::unordered_map<HirBindingId, std::vector<MirLoanId>>
+                      &bindingLoans) {
+  const auto staticPlace = [&](MirPlaceId id) {
+    const CanonicalPlace place =
+        mir_detail::canonicalBorrowOrigin(body, id, bindingLoans);
+    if (place.ambiguous || place.root != MirPlaceRootKind::Symbol ||
+        place.capture != 0 || program.findThreadLocalStorage(place.symbol))
+      return false;
+    for (const auto &projection : place.projections)
+      if (projection.kind != MirProjectionKind::Field &&
+          projection.kind != MirProjectionKind::Index &&
+          projection.kind != MirProjectionKind::Base &&
+          projection.kind != MirProjectionKind::Dereference)
+        return false;
+    const auto *step =
+        program.programInitializationPlan().findStepForSymbol(place.symbol);
+    const auto *storage =
+        step ? program.module().findPlace(step->storagePlace) : nullptr;
+    return storage != nullptr &&
+           (step->storageKind == ProgramStorageKind::NamespaceGlobal ||
+            step->storageKind == ProgramStorageKind::StaticField) &&
+           storage->access == AccessMode::ReadOnly;
+  };
+  std::vector<MirLoanId> pending{returned.id};
+  std::unordered_set<MirLoanId> visited;
+  while (!pending.empty()) {
+    const MirLoanId id = pending.back();
+    pending.pop_back();
+    if (id == 0 || !visited.insert(id).second)
+      continue;
+    const MirLoan *loan = body.findLoan(id);
+    if (loan == nullptr || loan->entry ||
+        loan->kind == MirLoanKind::Parameter ||
+        loan->access != AccessMode::ReadOnly || !staticPlace(loan->source))
+      return false;
+    pending.push_back(loan->parent);
+    pending.push_back(loan->storedDependency);
+    for (const auto &dependency : loan->additionalDependencies) {
+      if (dependency.source == 0 || !staticPlace(dependency.source))
+        return false;
+      pending.push_back(dependency.parent);
+    }
+  }
+  return true;
+}
+
 [[nodiscard]] MirVerificationResult verifyMirFunctionBorrowSummary(
     const MirProgram &program, const MirFunctionInstance &instance,
     bool completeReturnProof = false,
@@ -7257,9 +7337,13 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
     break;
   }
   case BorrowOriginKind::Global:
+    // Without an exact place, the declared `static` reference result is the
+    // contract (RFC 0004); each return below proves its static roots.
     if ((instance.owner && !instance.staticMember) ||
-        instance.returnBorrowParameter != 0 || !instance.returnBorrowPlace ||
-        !instance.returnBorrowPlace->valid()) {
+        instance.returnBorrowParameter != 0 ||
+        (instance.returnBorrowPlace
+             ? !instance.returnBorrowPlace->valid()
+             : instance.returnType.kind != SemanticType::Reference)) {
       return invalidSummary(
           "global return dependency requires a free or static function and "
           "one exact static storage place");
@@ -7937,7 +8021,19 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
                                 "field-to-source contract");
       }
     }
-    if (instance.returnBorrowOrigin == BorrowOriginKind::Global) {
+    if (instance.returnBorrowOrigin == BorrowOriginKind::Global &&
+        !instance.returnBorrowPlace) {
+      if (!staticStorageLoan(program, body, *loan, bindingLoans)) {
+        MirVerificationResult rejected = verificationFailure(
+            body, instance.id,
+            "static return borrows storage that is not static", block.id);
+        if (!rejected.errors.empty())
+          rejected.errors.back().borrow = {
+              .kind = MirBorrowRejectionKind::Escape,
+              .loan = *block.terminator.returnLoan};
+        return rejected;
+      }
+    } else if (instance.returnBorrowOrigin == BorrowOriginKind::Global) {
       const CanonicalPlace actual =
           canonicalBorrowOrigin(body, loan->source, bindingLoans);
       if (!instance.returnBorrowPlace ||

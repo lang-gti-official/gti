@@ -7568,6 +7568,17 @@ private:
     if (value.borrowOrigin == BorrowOriginKind::Global && value.borrowPlace) {
       return placeForBorrowOrigin(*value.borrowPlace, value);
     }
+    // A signature `static` result (RFC 0004) names no exact storage place.
+    // Its referent is the returned reference itself: static storage that no
+    // body-local owner protects, read through the published result address.
+    if (value.borrowOrigin == BorrowOriginKind::Global && call.result &&
+        value.info.category == ValueCategory::Place)
+      return appendPlace({.root = MirPlaceRootKind::Value,
+                          .value = *call.result,
+                          .type = value.info.type,
+                          .access = value.info.access,
+                          .traits = value.info.traits,
+                          .sourceValue = value.id});
     return 0;
   }
 
@@ -16354,11 +16365,20 @@ private:
               borrow.loan <= output.loans.size()) {
             const MirLoanId carrierId = borrow.loan;
             const MirLoan &carrier = output.loans[carrierId - 1];
+            // A compact single-origin carrier names no field: every stored
+            // reference in it holds its one source. A signature `static`
+            // result (RFC 0004) publishes that source for the program proof.
+            const bool compactCarrier =
+                function != nullptr &&
+                function->returnBorrowOrigin == BorrowOriginKind::Global &&
+                !function->returnBorrowPlace &&
+                carrier.designatedFields.empty() &&
+                carrier.additionalDependencies.empty();
             const bool carrierLoan =
                 carrier.kind == MirLoanKind::Stored && !carrier.entry &&
                 !carrier.escapes && !carrier.twoPhase &&
                 !carrier.referenceSelection && carrier.conditions.empty() &&
-                !carrier.designatedFields.empty();
+                (!carrier.designatedFields.empty() || compactCarrier);
             const auto carriedField = [&](const MirPlace *candidate) {
               if (candidate == nullptr ||
                   candidate->root != MirPlaceRootKind::Binding ||
@@ -16376,7 +16396,7 @@ private:
                   return false;
                 fields.push_back(candidate->projections[index].field);
               }
-              if (carrier.designatedFields == fields)
+              if (carrier.designatedFields == fields || compactCarrier)
                 return true;
               return std::any_of(carrier.additionalDependencies.begin(),
                                  carrier.additionalDependencies.end(),
@@ -16409,7 +16429,7 @@ private:
               path.push_back(projection.field);
             }
             if (fieldRead) {
-              if (carrier.designatedFields == path)
+              if (carrier.designatedFields == path || compactCarrier)
                 localCarrierFieldSource = carrier.source;
               for (const auto &dependency : carrier.additionalDependencies)
                 if (dependency.designatedFields == path &&
