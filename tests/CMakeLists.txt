@@ -1609,6 +1609,10 @@ add_test(NAME lifetime_native
     "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
     --output-dir "${CMAKE_BINARY_DIR}/Testing/lifetime-native-evidence")
 set_tests_properties(lifetime_native PROPERTIES TIMEOUT 1200)
+add_test(NAME borrowed_from_equivalence
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/borrowed_from_equivalence_test.py"
+    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}/stdlib")
+set_tests_properties(borrowed_from_equivalence PROPERTIES TIMEOUT 300)
 
 add_executable(gti_lambda_reference_tests lambda_reference_tests.cpp)
 target_link_libraries(gti_lambda_reference_tests PRIVATE gti_compiler)
