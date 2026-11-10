@@ -457,7 +457,7 @@ def main() -> None:
                 if result.error or result.observable != (expected['exit_code'], expected['stdout'], expected['stderr']):
                     raise AssertionError(f'{name} {endpoint}: {result}')
                 results.append(result.observable)
-            assert results[0] == results[1] == results[2]
+            assert len(results) >= 2 and all(result == results[0] for result in results)
         for name, specification in failure_cases.items():
             if selection and selection != name:
                 continue
@@ -473,7 +473,7 @@ def main() -> None:
                 if result.error or result.returncode != expected['exit_code'] or expected['diagnostic'] not in result.stderr:
                     raise AssertionError(f'{name} {endpoint}: {result}')
                 results.append(result.observable)
-            if not results[0] == results[1] == results[2]:
+            if len(results) < 2 or any(result != results[0] for result in results):
                 raise AssertionError(f'{name}: source/failure attribution drift: {results}')
         for name, specification in rejection_cases.items():
             if selection and selection != name:

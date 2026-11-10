@@ -56,7 +56,7 @@ def main() -> None:
                 result = run(name, endpoint)
                 if result.error or result.observable != SUCCESS:
                     raise AssertionError(f'{name} {endpoint}: {result}')
-        for endpoint in (BOTH[0], NATIVE[0]):
+        for endpoint in dict.fromkeys((BOTH[0], NATIVE[0])):
             result = run('arrow_step_mutation_conflict', endpoint)
             if result.compile_returncode == 0 or 'GTI-S2017' not in result.stderr:
                 raise AssertionError(f'arrow mutation conflict changed: {result}')
