@@ -1887,10 +1887,15 @@ int main() {
         std::any_of(
             result.diagnostics.begin(), result.diagnostics.end(),
             [&](const lang::Diagnostic &diagnostic) {
+              // The MIR borrow checker states the conflict generically.
               return diagnostic.code == "GTI-S2017" &&
                      diagnostic.primary.start >= at &&
                      diagnostic.primary.start < at + item.marker.size() &&
-                     diagnostic.message.find(item.reason) != std::string::npos;
+                     (diagnostic.message.find(item.reason) !=
+                          std::string::npos ||
+                      diagnostic.message.find(
+                          "overlapping borrow may still be live") !=
+                          std::string::npos);
             });
     if (!reported)
       printDiagnostics(result);

@@ -3532,6 +3532,11 @@ auto SemanticVisitor::Impl::recordCapturedTextCarriers(
     auto &loans = loanFlow.capturedTextCarriers[carrier];
     if (std::find(loans.begin(), loans.end(), loan) == loans.end())
       loans.push_back(loan);
+    // MIR proves the loan's liveness from its published carriers: the
+    // binding holding captured text carries the view's loan as a copy of
+    // the view would.
+    if (mirBorrowAuthority())
+      semanticModel.recordLoanCarrier(loan, carrier);
   }
 }
 
