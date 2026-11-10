@@ -38,6 +38,11 @@ struct LlvmBackendOptions {
   LlvmCodegenOptimization optimization = LlvmCodegenOptimization::None;
   bool debugInfo = false;
   LlvmInstrumentationMode instrumentation = LlvmInstrumentationMode::None;
+  // Return the module as textual LLVM IR (`.ll`) instead of object bytes: the
+  // exact module object emission would hand to target code generation, after
+  // GTI's own MIR optimization and the selected LLVM pipeline. Inspection only;
+  // never part of object-cache identity.
+  bool textualIr = false;
 };
 
 // Resolved producer facts for whole-program object caches. LLVM types remain

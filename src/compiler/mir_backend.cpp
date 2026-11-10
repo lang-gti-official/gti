@@ -2,6 +2,7 @@
 
 #include "gti/lowered_program.h"
 #include "gti/mir_printer.h"
+#include "mir_loan_normalization.h"
 
 #include <stdexcept>
 
@@ -15,8 +16,11 @@ BackendArtifact MirBackend::generate(LoweredProgram program) {
     throw std::logic_error(
         "MIR backend refuses to serialize an invalid lowered program");
   }
+  const MirProgram &mir = verified->program().mir();
   return {.kind = BackendArtifactKind::Source,
-          .contents = MirPrinter().print(verified->program().mir()),
+          .contents = options.normalizeLoanBookkeeping
+                          ? MirPrinter().print(normalizeLoanBookkeeping(mir))
+                          : MirPrinter().print(mir),
           .extension = ".mir"};
 }
 

@@ -2195,6 +2195,24 @@ for `gti check`, `gti run`, and `gti test` and alongside `--keep-cpp`. The
 direct and project modes therefore emit byte-identical serializations for
 the same resolved configuration.
 
+Direct mode has two further inspection options for the
+[RFC 0004 erasure gate](verification.md#rfc-0004-erasure-gate); project builds
+do not accept them. `--emit-mir --mir-normalize-loans` serializes the same
+verified snapshot after `normalizeLoanBookkeeping`
+(`src/compiler/mir_loan_normalization.h`): semantic loan numbers become zero,
+EndBorrow instructions are removed and instruction IDs are renumbered densely
+per body, so only loan bookkeeping is erased. The flag requires `--emit-mir`.
+`--emit-llvm` writes textual LLVM IR, defaulting to `<entry>.ll`: the module
+an LLVM executable build at the selected `-O` level hands to target code
+generation, after GTI's MIR optimization and LLVM's pipeline, with the
+executable build's definition closure and backend options. It is an emission
+mode like `--emit-mir`, so it rejects the other emission modes, `--backend`,
+`--std`, `--keep-cpp`, debug info, build reports and trailing compiler
+arguments. The text carries no temporary path or timestamp and is identical
+across runs: the module identifier is the fixed `gti.native.v<abi>`, the
+triple is the host's, and only `!gti.source` function provenance names
+absolute paths, those of the loaded sources themselves.
+
 Direct compilation also exposes opt-in optimizer observability without
 changing the selected backend:
 

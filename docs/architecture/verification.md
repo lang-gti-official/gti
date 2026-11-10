@@ -11,6 +11,57 @@ or worktrees. Failure-only MIR dumps go to captured stderr so their evidence
 stays with the failed test. `testSupportFacilities` checks independent roots and
 cleanup without removing a surviving fixture.
 
+## RFC 0004 erasure gate
+
+RFC 0004 moves borrow checking into MIR, which then derives loan ends from
+liveness. The owner's acceptance conditions for that change are:
+
+1. Only loan identity and loan bookkeeping may be normalized: loan IDs,
+   semantic loan numbers and the position of EndBorrow (loan-end) markers.
+   Everything else in MIR stays byte-identical: values, places, calls, moves,
+   control flow and, above all, drop and cleanup instructions and their order.
+   If EndBorrow placement can move a drop or cleanup, that is a behaviour
+   change and the gate fails.
+2. Backend output stays identical for lifetime-free examples: the LLVM IR, and
+   the native O0/O3 run results.
+3. The normalizer stays narrow, tested and documented, so it cannot start
+   hiding other fields.
+
+`tests/mir_lifetime_erasure_identity_test.py` checks conditions 1 and 2. For
+every example the reference compiler (built from the base `main` commit)
+compiles, it requires byte-identical `--emit-mir --mir-normalize-loans`
+output, byte-identical `--emit-llvm` output at `-O0` and `-O3` (with each
+compiler's own standard-library root spelled `<stdlib>`, since `!gti.source`
+provenance names absolute source paths and the two libraries live in different
+checkouts), and the same exit code and stdout from the native LLVM executable
+at `-O0` and `-O3`
+(see [build and driver](build-and-driver.md) for both flags). Each category is
+reported separately; an example that needs the concurrent profile is compiled
+with it by both compilers, a reference executable whose own runs disagree is
+reported as nondeterministic rather than compared, and lifetime examples the
+reference cannot parse are compiled by the candidate only. CTest registers it
+as `mir_lifetime_erasure_identity` when `GTI_MIR_REFERENCE_COMPILER` and
+`GTI_MIR_REFERENCE_STDLIB` are configured.
+
+The normalizer itself (`src/compiler/mir_loan_normalization.{h,cpp}`) leaves
+MIR-local loan IDs, loan rows and loan operands alone. It zeroes
+`MirLoan::semanticLoan`, removes every non-tombstone EndBorrow, and renumbers
+instruction IDs densely per body in block order, rewriting every
+instruction-ID field the header lists, including the cross-body thread-task,
+constructor dispatch, program-initialization and hosted-startup references. It
+fails closed: an EndBorrow carrying anything beyond its loan and its own
+source attribution, a reference to a removed EndBorrow, an ID outside its body
+or a repeated ID stops emission with an internal-error diagnostic instead of
+being normalized. A forgotten instruction-ID field keeps its original value
+and so shows up as a difference. Because renumbering follows block order,
+instruction-ID allocation order is not compared; block order, instruction
+order and every reference between instructions are. `mir_loan_normalization`
+proves that EndBorrow placement and semantic loan numbers normalize away, that
+a moved Drop and a changed literal or call target still differ, that every
+remapped reference names the same instruction, and each refusal. Any change to
+what the normalizer erases, or to its EndBorrow attribution allowlist, needs
+owner review.
+
 ## Terminal switch continuations and C++ text-borrow admission
 
 `mir_full_expression` analyzes the issue #309 generic accessor and independently

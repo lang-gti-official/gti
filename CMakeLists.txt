@@ -637,6 +637,7 @@ add_library(
   "src/compiler/mir_text_contracts.cpp"
   "src/compiler/mir_verification_queries.cpp"
   "src/compiler/mir_backend.cpp"
+  "src/compiler/mir_loan_normalization.cpp"
   "src/compiler/native_header.cpp"
   "src/compiler/optimization/alias.cpp"
   "src/compiler/optimization/coverage.cpp"

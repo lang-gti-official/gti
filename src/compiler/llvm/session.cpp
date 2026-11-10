@@ -1025,6 +1025,14 @@ BackendArtifact Session::emitObject() {
   if (debugInfo_)
     debugInfo_->prepareCodegen();
   verify();
+  if (options_.textualIr) {
+    // The same module, stopped where target code generation would begin.
+    std::string text;
+    llvm::raw_string_ostream stream(text);
+    module_.print(stream, nullptr);
+    stream.flush();
+    return {BackendArtifactKind::Source, std::move(text), ".ll"};
+  }
   llvm::SmallVector<char, 0> bytes;
   llvm::raw_svector_ostream stream(bytes);
   llvm::legacy::PassManager passes;

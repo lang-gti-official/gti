@@ -506,4 +506,25 @@ CompilationResult compileToMir(const CompilationRequest &request,
   return compileWithBackend(request, backend, progress);
 }
 
+CompilationResult compileToMir(const CompilationRequest &request,
+                               MirBackendOptions options,
+                               ProgressObserver *progress) {
+  MirBackend backend(options);
+  return compileWithBackend(request, backend, progress);
+}
+
+CompilationResult compileToLlvmIr(const CompilationRequest &request,
+                                  ProgressObserver *progress) {
+  if (request.debugInfo() ||
+      request.llvmInstrumentation() != LlvmInstrumentationMode::None)
+    throw std::invalid_argument(
+        "textual LLVM IR emission supports neither debug info nor "
+        "instrumentation");
+  const CompilationRequest llvm = request.withBackend(BackendKind::Llvm);
+  LlvmBackendOptions options = llvmBackendOptions(llvm);
+  options.textualIr = true;
+  LlvmBackend backend(options);
+  return compileWithBackend(llvm.withDefinitionClosure(), backend, progress);
+}
+
 } // namespace lang::driver
