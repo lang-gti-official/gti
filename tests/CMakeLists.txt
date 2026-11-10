@@ -179,10 +179,12 @@ if(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE)
   add_test(NAME macro_neovim_syntax
     COMMAND "${CMAKE_COMMAND}" -E env
       "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
-      "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test/state"
-      "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test/cache"
-      "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test/data"
-      "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-macro-syntax.log"
+      # Each Neovim test owns its directories: concurrent instances creating a
+      # shared parent race in Neovim's non-atomic log-directory creation.
+      "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test-macro-syntax/state"
+      "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test-macro-syntax/cache"
+      "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test-macro-syntax/data"
+      "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-test-macro-syntax.log"
       "${GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
       -l "${PROJECT_SOURCE_DIR}/tests/macro_syntax_test.lua")
   set_tests_properties(macro_neovim_syntax PROPERTIES TIMEOUT 30)
@@ -6364,16 +6366,20 @@ if(Python3_Interpreter_FOUND)
       add_test(NAME neovim_gtiup
         COMMAND "${CMAKE_COMMAND}" -E env
                 "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
+                "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test-gtiup/state"
+                "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test-gtiup/cache"
+                "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test-gtiup/data"
+                "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-test-gtiup.log"
                 "${GTI_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
                 -l "${PROJECT_SOURCE_DIR}/tests/nvim_gtiup_test.lua")
       add_test(
         NAME neovim_toolchain
         COMMAND "${CMAKE_COMMAND}" -E env
                 "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
-                "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test/state"
-                "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test/cache"
-                "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test/data"
-                "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-test.log"
+                "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test-toolchain/state"
+                "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test-toolchain/cache"
+                "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test-toolchain/data"
+                "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-test-toolchain.log"
                 "${GTI_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
                 -l "${PROJECT_SOURCE_DIR}/tests/nvim_toolchain_test.lua"
       )
@@ -6384,10 +6390,10 @@ if(Python3_Interpreter_FOUND)
                 "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
                 "GTI_TEST_LSP=$<TARGET_FILE:gti_lsp>"
                 "GTI_TEST_COMPILER=$<TARGET_FILE:gti>"
-                "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test/state"
-                "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test/cache"
-                "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test/data"
-                "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-test.log"
+                "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test-lsp-configuration/state"
+                "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test-lsp-configuration/cache"
+                "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test-lsp-configuration/data"
+                "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-test-lsp-configuration.log"
                 "${GTI_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
                 -l "${PROJECT_SOURCE_DIR}/tests/nvim_lsp_configuration_test.lua"
       )
