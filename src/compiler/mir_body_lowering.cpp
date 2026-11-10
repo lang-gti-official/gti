@@ -17571,19 +17571,19 @@ MirBody MirLowerer::lowerBody(
           rejectedAt)
         explainConflict(result, body, error.borrow.loan, *rejectedAt,
                         loanOrigin, laterUse, lifecycleBound);
-      errors.push_back({.body = {kind, owner},
-                        .block = error.block,
-                        .instruction = error.instruction,
-                        .source = rejectedAt,
-                        .message = error.message,
-                        .borrow = error.borrow,
-                        .loanOrigin = loanOrigin,
-                        .laterUse = laterUse,
-                        .lifecycleBound = lifecycleBound,
-                        .temporaryDestroyed = temporaryDestroyed &&
-                                              error.borrow.kind ==
-                                                  MirBorrowRejectionKind::
-                                                      Conflict});
+      errors.push_back(
+          {.body = {kind, owner},
+           .block = error.block,
+           .instruction = error.instruction,
+           .source = rejectedAt,
+           .message = error.message,
+           .borrow = error.borrow,
+           .loanOrigin = loanOrigin,
+           .laterUse = laterUse,
+           .lifecycleBound = lifecycleBound,
+           .temporaryDestroyed =
+               temporaryDestroyed &&
+               error.borrow.kind == MirBorrowRejectionKind::Conflict});
     }
     if (!lowerer->rejection() && lowerer->proof().valid())
       errors.push_back({.body = {kind, owner},

@@ -26,10 +26,9 @@ bool mirRejectsAlone(std::string_view name, const std::string &source,
                      std::string_view message) {
   if (!mirBorrowAuthority())
     return false;
-  const auto result =
-      lang::Frontend().analyze(std::string(name), source,
-                               {standardLibraryPrelude()}, {},
-                               {standardLibraryRoot()});
+  const auto result = lang::Frontend().analyze(std::string(name), source,
+                                               {standardLibraryPrelude()}, {},
+                                               {standardLibraryRoot()});
   return !result.canGenerateCode() &&
          hasDiagnostic(result.diagnostics, std::string(message));
 }
@@ -8030,8 +8029,9 @@ int main() {
     // A moved owner is not reset afterwards: that use-after-move would be
     // rejected first and hide the owner invalidation under test.
     if (mutation.starts_with("auto moved"))
-      invalidAdapterSource.erase(invalidAdapterSource.rfind("  owner.reset();\n"),
-                                 std::string_view("  owner.reset();\n").size());
+      invalidAdapterSource.erase(
+          invalidAdapterSource.rfind("  owner.reset();\n"),
+          std::string_view("  owner.reset();\n").size());
     const auto invalidAdapter = lang::Frontend().analyze(
         "stored-carrier-value-adapter-invalidation.gti", invalidAdapterSource,
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -16559,9 +16559,10 @@ int main() { return 0; }
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     // The move's loop-backedge S2018 rejects it in semantics, before MIR
     // checks the move against the live range; a breaking move isolates it.
-    const bool moveOwner = body.find("void move_owner") != std::string_view::npos;
-    std::string isolated = invalidPrefix + std::string(body) +
-                           "\nint main() { return 0; }\n";
+    const bool moveOwner =
+        body.find("void move_owner") != std::string_view::npos;
+    std::string isolated =
+        invalidPrefix + std::string(body) + "\nint main() { return 0; }\n";
     if (moveOwner)
       isolated.replace(isolated.find("std::move(text); }"),
                        std::string_view("std::move(text); }").size(),
@@ -24199,14 +24200,13 @@ int main() {
   const std::size_t assignment = conflicting.find("seen = armed && ready");
   // MIR reports a field store at its written place's root object.
   const std::size_t root = conflicting.find("counter.seen = armed");
-  const auto conflict =
-      std::find_if(rejected.diagnostics.begin(), rejected.diagnostics.end(),
-                   [&](const lang::Diagnostic &diagnostic) {
-                     return diagnostic.code == "GTI-S2017" &&
-                            (diagnostic.primary.start == assignment ||
-                             (mirBorrowAuthority() &&
-                              diagnostic.primary.start == root));
-                   });
+  const auto conflict = std::find_if(
+      rejected.diagnostics.begin(), rejected.diagnostics.end(),
+      [&](const lang::Diagnostic &diagnostic) {
+        return diagnostic.code == "GTI-S2017" &&
+               (diagnostic.primary.start == assignment ||
+                (mirBorrowAuthority() && diagnostic.primary.start == root));
+      });
   expect(!rejected.canGenerateCode() && rejected.diagnostics.size() == 1 &&
              conflict != rejected.diagnostics.end() &&
              conflict->message.find("overlapping borrow may still be live") !=

@@ -3563,8 +3563,8 @@ private:
     // docs/architecture/lsp.md.
     if (!frontend.cancelled && frontend.sourceValid && frontend.syntaxValid &&
         (frontend.semanticValid || frontend.mirBorrowRejected) &&
-        frontend.hirValid &&
-        frontend.failureMetadataValid && !frontend.mirValid &&
+        frontend.hirValid && frontend.failureMetadataValid &&
+        !frontend.mirValid &&
         result.workMetrics.hirOmittedInstanceBodies != 0 &&
         (request.cancellation == nullptr ||
          !request.cancellation->load(std::memory_order_relaxed))) {

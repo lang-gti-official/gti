@@ -150,8 +150,7 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
                   "its owner, or perform the owner operation before creating "
                   "the borrow. Choose an order that preserves the intended "
                   "effects.");
-      }
-      else if (explained->loanOrigin && !explained->temporaryDestroyed)
+      } else if (explained->loanOrigin && !explained->temporaryDestroyed)
         diagnostic.hints.emplace_back(
             "Place the borrowed value in a narrower block when an explicit "
             "lexical end is required across control flow.");

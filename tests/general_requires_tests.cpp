@@ -63,12 +63,11 @@ void expect(bool condition, const std::string &message) {
   }
 }
 
-lang::FrontendResult check(const std::filesystem::path &root,
-                           const std::filesystem::path &directory,
-                           const std::string &name, const std::string &source,
-                           bool concurrent = false,
-                           lang::FrontendPhase stopAfter =
-                               lang::FrontendPhase::Hir) {
+lang::FrontendResult
+check(const std::filesystem::path &root, const std::filesystem::path &directory,
+      const std::string &name, const std::string &source,
+      bool concurrent = false,
+      lang::FrontendPhase stopAfter = lang::FrontendPhase::Hir) {
   const auto file = directory / (name + ".gti");
   std::ofstream(file) << source;
   lang::FrontendOptions options;

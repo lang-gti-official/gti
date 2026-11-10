@@ -5039,11 +5039,12 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           if (overlaps && !sharedReadOnlyAccess) {
             // Overlapping live sibling loans are a source aliasing
             // violation, not an internal inconsistency.
-            MirVerificationResult rejected = failure(body, owner,
-                           "child loan " + std::to_string(loan) +
-                               " conflicts with active sibling loan " +
-                               std::to_string(other.id),
-                           block.id, instruction.id);
+            MirVerificationResult rejected =
+                failure(body, owner,
+                        "child loan " + std::to_string(loan) +
+                            " conflicts with active sibling loan " +
+                            std::to_string(other.id),
+                        block.id, instruction.id);
             rejected.errors.back().borrow = {
                 .kind = MirBorrowRejectionKind::Conflict,
                 .write = body.loans[loan - 1].access == AccessMode::Mutable,
@@ -6130,11 +6131,12 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                 !compatibleReadOnlyDependency && !compatibleReservationRead) {
               // Overlapping live sibling loans are a source aliasing
               // violation, not an internal inconsistency.
-              MirVerificationResult rejected = failure(body, owner,
-                             "derived loan " + std::to_string(loan) +
-                                 " conflicts with active sibling loan " +
-                                 std::to_string(other.id),
-                             block.id, instruction.id);
+              MirVerificationResult rejected =
+                  failure(body, owner,
+                          "derived loan " + std::to_string(loan) +
+                              " conflicts with active sibling loan " +
+                              std::to_string(other.id),
+                          block.id, instruction.id);
               rejected.errors.back().borrow = {
                   .kind = MirBorrowRejectionKind::Conflict,
                   .write = body.loans[loan - 1].access == AccessMode::Mutable,

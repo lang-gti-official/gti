@@ -567,7 +567,7 @@ int main() {
   return view;
 }
 )",
-           "GTI-S2017");
+                  "GTI-S2017");
   negative("lambda-reference-result-from-capture", R"(
 int main() {
   int cell = 4;
@@ -593,7 +593,7 @@ int main() {
   return 0;
 }
 )",
-           "GTI-S2093");
+                  "GTI-S2093");
   negative("invocation-pointer-origin-mismatch", R"(
 import std.functional;
 import std.memory;
