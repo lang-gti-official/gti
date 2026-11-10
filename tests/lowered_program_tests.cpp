@@ -3173,11 +3173,11 @@ struct Cell {
 public:
   Cell() = default;
 };
-void borrowed<T>() requires requires(mut T& owner) {
-  { owner.edit() } -> mut int32_t& [[borrowed_from(owner)]];
+void borrowed<T>() requires requires(mut T&<owner> owner) {
+  { owner.edit() } -> mut int32_t&<owner>;
 } {}
-void inferred_borrow<T>() requires requires(mut T& owner) {
-  { owner.edit() } -> mut auto& [[borrowed_from(owner)]];
+void inferred_borrow<T>() requires requires(mut T&<owner> owner) {
+  { owner.edit() } -> mut auto&<owner>;
 } {}
 class Reader {
 public:
