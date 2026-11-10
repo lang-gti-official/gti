@@ -28,6 +28,17 @@ public:
       visit(root, 0, {0, 0}, next);
     if (!body.roots.empty())
       lastInRegion.insert(body.roots.back());
+    // A result region no statement reaches, such as one in a constructor
+    // initializer, is its own root list: its loans are confined to it. A
+    // value follows the values it contains, so visiting the latest value
+    // first reaches each enclosing region before the regions nested in it.
+    std::size_t list = 2000;
+    for (auto value = body.values.rbegin(); value != body.values.rend();
+         ++value)
+      if (value->regionBody && !order.contains(*value->regionBody)) {
+        visit(*value->regionBody, 0, {0, ++list}, next);
+        lastInRegion.insert(*value->regionBody);
+      }
   }
 
   [[nodiscard]] RegionKey regionOf(HirStatementId id) const {
