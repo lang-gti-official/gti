@@ -1754,8 +1754,7 @@ class Owner {
   int* value = nullptr;
 public:
   Owner() = default;
-  [[borrowed_from(this)]]
-  int& read() { unsafe { return *this.value; } }
+  int&<this> read() { unsafe { return *this.value; } }
 };
 int main() { Owner owner{}; return owner.read(); }
 )gti");

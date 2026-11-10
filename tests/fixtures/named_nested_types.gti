@@ -62,7 +62,7 @@ struct Borrowing {
     int number = 31;
   public:
     Value(std::string input) : text(std::move(input)) {}
-    [[borrowed_from(this)]] int& code() { return number; }
+    int&<this> code() { return number; }
     uint64_t length() { return text.size(); }
   };
 public:

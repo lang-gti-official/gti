@@ -36,6 +36,11 @@ std::optional<Token> resultRegion(const TypeRef &result) {
   if (!result.lifetimeArguments.empty() &&
       result.lifetimeArguments.front().name.segments.size() == 1)
     return result.lifetimeArguments.front().name.last();
+  // A region written inside a type argument, as in `Result<int&<a>, E>`,
+  // is the region of the reference the result carries.
+  for (const TypeRef &argument : result.arguments)
+    if (auto nested = resultRegion(argument))
+      return nested;
   return std::nullopt;
 }
 
@@ -154,12 +159,15 @@ auto SemanticVisitor::Impl::hasExplicitBorrowContract(
     return true;
   // `static` keeps the inferred static-storage origin; the declared region is
   // checked against it, not substituted for it.
-  // Only a region the function itself binds states a contract the inferred
-  // summary cannot: `this` and class-bound (stored) regions are what the
-  // existing inference already derives from the receiver and its fields.
+  // Only `this` and a region the function itself binds state a contract:
+  // class-bound (stored) regions are what the existing inference derives
+  // from the receiver's fields.
   const auto region = resultRegion(syntax.returnType());
   if (!region)
     return false;
+  // `this` states the receiver contract `[[borrowed_from(this)]]` does.
+  if (region->kind == TokenKind::THIS || region->lexeme == "this")
+    return true;
   const auto parameters = syntax.lifetimeParameters();
   return std::any_of(parameters.begin(), parameters.end(),
                      [&](const GenericParameter &parameter) {

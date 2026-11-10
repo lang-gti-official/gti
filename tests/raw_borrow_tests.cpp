@@ -1173,7 +1173,7 @@ int main() {
 struct Reading {
   mut int value = 42;
   mut const int* address = nullptr;
-  [[borrowed_from(this)]] int& read() { unsafe { return *this.address; } }
+  int&<this> read() { unsafe { return *this.address; } }
 public:
   Reading() = default;
 };
@@ -1209,7 +1209,7 @@ int main() { Reading owner{}; View view{owner}; return view.get() - 42; }
       R"(
 struct Reading {
   mut const int* address = nullptr;
-  [[borrowed_from(this)]] int& read() { unsafe { return *this.address; } }
+  int&<this> read() { unsafe { return *this.address; } }
 public:
   Reading() = default;
 };
