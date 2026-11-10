@@ -187,6 +187,13 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
     inventory = storedReferenceInventory(result);
   if (!inventory || inventory->empty())
     return std::nullopt;
+  // Complete contracts cannot describe an escaping mutable dependency graph:
+  // a carrier result with a mutable stored path keeps its base origin.
+  if (!directReference &&
+      std::any_of(inventory->begin(), inventory->end(), [](const auto &path) {
+        return path.reference.referenceAccess == AccessMode::Mutable;
+      }))
+    return std::nullopt;
   const auto alternatives =
       directReference ? std::optional{std::vector<BorrowAlternativePath>{}}
                       : storedBorrowAlternativeInventory(result);

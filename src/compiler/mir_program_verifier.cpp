@@ -7634,7 +7634,14 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           loan->additionalDependencies == group->additionalDependencies)
         verifiedValueEntry = group;
     }
-    if (!instance.returnBorrowFields.empty() && !completeReferenceResult) {
+    // RFC 0004 shadow phase: a signature claim's field mapping lists every
+    // alternative supplier per result path; its complete-claim coverage, not
+    // this positional exact-field check, verifies each return.
+    static const bool signatureReturns =
+        std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+    if (!instance.returnBorrowFields.empty() && !completeReferenceResult &&
+        !(signatureReturns && instance.completeReturnBorrow &&
+          !instance.explicitReturnBorrowOrigin)) {
       std::vector<MirLoanDependency> actual{
           {.source = loan->source,
            .designatedFields = loan->designatedFields,

@@ -674,7 +674,9 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       textReferenceReturnSummary(concreteFunction, concreteOwner);
   static const bool signatureContracts =
       std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr; // shadow experiment
-  if (!concreteFunction.explicitReturnBorrowOrigin && !signatureContracts) {
+  // Text-view relays (L-OWN-02) keep their own derivation until text views
+  // get a signature rule; stored-field refinement is body inference.
+  if (!concreteFunction.explicitReturnBorrowOrigin) {
     if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
             dynamicTextReturnBorrowSummary(concreteFunction, concreteOwner)) {
       concreteFunction.returnBorrowOrigin = dynamicText->origin;
@@ -694,7 +696,9 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       concreteFunction.returnBorrowParameters = borrow.parameters;
       concreteFunction.returnBorrowPlace = borrow.place;
     }
-    if (const auto fields = storedFieldReturnBorrowSummary(concreteFunction)) {
+    if (const auto fields = signatureContracts ? std::nullopt
+                                               : storedFieldReturnBorrowSummary(
+                                                     concreteFunction)) {
       concreteFunction.returnBorrowOrigin = fields->origin;
       concreteFunction.returnBorrowParameter = fields->parameter;
       concreteFunction.returnBorrowAccess = fields->access;

@@ -10076,14 +10076,15 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
         updated.returnType, updated.parameterTypes, updated.ownerClass,
         updated.staticMember, updated.intrinsic);
-    if (!signatureContractDefaults()) {
-      if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
-              dynamicTextReturnBorrowSummary(updated)) {
-        summary = *dynamicText;
-      }
+    // Text-view relays (L-OWN-02) keep their own derivation until text views
+    // get a signature rule; stored-field refinement is body inference.
+    if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
+            dynamicTextReturnBorrowSummary(updated)) {
+      summary = *dynamicText;
+    }
+    if (!signatureContractDefaults())
       if (const auto fields = storedFieldReturnBorrowSummary(updated))
         summary = *fields;
-    }
     updated.returnedTextReference = textReferenceReturnSummary(updated);
     if (isBorrowReturningType(updated.returnType) &&
         updated.intrinsic == IntrinsicKind::None) {
