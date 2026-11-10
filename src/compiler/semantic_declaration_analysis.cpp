@@ -10200,6 +10200,7 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     updated.returnBorrowParameters = summary.parameters;
     updated.returnBorrowFields = summary.fields;
     updated.returnBorrowPlace = summary.place;
+    narrowToTypeParameterSuppliers(updated);
     // RFC 0004: the signature alone states an unannotated result's complete
     // contract, published before any body is analyzed so every call sees it.
     if (signatureContractDefaults() && updated.declaration != nullptr)

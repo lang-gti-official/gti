@@ -736,6 +736,8 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
     concreteFunction.returnBorrowPlace = borrow.place;
   }
   if (signatureContracts)
+    narrowToTypeParameterSuppliers(concreteFunction);
+  if (signatureContracts)
     if (const FunctionDecl *syntax = concreteFunction.bodyDeclaration())
       if (auto complete = signatureCompleteReturnBorrow(
               concreteFunction, syntax->receiverMutability(), concreteOwner)) {

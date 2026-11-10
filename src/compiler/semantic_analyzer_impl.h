@@ -3138,6 +3138,12 @@ private:
                             std::span<const SemanticType> parameterTypes) const;
   // RFC 0004 shadow phase: contracts come only from signatures.
   [[nodiscard]] static bool signatureContractDefaults();
+  // RFC 0004 elision of a free function result written as a bare type
+  // parameter: per declared parameter, whether its written type mentions it.
+  [[nodiscard]] static std::optional<std::vector<bool>>
+  typeParameterResultSuppliers(const FunctionInfo &function);
+  // Narrows an unannotated base result origin to those suppliers.
+  static void narrowToTypeParameterSuppliers(FunctionInfo &function);
   // RFC 0004 elision: the complete contract a signature alone implies.
   [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
   signatureCompleteReturnBorrow(

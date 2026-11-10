@@ -8262,15 +8262,32 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       declarationInfo->returnBorrowOrigin != BorrowOriginKind::None;
   const bool candidateOwnsBorrow =
       !genericContract && function.returnBorrowOrigin != BorrowOriginKind::None;
-  const BorrowOriginKind returnBorrowOrigin =
+  BorrowOriginKind returnBorrowOrigin =
       declarationOwnsBorrow ? declarationInfo->returnBorrowOrigin
                             : (candidateOwnsBorrow ? function.returnBorrowOrigin
                                                    : concreteBorrow.origin);
-  const std::size_t returnBorrowParameter =
+  std::size_t returnBorrowParameter =
       declarationOwnsBorrow
           ? declarationInfo->returnBorrowParameter
           : (candidateOwnsBorrow ? function.returnBorrowParameter
                                  : concreteBorrow.parameter);
+  std::vector<std::size_t> returnBorrowParameters =
+      declarationOwnsBorrow ? declarationInfo->returnBorrowParameters
+      : candidateOwnsBorrow ? function.returnBorrowParameters
+                            : concreteBorrow.parameters;
+  // RFC 0004: a bare type-parameter result binds only the inputs written in
+  // that parameter, as the selected instance's own contract does.
+  if (declarationInfo != nullptr && !genericContract &&
+      returnBorrowOrigin == BorrowOriginKind::Argument) {
+    FunctionInfo narrowed = *declarationInfo;
+    narrowed.returnBorrowOrigin = returnBorrowOrigin;
+    narrowed.returnBorrowParameter = returnBorrowParameter;
+    narrowed.returnBorrowParameters = returnBorrowParameters;
+    narrowToTypeParameterSuppliers(narrowed);
+    returnBorrowOrigin = narrowed.returnBorrowOrigin;
+    returnBorrowParameter = narrowed.returnBorrowParameter;
+    returnBorrowParameters = std::move(narrowed.returnBorrowParameters);
+  }
   const AccessMode returnBorrowAccess =
       declarationOwnsBorrow ? declarationInfo->returnBorrowAccess
                             : (candidateOwnsBorrow ? function.returnBorrowAccess
@@ -8342,10 +8359,7 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       .borrowOrigin = returnBorrowOrigin,
       .borrowArgument = returnBorrowParameter,
       .borrowAccess = returnBorrowAccess,
-      .borrowArguments = declarationOwnsBorrow
-                             ? declarationInfo->returnBorrowParameters
-                         : candidateOwnsBorrow ? function.returnBorrowParameters
-                                               : concreteBorrow.parameters,
+      .borrowArguments = std::move(returnBorrowParameters),
       .borrowFields = declarationOwnsBorrow
                           ? declarationInfo->returnBorrowFields
                       : candidateOwnsBorrow ? function.returnBorrowFields

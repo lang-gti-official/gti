@@ -7636,11 +7636,16 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
           block.id);
       // A return whose loan originates in storage this body owns (a local
       // binding, not any formal) is a borrow escape, not malformed MIR.
+      // Under signature contracts a formal the signature does not name as a
+      // supplier is equally outside the returned borrow's contract.
+      static const bool signatureSuppliers =
+          std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
       const bool bodyLocal =
           source->root == MirPlaceRootKind::Binding &&
-          std::find(instance.parameterBindings.begin(),
-                    instance.parameterBindings.end(),
-                    source->binding) == instance.parameterBindings.end();
+          (signatureSuppliers ||
+           std::find(instance.parameterBindings.begin(),
+                     instance.parameterBindings.end(),
+                     source->binding) == instance.parameterBindings.end());
       if (bodyLocal && !rejected.errors.empty())
         rejected.errors.back().borrow = {.kind = MirBorrowRejectionKind::Escape,
                                          .loan = *block.terminator.returnLoan};

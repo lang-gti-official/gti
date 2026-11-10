@@ -1335,6 +1335,74 @@ auto SemanticVisitor::Impl::declaredContractParameter(
   return lifetime.parameters.front();
 }
 
+// RFC 0004 elision, as Rust: a free function result written as a bare type
+// parameter (`fn f<I>(i: I, v: &T) -> I`) carries exactly the regions of that
+// parameter's argument, so only inputs whose written types mention it supply
+// the result.
+auto SemanticVisitor::Impl::typeParameterResultSuppliers(
+    const FunctionInfo &function) -> std::optional<std::vector<bool>> {
+  if (!signatureContractDefaults() || function.explicitReturnBorrowOrigin ||
+      (function.ownerClass != 0 && !function.staticMember))
+    return std::nullopt;
+  const FunctionDecl *syntax = function.bodyDeclaration();
+  if (syntax == nullptr ||
+      syntax->parameters().size() != function.parameterTypes.size() ||
+      std::any_of(syntax->parameters().begin(), syntax->parameters().end(),
+                  [](const Parameter &candidate) { return candidate.pack; }))
+    return std::nullopt;
+  const TypeRef &written = syntax->returnType();
+  if (written.reference || !written.pointers.empty() ||
+      !written.arguments.empty() || !written.lifetimeArguments.empty() ||
+      written.qualifiedOwner || written.name.segments.size() != 1)
+    return std::nullopt;
+  const std::string &name = written.name.last().lexeme;
+  if (std::none_of(syntax->genericParameters().begin(),
+                   syntax->genericParameters().end(),
+                   [&](const GenericParameter &parameter) {
+                     return !parameter.pack && !parameter.valueType &&
+                            parameter.name.lexeme == name;
+                   }))
+    return std::nullopt;
+  const std::function<bool(const TypeRef &)> mentions =
+      [&](const TypeRef &type) -> bool {
+    if (type.name.segments.size() == 1 && type.name.last().lexeme == name)
+      return true;
+    if (type.qualifiedOwner && mentions(*type.qualifiedOwner))
+      return true;
+    return std::any_of(type.arguments.begin(), type.arguments.end(), mentions);
+  };
+  std::vector<bool> suppliers;
+  for (const Parameter &parameter : syntax->parameters())
+    suppliers.push_back(mentions(parameter.type));
+  return suppliers;
+}
+
+auto SemanticVisitor::Impl::narrowToTypeParameterSuppliers(
+    FunctionInfo &function) -> void {
+  if (function.returnBorrowOrigin != BorrowOriginKind::Argument)
+    return;
+  const auto suppliers = typeParameterResultSuppliers(function);
+  if (!suppliers)
+    return;
+  std::vector<std::size_t> kept;
+  const auto candidates =
+      function.returnBorrowParameters.empty()
+          ? std::vector<std::size_t>{function.returnBorrowParameter}
+          : function.returnBorrowParameters;
+  for (const std::size_t index : candidates)
+    if (index < suppliers->size() && (*suppliers)[index])
+      kept.push_back(index);
+  function.returnBorrowParameters.clear();
+  if (kept.empty()) {
+    function.returnBorrowOrigin = BorrowOriginKind::None;
+    function.returnBorrowParameter = 0;
+    return;
+  }
+  function.returnBorrowParameter = kept.front();
+  if (kept.size() > 1)
+    function.returnBorrowParameters = std::move(kept);
+}
+
 // RFC 0004 elision as a complete declaration contract, from types alone. Every
 // reference-bearing result path may be supplied by every eligible input: a
 // free function's reference and borrowed-state parameters, or a method's
@@ -1465,15 +1533,37 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
     if (!addStored(BorrowOriginKind::Receiver, 0, receiver))
       return std::nullopt;
   }
+  // A free function's result written as a bare type parameter carries
+  // exactly that parameter's regions; a reference to one supplies what its
+  // referent stores, not itself.
+  std::optional<std::vector<bool>> typeParameterSuppliers;
+  if (parametersSupply && !function.explicitReturnBorrowOrigin)
+    typeParameterSuppliers = typeParameterResultSuppliers(function);
   if (parametersSupply) {
     // Named positions are expanded: a concrete pack supplies per lane.
     std::vector<SemanticType> expanded;
     for (const SemanticType &type : function.parameterTypes)
       SemanticType::appendExpandedArgument(expanded, type);
+    if (typeParameterSuppliers &&
+        typeParameterSuppliers->size() != expanded.size())
+      typeParameterSuppliers.reset();
     for (std::size_t index = 0; index < expanded.size(); ++index) {
       if (!named(index))
         continue;
       const SemanticType &parameter = expanded[index];
+      if (typeParameterSuppliers) {
+        if (!(*typeParameterSuppliers)[index])
+          continue;
+        const SemanticType &stored =
+            parameter.kind == SemanticType::Reference &&
+                    parameter.arguments.size() == 1
+                ? parameter.arguments.front()
+                : parameter;
+        if (typeTraits(stored).containsBorrowedState &&
+            !addStored(BorrowOriginKind::Argument, index, stored))
+          return std::nullopt;
+        continue;
+      }
       if (parameter.kind == SemanticType::Reference &&
           parameter.arguments.size() == 1) {
         sources.push_back({BorrowOriginKind::Argument,
