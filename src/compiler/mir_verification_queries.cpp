@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include "mir_verification_queries.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_effects.h"
@@ -2050,6 +2052,48 @@ returnOriginFormal(std::span<const SemanticType> parameterTypes,
                                .elementWithinBinding = expandedIndex - first};
 }
 
+// RFC 0004: a signature type erases its regions, so under signature
+// contracts a read-only reference result borrows every eligible read-only
+// reference parameter when there are several (a shared higher-ranked region).
+std::vector<std::size_t>
+functionPointerSignatureOrigins(const MirProgram &program,
+                                const SemanticType &signature) {
+  static const bool signatureContracts =
+      std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+  if (!signatureContracts || signature.kind != SemanticType::FunctionSignature ||
+      signature.arguments.empty() ||
+      signature.arguments.front().kind != SemanticType::Reference ||
+      signature.arguments.front().referenceAccess != AccessMode::ReadOnly)
+    return {};
+  std::vector<SemanticType> parameters;
+  for (const auto &parameter : std::span(signature.arguments).subspan(1))
+    SemanticType::appendExpandedArgument(parameters, parameter);
+  const auto erased = [&](const SemanticType &parameter) {
+    return parameter.arguments.size() == 1 &&
+           std::any_of(program.classInstances().begin(),
+                       program.classInstances().end(), [&](const auto &owner) {
+                         return owner.type == parameter.arguments.front() &&
+                                owner.compilerCapability ==
+                                    CompilerCapabilityTypeKind::ErasedObject;
+                       });
+  };
+  const auto readOnly = [](const SemanticType &parameter) {
+    return parameter.kind == SemanticType::Reference &&
+           parameter.referenceAccess == AccessMode::ReadOnly;
+  };
+  const bool typed =
+      std::any_of(parameters.begin(), parameters.end(), [&](const auto &p) {
+        return readOnly(p) && !erased(p);
+      });
+  std::vector<std::size_t> origins;
+  for (std::size_t index = 0; index < parameters.size(); ++index)
+    if (readOnly(parameters[index]) && !(typed && erased(parameters[index])))
+      origins.push_back(index);
+  if (origins.size() < 2)
+    origins.clear();
+  return origins;
+}
+
 bool functionPointerOperation(const MirProgram &program,
                               const MirInstruction &instruction) {
   const bool forming =
@@ -2062,8 +2106,7 @@ bool functionPointerOperation(const MirProgram &program,
       instruction.receiver || instruction.destination ||
       instruction.unsafeOperation != UnsafeOperationKind::None ||
       instruction.dispatch != CallDispatch::Static ||
-      !instruction.borrowFields.empty() ||
-      !instruction.borrowArguments.empty() || instruction.borrowPlace ||
+      !instruction.borrowFields.empty() || instruction.borrowPlace ||
       instruction.parameterTypes.size() != instruction.operands.size())
     return false;
   const SemanticType *signature = nullptr;
@@ -2097,9 +2140,18 @@ bool functionPointerOperation(const MirProgram &program,
   for (const auto &parameter : std::span(signature->arguments).subspan(1))
     SemanticType::appendExpandedArgument(parameters, parameter);
   const SemanticType &result = signature->arguments.front();
+  const std::vector<std::size_t> origins =
+      functionPointerSignatureOrigins(program, *signature);
   const std::optional<std::size_t> origin =
-      functionPointerSignatureOrigin(program, *signature);
+      origins.empty() ? functionPointerSignatureOrigin(program, *signature)
+                      : std::optional<std::size_t>(origins.front());
   if (result.kind == SemanticType::Reference && !origin)
+    return false;
+  std::vector<std::size_t> expectedArguments;
+  for (const std::size_t index : origins)
+    expectedArguments.push_back(index + 1);
+  if (instruction.borrowArguments != expectedArguments &&
+      !(forming && instruction.borrowArguments.empty()))
     return false;
   if (!forming) {
     // The invocation result borrows the origin argument (operand 0 is the
@@ -2124,11 +2176,25 @@ bool functionPointerOperation(const MirProgram &program,
   // The target's own result-origin contract names the signature's origin.
   const auto originMatches = [&](BorrowOriginKind targetOrigin,
                                  std::size_t targetParameter,
-                                 AccessMode targetAccess) {
+                                 AccessMode targetAccess,
+                                 std::span<const std::size_t> targetSeveral =
+                                     {}) {
     if (!origin)
       return targetOrigin == BorrowOriginKind::None;
-    return targetOrigin == BorrowOriginKind::Argument &&
-           targetParameter == *origin && targetAccess == AccessMode::ReadOnly;
+    if (targetOrigin != BorrowOriginKind::Argument ||
+        targetAccess != AccessMode::ReadOnly)
+      return false;
+    if (origins.empty())
+      return targetParameter == *origin;
+    // Under the union contract the target borrows any subset of them.
+    const auto eligible = [&](std::size_t supplier) {
+      return std::find(origins.begin(), origins.end(), supplier) !=
+             origins.end();
+    };
+    return targetSeveral.empty()
+               ? eligible(targetParameter)
+               : std::all_of(targetSeveral.begin(), targetSeveral.end(),
+                             eligible);
   };
   if (instruction.functionPointerFunctionTarget) {
     const auto *target = program.findFunctionInstance(
@@ -2139,7 +2205,8 @@ bool functionPointerOperation(const MirProgram &program,
            target->definitionKind == MirDefinitionKind::Source &&
            originMatches(target->returnBorrowOrigin,
                          target->returnBorrowParameter,
-                         target->returnBorrowAccess) &&
+                         target->returnBorrowAccess,
+                         target->returnBorrowParameters) &&
            !target->tracksCaller &&
            target->entryKind == ProgramEntryKind::None &&
            target->returnType == result && target->parameterTypes == parameters;

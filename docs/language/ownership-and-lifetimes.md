@@ -1864,8 +1864,14 @@ std::function_ptr<int&(std::vector<int>&)> first{head};
 int& front = first(values);   // borrows `values`, not the pointer
 ```
 
-An ambiguous signature (two eligible parameters), a mutable reference result
-and a borrowed-state class result are rejected before the view exists.
+Under RFC 0004 signature contracts, a signature whose eligible read-only
+reference parameters share the result's region, as in
+`for<lifetime r> int&<r>(int&<r>, int&<r>, bool)`, borrows all of them: each
+invocation keeps every such argument borrowed, and the target the pointer is
+built from may borrow any subset of them. (Signature types erase regions, so
+two eligible parameters always form this union.) Without signature contracts
+two eligible parameters are ambiguous. A mutable reference result and a
+borrowed-state class result are rejected before the view exists.
 
 A signature whose result is `std::string_view` or `c_string` names no origin,
 so an invocation through the pointer or view returns ownerless text and keeps

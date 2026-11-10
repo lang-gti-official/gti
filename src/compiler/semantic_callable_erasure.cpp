@@ -254,7 +254,37 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
   // through it, so the thunk's erased receiver does not compete with the
   // signature's own parameters.
   std::optional<std::size_t> resultOrigin;
-  if (result.kind == SemanticType::Reference &&
+  // RFC 0004: a signature type erases its regions, so under signature
+  // contracts a reference result conservatively borrows every eligible
+  // read-only reference parameter (a higher-ranked region several parameters
+  // share); a target may borrow any subset of them.
+  std::vector<std::size_t> resultOrigins;
+  if (signatureContractDefaults() && result.kind == SemanticType::Reference &&
+      result.referenceAccess == AccessMode::ReadOnly &&
+      !containsOpenTypeParameter(signature)) {
+    const auto erased = [&](const SemanticType &parameter) {
+      const ClassInfo *owner = parameter.arguments.size() == 1
+                                   ? classInfo(parameter.arguments.front())
+                                   : nullptr;
+      return owner != nullptr && owner->compilerCapability ==
+                                     CompilerCapabilityTypeKind::ErasedObject;
+    };
+    const auto readOnly = [](const SemanticType &parameter) {
+      return parameter.kind == SemanticType::Reference &&
+             parameter.referenceAccess == AccessMode::ReadOnly;
+    };
+    const bool typed = std::any_of(
+        parameters.begin(), parameters.end(),
+        [&](const auto &parameter) { return readOnly(parameter) && !erased(parameter); });
+    for (std::size_t index = 0; index < parameters.size(); ++index)
+      if (readOnly(parameters[index]) && !(typed && erased(parameters[index])))
+        resultOrigins.push_back(index);
+    if (resultOrigins.size() < 2)
+      resultOrigins.clear();
+    else
+      resultOrigin = resultOrigins.front();
+  }
+  if (resultOrigins.empty() && result.kind == SemanticType::Reference &&
       !containsOpenTypeParameter(signature)) {
     const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
         result, parameters, 0, true, IntrinsicKind::None);
@@ -451,7 +481,46 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
             info->returnBorrowAccess == AccessMode::ReadOnly)
           targetOrigin = info->returnBorrowParameter;
       }
-      if (targetOrigin != resultOrigin) {
+      // Under the union contract the target's own suppliers must be a
+      // subset of the signature's eligible parameters.
+      bool subset = false;
+      if (!resultOrigins.empty()) {
+        std::vector<std::size_t> suppliers;
+        const auto collect = [&](BorrowOriginKind kind, std::size_t parameter,
+                                 const std::vector<std::size_t> &several,
+                                 AccessMode access) {
+          if (kind != BorrowOriginKind::Argument ||
+              access != AccessMode::ReadOnly)
+            return;
+          suppliers = several.empty() ? std::vector<std::size_t>{parameter}
+                                      : several;
+        };
+        if (function != 0) {
+          const auto *declaration = semanticModel.findFunction(function);
+          if (declaration == nullptr && instanceBaseModel != nullptr)
+            declaration = instanceBaseModel->findFunction(function);
+          if (declaration != nullptr)
+            collect(declaration->returnBorrowOrigin,
+                    declaration->returnBorrowParameter,
+                    declaration->returnBorrowParameters,
+                    declaration->returnBorrowAccess);
+        } else if (lambda != 0) {
+          const LambdaInfo *info = semanticModel.findLambda(lambda);
+          if (info == nullptr && instanceBaseModel != nullptr)
+            info = instanceBaseModel->findLambda(lambda);
+          if (info != nullptr)
+            collect(info->returnBorrowOrigin, info->returnBorrowParameter, {},
+                    info->returnBorrowAccess);
+        }
+        subset = !suppliers.empty() &&
+                 std::all_of(suppliers.begin(), suppliers.end(),
+                             [&](std::size_t supplier) {
+                               return std::find(resultOrigins.begin(),
+                                                resultOrigins.end(),
+                                                supplier) != resultOrigins.end();
+                             });
+      }
+      if (!subset && targetOrigin != resultOrigin) {
         report(expressionToken(expr.arguments().front()),
                "GTI invocation pointer construction requires a target whose "
                "reference result borrows the signature's origin parameter " +
@@ -525,6 +594,8 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
       resolved.borrowOrigin = BorrowOriginKind::Argument;
       resolved.borrowArgument = *resultOrigin + 1;
       resolved.borrowAccess = AccessMode::ReadOnly;
+      for (const std::size_t origin : resultOrigins)
+        resolved.borrowArguments.push_back(origin + 1);
     }
     currentType = callExpressionType(result);
     semanticModel.record(expr, std::move(resolved));
