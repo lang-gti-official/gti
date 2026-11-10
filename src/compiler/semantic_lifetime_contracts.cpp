@@ -1458,18 +1458,20 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
     inventory = storedReferenceInventory(result);
   if (!inventory || inventory->empty())
     return std::nullopt;
-  // Complete contracts cannot describe an escaping mutable dependency graph:
-  // a class carrier result with a mutable stored path keeps its base origin.
-  // A payload enum's alternatives each guard their own stored paths.
-  if (!directReference && result.kind != SemanticType::Enum &&
-      std::any_of(inventory->begin(), inventory->end(), [](const auto &path) {
-        return path.reference.referenceAccess == AccessMode::Mutable;
-      }))
-    return std::nullopt;
   const auto alternatives =
       directReference ? std::optional{std::vector<BorrowAlternativePath>{}}
                       : storedBorrowAlternativeInventory(result);
   if (!alternatives)
+    return std::nullopt;
+  // Complete contracts cannot describe an escaping mutable dependency graph:
+  // an unconditional carrier result with a mutable stored path keeps its base
+  // origin. A conditional one (a payload enum alternative) needs its complete
+  // set for a selection; each of its mutable paths must then have exactly
+  // one supplier, a single exclusive edge (Rust's sole-input elision).
+  if (!directReference && alternatives->empty() &&
+      std::any_of(inventory->begin(), inventory->end(), [](const auto &path) {
+        return path.reference.referenceAccess == AccessMode::Mutable;
+      }))
     return std::nullopt;
 
   struct Source {
@@ -1654,6 +1656,7 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
       return std::nullopt;
     const AccessMode access = path.reference.referenceAccess;
     bool supplied = false;
+    std::size_t suppliers = 0;
     // Rust elision: a borrowed receiver supplies the result whole; what it
     // stores is reached through it. Its stored regions supply a path only
     // when the receiver itself cannot (a mutable path from a read-only one).
@@ -1679,6 +1682,7 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
                path.reference.arguments.front()))
         continue;
       supplied = true;
+      ++suppliers;
       BorrowedFieldOrigin dependency{.resultFields = fields,
                                      .origin = source.origin,
                                      .parameter = source.parameter,
@@ -1691,7 +1695,8 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
                     dependency) == summary.dependencies.end())
         summary.dependencies.push_back(std::move(dependency));
     }
-    if (!supplied)
+    if (!supplied ||
+        (!directReference && access == AccessMode::Mutable && suppliers > 1))
       return std::nullopt;
   }
   // A result borrowed whole from one supplier, in every stored path and with
