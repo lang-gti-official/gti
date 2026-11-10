@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -46,55 +46,56 @@ def main() -> int:
             if executed.returncode != 0:
                 return fail(executed)
 
-        emitted = root / "field-initializers.cpp"
-        emission = run(
-            [
-                str(compiler),
-                str(source),
-                "-O0",
-                "--std",
-                "c++23",
-                "--emit-cpp",
-                "-o",
-                str(emitted),
-            ]
-        )
-        if emission.returncode != 0:
-            return fail(emission)
-        generated = emitted.read_text(encoding="utf8")
-        # Declaration defaults are now explicit constructor MIR, not flattened
-        # native in-class expressions. Bind each source field to its exact
-        # publication place and retain the staged grouped/conversion operations.
-        schedules = []
-        for field, converted in (("grouped", False), ("converted", True)):
-            place = re.search(r"auto &(__gti_mir_p_\d+) = \(\*this\)\." + field + r";", generated)
-            if place is None:
+        # Emitted C++ text is evidence for the C++ profile only (backend_modes).
+        for _label, cpp_flags, _native in cpp_text_modes():
+            emitted = root / "field-initializers.cpp"
+            emission = run(
+                [
+                    str(compiler),
+                    str(source),
+                    "-O0",
+                    *cpp_flags,
+                    "--emit-cpp",
+                    "-o",
+                    str(emitted),
+                ]
+            )
+            if emission.returncode != 0:
+                return fail(emission)
+            generated = emitted.read_text(encoding="utf8")
+            # Declaration defaults are now explicit constructor MIR, not flattened
+            # native in-class expressions. Bind each source field to its exact
+            # publication place and retain the staged grouped/conversion operations.
+            schedules = []
+            for field, converted in (("grouped", False), ("converted", True)):
+                place = re.search(r"auto &(__gti_mir_p_\d+) = \(\*this\)\." + field + r";", generated)
+                if place is None:
+                    return 1
+                rhs = r"static_cast<std::int32_t>\((?P=literal)\)" if converted else r"(?P=literal)"
+                schedules.append(
+                    r"(?P<literal>__gti_mir_v_\d+) = static_cast<std::int32_t>\(7\);\s*"
+                    r"(?P<value>__gti_mir_v_\d+) = " + rhs + r";\s*"
+                    + re.escape(place.group(1)) + r" = (?P=value);\s*"
+                    r"// GTI MIR full-expression boundary \d+"
+                )
+            schedules.extend((
+                r"mir_checked_convert_v1<std::int8_t>\(__gti_mir_v_\d+, &__gti_mir_v_\d+\)",
+                # A passive payload field is published by its trivially movable
+                # assignment, which the emitter proves with a static_assert.
+                r"static_assert\(std::is_trivially_move_assignable_v<"
+                r"::__gti_program::payload_t>\);\s*"
+                r"\(\*this\)\.empty = ::__gti_program::payload_t\{std::in_place_index<1>\};",
+                r"static_assert\(std::is_trivially_move_assignable_v<"
+                r"::__gti_program::payload_t>\);\s*"
+                r"\(\*this\)\.valued = "
+                r"::__gti_program::payload_t\{std::in_place_index<0>, __gti_mir_v_\d+\};",
+            ))
+            if any(re.search(pattern, generated) is None for pattern in schedules):
+                sys.stderr.write(
+                    "generated C++ did not retain the verified field initializer "
+                    "schedule\n"
+                )
                 return 1
-            rhs = r"static_cast<std::int32_t>\((?P=literal)\)" if converted else r"(?P=literal)"
-            schedules.append(
-                r"(?P<literal>__gti_mir_v_\d+) = static_cast<std::int32_t>\(7\);\s*"
-                r"(?P<value>__gti_mir_v_\d+) = " + rhs + r";\s*"
-                + re.escape(place.group(1)) + r" = (?P=value);\s*"
-                r"// GTI MIR full-expression boundary \d+"
-            )
-        schedules.extend((
-            r"mir_checked_convert_v1<std::int8_t>\(__gti_mir_v_\d+, &__gti_mir_v_\d+\)",
-            # A passive payload field is published by its trivially movable
-            # assignment, which the emitter proves with a static_assert.
-            r"static_assert\(std::is_trivially_move_assignable_v<"
-            r"::__gti_program::payload_t>\);\s*"
-            r"\(\*this\)\.empty = ::__gti_program::payload_t\{std::in_place_index<1>\};",
-            r"static_assert\(std::is_trivially_move_assignable_v<"
-            r"::__gti_program::payload_t>\);\s*"
-            r"\(\*this\)\.valued = "
-            r"::__gti_program::payload_t\{std::in_place_index<0>, __gti_mir_v_\d+\};",
-        ))
-        if any(re.search(pattern, generated) is None for pattern in schedules):
-            sys.stderr.write(
-                "generated C++ did not retain the verified field initializer "
-                "schedule\n"
-            )
-            return 1
 
     return 0
 

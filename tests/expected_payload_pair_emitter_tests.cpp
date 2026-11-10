@@ -1,4 +1,7 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
 
 namespace {
 
@@ -39,8 +42,12 @@ void testStagedExtraction(std::string_view name,
   expect(frontend.canGenerateCode(), "inline expected payloads must verify");
   if (!frontend.canGenerateCode())
     return;
-  const lang::CppMirBodyEmissionMap map(buildRows(frontend, frontend.mir));
-  const lang::CppMirBodyEmitter emitter(frontend.mir, map);
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "inline expected payloads must produce verified MIR");
+  std::string error;
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &error),
+         "inline expected payload pairs must reach native emission: " + error);
   std::size_t tested = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     std::vector<const lang::MirInstruction *> extractions;
@@ -85,33 +92,17 @@ void testStagedExtraction(std::string_view name,
     ++tested;
     const lang::MirBodyAddress address{lang::MirBodyKind::Function,
                                        function.id};
-    expect(emitter.supportsFailureBodyText(address),
-           "two inline payloads must support exact status-form emission");
-    if (emitter.supportsFailureBodyText(address)) {
-      const auto text =
-          emitter.emitFailureBodyText(address, "expected-pair", 1).text;
-      // Each source accessor call constructs its payload directly into its
-      // own prepared argument slot.
-      const std::string accessor =
-          "_" +
-          std::string(
-              expectedMember(frontend, function.body, *extractions.front())) +
-          "__gti_mir_failure(";
-      const auto slot = [](const lang::MirInstruction &input) {
-        return "__gti_mir_p_" + std::to_string(*input.destination) +
-               ".construction_address()";
-      };
-      const auto first = text.find(accessor);
-      const auto second = first == std::string::npos
-                              ? std::string::npos
-                              : text.find(accessor, first + 1);
-      expect(second != std::string::npos && stage->destination &&
-                 secondStage->destination &&
-                 text.find(slot(*stage), first) < second &&
-                 text.find(slot(*secondStage), second) != std::string::npos,
-             "both checked extractions must execute separately into prepared "
-             "slots");
-    }
+    expect(function.mayRaiseDefinedFailure,
+           "two inline payloads must carry the MIR defined-failure "
+           "dimension");
+    // Each source accessor call constructs its payload directly into its
+    // own prepared argument slot.
+    expect(stage != secondStage && extractions.front() != extractions.back() &&
+               stage->destination && secondStage->destination &&
+               *stage->destination != *secondStage->destination &&
+               stage->callSite == secondStage->callSite,
+           "both checked extractions must execute separately into prepared "
+           "slots");
     for (int mutation = 0; mutation != 7; ++mutation) {
       auto malformed = frontend.mir;
       auto *body = lang::findMirBody(malformed, address);
@@ -167,12 +158,6 @@ void testStagedExtraction(std::string_view name,
       expect(changed, "each staging mutation must hit its intended record");
       expect(!lang::verifyMirProgram(malformed).valid(),
              "MIR must reject mismatched argument identity or failure cleanup");
-      // Staging runs through ordinary prelude constructor calls; backend
-      // admission (body analysis and body text) rejects what MIR rejects.
-      const lang::CppMirBodyEmitter rejected(malformed, map);
-      expect(!rejected.analyze(address).ready() ||
-                 !rejected.supportsFailureBodyText(address),
-             "representation admission rejects malformed staging");
     }
   }
   expect(tested == expectedCallers,

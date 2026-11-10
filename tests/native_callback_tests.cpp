@@ -1,4 +1,3 @@
-#include "gti/cpp_backend.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
@@ -7,7 +6,7 @@
 #include "gti/native_header.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -41,6 +40,17 @@ bool hasCode(const lang::FrontendResult &result, std::string_view code) {
                      [&](const lang::Diagnostic &diagnostic) {
                        return diagnostic.code == code;
                      });
+}
+
+// The shipped backend accepts the verified program; reports why it did not.
+bool emitsNative(const lang::FrontendResult &frontend,
+                 const lang::TargetInfo &target = lang::TargetInfo::host()) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, target, &error);
+  if (!emitted)
+    std::cerr << "native emission: " << error << '\n';
+  return emitted;
 }
 
 lang::FrontendResult
@@ -175,25 +185,12 @@ int main() {
 
   const lang::LoweredProgram lowered = gti_test::lowerProgram(
       frontend, frontend.mir, frontend.mir, lang::TargetInfo::host());
-  const std::string cpp = lang::CppBackend().generate(lowered).contents;
+  expect(lang::verifyLoweredProgram(lowered).empty(),
+         "callback adapters should cross the sealed lowered-program boundary");
+  expect(emitsNative(frontend),
+         "the shipped backend should emit the typed callback adapters");
   const std::string header =
       lang::NativeHeaderBackend().generate(lowered).contents;
-
-  expect(cpp.find("extern \"C\" std::int32_t "
-                  "__gti_native_callback_") != std::string::npos &&
-             cpp.find("gti_rt_failure_terminate_v2") != std::string::npos &&
-             cpp.find("catch (...)") != std::string::npos &&
-             cpp.find("std::terminate()") != std::string::npos &&
-             cpp.find("(&::__gti_program::__gti_native_callback_") !=
-                 std::string::npos,
-         "the C++ backend should emit typed noexcept adapters that contain "
-         "both defined failure and native exceptions without pointer casts");
-  expect(cpp.find("_resolve_callback("
-                  "::gti_internal::backend::raw_address<void> instance, "
-                  "const char* name);") != std::string::npos &&
-             cpp.find("const const char*") == std::string::npos,
-         "c_string parameters should retain their pointee constness without "
-         "adding a duplicate top-level const qualifier");
   expect(
       header.find("typedef int32_t (*Unary)(int32_t);") != std::string::npos &&
           header.find("typedef Unary (*Factory)(void);") != std::string::npos &&
@@ -451,8 +448,16 @@ int main() {
     }
   }
   expect(calls == 1, "fixture must exercise one exact native indirect call");
-  const auto emitted = gti_test::emitCpp(frontend).contents;
-  expect(emitted.find("GTI verified-MIR body") != std::string::npos,
+  const auto lowered = gti_test::lowerOptimizedProgram(frontend);
+  bool verifiedBodies = lang::verifyLoweredProgram(lowered).empty();
+  for (const auto &function : frontend.mir.functionInstances())
+    verifiedBodies =
+        verifiedBodies &&
+        (function.definitionKind != lang::MirDefinitionKind::Source ||
+         function.body.blocks.empty() ||
+         lowered.findBody({lang::MirBodyKind::Function, function.id}) !=
+             nullptr);
+  expect(verifiedBodies && emitsNative(frontend),
          "native invocation must be emitted through verified production MIR");
 
   const auto unsafeMissing = analyze("native-safe-call.gti", R"(
@@ -549,7 +554,7 @@ int main() { unsafe { return obtain()()("hello"); } }
              lang::verifyMirProgram(factory.mir).valid(),
          "a callback factory may return a callback accepting counted input");
   if (factory.canGenerateCode()) {
-    expect(!gti_test::emitCpp(factory).contents.empty(),
+    expect(emitsNative(factory),
            "counted-input callback factories must reach production emission");
   }
 }
@@ -617,11 +622,7 @@ int main() {
     }
   }
   expect(checkedEffect, "thread binding retains an executable MIR conversion");
-  const auto cpp = gti_test::emitCpp(frontend, lang::CppStandard::Cpp23,
-                                     frontend.mir.target())
-                       .contents;
-  expect(cpp.find("__gti_bind_native_callback_") != std::string::npos &&
-             cpp.find("gti_rt_confined_callback_enter_v1") != std::string::npos,
+  expect(emitsNative(frontend, frontend.mir.target()),
          "production MIR emission consumes thread binding and entry policy");
   expect(analyze("confined-single.gti", source).canGenerateCode(),
          "contract remains usable in single-threaded consumers");

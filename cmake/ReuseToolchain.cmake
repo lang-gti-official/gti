@@ -2,9 +2,17 @@
 # Admission and archive verification belong to scripts/source_stdlib_ci.py.
 get_filename_component(GTI_REUSE_TOOLCHAIN "${GTI_REUSE_TOOLCHAIN}" ABSOLUTE)
 find_package(GTI CONFIG REQUIRED PATHS "${GTI_REUSE_TOOLCHAIN}/lib/cmake/GTI" NO_DEFAULT_PATH)
-foreach(component compiler cpp_backend llvm_backend driver bindgen runtime)
+foreach(component compiler llvm_backend driver bindgen runtime)
   add_library(gti_${component} ALIAS GTI::${component})
 endforeach()
+# Older admitted SDKs still export the frozen C++ backend; consumers here
+# never need it unless this build enables it.
+if(GTI_ENABLE_CPP_BACKEND)
+  if(NOT TARGET GTI::cpp_backend)
+    message(FATAL_ERROR "GTI_ENABLE_CPP_BACKEND needs an SDK built with the C++ backend")
+  endif()
+  add_library(gti_cpp_backend ALIAS GTI::cpp_backend)
+endif()
 set(reused_tools gti)
 if(NOT GTI_REBUILD_LSP)
   list(APPEND reused_tools gti_lsp)

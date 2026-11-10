@@ -564,11 +564,10 @@ GATE_EXCLUDED = {
     "trusted_body_analysis_1", "trusted_body_analysis_2", "trusted_body_analysis_3",
     "lowered_program_corpus_census",
 }
-# The C++ backend is deprecated and frozen. Tests whose only subject is that
-# backend's generated text or its emitter run in the scheduled C++ job
-# (cpp-backend.yml, GTI_TEST_BACKENDS=cpp), never in the gate or in full
-# validation, as rustc tests its non-primary codegen backends on their own
-# schedule. Harness-driven C++ modes are selected by GTI_TEST_BACKENDS in
+# The C++ backend is frozen and built only with GTI_ENABLE_CPP_BACKEND. Tests
+# whose only subject is that backend's generated text or its emitter run only
+# in the hand-dispatched C++ job (cpp-backend.yml, GTI_TEST_BACKENDS=cpp),
+# never in the gate or in full validation. Harness-driven C++ modes are selected by GTI_TEST_BACKENDS in
 # tests/backend_modes.py; these are the CTest entries that exist only for it.
 CPP_ONLY_PREFIXES = ("cpp_mir_", "cpp_debug_artifacts", "lowered_program_corpus_census")
 # macOS does not repeat the Linux inventory. It runs the `darwin` set from

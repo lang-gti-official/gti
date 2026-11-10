@@ -121,8 +121,8 @@ def main():
         for name, (text, code, fragment) in negatives.items():
             source = scratch / f"{name}.gti"
             source.write_text(text, encoding="utf-8")
-            result = subprocess.run([str(compiler), str(source), "--emit-cpp",
-                                     "--progress", "never", "-o", str(scratch / f"{name}.cpp")],
+            result = subprocess.run([str(compiler), str(source), "--emit-mir",
+                                     "--progress", "never", "-o", str(scratch / f"{name}.mir")],
                                     capture_output=True, text=True, timeout=60)
             assert result.returncode != 0, name
             assert code in result.stderr and fragment in result.stderr, result.stderr
@@ -218,8 +218,8 @@ int main() {
             source = scratch / f"{name}.gti"
             source.write_text('import "nested_api.gti";\nint main() { ' + body + " }\n",
                               encoding="utf-8")
-            result = subprocess.run([str(compiler), str(source), "--emit-cpp",
-                                     "--progress", "never", "-o", str(scratch / f"{name}.cpp")],
+            result = subprocess.run([str(compiler), str(source), "--emit-mir",
+                                     "--progress", "never", "-o", str(scratch / f"{name}.mir")],
                                     capture_output=True, text=True, timeout=60)
             assert result.returncode != 0, name
             assert code in result.stderr and fragment in result.stderr, result.stderr

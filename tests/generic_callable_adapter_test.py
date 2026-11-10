@@ -6,12 +6,15 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_text_modes
 from lambda_pack_invocation_runtime_test import main
 
 
 if __name__ == "__main__":
     fixture = pathlib.Path(__file__).parent / "fixtures/generic_callable_adapter_declaration_order.gti"
-    if "--list-modes" not in sys.argv:
+    # The adapter declaration order is a property of the C++ representation;
+    # it is checked only when the backend policy selects the C++ backend.
+    if "--list-modes" not in sys.argv and cpp_text_modes():
         with tempfile.TemporaryDirectory(prefix="gti-generic-callable-adapter-") as temporary:
             emitted = pathlib.Path(temporary) / "adapters.cpp"
             result = subprocess.run([str(pathlib.Path(sys.argv[1]).resolve()),

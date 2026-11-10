@@ -1,9 +1,22 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
 #include "gti/language_queries.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
 
 #include <type_traits>
 
-using namespace gti_test::cpp_mir_body_emitter_fixture;
+using namespace gti_test::mir_fixture;
+
+namespace {
+// The shipped backend accepts the verified program and emits native code.
+void expectNativeEmission(const lang::FrontendResult &frontend,
+                          std::string_view message) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  expect(emitted, error.empty() ? std::string(message)
+                                : std::string(message) + ": " + error);
+}
+} // namespace
 
 static_assert(
     !std::is_default_constructible_v<lang::SemanticDirectInitializationProof>);
@@ -132,15 +145,8 @@ int main() {
   }
   expect(selectedFresh == 7,
          "typed fresh call sites retain selected occurrences");
-  for (const auto standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    const lang::CppMirBodyEmissionMap map(
-        buildRows(frontend, frontend.mir, standard));
-    expect(lang::CppMirBodyEmitter(frontend.mir, map).analyzeProgram().ready(),
-           "the complete production MIR vocabulary admits the original ICE");
-    expect(!gti_test::emitCpp(frontend, standard).contents.empty(),
-           "fresh results use production emission, not an AST fallback");
-  }
+  expectNativeEmission(frontend, "fresh results use production emission, "
+                                 "not an AST fallback");
 
   auto corrupted = frontend.hir;
   for (const auto &function : corrupted.functionInstances()) {
@@ -305,8 +311,8 @@ int main() {
   expect(fixed.canGenerateCode(),
          "initial creation and direct publication do not require movability");
   if (fixed.canGenerateCode())
-    expect(!gti_test::emitCpp(fixed).contents.empty(),
-           "an immovable factory result has a production representation");
+    expectNativeEmission(
+        fixed, "an immovable factory result has a production representation");
   const auto borrow = analyzeWithStandardLibrary("borrowed-results.gti", R"(
 class Lens {
   int& value;
@@ -405,8 +411,9 @@ int main() {
       }
   expect(concreteProof,
          "the positive dependent arm needs concrete rather than primary proof");
-  expect(!gti_test::emitCpp(frontend).contents.empty(),
-         "both concrete dependent arms and nominal calls remain representable");
+  expectNativeEmission(
+      frontend,
+      "both concrete dependent arms and nominal calls remain representable");
   for (const std::string_view name : {"factory", "adjust"}) {
     auto forged = frontend.hir;
     bool mutated = false;
@@ -515,8 +522,9 @@ int main() {
       frontend.canGenerateCode(),
       "concrete generic reanalysis and constexpr share the fresh-result rule");
   if (frontend.canGenerateCode())
-    expect(!gti_test::emitCpp(frontend).contents.empty(),
-           "constant and concrete results retain production MIR execution");
+    expectNativeEmission(
+        frontend,
+        "constant and concrete results retain production MIR execution");
 }
 
 void checkBorrowedResultComposition() {

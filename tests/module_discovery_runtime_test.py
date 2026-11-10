@@ -165,7 +165,7 @@ def main():
         run(command + ["--release"], cwd=root)
         run([str(executable_named(workspace / "build/gti/packages/module-discovery/release", "demo"))])
         # Direct compilation still receives no project discovery map.
-        direct = reject([compiler, str(entry), "--emit-cpp"], cwd=root)
+        direct = reject([compiler, str(entry), "--emit-mir"], cwd=root)
         assert "demo.counter" in direct.stderr, direct.stderr
     print("PASS default module discovery, private bodies, dependencies and cache invalidation")
 

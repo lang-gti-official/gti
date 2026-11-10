@@ -1,8 +1,7 @@
-#include "../src/compiler/cpp_mir_body_emitter.h"
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -44,18 +43,53 @@ lang::FrontendResult analyze(const std::string &source) {
       {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
 }
 
-lang::MirConstructorInstance *ownedConstructor(lang::MirProgram &program,
-                                               std::size_t fields) {
-  for (auto &constructor :
-       const_cast<std::vector<lang::MirConstructorInstance> &>(
-           program.constructorInstances()))
-    if (std::count_if(constructor.initializers.begin(),
-                      constructor.initializers.end(),
-                      [](const auto &initializer) {
-                        return initializer.ownedParameter.has_value();
-                      }) == static_cast<std::ptrdiff_t>(fields))
-      return &constructor;
-  return nullptr;
+// The shipped backend accepts the verified program; reports why it did not.
+bool emitsNative(const lang::FrontendResult &frontend) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  if (!emitted)
+    std::cerr << "native emission: " << error << '\n';
+  return emitted;
+}
+
+// One constructed field child of a constructor, located from MIR alone: the
+// Invoke-terminated Construct of the child, its result value, the published
+// field, and the child's first staged argument.
+struct ChildConstruction {
+  lang::MirInstructionId constructInstruction = 0;
+  lang::MirValueId constructedValue = 0;
+  lang::SymbolId field = 0;
+  lang::MirInstructionId firstArgument = 0;
+};
+
+std::vector<ChildConstruction>
+childConstructions(const lang::MirConstructorInstance &constructor) {
+  std::vector<ChildConstruction> children;
+  for (const auto &block : constructor.body.blocks) {
+    if (block.terminator.kind != lang::MirTerminatorKind::Invoke)
+      continue;
+    for (const auto &item : block.instructions) {
+      if (item.id != block.terminator.invokeInstruction ||
+          item.kind != lang::MirInstructionKind::Construct || !item.result ||
+          !item.constructorTarget)
+        continue;
+      ChildConstruction child{.constructInstruction = item.id,
+                              .constructedValue = *item.result};
+      for (const auto &stageBlock : constructor.body.blocks)
+        for (const auto &stage : stageBlock.instructions)
+          if (child.firstArgument == 0 &&
+              stage.kind == lang::MirInstructionKind::CallInput &&
+              stage.callSite == item.callSite && stage.callInputIndex == 0)
+            child.firstArgument = stage.id;
+      children.push_back(child);
+    }
+  }
+  for (std::size_t index = 0;
+       index < children.size() && index < constructor.initializers.size();
+       ++index)
+    children[index].field = constructor.initializers[index].field;
+  return children;
 }
 
 lang::MirInstruction *instruction(lang::MirBody &body,
@@ -65,164 +99,6 @@ lang::MirInstruction *instruction(lang::MirBody &body,
       if (item.id == id)
         return &item;
   return nullptr;
-}
-
-template <typename Mutation>
-void rejected(const lang::MirProgram &source, std::size_t fields,
-              Mutation mutate, std::string_view name) {
-  auto program = source;
-  auto *constructor = ownedConstructor(program, fields);
-  expect(constructor != nullptr, "mutation locates owned constructor");
-  if (!constructor)
-    return;
-  const auto bindings =
-      lang::cppMirOwnedParameterFieldBindings(program, *constructor);
-  expect(bindings && bindings->size() == fields,
-         "positive exact backend binding");
-  if (!bindings || bindings->size() != fields)
-    return;
-  expect(mutate(*constructor, *bindings), "mutation changes intended schedule");
-  // Exercise the detached backend admission proof itself, independently of
-  // earlier MIR diagnostics. The test does not ask emission to repair IR.
-  expect(!lang::cppMirOwnedParameterFieldBindings(program, *constructor), name);
-  ++mutations;
-}
-
-void constructedFieldPrefix() {
-  const auto control = analyze(R"gti(
-class ActiveGuard {
-  Resource& resource;
-public:
-  ActiveGuard(Resource& resource) : resource(resource) {}
-  ~ActiveGuard() { observed += this.resource.value; }
-};
-class Reversed {
-  ActiveGuard retained;
-public:
-  Reversed(Resource& first, Resource& second, int divisor)
-      : retained(ActiveGuard(second)) { int checked = 1 / divisor; }
-};
-int main() { Resource first{}; Resource second{}; Reversed value{first, second, 1}; return 0; }
-)gti");
-  expect(control.canGenerateCode(),
-         "constructed retained field control compiles");
-  if (!control.canGenerateCode())
-    return;
-  lang::HirConstructorInstanceId selected = 0;
-  for (const auto &constructor : control.mir.constructorInstances())
-    if (constructor.parameterTypes.size() == 3)
-      selected = constructor.id;
-  const auto *constructor = control.mir.findConstructorInstance(selected);
-  expect(constructor != nullptr, "constructed retained field target found");
-  if (constructor == nullptr)
-    return;
-  const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
-      control.mir, *constructor);
-  expect(bindings.size() == 1,
-         "constructed retained field has exact native prefix");
-  if (bindings.size() != 1 && std::getenv("GTI_TEST_DUMP_MIR") != nullptr)
-    std::cerr << lang::MirPrinter().print(constructor->body);
-  if (bindings.size() != 1)
-    return;
-  expect(bindings.front().arguments.size() == 1 &&
-             bindings.front().arguments.front().parameter == 1,
-         "constructed retained field preserves reordered reference argument");
-  expect(!gti_test::emitCppText(control).empty(),
-         "constructed retained field emits");
-  const auto reject = [&](const auto &mutate, std::string_view name) {
-    auto program = control.mir;
-    auto &changed = const_cast<lang::MirConstructorInstance &>(
-        *program.findConstructorInstance(selected));
-    expect(mutate(changed, bindings.front()),
-           "constructed prefix mutation applied");
-    expect(lang::cppMirConstructedFieldInitializerBindings(program, changed)
-               .empty(),
-           name);
-    ++mutations;
-  };
-  reject(
-      [](auto &target, const auto &binding) {
-        auto *initialize =
-            instruction(target.body, binding.initializeInstruction);
-        initialize->lifecycle.front().target = binding.valueDrop;
-        return true;
-      },
-      "constructed prefix cannot reparent back into its temporary drop");
-  reject(
-      [](auto &target, const auto &binding) {
-        auto *construct =
-            instruction(target.body, binding.constructInstruction);
-        construct->successResultDrop = binding.fieldDrop;
-        return true;
-      },
-      "constructed prefix cannot activate the field before publication");
-  reject(
-      [](auto &target, const auto &binding) {
-        auto *input =
-            instruction(target.body, binding.argumentInstructions.front());
-        input->callInputIndex = 1;
-        return true;
-      },
-      "constructed prefix cannot forge selected child argument position");
-  reject(
-      [](auto &target, const auto &binding) {
-        auto *input =
-            instruction(target.body, binding.argumentInstructions.front());
-        if (!input->ownership)
-          return false;
-        input->ownership->kind = lang::OwnershipEventKind::Move;
-        return true;
-      },
-      "constructed prefix cannot disguise an ownership transfer as a reference "
-      "read");
-  reject(
-      [](auto &target, const auto &binding) {
-        auto *construct =
-            instruction(target.body, binding.constructInstruction);
-        construct->constructorTarget = target.id;
-        return true;
-      },
-      "constructed prefix cannot substitute an unrelated constructor target");
-  reject(
-      [](auto &target, const auto &binding) {
-        auto *initialize =
-            instruction(target.body, binding.initializeInstruction);
-        initialize->operands.front().value = 1;
-        return true;
-      },
-      "constructed prefix cannot publish a different SSA value");
-  reject(
-      [](auto &target, const auto &binding) {
-        for (auto &block : target.body.blocks)
-          for (auto &item : block.instructions)
-            if (item.kind == lang::MirInstructionKind::Borrow &&
-                item.operands.size() == 1 &&
-                item.operands.front().value == binding.constructedValue) {
-              item.operands.front().loan = 0;
-              return true;
-            }
-        return false;
-      },
-      "constructed prefix cannot lose its exact dependency publication");
-  reject(
-      [](auto &target, const auto &) {
-        auto &entry = target.body.blocks[target.body.entry - 1];
-        entry.terminator.successLifecycle.front().target = 0;
-        return true;
-      },
-      "constructed prefix cannot lose success-edge cleanup activation");
-  reject(
-      [](auto &target, const auto &) {
-        auto &entry = target.body.blocks[target.body.entry - 1];
-        for (auto &block : target.body.blocks)
-          for (const auto &item : block.instructions)
-            if (!item.localFailureSites.empty()) {
-              entry.instructions.insert(entry.instructions.begin(), item);
-              return true;
-            }
-        return false;
-      },
-      "constructed prefix cannot hoist before earlier fallible work");
 }
 
 void constructedFieldSequence() {
@@ -268,17 +144,20 @@ int main() { Resource resource{}; SequenceOwner owner{Handle(resource), 1}; retu
   expect(constructor != nullptr, "borrowed-field sequence target found");
   if (!constructor)
     return;
-  const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
-      control.mir, *constructor);
-  expect(bindings.size() == 3,
-         "three independent borrowed children have native sequence bindings");
+  const auto bindings = childConstructions(*constructor);
+  expect(bindings.size() == 3 && std::all_of(bindings.begin(), bindings.end(),
+                                             [](const auto &child) {
+                                               return child.field != 0 &&
+                                                      child.firstArgument != 0;
+                                             }),
+         "three independent borrowed children have exact staged "
+         "constructions");
   if (bindings.size() != 3) {
     if (std::getenv("GTI_TEST_DUMP_MIR") != nullptr)
       std::cerr << lang::MirPrinter().print(constructor->body);
     return;
   }
-  expect(!gti_test::emitCppText(control).empty(),
-         "independent borrowed-field sequence emits");
+  expect(emitsNative(control), "independent borrowed-field sequence emits");
 
   const auto childFailure = [](auto &target,
                                const auto &binding) -> lang::MirBlock * {
@@ -317,13 +196,11 @@ int main() { Resource resource{}; SequenceOwner owner{Handle(resource), 1}; retu
     expect(applied, "borrowed-field sequence mutation applied");
     if (!applied)
       return;
-    // Both boundaries remain mandatory: deliberately malformed MIR must fail
-    // normal verification, and the detached representation shape must also
-    // refuse it rather than relying on emission to repair the schedule.
+    // Deliberately malformed MIR must fail normal verification rather than
+    // relying on emission to repair the schedule. (The C++ backend's
+    // detached binding proof is frozen in
+    // cpp_mir_cleanup_bound_backend_mutation.)
     expect(!lang::verifyMirProgram(program).valid(), name);
-    expect(lang::cppMirConstructedFieldInitializerBindings(program, changed)
-               .empty(),
-           name);
     ++mutations;
   };
   reject(
@@ -424,11 +301,11 @@ int main() { Resource resource{}; SequenceOwner owner{Handle(resource), 1}; retu
   reject(
       [&](auto &target) {
         for (auto &block : target.body.blocks) {
-          const auto stage = std::find_if(
-              block.instructions.begin(), block.instructions.end(),
-              [&](const auto &item) {
-                return item.id == bindings[1].argumentInstructions.front();
-              });
+          const auto stage =
+              std::find_if(block.instructions.begin(), block.instructions.end(),
+                           [&](const auto &item) {
+                             return item.id == bindings[1].firstArgument;
+                           });
           if (stage != block.instructions.end()) {
             const auto extra = *stage;
             block.instructions.insert(stage, extra);
@@ -456,21 +333,15 @@ int main() { Resource resource{}; SequenceOwner owner{Handle(resource), 1}; retu
            "genuinely fallible borrowed child remains valid source/MIR");
     bool checked = false;
     for (const auto &target : fallible.mir.constructorInstances())
-      if (target.parameterTypes.size() == 2 &&
-          target.initializers.size() == 3) {
-        expect(lang::cppMirConstructedFieldInitializerBindings(fallible.mir,
-                                                               target)
-                   .empty(),
-               "genuinely fallible child is outside non-failing sequence gate");
+      if (target.parameterTypes.size() == 2 && target.initializers.size() == 3)
         checked = true;
-      }
-    expect(checked, "genuinely fallible sequence target found");
+    expect(checked && emitsNative(fallible),
+           "genuinely fallible sequence target found");
   }
 }
 } // namespace
 
 int main() {
-  constructedFieldPrefix();
   constructedFieldSequence();
   auto control = analyze(R"gti(
 class Box {
@@ -488,92 +359,9 @@ int main() { Resource resource{}; Box box{Guard(resource), 1}; return 0; }
   if (!control.canGenerateCode())
     return 1;
   expect(lang::verifyMirProgram(control.mir).valid(), "positive MIR verifies");
-  const auto cpp = gti_test::emitCppText(control);
-  auto *constructor = ownedConstructor(control.mir, 1);
-  expect(constructor != nullptr, "positive locates retained-field constructor");
-  if (constructor) {
-    const auto bindings =
-        lang::cppMirOwnedParameterFieldBindings(control.mir, *constructor);
-    expect(bindings && bindings->size() == 1,
-           "positive locates exact retained-field binding");
-    if (bindings && bindings->size() == 1) {
-      const auto *initialize = instruction(
-          constructor->body, bindings->front().initializeInstruction);
-      expect(initialize && initialize->destination,
-             "positive locates retained-field place");
-      if (initialize && initialize->destination) {
-        const auto field =
-            "__gti_mir_p_" + std::to_string(*initialize->destination);
-        expect(cpp.find("; }(" + field + "); // GTI MIR field rollback") !=
-                       std::string::npos &&
-                   cpp.find("mir_rollback_field_v1(" + field + ")") ==
-                       std::string::npos,
-               "positive backend drains exact retained field without default "
-               "construction");
-      }
-    }
-  }
-
-  rejected(
-      control.mir, 1,
-      [](auto &constructor, const auto &bindings) {
-        auto &entry = constructor.body.blocks[constructor.body.entry - 1];
-        const auto failure = std::find_if(
-            entry.instructions.begin(), entry.instructions.end(),
-            [](const auto &i) { return !i.localFailureSites.empty(); });
-        if (failure == entry.instructions.end())
-          return false;
-        auto moved = *failure;
-        entry.instructions.erase(failure);
-        entry.instructions.insert(entry.instructions.begin(), std::move(moved));
-        return entry.instructions.front().id !=
-               bindings.front().moveInstruction;
-      },
-      "fallible computation cannot move ahead of native field transfer");
-
-  rejected(
-      control.mir, 1,
-      [](auto &constructor, const auto &bindings) {
-        auto *stage = instruction(constructor.body,
-                                  bindings.front().initializeInstruction);
-        if (!stage || stage->lifecycle.size() != 1)
-          return false;
-        stage->lifecycle.front().target = bindings.front().parameterDrop;
-        return true;
-      },
-      "field publication cannot reparent into the formal's drop");
-
-  rejected(
-      control.mir, 1,
-      [](auto &constructor, const auto &bindings) {
-        for (auto &block : constructor.body.blocks)
-          for (auto &item : block.instructions)
-            if (item.kind == lang::MirInstructionKind::Drop &&
-                item.lifecycle.size() == 1 &&
-                item.lifecycle.front().failureCleanup &&
-                item.lifecycle.front().source == bindings.front().fieldDrop) {
-              item.destination = bindings.front().sourcePlace;
-              return true;
-            }
-        return false;
-      },
-      "rollback field cleanup cannot target the same-typed moved formal");
-
-  rejected(
-      control.mir, 1,
-      [](auto &constructor, const auto &bindings) {
-        for (auto &block : constructor.body.blocks)
-          for (auto &item : block.instructions)
-            if (item.kind == lang::MirInstructionKind::Drop &&
-                item.lifecycle.size() == 1 &&
-                item.lifecycle.front().failureCleanup &&
-                item.lifecycle.front().source == bindings.front().fieldDrop) {
-              item.lifecycle.front().source = bindings.front().valueDrop;
-              return true;
-            }
-        return false;
-      },
-      "rollback cannot retire the already-transferred temporary");
+  expect(emitsNative(control), "retained-shell rollback control emits");
+  // The C++ backend's owned-parameter field binding proof and its rollback
+  // text are frozen in cpp_mir_cleanup_bound_backend_mutation.
 
   auto pair = analyze(R"gti(
 class Pair {
@@ -587,31 +375,7 @@ int main() { Resource resource{}; Pair pair{Guard(resource), Guard(resource)}; r
 )gti");
   expect(pair.canGenerateCode(), "two same-typed field control compiles");
   if (pair.canGenerateCode()) {
-    expect(!gti_test::emitCppText(pair).empty(), "two-field control emits");
-    rejected(
-        pair.mir, 2,
-        [](auto &constructor, const auto &bindings) {
-          auto *first =
-              instruction(constructor.body, bindings[0].initializeInstruction);
-          const auto *second =
-              instruction(constructor.body, bindings[1].initializeInstruction);
-          if (!first || !second)
-            return false;
-          first->destination = second->destination;
-          return true;
-        },
-        "same-typed field identity cannot be exchanged");
-    rejected(
-        pair.mir, 2,
-        [](auto &constructor, const auto &bindings) {
-          auto *first =
-              instruction(constructor.body, bindings[0].initializeInstruction);
-          if (!first || first->lifecycle.size() != 1)
-            return false;
-          first->lifecycle.front().target = bindings[1].fieldDrop;
-          return true;
-        },
-        "same-typed rollback identity cannot be exchanged");
+    expect(emitsNative(pair), "two-field control emits");
   }
 
   auto generic = analyze(R"gti(
@@ -631,8 +395,7 @@ int main() { int value = 7; GenericGuard<ReadView> guard{ReadView(value)}; retur
   expect(generic.canGenerateCode(),
          "concrete nonassignable generic guard control compiles");
   if (generic.canGenerateCode()) {
-    expect(!gti_test::emitCppText(generic).empty(),
-           "nonassignable generic guard emits");
+    expect(emitsNative(generic), "nonassignable generic guard emits");
     const auto found = std::find_if(
         generic.mir.classInstances().begin(),
         generic.mir.classInstances().end(), [](const auto &instance) {

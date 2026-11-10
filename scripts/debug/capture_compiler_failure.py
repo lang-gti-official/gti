@@ -16,9 +16,9 @@ signature — instead of a screenshot and an expired temporary directory.
                  --gti <compiler> --bundle <bundle-dir>
 
 The capture mode runs a bounded stage ladder and stops at the first failing
-probe.  Direct mode probes MIR emission, C++ emission, native build, and
-program execution; project mode probes `check`, `build --emit-mir`,
-`build --keep-cpp`, and `run`.  The ladder locates the narrowest observable
+probe.  Direct mode probes MIR emission, native build, and program
+execution; project mode probes `check`, `build --emit-mir`, `build`, and
+`run`.  The ladder locates the narrowest observable
 boundary; the GTI diagnostic itself remains the authority on the exact owner.
 This script never parses emitted C++ to infer language meaning.
 
@@ -140,9 +140,6 @@ def direct_ladder(entry_name: str) -> list[Probe]:
         Probe("mir-emission",
               ["{GTI}", "--emit-mir", entry_name, "-o", "{SCRATCH}/out.mir"],
               "source-dir"),
-        Probe("cpp-emission",
-              ["{GTI}", "--emit-cpp", entry_name, "-o", "{SCRATCH}/out.cpp"],
-              "source-dir"),
         Probe("native-build",
               ["{GTI}", entry_name, "-o", "{SCRATCH}/out.bin"],
               "source-dir"),
@@ -154,8 +151,7 @@ def project_ladder() -> list[Probe]:
     return [
         Probe("check", ["{GTI}", "check"], "project-dir"),
         Probe("mir-emission", ["{GTI}", "build", "--emit-mir"], "project-dir"),
-        Probe("build-keep-cpp", ["{GTI}", "build", "--keep-cpp"],
-              "project-dir"),
+        Probe("native-build", ["{GTI}", "build"], "project-dir"),
         Probe("run", ["{GTI}", "run"], "project-dir"),
     ]
 
@@ -165,9 +161,7 @@ def project_ladder() -> list[Probe]:
 BOUNDARY_BY_STAGE = {
     "check": "frontend (source loading, parsing, semantics, HIR, or MIR)",
     "mir-emission": "driver input, lowered-program construction, or MIR backend",
-    "cpp-emission": "C++ representation or emission",
-    "build-keep-cpp": "C++ emission or native toolchain (see retained C++)",
-    "native-build": "native compiler or linker boundary",
+    "native-build": "LLVM backend, native object emission or linker boundary",
     "run": "generated-program runtime",
 }
 
@@ -390,7 +384,7 @@ def run_ladder(probes: list[Probe], gti: Path, cwd: Path, scratch: Path,
 def preserve_artifacts(scratch: Path, artifact_dir: Path) -> list[dict]:
     entries = []
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("out.mir", "out.cpp"):
+    for name in ("out.mir",):
         produced = scratch / name
         if produced.is_file():
             shutil.copy2(produced, artifact_dir / name)

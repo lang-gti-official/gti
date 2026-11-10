@@ -34,7 +34,7 @@ def main():
 
         warning = root / "warning.gti"
         warning.write_text("int main() { mut int value = 0; return value; }\n")
-        args = [str(warning), "--emit-cpp", "-o", str(root / "out.cpp")]
+        args = [str(warning), "--emit-mir", "-o", str(root / "out.mir")]
         plain = run(args)
         assert "warning[GTI-S2096]" in plain.stderr
         assert "Diagnostics: 0 errors, 1 warning" in plain.stdout
@@ -46,7 +46,7 @@ def main():
         assert "\x1b[1;32mEmitted" in colored.stdout
         assert ANSI.sub("", colored.stdout) == plain.stdout
         assert ANSI.sub("", colored.stderr) == plain.stderr
-        assert "\x1b" not in (root / "out.cpp").read_text()
+        assert "\x1b" not in (root / "out.mir").read_text()
         clean = run([*args, "--color=always", "-Wno-unused-mut"])
         assert "\x1b[1;32mDiagnostics: 0 errors, 0 warnings" in clean.stdout
         assert clean.stderr == ""
@@ -64,16 +64,16 @@ def main():
             result = run(flags, 64)
             assert "--color" in result.stderr
         # An operand that looks like our option is still an output path.
-        run([str(warning), "--emit-cpp", "-o", "--color=never", "--color=always"])
+        run([str(warning), "--emit-mir", "-o", "--color=never", "--color=always"])
         assert (root / "--color=never").is_file()
 
         invalid = root / "invalid.gti"
         invalid.write_text("int main() { return missing; }\n")
-        result = run([str(invalid), "--emit-cpp", "--color=always"], 65)
+        result = run([str(invalid), "--emit-mir", "--color=always"], 65)
         assert "\x1b[1;31merror[GTI-" in result.stderr
         assert "\x1b[1;31mDiagnostics:" in result.stdout
         invalid.write_text("int main() { int value = 0; int value = 1; return value; }\n")
-        result = run([str(invalid), "--emit-cpp", "--color=always"], 65)
+        result = run([str(invalid), "--emit-mir", "--color=always"], 65)
         assert "\x1b[1;36mnote\x1b[0m:" in result.stderr, result.stderr
 
         # Auto must inspect each destination separately, not just stdout.

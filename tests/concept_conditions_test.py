@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
+
 
 def main():
     compiler = pathlib.Path(sys.argv[1]).resolve()
@@ -68,13 +70,16 @@ def main():
             assert " valid=1\n" in mir.read_text()[:80]
             # Query results are Boolean literals; no runtime concept operation
             # is introduced. Native success checks every chosen branch.
-            for backend, level in (("llvm", "O0"), ("llvm", "O2"), ("cpp", "O2")):
-                binary = directory / f"{source.stem}-{backend}-{level}"
-                result = run([source, "--backend", backend, f"-{level}", "-o", binary])
-                assert result.returncode == 0, (backend, result.stderr)
+            # The C++ profile joins only when GTI_TEST_BACKENDS selects it.
+            endpoints = [("llvm-O0", ["--backend", "llvm", "-O0"]), ("llvm-O2", ["--backend", "llvm", "-O2"])]
+            endpoints += [(label, flags) for label, flags, _native in cpp_modes()]
+            for label, flags in endpoints:
+                binary = directory / f"{source.stem}-{label}"
+                result = run([source, *flags, "-o", binary])
+                assert result.returncode == 0, (label, result.stderr)
                 executed = subprocess.run([str(binary)], capture_output=True, text=True, timeout=20)
                 assert (executed.returncode, executed.stdout, executed.stderr) == (0, "", ""), executed
-    print("concept conditions: semantic boundaries, verified MIR, LLVM O0/O2 and C++ O2 passed")
+    print("concept conditions: semantic boundaries, verified MIR, LLVM O0/O2 (and the selected C++ profile) passed")
 
 
 if __name__ == "__main__":

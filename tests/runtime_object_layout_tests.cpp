@@ -1,9 +1,9 @@
-#include "cpp_backend_test_support.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -106,12 +106,28 @@ int main() {
          "serialization retains query identity");
   for (auto level : {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
                      lang::OptimizationLevel::O3}) {
-    const auto cpp = gti_test::emitCppText(frontend, lang::CppStandard::Cpp23,
-                                           lang::TargetInfo::host(), level);
-    expect(cpp.find("// GTI verified-MIR body:") != std::string::npos &&
-               cpp.find("sizeof(") != std::string::npos &&
-               cpp.find("alignof(") != std::string::npos,
+    // The optimized program a backend consumes still carries typed size and
+    // alignment queries, and the shipped backend lowers them. The C++
+    // sizeof/alignof spelling lives in cpp_mir_runtime_object_layout_tests.
+    const auto optimized = gti_test::optimizeProgram(frontend, level);
+    std::size_t optimizedSizes = 0, optimizedAlignments = 0;
+    for (const auto &function : optimized.mir.functionInstances())
+      for (const auto &block : function.body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (!instruction.tombstone && instruction.objectLayoutType) {
+            optimizedSizes +=
+                instruction.intrinsic == lang::IntrinsicKind::ObjectSize;
+            optimizedAlignments +=
+                instruction.intrinsic == lang::IntrinsicKind::ObjectAlignment;
+          }
+    std::string error;
+    expect(lang::verifyMirProgram(optimized.mir).valid() &&
+               optimizedSizes != 0 && optimizedAlignments != 0 &&
+               gti_test::llvmEmits(frontend, level, lang::TargetInfo::host(),
+                                   &error),
            "optimized detached MIR emits representation queries");
+    if (!error.empty())
+      std::cerr << error << '\n';
   }
   const auto formatted = lang::Formatter().format(source);
   expect(lang::Formatter().format(formatted) == formatted &&
@@ -177,7 +193,7 @@ int main() {
   expect(otherShapes.canGenerateCode(),
          "pointer, integral enum, union and borrowed-state class query");
   if (otherShapes.canGenerateCode())
-    expect(!gti_test::emitCppText(otherShapes).empty(),
+    expect(gti_test::llvmEmits(otherShapes),
            "other representations emit from MIR");
   rejected(prefix + "int main() { auto x = std::layout_of<void>(); return 0; }",
            "GTI-S2029", "void source query");
@@ -200,7 +216,7 @@ int main() {
   expect(resultLayouts.canGenerateCode(),
          "complete result and text carriers have queryable object layouts");
   if (resultLayouts.canGenerateCode())
-    expect(!gti_test::emitCppText(resultLayouts).empty(),
+    expect(gti_test::llvmEmits(resultLayouts),
            "result and text layouts emit through verified MIR");
   const auto constantLayout = analyze(
       prefix + "struct Ordinary { int value; };\n"

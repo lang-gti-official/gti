@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
 from example_case_context import require_cpp_limitation
 
 
@@ -18,8 +19,9 @@ def main():
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="gti-array-borrow-") as tmp:
         tmp = Path(tmp)
-        require_cpp_limitation(compiler, root / "examples/182-bounded-array-borrows.gti",
-                               tmp / "unsupported.cpp", os.environ.copy())
+        if cpp_modes():  # C++ limitation evidence only under the hand-dispatched C++ profile
+            require_cpp_limitation(compiler, root / "examples/182-bounded-array-borrows.gti",
+                                   tmp / "unsupported.cpp", os.environ.copy())
         cleanup = tmp / "cleanup.gti"
         cleanup.write_text('''import std.io;
 import std.string;

@@ -12,7 +12,14 @@ import subprocess
 import sys
 import time
 
+from backend_modes import cpp_modes
 from llvm_evidence_manifest import build_manifest
+
+# The frozen C++ backend's comparator builds and its documented limitation run
+# only when GTI_TEST_BACKENDS selects C++; otherwise the LLVM levels agree with
+# each other and with the explicit expected observations.
+CPP_STANDARDS = ("c++20", "c++23") if cpp_modes() else ()
+CPP_BACKENDS = ("cpp",) if cpp_modes() else ()
 
 SOURCE_PATHS = {name: f"tests/fixtures/llvm_native_c_abi/{name}.gti" for name in
                 ("native_storage", "native_storage_controls", "native_storage_failure", "native_storage_opaque",
@@ -126,7 +133,7 @@ def main():
             objects = [example] if name == "storage_example" else [host]
             expected_exit = 70 if name == "native_storage_failure" else 0
             oracle = None
-            for standard in ("c++20", "c++23"):
+            for standard in CPP_STANDARDS:
                 tag = f"{name}-{standard}-c{c_level}"
                 binary = output / tag
                 # Frozen pre-storage767680c reproduces these existing C++ text
@@ -165,12 +172,14 @@ def main():
                      "--", *objects], "build-" + tag)
                 result = run([binary], "run-" + tag, expected_exit)
                 observe(name, result)
-                if oracle is not None and (result.stdout, result.stderr) != oracle:
+                if oracle is None:
+                    oracle = result.stdout, result.stderr
+                if (result.stdout, result.stderr) != oracle:
                     raise RuntimeError("native storage execution differs from supported C++ control")
                 executions += 1
     if args.focus != "prerequisites":
         for name in ("reject_native_storage_opaque_value", "reject_native_storage_opaque_dereference"):
-            for backend in ("llvm", "cpp"):
+            for backend in ("llvm", *CPP_BACKENDS):
                 for level in (0, 3):
                     binary = output / f"{name}-{backend}-O{level}"
                     sentinel = b"existing opaque boundary artifact\n"
@@ -181,7 +190,7 @@ def main():
                         raise RuntimeError("pointer referent witness admitted an opaque object operation")
                     negatives += 1
         for name in ("reject_native_storage_function_field", "reject_native_storage_aggregate_function"):
-            for standard in ("c++20", "c++23"):
+            for standard in CPP_STANDARDS:
                 binary = output / f"{name}-{standard}"
                 run([compiler, fixture / (name + ".gti"), "--backend", "cpp", "--std", standard,
                      "-O3", "-o", binary], "build-" + binary.name)
@@ -195,7 +204,7 @@ def main():
                 if result.stdout or result.stderr:
                     raise RuntimeError("dormant native signature storage produced output")
                 executions += 1
-        for backend in ("llvm", "cpp"):
+        for backend in ("llvm", *CPP_BACKENDS):
             for level in (0, 3):
                 name = f"pointer-permission-{backend}-O{level}"
                 binary = output / name

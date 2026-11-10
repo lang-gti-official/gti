@@ -503,6 +503,7 @@ def fake_build_variant(
     native_flags: list[str],
     timeout: float,
     native_optimization: str | None = None,
+    gti_backend: str = "llvm",
 ) -> dict[str, Any]:
     del (
         workload,
@@ -1268,7 +1269,9 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path) -> None:
+def test_real_smoke(
+    module: Any, runner: Path, gti: Path, cxx: Path, root: Path, backend: str = "llvm"
+) -> None:
     repository = runner.parent.parent
     output = root / "real-smoke-output"
     json_report = output / "report.json"
@@ -1283,6 +1286,8 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         str(cxx),
         "--optimization",
         "3",
+        "--gti-backend",
+        backend,
         "--cpp-standard",
         "c++23",
         "--warmup",
@@ -1323,8 +1328,15 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
     )
 
     report = json.loads(json_report.read_text(encoding="utf-8"))
-    test_schema_1_base_shape(report)
-    require(report["schema"] == 1, "unexpected benchmark report schema")
+    if backend == "cpp":
+        # Schemas 1-4 keep the frozen C++-backend report shape.
+        test_schema_1_base_shape(report)
+        require(report["schema"] == 1, "unexpected benchmark report schema")
+    else:
+        require(
+            report["schema"] == 5 and report["gti_backend"] == "llvm",
+            "an LLVM benchmark report must use schema 5 and record its backend",
+        )
     require(report["runner"]["path"] == str(runner), "runner identity path changed")
     require(
         report["runner"]["sha256"] == sha256_file(runner),
@@ -1370,8 +1382,9 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         )
 
     require(
-        "exact_head_evidence" not in report
-        and "source_identity" not in report["tools"]["gti"],
+        backend != "cpp"
+        or ("exact_head_evidence" not in report
+            and "source_identity" not in report["tools"]["gti"]),
         "schema-1 report gained schema-2 compiler evidence",
     )
 
@@ -1438,7 +1451,7 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
             (Path(workload["descriptor_path"]).parent / descriptor_by_name[name]["source"])
             .resolve()
         )
-        if variant["kind"] == "gti":
+        if variant["kind"] == "gti" and backend == "cpp":
             expected_command = [
                 str(gti),
                 source,
@@ -1448,6 +1461,16 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
                 "--cxx",
                 str(cxx),
                 "--keep-cpp",
+                "-o",
+                executable,
+            ]
+        elif variant["kind"] == "gti":
+            expected_command = [
+                str(gti),
+                source,
+                "-O3",
+                "--cxx",
+                str(cxx),
                 "-o",
                 executable,
             ]
@@ -1481,15 +1504,21 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         require(summary["maximum_ns"] == samples[0], f"{name} maximum lost raw sample")
         require(summary["median_ns"] == samples[0], f"{name} median lost raw sample")
 
-    emitted = variants["gti"]["artifacts"]["emitted_cpp"]
-    emitted_path = Path(emitted["path"])
-    require(emitted_path.is_relative_to(run_directory), "emitted GTI C++ escaped the run")
-    require(emitted_path.is_file(), "reported emitted GTI C++ does not exist")
-    require(emitted["bytes"] == emitted_path.stat().st_size, "emitted C++ size is wrong")
-    require(
-        emitted["sha256"] == sha256_file(emitted_path),
-        "emitted GTI C++ digest is wrong",
-    )
+    if backend == "cpp":
+        emitted = variants["gti"]["artifacts"]["emitted_cpp"]
+        emitted_path = Path(emitted["path"])
+        require(emitted_path.is_relative_to(run_directory), "emitted GTI C++ escaped the run")
+        require(emitted_path.is_file(), "reported emitted GTI C++ does not exist")
+        require(emitted["bytes"] == emitted_path.stat().st_size, "emitted C++ size is wrong")
+        require(
+            emitted["sha256"] == sha256_file(emitted_path),
+            "emitted GTI C++ digest is wrong",
+        )
+    else:
+        require(
+            "emitted_cpp" not in variants["gti"]["artifacts"],
+            "an LLVM benchmark build reported emitted C++",
+        )
 
     thread_output = root / "provenance-smoke-output"
     thread_json_report = thread_output / "report.json"
@@ -1503,6 +1532,8 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
         str(cxx),
         "--optimization",
         "3",
+        "--gti-backend",
+        backend,
         "--cpp-standard",
         "c++23",
         "--warmup",
@@ -1525,7 +1556,10 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
     ]
     run(thread_command, repository, environment=environment)
     thread_report = json.loads(thread_json_report.read_text(encoding="utf-8"))
-    require(thread_report["schema"] == 2, "provenance run did not use report schema 2")
+    require(
+        thread_report["schema"] == (2 if backend == "cpp" else 5),
+        "provenance run did not use its backend's report schema",
+    )
     require(
         "exact_head_evidence" in thread_report,
         "schema-2 report omitted exact-head evidence",
@@ -1590,11 +1624,10 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
             str(gti),
             source,
             "-O3",
-            "--std",
-            "c++23",
+            *(["--std", "c++23"] if backend == "cpp" else []),
             "--cxx",
             str(cxx),
-            "--keep-cpp",
+            *(["--keep-cpp"] if backend == "cpp" else []),
             "--execution-profile",
             "concurrent",
             "--build-report",
@@ -1621,17 +1654,18 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
             len(samples) == 1 and isinstance(samples[0], int) and samples[0] > 0,
             f"{name} did not retain its one raw sample",
         )
-        emitted = variant["artifacts"]["emitted_cpp"]
-        emitted_path = Path(emitted["path"])
-        require(
-            emitted_path.is_relative_to(thread_run_directory)
-            and emitted_path.is_file(),
-            f"{name} emitted C++ escaped or is missing",
-        )
-        require(
-            emitted["sha256"] == sha256_file(emitted_path),
-            f"{name} emitted C++ digest is wrong",
-        )
+        if backend == "cpp":
+            emitted = variant["artifacts"]["emitted_cpp"]
+            emitted_path = Path(emitted["path"])
+            require(
+                emitted_path.is_relative_to(thread_run_directory)
+                and emitted_path.is_file(),
+                f"{name} emitted C++ escaped or is missing",
+            )
+            require(
+                emitted["sha256"] == sha256_file(emitted_path),
+                f"{name} emitted C++ digest is wrong",
+            )
         provenance = variant["provenance"]
         build_provenance = provenance["build"]
         require(
@@ -1672,7 +1706,8 @@ def test_real_smoke(module: Any, runner: Path, gti: Path, cxx: Path, root: Path)
             )
         runtime = build_provenance["native"]["runtime"]
         require(
-            any(header["kind"] == "runtime" for header in runtime["headers"])
+            (backend == "llvm"
+             or any(header["kind"] == "runtime" for header in runtime["headers"]))
             and any(Path(argument).resolve()
                     == Path(runtime["archive"]["canonical_path"]).resolve()
                     for argument in build_provenance["native"]["argv"]),
@@ -2020,6 +2055,8 @@ def test_fixed_native_smoke(
         "0",
         "--native-optimization",
         "3",
+        "--gti-backend",
+        "cpp",
         "--workload",
         str(descriptor),
         "--output",
@@ -2164,6 +2201,8 @@ def test_arithmetic_success_proxy_smoke(
         "0",
         "--native-optimization",
         "3",
+        "--gti-backend",
+        "cpp",
         "--arithmetic-success-proxy",
         "arithmetic-proxy-smoke/gti",
         "--seed",
@@ -2294,6 +2333,19 @@ def test_tool_invocation_alias(module, root: Path) -> None:
             "preserving driver spelling must not weaken executable provenance")
 
 
+def compiler_has_cpp_backend(gti: Path, root: Path) -> bool:
+    root.mkdir(parents=True)
+    source = root / "probe.gti"
+    source.write_text("int main() { return 0; }\n", encoding="utf-8")
+    result = subprocess.run(
+        [str(gti), str(source), "--emit-cpp", "-o", str(root / "probe.cpp")],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    return result.returncode == 0
+
+
 def main() -> None:
     if len(sys.argv) != 4:
         raise SystemExit("usage: benchmark_compare_test.py runner.py gti cxx")
@@ -2314,10 +2366,17 @@ def main() -> None:
         test_arithmetic_success_proxy_contract(module, root / "proxy-contract")
         test_exact_head_truth_table(module, root / "exact-head")
         test_real_smoke(module, runner, gti, cxx, root / "smoke")
-        test_fixed_native_smoke(module, runner, gti, cxx, root / "fixed-smoke")
-        test_arithmetic_success_proxy_smoke(
-            module, runner, gti, cxx, root / "proxy-smoke"
-        )
+        # Fixed-native rebuilds and arithmetic proxies replay generated C++,
+        # and schemas 1-4 freeze the C++-backend report shape, so these need a
+        # compiler built with the frozen C++ backend.
+        if compiler_has_cpp_backend(gti, root / "cpp-probe"):
+            test_real_smoke(module, runner, gti, cxx, root / "smoke-cpp", backend="cpp")
+            test_fixed_native_smoke(module, runner, gti, cxx, root / "fixed-smoke")
+            test_arithmetic_success_proxy_smoke(
+                module, runner, gti, cxx, root / "proxy-smoke"
+            )
+        else:
+            print("skipping C++-backend benchmark smokes: the compiler omits it")
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -268,15 +268,10 @@ void testLanguagePipeline() {
          "bits outside their declared representation");
 
   if (result.canGenerateCode()) {
-    const std::string generated = gti_test::emitCppText(result);
-    expect(generated.find("std::bit_cast<double>(std::uint64_t{"
-                          "0x3fb999999999999aULL})") != std::string::npos &&
-               generated.find("static_assert(__gti_strict_ieee754 == 1") !=
-                   std::string::npos &&
-               generated.find("numeric_limits<double>::digits == 53") !=
-                   std::string::npos,
-           "the backend should emit retained binary64 bits under the strict "
-           "IEEE policy");
+    std::string error;
+    expect(gti_test::llvmEmits(result, lang::OptimizationLevel::O0,
+                               lang::TargetInfo::host(), &error),
+           "the backend should emit retained binary64 bits: " + error);
   }
 }
 

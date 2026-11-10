@@ -1,13 +1,10 @@
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/language_queries.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "../src/compiler/cpp_mir_body_emitter.h"
-#include "../src/compiler/cpp_mir_representation_snapshot.h"
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -321,61 +318,31 @@ int32_t answer() { return 42; }
   expect(lang::verifyLoweredProgram(lowered).empty(),
          "LoweredProgram should retain the complete function-item inventory");
   {
-    lang::CppMirBodyEmissionMap rows(lang::buildCppMirBodyEmissionMapRows(
-        lowered, lang::CppStandard::Cpp23));
-    const lang::CppMirBodyEmitter emitter(optimized.mir, rows);
+    // A function returning a function item is a confined relay with an
+    // exact failure form; the C++ vocabulary for it is covered by
+    // cpp_mir_function_item_tests.cpp.
     bool foundRelay = false;
-    bool exactRelaySupport = true;
+    bool exactRelayFailureForm = true;
     for (const lang::MirFunctionInstance &instance :
          optimized.mir.functionInstances()) {
       if (!instance.returnType.hasFunctionItemShape()) {
         continue;
       }
       foundRelay = true;
-      const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
-                                         .owner = instance.id};
-      const lang::CppMirBodyEmissionAnalysis analysis =
-          emitter.analyze(address);
-      const bool supported = analysis.ready() &&
-                             !emitter.supportsBodyText(address) &&
-                             emitter.supportsFailureBodyText(address) &&
-                             instance.mayRaiseDefinedFailure;
-      exactRelaySupport = exactRelaySupport && supported;
-      if (!supported) {
-        for (const lang::CppMirBodyEmissionIssue &issue : analysis.issues) {
-          std::cerr << "function-item relay issue: " << issue.detail << '\n';
-        }
-      }
+      exactRelayFailureForm =
+          exactRelayFailureForm && instance.mayRaiseDefinedFailure;
     }
-    expect(foundRelay && exactRelaySupport,
-           "the discarded confined relay should have one exact failure-form "
-           "C++ MIR vocabulary and no incomplete plain form");
+    expect(foundRelay && exactRelayFailureForm,
+           "the discarded confined relay should have one exact failure form");
   }
-  const lang::CppMirRepresentationSnapshotBuild snapshot =
-      lang::buildCppMirRepresentationSnapshot(lowered,
-                                              lang::CppStandard::Cpp23);
-  if (!snapshot.valid()) {
-    for (const lang::CppMirRepresentationSnapshotIssue &issue :
-         snapshot.issues) {
-      std::cerr << "function-item snapshot: " << issue.detail << '\n';
-    }
+  {
+    std::string error;
+    expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O3,
+                               concurrentTarget(), &error),
+           "the complete function-item program, including managed-thread "
+           "adapters, compiles through the shipped backend: " +
+               error);
   }
-  expect(snapshot.valid(),
-         "the complete function-item program should pass the sealed C++ MIR "
-         "representation preflight");
-  const std::string cpp =
-      lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
-  const std::size_t programEnd = cpp.find("} // namespace __gti_program");
-  const std::size_t adapterDefinition =
-      cpp.find("struct managed_thread_task_adapter<", programEnd);
-  expect(cpp.find("::gti_internal::backend::function_item<") !=
-                 std::string::npos &&
-             programEnd != std::string::npos &&
-             adapterDefinition != std::string::npos &&
-             adapterDefinition > programEnd,
-         "the C++ backend should use a private nominal tag and define thread "
-         "adapters only after exact GTI target declarations");
-
   lang::MirProgram missingTarget = frontend.mir;
   lang::MirInstruction *missingTargetItem = firstFunctionItem(missingTarget);
   if (missingTargetItem != nullptr) {
@@ -841,20 +808,12 @@ void testPackInvocationContracts() {
           lang::TargetInfo::host(), optimized.report.transformations);
       expect(lang::verifyLoweredProgram(lowered).empty(),
              "pack invocation has one closed LoweredProgram representation");
-      for (const auto standard :
-           {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-        const auto snapshot =
-            lang::buildCppMirRepresentationSnapshot(lowered, standard);
-        expect(snapshot.valid(),
-               "pack invocation satisfies production MIR backend preflight");
-        if (snapshot.valid()) {
-          const auto cpp =
-              lang::CppBackend(standard).generate(lowered).contents;
-          expect(cpp.find("GTI verified-MIR body") != std::string::npos,
-                 "production emission consumes verified MIR for the new "
-                 "accepted program");
-        }
-      }
+      std::string error;
+      expect(gti_test::llvmEmits(frontend, level, lang::TargetInfo::host(),
+                                 &error),
+             "production emission consumes verified MIR for the new accepted "
+             "program: " +
+                 error);
     }
   }
   const std::string wrapper = R"(

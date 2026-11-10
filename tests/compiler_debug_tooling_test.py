@@ -221,7 +221,7 @@ root = "src/tests/main.gti"
         drift_signature = manifest_of(drift_bundle)["signature"]
         check(drift_signature["kind"] == "runtime"
               and drift_signature["exit"] == 3
-              and (drift_bundle / "artifacts/out.cpp").is_file(),
+              and (drift_bundle / "artifacts/out.mir").is_file(),
               "runtime signature carries exit and preserved artifacts",
               json.dumps(drift_signature))
 

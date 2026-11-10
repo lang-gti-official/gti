@@ -17,15 +17,15 @@ from typing import Any
 
 # The same compiler invocation/resource contract as the existing typed audit.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from local_language_audit import INTERNAL_FAILURE_MARKERS, compile_command, resolve_tool
+from local_language_audit import INTERNAL_FAILURE_MARKERS, resolve_tool
 from debug.feature_interaction_model import (
     FACTORS, InteractionCase, admissible, coverage, covering_array, make_case,
     negative_controls,
 )
 
 
-CONFIGURATIONS = (("O0", "c++20"), ("O3", "c++20"),
-                  ("O0", "c++23"), ("O3", "c++23"))
+# (optimization, backend). Every case runs on the shipped LLVM backend.
+CONFIGURATIONS = (("O0", "llvm"), ("O3", "llvm"))
 VARIANTS = ("original", "renamed")
 
 
@@ -138,11 +138,12 @@ def probe(case: InteractionCase, gti: str, cxx: str, root: Path, *,
     source = root / f"{variant}.gti"
     source.write_text(case.emit(variant), encoding="utf-8")
     executable = root / ("program.exe" if sys.platform == "win32" else "program")
-    optimization, standard = configuration
-    command = compile_command(gti, cxx, source, executable, optimization, standard)
+    optimization, backend = configuration
+    command = [gti, str(source), f"-{optimization}", "--backend", backend,
+               "--cxx", cxx, "-o", str(executable)]
     # Developer evidence must retain the real backend reason/tool output,
     # rather than classifying every neutral backend summary as the same bug.
-    command.extend(["--keep-cpp", "--verbose"])
+    command.append("--verbose")
     records: list[Observation] = []
     built = execute(command, "build", timeout, root, records)
     signature = compiler_failure(built)
@@ -287,11 +288,9 @@ def triage_failure(case: InteractionCase, original: dict[str, Any], root: Path,
     records: list[Observation] = []
     execute([gti, "--version"], "version", timeout, root, records)
     phases: dict[str, Any] = {}
-    for stage, option, suffix in (("mir", "--emit-mir", ".mir"),
-                                  ("cpp", "--emit-cpp", ".cpp")):
+    for stage, option, suffix in (("mir", "--emit-mir", ".mir"),):
         artifact = root / ("program" + suffix)
-        command = [gti, str(source), f"-{configuration[0]}", "--std", configuration[1],
-                   option, "-o", str(artifact)]
+        command = [gti, str(source), f"-{configuration[0]}", option, "-o", str(artifact)]
         observed = execute(command, stage, timeout, root, records)
         signature = compiler_failure(observed)
         phases[stage] = {"accepted": signature is None and artifact.is_file(),
@@ -301,8 +300,6 @@ def triage_failure(case: InteractionCase, original: dict[str, Any], root: Path,
         boundary = "not-reproduced"
     elif not phases["mir"]["accepted"]:
         boundary = "before-verified-mir"
-    elif not phases["cpp"]["accepted"]:
-        boundary = "cpp-emission"
     elif original["signature"]["stage"] == "build":
         boundary = "native-build-or-driver"
     else:

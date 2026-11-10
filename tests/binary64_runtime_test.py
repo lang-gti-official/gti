@@ -4,7 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -43,9 +43,13 @@ def main() -> int:
                 sys.stderr.write(executed.stderr)
                 return 1
 
+        # The emitted-C++ binary64 policy probe belongs to the C++ profile only.
+        if not cpp_text_modes():
+            return 0
+        _label, cpp_flags, _native = cpp_text_modes()[0]
         emitted = root / "binary64.cpp"
         emission = run(
-            [str(compiler), str(source), "--emit-cpp", "-o", str(emitted)]
+            [str(compiler), str(source), *cpp_flags, "--emit-cpp", "-o", str(emitted)]
         )
         if emission.returncode != 0:
             sys.stderr.write(emission.stdout)

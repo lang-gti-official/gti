@@ -32,7 +32,7 @@ def main() -> int:
         print(f"retained failing matrix: {output}", file=sys.stderr)
         return 1
     report = json.loads((output / "run/report.json").read_text(encoding="utf-8"))
-    if (report["verified_cases"] != 3 or report["native_outcomes"] != 24
+    if (report["verified_cases"] != 3 or report["native_outcomes"] != 12
             or report["negative_controls"] != 2 or report["failures"]):
         raise RuntimeError(f"incomplete compiler matrix: {report}")
     # The full constrained coverage belongs to the opt-in campaign. Do not
@@ -41,7 +41,7 @@ def main() -> int:
         raise RuntimeError("smoke unexpectedly claimed complete pairwise coverage")
     import shutil
     shutil.rmtree(output)
-    print("feature interaction smoke: 24 native outcomes and two admission controls passed")
+    print("feature interaction smoke: 12 native outcomes and two admission controls passed")
     return 0
 
 

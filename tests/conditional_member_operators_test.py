@@ -73,7 +73,10 @@ int main() {
             assert run([str(binary)]).returncode == 0
             print(f"unused conditional operator: existing C++ behavior ({label}) passed", flush=True)
         supported = repository / "tests/fixtures/conditional_member_operators_cpp_supported.gti"
-        for backend in ("cpp", "llvm"):
+        # The C++ endpoints run only when the backend policy selects the C++
+        # backend (tests/backend_modes.py); LLVM always runs.
+        cpp_selected = bool(cpp_modes())
+        for backend in (("cpp", "llvm") if cpp_selected else ("llvm",)):
             for level in ("O0", "O3"):
                 binary = scratch / f"supported-{backend}-{level}"
                 built = run([str(compiler), str(supported), "--backend", backend,
@@ -85,7 +88,7 @@ int main() {
         sources = [repository / "tests/fixtures/conditional_member_operators.gti",
                    repository / "examples/190-conditional-member-operators.gti"]
         for source in sources:
-            for backend, level in (("llvm", "O0"), ("llvm", "O3"), ("cpp", "O2")):
+            for backend, level in (("llvm", "O0"), ("llvm", "O3"), *((("cpp", "O2"),) if cpp_selected else ())):
                 binary = scratch / f"{source.stem}-{backend}-{level}"
                 built = run([str(compiler), str(source), "--backend", backend, f"-{level}", "--progress", "never", "-o", str(binary)])
                 if backend == "cpp":

@@ -130,7 +130,7 @@ int main() {
         for name, source, expected in rejected:
             path = root / f"{name}.gti"
             path.write_text(source)
-            result = run([str(compiler), str(path), "--emit-cpp", "-o", str(root / f"{name}.cpp")])
+            result = run([str(compiler), str(path), "--emit-mir", "-o", str(root / f"{name}.mir")])
             if result.returncode == 0 or expected not in result.stderr or "GTI-B0001" in result.stderr:
                 raise AssertionError(f"{name}: {result.returncode}\n{result.stdout}{result.stderr}")
         for mode, flags, native in modes:

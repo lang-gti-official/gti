@@ -1,7 +1,6 @@
 #include "../src/compiler/llvm/dispatch.h"
 #include "../src/compiler/llvm/failure.h"
 #include "../src/compiler/llvm/lifetimes.h"
-#include "cpp_backend_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"
@@ -9,6 +8,7 @@
 #include "gti/mir_effects.h"
 #include "gti/process_memory_runtime.h"
 #include "gti/runtime_failure.h"
+#include "lowered_program_test_support.h"
 
 #include <algorithm>
 #include <chrono>

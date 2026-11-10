@@ -21,6 +21,9 @@ import time
 import resource
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from backend_modes import cpp_modes  # noqa: E402
+
 
 @contextmanager
 def measurement_window(root, args):
@@ -314,7 +317,9 @@ def main():
             declarations = DECLARATIONS.replace("COUNT", str(iterations)).replace(
                 "CHECKSUM", str(expected["checksum"])).replace("EFFECTS", str(expected["effects"]))
             path.write_text(declarations + source + "\n")
-            for backend, optimization in [("cpp", "3"), *(('llvm', str(i)) for i in range(4))]:
+            # The C++ comparator builds only when the backend policy selects it.
+            for backend, optimization in [*([("cpp", "3")] if cpp_modes() else []),
+                                          *(('llvm', str(i)) for i in range(4))]:
                 binary = output / f"{name}-{backend}-O{optimization}"
                 report_path = output / f"{name}-{backend}-O{optimization}-build.json"
                 native_options = ["--cxx", args.native_cxx] if args.native_cxx else []
@@ -348,11 +353,12 @@ def main():
             quiet()
             manifest["load_before"] = os.getloadavg()
             for name in selected:
-                samples = {"cpp": [], "llvm": []}
+                samples = {backend: [] for backend in (("cpp", "llvm") if cpp_modes() else ("llvm",))}
                 for backend in samples:
                     run([binaries[(name, backend, "3")]])
                 for index in range(args.samples):
-                    for backend in (("cpp", "llvm") if index % 2 == 0 else ("llvm", "cpp")):
+                    order = tuple(samples)
+                    for backend in (order if index % 2 == 0 else order[::-1]):
                         quiet()
                         result = run([binaries[(name, backend, "3")]])
                         assert not result.stderr and not result.stdout

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
 from case_jobs import configured_jobs, run_cases
 
 
@@ -45,8 +46,10 @@ def main() -> int:
 
         plan = [(f"{source.name}/llvm-{level}", (source, "llvm", level))
                 for source in sources for level in ("O0", "O1", "O3")]
-        plan += [(f"{source.name}/cpp-limitation", (source, "cpp", "O1"))
-                 for source in sources]
+        # The frozen C++ backend's declared limitation runs only in the C++ job.
+        if cpp_modes():
+            plan += [(f"{source.name}/cpp-limitation", (source, "cpp", "O1"))
+                     for source in sources]
         run_cases(plan, compile_case, configured_jobs(), execute_case)
 
         # Realistic literal length and field count exceed the old small budget.

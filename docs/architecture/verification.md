@@ -98,7 +98,8 @@ The affected source-module, driver, cache and LSP consumers, `compiler_pipeline`
 and native O0/O3 smoke remain focused acceptance obligations. Post-integration
 full validation proves the complete inventory on Linux x64 and the `darwin`
 set on macOS arm64 (what differs on the platform) before the change can
-reach nightly; the deprecated C++ backend is proven weekly at `c++23 -O3`.
+reach nightly. The frozen C++ backend is not part of validation; it is built
+and tested only by the hand-dispatched `cpp-backend.yml`.
 
 Runtime harnesses take their modes from `tests/backend_modes.py`
 (`native_modes()`: `llvm-O0` and `llvm-O3` under the default
@@ -9568,7 +9569,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
 | `unsafe_function_contract` / `unsafe_function_runtime` / `unsafe_function_lsp` | namespace-scope caller obligations, exact diagnostics and related spans, generic/overload retention, safe callable-erasure rejection, HIR/MIR/lowered mutations, ordinary MIR call and failure cleanup at O0/O1/O3 under C++20/C++23, and editor publication/clearing/hover without unsafe fix-its |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
-| `cpp_backend_library_boundary` | build-tree C++ backend archive and generated-source boundary |
+| `cpp_mir_backend_library_boundary` | build-tree C++ backend archive and generated-source boundary |
 | `cmake_test_ownership` | root CMake owns products/options/install rules while `tests/CMakeLists.txt` owns test executables and CTest registration |
 | `driver_pipeline` / `driver_library_boundary` | fail-closed target/runtime analysis configuration, requests, artifacts, resources, native tools, driver archive |
 | `project_model` | manifests, plans, profiles, targets, native inputs, path safety |

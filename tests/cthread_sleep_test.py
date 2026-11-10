@@ -10,7 +10,7 @@ import tempfile
 from sanitizer_support import thread_sanitizer_enabled
 
 from native_symbol_spelling import native_spelling
-from backend_modes import cpp_variant_mode, is_cpp_mode, keep_cpp, native_modes, optimization_level
+from backend_modes import cpp_modes, cpp_variant_mode, is_cpp_mode, keep_cpp, native_modes, optimization_level
 
 
 def run(command):
@@ -33,7 +33,9 @@ def main():
     root = pathlib.Path(__file__).resolve().parent.parent
     fixtures = root / "tests/fixtures"
     modes = native_modes()
-    if thread_sanitizer_enabled():
+    # The thread-sanitized variant instruments generated C++, so it runs only
+    # when the policy selects the C++ backend.
+    if thread_sanitizer_enabled() and cpp_modes():
         modes.append(cpp_variant_mode("tsan", native=["-fsanitize=thread", "-fno-omit-frame-pointer"]))
     with tempfile.TemporaryDirectory(prefix="gti-cthread-sleep-") as directory:
         output = pathlib.Path(directory)

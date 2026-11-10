@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from backend_execution import Endpoint, execute, plan_compile_command
+from backend_execution import Endpoint, execute, plan_compile_command, selected_endpoints
 from llvm_case_context import CaseContext
 from llvm_evidence_manifest import build_manifest, build_context_sidecar
 
@@ -321,7 +321,8 @@ class ScalarCase:
 
 
 def scalar_cases(root: Path) -> dict[str, ScalarCase]:
-    endpoints = (Endpoint('cpp', 'O3', 'c++23'), Endpoint('llvm', 'O0'), Endpoint('llvm', 'O3'))
+    endpoints = selected_endpoints((Endpoint('cpp', 'O3', 'c++23'), Endpoint('llvm', 'O0'),
+                                    Endpoint('llvm', 'O3')))
     cases = {}
 
     def add(name: str, text: str, expectation: dict) -> None:
@@ -456,7 +457,7 @@ def main() -> None:
                 if result.error or result.observable != (expected['exit_code'], expected['stdout'], expected['stderr']):
                     raise AssertionError(f'{name} {endpoint}: {result}')
                 results.append(result.observable)
-            assert results[0] == results[1] == results[2]
+            assert len(results) >= 2 and all(result == results[0] for result in results)
         for name, specification in failure_cases.items():
             if selection and selection != name:
                 continue
@@ -472,7 +473,7 @@ def main() -> None:
                 if result.error or result.returncode != expected['exit_code'] or expected['diagnostic'] not in result.stderr:
                     raise AssertionError(f'{name} {endpoint}: {result}')
                 results.append(result.observable)
-            if not results[0] == results[1] == results[2]:
+            if len(results) < 2 or any(result != results[0] for result in results):
                 raise AssertionError(f'{name}: source/failure attribution drift: {results}')
         for name, specification in rejection_cases.items():
             if selection and selection != name:

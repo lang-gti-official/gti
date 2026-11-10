@@ -1,11 +1,9 @@
-#include "gti/cpp_backend.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
-#include "native_symbol_spelling.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <array>
@@ -64,6 +62,17 @@ analyze(std::string_view name, std::string source,
   }
   return lang::Frontend(std::move(options))
       .analyze(std::string(name), std::move(source));
+}
+
+// The shipped native backend lowers and compiles the verified program.
+bool emitsNatively(const lang::FrontendResult &result,
+                   lang::OptimizationLevel level) {
+  std::string error;
+  const bool emitted =
+      gti_test::llvmEmits(result, level, lang::TargetInfo::host(), &error);
+  if (!emitted)
+    std::cerr << "LLVM emission: " << error << '\n';
+  return emitted;
 }
 
 const lang::ClassDecl *findClass(const lang::Program &program,
@@ -210,25 +219,9 @@ void testSemanticLayoutAndAbi() {
          "MIR verification should reject active-cleanup metadata forged onto "
          "a passive native record");
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(result.hir, lang::OptimizationLevel::O1);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(result, result.mir, result.mir, optimizations);
-  expect(
-      artifact.contents.find("static_assert(sizeof(Packet) == 32") !=
-              std::string::npos &&
-          artifact.contents.find("static_assert(alignof(Packet) == 8") !=
-              std::string::npos &&
-          artifact.contents.find("__builtin_offsetof(Packet, point) == 20") !=
-              std::string::npos &&
-          artifact.contents.find(
-              "::__gti_program::Packet " +
-              gti_test::nativeSpelling(artifact.contents, "packet_roundtrip") +
-              "(::__gti_program::Packet") != std::string::npos &&
-          artifact.contents.find("static_cast<std::uint64_t>(32)") !=
-              std::string::npos,
-      "the C++ backend should emit a passive record, C signatures, native "
-      "layout guards, and frontend-resolved query constants");
+  expect(emitsNatively(result, lang::OptimizationLevel::O1),
+         "the native backend should compile passive records, C signatures "
+         "and frontend-resolved query constants");
 }
 
 void testTargetMatrix() {
@@ -317,18 +310,9 @@ int main() {
          "and scale by every extent");
   expect(lang::verifyMirProgram(result.mir).valid(),
          "record-array field layout metadata should verify in MIR");
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(result.hir, lang::OptimizationLevel::O1);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(result, result.mir, result.mir, optimizations);
-  expect(artifact.contents.find("static_assert(sizeof(Board) == 80") !=
-                 std::string::npos &&
-             artifact.contents.find("__builtin_offsetof(Board, grid) == 48") !=
-                 std::string::npos &&
-             artifact.contents.find("grid[2][2];") != std::string::npos &&
-             artifact.contents.find("scratch[2];") != std::string::npos,
-         "the backend should emit direct C array declarators and audit the "
-         "frontend layout with native assertions");
+  expect(emitsNatively(result, lang::OptimizationLevel::O1),
+         "the native backend should compile record-array, void-pointer-array "
+         "and multi-extent record-array fields");
 
   const lang::FrontendResult bareVoid = analyze(
       "native-record-void-array.gti",
@@ -356,26 +340,40 @@ int main() {
     printDiagnostics(result);
     return;
   }
-  const auto optimizations =
-      lang::OptimizationPipeline().run(result.hir, lang::OptimizationLevel::O0);
-  const auto artifact =
-      gti_test::emitCpp(result, result.mir, result.mir, optimizations);
-  const auto &text = artifact.contents;
-  expect(
-      text.find("raw_address<const std::array<std::int32_t, 3>>") ==
-              std::string::npos &&
-          text.find(
-              "static_cast<void>(::gti_internal::backend::raw_address_of(&") !=
-              std::string::npos,
-      "unused native row addresses must evaluate without invented std::array "
-      "pointer storage");
-  expect(
-      text.find(" = ::gti_internal::backend::mir_checked_array_bound_v1(") !=
-              std::string::npos &&
-          text.find(" = ::gti_internal::backend::mir_checked_array_read_v1(") !=
-              std::string::npos,
-      "eliding unused address storage must retain prefix and terminal bounds "
-      "checks");
+  // The read keeps both array subscripts as checked Index projections of the
+  // record field: the row prefix and the terminal element.
+  std::size_t checkedReads = 0;
+  for (const auto &function : result.mir.functionInstances()) {
+    if (function.entryKind == lang::ProgramEntryKind::None)
+      continue;
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Load ||
+            instruction.operands.size() != 1)
+          continue;
+        const auto *place =
+            function.body.findPlace(instruction.operands.front().place);
+        if (place == nullptr || place->projections.size() != 3)
+          continue;
+        const auto &projections = place->projections;
+        checkedReads +=
+            projections[0].kind == lang::MirProjectionKind::Field &&
+                    projections[1].kind == lang::MirProjectionKind::Index &&
+                    projections[2].kind == lang::MirProjectionKind::Index &&
+                    place->type == lang::SemanticType::Int32
+                ? 1
+                : 0;
+      }
+    for (const auto &place : function.body.places)
+      for (const auto &projection : place.projections)
+        expect(projection.kind != lang::MirProjectionKind::RawIndex,
+               "native nested indexing never becomes unchecked raw indexing");
+  }
+  expect(checkedReads == 1,
+         "nested native array indexing must retain prefix and terminal "
+         "bounds-checked projections");
+  expect(emitsNatively(result, lang::OptimizationLevel::O0),
+         "the native backend should compile nested native array reads");
 }
 
 void expectNativeRecordFailure(std::string_view name, std::string source,
@@ -760,20 +758,9 @@ int main() {
          "an opaque native handle should retain one incomplete nominal "
          "identity without acquiring a record layout");
   if (valid.canGenerateCode()) {
-    const lang::OptimizationResult optimizations =
-        lang::OptimizationPipeline().run(valid.hir,
-                                         lang::OptimizationLevel::O1);
-    const lang::BackendArtifact cpp =
-        gti_test::emitCpp(valid, valid.mir, valid.mir, optimizations);
-    expect(cpp.contents.find("struct NativeEngine;") != std::string::npos &&
-               cpp.contents.find("struct NativeEngine {") ==
-                   std::string::npos &&
-               cpp.contents.find(
-                   "::NativeEngine* " +
-                   gti_test::nativeSpelling(cpp.contents, "engine_create")) !=
-                   std::string::npos,
-           "the C++ backend should preserve the opaque handle as an "
-           "incomplete type used only by pointer");
+    expect(emitsNatively(valid, lang::OptimizationLevel::O1),
+           "the native backend should compile an opaque handle used only by "
+           "pointer");
   }
 
   expectOpaqueHandleFailure(

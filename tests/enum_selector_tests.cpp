@@ -1,5 +1,9 @@
-#include "../src/compiler/cpp_representation.h"
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "gti/lowered_program.h"
+#include "llvm_backend_test_support.h"
+#include "lowered_program_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
 
 namespace lang {
 struct LoweredProgramTestAccess {
@@ -23,10 +27,12 @@ int main() {
     return 1;
   const auto lowered =
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
-  const auto text = lang::CppBackend().generate(lowered).contents;
-  expect(text.find("__gti_enum_selector_") != std::string::npos &&
-             text.find("void state;") == std::string::npos,
-         "dependent fields select concrete enums without void placeholders");
+  expect(lang::verifyLoweredProgram(lowered).empty(),
+         "enum selector composition produces a verified lowered program");
+  std::string error;
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &error),
+         "dependent fields select concrete enums natively: " + error);
   std::size_t checked = 0;
   for (const auto &row : lowered.declarations()) {
     const auto *enumeration =
@@ -49,28 +55,7 @@ int main() {
       expect(!lang::verifyLoweredProgram(malformed).empty(),
              "enum selector rejects missing binder, wrong argument kind and "
              "missing name");
-      bool rejected = false;
-      try {
-        static_cast<void>(lang::CppBackend().generate(malformed));
-      } catch (const std::logic_error &) {
-        rejected = true;
-      }
-      expect(
-          rejected,
-          "native emission independently rejects malformed selector metadata");
     }
-    auto missing = enumeration->type;
-    missing.valueArguments.push_back(lang::CompileTimeValue::uint64(12345));
-    bool rejected = false;
-    try {
-      static_cast<void>(lang::cppSemanticTypeSpelling(
-          lowered, lang::CppStandard::Cpp23, missing));
-    } catch (const std::logic_error &) {
-      rejected = true;
-    }
-    expect(
-        rejected,
-        "a missing concrete enum cannot acquire a dependent selector fallback");
   }
   expect(checked >= 8, "selector proof covers distinct families and "
                        "type/value/pack applications");
@@ -81,24 +66,17 @@ int main() {
       analyzeWithStandardLibrary(exactPath.string(), exactSource);
   expect(exact.canGenerateCode(), "exact native aliases remain valid GTI");
   if (exact.canGenerateCode()) {
-    const auto exactText = gti_test::emitCppText(exact);
-    // The prelude's generic expected<T, E> template selects its state enum
-    // dependently, so only the fixture's own enum families must stay exact.
+    expect(lang::verifyMirProgram(exact.mir).valid(),
+           "exact native aliases produce verified MIR");
     std::size_t fixtureEnums = 0;
-    for (const auto &enumeration : exact.hir.enumDeclarations()) {
-      if (enumeration.sourceUnit != exact.sourceGraph.entryUnit())
-        continue;
-      ++fixtureEnums;
-      expect(exactText.find("__gti_enum_selector_" +
-                            std::to_string(enumeration.declaration) + "<") ==
-                     std::string::npos &&
-                 exactText.find("__gti_enum_selector_" +
-                                std::to_string(enumeration.declaration) +
-                                ";") == std::string::npos,
-             "exact-only native aliases never demand a dependent selector "
-             "catalog");
-    }
+    for (const auto &enumeration : exact.hir.enumDeclarations())
+      if (enumeration.sourceUnit == exact.sourceGraph.entryUnit())
+        ++fixtureEnums;
     expect(fixtureEnums != 0, "exact alias fixture declares its own enum");
+    std::string exactError;
+    expect(gti_test::llvmEmits(exact, lang::OptimizationLevel::O0,
+                               lang::TargetInfo::host(), &exactError),
+           "exact-only native aliases reach native emission: " + exactError);
   }
   return failures ? 1 : 0;
 }

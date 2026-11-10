@@ -1,16 +1,13 @@
 name: C++ backend
 
-# The deprecated, frozen C++ backend is proven on its own schedule, under one
-# profile (c++23 at -O3, the shipped default's standard at the production
-# level), the way rustc tests its non-primary codegen backends: never per
-# change, never as a per-feature differential against the primary backend.
-# This job runs every runtime harness with GTI_TEST_BACKENDS=cpp, the
-# C++-only CTest entries (the emitter's generated-text corpora and census),
-# and the emitter under ASan/UBSan. A failure here opens the `cpp-backend`
-# issue; it never blocks the merge queue, full validation or a channel.
+# The C++ backend is frozen and separated from default builds, tests and CI
+# (docs/decisions/031-native-llvm-backend-foundation.md). It is built only with
+# the GTI_ENABLE_CPP_BACKEND CMake option. This workflow is the one place that still
+# builds and tests it, and only when dispatched by hand: it never runs on a
+# schedule, never gates a change, never opens an issue and never blocks a
+# channel. It runs every runtime harness with GTI_TEST_BACKENDS=cpp, the
+# C++-only CTest entries, and the emitter under ASan/UBSan.
 on:
-  schedule:
-    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -30,11 +27,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Require a main head
+      # Dispatched by hand on main or on the branch of a C++ backend fix.
+      - name: Select the full C++ run
         id: plan
-        run: |
-          [[ "${GITHUB_REF}" == "refs/heads/main" ]] || exit 1
-          echo 'mode=full' >> "${GITHUB_OUTPUT}"
+        run: echo 'mode=full' >> "${GITHUB_OUTPUT}"
 
   suite:
     name: C++ backend suite (${{ matrix.index }}/${{ matrix.shards }})
@@ -89,6 +85,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DGTI_RELEASE_BUILD=ON
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_ENABLE_CPP_BACKEND=ON
           -DGTI_TEST_BACKENDS=cpp
           -DGTI_TEST_TIMEOUT_SCALE=3
       - name: Run this shard of the C++ backend suite
@@ -163,6 +160,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DGTI_BUILD_LSP=OFF
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_ENABLE_CPP_BACKEND=ON
           -DGTI_TEST_BACKENDS=cpp
           -DGTI_TEST_TIMEOUT_SCALE=6
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
@@ -233,24 +231,3 @@ jobs:
           print("C++ backend:", "passed" if not failed else "failed: " + ", ".join(failed))
           sys.exit(1 if failed else 0)
           PY
-
-  report:
-    name: Report C++ backend status
-    if: always() && github.event_name == 'schedule' && needs.verdict.result != 'cancelled'
-    needs: [verdict]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Open, update or close the cpp-backend issue
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GTI_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          GTI_SHA: ${{ github.sha }}
-          GTI_STATUS: ${{ needs.verdict.result == 'success' && 'passed' || 'failed' }}
-        run: >-
-          python3 scripts/full_validation_report.py --run-url "${GTI_RUN_URL}"
-          --sha "${GTI_SHA}" --status "${GTI_STATUS}" --label cpp-backend
-          --title "The scheduled C++ backend run is failing"

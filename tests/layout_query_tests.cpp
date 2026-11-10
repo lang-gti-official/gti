@@ -1,13 +1,11 @@
 #include "gti/ast_printer.h"
-#include "gti/cpp_backend.h"
-#include "gti/cpp_emitter.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/lexer.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <array>
@@ -25,18 +23,6 @@
 #include <vector>
 
 namespace {
-
-static_assert(!std::is_default_constructible_v<lang::CppEmitter>);
-static_assert(
-    !std::is_constructible_v<lang::CppEmitter, const lang::SemanticModel &,
-                             const lang::HirProgram &>);
-static_assert(!std::is_constructible_v<lang::CppEmitter, lang::SemanticModel &&,
-                                       const lang::HirProgram &>);
-static_assert(
-    !std::is_constructible_v<lang::CppEmitter, const lang::SemanticModel &,
-                             lang::HirProgram &&>);
-static_assert(!std::is_constructible_v<lang::CppEmitter, lang::SemanticModel &&,
-                                       lang::HirProgram &&>);
 
 int failures = 0;
 
@@ -618,15 +604,12 @@ void testNativeLayoutAdmission() {
            "erased native layout uses retain the backend admission fact");
     if (!result.canGenerateCode())
       continue;
-    bool rejected = false;
-    try {
-      (void)gti_test::emitCpp(result);
-    } catch (const lang::BackendUnsupportedError &error) {
-      rejected =
-          std::string_view(error.what()).find("general sizeof/alignof") !=
-          std::string_view::npos;
-    }
-    expect(rejected, "C++ rejects native layout constants after erasure");
+    std::string error;
+    expect(gti_test::llvmEmits(result, lang::OptimizationLevel::O0,
+                               lang::TargetInfo::host(), &error),
+           "the native-layout backend accepts layout constants after "
+           "erasure: " +
+               error);
   }
   const auto scalar = analyze("scalar-generic-layout.gti", R"(
 constexpr uint64_t bytes<T>() { return sizeof(T); }
@@ -636,7 +619,8 @@ int main() { return 0; }
   expect(scalar.canGenerateCode() && !scalar.mir.requiresNativeObjectLayout(),
          "a scalar generic query does not require native aggregate layout");
   if (scalar.canGenerateCode())
-    (void)gti_test::emitCpp(scalar);
+    expect(gti_test::llvmEmits(scalar),
+           "a scalar generic layout query reaches native emission");
 }
 
 void testLayoutGraph() {
@@ -731,32 +715,51 @@ void testHirMirAndBackend() {
                      }),
          "constant folding should consume retained layout-query constants");
 
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(result, result.mir, result.mir, optimizations);
-  // The body emits from verified MIR: layout results stage as the
-  // frontend-computed literals, and the emitted body region carries no
-  // native layout query at all (the sealed helpers above it may).
-  const std::size_t layoutBodyStart =
-      artifact.contents.find("function-instance");
-  const std::string_view layoutBody =
-      layoutBodyStart == std::string::npos
-          ? std::string_view()
-          : std::string_view(artifact.contents).substr(layoutBodyStart);
-  const auto stagedLiteral = [&](std::uint64_t expected) {
-    return layoutBody.find(">(" + std::to_string(expected) + ")") !=
-           std::string_view::npos;
-  };
-  expect(!layoutBody.empty() && stagedLiteral(1) && stagedLiteral(24) &&
-             stagedLiteral(8) &&
-             layoutBody.find("sizeof") == std::string_view::npos &&
-             layoutBody.find("alignof") == std::string_view::npos,
+  // Backends consume frontend-computed numeric constants: every layout query
+  // reaches the verified lowered program as a uint64 literal of its exact HIR
+  // value, never as a native layout operation.
+  const lang::LoweredProgram lowered =
+      gti_test::lowerProgram(result, result.mir, result.mir);
+  const lang::MirFunctionInstance *loweredMain =
+      lowered.mir().findFunctionInstance(main->id);
+  std::unordered_map<lang::HirValueId, std::uint64_t> hirMagnitudes;
+  for (const lang::HirValue &value : main->body.values) {
+    const auto *integer =
+        value.kind != lang::HirValueKind::LayoutQuery || !value.constant
+            ? nullptr
+            : std::get_if<lang::ConstantInteger>(&*value.constant);
+    if (integer != nullptr)
+      hirMagnitudes.emplace(value.id, integer->magnitude);
+  }
+  std::unordered_set<std::uint64_t> stagedLiterals;
+  std::unordered_set<lang::HirValueId> staged;
+  bool exactLiterals = loweredMain != nullptr;
+  if (loweredMain != nullptr) {
+    for (const lang::MirBlock &block : loweredMain->body.blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        const auto found = hirMagnitudes.find(instruction.hirValue);
+        if (found == hirMagnitudes.end() ||
+            instruction.operation != lang::MirOperation::Literal)
+          continue;
+        const auto *literal =
+            instruction.literal
+                ? std::get_if<std::uint64_t>(&*instruction.literal)
+                : nullptr;
+        exactLiterals =
+            exactLiterals && literal != nullptr && *literal == found->second;
+        if (literal != nullptr)
+          stagedLiterals.insert(*literal);
+        staged.insert(instruction.hirValue);
+      }
+    }
+  }
+  exactLiterals = exactLiterals && staged.size() == hirMagnitudes.size() &&
+                  hirMagnitudes.size() == layoutValues.size();
+  expect(exactLiterals && stagedLiterals.contains(1) &&
+             stagedLiterals.contains(24) && stagedLiterals.contains(8) &&
+             gti_test::llvmEmits(result),
          "the backend should emit frontend-computed numeric constants, not "
          "native C++ layout queries for source expressions");
-
-  expect(!std::is_constructible_v<lang::CppEmitter, const lang::SemanticModel &,
-                                  const lang::HirProgram &>,
-         "only CppBackend should construct the emitter, with verified MIR and "
-         "its copied representation rows");
 }
 
 void testConstexprControlFlow() {

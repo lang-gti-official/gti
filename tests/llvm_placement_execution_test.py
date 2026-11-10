@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from backend_modes import cpp_modes
 
 
 PINNED = r'''
@@ -362,8 +363,12 @@ def main():
     if selected and selected not in cases and selected not in REJECT and selected not in FAILURES:
         raise ValueError(f"unknown placement case: {selected}")
     env = {**os.environ, "NO_COLOR": "1"}
-    endpoints = (Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
-                 *(Endpoint("llvm", mode) for mode in ("O0", "O1", "O2", "O3")))
+    # The C++ comparator endpoints run only when GTI_TEST_BACKENDS selects
+    # the C++ backend; each case asserts its exact observable on every endpoint.
+    cpp_endpoints = ((Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"))
+                     if cpp_modes() else ())
+    llvm_endpoints = tuple(Endpoint("llvm", mode) for mode in ("O0", "O1", "O2", "O3"))
+    endpoints = (*cpp_endpoints, *llvm_endpoints)
     with tempfile.TemporaryDirectory(prefix="gti-llvm-placement-") as directory:
         work = Path(directory)
         for name, text in cases.items():
@@ -374,11 +379,12 @@ def main():
             source.write_text((root / "examples/llvm/immovable-placement.gti").read_text()
                               if text is None else 'import std.panic;\n' + prelude + text,
                               encoding="utf-8")
-            for endpoint in endpoints[2:] if name in COMPARATOR_GAPS else endpoints:
+            for endpoint in llvm_endpoints if name in COMPARATOR_GAPS else endpoints:
                 result = execute(gti, root, work / f"{name}-{endpoint}", source, endpoint, env)
                 if result.error or result.observable != (0, "", ""):
                     raise AssertionError(f"{name} {endpoint}: {result}")
-            comparators = "LLVM O0-O3 (recorded C++ comparator gap)" if name in COMPARATOR_GAPS else "C++20/23 and LLVM O0-O3"
+            comparators = ("LLVM O0-O3 (recorded C++ comparator gap)" if name in COMPARATOR_GAPS
+                           else "C++20/23 and LLVM O0-O3" if cpp_endpoints else "LLVM O0-O3")
             print(f"{name}: final addresses/cleanup {comparators} passed", flush=True)
         for name, text in FAILURES.items():
             if selected and selected != name:
@@ -402,7 +408,7 @@ def main():
                 continue
             source = work / f"{name}.gti"
             source.write_text('import std.panic;\n' + PINNED + text, encoding="utf-8")
-            for backend in ("cpp", "llvm"):
+            for backend in (*(("cpp",) if cpp_endpoints else ()), "llvm"):
                 output = work / f"reject-{name}-{backend}"
                 output.write_text("preserved", encoding="utf-8")
                 result = subprocess.run([str(gti), str(source), "--backend", backend,

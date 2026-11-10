@@ -392,11 +392,10 @@ void printUsage(std::ostream &stream) {
          "debug symbols.\n"
          "      --no-debug-info  Disable source-level debug info.\n"
          "      --cxx <path>     Select the native compiler.\n"
-         "      --backend <name> Select llvm or cpp. The default is llvm on "
-         "arm64 macOS and x86_64 Linux and cpp on other targets; --std and "
-         "--keep-cpp select "
-         "cpp. The LLVM backend has partial language support; unsupported "
-         "features report GTI-B0003.\n"
+         "      --backend <name> Select llvm (the default) or cpp. The frozen "
+         "cpp backend exists only in toolchains built with it; --std and "
+         "--keep-cpp select it. The LLVM backend has partial language "
+         "support; unsupported features report GTI-B0003.\n"
          "      --std <version>  Select c++20 or c++23 (default: c++23).\n"
          "      --execution-profile <name>\n"
          "                       Select single-threaded (default) or "
@@ -2586,6 +2585,11 @@ int runDirect(const Options &options, const char *driver) {
       lang::driver::RuntimeProfile::Hosted, options.configurationFlags);
   const lang::TargetInfo &target = configuration.target();
 
+  if (options.emitCpp && !lang::driver::cppBackendAvailable()) {
+    std::cerr << "gti: --emit-cpp: "
+              << lang::driver::cppBackendUnavailableMessage() << '\n';
+    return exitCode(ExitStatus::Usage);
+  }
   // Keep emit-only direct invocations silent by default for existing tooling.
   // Explicit --progress also enables observation for these modes.
   lang::cli::BuildProgress progress(
@@ -2657,6 +2661,15 @@ int runDirect(const Options &options, const char *driver) {
       : options.keepCpp || options.standardSelected
           ? lang::BackendKind::Cpp
           : lang::defaultBackend(target);
+  if (backend == lang::BackendKind::Cpp &&
+      !lang::driver::cppBackendAvailable()) {
+    std::cerr << "gti: "
+              << (options.backendSelected ? "--backend cpp"
+                  : options.keepCpp       ? "--keep-cpp"
+                                          : "--std")
+              << ": " << lang::driver::cppBackendUnavailableMessage() << '\n';
+    return exitCode(ExitStatus::Usage);
+  }
   const std::filesystem::path generatedSource =
       options.keepCpp
           ? std::filesystem::path(options.output.string() + ".gti.cpp")

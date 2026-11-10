@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 
+from backend_modes import cpp_modes
 from llvm_evidence_manifest import build_manifest
 
 SOURCE_PATHS = {name: f"tests/fixtures/llvm_native_c_abi/{name}.gti" for name in
@@ -108,8 +109,10 @@ def main():
         for name, source in SOURCE_PATHS.items():
             expected = 70 if name == "native_callback_failure" else 86 if name == "native_callback_exception" else 0
             obj = host if name == "native_callbacks" else terminal
+            # The C++ controls run only when GTI_TEST_BACKENDS selects C++.
             for backend, standard, level in [*(('llvm', 'c++20', n) for n in range(4)),
-                                             ('cpp', 'c++20', 3), ('cpp', 'c++23', 3)]:
+                                             *([('cpp', 'c++20', 3), ('cpp', 'c++23', 3)]
+                                               if cpp_modes() else [])]:
                 tag = f"{name}-{backend}-{standard}-O{level}-c{host_level}"
                 binary = output / tag
                 standard_args = ["--std", standard] if backend == "cpp" else []
@@ -123,7 +126,7 @@ def main():
     negatives = 0
     for name, code in (("reject_native_callback_lambda", b"GTI-S2003"),
                        ("reject_native_callback_bodyless", b"GTI-S2076")):
-        for backend in ("llvm", "cpp"):
+        for backend in ("llvm", *(("cpp",) if cpp_modes() else ())):
             for level in (0, 3):
                 binary = output / f"{name}-{backend}-O{level}"
                 sentinel = b"retained callback artifact\n"

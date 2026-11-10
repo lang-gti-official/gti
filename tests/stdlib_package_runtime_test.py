@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
 from sanitizer_support import scaled_timeout
 
 
@@ -18,7 +19,8 @@ def main():
                        GTI_RUNTIME_INCLUDE=str(repository / "runtime/include"))
     expected = "acc worked\nnumeric tests passed\nfoundation tests passed\n"
     with tempfile.TemporaryDirectory(prefix="gti-stdlib-package-") as directory:
-        for backend in ("llvm", "cpp"):
+        # The C++ backend runs only when GTI_TEST_BACKENDS selects it.
+        for backend in ("llvm", *(("cpp",) if cpp_modes() else ())):
             for profile in ("dev", "release"):
                 package = Path(directory) / f"{backend}-{profile}"
                 shutil.copytree(repository / "stdlib/tests", package,

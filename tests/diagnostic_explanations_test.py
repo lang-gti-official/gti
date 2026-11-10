@@ -27,7 +27,7 @@ int main() {
             path.write_bytes(text)
         else:
             path.write_text(text)
-        result = subprocess.run([compiler, str(path), "--emit-cpp", f"--color={color}"],
+        result = subprocess.run([compiler, str(path), "--emit-mir", f"--color={color}"],
                                 cwd=root, text=True,
                                 capture_output=True, timeout=30)
         assert result.returncode == 65, result

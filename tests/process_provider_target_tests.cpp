@@ -1,8 +1,8 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 #include "gti/process_memory_runtime.h"
+#include "lowered_program_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -149,17 +149,40 @@ void testTarget(std::string_view os) {
   if (!result.canGenerateCode()) {
     return;
   }
-  const auto text =
-      gti_test::emitCppText(result, lang::CppStandard::Cpp23, options.target);
   const bool windows = os == "windows";
-  const auto selected =
+  const std::string_view selected =
       windows ? "gti_rt_aligned_malloc_v1" : "gti_rt_posix_memalign_v1";
-  const auto absent =
+  const std::string_view absent =
       windows ? "gti_rt_posix_memalign_v1" : "gti_rt_aligned_malloc_v1";
-  expect(text.find(selected) != std::string::npos &&
-             text.find(absent) == std::string::npos &&
-             text.find("gti_rt_memory_allocate_v1") == std::string::npos,
+  // The target's provider is the runtime declaration the program actually
+  // calls; the other family and the generic allocator are not declared.
+  bool selectedCalled = false;
+  bool otherDeclared = false;
+  for (const auto &function : result.mir.functionInstances()) {
+    otherDeclared |= function.externalSymbol == absent ||
+                     function.externalSymbol == "gti_rt_memory_allocate_v1";
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        const auto *callee =
+            instruction.functionTarget
+                ? result.mir.findFunctionInstance(*instruction.functionTarget)
+                : nullptr;
+        selectedCalled |=
+            callee != nullptr && callee->externalSymbol == selected;
+      }
+  }
+  expect(selectedCalled && !otherDeclared,
          "target selects its source provider");
+  bool providerLowered = true;
+  try {
+    (void)gti_test::lowerOptimizedProgram(result, lang::OptimizationLevel::O0,
+                                          options.target);
+  } catch (const std::exception &error) {
+    std::cerr << error.what() << '\n';
+    providerLowered = false;
+  }
+  expect(providerLowered,
+         "the target's provider forms a verified lowered program");
 
   // Semantics, HIR and MIR agree on the exact trusted declarations.
   std::set<Operation> expected{Operation::NativeSizeMax,

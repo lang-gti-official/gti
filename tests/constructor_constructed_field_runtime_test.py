@@ -14,7 +14,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -66,62 +66,63 @@ def main() -> int:
             ):
                 return fail(f"run {mode}", executed)
 
-        generated_path = root / "constructed-field.cpp"
-        emitted = run(
-            [
-                str(compiler),
-                str(fixture),
-                "-O0",
-                "--std",
-                "c++23",
-                "--emit-cpp",
-                "-o",
-                str(generated_path),
-            ]
-        )
-        if emitted.returncode != 0:
-            return fail("emit C++23/O0", emitted)
+        # Emitted C++ text is evidence for the C++ profile only (backend_modes).
+        for _label, cpp_flags, _native in cpp_text_modes():
+            generated_path = root / "constructed-field.cpp"
+            emitted = run(
+                [
+                    str(compiler),
+                    str(fixture),
+                    "-O0",
+                    *cpp_flags,
+                    "--emit-cpp",
+                    "-o",
+                    str(generated_path),
+                ]
+            )
+            if emitted.returncode != 0:
+                return fail("emit C++23/O0", emitted)
 
-        generated = generated_path.read_text(encoding="utf8")
-        # The three-field constructor must spell one prvalue per field in the
-        # native member-initializer list, in declaration order.
-        trio = re.search(
-            r"Trio::Trio\([^\n]*?\)\s*:\s*"
-            r"left\(::__gti_program::Probe\(__gti_mir_arg_0\)\), "
-            r"middle\(::__gti_program::Probe\(__gti_mir_arg_1\)\), "
-            r"right\(::__gti_program::Probe\(__gti_mir_arg_2\)\)",
-            generated,
-        )
-        if trio is None:
-            sys.stderr.write(
-                "generated C++ lost the native member-initializer spelling for "
-                "constructed class fields\n"
+            generated = generated_path.read_text(encoding="utf8")
+            # The three-field constructor must spell one prvalue per field in the
+            # native member-initializer list, in declaration order.
+            trio = re.search(
+                r"Trio::Trio\([^\n]*?\)\s*:\s*"
+                r"left\(::__gti_program::Probe\(__gti_mir_arg_0\)\), "
+                r"middle\(::__gti_program::Probe\(__gti_mir_arg_1\)\), "
+                r"right\(::__gti_program::Probe\(__gti_mir_arg_2\)\)",
+                generated,
             )
-            return 1
-        # A mixed schedule keeps the scalar parameter copy beside the
-        # constructed field, still in declaration order.
-        tagged = re.search(
-            r"Tagged::Tagged\([^\n]*?\)\s*:\s*"
-            r"name\(__gti_mir_arg_0\), "
-            r"held\(::__gti_program::Probe\(__gti_mir_arg_1\)\)",
-            generated,
-        )
-        if tagged is None:
-            sys.stderr.write(
-                "generated C++ lost the mixed scalar/constructed-field "
-                "member-initializer spelling\n"
-            )
-            return 1
-        # No body assignment may remain: assigning a class field would need a
-        # second object and an invented move.
-        for field in ("left", "middle", "right", "held"):
-            if f"(*this).{field} = " in generated:
+            if trio is None:
                 sys.stderr.write(
-                    f"generated C++ assigns field '{field}' in the constructor "
-                    "body instead of publishing it in the member-initializer "
-                    "list\n"
+                    "generated C++ lost the native member-initializer spelling for "
+                    "constructed class fields\n"
                 )
                 return 1
+            # A mixed schedule keeps the scalar parameter copy beside the
+            # constructed field, still in declaration order.
+            tagged = re.search(
+                r"Tagged::Tagged\([^\n]*?\)\s*:\s*"
+                r"name\(__gti_mir_arg_0\), "
+                r"held\(::__gti_program::Probe\(__gti_mir_arg_1\)\)",
+                generated,
+            )
+            if tagged is None:
+                sys.stderr.write(
+                    "generated C++ lost the mixed scalar/constructed-field "
+                    "member-initializer spelling\n"
+                )
+                return 1
+            # No body assignment may remain: assigning a class field would need a
+            # second object and an invented move.
+            for field in ("left", "middle", "right", "held"):
+                if f"(*this).{field} = " in generated:
+                    sys.stderr.write(
+                        f"generated C++ assigns field '{field}' in the constructor "
+                        "body instead of publishing it in the member-initializer "
+                        "list\n"
+                    )
+                    return 1
 
     return 0
 

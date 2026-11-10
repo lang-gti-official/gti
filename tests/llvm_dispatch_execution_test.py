@@ -33,13 +33,22 @@ import tempfile
 import time
 
 from backend_execution import Endpoint, execute
+from backend_modes import cpp_modes
 from llvm_case_context import CaseContext
 from llvm_evidence_manifest import build_context_sidecar, build_manifest
 
 
-ENDPOINTS = (
+# The C++ comparators. The default correctness gate runs them only when the
+# backend policy selects the C++ backend (tests/backend_modes.py); every
+# case's LLVM observables are checked against its own independent expectation.
+CPP_COMPARATORS = (
     Endpoint("cpp", "O3", "c++20"),
     Endpoint("cpp", "O3", "c++23"),
+)
+CPP_ENDPOINTS = CPP_COMPARATORS if cpp_modes() else ()
+
+ENDPOINTS = (
+    *CPP_ENDPOINTS,
     Endpoint("llvm", "O0"),
     Endpoint("llvm", "O3"),
 )
@@ -87,9 +96,10 @@ SUCCESS_FILES = {
 # Sources that start threads compile under the concurrent execution profile.
 CONCURRENT_CASES = frozenset({"thread-local-hierarchy-storage"})
 
+LLVM_TRANSFER_ENDPOINTS = tuple(Endpoint("llvm", level) for level in ("O0", "O1", "O2", "O3"))
 TRANSFER_ENDPOINTS = (
-    *ENDPOINTS[:2],
-    *(Endpoint("llvm", level) for level in ("O0", "O1", "O2", "O3")),
+    *CPP_ENDPOINTS,
+    *LLVM_TRANSFER_ENDPOINTS,
 )
 
 CPP_LIMITATIONS = {
@@ -1111,7 +1121,8 @@ def execute_case(gti: Path, root: Path, work: Path, name: str,
         print(f"{name}: native {levels} passed its independent expectation; C++ divergence pinned", flush=True)
     else:
         outcome = f"normal exit {expected_exit}" if failure_needle is None else "source-attributed failure exit 70"
-        print(f"{name}: C++20/23 O3 and native {levels} passed ({outcome})", flush=True)
+        comparators = "C++20/23 O3 and " if any(endpoint.backend == "cpp" for endpoint in endpoints) else ""
+        print(f"{name}: {comparators}native {levels} passed ({outcome})", flush=True)
 
 
 def reject_case(gti: Path, root: Path, work: Path, name: str,
@@ -1145,7 +1156,8 @@ def reject_case(gti: Path, root: Path, work: Path, name: str,
 # This opt-in path deliberately shares the source/execution harness, not the
 # default correctness gate. Preparation never authorizes runtime sampling.
 MEASURE_SCHEMA = 1
-MEASURE_ENDPOINTS = (Endpoint("llvm", "O3"), *ENDPOINTS[:2])
+# The opt-in measurement keeps its required C++ source comparators.
+MEASURE_ENDPOINTS = (Endpoint("llvm", "O3"), *CPP_COMPARATORS)
 MEASURE_VARIANTS = ("direct", "dynamic", "startup", "control")
 MEASURE_ENVIRONMENT = (
     "PATH", "GTI_CXX", "CXX", "CC", "GTI_RUNTIME_LIBRARY", "GTI_RUNTIME_INCLUDE",
@@ -1896,7 +1908,7 @@ int main(int argc, std::vector<std::string> argv) {
         add(owned_base_wrong_cleanup(name),
             OWNED_BASE_FAILURE_PRELUDE.replace("EXPECTED_TRACE", trace + "0") + body,
             "wrong-cleanup-trace", expected_exit=70, failure_needle=needle,
-            endpoints=TRANSFER_ENDPOINTS[2:])
+            endpoints=LLVM_TRANSFER_ENDPOINTS)
     source = (root / SUCCESS_FILES["static-dispatch"]).read_text(encoding="utf-8")
     nested = (root / SUCCESS_FILES["nested-hierarchy-transfer"]).read_text(encoding="utf-8")
     nested_failure = nested.replace("// NESTED_TRANSFER_MAIN", """
@@ -1963,7 +1975,7 @@ int main() {
         endpoints=TRANSFER_ENDPOINTS, cpp_limitation=CPP_LIMITATIONS["owner-failure-before-reference"])
     add("owner-reference-wrong-cleanup", owner_failure.replace("events != 1234", "events != 1235"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle="return 120 / divisor;",
-        endpoints=TRANSFER_ENDPOINTS[2:])
+        endpoints=LLVM_TRANSFER_ENDPOINTS)
     if source.count(ALIAS_ANCHOR) != 1:
         raise AssertionError("borrowed-view anchor is not unique")
     add("borrowed-dispatch", source.replace(ALIAS_ANCHOR, ALIAS_ANCHOR + '\n    {\n      Reader& view = value;\n      if (view.read(1) != 11) { return 6; }\n      if (via_reader(view, 2) != 12) { return 7; }\n      Reader& second = view;\n      if (via_reader(second, 3) != 13) { return 8; }\n    }\n    {\n      mut Root& root_view = value;\n      if (root_view.base_value() != 7) { return 9; }\n      root_view.set_base(9);\n      if (root_view.base_value() != 9) { return 10; }\n      root_view.set_base(7);\n    }\n    {\n      mut Writer& view = value;\n      via_writer(view, 23);\n    }\n    if (!via_truth(value, true)) { return 11; }\n'))
@@ -2014,7 +2026,7 @@ int main() {
         cases["inline-field-constructor-rollback"].source_text.replace(
             "expected_cleanup = 1231221321;", "expected_cleanup = 1231221322;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle="quotient(12 / divisor)",
-        endpoints=TRANSFER_ENDPOINTS[2:])
+        endpoints=LLVM_TRANSFER_ENDPOINTS)
     anchor = "mut int expected_cleanup = 1234321;"
     if lifecycle.count(anchor) != 1:
         raise AssertionError("cleanup oracle mutation anchor is not unique")
@@ -2249,7 +2261,7 @@ int main() {
     # program checks its own results and destructor IDs, so native O0-O3 need
     # no C++ comparator.
     add("hierarchy-captures", captures, origin=captures_origin,
-        endpoints=TRANSFER_ENDPOINTS[2:])
+        endpoints=LLVM_TRANSFER_ENDPOINTS)
     # A failure inside the closure ends both captures once, in reverse
     # declaration order, while unwinding.
     capture_failure = captures.split(captures_marker, 1)[0] + """int main() {
@@ -2260,11 +2272,11 @@ int main() {
 """
     capture_needle = "int read(int divisor) override { return this.scale * 12 / divisor; }"
     add("hierarchy-capture-failure", capture_failure, "defined-failure",
-        expected_exit=70, failure_needle=capture_needle, endpoints=TRANSFER_ENDPOINTS[2:])
+        expected_exit=70, failure_needle=capture_needle, endpoints=LLVM_TRANSFER_ENDPOINTS)
     add("hierarchy-capture-wrong-cleanup",
         capture_failure.replace("expected_cleanup = 21;", "expected_cleanup = 12;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=capture_needle,
-        endpoints=TRANSFER_ENDPOINTS[2:])
+        endpoints=LLVM_TRANSFER_ENDPOINTS)
     transfers_origin = "tests/fixtures/llvm_dispatch_closure_transfers.gti"
     transfers = (root / transfers_origin).read_text(encoding="utf-8")
     transfers_marker = "// TRANSFERS_MAIN\n"
@@ -2273,7 +2285,7 @@ int main() {
     # The C++ backend does not represent these copies and moves either; each
     # program checks its own results and destructor IDs.
     add("closure-transfers", transfers, origin=transfers_origin,
-        endpoints=TRANSFER_ENDPOINTS[2:])
+        endpoints=LLVM_TRANSFER_ENDPOINTS)
     # A failure in a closure holding a moved closure ends the inner capture
     # once while unwinding.
     transfer_failure = transfers.split(transfers_marker, 1)[0] + """int main() {
@@ -2284,15 +2296,15 @@ int main() {
 """
     transfer_needle = "auto second = [inner = std::move(first)](int d) -> int { return inner() / d; };"
     add("closure-transfer-failure", transfer_failure, "defined-failure",
-        expected_exit=70, failure_needle=transfer_needle, endpoints=TRANSFER_ENDPOINTS[2:])
+        expected_exit=70, failure_needle=transfer_needle, endpoints=LLVM_TRANSFER_ENDPOINTS)
     add("closure-transfer-wrong-cleanup",
         transfer_failure.replace("expected_cleanup = 4;", "expected_cleanup = 44;"),
         "wrong-cleanup-trace", expected_exit=70, failure_needle=transfer_needle,
-        endpoints=TRANSFER_ENDPOINTS[2:])
+        endpoints=LLVM_TRANSFER_ENDPOINTS)
     thread_local_origin = "tests/fixtures/llvm_dispatch_thread_local_hierarchy.gti"
     add("thread-local-hierarchy-storage",
         (root / thread_local_origin).read_text(encoding="utf-8"),
-        origin=thread_local_origin, endpoints=TRANSFER_ENDPOINTS[2:])
+        origin=thread_local_origin, endpoints=LLVM_TRANSFER_ENDPOINTS)
     payloads = (root / SUCCESS_FILES["hierarchy-payloads"]).read_text(encoding="utf-8")
     payloads_marker = "// PAYLOADS_MAIN\n"
     if payloads.count(payloads_marker) != 1:

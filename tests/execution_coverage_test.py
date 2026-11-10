@@ -16,7 +16,7 @@ of these:
   backend rejects it; `keep_cpp(flags)` is empty there);
 * it selects no backend at all, so the compiler's default, LLVM, executes it;
 * or it is a C++-only entry by name (`scripts/validation_checks.py`
-  `CPP_ONLY_PREFIXES`), which only the scheduled C++ job runs;
+  `CPP_ONLY_PREFIXES`), which only the hand-dispatched C++ job runs;
 * or it is listed in ALLOWED_SPELLINGS with the reason the spelling is the
   contract under test (a CLI option check, say) rather than a mode table.
 
@@ -37,28 +37,24 @@ from test_throughput_registration_test import inventory
 # modes they are about: never a fixture's only execution. Each entry names the
 # reason; an entry that no registered test uses fails the check.
 ALLOWED_SPELLINGS = {
-    "annotated_test_suite_test.py": "the `gti test --std` project command is the contract under test",
     "backend_execution_test.py": "unit test of the backend endpoint protocol's own flag spelling",
     "benchmark_compare_test.py": "the benchmark driver's per-backend flag spelling is the contract under test",
     "cli_progress_test.py": "asserts the CLI help text names the C++ backend options",
     "cli_smoke_test.py": "the direct-compilation CLI contract, including --std and --keep-cpp acceptance",
     "compiled_library_project_test.py": "asserts the project driver rejects --backend cpp for a compiled library",
     "feature_interaction_model_test.py": "the model's recorded observations name the C++ options",
-    "general_object_layout_test.py": "layout oracle comparing the C++ text's object layout with the LLVM layout",
+    "general_object_layout_test.py": "pins the C++ backend's general sizeof/alignof rejection beside the LLVM layout runs",
     "llvm_backend_cli_test.py": "asserts the LLVM backend rejects --std and --keep-cpp",
     "llvm_cache_project_test.py": "asserts the project driver rejects --std with --backend llvm",
     "llvm_case_context_test.py": "unit test of the recorded case-context command spelling",
     "llvm_embedding_project_test.py": "asserts the embedding project rejects --backend cpp",
-    "macos_installed_runtime_test.py": "installed-toolchain contract exercising the C++ options of the shipped CLI",
     "module_cpp_boundary_test.py": "the C++ module boundary of the C++ backend is the contract under test",
     "native_fixture_build_test.py": "unit test of the native provider build helper's C++ emission path",
     "project_cli_smoke_test.py": "the project CLI contract, including --keep-cpp acceptance",
     "registry_cli_test.py": "the `gti run --std` registry workflow is the contract under test",
     # LLVM-backend harnesses with a C++ differential oracle.
-    "llvm_checked_range_runtime_test.py": "LLVM-backend harness; C++ endpoint is a differential oracle",
     "llvm_checked_reduction_runtime_test.py": "LLVM-backend harness; C++ endpoint is a differential oracle",
     "llvm_dispatch_execution_test.py": "LLVM-backend harness; C++ endpoints are a differential oracle",
-    "llvm_hosted_cleanup_evidence_test.py": "LLVM-backend harness; the C++ standard names the recorded evidence",
     "llvm_hosted_cleanup_execution_test.py": "LLVM-backend harness; C++ endpoint is a differential oracle",
     "llvm_hosted_execution_test.py": "LLVM-backend harness; C++ endpoints are a differential oracle",
     "llvm_mutex_service_test.py": "LLVM-backend harness; C++ guard build is a differential oracle",

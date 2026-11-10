@@ -321,7 +321,7 @@ def main() -> None:
         for level in ("O0", "O3"):
             work = directory / level
             work.mkdir()
-            command = [str(gti), str(source), "--emit-mir", "--std", "c++23", "--execution-profile", "single-threaded",
+            command = [str(gti), str(source), "--emit-mir", "--execution-profile", "single-threaded",
                        f"-{level}", "-o", str(work / "verified.mir")]
             # The original bounded runner deliberately inherits the environment;
             # this one explicit resource selection is scoped to this child.

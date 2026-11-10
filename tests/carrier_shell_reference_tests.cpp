@@ -1,8 +1,18 @@
 #include "compiler_test_fixture.h"
 #include "gti/mir_effects.h"
 #include "gti/optimization/alias.h"
+#include "llvm_backend_test_support.h"
 
 namespace {
+
+// The shipped backend accepts the verified program and emits native code.
+void expectNativeEmission(const lang::FrontendResult &frontend,
+                          const std::string &message) {
+  std::string error;
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &error),
+         error.empty() ? message : message + ": " + error);
+}
 
 const std::string declarations = R"gti(
 import std.utility;
@@ -92,20 +102,9 @@ int main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     return;
   }
-  try {
-    expect(!gti_test::emitCpp(frontend).contents.empty(),
-           "verified text-reference adapters reach the production backend");
-  } catch (const lang::BackendUnsupportedError &error) {
-    // The frozen C++ backend cannot represent a text call result that
-    // carries a borrow dependency and says so (GTI-B0003); LLVM executes it.
-    expect(std::string(error.what())
-                   .find("borrow-dependent text call results require the LLVM "
-                         "backend") != std::string::npos,
-           std::string("text-reference backend: unexpected C++ limitation: ") +
-               error.what());
-  } catch (const std::logic_error &error) {
-    expect(false, std::string("text-reference backend: ") + error.what());
-  }
+  expectNativeEmission(
+      frontend,
+      "verified text-reference adapters reach the production backend");
   bool checkedEntry = false;
   bool checkedWrongOwner = false;
   bool checkedEndpoint = false;
@@ -336,12 +335,8 @@ int main() {
   }
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "text reference reads verify");
-  try {
-    expect(!gti_test::emitCpp(frontend).contents.empty(),
-           "text reference reads reach the production backend");
-  } catch (const std::logic_error &error) {
-    expect(false, std::string("text-reference reads backend: ") + error.what());
-  }
+  expectNativeEmission(frontend,
+                       "text reference reads reach the production backend");
   bool checkedReturn = false;
   bool checkedFieldRelay = false;
   for (const auto &function : frontend.mir.functionInstances()) {
@@ -559,12 +554,9 @@ void checkLocalReferences() {
     }
     expect(separateShell && lang::verifyMirProgram(frontend.mir).valid(),
            "a reference protects both the physical shell and its stored loan");
-    try {
-      expect(!gti_test::emitCpp(frontend).contents.empty(),
-             "verified carrier shell references reach the production backend");
-    } catch (const std::logic_error &error) {
-      expect(false, std::string("carrier shell backend: ") + error.what());
-    }
+    expectNativeEmission(
+        frontend,
+        "verified carrier shell references reach the production backend");
   }
 }
 
@@ -597,13 +589,8 @@ int main() {
     for (const auto &diagnostic : frontend.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   if (frontend.canGenerateCode()) {
-    try {
-      expect(!gti_test::emitCpp(frontend).contents.empty(),
-             "owning accessor adapter reaches the verified MIR backend");
-    } catch (const std::logic_error &error) {
-      expect(false,
-             std::string("owning accessor adapter backend: ") + error.what());
-    }
+    expectNativeEmission(
+        frontend, "owning accessor adapter reaches the verified MIR backend");
     bool checkedParent = false;
     for (const auto &function : frontend.mir.functionInstances()) {
       for (const auto &loan : function.body.loans) {
@@ -1507,7 +1494,7 @@ void checkReferenceCopies() {
                  "retirement");
           bool rejectedByLoweredBoundary = false;
           try {
-            (void)gti_test::emitCpp(frontend, malformed, malformed);
+            (void)gti_test::lowerProgram(frontend, malformed, malformed);
           } catch (const std::logic_error &error) {
             rejectedByLoweredBoundary =
                 std::string_view(error.what()).find("lowered program") !=
@@ -1515,20 +1502,15 @@ void checkReferenceCopies() {
           }
           expect(rejectedByLoweredBoundary,
                  "production lowering rejects missing copy-return retirement "
-                 "before C++ representation admission");
+                 "before backend admission");
           checkedRetirement = true;
         }
       }
       expect(checkedRetirement,
              "copied return retirement mutation exercised actual source MIR");
     }
-    try {
-      expect(!gti_test::emitCpp(frontend).contents.empty(),
-             "copied reference carrier reaches production backend");
-    } catch (const std::logic_error &error) {
-      expect(false,
-             std::string("copied reference carrier backend: ") + error.what());
-    }
+    expectNativeEmission(frontend,
+                         "copied reference carrier reaches production backend");
   }
 }
 
@@ -1554,13 +1536,9 @@ int main() {
          "dereference rather than reconstructing the overlap-only place");
   if (!frontend.canGenerateCode())
     return;
-  try {
-    expect(!gti_test::emitCpp(frontend).contents.empty(),
-           "mutable and shared stored-referent bindings reach the backend");
-  } catch (const std::logic_error &error) {
-    expect(false,
-           std::string("local stored-referent backend: ") + error.what());
-  }
+  expectNativeEmission(
+      frontend,
+      "mutable and shared stored-referent bindings reach the backend");
   bool checkedDereference = false;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &loan : function.body.loans) {
@@ -1578,7 +1556,7 @@ int main() {
       changed->body.places[source->id - 1].projections.pop_back();
       bool rejected = false;
       try {
-        (void)gti_test::emitCpp(frontend, malformed, malformed);
+        (void)gti_test::lowerProgram(frontend, malformed, malformed);
       } catch (const std::logic_error &) {
         rejected = true;
       }
@@ -2078,22 +2056,8 @@ int main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     return;
   }
-  try {
-    expect(!gti_test::emitCpp(frontend).contents.empty(),
-           "accessor-returned text carriers reach the production backend");
-  } catch (const lang::BackendUnsupportedError &error) {
-    // The frozen C++ backend cannot represent a text call result that
-    // carries a borrow dependency and says so (GTI-B0003); LLVM executes it.
-    expect(std::string(error.what())
-                   .find("borrow-dependent text call results require the LLVM "
-                         "backend") != std::string::npos,
-           std::string(
-               "accessor text carrier backend: unexpected C++ limitation: ") +
-               error.what());
-  } catch (const std::logic_error &error) {
-    expect(false,
-           std::string("accessor text carrier backend: ") + error.what());
-  }
+  expectNativeEmission(
+      frontend, "accessor-returned text carriers reach the production backend");
   const auto rejectedWith = [](const lang::MirProgram &program,
                                std::string_view message) {
     const auto result = lang::verifyMirProgram(program);

@@ -1,10 +1,9 @@
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <array>
@@ -21,15 +20,6 @@
 
 namespace {
 
-// The function route dissolved into analysis-driven per-body admission:
-// slot-vocabulary bodies publish under the general route's label while the
-// destructor-definition route keeps the family label below.
-constexpr std::string_view functionMarker =
-    "// GTI verified-MIR body: scalar-cfg-v1 function-instance ";
-constexpr std::string_view failureFunctionMarker =
-    "// GTI verified-MIR body: scalar-cfg-failure-v1 function-instance ";
-constexpr std::string_view destructorMarker =
-    "// GTI verified-MIR body: scalar-cfg-v1 destructor-instance ";
 int failures = 0;
 
 void expect(bool condition, std::string_view message) {
@@ -43,51 +33,6 @@ std::string readFile(const std::filesystem::path &path) {
   std::ifstream input(path);
   return std::string(std::istreambuf_iterator<char>(input),
                      std::istreambuf_iterator<char>());
-}
-
-std::size_t count(std::string_view text, std::string_view needle) {
-  std::size_t result = 0;
-  for (std::size_t position = text.find(needle);
-       position != std::string_view::npos;
-       position = text.find(needle, position + needle.size())) {
-    ++result;
-  }
-  return result;
-}
-
-std::string_view definitionContaining(std::string_view generated,
-                                      std::string_view needle) {
-  for (std::size_t position = generated.find(needle);
-       position != std::string_view::npos;
-       position = generated.find(needle, position + needle.size())) {
-    const std::size_t lineEnd = generated.find('\n', position);
-    const std::size_t opening = generated.find('{', position + needle.size());
-    if (opening == std::string_view::npos ||
-        (lineEnd != std::string_view::npos && opening > lineEnd)) {
-      continue;
-    }
-    std::size_t depth = 0;
-    for (std::size_t cursor = opening; cursor < generated.size(); ++cursor) {
-      if (generated[cursor] == '{') {
-        ++depth;
-      } else if (generated[cursor] == '}' && --depth == 0) {
-        return generated.substr(opening, cursor + 1 - opening);
-      }
-    }
-  }
-  return {};
-}
-
-std::string_view functionDefinition(std::string_view generated,
-                                    std::string_view sourceName) {
-  return definitionContaining(generated,
-                              std::string{"_"} + std::string{sourceName} + "(");
-}
-
-std::string_view lifecycleDefinition(std::string_view generated,
-                                     std::string_view className) {
-  return definitionContaining(generated, std::string{className} +
-                                             "::__gti_lifecycle_cleanup_");
 }
 
 const lang::HirFunctionInstance *
@@ -176,7 +121,8 @@ lang::BackendArtifact emit(const lang::FrontendResult &frontend,
                            const lang::MirProgram &mir,
                            const lang::OptimizationResult &compatibility) {
   static_cast<void>(compatibility);
-  return gti_test::emitCpp(frontend, frontend.mir, mir);
+  return lang::LlvmBackend().generate(
+      gti_test::lowerProgram(frontend, frontend.mir, mir));
 }
 
 bool emissionRejected(const lang::FrontendResult &frontend,
@@ -253,97 +199,6 @@ bool destructorIsBounded(const lang::MirDestructorInstance *destructor) {
     }
   }
   return assignments == 1 && literals == 1;
-}
-
-void expectSelectedDefinitions(std::string_view generated) {
-  expect(count(generated, destructorMarker) == 4,
-         "the Early, Late, ExplicitDefault, and FieldOwner destructors "
-         "should be MIR-emitted");
-
-  const std::string_view selected =
-      functionDefinition(generated, "selected_default_cleanup");
-  expect(selected.find(functionMarker) != std::string_view::npos,
-         "selected_default_cleanup should carry MIR body authority");
-  expect(count(selected, "::gti_internal::backend::mir_lifetime_slot<") == 2,
-         "each selected class local should use the non-RAII MIR lifetime slot");
-  expect(count(selected, ".construct()") == 2,
-         "each generated-default Construct should construct its final slot");
-  expect(count(selected, ".destroy()") == 2,
-         "each normal MIR Drop should explicitly destroy its final slot");
-  expect(selected.find(".destroy_if_engaged()") == std::string_view::npos,
-         "cleanup-owning slots must not replace a missing semantic Drop with "
-         "representation-only rearming");
-  expect(selected.find("std::optional<") == std::string_view::npos &&
-             selected.find("std::move(") == std::string_view::npos &&
-             selected.find("Early early") == std::string_view::npos &&
-             selected.find("Late late") == std::string_view::npos,
-         "selected cleanup must not rely on optional, an unmodeled move, or "
-         "native automatic RAII");
-
-  expect(lifecycleDefinition(generated, "Early").find(destructorMarker) !=
-                 std::string_view::npos &&
-             lifecycleDefinition(generated, "Late").find(destructorMarker) !=
-                 std::string_view::npos,
-         "both selected lifecycle helpers should execute destructor MIR");
-
-  // Ordinary lifetimes the whole-family contract had to reject now emit
-  // per body through the same slot vocabulary.
-  constexpr std::array<std::string_view, 3> migratedFunctions = {
-      "compatibility_declared_constructor", "compatibility_nested_scope",
-      "compatibility_branch"};
-  for (const std::string_view name : migratedFunctions) {
-    const std::string_view body = functionDefinition(generated, name);
-    expect(body.find(functionMarker) != std::string_view::npos &&
-               body.find(".construct()") != std::string_view::npos &&
-               body.find(".destroy()") != std::string_view::npos,
-           std::string{"the migrated function should emit through the slot "
-                       "vocabulary: "} +
-               std::string{name});
-  }
-  const std::string_view fieldOwner = functionDefinition(
-      generated, "compatibility_field_owner__gti_mir_failure");
-  const auto construction = fieldOwner.find(".construction_address()");
-  const auto successGuard = fieldOwner.find("if (__gti_mir_construct_success_");
-  const auto activation = fieldOwner.find(".mark_constructed()");
-  const auto destruction = fieldOwner.find(".destroy()");
-  expect(fieldOwner.find(failureFunctionMarker) != std::string_view::npos &&
-             construction != std::string_view::npos &&
-             successGuard != std::string_view::npos &&
-             activation != std::string_view::npos &&
-             destruction != std::string_view::npos &&
-             construction < successGuard && successGuard < activation &&
-             activation < destruction &&
-             fieldOwner.find("::new (") != std::string_view::npos &&
-             fieldOwner.find("mir_failure_constructor_tag_v1<") !=
-                 std::string_view::npos &&
-             fieldOwner.find("return false;") != std::string_view::npos &&
-             functionDefinition(generated, "compatibility_field_owner").empty(),
-         "the field-owning function must placement-construct its selected "
-         "generated body, activate only on success, and drain its slot only "
-         "through the explicit failure-form body");
-  expect(functionDefinition(generated, "compatibility_checked_cleanup")
-                 .find(".construct()") == std::string_view::npos,
-         "the checked-cleanup near miss should remain compatible");
-  // Per-body admission also emits the ordinary destructors the dissolved
-  // route's whole-family contract had to reject.
-  constexpr std::array<std::string_view, 2> migratedDestructors = {
-      "ExplicitDefault", "FieldOwner"};
-  for (const std::string_view name : migratedDestructors) {
-    expect(lifecycleDefinition(generated, name).find(destructorMarker) !=
-               std::string_view::npos,
-           std::string{"the migrated destructor should execute MIR: "} +
-               std::string{name});
-  }
-  expect(
-      lifecycleDefinition(generated, "CheckedCleanup").find(destructorMarker) ==
-          std::string_view::npos,
-      "the checked-arithmetic destructor near miss should remain "
-      "compatible: CheckedCleanup");
-
-  expect(generated.find("verified MIR lifetime slot escaped without Drop") !=
-             std::string_view::npos,
-         "the generated lifetime slot must abort instead of hiding a missing "
-         "MIR Drop");
 }
 
 void testFamily(const std::filesystem::path &fixture) {
@@ -457,8 +312,31 @@ void testFamily(const std::filesystem::path &fixture) {
     expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
            "class-default-cleanup MIR should verify at O0, O1, and O3");
     if (optimized.valid() && lang::verifyMirProgram(optimized.mir).valid()) {
-      expectSelectedDefinitions(
-          emit(frontend, optimized.mir, compatibility).contents);
+      expect(!emit(frontend, optimized.mir, compatibility).contents.empty(),
+             "the shipped backend should accept class-default-cleanup MIR");
+      // Ordinary lifetimes construct and drop through explicit MIR
+      // operations; the field owner constructs through its failure form.
+      for (const std::string_view name :
+           {"compatibility_declared_constructor", "compatibility_nested_scope",
+            "compatibility_branch", "compatibility_field_owner"}) {
+        const lang::MirFunctionInstance *function =
+            findMirFunction(frontend.hir, optimized.mir, name);
+        expect(function != nullptr &&
+                   !instructionsOfKind(function->body,
+                                       lang::MirInstructionKind::Construct)
+                        .empty() &&
+                   !instructionsOfKind(function->body,
+                                       lang::MirInstructionKind::Drop)
+                        .empty(),
+               std::string{"the migrated function should construct and drop "
+                           "through MIR: "} +
+                   std::string{name});
+      }
+      const lang::MirFunctionInstance *fieldOwner = findMirFunction(
+          frontend.hir, optimized.mir, "compatibility_field_owner");
+      expect(fieldOwner != nullptr && fieldOwner->mayRaiseDefinedFailure,
+             "the field-owning function should carry its defined-failure "
+             "summary");
     }
   }
 }

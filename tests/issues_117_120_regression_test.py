@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 POSITIVE_FIXTURES = (
@@ -54,33 +54,36 @@ def main() -> int:
             if executed.returncode != 0 or executed.stdout or executed.stderr:
                 return fail(f"run {fixture_name}", executed)
 
-        indirect_source = fixtures / "issue_117_generic_indirect.gti"
-        indirect_cpp = root / "issue_117_generic_indirect.cpp"
-        emitted_indirect = run(
-            [
-                str(compiler),
-                str(indirect_source),
-                "--emit-cpp",
-                "-o",
-                str(indirect_cpp),
-            ]
-        )
-        if emitted_indirect.returncode != 0:
-            return fail("emit indirect concrete generic classes", emitted_indirect)
-        indirect_text = indirect_cpp.read_text(encoding="utf8")
-        indirect_definitions = re.findall(
-            r"class (__gti_type_[0-9a-f]{64}_(?:cell|box)) [{]",
-            indirect_text,
-        )
-        if (
-            len(indirect_definitions) != 5
-            or len(set(indirect_definitions)) != 5
-        ):
-            sys.stderr.write(
-                "finite nested generic applications lost their five exact "
-                "concrete class definitions\n"
+        # The concrete C++ class definitions are a C++-profile text probe.
+        for _label, cpp_flags, _native in cpp_text_modes():
+            indirect_source = fixtures / "issue_117_generic_indirect.gti"
+            indirect_cpp = root / "issue_117_generic_indirect.cpp"
+            emitted_indirect = run(
+                [
+                    str(compiler),
+                    str(indirect_source),
+                    *cpp_flags,
+                    "--emit-cpp",
+                    "-o",
+                    str(indirect_cpp),
+                ]
             )
-            return 1
+            if emitted_indirect.returncode != 0:
+                return fail("emit indirect concrete generic classes", emitted_indirect)
+            indirect_text = indirect_cpp.read_text(encoding="utf8")
+            indirect_definitions = re.findall(
+                r"class (__gti_type_[0-9a-f]{64}_(?:cell|box)) [{]",
+                indirect_text,
+            )
+            if (
+                len(indirect_definitions) != 5
+                or len(set(indirect_definitions)) != 5
+            ):
+                sys.stderr.write(
+                    "finite nested generic applications lost their five exact "
+                    "concrete class definitions\n"
+                )
+                return 1
 
         for fixture_name in (
             "issue_117_array_cleanup.gti",

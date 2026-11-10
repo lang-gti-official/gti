@@ -177,7 +177,7 @@ def main() -> int:
             source = root / f"{label}.gti"
             source.write_text(source_text, encoding="utf-8")
             checked = run(
-                [str(compiler), str(source), "--emit-cpp", "-o", str(root / "out.cpp")]
+                [str(compiler), str(source), "--emit-mir", "-o", str(root / "out.mir")]
             )
             if checked.returncode != 65 or any(
                 fragment not in checked.stderr for fragment in fragments

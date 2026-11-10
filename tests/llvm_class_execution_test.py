@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from backend_modes import cpp_modes
 from llvm_evidence_manifest import build_manifest
 
 
@@ -893,8 +894,12 @@ def main():
         raise ValueError(f"unknown class execution case: {selected}")
     env = os.environ.copy()
     env["NO_COLOR"] = "1"
-    endpoints = (Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
-                 *(Endpoint("llvm", mode) for mode in ("O0", "O1", "O2", "O3")))
+    # The C++ comparator endpoints run only when GTI_TEST_BACKENDS selects C++.
+    cpp_endpoints = ((Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"))
+                     if cpp_modes() else ())
+    llvm_endpoints = tuple(Endpoint("llvm", mode) for mode in ("O0", "O1", "O2", "O3"))
+    endpoints = (*cpp_endpoints, *llvm_endpoints)
+    compared = "C++20/23 O3 and LLVM O0-O3" if cpp_endpoints else "LLVM O0-O3"
     with tempfile.TemporaryDirectory(prefix="gti-llvm-classes-") as directory:
         work = Path(directory)
         for name, text in runnable_cases.items():
@@ -907,7 +912,7 @@ def main():
                 result = execute(gti, root, case, source, endpoint, env)
                 if result.error or result.observable != (0, "", ""):
                     raise AssertionError(f"{name} {endpoint}: {result}")
-            print(f"{name}: C++20/23 O3 and LLVM O0-O3 passed", flush=True)
+            print(f"{name}: {compared} passed", flush=True)
         for name, (text, code, message) in FAILURES.items():
             if selected and name != selected:
                 continue
@@ -924,13 +929,13 @@ def main():
                 observables.append(result.observable)
             if len(set(observables)) != 1:
                 raise AssertionError(f"failure attribution drift in {name}: {observables}")
-            print(f"{name}: exact C++20/23 and LLVM O0-O3 failure passed", flush=True)
+            print(f"{name}: exact {compared} failure passed", flush=True)
         for name, text in NATIVE_ONLY.items():
             if selected and name != selected:
                 continue
             source = work / f"{name}.gti"
             source.write_text(text, encoding="utf-8")
-            for endpoint in endpoints[2:]:
+            for endpoint in llvm_endpoints:
                 result = execute(gti, root, work / f"{name}-{endpoint.optimization}", source, endpoint, env)
                 if result.error or result.observable != (0, "", ""):
                     raise AssertionError(f"{name} {endpoint}: {result}")
@@ -940,7 +945,7 @@ def main():
                 continue
             source = work / f"{name}.gti"
             source.write_text(text, encoding="utf-8")
-            for endpoint in endpoints[2:]:
+            for endpoint in llvm_endpoints:
                 result = execute(gti, root, work / f"{name}-{endpoint.optimization}", source, endpoint, env)
                 if result.error or result.returncode != 70 or code not in result.stderr:
                     raise AssertionError(f"{name} {endpoint}: {result}")

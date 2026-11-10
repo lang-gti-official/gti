@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
 from sanitizer_support import scaled_timeout
 
 
@@ -23,7 +24,8 @@ def main():
                        GTI_RUNTIME_INCLUDE=str(repository / "runtime/include"))
     with tempfile.TemporaryDirectory(prefix="gti-stdlib-contracts-") as directory:
         temporary = Path(directory)
-        for backend in ("llvm", "cpp"):
+        # The C++ backend runs only when GTI_TEST_BACKENDS selects it.
+        for backend in ("llvm", *(("cpp",) if cpp_modes() else ())):
             for optimization in ("O0", "O3"):
                 output = temporary / f"set-swap-{backend}-{optimization}"
                 source = repository / "tests/fixtures/set_swap_contract.gti"
@@ -65,7 +67,7 @@ public:
                     f"int main() {{\n  int state = 0;\n  mut {container} a{{{arguments}}};\n"
                     f"  mut {container} b{{{arguments}}};\n  a.swap(b);\n  return 0;\n}}\n")
             source.write_text(text)
-            result = execute([compiler, source, "--emit-cpp", "-o", temporary / "invalid.cpp"], environment)
+            result = execute([compiler, source, "--emit-mir", "-o", temporary / "invalid.mir"], environment)
             diagnostics = result.stdout + result.stderr
             errors = re.findall(r"error\[(GTI-[A-Z]\d+)\]", diagnostics)
             line = next(i for i, value in enumerate(text.splitlines(), 1) if "a.swap(b)" in value)
@@ -90,7 +92,7 @@ public:
                         call + "\n  return 0;\n}\n")
                 source = temporary / f"{function}-argument-{bad_index}.gti"
                 source.write_text(text)
-                result = execute([compiler, source, "--emit-cpp", "-o", temporary / "invalid.cpp"], environment)
+                result = execute([compiler, source, "--emit-mir", "-o", temporary / "invalid.mir"], environment)
                 diagnostics = result.stdout + result.stderr
                 errors = re.findall(r"error\[(GTI-[A-Z]\d+)\]", diagnostics)
                 assert result.returncode != 0 and errors == ["GTI-S2029"], diagnostics

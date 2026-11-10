@@ -1,6 +1,19 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
 
 namespace {
+// The shipped backend accepts the verified program and emits native code.
+void expectNativeEmission(const lang::FrontendResult &frontend,
+                          std::string_view message) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  expect(emitted, error.empty() ? std::string(message)
+                                : std::string(message) + ": " + error);
+}
+
 // The fixture's own bodies; prelude result members also consume receivers.
 bool entryFunction(const lang::FrontendResult &frontend,
                    lang::HirFunctionInstanceId id) {
@@ -45,7 +58,6 @@ int main() {
            "consuming result assignment has verified MIR");
     if (!frontend.canGenerateCode())
       return 1;
-    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
     std::size_t checked = 0;
     for (const auto &function : frontend.mir.functionInstances()) {
       if (!entryFunction(frontend, function.id))
@@ -58,11 +70,6 @@ int main() {
               instruction.info.type.kind != lang::SemanticType::Class)
             continue;
           ++checked;
-          expect(lang::CppMirBodyEmitter(frontend.mir, rows)
-                     .supportsFailureBodyText(
-                         {lang::MirBodyKind::Function, function.id}),
-                 "source consuming receivers share the class result "
-                 "publication proof");
           for (int mutation = 0; mutation != 3; ++mutation) {
             auto malformed = frontend.mir;
             auto *changed = const_cast<lang::MirFunctionInstance *>(
@@ -82,16 +89,13 @@ int main() {
             expect(!lang::verifyMirProgram(malformed).valid(),
                    "consuming receiver retains access, exact owner, and result "
                    "activation");
-            expect(!lang::CppMirBodyEmitter(malformed, rows)
-                        .supportsFailureBodyText(
-                            {lang::MirBodyKind::Function, function.id}),
-                   "consuming result admission rejects forged "
-                   "receiver/publication facts");
           }
         }
       }
     }
     expect(checked == 2, "fixture reaches named and fresh consuming receivers");
+    expectNativeEmission(frontend, "source consuming receivers share the class "
+                                   "result publication");
   }
   for (const std::string source : {
            "struct Value { int number; Value(int n) : number(n) {} };\n"
@@ -111,13 +115,8 @@ int main() {
     expect(frontend.canGenerateCode(), "checked class return has verified MIR");
     if (!frontend.canGenerateCode())
       continue;
-    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
-    try {
-      expect(!gti_test::emitCppText(frontend).empty(),
-             "checked payload return publishes without an extra object");
-    } catch (const std::exception &error) {
-      expect(false, error.what());
-    }
+    expectNativeEmission(
+        frontend, "checked payload return publishes without an extra object");
     std::size_t checked = 0;
     for (const auto &function : frontend.mir.functionInstances()) {
       for (const auto &block : function.body.blocks) {
@@ -149,16 +148,6 @@ int main() {
             expect(!lang::verifyMirProgram(malformed).valid(),
                    "payload return retains type, wrong-state check, and drop "
                    "identity");
-            // value() is an ordinary source call: the emitter's admission is
-            // its vocabulary probe plus a Ready analysis, which re-verifies
-            // the call's exact result and failure contracts.
-            const lang::CppMirBodyEmitter emitter(malformed, rows);
-            const lang::MirBodyAddress address{lang::MirBodyKind::Function,
-                                               function.id};
-            expect(!emitter.supportsFailureBodyText(address) ||
-                       !emitter.analyze(address).ready(),
-                   "payload return admission rejects forged checked "
-                   "publication");
           }
         }
       }
@@ -181,13 +170,9 @@ int main() {
            "passive call results have verified MIR");
     if (!frontend.canGenerateCode())
       continue;
-    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
-    try {
-      expect(!gti_test::emitCppText(frontend).empty(),
-             "original native result return/discard must emit C++");
-    } catch (const std::exception &error) {
-      expect(false, error.what());
-    }
+    expectNativeEmission(
+        frontend,
+        "original native result return/discard must reach native emission");
     std::size_t checked = 0;
     for (const auto &function : frontend.mir.functionInstances()) {
       for (const auto &block : function.body.blocks) {
@@ -218,10 +203,6 @@ int main() {
               }
             expect(!lang::verifyMirProgram(malformed).valid(),
                    "passive result must retain type/signature/drop identity");
-            expect(!lang::CppMirBodyEmitter(malformed, rows)
-                        .supportsFailureBodyText(
-                            {lang::MirBodyKind::Function, function.id}),
-                   "native result admission rejects forged transport facts");
           }
         }
       }
@@ -230,5 +211,5 @@ int main() {
   }
   if (failures)
     return 1;
-  std::cout << "call-result publication proofs passed\n";
+  std::cout << "call-result publication MIR proofs passed\n";
 }

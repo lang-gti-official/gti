@@ -1,11 +1,12 @@
 #include "../src/compiler/mir_verification_queries.h"
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/lexer.h"
+#include "gti/lowered_program_printer.h"
 #include "gti/mir.h"
 #include "gti/mir_printer.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -259,17 +260,25 @@ int main() {
     expect(lang::MirPrinter().print(off.mir) ==
                lang::MirPrinter().print(warn.mir),
            name + " has identical mandatory MIR including loans and failures");
-    for (const auto standard :
-         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
-      for (const auto level :
-           {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
-        const auto ordinary = gti_test::emitCppText(
-            off, standard, lang::TargetInfo::host(), level);
-        const auto audited = gti_test::emitCppText(
-            warn, standard, lang::TargetInfo::host(), level);
-        expect(!ordinary.empty() && ordinary == audited,
-               name + " emits identical C++ with audit Off and Warn");
-      }
+    // Identical backend input at every level: the audit policy cannot
+    // change what any code generator sees.
+    for (const auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
+      const auto ordinary = lang::LoweredProgramPrinter().print(
+          gti_test::lowerOptimizedProgram(off, level));
+      const auto audited = lang::LoweredProgramPrinter().print(
+          gti_test::lowerOptimizedProgram(warn, level));
+      std::string error;
+      expect(!ordinary.empty() && ordinary == audited &&
+                 gti_test::llvmEmits(off, level, lang::TargetInfo::host(),
+                                     &error) &&
+                 gti_test::llvmEmits(warn, level, lang::TargetInfo::host(),
+                                     &error),
+             name +
+                 " lowers identically and emits natively with audit Off "
+                 "and Warn " +
+                 error);
+    }
   }
 }
 void canonicalConstructorFields() {
@@ -477,10 +486,10 @@ int main() {
           }
         }
   expect(bridges >= 2, "read and mutable bridges reach MIR");
-  for (const auto standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
-    expect(!gti_test::emitCppText(result, standard).empty(),
-           "verified bridge has a C++20/C++23 production consumer");
+  std::string error;
+  expect(gti_test::llvmEmits(result, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &error),
+         "verified bridge has a production native consumer " + error);
 }
 void producedResults() {
   const auto ordinaryGeneric = auditAnalyze(R"(

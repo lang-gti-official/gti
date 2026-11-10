@@ -5,6 +5,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from backend_modes import cpp_modes  # noqa: E402
+
 
 def expected(mode, start, stop, length, early):
     index, total, events = start, 0, []
@@ -35,7 +38,8 @@ def main():
     modes = [("llvm-O0", ["--backend", "llvm", "-O0"]),
              ("llvm-O2", ["--backend", "llvm", "-O2"]),
              ("llvm-O3", ["--backend", "llvm", "-O3"]),
-             ("cpp-O3", ["--backend", "cpp", "--std", "c++23", "-O3"])]
+             # The C++ differential endpoint, only when the policy selects it.
+             *((label, flags) for label, flags, _native in cpp_modes())]
     baseline = {}
     with tempfile.TemporaryDirectory(prefix="gti-checked-ranges-") as directory:
         for name, flags in modes:

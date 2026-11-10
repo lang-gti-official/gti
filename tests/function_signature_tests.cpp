@@ -2,6 +2,20 @@
 
 namespace {
 
+// True when the shipped native backend accepts the program; reports why not.
+// Emission is asserted on the LLVM backend, never on generated C++ text.
+[[maybe_unused]] bool
+llvmAccepts(const lang::FrontendResult &frontend,
+            lang::OptimizationLevel level = lang::OptimizationLevel::O0,
+            const lang::TargetInfo &target = lang::TargetInfo::host()) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(frontend, level, target, &error);
+  if (!emitted) {
+    std::cerr << "LLVM emission failed: " << error << '\n';
+  }
+  return emitted;
+}
+
 void callableSignatureFormatting() {
   const std::vector<std::pair<std::string, std::string>> cases = {
       {"using Callback=std::function < void(Event &) >;",
@@ -276,7 +290,7 @@ int main() {
            "alias");
     expect(lang::verifyMirProgram(frontend.mir).valid(),
            "patterned primary instances must reach verified MIR");
-    expect(!emitAnalyzedSource(source).empty(),
+    expect(llvmAccepts(frontend),
            "patterned class methods and aliases must lower from resolved "
            "bindings");
     int signatures = 0;
@@ -396,10 +410,7 @@ int main() {
     }
   }
   expect(mutated, "signature verifier test should mutate a live body");
-  const std::string generated = emitAnalyzedSource(source);
-  expect(generated.find("using Action = void();") != std::string::npos &&
-             generated.find("using Predicate = bool(std::int32_t);") !=
-                 std::string::npos,
+  expect(llvmAccepts(frontend),
          "signature aliases should lower as types without function pointers");
   const auto unit = frontend.sourceGraph.entryUnit();
   const auto hover = lang::LanguageQueries().hover(
@@ -466,13 +477,9 @@ int main() {
                  .analyze("formatted-qualified.gti", formatted)
                  .canGenerateCode(),
          "formatting preserves qualified signature semantics");
-  const auto generated = emitAnalyzedSource(source);
-  expect(generated.find("using Mutable = std::int32_t(std::int32_t) &;") !=
-                 std::string::npos &&
-             generated.find("using Once = std::int32_t(std::int32_t) &&;") !=
-                 std::string::npos,
-         "the native metadata representation distinguishes qualifiers without "
-         "pointers");
+  expect(llvmAccepts(frontend),
+         "the native representation accepts the qualified signature "
+         "metadata without pointers");
   const auto dump = lang::MirPrinter().print(frontend.mir);
   expect(dump.find("signature-receiver=1") != std::string::npos &&
              dump.find("signature-receiver=2") != std::string::npos,
@@ -515,7 +522,7 @@ void mutableSignatureCallback() {
   expect(valid.canGenerateCode(), "qualified patterns compose with retained "
                                   "mutable targets and interface dispatch");
   if (valid.canGenerateCode()) {
-    expect(!gti_test::emitCpp(valid).contents.empty(),
+    expect(llvmAccepts(valid),
            "mutable targets with generated construction and source cleanup "
            "must have a complete MIR emission path");
     bool checkedTransfer = false;
@@ -757,8 +764,8 @@ int main() {
     };
     for (const auto &body : bodies) {
       try {
-        expect(!emitAnalyzedSource(declarations + "int main() {" + body + "}")
-                    .empty(),
+        expect(llvmAccepts(analyzeEmissionFixture(declarations +
+                                                  "int main() {" + body + "}")),
                "void metadata must have a complete lowered representation");
       } catch (const std::logic_error &error) {
         expect(false,
@@ -870,7 +877,7 @@ int main() {
   if (frontend.canGenerateCode()) {
     expect(lang::verifyMirProgram(frontend.mir).valid(),
            "class-pack instances must have valid concrete MIR");
-    expect(!emitAnalyzedSource(source).empty(),
+    expect(llvmAccepts(frontend),
            "class-pack metadata must lower without a backend type system");
     int emptyTypes = 0;
     int referenceSignatures = 0;
@@ -1037,7 +1044,7 @@ int main() {
          "signature metadata must deduce the exact trailing type pack");
   if (frontend.canGenerateCode()) {
     expect(lang::verifyMirProgram(frontend.mir).valid() &&
-               !emitAnalyzedSource(source).empty(),
+               llvmAccepts(frontend),
            "deduced signature packs must preserve selected instances through "
            "MIR and emission");
     std::size_t unpackInstances = 0;
@@ -1200,7 +1207,7 @@ int main() {
   if (frontend.canGenerateCode()) {
     expect(lang::verifyMirProgram(frontend.mir).valid(),
            "class-owned parameter packs must have verified MIR");
-    expect(!emitAnalyzedSource(source).empty(),
+    expect(llvmAccepts(frontend),
            "owner-pack methods must emit from the verified MIR body");
     bool mutatedSource = false;
     bool mutatedDeclaration = false;
@@ -1335,8 +1342,7 @@ void signatureReceiverFamily() {
   expect(result.canGenerateCode(),
          "disjoint signature receivers select distinct definitions");
   if (result.canGenerateCode()) {
-    expect(!gti_test::emitCpp(result).contents.empty(),
-           "receiver family must emit from verified MIR");
+    expect(llvmAccepts(result), "receiver family must emit from verified MIR");
     auto lowered = gti_test::lowerProgram(result, result.mir, result.mir);
     bool changed = false;
     for (auto &row : const_cast<std::vector<lang::LoweredDeclaration> &>(
@@ -1456,8 +1462,7 @@ void mutableSignatureArguments() {
   expect(result.canGenerateCode(),
          "mutable reference packs reach verified MIR");
   if (result.canGenerateCode()) {
-    expect(!gti_test::emitCpp(result).contents.empty(),
-           "mutable arguments emit through MIR");
+    expect(llvmAccepts(result), "mutable arguments emit through MIR");
     bool checked = false;
     for (const auto &function : result.mir.functionInstances()) {
       for (const auto &loan : function.body.loans) {
@@ -1558,7 +1563,7 @@ void mutableSignatureArguments() {
          "paths");
   if (failureResult.canGenerateCode()) {
     expect(
-        !gti_test::emitCpp(failureResult).contents.empty(),
+        llvmAccepts(failureResult),
         "peer borrowed arguments cross a scalar conditional before invocation");
   }
 }

@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
+
 
 def run(command):
     return subprocess.run(command, capture_output=True, text=True, timeout=120)
@@ -127,7 +129,8 @@ int main() { Ticket value{}; escape(value); return 0; }
             assert result.returncode and code in diagnostic and "GTI-B000" not in diagnostic, (name, diagnostic)
             print(f"{name}: rejected", flush=True)
         fixture = root / "tests/fixtures/reference_parameter_packs.gti"
-        for backend, level in (("llvm", "O0"), ("llvm", "O3"), ("cpp", "O2")):
+        # The C++ decline probe runs only when GTI_TEST_BACKENDS selects C++.
+        for backend, level in (("llvm", "O0"), ("llvm", "O3"), *((("cpp", "O2"),) if cpp_modes() else ())):
             executable = scratch / f"references-{backend}-{level}"
             result = run([str(compiler), str(fixture), "--backend", backend,
                           f"-{level}", "--progress", "never", "-o", str(executable)])

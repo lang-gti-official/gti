@@ -7,8 +7,9 @@ items and generated items by kind) for both target profiles
 
 The default `mir_census_regression` uses sealed LoweredProgram bodies, so new
 LLVM features do not depend on the deprecated C++ emitter. The corpus oracle
-executes every example on LLVM O0/O3. The explicitly selected scheduled C++
-profile retains its emitted-text inventory and single C++23/O3 execution mode.
+executes every example on LLVM O0/O3. The hand-dispatched C++ profile (only in
+a build with `GTI_ENABLE_CPP_BACKEND`) retains its emitted-text inventory and
+single C++23/O3 execution mode.
 
 The census checks report counts outside their budget as advisory findings
 (strict advisory mode makes them failures). An example that cannot compile

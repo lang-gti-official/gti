@@ -111,7 +111,10 @@ def verify(tests, repository):
         names.add(test["name"])
         properties = {item["name"]: item["value"] for item in test["properties"]}
         labels = properties.get("LABELS", [])
-        if "coverage-full" not in labels or properties.get("DISABLED"):
+        # A build without the frozen C++ backend disables its C++-only entries;
+        # no other entry may be disabled.
+        if "coverage-full" not in labels or (properties.get("DISABLED")
+                                              and not cpp_only(test["name"])):
             raise AssertionError(f"{test['name']}: omitted from full coverage")
         if ("cpp-backend" in labels) != bool(cpp_only(test["name"])):
             raise AssertionError(f"{test['name']}: cpp-backend label disagrees with CPP_ONLY_PREFIXES")

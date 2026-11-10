@@ -43,8 +43,10 @@ void accepted(std::string source) {
   if (result.canGenerateCode()) {
     expect(lang::verifyMirProgram(result.mir).valid(),
            "profile preserves verified MIR");
-    expect(!gti_test::emitCpp(result).contents.empty(),
-           "profile reaches native emission");
+    std::string error;
+    expect(gti_test::llvmEmits(result, lang::OptimizationLevel::O0,
+                               lang::TargetInfo::host(), &error),
+           "profile reaches native emission: " + error);
   }
 }
 

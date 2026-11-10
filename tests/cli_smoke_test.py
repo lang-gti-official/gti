@@ -11,7 +11,22 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
 from native_symbol_spelling import native_spelling
+
+# The C++ backend's own CLI options (--std, --keep-cpp, --emit-cpp) run only
+# when GTI_TEST_BACKENDS selects the C++ backend. Contracts that do not depend
+# on the backend run on the default (LLVM) backend otherwise.
+CPP = bool(cpp_modes())
+
+
+# Both C++ standards under the C++ profile; one default-backend pass otherwise.
+CPP_STANDARDS = ("c++20", "c++23") if CPP else (None,)
+
+
+def cpp_std(standard="c++20"):
+    """`--std <standard>` under the C++ profile; nothing on the LLVM default."""
+    return ["--std", standard] if CPP and standard is not None else []
 
 
 def run(arguments, expected=0, cwd=None, input_text=None):
@@ -137,8 +152,7 @@ def main():
             [
                 gti,
                 str(source),
-                "--std",
-                "c++20",
+                *cpp_std(),
                 "--build-report",
                 str(build_report),
                 "-o",
@@ -184,11 +198,14 @@ def main():
         assert pathlib.Path(invoked_compiler).resolve() == pathlib.Path(
             native["compiler_executable"]["canonical_path"]
         )
-        assert "-MD" in native["argv"] and "-MF" in native["argv"]
         runtime = native["runtime"]
-        assert runtime["headers"] and all(
-            header["kind"] == "runtime" for header in runtime["headers"]
-        )
+        if CPP:
+            # Only the C++ backend compiles generated source against the
+            # runtime headers and records its dependency file.
+            assert "-MD" in native["argv"] and "-MF" in native["argv"]
+            assert runtime["headers"] and all(
+                header["kind"] == "runtime" for header in runtime["headers"]
+            )
         archive = pathlib.Path(runtime["archive"]["canonical_path"]).resolve()
         assert any(pathlib.Path(argument).resolve() == archive
                    for argument in native["argv"])
@@ -285,43 +302,45 @@ def main():
             assert output_report_alias.samefile(hardlink_output)
             assert hardlink_output.read_text(encoding="utf-8") == "preserved output\n"
 
-        generated_alias_output = root / "generated-alias-program"
-        generated_alias_source = pathlib.Path(
-            str(generated_alias_output) + ".gti.cpp"
-        )
-        generated_alias_source.write_text(
-            "preserved generated source\n", encoding="utf-8"
-        )
-        generated_report_alias = root / "generated-report-hardlink"
-        try:
-            os.link(generated_alias_source, generated_report_alias)
-        except OSError:
-            pass
-        else:
-            generated_alias_collision = run(
-                [
-                    gti,
-                    str(source),
-                    "--keep-cpp",
-                    "--build-report",
-                    str(generated_report_alias),
-                    "-o",
-                    str(generated_alias_output),
-                ],
-                expected=64,
+        # The retained C++ representation is a C++-backend artifact.
+        if CPP:
+            generated_alias_output = root / "generated-alias-program"
+            generated_alias_source = pathlib.Path(
+                str(generated_alias_output) + ".gti.cpp"
             )
-            assert "must not overwrite" in generated_alias_collision.stderr
-            assert generated_report_alias.samefile(generated_alias_source)
-            assert (
-                generated_alias_source.read_text(encoding="utf-8")
-                == "preserved generated source\n"
+            generated_alias_source.write_text(
+                "preserved generated source\n", encoding="utf-8"
             )
+            generated_report_alias = root / "generated-report-hardlink"
+            try:
+                os.link(generated_alias_source, generated_report_alias)
+            except OSError:
+                pass
+            else:
+                generated_alias_collision = run(
+                    [
+                        gti,
+                        str(source),
+                        "--keep-cpp",
+                        "--build-report",
+                        str(generated_report_alias),
+                        "-o",
+                        str(generated_alias_output),
+                    ],
+                    expected=64,
+                )
+                assert "must not overwrite" in generated_alias_collision.stderr
+                assert generated_report_alias.samefile(generated_alias_source)
+                assert (
+                    generated_alias_source.read_text(encoding="utf-8")
+                    == "preserved generated source\n"
+                )
 
         report_for_emission = run(
             [
                 gti,
                 str(source),
-                "--emit-cpp",
+                "--emit-mir",
                 "--build-report",
                 str(root / "invalid-report.json"),
             ],
@@ -423,9 +442,9 @@ def main():
             [
                 gti,
                 str(unknown_configuration),
-                "--emit-cpp",
+                "--emit-mir",
                 "-o",
-                str(root / "unknown.cpp"),
+                str(root / "unknown.mir"),
             ]
         )
         assert "warning[GTI-S2075]" in unknown_result.stderr
@@ -440,9 +459,9 @@ def main():
             [
                 gti,
                 str(advisory_source),
-                "--emit-cpp",
+                "--emit-mir",
                 "-o",
-                str(root / "advisory.cpp"),
+                str(root / "advisory.mir"),
             ]
         )
         assert "warning[GTI-S2095]" in advisory_result.stderr
@@ -644,45 +663,47 @@ def main():
             )
             run([str(extern_c_executable)])
 
-            extern_c_cpp = root / "extern-c-sockets.cpp"
-            run(
-                [
-                    gti,
-                    str(extern_c_source),
-                    "--emit-cpp",
-                    "-o",
-                    str(extern_c_cpp),
-                ]
-            )
-            emitted_extern_c = extern_c_cpp.read_text(encoding="utf-8")
-            assert 'extern "C" {' in emitted_extern_c
-            socket_call = native_spelling(emitted_extern_c, "socket")
-            assert f"std::int32_t {socket_call}(" in emitted_extern_c
-            assert re.search(
-                r"gti_internal::runtime::" + re.escape(socket_call) + r"\("
-                r"__gti_mir_v_\d+, __gti_mir_v_\d+, __gti_mir_v_\d+\)",
-                emitted_extern_c,
-            )
-            assert "class socket" in emitted_extern_c
-            # open() returns the prelude's expected<socket, errc> instance.
-            expected_socket = re.search(
-                r"static ::__gti_program::(__gti_type_[0-9a-f]+_expected) "
-                r"__gti_fn_\d+_open\(\);",
-                emitted_extern_c,
-            )
-            assert expected_socket
-            assert re.search(
-                r"explicit " + expected_socket.group(1) +
-                r"\(::__gti_program::__gti_std::tcp::socket __gti_mir_arg_0\);",
-                emitted_extern_c,
-            )
-            close_call = native_spelling(emitted_extern_c, "close")
-            assert re.search(
-                r"gti_internal::runtime::" + re.escape(close_call) +
-                r"\(__gti_mir_v_\d+\)",
-                emitted_extern_c,
-            )
-            assert "socket(socket &&other)" in emitted_extern_c
+            # The emitted extern "C" declarations are a C++-backend text probe.
+            if CPP:
+                extern_c_cpp = root / "extern-c-sockets.cpp"
+                run(
+                    [
+                        gti,
+                        str(extern_c_source),
+                        "--emit-cpp",
+                        "-o",
+                        str(extern_c_cpp),
+                    ]
+                )
+                emitted_extern_c = extern_c_cpp.read_text(encoding="utf-8")
+                assert 'extern "C" {' in emitted_extern_c
+                socket_call = native_spelling(emitted_extern_c, "socket")
+                assert f"std::int32_t {socket_call}(" in emitted_extern_c
+                assert re.search(
+                    r"gti_internal::runtime::" + re.escape(socket_call) + r"\("
+                    r"__gti_mir_v_\d+, __gti_mir_v_\d+, __gti_mir_v_\d+\)",
+                    emitted_extern_c,
+                )
+                assert "class socket" in emitted_extern_c
+                # open() returns the prelude's expected<socket, errc> instance.
+                expected_socket = re.search(
+                    r"static ::__gti_program::(__gti_type_[0-9a-f]+_expected) "
+                    r"__gti_fn_\d+_open\(\);",
+                    emitted_extern_c,
+                )
+                assert expected_socket
+                assert re.search(
+                    r"explicit " + expected_socket.group(1) +
+                    r"\(::__gti_program::__gti_std::tcp::socket __gti_mir_arg_0\);",
+                    emitted_extern_c,
+                )
+                close_call = native_spelling(emitted_extern_c, "close")
+                assert re.search(
+                    r"gti_internal::runtime::" + re.escape(close_call) +
+                    r"\(__gti_mir_v_\d+\)",
+                    emitted_extern_c,
+                )
+                assert "socket(socket &&other)" in emitted_extern_c
 
             copied_socket_source = root / "copied-tcp-socket.gti"
             copied_socket_source.write_text(
@@ -818,8 +839,7 @@ def main():
                     str(tcp_failure_source),
                     "-o",
                     str(tcp_failure_cpp20_executable),
-                    "--std",
-                    "c++20",
+                    *cpp_std(),
                     "--",
                     str(tcp_stub),
                 ]
@@ -872,8 +892,7 @@ def main():
                 str(cstdio_source),
                 "-o",
                 str(cstdio_cpp20_executable),
-                "--std",
-                "c++20",
+                *cpp_std(),
             ]
         )
         run([str(cstdio_cpp20_executable)], cwd=root, input_text="Q")
@@ -1011,12 +1030,11 @@ def main():
                 str(standard_string_source),
                 "-o",
                 str(standard_string_cpp20),
-                "--std",
-                "c++20",
+                *cpp_std(),
             ]
         )
         run([str(standard_string_cpp20)])
-        for standard in ("c++20", "c++23"):
+        for standard in CPP_STANDARDS:
             for optimization in ("-O1", "-O3"):
                 standard_string_optimized = (
                     root / f"standard-string-{standard}-{optimization[1:].lower()}"
@@ -1027,8 +1045,7 @@ def main():
                         str(standard_string_source),
                         "-o",
                         str(standard_string_optimized),
-                        "--std",
-                        standard,
+                        *cpp_std(standard),
                         optimization,
                     ]
                 )
@@ -1086,8 +1103,7 @@ def main():
                 str(standard_vector_source),
                 "-o",
                 str(standard_vector_cpp20),
-                "--std",
-                "c++20",
+                *cpp_std(),
             ]
         )
         run([str(standard_vector_cpp20)])
@@ -1196,8 +1212,7 @@ def main():
                 str(standard_accumulate_source),
                 "-o",
                 str(standard_accumulate_cpp20),
-                "--std",
-                "c++20",
+                *cpp_std(),
             ]
         )
         run([str(standard_accumulate_cpp20)])
@@ -1265,20 +1280,18 @@ def main():
             "#define std forced_standard_namespace\n",
             encoding="utf-8",
         )
-        for standard in ("c++20", "c++23"):
+        for standard in CPP_STANDARDS:
             backend_isolation_executable = root / (
-                "backend-isolation-" + standard
+                f"backend-isolation-{standard}"
             )
             command = [
                 gti,
                 str(backend_isolation_source),
                 "-o",
                 str(backend_isolation_executable),
-                "--std",
-                standard,
-                "--",
-                "-include",
-                str(forced_backend_macros),
+                *cpp_std(standard),
+                # Host-macro hygiene is a property of the generated C++.
+                *(["--", "-include", str(forced_backend_macros)] if CPP else []),
             ]
             run(command)
             run([str(backend_isolation_executable)])
@@ -1322,8 +1335,7 @@ def main():
                 str(program_arguments_source),
                 "-o",
                 str(program_arguments_cpp20),
-                "--std",
-                "c++20",
+                *cpp_std(),
             ]
         )
         assert (
@@ -1363,8 +1375,7 @@ def main():
                 str(nested_loan_source),
                 "-o",
                 str(nested_loan_cpp20),
-                "--std",
-                "c++20",
+                *cpp_std(),
             ]
         )
         run([str(nested_loan_cpp20)])
@@ -1418,8 +1429,7 @@ def main():
                 str(loop_loan_source),
                 "-o",
                 str(loop_loan_cpp20),
-                "--std",
-                "c++20",
+                *cpp_std(),
             ]
         )
         run([str(loop_loan_cpp20)])
@@ -1533,8 +1543,7 @@ def main():
                     gti,
                     str(temporary_lifecycle_source),
                     optimization,
-                    "--std",
-                    "c++20",
+                    *cpp_std(),
                     "-o",
                     str(temporary_lifecycle_cpp20),
                 ]
@@ -1652,8 +1661,7 @@ def main():
                 gti,
                 str(indexed_ownership_source),
                 "-O3",
-                "--std",
-                "c++20",
+                *cpp_std(),
                 "-o",
                 str(indexed_ownership_cpp20),
             ]
@@ -1720,8 +1728,7 @@ def main():
                 str(range_source),
                 "-o",
                 str(range_cpp20),
-                "--std",
-                "c++20",
+                *cpp_std(),
             ]
         )
         run([str(range_cpp20)])
@@ -1764,7 +1771,7 @@ def main():
             "std::println(result); return result - 29; }\n",
             encoding="utf-8",
         )
-        for standard in ("c++20", "c++23"):
+        for standard in CPP_STANDARDS:
             for optimization in ("-O0", "-O3"):
                 readonly_range_executable = root / (
                     f"readonly-range-{standard}-{optimization[1:]}"
@@ -1775,8 +1782,7 @@ def main():
                         str(readonly_range_source),
                         "-o",
                         str(readonly_range_executable),
-                        "--std",
-                        standard,
+                        *cpp_std(standard),
                         optimization,
                     ]
                 )
@@ -1823,8 +1829,7 @@ def main():
                 str(storage_source),
                 "-o",
                 str(storage_cpp20),
-                "--std",
-                "c++20",
+                *cpp_std(),
             ]
         )
         run([str(storage_cpp20)])
@@ -1868,8 +1873,7 @@ def main():
                 str(ownership_source),
                 "-o",
                 str(ownership_cpp20),
-                "--std",
-                "c++20",
+                *cpp_std(),
             ]
         )
         run([str(ownership_cpp20)])
@@ -1970,8 +1974,7 @@ def main():
                 str(overload_source),
                 "-o",
                 str(overload_cpp20),
-                "--std",
-                "c++20",
+                *cpp_std(),
             ]
         )
         run([str(overload_cpp20)])
@@ -2030,54 +2033,56 @@ def main():
             "return 1; }\n",
             encoding="utf-8",
         )
-        optimization_o0 = root / "optimization-o0.cpp"
-        run(
-            [
-                gti,
-                str(optimization_source),
-                "--emit-cpp",
-                "-O0",
-                "-o",
-                str(optimization_o0),
-            ]
-        )
-        # The entry emits from verified MIR: O0 keeps the staged
-        # comparison unfolded, exactly as the compatibility text kept the
-        # source-shaped "1 < 2".
-        assert " < __gti_mir_v_" in optimization_o0.read_text(encoding="utf-8")
+        # The folded comparison spelling is a C++-backend text probe; the MIR dumps below carry the optimizer evidence.
+        if CPP:
+            optimization_o0 = root / "optimization-o0.cpp"
+            run(
+                [
+                    gti,
+                    str(optimization_source),
+                    "--emit-cpp",
+                    "-O0",
+                    "-o",
+                    str(optimization_o0),
+                ]
+            )
+            # The entry emits from verified MIR: O0 keeps the staged
+            # comparison unfolded, exactly as the compatibility text kept the
+            # source-shaped "1 < 2".
+            assert " < __gti_mir_v_" in optimization_o0.read_text(encoding="utf-8")
 
-        optimization_o1 = root / "optimization-o1.cpp"
-        run(
-            [
-                gti,
-                str(optimization_source),
-                "--emit-cpp",
-                "-O1",
-                "-o",
-                str(optimization_o1),
-            ]
-        )
-        # O1 folds the whole chain in verified MIR: the comparison is
-        # gone and only folded literals remain.
-        optimization_o1_text = optimization_o1.read_text(encoding="utf-8")
-        assert " < __gti_mir_v_" not in optimization_o1_text
-        assert "provenance=branch-fold" not in optimization_o1_text  # emitted C++, not MIR
-        assert "= true;" in optimization_o1_text
+            optimization_o1 = root / "optimization-o1.cpp"
+            run(
+                [
+                    gti,
+                    str(optimization_source),
+                    "--emit-cpp",
+                    "-O1",
+                    "-o",
+                    str(optimization_o1),
+                ]
+            )
+            # O1 folds the whole chain in verified MIR: the comparison is
+            # gone and only folded literals remain.
+            optimization_o1_text = optimization_o1.read_text(encoding="utf-8")
+            assert " < __gti_mir_v_" not in optimization_o1_text
+            assert "provenance=branch-fold" not in optimization_o1_text  # emitted C++, not MIR
+            assert "= true;" in optimization_o1_text
 
-        optimization_o3 = root / "optimization-o3.cpp"
-        run(
-            [
-                gti,
-                str(optimization_source),
-                "--emit-cpp",
-                "-O3",
-                "-o",
-                str(optimization_o3),
-            ]
-        )
-        optimization_o3_text = optimization_o3.read_text(encoding="utf-8")
-        assert " < __gti_mir_v_" not in optimization_o3_text
-        assert "= true;" in optimization_o3_text
+            optimization_o3 = root / "optimization-o3.cpp"
+            run(
+                [
+                    gti,
+                    str(optimization_source),
+                    "--emit-cpp",
+                    "-O3",
+                    "-o",
+                    str(optimization_o3),
+                ]
+            )
+            optimization_o3_text = optimization_o3.read_text(encoding="utf-8")
+            assert " < __gti_mir_v_" not in optimization_o3_text
+            assert "= true;" in optimization_o3_text
 
         # --emit-mir writes the deterministic verified-MIR serialization for
         # the same program, refuses to combine with other emission modes, and
@@ -2096,26 +2101,28 @@ def main():
         assert mir_text.startswith("mir-v")
         assert " valid=1" in mir_text.splitlines()[0]
         assert "failure-metadata artifact=" in mir_text
-        combined = run(
-            [gti, str(optimization_source), "--emit-mir", "--emit-cpp"],
-            expected=64,
-        )
-        assert "cannot be used together" in combined.stderr
-        kept = run(
-            [gti, str(optimization_source), "--emit-mir", "--keep-cpp"],
-            expected=64,
-        )
-        assert "cannot be used together" in kept.stderr
+        # --emit-cpp and --keep-cpp are C++-backend options.
+        if CPP:
+            combined = run(
+                [gti, str(optimization_source), "--emit-mir", "--emit-cpp"],
+                expected=64,
+            )
+            assert "cannot be used together" in combined.stderr
+            kept = run(
+                [gti, str(optimization_source), "--emit-mir", "--keep-cpp"],
+                expected=64,
+            )
+            assert "cannot be used together" in kept.stderr
 
         pre_optimization_mir = root / "optimization-before.mir"
         post_optimization_mir = root / "optimization-after.mir"
         optimization_report = root / "optimization-report.json"
-        observed_cpp = root / "optimization-observed.cpp"
+        observed_cpp = root / "optimization-observed.mir"
         observed = run(
             [
                 gti,
                 str(optimization_source),
-                "--emit-cpp",
+                "--emit-mir",
                 "-O1",
                 "--dump-mir-before",
                 str(pre_optimization_mir),
@@ -2168,12 +2175,12 @@ def main():
         repeated_before = root / "optimization-before-repeated.mir"
         repeated_after = root / "optimization-after-repeated.mir"
         repeated_report = root / "optimization-report-repeated.json"
-        repeated_cpp = root / "optimization-observed-repeated.cpp"
+        repeated_cpp = root / "optimization-observed-repeated.mir"
         run(
             [
                 gti,
                 str(optimization_source),
-                "--emit-cpp",
+                "--emit-mir",
                 "-O1",
                 "--dump-mir-before",
                 str(repeated_before),
@@ -2192,12 +2199,12 @@ def main():
         o0_before = root / "optimization-o0-before.mir"
         o0_after = root / "optimization-o0-after.mir"
         o0_report = root / "optimization-o0-report.json"
-        o0_observed_cpp = root / "optimization-o0-observed.cpp"
+        o0_observed_cpp = root / "optimization-o0-observed.mir"
         run(
             [
                 gti,
                 str(optimization_source),
-                "--emit-cpp",
+                "--emit-mir",
                 "-O0",
                 "--dump-mir-before",
                 str(o0_before),
@@ -2218,13 +2225,13 @@ def main():
             [
                 gti,
                 str(optimization_source),
-                "--emit-cpp",
+                "--emit-mir",
                 "--dump-mir-before",
                 str(pre_optimization_mir),
                 "--dump-mir-after",
                 str(pre_optimization_mir),
                 "-o",
-                str(root / "duplicate-observation.cpp"),
+                str(root / "duplicate-observation.mir"),
             ],
             expected=64,
         )
@@ -2234,34 +2241,36 @@ def main():
             [
                 gti,
                 str(optimization_source),
-                "--emit-cpp",
+                "--emit-mir",
                 "--optimization-report",
                 str(optimization_source),
                 "-o",
-                str(root / "source-collision.cpp"),
+                str(root / "source-collision.mir"),
             ],
             expected=64,
         )
         assert "refusing to overwrite loaded source" in source_collision.stderr
         assert optimization_source.read_text(encoding="utf-8") == source_before_collision
 
-        # The level reaches the C++ backend's native compile command; LLVM
-        # applies it in process, which its execution tests cover.
-        optimization_executable = root / "optimization"
-        optimized_build = run(
-            [
-                gti,
-                str(optimization_source),
-                "--backend",
-                "cpp",
-                "-O2",
-                "--verbose",
-                "-o",
-                str(optimization_executable),
-            ]
-        )
-        assert " -O2 " in optimized_build.stderr
-        run([str(optimization_executable)])
+        # The C++ backend's native compile command.
+        if CPP:
+            # The level reaches the C++ backend's native compile command; LLVM
+            # applies it in process, which its execution tests cover.
+            optimization_executable = root / "optimization"
+            optimized_build = run(
+                [
+                    gti,
+                    str(optimization_source),
+                    "--backend",
+                    "cpp",
+                    "-O2",
+                    "--verbose",
+                    "-o",
+                    str(optimization_executable),
+                ]
+            )
+            assert " -O2 " in optimized_build.stderr
+            run([str(optimization_executable)])
 
         float_source = root / "binary32-runtime.gti"
         float_executable = root / "binary32-runtime"
@@ -2302,57 +2311,59 @@ def main():
         )
         run([str(float_executable)])
 
-        float_cpp = root / "binary32-runtime.cpp"
-        run(
-            [
-                gti,
-                str(float_source),
-                "--emit-cpp",
-                "-O0",
-                "-o",
-                str(float_cpp),
-            ]
-        )
-        unacknowledged_float_policy = subprocess.run(
-            [
-                "c++",
-                "-std=c++20",
-                "-I"
-                + str(
-                    pathlib.Path(__file__).resolve().parent.parent
-                    / "runtime/include"
-                ),
-                "-c",
-                str(float_cpp),
-                "-o",
-                str(root / "binary32-unacknowledged.o"),
-            ],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        assert unacknowledged_float_policy.returncode != 0
-        assert "__gti_strict_ieee754" in unacknowledged_float_policy.stderr
-        direct_float_object = root / "binary32-direct.o"
-        run(
-            [
-                "c++",
-                "-std=c++20",
-                "-O3",
-                "-fno-fast-math",
-                "-ffp-contract=off",
-                "-D__gti_strict_ieee754=1",
-                "-I"
-                + str(
-                    pathlib.Path(__file__).resolve().parent.parent
-                    / "runtime/include"
-                ),
-                "-c",
-                str(float_cpp),
-                "-o",
-                str(direct_float_object),
-            ]
-        )
+        # The strict-IEEE guard is part of the generated C++.
+        if CPP:
+            float_cpp = root / "binary32-runtime.cpp"
+            run(
+                [
+                    gti,
+                    str(float_source),
+                    "--emit-cpp",
+                    "-O0",
+                    "-o",
+                    str(float_cpp),
+                ]
+            )
+            unacknowledged_float_policy = subprocess.run(
+                [
+                    "c++",
+                    "-std=c++20",
+                    "-I"
+                    + str(
+                        pathlib.Path(__file__).resolve().parent.parent
+                        / "runtime/include"
+                    ),
+                    "-c",
+                    str(float_cpp),
+                    "-o",
+                    str(root / "binary32-unacknowledged.o"),
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            assert unacknowledged_float_policy.returncode != 0
+            assert "__gti_strict_ieee754" in unacknowledged_float_policy.stderr
+            direct_float_object = root / "binary32-direct.o"
+            run(
+                [
+                    "c++",
+                    "-std=c++20",
+                    "-O3",
+                    "-fno-fast-math",
+                    "-ffp-contract=off",
+                    "-D__gti_strict_ieee754=1",
+                    "-I"
+                    + str(
+                        pathlib.Path(__file__).resolve().parent.parent
+                        / "runtime/include"
+                    ),
+                    "-c",
+                    str(float_cpp),
+                    "-o",
+                    str(direct_float_object),
+                ]
+            )
 
         chatty_compiler = root / "chatty-compiler"
         chatty_compiler.write_text(
@@ -2525,8 +2536,7 @@ def main():
                 str(operator_source),
                 "-o",
                 str(operator_cpp20),
-                "--std",
-                "c++20",
+                *cpp_std(),
             ]
         )
         run([str(operator_cpp20)])
@@ -2546,7 +2556,7 @@ def main():
             "if (read == 3 and changed == 7) { return 0; } return 1; }\n",
             encoding="utf-8",
         )
-        for standard in ("c++20", "c++23"):
+        for standard in CPP_STANDARDS:
             callable_dispatch_executable = root / f"callable-dispatch-{standard}"
             run(
                 [
@@ -2554,8 +2564,7 @@ def main():
                     str(callable_dispatch_source),
                     "-o",
                     str(callable_dispatch_executable),
-                    "--std",
-                    standard,
+                    *cpp_std(standard),
                 ]
             )
             run([str(callable_dispatch_executable)])
@@ -2628,7 +2637,7 @@ def main():
             "return 1; }\n",
             encoding="utf-8",
         )
-        for standard in ("c++20", "c++23"):
+        for standard in CPP_STANDARDS:
             exact_callable_dispatch_executable = root / (
                 f"exact-callable-dispatch-{standard}"
             )
@@ -2638,8 +2647,7 @@ def main():
                     str(exact_callable_dispatch_source),
                     "-o",
                     str(exact_callable_dispatch_executable),
-                    "--std",
-                    standard,
+                    *cpp_std(standard),
                 ]
             )
             run([str(exact_callable_dispatch_executable)])
@@ -2659,7 +2667,7 @@ def main():
             "return relocated() - 7; }\n",
             encoding="utf-8",
         )
-        for standard in ("c++20", "c++23"):
+        for standard in CPP_STANDARDS:
             for optimization in ("-O0", "-O3"):
                 owned_move_capture_executable = root / (
                     f"owned-move-capture-{standard}-{optimization[1:]}"
@@ -2668,8 +2676,7 @@ def main():
                     [
                         gti,
                         str(owned_move_capture_source),
-                        "--std",
-                        standard,
+                        *cpp_std(standard),
                         optimization,
                         "-o",
                         str(owned_move_capture_executable),
@@ -2699,7 +2706,7 @@ def main():
             "int main() { transport(); return 0; }\n",
             encoding="utf-8",
         )
-        for standard in ("c++20", "c++23"):
+        for standard in CPP_STANDARDS:
             for optimization in ("-O0", "-O3"):
                 owned_callable_transport_executable = root / (
                     f"owned-callable-transport-{standard}-{optimization[1:]}"
@@ -2708,8 +2715,7 @@ def main():
                     [
                         gti,
                         str(owned_callable_transport_source),
-                        "--std",
-                        standard,
+                        *cpp_std(standard),
                         optimization,
                         "-o",
                         str(owned_callable_transport_executable),
@@ -3077,59 +3083,60 @@ def main():
         )
 
         cpp20_executable = root / "main-cpp20"
-        run([gti, str(source), "-o", str(cpp20_executable), "--std", "c++20"])
+        run([gti, str(source), "-o", str(cpp20_executable), *cpp_std()])
         assert run([str(cpp20_executable)]).stdout == "hello world\n"
 
-        emitted = root / "main.cpp"
-        run([gti, str(source), "--emit-cpp", "-o", str(emitted)])
-        emitted_source = emitted.read_text(encoding="utf-8")
-        # The entry emits from verified MIR once the expected extractions
-        # joined the intrinsic vocabulary (0.250.0): the source binding's
-        # literal stages as a typed MIR value instead of a named local.
-        assert "// GTI verified-MIR body: scalar-cfg-failure-v1" in emitted_source
-        assert "static_cast<std::int32_t>(42)" in emitted_source
-        assert "#include <expected>" not in emitted_source
-        # calculate() returns the prelude's expected<int, int> class instance.
-        assert re.search(
-            r"::__gti_program::__gti_type_[0-9a-f]+_expected "
-            r"__gti_fn_\d+_calculate\(const bool fail\);",
-            emitted_source,
-        )
-        # Source target branches must be resolved before program emission.
-        # The backend support preamble independently guards its native ABI;
-        # those host preprocessor checks are not unlowered GTI conditionals.
-        _, program_namespace, emitted_program = emitted_source.partition(
-            "namespace __gti_program {"
-        )
-        assert program_namespace, "expected the lowered program namespace"
-        assert "#if" not in emitted_program
-        assert "target.vendor" not in emitted_source
+        # The emitted and retained C++ representation is a C++-backend probe.
+        if CPP:
+            emitted = root / "main.cpp"
+            run([gti, str(source), "--emit-cpp", "-o", str(emitted)])
+            emitted_source = emitted.read_text(encoding="utf-8")
+            # The entry emits from verified MIR once the expected extractions
+            # joined the intrinsic vocabulary (0.250.0): the source binding's
+            # literal stages as a typed MIR value instead of a named local.
+            assert "// GTI verified-MIR body: scalar-cfg-failure-v1" in emitted_source
+            assert "static_cast<std::int32_t>(42)" in emitted_source
+            assert "#include <expected>" not in emitted_source
+            # calculate() returns the prelude's expected<int, int> class instance.
+            assert re.search(
+                r"::__gti_program::__gti_type_[0-9a-f]+_expected "
+                r"__gti_fn_\d+_calculate\(const bool fail\);",
+                emitted_source,
+            )
+            # Source target branches must be resolved before program emission.
+            # The backend support preamble independently guards its native ABI;
+            # those host preprocessor checks are not unlowered GTI conditionals.
+            _, program_namespace, emitted_program = emitted_source.partition(
+                "namespace __gti_program {"
+            )
+            assert program_namespace, "expected the lowered program namespace"
+            assert "#if" not in emitted_program
+            assert "target.vendor" not in emitted_source
 
-        emitted_cpp20 = root / "main-cpp20.cpp"
-        run(
-            [
-                gti,
-                str(source),
-                "--emit-cpp",
-                "--std",
-                "c++20",
-                "-o",
-                str(emitted_cpp20),
-            ]
-        )
-        emitted_cpp20_source = emitted_cpp20.read_text(encoding="utf-8")
-        # Both standards share GTI's own expected representation: the
-        # prelude's class instance.
-        assert "nonstd/expected.hpp" not in emitted_cpp20_source
-        assert re.search(
-            r"::__gti_program::__gti_type_[0-9a-f]+_expected "
-            r"__gti_fn_\d+_calculate\(const bool fail\);",
-            emitted_cpp20_source,
-        )
+            emitted_cpp20 = root / "main-cpp20.cpp"
+            run(
+                [
+                    gti,
+                    str(source),
+                    "--emit-cpp",
+                    *cpp_std(),
+                    "-o",
+                    str(emitted_cpp20),
+                ]
+            )
+            emitted_cpp20_source = emitted_cpp20.read_text(encoding="utf-8")
+            # Both standards share GTI's own expected representation: the
+            # prelude's class instance.
+            assert "nonstd/expected.hpp" not in emitted_cpp20_source
+            assert re.search(
+                r"::__gti_program::__gti_type_[0-9a-f]+_expected "
+                r"__gti_fn_\d+_calculate\(const bool fail\);",
+                emitted_cpp20_source,
+            )
 
-        kept_executable = root / "kept"
-        run([gti, str(source), "-o", str(kept_executable), "--keep-cpp"])
-        assert pathlib.Path(str(kept_executable) + ".gti.cpp").is_file()
+            kept_executable = root / "kept"
+            run([gti, str(source), "-o", str(kept_executable), "--keep-cpp"])
+            assert pathlib.Path(str(kept_executable) + ".gti.cpp").is_file()
 
         rejecting_compiler = root / "rejecting-compiler"
         rejecting_compiler.write_text(
@@ -3258,19 +3265,19 @@ def main():
             "int main() { mut int result = 1; return result; }\n",
             encoding="utf-8",
         )
-        warning_cpp = root / "warning.cpp"
+        warning_cpp = root / "warning.mir"
         warned = run(
-            [gti, str(warning_source), "--emit-cpp", "-o", str(warning_cpp)]
+            [gti, str(warning_source), "--emit-mir", "-o", str(warning_cpp)]
         )
         assert "warning[GTI-S2096]" in warned.stderr
         assert warned.stdout.splitlines()[-1] == "Diagnostics: 0 errors, 1 warning"
 
-        suppressed_cpp = root / "warning-suppressed.cpp"
+        suppressed_cpp = root / "warning-suppressed.mir"
         suppressed = run(
             [
                 gti,
                 str(warning_source),
-                "--emit-cpp",
+                "--emit-mir",
                 "-Wno-unused-mut",
                 "-o",
                 str(suppressed_cpp),
@@ -3310,9 +3317,9 @@ def main():
             [
                 gti,
                 str(profile_global),
-                "--emit-cpp",
+                "--emit-mir",
                 "-o",
-                str(root / "profile-global.cpp"),
+                str(root / "profile-global.mir"),
             ]
         )
         concurrent_global = run(
@@ -3321,9 +3328,9 @@ def main():
                 str(profile_global),
                 "--execution-profile",
                 "concurrent",
-                "--emit-cpp",
+                "--emit-mir",
                 "-o",
-                str(root / "concurrent-profile-global.cpp"),
+                str(root / "concurrent-profile-global.mir"),
             ],
             65,
         )
@@ -3609,19 +3616,19 @@ def main():
             "int first = 1\nint main() { return 0; }\n", encoding="utf-8"
         )
         rejected_syntax = run(
-            [gti, str(missing_semicolon), "--emit-cpp"], 65
+            [gti, str(missing_semicolon), "--emit-mir"], 65
         )
         assert "error[GTI-P0001]" in rejected_syntax.stderr
         assert "help: Insert ';'." in rejected_syntax.stderr
 
         reserved_identifier = root / "reserved-identifier.gti"
-        reserved_output = root / "reserved-identifier.cpp"
+        reserved_output = root / "reserved-identifier.mir"
         reserved_identifier.write_text(
             "int main() { int template = 1; return template - 1; }\n",
             encoding="utf-8",
         )
         rejected_reserved = run(
-            [gti, str(reserved_identifier), "--emit-cpp", "-o", str(reserved_output)],
+            [gti, str(reserved_identifier), "--emit-mir", "-o", str(reserved_output)],
             65,
         )
         assert "error[GTI-P0002]" in rejected_reserved.stderr
@@ -3638,7 +3645,7 @@ def main():
                                'export module cycle_b;\n'
                                'import "cycle_a.gti";\n'
                            ), encoding="utf-8")
-        cycle = run([gti, str(cycle_a), "--emit-cpp"], 65)
+        cycle = run([gti, str(cycle_a), "--emit-mir"], 65)
         assert "error[GTI-I0001]" in cycle.stderr
         assert "Module import cycle detected" in cycle.stderr
         assert "error[GTI-I0012]" not in cycle.stderr
@@ -3649,7 +3656,7 @@ def main():
             encoding="utf-8",
         )
         rejected_standard = run(
-            [gti, str(missing_standard), "--emit-cpp"], 65
+            [gti, str(missing_standard), "--emit-mir"], 65
         )
         assert "error[GTI-I0012]" in rejected_standard.stderr
         assert "Source owner 'std' does not declare public module 'not_present'." in rejected_standard.stderr
@@ -3662,7 +3669,7 @@ def main():
             "int main() { return 0; }\n",
             encoding="utf-8",
         )
-        rejected_private = run([gti, str(private_capability), "--emit-cpp"], 65)
+        rejected_private = run([gti, str(private_capability), "--emit-mir"], 65)
         assert rejected_private.stderr.count("error[GTI-S2058]") == 3
         assert "Compiler-private name 'gti_internal'" in rejected_private.stderr
         assert "Compiler-private name 'gti_internal::text_view'" in (
@@ -3694,7 +3701,7 @@ def main():
             encoding="utf-8",
         )
         private_dependency = run(
-            [gti, str(private_entry), "--emit-cpp"], 65
+            [gti, str(private_entry), "--emit-mir"], 65
         )
         assert "error[GTI-S2024]" in private_dependency.stderr
         assert 'import "private_leaf.gti";' in private_dependency.stderr
@@ -3709,7 +3716,7 @@ def main():
             encoding="utf-8",
         )
         rejected_import = run(
-            [gti, str(conditional_import), "--emit-cpp"], 65
+            [gti, str(conditional_import), "--emit-mir"], 65
         )
         assert "error[GTI-I0012]" in rejected_import.stderr
         assert "Module imports are unconditional source-unit-level declarations." in rejected_import.stderr
@@ -3916,9 +3923,12 @@ def main():
         assert "-Wno-unused-mut" in help_output
         run([gti], 64)
         run([gti, str(source), "--unknown"], 64)
-        run([gti, str(source), "--emit-cpp", "--keep-cpp"], 64)
-        run([gti, str(source), "--emit-cpp", "--", "-DINVALID=1"], 64)
-        run([gti, str(source), "--std", "c++17"], 64)
+        run([gti, str(source), "--emit-mir", "--", "-DINVALID=1"], 64)
+        if CPP:
+            # Usage errors of the C++ backend's own options.
+            run([gti, str(source), "--emit-cpp", "--keep-cpp"], 64)
+            run([gti, str(source), "--emit-cpp", "--", "-DINVALID=1"], 64)
+            run([gti, str(source), "--std", "c++17"], 64)
         invalid_optimization = run([gti, str(source), "-O4"], 64)
         assert "optimization level must be" in invalid_optimization.stderr
 

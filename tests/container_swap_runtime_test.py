@@ -81,8 +81,8 @@ def main():
                                   f"mut {spelling} a = {spelling}();\n"
                                   f"mut {spelling} b = {spelling}();\n"
                                   f"{setup}\n{expression}\nreturn 0;\n}}\n")
-                artifact = source.with_suffix(".cpp")
-                result = run([compiler, source, "--emit-cpp", "-o", artifact])
+                artifact = source.with_suffix(".mir")
+                result = run([compiler, source, "--emit-mir", "-o", artifact])
                 assert result.returncode == 65 and "error[GTI-S" in result.stderr, result
                 assert "GTI-B0001" not in result.stderr and not artifact.exists(), result
 

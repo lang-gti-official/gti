@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-from backend_execution import Endpoint, execute
+from backend_execution import Endpoint, cpp_selected, execute, selected_endpoints
 from llvm_evidence_manifest import build_manifest
 
 
@@ -814,8 +814,8 @@ def main() -> None:
     # contract. Do not reproduce the production backend's unchecked data()
     # conversion: native admission requires an exact NUL-free literal proof.
     native_rejections = native_rejection_cases(root)
-    endpoints = (Endpoint('cpp', 'O3', 'c++20'), Endpoint('cpp', 'O3', 'c++23'),
-                 *(Endpoint('llvm', mode) for mode in ('O0', 'O1', 'O2', 'O3')))
+    endpoints = selected_endpoints((Endpoint('cpp', 'O3', 'c++20'), Endpoint('cpp', 'O3', 'c++23'),
+                                    *(Endpoint('llvm', mode) for mode in ('O0', 'O1', 'O2', 'O3'))))
     if selection and selection not in success_cases and selection not in failures and selection not in native_only and selection not in rejections and selection not in native_rejections:
         raise ValueError(f'unknown execution case: {selection}')
     with tempfile.TemporaryDirectory(prefix='gti-llvm-places-') as directory:
@@ -851,7 +851,7 @@ def main() -> None:
                 continue
             source = work / f'{name}.gti'
             source.write_text(text, encoding='utf-8')
-            for backend in ('cpp', 'llvm'):
+            for backend in (('cpp', 'llvm') if cpp_selected() else ('llvm',)):
                 output = work / f'{name}-{backend}'
                 result = subprocess.run([str(gti), str(source), '--backend', backend, '-o', str(output)],
                                         env=env, capture_output=True, text=True, timeout=30)

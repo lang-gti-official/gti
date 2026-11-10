@@ -1,7 +1,7 @@
-#include "cpp_backend_test_support.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <iostream>
@@ -62,9 +62,10 @@ int main() {
   if (result.canGenerateCode()) {
     expect(lang::verifyMirProgram(result.mir).valid(),
            "construction MIR verifies");
-    const auto text = gti_test::emitCppText(result);
-    expect(!text.empty(),
-           "designated construction reaches the production backend");
+    std::string error;
+    expect(gti_test::llvmEmits(result, lang::OptimizationLevel::O0,
+                               lang::TargetInfo::host(), &error),
+           "designated construction reaches the production backend: " + error);
     auto forged = result.mir;
     bool mutated = false;
     for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(

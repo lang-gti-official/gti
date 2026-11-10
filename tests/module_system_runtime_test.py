@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 
+from backend_modes import cpp_modes
 from project_cli_smoke_test import executable_named, run
 
 
@@ -15,7 +16,8 @@ def main():
     compiler = str(pathlib.Path(sys.argv[1]).resolve())
     repository = pathlib.Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix="gti-module-system-") as temporary:
-        for backend in ("llvm", "cpp"):
+        # The C++ backend runs only when GTI_TEST_BACKENDS selects it.
+        for backend in ("llvm", *(("cpp",) if cpp_modes() else ())):
             # Direct mode also owns a shipped example: relative imports and
             # private helpers must work without a project manifest.
             direct = pathlib.Path(temporary) / f"direct-{backend}"

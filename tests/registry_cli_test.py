@@ -14,6 +14,8 @@ import tempfile
 import threading
 import urllib.parse
 
+from backend_modes import cpp_modes
+
 GTI = pathlib.Path(sys.argv[1]).resolve()
 LSP = pathlib.Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None
 
@@ -220,8 +222,11 @@ def main():
             run(["fetch"], consumer, consumer_env, False, "GTI-B1717")
             record.write_bytes(good_record)
             requests = len(server.requests)
-            for std, optimization in [("c++20", "-O0"), ("c++23", "-O3")]:
-                run(["run", "--locked", "--offline", "--no-cache", "--progress", "never", "--std", std, optimization], consumer, consumer_env)
+            for optimization in ("-O0", "-O3"):
+                run(["run", "--locked", "--offline", "--no-cache", "--progress", "never", "--backend", "llvm", optimization], consumer, consumer_env)
+            if cpp_modes():  # the C++ profile's `gti run --std` selection, only when selected
+                for std, optimization in [("c++20", "-O0"), ("c++23", "-O3")]:
+                    run(["run", "--locked", "--offline", "--no-cache", "--progress", "never", "--std", std, optimization], consumer, consumer_env)
             run(["metadata"], consumer, consumer_env, fragment="registry+official:libc@0.2.0")
             assert len(server.requests) == requests, "build/metadata must never query a registry"
             run(["fetch", "--offline"], consumer, consumer_env, fragment="up to date")

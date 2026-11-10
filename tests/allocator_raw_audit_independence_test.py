@@ -3,7 +3,8 @@
 
 The allocator example and resource fixtures rely on documented unsafe provider
 contracts. Their checked ownership and borrowing must not depend on the
-optional audit: Off and Warn accept the same programs and emit identical C++,
+optional audit: Off and Warn accept the same programs and emit identical
+verified MIR (the backend-neutral code every backend lowers),
 including when trusted-library findings are requested.
 Warn findings are advisory and may report analysis limitations.
 """
@@ -51,9 +52,9 @@ def main() -> None:
             source = root / relative
             emitted = {}
             for mode in ("off", "warn", "warn-library"):
-                output = temporary / f"{source.stem}-{mode}.cpp"
+                output = temporary / f"{source.stem}-{mode}.mir"
                 result = subprocess.run(
-                    [str(compiler), str(source), "--emit-cpp", "-o", str(output),
+                    [str(compiler), str(source), "--emit-mir", "-o", str(output),
                      f"--raw-pointer-audit={'warn' if mode == 'warn-library' else mode}",
                      *(["--raw-pointer-audit-library-findings"]
                        if mode == "warn-library" else [])],
@@ -62,7 +63,7 @@ def main() -> None:
                 assert "error[" not in result.stderr, (relative, mode, result.stderr)
                 emitted[mode] = output.read_bytes()
             assert emitted["off"] == emitted["warn"] == emitted["warn-library"], (
-                relative, "raw-pointer auditing changed generated code")
+                relative, "raw-pointer auditing changed the verified MIR")
     print(f"allocator raw-pointer audit independence passed ({len(sources)} sources)")
 
 

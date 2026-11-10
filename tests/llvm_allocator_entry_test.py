@@ -17,6 +17,7 @@ import subprocess
 
 from llvm_runtime_cost_test import CASES, validate_build_report
 from internal_module_fixture import private_library
+from backend_modes import cpp_modes
 
 ENTRIES = ("malloc", "calloc", "realloc", "posix_memalign", "free")
 PROTOTYPES = '''extern "C" {
@@ -205,7 +206,8 @@ def main():
             path = output / f"{name}.gti"
             path.write_text(PROTOTYPES + body)
             wanted = 0 if name == "provider-rejections" else checksum(name, args.iterations)
-            endpoints = [("cpp", 3), *(("llvm", level) for level in range(4))]
+            # The C++ endpoint runs only when GTI_TEST_BACKENDS selects it.
+            endpoints = [*([("cpp", 3)] if cpp_modes() else []), *(("llvm", level) for level in range(4))]
             if name == "shared-owner":
                 # Public owning matrices separately require the exact C++
                 # unsupported diagnostic; this audit measures LLVM allocations.
@@ -230,11 +232,12 @@ def main():
                     assert all(row[entry] == 0 for entry in ENTRIES), "profile observed unexpected public allocator entries"
                 manifest["cases"].append({"case": name, "backend": backend, "optimization": level,
                                           "report": report_path.name, "provenance": facts, "observation": row})
-        assert len(manifest["native_controls"]) == 2 and len(manifest["cases"]) == 24
+        observed = 4 + 4 * (5 if cpp_modes() else 4)  # shared-owner runs on LLVM only
+        assert len(manifest["native_controls"]) == 2 and len(manifest["cases"]) == observed
         assert digest(args.gti) == manifest["gti_sha256"] and digest(audit) == manifest["audit_material"]["sha256"]
-        manifest["gti_acceptance"] = "24 bounded observed-entry profiles passed; capture limits apply"
+        manifest["gti_acceptance"] = f"{observed} bounded observed-entry profiles passed; capture limits apply"
         manifest["status"] = "passed-bounded-public-entry-audit"
-        print("PASS: 2 mandatory native controls and 24 GTI public allocator-entry observations; capture limits retained")
+        print(f"PASS: 2 mandatory native controls and {observed} GTI public allocator-entry observations; capture limits retained")
     except BaseException as error:
         manifest["status"] = "failed"
         manifest["error"] = str(error)

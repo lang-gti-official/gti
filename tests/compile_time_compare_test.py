@@ -17,13 +17,12 @@ def main():
                    '--optimization', '2', '--runs', '1', '--warmup', '0']
         subprocess.run(command, check=True, timeout=180)
         report = json.loads((output / 'report.json').read_text())
-        assert report['schema'] == 1
+        assert report['schema'] == 2 and report['backend'] == 'llvm'
         assert report['runs'] == 1 and report['warmup'] == 0
         row, = report['rows']
         assert row['baseline_emission_identical'] is True
         assert len(set(row['runtime_outputs'].values())) == 1
-        expected = {'gti-full', 'gti-emit', 'gti-native',
-                    'baseline-gti-full', 'baseline-gti-emit', 'baseline-gti-native',
+        expected = {'gti-full', 'gti-emit', 'baseline-gti-full', 'baseline-gti-emit',
                     'cpp-idiomatic', 'cpp-semantic'}
         assert set(row['samples']) == expected
         assert set(row['order'][0]) == expected
@@ -32,6 +31,7 @@ def main():
             assert row['warmups'][name] == []
             assert samples[0]['argv']
         assert all(value['sha256'] for value in row['sources'].values())
+        assert set(row['emitted_mir']) == {'gti', 'baseline-gti'}
         original = (output / 'report.json').read_bytes()
         refused = subprocess.run(command, capture_output=True, timeout=20)
         assert refused.returncode != 0
