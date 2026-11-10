@@ -12706,6 +12706,7 @@ auto SemanticVisitor::Impl::createRetainedLoan(
     return 0;
   }
   const SemanticLoanId id = nextSemanticLoanId++;
+  if (std::getenv("GTI_TRACE_HLC")) std::fprintf(stderr, "[crl-new] loan=%llu carrier=s%llu\n", (unsigned long long)id, (unsigned long long)carrierSymbol); // TEMP-TRACE
   if (std::getenv("GTI_TRACE_CRL2")) { const auto *ancestor = parent ? semanticModel.findLoan(parent) : nullptr; std::fprintf(stderr, "[crl2] id=%llu kind=%d parent=%llu parentKind=%d parentSd=%llu line=%d\n", (unsigned long long)id, (int)kind, (unsigned long long)parent, ancestor ? (int)ancestor->kind : -1, ancestor ? (unsigned long long)ancestor->storedDependency : 0ull, origin ? expressionToken(*origin).line : -1); } // TEMP-TRACE
   const bool lifecycleBound = lifecycleBoundBorrowCarrierFor(carrier.type);
   // A loan below a parent that retains a stored owner keeps that owner for

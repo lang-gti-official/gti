@@ -15679,6 +15679,10 @@ private:
       }
     }
     if (retainedLoan != 0) {
+      // Bindings that carried a consumed group's value. Semantics keeps them
+      // on the one transferred identity; MIR gives the call result its own
+      // physical group, which none of them ever holds.
+      std::vector<HirBindingId> consumedCarriers;
       if (binding != nullptr && binding->info.retainedLoan != 0) {
         const SemanticLoanId semanticLoan = binding->info.retainedLoan;
         if (const auto found = semanticLoans.find(semanticLoan);
@@ -15783,6 +15787,7 @@ private:
             // collapsing both lifetimes into the old carrier's schedule.
             const auto consumed = existing->id;
             std::erase(output.loans[consumed - 1].carriers, *statement.binding);
+            consumedCarriers = output.loans[consumed - 1].carriers;
             output.loans[consumed - 1].semanticLoan = 0;
             // An exact field-mapped by-value call already retires the old
             // carrier on its success edge. Compact calls retire it here.
@@ -15834,6 +15839,10 @@ private:
             // (moved into this very call, e.g. std::next(std::move(it))). The
             // call's own result loan now carries the same external owners.
             if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[consumedid] semantic=%llu existing=%llu -> %llu\n", (unsigned long long)semanticLoan, (unsigned long long)existing->id, (unsigned long long)retainedLoan); // TEMP-TRACE
+            // The consumed group keeps only the carriers of its own value.
+            std::erase(output.loans[existing->id - 1].carriers,
+                       *statement.binding);
+            consumedCarriers = output.loans[existing->id - 1].carriers;
             output.loans[existing->id - 1].semanticLoan = 0;
             semanticLoans.insert_or_assign(semanticLoan, retainedLoan);
           } else {
@@ -15959,6 +15968,9 @@ private:
           carriers.end()) {
         carriers.push_back(*statement.binding);
       }
+      for (const HirBindingId consumed : consumedCarriers)
+        if (consumed != *statement.binding)
+          std::erase(carriers, consumed);
       if (std::getenv("GTI_TRACE_LCBD2")) { std::fprintf(stderr, "[carry] b%llu -> loan%llu carriers:", (unsigned long long)*statement.binding, (unsigned long long)retainedLoan); for (auto c : output.loans[retainedLoan - 1].carriers) std::fprintf(stderr, " b%llu", (unsigned long long)c); std::fprintf(stderr, "\n"); } // TEMP-TRACE
       const MirLoan *retained = output.findLoan(retainedLoan);
       const HirBindingId transferred =

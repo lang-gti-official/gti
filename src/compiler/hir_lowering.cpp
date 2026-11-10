@@ -3974,6 +3974,7 @@ private:
           lowered.carriers.push_back(found->second);
         }
       }
+      if (std::getenv("GTI_TRACE_HLC")) { std::fprintf(stderr, "[hlc] semantic=%llu kind=%d carriers:", (unsigned long long)loan.id, static_cast<int>(loan.kind)); for (auto c : loan.carriers) std::fprintf(stderr, " s%llu", (unsigned long long)c); std::fprintf(stderr, "\n"); } // TEMP-TRACE
       body.loans.push_back(std::move(lowered));
     }
   }

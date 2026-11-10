@@ -3220,6 +3220,7 @@ void SemanticModel::recordLoanCarrier(SemanticLoanId id, SymbolId carrier) {
     return;
   }
   std::vector<SymbolId> &carriers = retainedLoans[id - 1].carriers;
+  if (std::getenv("GTI_TRACE_HLC")) std::fprintf(stderr, "[rlc] loan=%llu carrier=s%llu\n", (unsigned long long)id, (unsigned long long)carrier); // TEMP-TRACE
   if (std::find(carriers.begin(), carriers.end(), carrier) == carriers.end()) {
     carriers.push_back(carrier);
   }
