@@ -5866,11 +5866,19 @@ auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
                  initializer.target.name.last().lexeme ==
                      field.declaration->name().lexeme;
         });
-    if (!fieldSymbol || initialized == constructor.initializers().end() ||
-        initialized->arguments.size() != 1)
+    // A field the constructor leaves to its declaration default takes that
+    // default's dependencies (an ownerless alternative has none).
+    const ExprPtr *source = nullptr;
+    if (initialized != constructor.initializers().end()) {
+      if (initialized->arguments.size() != 1)
+        return;
+      source = &initialized->arguments.front();
+    } else if (field.declaration->initializer()) {
+      source = &field.declaration->initializer();
+    }
+    if (!fieldSymbol || source == nullptr)
       return;
-    const auto input =
-        completeBorrowDependencySet(initialized->arguments.front());
+    const auto input = completeBorrowDependencySet(*source);
     if (!input)
       return;
     for (auto dependency : input->dependencies) {
