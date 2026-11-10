@@ -5937,12 +5937,25 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                                transfersAtPublication)))
                 return true;
             }
+            // A generated move construction consumes its moved carrier just
+            // as an owned parameter does: its nominal `T&&` formal only
+            // selects the special member, and the result relocates the same
+            // stored references, so it forwards that exact ancestry too.
+            const bool generatedMove =
+                instruction.kind == MirInstructionKind::Construct &&
+                !instruction.constructorTarget &&
+                instruction.constructorKind == ConstructorKind::Move &&
+                instruction.operands.size() == 1 &&
+                instruction.borrowArgument == 0 &&
+                instruction.borrowArguments.empty() &&
+                instruction.borrowFields.empty();
             return movedCarrier &&
                    instruction.borrowOrigin == BorrowOriginKind::Argument &&
                    instruction.borrowArgument <
                        instruction.parameterTypes.size() &&
-                   instruction.parameterTypes[instruction.borrowArgument]
-                           .kind != SemanticType::Reference &&
+                   (generatedMove ||
+                    instruction.parameterTypes[instruction.borrowArgument]
+                            .kind != SemanticType::Reference) &&
                    body.loans[loan - 1].kind == MirLoanKind::Stored &&
                    exactAncestry;
           };

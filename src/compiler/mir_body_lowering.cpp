@@ -4657,6 +4657,25 @@ private:
           valid = false;
       }
     }
+    // A carrier storing a reference that its parent call result selected
+    // from several owners stores whichever one was selected. MIR derived
+    // each alternative from that parent loan; a semantic record naming the
+    // carrier's own field path does not replace those owners.
+    if (const MirLoan *parent = output.findLoan(lowered.parent);
+        parent != nullptr && parent->kind == MirLoanKind::CallResult &&
+        lowered.kind == MirLoanKind::Stored && !loan.entry)
+      for (const auto &previous : previousDependencies) {
+        const auto sameOwner = [&](const MirLoanDependency &candidate) {
+          return candidate.source == previous.source &&
+                 candidate.access == previous.access;
+        };
+        if (previous.source != 0 && previous.source != lowered.source &&
+            std::any_of(parent->additionalDependencies.begin(),
+                        parent->additionalDependencies.end(), sameOwner) &&
+            std::none_of(lowered.additionalDependencies.begin(),
+                         lowered.additionalDependencies.end(), sameOwner))
+          lowered.additionalDependencies.push_back(previous);
+      }
     if (lowered.access == AccessMode::ReadOnly &&
         loan.access == AccessMode::Mutable) {
       valid = false;
