@@ -38,7 +38,60 @@ struct MirBorrowCheck {
   bool internal = false;
 };
 
-std::string conflictMessage(const MirBorrowRejection &borrow) {
+// Whether the rejected instruction passes move-only storage as a call's
+// mutable receiver: the call may reallocate or replace that storage.
+const MirBody *findMirBody(const MirProgram &program, MirBodyKind kind,
+                           std::size_t owner) {
+  const MirBody *body = nullptr;
+  const auto search = [&](const auto &instances) {
+    for (const auto &candidate : instances)
+      if (candidate.id == owner)
+        body = &candidate.body;
+  };
+  if (kind == MirBodyKind::Function)
+    search(program.functionInstances());
+  else if (kind == MirBodyKind::Constructor)
+    search(program.constructorInstances());
+  else if (kind == MirBodyKind::Destructor)
+    search(program.destructorInstances());
+  else if (kind == MirBodyKind::Lambda)
+    search(program.lambdaInstances());
+  return body;
+}
+
+bool moveOnlyMutableReceiver(const MirProgram &program, MirBodyKind kind,
+                             std::size_t owner, MirBlockId blockId,
+                             MirInstructionId instructionId,
+                             const MirBorrowRejection &borrow) {
+  if (!borrow.write || borrow.instruction != MirInstructionKind::CallInput)
+    return false;
+  const MirBody *body = findMirBody(program, kind, owner);
+  const MirBlock *block = body ? body->findBlock(blockId) : nullptr;
+  if (block == nullptr)
+    return false;
+  for (const MirInstruction &instruction : block->instructions) {
+    if (instruction.id != instructionId ||
+        instruction.callInputRole != MirCallInputRole::Receiver ||
+        instruction.callInputKind != HirCallInputKind::MutableBorrow)
+      continue;
+    MirPlaceId place = 0;
+    if (instruction.loan)
+      if (const MirLoan *loan = body->findLoan(*instruction.loan))
+        place = loan->source;
+    if (place == 0 && !instruction.operands.empty())
+      place = instruction.operands.front().place;
+    const MirPlace *receiver = body->findPlace(place);
+    return receiver != nullptr && receiver->access == AccessMode::Mutable &&
+           !receiver->traits.copyable && receiver->traits.movable;
+  }
+  return false;
+}
+
+std::string conflictMessage(const MirBorrowRejection &borrow,
+                            bool moveOnlyReceiver = false) {
+  if (moveOnlyReceiver)
+    return "Mutable method cannot use move-only storage while a reference "
+           "borrowed from it may still be live.";
   if (borrow.kind == MirBorrowRejectionKind::ParentUse)
     return "Cannot use a parent loan while an overlapping child reborrow may "
            "still be live.";
@@ -133,12 +186,43 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       add(span, escapeMessage);
   };
   // A write conflict anchored at the declaration rather than in its body is
-  // the function's exit drop of storage it owns. Under a `static` result the
-  // returned borrow stays live there: that storage does not live for
-  // 'static'.
-  const auto exitDropUnderStaticResult = [&](const MirLoweringError &error) {
+  // the function's exit drop of storage it owns. A returned borrow stays live
+  // there: it depends on storage that does not outlive the call, and under a
+  // `static` result that storage does not live for 'static'.
+  const auto escapingLoan = [&](const MirLoweringError &error) {
+    const MirBody *body =
+        findMirBody(program, error.body.kind, error.body.owner);
+    const MirLoan *loan = body ? body->findLoan(error.borrow.loan) : nullptr;
+    return loan != nullptr && loan->escapes ? loan : nullptr;
+  };
+  // The escaping loan borrows a projection of a by-value parameter that
+  // carries borrowed state: the parameter's shell, not the owner it borrows.
+  const auto byValueCarrierShell = [&](const MirLoweringError &error) {
+    const MirLoan *loan = escapingLoan(error);
+    const MirBody *body =
+        findMirBody(program, error.body.kind, error.body.owner);
+    const MirPlace *source = loan ? body->findPlace(loan->source) : nullptr;
+    if (source == nullptr || source->root != MirPlaceRootKind::Binding ||
+        source->projections.empty())
+      return false;
+    for (const auto &function : program.functionInstances())
+      if (function.id == error.body.owner)
+        for (std::size_t index = 0; index < function.parameterBindings.size();
+             ++index)
+          if (function.parameterBindings[index] == source->binding)
+            for (const MirPlace &place : body->places)
+              if (place.root == MirPlaceRootKind::Binding &&
+                  place.binding == source->binding &&
+                  place.projections.empty())
+                return place.type.kind != SemanticType::Reference &&
+                       place.traits.containsBorrowedState;
+    return false;
+  };
+  const auto exitDropUnderReturnedBorrow = [&](const MirLoweringError &error) {
     if (!error.borrow.write || !error.source ||
-        !staticResult(error.body.kind, error.body.owner))
+        error.body.kind != MirBodyKind::Function ||
+        (!staticResult(error.body.kind, error.body.owner) &&
+         escapingLoan(error) == nullptr))
       return false;
     for (const auto &candidate : hir.functionInstances())
       if (candidate.id == error.body.owner && candidate.source != nullptr) {
@@ -211,12 +295,27 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       check.internal = true;
       continue;
     }
-    if (error.borrow.kind == MirBorrowRejectionKind::Escape ||
-        exitDropUnderStaticResult(error))
+    if (error.borrow.kind == MirBorrowRejectionKind::Escape)
       addEscape(*error.source, error.body.kind, error.body.owner);
-    else {
-      add(*error.source, conflictMessage(error.borrow), "GTI-S2017",
-          error.loanOrigin);
+    else if (exitDropUnderReturnedBorrow(error)) {
+      const SourceSpan span =
+          escapeSpan(error.body.kind, error.body.owner, error.block)
+              .value_or(*error.source);
+      if (!staticResult(error.body.kind, error.body.owner) &&
+          byValueCarrierShell(error))
+        add(span,
+            "Returned reference is a projection of the by-value carrier "
+            "shell rather than its external owner dependency.",
+            "GTI-S2085");
+      else
+        addEscape(span, error.body.kind, error.body.owner);
+    } else {
+      add(*error.source,
+          conflictMessage(error.borrow,
+                          moveOnlyMutableReceiver(
+                              program, error.body.kind, error.body.owner,
+                              error.block, error.instruction, error.borrow)),
+          "GTI-S2017", error.loanOrigin);
       if (!error.loanOrigin)
         relateLoan(error.body, error.borrow);
     }
