@@ -10076,12 +10076,14 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
         updated.returnType, updated.parameterTypes, updated.ownerClass,
         updated.staticMember, updated.intrinsic);
-    if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
-            dynamicTextReturnBorrowSummary(updated)) {
-      summary = *dynamicText;
+    if (!signatureContractDefaults()) {
+      if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
+              dynamicTextReturnBorrowSummary(updated)) {
+        summary = *dynamicText;
+      }
+      if (const auto fields = storedFieldReturnBorrowSummary(updated))
+        summary = *fields;
     }
-    if (const auto fields = storedFieldReturnBorrowSummary(updated))
-      summary = *fields;
     updated.returnedTextReference = textReferenceReturnSummary(updated);
     if (isBorrowReturningType(updated.returnType) &&
         updated.intrinsic == IntrinsicKind::None) {
@@ -10098,6 +10100,18 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     updated.returnBorrowParameters = summary.parameters;
     updated.returnBorrowFields = summary.fields;
     updated.returnBorrowPlace = summary.place;
+    // RFC 0004: the signature alone states an unannotated result's complete
+    // contract, published before any body is analyzed so every call sees it.
+    if (signatureContractDefaults() && updated.declaration != nullptr)
+      if (const FunctionDecl *syntax = updated.bodyDeclaration())
+        if (auto complete = signatureCompleteReturnBorrow(
+                updated, syntax->receiverMutability())) {
+          if (updated.returnType.kind == SemanticType::Class ||
+              (updated.returnType.kind == SemanticType::Reference &&
+               updated.ownerClass))
+            updated.returnBorrowFields = complete->dependencies;
+          updated.completeReturnBorrow = std::move(*complete);
+        }
     updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
     semanticModel.record(*declaration, updated);
     publishFunctionBorrowSummary(updated, candidateIndex);

@@ -7934,8 +7934,22 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     concreteDeclaration = *declarationInfo;
     concreteDeclaration->returnType = function.returnType;
     concreteDeclaration->parameterTypes = function.parameterTypes;
-    // RFC 0004 shadow phase: signature contracts are not refined per call.
+    // RFC 0004 shadow phase: a call sees the same signature contract its
+    // concrete callee instance publishes; nothing is refined per call.
     if (signatureContractDefaults()) {
+      if (!concreteDeclaration->explicitReturnBorrowOrigin)
+        if (const FunctionDecl *syntax = concreteDeclaration->bodyDeclaration())
+          if (auto complete = signatureCompleteReturnBorrow(
+                  *concreteDeclaration, syntax->receiverMutability(),
+                  function.dispatchOwner)) {
+            if (concreteDeclaration->returnType.kind == SemanticType::Class ||
+                (concreteDeclaration->returnType.kind ==
+                     SemanticType::Reference &&
+                 concreteDeclaration->ownerClass))
+              concreteDeclaration->returnBorrowFields = complete->dependencies;
+            concreteDeclaration->completeReturnBorrow = std::move(*complete);
+            declarationInfo = &*concreteDeclaration;
+          }
     } else if (const auto fields = storedFieldReturnBorrowSummary(
                    *concreteDeclaration, function.dispatchOwner)) {
       concreteDeclaration->returnBorrowOrigin = fields->origin;
