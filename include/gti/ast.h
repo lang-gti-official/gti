@@ -135,6 +135,10 @@ struct TypeRef {
   std::vector<PointerLayer> pointers;
   std::vector<ArrayExtentExprPtr> arrayExtents;
   std::optional<Token> reference;
+  // Lifetime arguments of the written generic argument list (`_`, `static`,
+  // `this` or an in-scope `lifetime` binder). They are signature metadata
+  // and never part of `arguments` (RFC 0004 parametricity).
+  std::vector<TypeRef> lifetimeArguments;
   // Written reference validity, distinct from generic arguments of its
   // referent. Absence preserves elision; `_` is retained as an explicit
   // inference request.
@@ -427,6 +431,24 @@ struct GenericParameter {
   ArrayExtentExprPtr defaultValue;
 };
 
+[[nodiscard]] inline std::vector<GenericParameter>
+withoutLifetimeParameters(const std::vector<GenericParameter> &parameters) {
+  std::vector<GenericParameter> result;
+  for (const auto &parameter : parameters)
+    if (!parameter.lifetimeKeyword)
+      result.push_back(parameter);
+  return result;
+}
+
+[[nodiscard]] inline std::vector<GenericParameter>
+onlyLifetimeParameters(const std::vector<GenericParameter> &parameters) {
+  std::vector<GenericParameter> result;
+  for (const auto &parameter : parameters)
+    if (parameter.lifetimeKeyword)
+      result.push_back(parameter);
+  return result;
+}
+
 struct RuntimeBinding {
   Token attribute;
   std::string name;
@@ -494,6 +516,10 @@ struct ConstraintExpression {
   std::vector<ConceptApplication> applications;
   std::vector<ConstraintExpressionNode> nodes;
   std::size_t root = ConstraintExpressionNode::invalidIndex;
+  // `outlives<a, b>` applications (RFC 0004). They are signature lifetime
+  // contracts, never type-level requirements, so the parser lifts them out of
+  // the conjunction that type-level satisfaction evaluates.
+  std::vector<ConceptApplication> lifetimeRequirements;
 
   [[nodiscard]] bool empty() const { return applications.empty(); }
 };
@@ -1985,8 +2011,17 @@ public:
   [[nodiscard]] bool isConsteval() const {
     return constexprKeyword_ && constexprKeyword_->kind == TokenKind::CONSTEVAL;
   }
+  // Type and value parameters only. Lifetime binders are signature
+  // contracts, never type identity (RFC 0004 parametricity).
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
+    return typeGenericParameters_;
+  }
+  // Every written binder in source order, lifetime binders included.
+  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
     return genericParameters_;
+  }
+  [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {
+    return onlyLifetimeParameters(genericParameters_);
   }
   [[nodiscard]] const std::vector<Parameter> &parameters() const {
     return parameters_;
@@ -2022,6 +2057,8 @@ private:
   std::optional<Token> constexprKeyword_;
   Token name_;
   std::vector<GenericParameter> genericParameters_;
+  std::vector<GenericParameter> typeGenericParameters_ =
+      withoutLifetimeParameters(genericParameters_);
   std::vector<Parameter> parameters_;
   std::optional<RequiresClause> requiresClause_;
   std::vector<ConstructorInitializer> initializers_;
@@ -2101,8 +2138,17 @@ public:
   [[nodiscard]] bool isExactSpecialization() const {
     return exactSpecialization_.has_value();
   }
+  // Type and value parameters only. Lifetime binders are signature
+  // contracts, never type identity (RFC 0004 parametricity).
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
+    return typeGenericParameters_;
+  }
+  // Every written binder in source order, lifetime binders included.
+  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
     return genericParameters_;
+  }
+  [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {
+    return onlyLifetimeParameters(genericParameters_);
   }
   // A patterned primary declares the shapes of its public arguments, not a
   // flat list of already-resolved binders. Semantic analysis owns binding the
@@ -2136,6 +2182,8 @@ private:
   Token name_;
   std::optional<TypeRef> exactSpecialization_;
   std::vector<GenericParameter> genericParameters_;
+  std::vector<GenericParameter> typeGenericParameters_ =
+      withoutLifetimeParameters(genericParameters_);
   std::vector<TypeRef> genericArgumentPatterns_;
   std::vector<BaseSpecifier> bases_;
   StmtList members_;
@@ -2176,8 +2224,17 @@ public:
   [[nodiscard]] const std::vector<EnumeratorDecl> &enumerators() const {
     return enumerators_;
   }
+  // Type and value parameters only. Lifetime binders are signature
+  // contracts, never type identity (RFC 0004 parametricity).
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
+    return typeGenericParameters_;
+  }
+  // Every written binder in source order, lifetime binders included.
+  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
     return genericParameters_;
+  }
+  [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {
+    return onlyLifetimeParameters(genericParameters_);
   }
 
 private:
@@ -2187,6 +2244,8 @@ private:
   std::optional<TypeRef> underlyingType_;
   std::vector<EnumeratorDecl> enumerators_;
   std::vector<GenericParameter> genericParameters_;
+  std::vector<GenericParameter> typeGenericParameters_ =
+      withoutLifetimeParameters(genericParameters_);
 };
 
 class ConditionalStmt final : public StmtOfKind<StmtKind::ConditionalStmt> {
@@ -2502,8 +2561,17 @@ public:
     return definitionOwner_;
   }
   [[nodiscard]] const Token &name() const { return name_; }
+  // Type and value parameters only. Lifetime binders are signature
+  // contracts, never type identity (RFC 0004 parametricity).
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
+    return typeGenericParameters_;
+  }
+  // Every written binder in source order, lifetime binders included.
+  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
     return genericParameters_;
+  }
+  [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {
+    return onlyLifetimeParameters(genericParameters_);
   }
   [[nodiscard]] const std::vector<Parameter> &parameters() const {
     return parameters_;
@@ -2602,6 +2670,8 @@ private:
   TypeRef returnType_;
   Token name_;
   std::vector<GenericParameter> genericParameters_;
+  std::vector<GenericParameter> typeGenericParameters_ =
+      withoutLifetimeParameters(genericParameters_);
   std::vector<Parameter> parameters_;
   std::unique_ptr<BlockStmt> body_;
   std::optional<RuntimeBinding> runtimeBinding_;
@@ -2837,8 +2907,17 @@ public:
   [[nodiscard]] const Token &keyword() const { return keyword_; }
   [[nodiscard]] const Token &name() const { return name_; }
   [[nodiscard]] const TypeRef &target() const { return target_; }
+  // Type and value parameters only. Lifetime binders are signature
+  // contracts, never type identity (RFC 0004 parametricity).
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
+    return typeGenericParameters_;
+  }
+  // Every written binder in source order, lifetime binders included.
+  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
     return genericParameters_;
+  }
+  [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {
+    return onlyLifetimeParameters(genericParameters_);
   }
 
 private:
@@ -2846,6 +2925,8 @@ private:
   Token name_;
   TypeRef target_;
   std::vector<GenericParameter> genericParameters_;
+  std::vector<GenericParameter> typeGenericParameters_ =
+      withoutLifetimeParameters(genericParameters_);
 };
 
 /// One `typename name;` member of a protocol concept body.
@@ -2902,8 +2983,17 @@ public:
 
   [[nodiscard]] const Token &keyword() const { return keyword_; }
   [[nodiscard]] const Token &name() const { return name_; }
+  // Type and value parameters only. Lifetime binders are signature
+  // contracts, never type identity (RFC 0004 parametricity).
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
+    return typeGenericParameters_;
+  }
+  // Every written binder in source order, lifetime binders included.
+  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
     return genericParameters_;
+  }
+  [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {
+    return onlyLifetimeParameters(genericParameters_);
   }
   // Compatibility projection for operations that apply only to type binders.
   [[nodiscard]] const std::vector<Token> &typeParameters() const {
@@ -2941,6 +3031,8 @@ private:
   Token keyword_;
   Token name_;
   std::vector<GenericParameter> genericParameters_;
+  std::vector<GenericParameter> typeGenericParameters_ =
+      withoutLifetimeParameters(genericParameters_);
   std::vector<Token> typeParameters_;
   ConstraintExpression requirements_;
   std::optional<CompilerConstraintBinding> compilerBinding_;
@@ -2969,8 +3061,17 @@ public:
   }
 
   [[nodiscard]] const Token &forKeyword() const { return forKeyword_; }
+  // Type and value parameters only. Lifetime binders are signature
+  // contracts, never type identity (RFC 0004 parametricity).
   [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
+    return typeGenericParameters_;
+  }
+  // Every written binder in source order, lifetime binders included.
+  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
     return genericParameters_;
+  }
+  [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {
+    return onlyLifetimeParameters(genericParameters_);
   }
   [[nodiscard]] const Token &conceptKeyword() const { return conceptKeyword_; }
   [[nodiscard]] const ConceptApplication &target() const { return target_; }
@@ -2982,6 +3083,8 @@ public:
 private:
   Token forKeyword_;
   std::vector<GenericParameter> genericParameters_;
+  std::vector<GenericParameter> typeGenericParameters_ =
+      withoutLifetimeParameters(genericParameters_);
   Token conceptKeyword_;
   ConceptApplication target_;
   StmtList members_;

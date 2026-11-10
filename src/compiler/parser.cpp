@@ -467,6 +467,7 @@ private:
   }
 
   StmtPtr typeAliasDeclaration(Token keyword) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     Token name =
         consume(TokenKind::IDENTIFIER, "Expect type alias name after 'using'.");
     std::vector<GenericParameter> parameters;
@@ -488,6 +489,7 @@ private:
       Token keyword,
       std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt,
       std::optional<ConceptExplanation> explanation = std::nullopt) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     Token name = consume(TokenKind::IDENTIFIER, "Expect concept name.");
     std::vector<GenericParameter> parameters = genericParameterList();
     for (const auto &parameter : parameters) {
@@ -602,6 +604,7 @@ private:
   // concept. The name derives from the concept application's tokens, so it
   // is stable across compilations and distinct for each block.
   StmtPtr conformanceDeclaration(Token forKeyword) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     std::vector<GenericParameter> genericParameters;
     if (check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
@@ -736,6 +739,7 @@ private:
       arguments.emplace_back(parseGenericArgument());
     } while (match({TokenKind::COMMA}));
     consumeGenericClose("Expect '>' after concept arguments.");
+    (void)takeLifetimeArguments(arguments);
     return {std::move(name), std::move(arguments)};
   }
 
@@ -750,6 +754,10 @@ private:
     while (match({TokenKind::OR})) {
       Token operation = previous();
       const std::size_t right = constraintConjunction(expression);
+      if (left == ConstraintExpressionNode::invalidIndex ||
+          right == ConstraintExpressionNode::invalidIndex)
+        throw error(operation, "An 'outlives' lifetime requirement cannot be "
+                               "an alternative of '||'.");
       expression.nodes.push_back({.kind = ConstraintExpressionKind::Disjunction,
                                   .left = left,
                                   .right = right,
@@ -764,6 +772,13 @@ private:
     while (match({TokenKind::AND})) {
       Token operation = previous();
       const std::size_t right = constraintPrimary(expression);
+      // A lifted lifetime requirement leaves no type-level operand.
+      if (right == ConstraintExpressionNode::invalidIndex)
+        continue;
+      if (left == ConstraintExpressionNode::invalidIndex) {
+        left = right;
+        continue;
+      }
       expression.nodes.push_back({.kind = ConstraintExpressionKind::Conjunction,
                                   .left = left,
                                   .right = right,
@@ -823,6 +838,11 @@ private:
     }
     const std::size_t application = expression.applications.size();
     ConceptApplication leaf = conceptApplication();
+    if (leaf.name.segments.size() == 1 && leaf.name.last().lexeme == "outlives" &&
+        !check(TokenKind::LEFT_PAREN)) {
+      expression.lifetimeRequirements.push_back(std::move(leaf));
+      return ConstraintExpressionNode::invalidIndex;
+    }
     if (match({TokenKind::LEFT_PAREN})) {
       auto callee = std::make_unique<QualifiedName>(leaf.name);
       leaf.predicate = finishCall(std::move(callee), leaf.arguments);
@@ -1221,6 +1241,7 @@ private:
   StmtPtr classDeclaration(
       std::vector<ClassAttribute> attributes, Token keyword,
       std::optional<CompilerTypeBinding> compilerTypeBinding = std::nullopt) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     const NestingGuard nesting = enterNesting(keyword);
     const ClassKind kind =
         keyword.kind == TokenKind::STRUCT      ? ClassKind::Struct
@@ -1313,6 +1334,7 @@ private:
   }
 
   StmtPtr enumDeclaration(Token keyword) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     std::optional<Token> classKeyword;
     if (match({TokenKind::CLASS})) {
       classKeyword = previous();
@@ -1363,6 +1385,7 @@ private:
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeKeyword = std::nullopt,
       std::vector<FunctionAttribute> functionAttributes = {}) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     // Taken at entry, so declarations nested in the body never see them.
     std::optional<std::vector<GenericParameter>> blockParameters =
         std::exchange(conformanceGenericParameters, std::nullopt);
@@ -1557,6 +1580,7 @@ private:
 
   StmtPtr macroDeclaration(Token keyword,
                            std::vector<FunctionAttribute> attributes = {}) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     std::optional<Token> mode;
     if (match({TokenKind::LEFT_PAREN})) {
       mode = consume(TokenKind::IDENTIFIER, "Expect 'proc' in '#macro(proc)'.");
@@ -1968,6 +1992,19 @@ private:
     }
   }
 
+  // Lexical lifetime binders of the declarations being parsed (RFC 0004).
+  std::vector<std::vector<std::string>> lifetimeScopes;
+  struct LifetimeScopeGuard {
+    std::vector<std::vector<std::string>> &scopes;
+    explicit LifetimeScopeGuard(std::vector<std::vector<std::string>> &scopes)
+        : scopes(scopes) {
+      scopes.emplace_back();
+    }
+    ~LifetimeScopeGuard() { scopes.pop_back(); }
+    LifetimeScopeGuard(const LifetimeScopeGuard &) = delete;
+    LifetimeScopeGuard &operator=(const LifetimeScopeGuard &) = delete;
+  };
+
   bool lifetimeParameterAhead() const {
     return check(TokenKind::IDENTIFIER) && peek().lexeme == "lifetime" &&
            (peekAt(1).kind == TokenKind::IDENTIFIER ||
@@ -1981,6 +2018,7 @@ private:
     if (name.lexeme == "_")
       throw error(name, "A lifetime parameter requires a name; '_' is an "
                         "inferred lifetime argument.");
+    declareLifetimeBinder(name.lexeme);
     return {.name = std::move(name), .lifetimeKeyword = std::move(keyword)};
   }
 
@@ -1995,6 +2033,7 @@ private:
           throw error(peek(), "Only lifetime parameters may follow the class "
                               "argument patterns and their lifetime parameters.");
         patterns.push_back(parseGenericArgument());
+        declarePatternLifetimeBinders(patterns.back());
       }
     } while (match({TokenKind::COMMA}));
     consumeGenericClose("Expect '>' after class argument patterns.");
@@ -2056,6 +2095,7 @@ private:
                          std::optional<Token> unsafeKeyword = {},
                          std::optional<Token> implicitKeyword = {},
                          std::vector<FunctionAttribute> attributes = {}) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     std::vector<GenericParameter> genericParameters;
     if (check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
@@ -2680,7 +2720,9 @@ private:
         }
         consumeGenericClose("Expect '>' after generic arguments.");
       }
+      auto lifetimeArguments = takeLifetimeArguments(arguments);
       TypeRef type(std::move(name), std::move(arguments));
+      type.lifetimeArguments = std::move(lifetimeArguments);
       std::size_t qualifierDepth = 0;
       while (match({TokenKind::SCOPE})) {
         Token member = consume(TokenKind::IDENTIFIER,
@@ -2699,6 +2741,7 @@ private:
           }
           consumeGenericClose("Expect '>' after type member arguments.");
         }
+        selected.lifetimeArguments = takeLifetimeArguments(selected.arguments);
         type = std::move(selected);
       }
       return type;
@@ -2788,9 +2831,45 @@ private:
         argument.arguments.empty() && argument.arrayExtents.empty() &&
         argument.pointers.empty() && !argument.reference) {
       argument.genericArgumentSyntax =
-          GenericArgumentSyntax::UnresolvedIdentifier;
+          lifetimeBinderInScope(argument.name.last().lexeme)
+              ? GenericArgumentSyntax::Lifetime
+              : GenericArgumentSyntax::UnresolvedIdentifier;
     }
     return argument;
+  }
+
+  // RFC 0004 parametricity: lifetime arguments are signature metadata, never
+  // part of a type's argument list. Move them aside where a list is formed.
+  static std::vector<TypeRef> takeLifetimeArguments(std::vector<TypeRef> &arguments) {
+    std::vector<TypeRef> lifetimes;
+    std::vector<TypeRef> types;
+    for (auto &argument : arguments)
+      (argument.genericArgumentSyntax == GenericArgumentSyntax::Lifetime ? lifetimes : types)
+          .push_back(std::move(argument));
+    arguments = std::move(types);
+    return lifetimes;
+  }
+
+  void declareLifetimeBinder(const std::string &name) {
+    if (!lifetimeScopes.empty())
+      lifetimeScopes.back().push_back(name);
+  }
+
+  // A class argument pattern such as `int&<source>` binds `source`.
+  void declarePatternLifetimeBinders(const TypeRef &pattern) {
+    if (pattern.referenceLifetime &&
+        pattern.referenceLifetime->name.kind == TokenKind::IDENTIFIER &&
+        pattern.referenceLifetime->name.lexeme != "_")
+      declareLifetimeBinder(pattern.referenceLifetime->name.lexeme);
+    for (const auto &argument : pattern.arguments)
+      declarePatternLifetimeBinders(argument);
+  }
+
+  [[nodiscard]] bool lifetimeBinderInScope(const std::string &name) const {
+    for (const auto &scope : lifetimeScopes)
+      if (std::find(scope.begin(), scope.end(), name) != scope.end())
+        return true;
+    return false;
   }
 
   void parseArrayDeclaratorSuffix(TypeRef &type) {
@@ -4086,6 +4165,7 @@ private:
       } while (match({TokenKind::COMMA}));
     }
     consumeGenericClose("Expect '>' after generic arguments.");
+    (void)takeLifetimeArguments(arguments);
     return arguments;
   }
 
