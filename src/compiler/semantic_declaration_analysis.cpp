@@ -10068,6 +10068,17 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
       updated.returnBorrowParameter = contract.parameter;
       updated.returnBorrowAccess = contract.access;
       updated.returnBorrowParameters = contract.parameters;
+      // RFC 0004: an explicit contract states its complete contract too.
+      if (signatureContractDefaults())
+        if (const FunctionDecl *syntax = updated.bodyDeclaration())
+          if (auto complete = signatureCompleteReturnBorrow(
+                  updated, syntax->receiverMutability())) {
+            if (updated.returnType.kind == SemanticType::Class ||
+                (updated.returnType.kind == SemanticType::Reference &&
+                 updated.ownerClass))
+              updated.returnBorrowFields = complete->dependencies;
+            updated.completeReturnBorrow = std::move(*complete);
+          }
       updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
       semanticModel.record(*declaration, updated);
       publishFunctionBorrowSummary(updated, candidateIndex);

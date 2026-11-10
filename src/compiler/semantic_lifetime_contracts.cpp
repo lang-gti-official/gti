@@ -261,7 +261,38 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
     }
     return true;
   };
-  if (function.ownerClass != 0 && !function.staticMember) {
+  // An explicit contract names its suppliers: the receiver or the listed
+  // parameters. Otherwise a method elides to its receiver and a free
+  // function to every borrow-carrying input.
+  const bool method = function.ownerClass != 0 && !function.staticMember;
+  std::vector<std::size_t> namedParameters;
+  bool receiverSupplies = method;
+  bool parametersSupply = !method;
+  if (function.explicitReturnBorrowOrigin) {
+    switch (function.returnBorrowOrigin) {
+    case BorrowOriginKind::Receiver:
+      if (!method)
+        return std::nullopt;
+      receiverSupplies = true;
+      parametersSupply = false;
+      break;
+    case BorrowOriginKind::Argument:
+      receiverSupplies = false;
+      parametersSupply = true;
+      namedParameters = function.returnBorrowParameters.empty()
+                            ? std::vector{function.returnBorrowParameter}
+                            : function.returnBorrowParameters;
+      break;
+    default:
+      return std::nullopt;
+    }
+  }
+  const auto named = [&](std::size_t index) {
+    return namedParameters.empty() ||
+           std::find(namedParameters.begin(), namedParameters.end(), index) !=
+               namedParameters.end();
+  };
+  if (receiverSupplies) {
     const SemanticType receiver = concreteReceiver.kind == SemanticType::Class
                                       ? concreteReceiver
                                       : openClassType(function.ownerClass);
@@ -275,9 +306,12 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
                              : AccessMode::ReadOnly});
     if (!addStored(BorrowOriginKind::Receiver, 0, receiver))
       return std::nullopt;
-  } else {
+  }
+  if (parametersSupply) {
     for (std::size_t index = 0; index < function.parameterTypes.size();
          ++index) {
+      if (!named(index))
+        continue;
       const SemanticType &parameter = function.parameterTypes[index];
       if (parameter.kind == SemanticType::Reference &&
           parameter.arguments.size() == 1) {
@@ -331,6 +365,12 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
     if (!supplied)
       return std::nullopt;
   }
+  // A direct reference borrowed whole from one supplier is exactly its base
+  // origin; a complete contract would only restate it.
+  if (directReference && summary.dependencies.size() == 1 &&
+      summary.dependencies.front().sourceFields.empty() &&
+      summary.dependencies.front().sourceConditions.empty())
+    return std::nullopt;
   return summary;
 }
 

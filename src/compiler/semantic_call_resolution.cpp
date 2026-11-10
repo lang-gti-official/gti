@@ -7937,21 +7937,38 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     // RFC 0004 shadow phase: a call sees the same signature contract its
     // concrete callee instance publishes; nothing is refined per call.
     if (signatureContractDefaults()) {
-      if (!concreteDeclaration->explicitReturnBorrowOrigin)
-        if (const FunctionDecl *syntax = concreteDeclaration->bodyDeclaration())
-          if (auto complete = signatureCompleteReturnBorrow(
-                  *concreteDeclaration, syntax->receiverMutability(),
-                  function.dispatchOwner)) {
-            if (concreteDeclaration->returnType.kind == SemanticType::Class ||
-                (concreteDeclaration->returnType.kind ==
-                     SemanticType::Reference &&
-                 concreteDeclaration->ownerClass))
-              concreteDeclaration->returnBorrowFields = complete->dependencies;
-            concreteDeclaration->completeReturnBorrow = std::move(*complete);
-            declarationInfo = &*concreteDeclaration;
-          }
-    } else if (const auto fields = storedFieldReturnBorrowSummary(
-                   *concreteDeclaration, function.dispatchOwner)) {
+      if (const FunctionDecl *syntax = concreteDeclaration->bodyDeclaration();
+          syntax && concreteDeclaration->explicitReturnBorrowOrigin) {
+        // An explicit contract resolves per instance, as its instance does.
+        const auto contract = genericReturnBorrowContract(
+            *syntax, concreteDeclaration->returnType,
+            concreteDeclaration->parameterTypes,
+            concreteDeclaration->ownerClass, concreteDeclaration->staticMember);
+        concreteDeclaration->returnBorrowOrigin = contract.origin;
+        concreteDeclaration->returnBorrowParameter = contract.parameter;
+        concreteDeclaration->returnBorrowAccess = contract.access;
+        concreteDeclaration->returnBorrowParameters = contract.parameters;
+      }
+      if (const FunctionDecl *syntax = concreteDeclaration->bodyDeclaration())
+        if (auto complete = signatureCompleteReturnBorrow(
+                *concreteDeclaration, syntax->receiverMutability(),
+                function.dispatchOwner)) {
+          if (concreteDeclaration->returnType.kind == SemanticType::Class ||
+              (concreteDeclaration->returnType.kind ==
+                   SemanticType::Reference &&
+               concreteDeclaration->ownerClass))
+            concreteDeclaration->returnBorrowFields = complete->dependencies;
+          concreteDeclaration->completeReturnBorrow = std::move(*complete);
+          declarationInfo = &*concreteDeclaration;
+        }
+    }
+    // Signature contracts skip only stored-field refinement (body
+    // inference); text relays still follow the instance (L-OWN-02).
+    if (const auto fields =
+            signatureContractDefaults()
+                ? std::nullopt
+                : storedFieldReturnBorrowSummary(*concreteDeclaration,
+                                                 function.dispatchOwner)) {
       concreteDeclaration->returnBorrowOrigin = fields->origin;
       concreteDeclaration->returnBorrowParameter = fields->parameter;
       concreteDeclaration->returnBorrowAccess = fields->access;
