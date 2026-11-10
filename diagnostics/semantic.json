@@ -162,6 +162,15 @@
     "arguments": 2
   },
   {
+    "id": "UnresolvedReflectionQuery",
+    "code": "GTI-S2126",
+    "phase": "Semantics",
+    "severity": "Error",
+    "group": "reflection",
+    "format": "{0}",
+    "arguments": 1
+  },
+  {
     "id": "CheckedLiteralOverloadShadow",
     "code": "GTI-S2125",
     "phase": "Semantics",

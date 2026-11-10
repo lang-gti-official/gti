@@ -182,6 +182,13 @@ counts the omissions and `FrontendWorkMetrics::hirOmittedInstanceBodies`
 reports them. Class instances are never omitted: lowered bodies of the file's
 own instances reference their layout.
 
+A function instance whose concrete reanalysis reports an error is likewise
+processed up to its body and then stops: its diagnostics are reported, but the
+body is not lowered and the lowering is marked invalid. A failed expression
+keeps no instance record, so lowering it would read the primary body's facts
+through the instance delta and admit instances that still name this instance's
+own generic parameters; their analyses would only repeat the failure.
+
 The LSP clears the option because it never reads HIR bodies, only HIR's
 diagnostics. The contract follows from the scope rule above: an instance that
 only a library-only body would request is, like one that only unreached
