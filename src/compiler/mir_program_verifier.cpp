@@ -6477,7 +6477,13 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
             entrySource != nullptr &&
             entrySource->root == dependencySource->root &&
             entrySource->binding == dependencySource->binding &&
-            entrySource->projections.empty() &&
+            (entrySource->projections.empty() ||
+             (entrySource->projections.size() == 1 &&
+              entrySource->projections.front().kind ==
+                  MirProjectionKind::PackElement &&
+              !dependencySource->projections.empty() &&
+              dependencySource->projections.front() ==
+                  entrySource->projections.front())) &&
             (entrySource->root == MirPlaceRootKind::This ||
              entrySource->type.kind == SemanticType::Reference);
         const bool carried =
@@ -6488,7 +6494,17 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
               candidate.lifecycleBound &&
               mir_detail::bindingReceivedStoredLoan(
                   body, dependencySource->binding, candidate.id)));
-        if (candidate.id == loan.id || (!abstractEntry && !carried))
+        // A reference pack carries each lane separately.
+        const bool otherLane = carried &&
+                               !dependencySource->projections.empty() &&
+                               dependencySource->projections.front().kind ==
+                                   MirProjectionKind::PackElement &&
+                               entrySource != nullptr &&
+                               (entrySource->projections.empty() ||
+                                entrySource->projections.front() !=
+                                    dependencySource->projections.front());
+        if (candidate.id == loan.id || (!abstractEntry && !carried) ||
+            otherLane)
           continue;
         const MirLoanId dependency = candidate.kind == MirLoanKind::Stored
                                          ? candidate.id
@@ -6584,15 +6600,36 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
                    ? AccessMode::Mutable
                    : AccessMode::ReadOnly);
       bool parameterEntry = false;
+      // One reference lane of a concrete formal pack names that lane.
+      const auto lane =
+          source->projections.size() == 1 &&
+                  source->projections.front().kind ==
+                      MirProjectionKind::PackElement &&
+                  source->projections.front().constantIndex
+              ? std::optional<std::size_t>{static_cast<std::size_t>(
+                    *source->projections.front().constantIndex)}
+              : std::nullopt;
       if (parameterBindings != nullptr && parameterTypes != nullptr &&
           source->root == MirPlaceRootKind::Binding &&
-          source->type.kind == SemanticType::Reference) {
+          source->type.kind == SemanticType::Reference &&
+          (source->projections.empty() || lane)) {
         for (std::size_t index = 0; index < parameterBindings->size() &&
                                     index < parameterTypes->size();
              ++index)
-          parameterEntry = parameterEntry ||
-                           ((*parameterBindings)[index] == source->binding &&
-                            (*parameterTypes)[index] == source->type);
+          parameterEntry =
+              parameterEntry ||
+              (!lane && (*parameterBindings)[index] == source->binding &&
+               (*parameterTypes)[index] == source->type);
+        // Pack lanes are expanded in the formal types.
+        for (std::size_t index = 0; lane && index < parameterTypes->size();
+             ++index) {
+          const auto formal = mir_detail::returnOriginFormal(
+              *parameterTypes, *parameterBindings, index);
+          parameterEntry =
+              parameterEntry || (formal && formal->binding == source->binding &&
+                                 formal->elementWithinBinding == *lane &&
+                                 (*parameterTypes)[index] == source->type);
+        }
       }
       const bool captureEntry =
           lambda && source->root == MirPlaceRootKind::Symbol &&
@@ -6602,7 +6639,7 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
           source->symbol == lambda->captureSymbols[source->capture - 1] &&
           source->type == lambda->captureTypes[source->capture - 1];
       if ((!receiverEntry && !parameterEntry && !captureEntry) ||
-          !source->projections.empty())
+          (!source->projections.empty() && !(parameterEntry && lane)))
         return verificationFailure(body, owner,
                                    "abstract stored dependency must name the "
                                    "exact receiver or reference formal");
@@ -18734,6 +18771,13 @@ verifyMirProgramContracts(const MirProgram &program) {
           const auto storedPaths = findStoredCarrierReferences(program, type);
           const bool storedCarrier =
               type.kind == SemanticType::Class && !storedPaths.empty();
+          // A read-only reference lane to a borrowed carrier derives its
+          // abstract Stored entry from the carrier's sole stored reference
+          // path; the lane's own shell entry retains it.
+          const auto lanePaths =
+              summarizedOrigin && type.arguments.size() == 1
+                  ? findStoredCarrierReferences(program, type.arguments.front())
+                  : decltype(storedPaths){};
           std::size_t entryLoans = 0;
           for (const MirLoan &loan : body.loans) {
             const MirPlace *source = body.findPlace(loan.source);
@@ -18743,6 +18787,22 @@ verifyMirProgramContracts(const MirProgram &program) {
                 source->projections.front().kind !=
                     MirProjectionKind::PackElement ||
                 source->projections.front().constantIndex != element)
+              continue;
+            if (loan.kind == MirLoanKind::Stored && lanePaths.size() == 1 &&
+                loan.semanticLoan == 0 && loan.carriers.empty() &&
+                loan.parent == 0 && loan.storedDependency == 0 &&
+                !loan.escapes && !loan.lifecycleBound &&
+                loan.designatedFields == lanePaths.front().fields &&
+                loan.access == lanePaths.front().reference.referenceAccess &&
+                loan.additionalDependencies.empty() && source->type == type &&
+                source->initiallyAvailable &&
+                std::any_of(body.loans.begin(), body.loans.end(),
+                            [&](const MirLoan &shell) {
+                              return shell.kind == MirLoanKind::Parameter &&
+                                     shell.entry &&
+                                     shell.source == loan.source &&
+                                     shell.storedDependency == loan.id;
+                            }))
               continue;
             ++entryLoans;
             const bool exactAccess =

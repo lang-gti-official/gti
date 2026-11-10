@@ -6840,6 +6840,20 @@ private:
     const MirPlace *place = output.findPlace(id);
     if (place == nullptr)
       return 0;
+    // One lane of a reference pack has its own entry loan; the pack binding
+    // carries every lane, so select the exact lane rather than the binding.
+    if (place->root == MirPlaceRootKind::Binding &&
+        !place->projections.empty() &&
+        place->projections.front().kind == MirProjectionKind::PackElement)
+      for (const auto &[lanePlace, laneLoan] : packEntryLoans) {
+        const MirPlace *lane = output.findPlace(lanePlace);
+        const MirLoan *loan = output.findLoan(laneLoan);
+        if (lane != nullptr && loan != nullptr && loan->storedDependency &&
+            lane->binding == place->binding && lane->projections.size() == 1 &&
+            lane->projections.front().constantIndex ==
+                place->projections.front().constantIndex)
+          return loan->storedDependency;
+      }
     if (place->root == MirPlaceRootKind::Loan) {
       const auto *loan = output.findLoan(place->loan);
       return loan == nullptr ? 0 : loan->storedDependency;
@@ -8529,6 +8543,16 @@ private:
         }
       }
     }
+    // An expanded pack lane is no separate HIR argument. A carrier lane's own
+    // shell entry retains its derived stored dependency.
+    if (originLoan == 0 && value.borrowOrigin == BorrowOriginKind::Argument &&
+        value.borrowArgument >= arguments.size() &&
+        value.borrowArgument < sourceArguments.size())
+      if (const auto lane =
+              packEntryLoans.find(sourceArguments[value.borrowArgument].place);
+          lane != packEntryLoans.end() &&
+          output.loans[lane->second - 1].storedDependency != 0)
+        originLoan = lane->second;
     // A mapped reference-field result borrows the selected external referent,
     // not the address of a reference alias's carrier shell. Match the source
     // selection in borrowOriginPlace while retaining shell ancestry for
@@ -13475,9 +13499,14 @@ private:
     if (sourcePlace == 0 || scopes.empty()) {
       return;
     }
+    const MirLoanId stored =
+        root != nullptr && root->type.kind == SemanticType::TypePack
+            ? seedPackLaneStoredEntry(sourcePlace)
+            : 0;
     const MirLoanId loan = createLoan(MirLoanKind::Parameter, sourcePlace,
                                       bodyReturnBorrowAccess(), 0, binding);
     output.loans[loan - 1].entry = true;
+    output.loans[loan - 1].storedDependency = stored;
     bindingLoans.insert_or_assign(binding, loan);
     scopes.front().loans.push_back(loan);
     // Among several supplying lanes, each lane forwards its own entry loan.
@@ -13526,13 +13555,48 @@ private:
       const MirPlaceId place = appendPackElementPlace(std::move(projected));
       if (place == 0 || packEntryLoans.contains(place))
         continue;
+      const MirLoanId stored = seedPackLaneStoredEntry(place);
       const MirLoanId loan =
           createLoan(MirLoanKind::Parameter, place, element.referenceAccess, 0,
                      formal->binding);
       output.loans[loan - 1].entry = true;
+      output.loans[loan - 1].storedDependency = stored;
       packEntryLoans.emplace(place, loan);
       scopes.front().loans.push_back(loan);
     }
+  }
+
+  // A lane `Carrier&` of a reference pack names no semantic entry loan, yet
+  // its carrier holds external referents exactly as a fixed reference
+  // formal's does. Derive that formal's abstract Stored entry from the lane's
+  // type: its sole stored reference path, with that reference's permission.
+  // The lane's shell loan retains it as its stored dependency.
+  [[nodiscard]] MirLoanId seedPackLaneStoredEntry(MirPlaceId lane) {
+    const MirPlace *place = output.findPlace(lane);
+    if (place == nullptr || place->type.kind != SemanticType::Reference ||
+        place->type.arguments.size() != 1)
+      return 0;
+    const SemanticType carrier = place->type.arguments.front();
+    if (carrier.kind != SemanticType::Class)
+      return 0;
+    const auto path = soleStoredReferencePath(carrier);
+    if (!path)
+      return 0;
+    SemanticType reference = carrier;
+    for (const SymbolId field : path->first) {
+      const auto selected = borrowedFieldType(reference, field);
+      if (!selected)
+        return 0;
+      reference = *selected;
+    }
+    if (reference.kind != SemanticType::Reference)
+      return 0;
+    const MirLoanId stored =
+        createLoan(MirLoanKind::Stored, lane, reference.referenceAccess);
+    output.loans[stored - 1].entry = true;
+    output.loans[stored - 1].designatedFields = path->first;
+    scopes.front().loans.push_back(stored);
+    return stored;
   }
 
   // Scope exit.
@@ -16678,13 +16742,24 @@ private:
               transient = relay->parent;
               relayedEntry = true;
             }
+            // Each supplying lane of a reference pack keeps its own entry
+            // authority, which a forwarded lane's result relays.
+            const bool supplierLaneEntry =
+                transient != 0 && !function->returnBorrowParameters.empty() &&
+                std::any_of(
+                    packEntryLoans.begin(), packEntryLoans.end(),
+                    [&](const auto &lane) {
+                      const MirPlace *place = output.findPlace(lane.first);
+                      return lane.second == transient && place != nullptr &&
+                             place->binding == returnBorrowParameterBinding();
+                    });
             const bool validTail =
                 function->returnBorrowOrigin == BorrowOriginKind::Receiver ||
                         function->returnBorrowOrigin == BorrowOriginKind::Global
                     ? transient == 0 ||
                           (mappedEntry != 0 && transient == mappedEntry)
                     : (summarizedEntry != 0 || transferredEntry != 0) &&
-                          (transient == mappedEntry ||
+                          (transient == mappedEntry || supplierLaneEntry ||
                            (transient == 0 &&
                             output.loans[borrow.loan - 1].access ==
                                 AccessMode::ReadOnly &&

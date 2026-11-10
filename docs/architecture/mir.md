@@ -3001,6 +3001,13 @@ A `MirBody` owns:
   reuses the canonical element place and its loan; copying stages an independent
   carrier while moving consumes only the carrier shell. Whole-program checks
   independently replay field paths and reject missing or substituted origins;
+- a read-only supplying lane `Carrier&` of a concrete formal pack has no
+  semantic entry loan; MIR derives one from the lane's type. Its `Parameter`
+  shell entry retains an abstract `Stored` entry over the same `PackElement`
+  place naming the carrier's sole stored reference path, as a fixed reference
+  formal's semantic entries do. A forwarded lane's call result is a child of
+  that lane's shell and keeps its stored dependency; verification matches
+  shell, dependency and lane by element, never by the whole pack binding;
 - typed lexical/value drop obligations and per-instruction initialize, move,
   reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,

@@ -2876,7 +2876,16 @@ soleInvokePredecessor(const MirBlockPredecessors &predecessors,
       loan.producedBy != 0 || loan.storedField != 0)
     return false;
   const MirPlace *source = body.findPlace(loan.source);
-  if (source == nullptr || !source->projections.empty())
+  // One reference lane of a formal pack is a reference formal of its own.
+  const bool packLane =
+      source != nullptr && source->root == MirPlaceRootKind::Binding &&
+      source->projections.size() == 1 &&
+      source->projections.front().kind == MirProjectionKind::PackElement &&
+      source->type.kind == SemanticType::Reference &&
+      source->type.arguments.size() == 1 &&
+      source->type.arguments.front().kind == SemanticType::Class &&
+      loan.carriers.empty() && !loan.designatedFields.empty();
+  if (source == nullptr || (!source->projections.empty() && !packLane))
     return false;
   // A checked text reference borrows two things: the view object and its
   // caller-owned text. Text has an opaque owner dependency, not a nominal
