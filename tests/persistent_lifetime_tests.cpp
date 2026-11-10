@@ -283,15 +283,20 @@ void contracts() {
           "serialized incomplete marker must reject");
 }
 void requirementFormulas() {
-  const auto make = [](GenericParameterId a, GenericParameterId b, GenericParameterId t) {
+  const auto make = [](GenericParameterId a, GenericParameterId b,
+                       GenericParameterId t) {
     auto value = contract(a, b);
     using Kind = LifetimeRequirementNode::Kind;
     value.requirements.nodes = {
-        {.kind = Kind::Region, .bound = {Lifetime::parameter(a), Lifetime::parameter(b)}},
-        {.kind = Kind::Type, .bound = {{}, Lifetime::parameter(b)},
+        {.kind = Kind::Region,
+         .bound = {Lifetime::parameter(a), Lifetime::parameter(b)}},
+        {.kind = Kind::Type,
+         .bound = {{}, Lifetime::parameter(b)},
          .type = SemanticType::typeParameter(t)},
         {.kind = Kind::Any, .left = 0, .right = 1},
-        {.kind = Kind::SemanticPredicate, .predicate = 7, .semanticTruth = true},
+        {.kind = Kind::SemanticPredicate,
+         .predicate = 7,
+         .semanticTruth = true},
         {.kind = Kind::All, .left = 2, .right = 3}};
     value.requirements.root = 4;
     return value;
@@ -303,20 +308,23 @@ void requirementFormulas() {
   const auto bytes = writePersistentLifetimeContract(original, from);
   expect(bytes.starts_with("gti.lifetime-contract.2:") &&
              bytes == writePersistentLifetimeContract(imported, to),
-         "boolean lifetime requirements retain alpha-invariant versioned identity");
+         "boolean lifetime requirements retain alpha-invariant versioned "
+         "identity");
   const auto decoded = readPersistentLifetimeContract(bytes, to);
   expect(decoded.requirements == imported.requirements,
          "formula topology, exact type leaves, and predicate facts round trip");
   auto changed = original;
   changed.requirements.nodes[2].kind = LifetimeRequirementNode::Kind::All;
-  expect(writePersistentLifetimeContract(changed, from) != bytes,
-         "conjunction and disjunction cannot share persistent interface content");
+  expect(
+      writePersistentLifetimeContract(changed, from) != bytes,
+      "conjunction and disjunction cannot share persistent interface content");
   changed = original;
   changed.requirements.nodes[3].semanticTruth.reset();
   const auto unresolved = readPersistentLifetimeContract(
       writePersistentLifetimeContract(changed, from), to);
   expect(!unresolved.requirements.resolved(),
-         "generic declaration predicates remain unresolved until exact instantiation");
+         "generic declaration predicates remain unresolved until exact "
+         "instantiation");
   changed.requirements.nodes[4].left = 4;
   rejects([&] { (void)writePersistentLifetimeContract(changed, from); },
           "cyclic requirement metadata must reject before persistence");

@@ -846,7 +846,8 @@ private:
     }
     const std::size_t application = expression.applications.size();
     ConceptApplication leaf = conceptApplication();
-    if (leaf.name.segments.size() == 1 && leaf.name.last().lexeme == "outlives" &&
+    if (leaf.name.segments.size() == 1 &&
+        leaf.name.last().lexeme == "outlives" &&
         !check(TokenKind::LEFT_PAREN)) {
       expression.lifetimeRequirements.push_back(std::move(leaf));
       return ConstraintExpressionNode::invalidIndex;
@@ -1701,7 +1702,8 @@ private:
         const std::size_t applicationOffset = combined.applications.size();
         const std::size_t nodeOffset = combined.nodes.size();
         combined.applications.insert(combined.applications.end(),
-                                     extra.applications.begin(), extra.applications.end());
+                                     extra.applications.begin(),
+                                     extra.applications.end());
         for (auto node : extra.nodes) {
           if (node.kind == ConstraintExpressionKind::Application)
             node.application += applicationOffset;
@@ -1713,15 +1715,17 @@ private:
         }
         // A clause of only lifetime requirements leaves no type-level root.
         if (extra.root != ConstraintExpressionNode::invalidIndex) {
-          combined.nodes.push_back({.kind = ConstraintExpressionKind::Conjunction,
-                                    .left = combined.root,
-                                    .right = extra.root + nodeOffset,
-                                    .operation = requiresClause->keyword});
+          combined.nodes.push_back(
+              {.kind = ConstraintExpressionKind::Conjunction,
+               .left = combined.root,
+               .right = extra.root + nodeOffset,
+               .operation = requiresClause->keyword});
           combined.root = combined.nodes.size() - 1;
         }
-        combined.lifetimeRequirements.insert(combined.lifetimeRequirements.end(),
-                                             extra.lifetimeRequirements.begin(),
-                                             extra.lifetimeRequirements.end());
+        combined.lifetimeRequirements.insert(
+            combined.lifetimeRequirements.end(),
+            extra.lifetimeRequirements.begin(),
+            extra.lifetimeRequirements.end());
         requiresClause->expression = std::move(combined);
       }
     }
@@ -2044,8 +2048,9 @@ private:
         parameters.push_back(lifetimeParameter());
       } else {
         if (!parameters.empty())
-          throw error(peek(), "Only lifetime parameters may follow the class "
-                              "argument patterns and their lifetime parameters.");
+          throw error(peek(),
+                      "Only lifetime parameters may follow the class "
+                      "argument patterns and their lifetime parameters.");
         patterns.push_back(parseGenericArgument());
         declarePatternLifetimeBinders(patterns.back());
       }
@@ -2854,11 +2859,14 @@ private:
 
   // RFC 0004 parametricity: lifetime arguments are signature metadata, never
   // part of a type's argument list. Move them aside where a list is formed.
-  static std::vector<TypeRef> takeLifetimeArguments(std::vector<TypeRef> &arguments) {
+  static std::vector<TypeRef>
+  takeLifetimeArguments(std::vector<TypeRef> &arguments) {
     std::vector<TypeRef> lifetimes;
     std::vector<TypeRef> types;
     for (auto &argument : arguments)
-      (argument.genericArgumentSyntax == GenericArgumentSyntax::Lifetime ? lifetimes : types)
+      (argument.genericArgumentSyntax == GenericArgumentSyntax::Lifetime
+           ? lifetimes
+           : types)
           .push_back(std::move(argument));
     arguments = std::move(types);
     return lifetimes;
@@ -3976,7 +3984,8 @@ private:
             std::move(path), TypeRef(std::move(owner), std::move(arguments)));
       } else if (isExplicitGenericCallStart()) {
         std::vector<TypeRef> lifetimeArguments;
-        std::vector<TypeRef> typeArguments = typeArgumentList(&lifetimeArguments);
+        std::vector<TypeRef> typeArguments =
+            typeArgumentList(&lifetimeArguments);
         const std::optional<Token> bang = match({TokenKind::BANG})
                                               ? std::optional<Token>(previous())
                                               : std::nullopt;
@@ -4173,7 +4182,8 @@ private:
     return call;
   }
 
-  std::vector<TypeRef> typeArgumentList(std::vector<TypeRef> *lifetimes = nullptr) {
+  std::vector<TypeRef>
+  typeArgumentList(std::vector<TypeRef> *lifetimes = nullptr) {
     consume(TokenKind::LESS, "Expect '<' before generic arguments.");
     std::vector<TypeRef> arguments;
     if (!check(TokenKind::GREATER)) {

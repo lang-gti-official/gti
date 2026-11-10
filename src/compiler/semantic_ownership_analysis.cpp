@@ -6810,10 +6810,12 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
   if (attribute == nullptr) {
     // RFC 0004: a result written with a region states its suppliers in the
     // signature. It translates into the same core contract.
-    const auto lifetime = explicitLifetimeResult(syntax, parameterTypes, ownerClass);
+    const auto lifetime =
+        explicitLifetimeResult(syntax, parameterTypes, ownerClass);
     const bool reference = returnType.kind == SemanticType::Reference &&
                            returnType.arguments.size() == 1;
-    contract.access = reference ? returnType.referenceAccess : AccessMode::ReadOnly;
+    contract.access =
+        reference ? returnType.referenceAccess : AccessMode::ReadOnly;
     switch (lifetime.kind) {
     case ExplicitLifetimeResult::Kind::None:
     case ExplicitLifetimeResult::Kind::Static:

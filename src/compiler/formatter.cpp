@@ -386,7 +386,8 @@ public:
           // Conformance headers retain `for <Parameters> concept`, while
           // a quantified callable type uses `for<lifetime a> Result(Args)`.
           const auto close = matchingGenericClose(lexemes, index, true);
-          const Lexeme *after = close ? nextSyntaxLexeme(lexemes, *close) : nullptr;
+          const Lexeme *after =
+              close ? nextSyntaxLexeme(lexemes, *close) : nullptr;
           if (next != nullptr && next->kind == Kind::Word &&
               next->text == "lifetime" &&
               (after == nullptr || after->text != "concept")) {
@@ -2360,8 +2361,8 @@ private:
     const Lexeme *marker = previousSyntaxLexeme(lexemes, index);
     const Lexeme *argument = nextSyntaxLexeme(lexemes, index);
     if (marker == nullptr || marker->kind != Kind::Operator ||
-        (marker->text != "&" && marker->text != "&&") ||
-        argument == nullptr || argument->kind != Kind::Word) {
+        (marker->text != "&" && marker->text != "&&") || argument == nullptr ||
+        argument->kind != Kind::Word) {
       return false;
     }
     const Lexeme *close = nextSyntaxLexeme(

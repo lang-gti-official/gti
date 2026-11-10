@@ -5886,7 +5886,8 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
   // its named suppliers, never an unnamed parameter or other storage.
   for (const auto supplier : function->returnBorrowParameters)
     if (supplier < function->bodyDeclaration()->parameters().size() &&
-        isParameterDerivedBorrow(value, function->bodyDeclaration()->parameters()[supplier]))
+        isParameterDerivedBorrow(
+            value, function->bodyDeclaration()->parameters()[supplier]))
       return;
   const std::string sourceKind =
       function->returnBorrowParameter < function->parameterTypes.size() &&

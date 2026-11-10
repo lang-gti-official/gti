@@ -106,11 +106,14 @@ auto SemanticVisitor::Impl::explicitLifetimeResult(
   for (std::size_t index = 0;
        index < parameters.size() && index < parameterTypes.size(); ++index) {
     const std::size_t width =
-        parameters[index].pack ? expanded.size() - (parameterTypes.size() - 1) : 1;
+        parameters[index].pack ? expanded.size() - (parameterTypes.size() - 1)
+                               : 1;
     std::vector<std::string> names;
     collectRegionNames(parameters[index].type, names);
     const bool supplies = std::any_of(names.begin(), names.end(),
-        [&](const std::string &candidate) { return contains(suppliers, candidate); });
+                                      [&](const std::string &candidate) {
+                                        return contains(suppliers, candidate);
+                                      });
     if (supplies)
       for (std::size_t element = position;
            element < position + width && element < expanded.size(); ++element)

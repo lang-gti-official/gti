@@ -2026,7 +2026,8 @@ public:
     return typeGenericParameters_;
   }
   // Every written binder in source order, lifetime binders included.
-  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
+  [[nodiscard]] const std::vector<GenericParameter> &
+  sourceGenericParameters() const {
     return genericParameters_;
   }
   [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {
@@ -2153,7 +2154,8 @@ public:
     return typeGenericParameters_;
   }
   // Every written binder in source order, lifetime binders included.
-  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
+  [[nodiscard]] const std::vector<GenericParameter> &
+  sourceGenericParameters() const {
     return genericParameters_;
   }
   [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {
@@ -2239,7 +2241,8 @@ public:
     return typeGenericParameters_;
   }
   // Every written binder in source order, lifetime binders included.
-  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
+  [[nodiscard]] const std::vector<GenericParameter> &
+  sourceGenericParameters() const {
     return genericParameters_;
   }
   [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {
@@ -2576,7 +2579,8 @@ public:
     return typeGenericParameters_;
   }
   // Every written binder in source order, lifetime binders included.
-  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
+  [[nodiscard]] const std::vector<GenericParameter> &
+  sourceGenericParameters() const {
     return genericParameters_;
   }
   [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {
@@ -2922,7 +2926,8 @@ public:
     return typeGenericParameters_;
   }
   // Every written binder in source order, lifetime binders included.
-  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
+  [[nodiscard]] const std::vector<GenericParameter> &
+  sourceGenericParameters() const {
     return genericParameters_;
   }
   [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {
@@ -2998,7 +3003,8 @@ public:
     return typeGenericParameters_;
   }
   // Every written binder in source order, lifetime binders included.
-  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
+  [[nodiscard]] const std::vector<GenericParameter> &
+  sourceGenericParameters() const {
     return genericParameters_;
   }
   [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {
@@ -3076,7 +3082,8 @@ public:
     return typeGenericParameters_;
   }
   // Every written binder in source order, lifetime binders included.
-  [[nodiscard]] const std::vector<GenericParameter> &sourceGenericParameters() const {
+  [[nodiscard]] const std::vector<GenericParameter> &
+  sourceGenericParameters() const {
     return genericParameters_;
   }
   [[nodiscard]] std::vector<GenericParameter> lifetimeParameters() const {

@@ -124,20 +124,22 @@ using Static = Borrowed<int, static>;
              conceptDeclaration->typeParameters()[0].lexeme == "T",
          "concepts must retain lifetime binders");
   const auto *shorten = findFunction(program, "shorten");
-  expect(shorten && shorten->requiresClause() &&
-             shorten->requiresClause()->requirements().empty() &&
-             shorten->requiresClause()->expression.lifetimeRequirements.size() == 2 &&
-             shorten->requiresClause()
-                     ->expression.lifetimeRequirements[0]
-                     .name.last()
-                     .lexeme == "outlives" &&
-             shorten->requiresClause()
-                     ->expression.lifetimeRequirements[1]
-                     .arguments[1]
-                     .genericArgumentSyntax ==
-                 lang::GenericArgumentSyntax::Lifetime,
-         "outlives is a lifetime requirement, lifted out of type-level "
-         "satisfaction with its argument kinds preserved");
+  expect(
+      shorten && shorten->requiresClause() &&
+          shorten->requiresClause()->requirements().empty() &&
+          shorten->requiresClause()->expression.lifetimeRequirements.size() ==
+              2 &&
+          shorten->requiresClause()
+                  ->expression.lifetimeRequirements[0]
+                  .name.last()
+                  .lexeme == "outlives" &&
+          shorten->requiresClause()
+                  ->expression.lifetimeRequirements[1]
+                  .arguments[1]
+                  .genericArgumentSyntax ==
+              lang::GenericArgumentSyntax::Lifetime,
+      "outlives is a lifetime requirement, lifted out of type-level "
+      "satisfaction with its argument kinds preserved");
 
   const auto *nested =
       lang::stmtAs<lang::TypeAliasDecl>(program.declarations()[6].get());
@@ -158,7 +160,9 @@ using Static = Borrowed<int, static>;
         lang::stmtAs<lang::TypeAliasDecl>(program.declarations()[index].get());
     expect(argumentAlias && argumentAlias->target().arguments.size() == 1 &&
                argumentAlias->target().lifetimeArguments.size() == 1 &&
-               argumentAlias->target().lifetimeArguments[0].genericArgumentSyntax ==
+               argumentAlias->target()
+                       .lifetimeArguments[0]
+                       .genericArgumentSyntax ==
                    lang::GenericArgumentSyntax::Lifetime,
            "placeholder and static arguments must be classified as lifetime "
            "syntax");
@@ -268,15 +272,15 @@ int main() {
          "spans");
   const auto *mutableAlias =
       lang::stmtAs<lang::TypeAliasDecl>(program.declarations()[2].get());
-  expect(mutableAlias &&
-             mutableAlias->target().arguments[0].referenceMutability &&
-             mutableAlias->target().lifetimeArguments.size() == 1 &&
-             mutableAlias->target().lifetimeArguments[0].genericArgumentSyntax ==
-                 lang::GenericArgumentSyntax::Lifetime &&
-             mutableAlias->target().lifetimeArguments[0].name.last().kind ==
-                 lang::TokenKind::THIS,
-         "generic arguments must preserve mutable references and receiver "
-         "lifetimes");
+  expect(
+      mutableAlias && mutableAlias->target().arguments[0].referenceMutability &&
+          mutableAlias->target().lifetimeArguments.size() == 1 &&
+          mutableAlias->target().lifetimeArguments[0].genericArgumentSyntax ==
+              lang::GenericArgumentSyntax::Lifetime &&
+          mutableAlias->target().lifetimeArguments[0].name.last().kind ==
+              lang::TokenKind::THIS,
+      "generic arguments must preserve mutable references and receiver "
+      "lifetimes");
   const auto *record =
       lang::stmtAs<lang::ClassDecl>(program.declarations()[3].get());
   expect(record && record->members().size() == 3,
@@ -290,7 +294,8 @@ int main() {
                  lang::TokenKind::THIS &&
              retain && retain->requiresClause() &&
              retain->requiresClause()->requirements().empty() &&
-             retain->requiresClause()->expression.lifetimeRequirements.size() == 1 &&
+             retain->requiresClause()->expression.lifetimeRequirements.size() ==
+                 1 &&
              retain->requiresClause()
                      ->expression.lifetimeRequirements[0]
                      .arguments[0]
@@ -483,37 +488,48 @@ for<T> concept P<Wrap<T>> {
       std::cerr << error.message << '\n';
   expect(!lexer.hadError() && !parser.hadError(),
          "protocol operations may declare lifetime-only local binders");
-  const auto findBlock = [](auto &&self, const lang::StmtList &declarations)
-      -> const lang::ConformanceDecl * {
+  const auto findBlock =
+      [](auto &&self,
+         const lang::StmtList &declarations) -> const lang::ConformanceDecl * {
     for (const auto &declaration : declarations) {
-      if (const auto *block = lang::stmtAs<lang::ConformanceDecl>(declaration.get()))
+      if (const auto *block =
+              lang::stmtAs<lang::ConformanceDecl>(declaration.get()))
         return block;
-      if (const auto *scope = lang::stmtAs<lang::NamespaceDecl>(declaration.get()))
+      if (const auto *scope =
+              lang::stmtAs<lang::NamespaceDecl>(declaration.get()))
         if (const auto *block = self(self, scope->declarations()))
           return block;
     }
     return nullptr;
   };
-  const lang::ConformanceDecl *block = findBlock(findBlock, program.declarations());
+  const lang::ConformanceDecl *block =
+      findBlock(findBlock, program.declarations());
   expect(block && block->members().size() == 2,
          "conformance lifetime operation remains a source member");
   if (!block || block->members().empty())
     return;
-  const auto *operation = lang::stmtAs<lang::FunctionDecl>(block->members()[0].get());
-  expect(operation && operation->sourceGenericParameters().size() == 2 &&
-             operation->sourceGenericParameters()[0].name.lexeme == "T" &&
-             !operation->sourceGenericParameters()[0].lifetimeKeyword &&
-             operation->sourceGenericParameters()[1].lifetimeKeyword &&
-             operation->sourceGenericParameters()[1].name.lexeme == "a" &&
-             operation->genericParameters().size() == 1,
-         "the operation keeps block parameters before its local lifetime binders");
-  const auto *shorten = block->members().size() == 2
-      ? lang::stmtAs<lang::FunctionDecl>(block->members()[1].get()) : nullptr;
-  expect(shorten && shorten->requiresClause() &&
-             shorten->requiresClause()->requirements().size() == 1 &&
-             shorten->requiresClause()->expression.lifetimeRequirements.size() == 1 &&
-             !shorten->requiresClause()->keyword.generated,
-         "a local lifetime requirement conjoins with the block's inherited application");
+  const auto *operation =
+      lang::stmtAs<lang::FunctionDecl>(block->members()[0].get());
+  expect(
+      operation && operation->sourceGenericParameters().size() == 2 &&
+          operation->sourceGenericParameters()[0].name.lexeme == "T" &&
+          !operation->sourceGenericParameters()[0].lifetimeKeyword &&
+          operation->sourceGenericParameters()[1].lifetimeKeyword &&
+          operation->sourceGenericParameters()[1].name.lexeme == "a" &&
+          operation->genericParameters().size() == 1,
+      "the operation keeps block parameters before its local lifetime binders");
+  const auto *shorten =
+      block->members().size() == 2
+          ? lang::stmtAs<lang::FunctionDecl>(block->members()[1].get())
+          : nullptr;
+  expect(
+      shorten && shorten->requiresClause() &&
+          shorten->requiresClause()->requirements().size() == 1 &&
+          shorten->requiresClause()->expression.lifetimeRequirements.size() ==
+              1 &&
+          !shorten->requiresClause()->keyword.generated,
+      "a local lifetime requirement conjoins with the block's inherited "
+      "application");
 }
 
 void testPatternedNominalLifetimes() {
@@ -525,30 +541,38 @@ class Callback<R&<result>(Args...), lifetime environment> {
   lang::Lexer lexer;
   lang::Parser parser(lexer.scan(source, "pattern-lifetimes.gti"));
   const auto program = parser.parse();
-  expect(!lexer.hadError() && !parser.hadError() && program.declarations().size() == 1,
+  expect(!lexer.hadError() && !parser.hadError() &&
+             program.declarations().size() == 1,
          "patterned primaries accept trailing nominal lifetime parameters");
-  const auto *owner = lang::stmtAs<lang::ClassDecl>(program.declarations().front().get());
-  expect(owner && owner->genericArgumentPatterns().size() == 1 &&
-             owner->sourceGenericParameters().size() == 1 &&
-             owner->lifetimeParameters().size() == 1 &&
-             owner->genericParameters().empty(),
-         "public type patterns and nominal lifetime declarations remain distinct");
+  const auto *owner =
+      lang::stmtAs<lang::ClassDecl>(program.declarations().front().get());
+  expect(
+      owner && owner->genericArgumentPatterns().size() == 1 &&
+          owner->sourceGenericParameters().size() == 1 &&
+          owner->lifetimeParameters().size() == 1 &&
+          owner->genericParameters().empty(),
+      "public type patterns and nominal lifetime declarations remain distinct");
   const auto &parameter = owner->sourceGenericParameters().front();
   expect(parameter.lifetimeKeyword && parameter.name.lexeme == "environment" &&
              parameter.name.position == source.find("environment") &&
              parameter.lifetimeKeyword->position == source.find("lifetime") &&
-             owner->genericArgumentPatterns().front().arguments.back()
+             owner->genericArgumentPatterns()
+                     .front()
+                     .arguments.back()
                      .referenceLifetime->name.lexeme == "result",
-         "projected and explicit nominal lifetime tokens retain their own source identity");
-  for (const std::string invalid : {
-           "class Bad<R(Args...), lifetime a, T> {};",
-           "class Bad<R(Args...), lifetime _> {};",
-           "class Bad<R(Args...), lifetime a = static> {};"}) {
+         "projected and explicit nominal lifetime tokens retain their own "
+         "source identity");
+  for (const std::string invalid :
+       {"class Bad<R(Args...), lifetime a, T> {};",
+        "class Bad<R(Args...), lifetime _> {};",
+        "class Bad<R(Args...), lifetime a = static> {};"}) {
     lang::Lexer invalidLexer;
-    lang::Parser invalidParser(invalidLexer.scan(invalid, "invalid-pattern-lifetime.gti"));
+    lang::Parser invalidParser(
+        invalidLexer.scan(invalid, "invalid-pattern-lifetime.gti"));
     (void)invalidParser.parse();
     expect(invalidParser.hadError(),
-           "pattern lifetime suffix rejects non-lifetime, anonymous and defaulted formals");
+           "pattern lifetime suffix rejects non-lifetime, anonymous and "
+           "defaulted formals");
   }
 }
 
@@ -562,37 +586,48 @@ struct Derived<Args...> : public Base {
   lang::Lexer lexer;
   lang::Parser parser(lexer.scan(source, "initializer-pack.gti"));
   const auto program = parser.parse();
-  expect(!lexer.hadError() && !parser.hadError() && program.declarations().size() == 1,
-         "constructor initializers share ordinary call pack and brace arguments");
-  const auto *owner = lang::stmtAs<lang::ClassDecl>(program.declarations().front().get());
-  const auto *constructor = owner && owner->members().size() == 2
-      ? lang::stmtAs<lang::ConstructorDecl>(owner->members()[1].get()) : nullptr;
-  expect(constructor && constructor->initializers().size() == 2 &&
-             constructor->initializers()[0].arguments.size() == 2 &&
-             constructor->initializers()[1].arguments.size() == 1,
-         "initializer argument parsing preserves separate base and field lists");
+  expect(
+      !lexer.hadError() && !parser.hadError() &&
+          program.declarations().size() == 1,
+      "constructor initializers share ordinary call pack and brace arguments");
+  const auto *owner =
+      lang::stmtAs<lang::ClassDecl>(program.declarations().front().get());
+  const auto *constructor =
+      owner && owner->members().size() == 2
+          ? lang::stmtAs<lang::ConstructorDecl>(owner->members()[1].get())
+          : nullptr;
+  expect(
+      constructor && constructor->initializers().size() == 2 &&
+          constructor->initializers()[0].arguments.size() == 2 &&
+          constructor->initializers()[1].arguments.size() == 1,
+      "initializer argument parsing preserves separate base and field lists");
   const auto *pack = lang::exprAs<lang::PackExpansion>(
       constructor->initializers()[0].arguments[1].get());
-  expect(pack && pack->name().lexeme == "pack" &&
-             pack->name().position == source.find("pack...") &&
-             pack->ellipsis().position == source.find("pack...") + 4 &&
-             lang::exprAs<lang::ArrayInitializer>(
-                 constructor->initializers()[1].arguments[0].get()),
-         "initializer pack tokens and brace expression retain exact AST identity");
-  for (const auto &[argument, message] : {
-           std::pair{"pack..., 7", "must be the final call argument"},
-           std::pair{"(pack)...", "Only a named function parameter pack"}}) {
-    const std::string invalid = "struct Derived<Args...> { Derived(Args... pack) : Base(" +
-                                std::string(argument) + ") {} };";
+  expect(
+      pack && pack->name().lexeme == "pack" &&
+          pack->name().position == source.find("pack...") &&
+          pack->ellipsis().position == source.find("pack...") + 4 &&
+          lang::exprAs<lang::ArrayInitializer>(
+              constructor->initializers()[1].arguments[0].get()),
+      "initializer pack tokens and brace expression retain exact AST identity");
+  for (const auto &[argument, message] :
+       {std::pair{"pack..., 7", "must be the final call argument"},
+        std::pair{"(pack)...", "Only a named function parameter pack"}}) {
+    const std::string invalid =
+        "struct Derived<Args...> { Derived(Args... pack) : Base(" +
+        std::string(argument) + ") {} };";
     lang::Lexer invalidLexer;
-    lang::Parser invalidParser(invalidLexer.scan(invalid, "invalid-initializer-pack.gti"));
+    lang::Parser invalidParser(
+        invalidLexer.scan(invalid, "invalid-initializer-pack.gti"));
     (void)invalidParser.parse();
     expect(invalidParser.hadError() &&
-               std::any_of(invalidParser.errors().begin(), invalidParser.errors().end(),
-                           [&](const auto &error) {
-                             return error.message.find(message) != std::string::npos;
-                           }),
-           "initializer packs enforce the same named-final-argument restrictions as calls");
+               std::any_of(
+                   invalidParser.errors().begin(), invalidParser.errors().end(),
+                   [&](const auto &error) {
+                     return error.message.find(message) != std::string::npos;
+                   }),
+           "initializer packs enforce the same named-final-argument "
+           "restrictions as calls");
   }
 }
 
