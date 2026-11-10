@@ -17455,12 +17455,37 @@ MirBody MirLowerer::lowerBody(
               !token.lexeme.empty())
             anchor = tokenSpan(token);
       }
+      // The live loan a conflict overlaps is named at the expression that
+      // created it, or else at the declaration of the binding carrying it.
+      std::optional<SourceSpan> loanOrigin;
+      if (error.borrow.kind == MirBorrowRejectionKind::Conflict ||
+          error.borrow.kind == MirBorrowRejectionKind::ParentUse)
+        if (const MirLoan *loan = result.findLoan(error.borrow.loan)) {
+          if (const HirValue *producer = body.findValue(loan->producedBy);
+              producer != nullptr && producer->source != nullptr) {
+            // A call is named by its callee rather than its parenthesis.
+            const Expr *named = producer->source;
+            if (named->exprKind() == ExprKind::Call)
+              if (const auto &callee =
+                      static_cast<const Call *>(named)->callee())
+                named = callee.get();
+            if (const Token token = expressionAnchorToken(*named);
+                !token.lexeme.empty())
+              loanOrigin = tokenSpan(token);
+          }
+          for (const HirBinding &binding : body.bindings)
+            if (!loanOrigin && binding.variable != nullptr &&
+                std::find(loan->carriers.begin(), loan->carriers.end(),
+                          binding.id) != loan->carriers.end())
+              loanOrigin = tokenSpan(binding.variable->name());
+        }
       errors.push_back({.body = {kind, owner},
                         .block = error.block,
                         .instruction = error.instruction,
                         .source = anchor ? anchor : sourceFor(value),
                         .message = error.message,
-                        .borrow = error.borrow});
+                        .borrow = error.borrow,
+                        .loanOrigin = loanOrigin});
     }
     if (!lowerer->rejection() && lowerer->proof().valid())
       errors.push_back({.body = {kind, owner},

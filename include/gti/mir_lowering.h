@@ -17,6 +17,8 @@ struct MirLoweringError {
   // Set when the verifier rejected the source program's borrows rather than
   // finding an internal inconsistency.
   MirBorrowRejection borrow;
+  // A conflict's live loan: where the borrow it protects was created.
+  std::optional<SourceSpan> loanOrigin;
 };
 
 struct MirLoweringResult {

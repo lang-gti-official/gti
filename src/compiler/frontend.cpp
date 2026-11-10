@@ -64,9 +64,13 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
                                     const HirProgram &hir) {
   MirBorrowCheck check;
   const auto add = [&](SourceSpan span, std::string message,
-                       const char *code = "GTI-S2017") {
-    Diagnostic diagnostic = makeDiagnostic(
-        code, DiagnosticPhase::Semantics, span, std::move(message));
+                       const char *code = "GTI-S2017",
+                       std::optional<SourceSpan> origin = std::nullopt) {
+    Diagnostic diagnostic = makeDiagnostic(code, DiagnosticPhase::Semantics,
+                                           span, std::move(message));
+    if (origin && !(*origin == span))
+      diagnostic.related.push_back(
+          {*origin, "Retained borrow originates here."});
     if (std::none_of(check.diagnostics.begin(), check.diagnostics.end(),
                      [&](const Diagnostic &existing) {
                        return existing.primary == diagnostic.primary &&
@@ -211,8 +215,10 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
         exitDropUnderStaticResult(error))
       addEscape(*error.source, error.body.kind, error.body.owner);
     else {
-      add(*error.source, conflictMessage(error.borrow));
-      relateLoan(error.body, error.borrow);
+      add(*error.source, conflictMessage(error.borrow), "GTI-S2017",
+          error.loanOrigin);
+      if (!error.loanOrigin)
+        relateLoan(error.body, error.borrow);
     }
   }
   if (!mir.errors.empty())
