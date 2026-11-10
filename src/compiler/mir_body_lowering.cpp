@@ -65,6 +65,87 @@ programConstantLiteral(const ConstantValue &constant) {
   }
   return std::nullopt;
 }
+
+// Explains a rejected access that overlaps a live loan: where that loan was
+// created, and the first later source statement that reads one of the
+// bindings carrying it (or a reborrow derived from it), which is what keeps
+// it live across the access.
+void explainConflict(const MirBody &mir, const HirBody &body, MirLoanId loanId,
+                     const SourceSpan &rejected,
+                     std::optional<SourceSpan> &origin,
+                     std::optional<SourceSpan> &laterUse) {
+  const MirLoan *loan = mir.findLoan(loanId);
+  if (loan == nullptr)
+    return;
+  std::unordered_set<MirLoanId> family{loanId};
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (const MirLoan &candidate : mir.loans)
+      if (!family.contains(candidate.id) &&
+          (family.contains(candidate.parent) ||
+           family.contains(candidate.storedDependency)))
+        changed = family.insert(candidate.id).second || changed;
+  }
+  std::unordered_set<HirBindingId> carriers;
+  for (const MirLoan &candidate : mir.loans)
+    if (family.contains(candidate.id))
+      carriers.insert(candidate.carriers.begin(), candidate.carriers.end());
+  std::unordered_set<SymbolId> symbols;
+  for (const HirBinding &binding : body.bindings)
+    if (carriers.contains(binding.id) && binding.info.symbol != 0)
+      symbols.insert(binding.info.symbol);
+
+  if (const HirValue *producer = body.findValue(loan->producedBy);
+      producer != nullptr && producer->source != nullptr) {
+    if (const Token token = expressionAnchorToken(*producer->source);
+        !token.lexeme.empty())
+      origin = tokenSpan(token);
+  }
+  if (!origin)
+    for (const HirStatement &statement : body.statements)
+      if (statement.binding && carriers.contains(*statement.binding) &&
+          statement.source && statement.source->extent()) {
+        origin = *statement.source->extent();
+        break;
+      }
+
+  if (symbols.empty())
+    return;
+  for (const HirStatement &statement : body.statements) {
+    if (!statement.source || !statement.source->extent())
+      continue;
+    const SourceSpan &span = *statement.source->extent();
+    if (span.source != rejected.source || span.start < rejected.end ||
+        (laterUse && span.start > laterUse->start))
+      continue;
+    std::vector<HirValueId> pending;
+    for (const auto &root :
+         {statement.value, statement.condition, statement.increment})
+      if (root)
+        pending.push_back(*root);
+    std::unordered_set<HirValueId> visited;
+    bool reads = false;
+    while (!pending.empty() && !reads) {
+      const HirValueId next = pending.back();
+      pending.pop_back();
+      if (!visited.insert(next).second)
+        continue;
+      const HirValue *value = body.findValue(next);
+      if (value == nullptr)
+        continue;
+      reads = value->symbol != 0 && symbols.contains(value->symbol);
+      pending.insert(pending.end(), value->operands.begin(),
+                     value->operands.end());
+      pending.insert(pending.end(), value->sequencedInputs.begin(),
+                     value->sequencedInputs.end());
+      if (value->receiver)
+        pending.push_back(*value->receiver);
+    }
+    if (reads && (!laterUse || span.start < laterUse->start ||
+                  span.end - span.start < laterUse->end - laterUse->start))
+      laterUse = span;
+  }
+}
 } // namespace
 class MirBodyLowerer {
 public:
@@ -17466,37 +17547,23 @@ MirBody MirLowerer::lowerBody(
               !token.lexeme.empty())
             anchor = tokenSpan(token);
       }
-      // The live loan a conflict overlaps is named at the expression that
-      // created it, or else at the declaration of the binding carrying it.
+      const std::optional<SourceSpan> rejectedAt =
+          anchor ? anchor : sourceFor(value);
       std::optional<SourceSpan> loanOrigin;
-      if (error.borrow.kind == MirBorrowRejectionKind::Conflict ||
-          error.borrow.kind == MirBorrowRejectionKind::ParentUse)
-        if (const MirLoan *loan = result.findLoan(error.borrow.loan)) {
-          if (const HirValue *producer = body.findValue(loan->producedBy);
-              producer != nullptr && producer->source != nullptr) {
-            // A call is named by its callee rather than its parenthesis.
-            const Expr *named = producer->source;
-            if (named->exprKind() == ExprKind::Call)
-              if (const auto &callee =
-                      static_cast<const Call *>(named)->callee())
-                named = callee.get();
-            if (const Token token = expressionAnchorToken(*named);
-                !token.lexeme.empty())
-              loanOrigin = tokenSpan(token);
-          }
-          for (const HirBinding &binding : body.bindings)
-            if (!loanOrigin && binding.variable != nullptr &&
-                std::find(loan->carriers.begin(), loan->carriers.end(),
-                          binding.id) != loan->carriers.end())
-              loanOrigin = tokenSpan(binding.variable->name());
-        }
+      std::optional<SourceSpan> laterUse;
+      if ((error.borrow.kind == MirBorrowRejectionKind::Conflict ||
+           error.borrow.kind == MirBorrowRejectionKind::ParentUse) &&
+          rejectedAt)
+        explainConflict(result, body, error.borrow.loan, *rejectedAt,
+                        loanOrigin, laterUse);
       errors.push_back({.body = {kind, owner},
                         .block = error.block,
                         .instruction = error.instruction,
-                        .source = anchor ? anchor : sourceFor(value),
+                        .source = rejectedAt,
                         .message = error.message,
                         .borrow = error.borrow,
-                        .loanOrigin = loanOrigin});
+                        .loanOrigin = loanOrigin,
+                        .laterUse = laterUse});
     }
     if (!lowerer->rejection() && lowerer->proof().valid())
       errors.push_back({.body = {kind, owner},

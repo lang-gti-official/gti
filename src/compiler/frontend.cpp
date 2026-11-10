@@ -118,12 +118,22 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
   MirBorrowCheck check;
   const auto add = [&](SourceSpan span, std::string message,
                        const char *code = "GTI-S2017",
-                       std::optional<SourceSpan> origin = std::nullopt) {
-    Diagnostic diagnostic = makeDiagnostic(code, DiagnosticPhase::Semantics,
-                                           span, std::move(message));
-    if (origin && !(*origin == span))
-      diagnostic.related.push_back(
-          {*origin, "Retained borrow originates here."});
+                       const MirLoweringError *explained = nullptr) {
+    Diagnostic diagnostic = makeDiagnostic(
+        code, DiagnosticPhase::Semantics, span, std::move(message));
+    if (explained != nullptr) {
+      if (explained->loanOrigin)
+        diagnostic.related.push_back(
+            {*explained->loanOrigin, "Retained borrow originates here."});
+      if (explained->laterUse) {
+        diagnostic.related.push_back(
+            {*explained->laterUse, "The borrowed value is used later here."});
+        diagnostic.hints.emplace_back(
+            "Finish using the borrowed value before changing or moving its "
+            "owner, or perform the owner operation before creating the "
+            "borrow. Choose an order that preserves the intended effects.");
+      }
+    }
     if (std::none_of(check.diagnostics.begin(), check.diagnostics.end(),
                      [&](const Diagnostic &existing) {
                        return existing.primary == diagnostic.primary &&
@@ -342,7 +352,7 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
                           moveOnlyMutableReceiver(
                               program, error.body.kind, error.body.owner,
                               error.block, error.instruction, error.borrow)),
-          "GTI-S2017", error.loanOrigin);
+          "GTI-S2017", &error);
       if (!error.loanOrigin)
         relateLoan(error.body, error.borrow);
     }
