@@ -66,11 +66,13 @@ void expect(bool condition, const std::string &message) {
 lang::FrontendResult check(const std::filesystem::path &root,
                            const std::filesystem::path &directory,
                            const std::string &name, const std::string &source,
-                           bool concurrent = false) {
+                           bool concurrent = false,
+                           lang::FrontendPhase stopAfter =
+                               lang::FrontendPhase::Hir) {
   const auto file = directory / (name + ".gti");
   std::ofstream(file) << source;
   lang::FrontendOptions options;
-  options.stopAfter = lang::FrontendPhase::Hir;
+  options.stopAfter = stopAfter;
   options.analyzeRecoveredProgram = true;
   if (concurrent) {
     options.target.executionProfile = lang::ExecutionProfile::Concurrent;
@@ -110,7 +112,11 @@ void rejected(const lang::FrontendResult &result, const std::string &name,
   if (code.starts_with("GTI-P"))
     expect(!result.canGenerateCode(), name + " cannot generate recovered code");
   else
-    expect(!result.hirValid, name + " cannot publish executable HIR");
+    // Body-local loan conflicts are rejected by the MIR borrow checker,
+    // after HIR; they still never publish executable code.
+    expect(!result.hirValid ||
+               (result.mirBorrowRejected && !result.canGenerateCode()),
+           name + " cannot publish executable HIR");
   expect(
       std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
                    [](const auto &item) { return item.code == "GTI-B0001"; }),
@@ -1331,7 +1337,8 @@ int32_t bad<H>(mut H& h) requires viewable<H> && bumpable<H> {
   return view.get();
 }
 int main() { mut Holder holder{}; return bad(holder); }
-)GTI"),
+)GTI",
+                        false, lang::FrontendPhase::Mir),
                   "mutating the origin while the carrier is live",
                   "child reborrow may still be live", "GTI-S2017");
   // A reference to a carrier is not a carrier value: its exposed expression
@@ -1542,7 +1549,8 @@ void alias<C>(mut C& owner) requires editable<C> {
   second = 2;
 }
 int main() { return 0; }
-)"),
+)",
+                 false, lang::FrontendPhase::Mir),
            "generic result origins retain exclusive-loan conflicts",
            "GTI-S2017");
 
