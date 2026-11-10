@@ -4040,7 +4040,18 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     updated.entryArgumentAppendFunction = appendFunction;
     semanticModel.record(stmt, std::move(updated));
   }
-  if (stmt.receiverMutability() == ReceiverMutability::Consuming) {
+  // A result written with the class's region (or `static`) names the
+  // consumed value's external referent, not the destroyed shell.
+  const auto consumedStoredResult = [&] {
+    if (functionInfo == nullptr)
+      return false;
+    const auto lifetime = explicitLifetimeResult(
+        stmt, functionInfo->parameterTypes, functionInfo->ownerClass);
+    return lifetime.classBinder ||
+           lifetime.kind == ExplicitLifetimeResult::Kind::Static;
+  };
+  if (stmt.receiverMutability() == ReceiverMutability::Consuming &&
+      !consumedStoredResult()) {
     const SemanticType result =
         typeOf(stmt.returnType(), stmt.returnMutability());
     if (!conditionalReferenceReturn(result, {},

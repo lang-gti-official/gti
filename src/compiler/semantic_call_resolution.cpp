@@ -5398,6 +5398,18 @@ auto SemanticVisitor::Impl::constructorSignatureSpelling(
 
 auto SemanticVisitor::Impl::consumingResultCarriesBorrow(
     const CallableCandidate &function) const -> bool {
+  // A result written with the class's region (or `static`) borrows the
+  // consumed value's external referent, never the shell it destroys:
+  // `int&<data> take() &&` in `S<lifetime data>`, as Rust's `fn take(self)
+  // -> &'data T`.
+  if (function.receiverMutability == ReceiverMutability::Consuming &&
+      function.declaration != nullptr) {
+    const auto lifetime = explicitLifetimeResult(
+        *function.declaration, function.parameterTypes, function.ownerClass);
+    if (lifetime.classBinder ||
+        lifetime.kind == ExplicitLifetimeResult::Kind::Static)
+      return false;
+  }
   return function.receiverMutability == ReceiverMutability::Consuming &&
          !receiverTextFieldResult(function.returnType,
                                   function.returnBorrowOrigin,

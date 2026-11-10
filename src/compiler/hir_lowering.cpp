@@ -1,4 +1,5 @@
 #include "gti/hir.h"
+#include <cstdlib>
 
 #include "diagnostic_registry.h"
 #include "gti/generic_instantiation_limits.h"
@@ -8,6 +9,19 @@
 #include <unordered_set>
 
 namespace lang {
+
+namespace {
+// RFC 0004 shadow switch: with MIR as the borrow authority, MIR derives a
+// consumed borrow carrier's loans from its own places, so HIR no longer needs
+// the semantic complete dependency set to transfer it.
+bool mirOwnsConsumedCarriers() {
+  static const bool enabled = [] {
+    const char *mode = std::getenv("GTI_BORROW_AUTHORITY");
+    return mode != nullptr && std::string_view(mode) == "mir";
+  }();
+  return enabled;
+}
+} // namespace
 
 class HirLowerer::Impl {
 public:
@@ -4854,7 +4868,7 @@ private:
           !input->info.traits.movable ||
           (input->info.traits.containsBorrowedState &&
            (input->info.type.kind != SemanticType::Class ||
-            (!input->borrowDependencies &&
+            (!input->borrowDependencies && !mirOwnsConsumedCarriers() &&
              // A dependent text value's class holds no borrowed state of
              // its own (L-OWN-02); the callee's field contract governs it.
              instanceProvider->traitsFor(input->info.type)

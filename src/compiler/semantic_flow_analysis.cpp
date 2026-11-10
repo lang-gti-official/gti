@@ -9266,6 +9266,8 @@ auto SemanticVisitor::Impl::consumingReceiverValue(
   return info != nullptr && info->category == ValueCategory::Value &&
          info->type.kind == SemanticType::Class && info->traits.movable &&
          (!info->traits.containsBorrowedState || isTextDependentValue(*info) ||
+          // MIR follows a consumed carrier's loans from its own places.
+          mirBorrowAuthority() ||
           completeBorrowDependencySet(receiver).has_value());
 }
 

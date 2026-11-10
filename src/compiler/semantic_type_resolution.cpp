@@ -3110,6 +3110,43 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
                "GTI-S2045");
     }
   }
+  // RFC 0004: a carrier's constructor signature names the suppliers of its
+  // stored regions, so the construction has a complete dependency set: each
+  // stored path depends on every supplier. Consumers that need completeness
+  // (a consumed borrow-carrying receiver) then see it, as for conditional
+  // carriers above.
+  if (signatureContractDefaults() && !conditionalFields &&
+      selected.kind == ConstructorKind::Ordinary &&
+      !containsOpenTypeParameter(constructedType) &&
+      !storedParameters.empty() && construction != nullptr &&
+      !contextualConstruction) {
+    FunctionBorrowDependencySummary summary;
+    bool complete = true;
+    for (const auto &path : storedPaths) {
+      auto fields = storedFieldSymbols(constructedType, path.fields);
+      if (fields.size() != path.fields.size()) {
+        complete = false;
+        break;
+      }
+      for (const std::size_t parameter : storedParameters)
+        summary.dependencies.push_back(
+            {.resultFields = fields,
+             .origin = BorrowOriginKind::Argument,
+             .parameter = parameter,
+             .access = path.reference.referenceAccess});
+    }
+    if (complete) {
+      ResolvedCallInfo publication;
+      publication.returnType = constructedType;
+      publication.parameterTypes = selected.parameterTypes;
+      std::vector<const ExprPtr *> inputs;
+      for (const auto &argument : arguments)
+        inputs.push_back(argument.expression);
+      if (const auto dependencies =
+              instantiateCompleteBorrowArguments(publication, summary, inputs))
+        semanticModel.recordBorrowDependencySet(*construction, *dependencies);
+    }
+  }
   if (!textOrigins.empty()) {
     // The construction publishes its argument's owner as a stored value
     // dependency at the text field, as a one-reference carrier does. The
