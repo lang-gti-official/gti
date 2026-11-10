@@ -20,8 +20,8 @@ namespace domain {
             return result;
         }
         Point echo(Point value) { return value; }
-        [[borrowed_from(value)]] Point& view(Point& value) { return value; }
-        [[borrowed_from(value)]] mut Point& edit(mut Point& value) { return value; }
+        Point&<a> view<lifetime a>(Point&<a> value) { return value; }
+        mut Point&<a> edit<lifetime a>(mut Point&<a> value) { return value; }
         Status status(Status value) { return value; }
         namespace operations {
             int sum(Point value) { return value.x + value.y; }

@@ -6,5 +6,5 @@ export namespace processing {
         Envelope() = default;
     };
     Envelope echo(Envelope value) { return value; }
-    [[borrowed_from(value)]] mut Envelope& edit(mut Envelope& value) { return value; }
+    mut Envelope&<a> edit<lifetime a>(mut Envelope&<a> value) { return value; }
 }
