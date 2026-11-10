@@ -3887,8 +3887,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       methodDeclaration || intrinsicDeclaration || hasReturnBorrowSummary ||
           isBorrowReturningType(declaredReturnType),
       methodDeclaration ? "method return type" : "function return type", false,
-      false,
-      hasReturnBorrowSummary && stmt.hasFunctionAttribute("borrowed_from"));
+      false, hasReturnBorrowSummary && hasExplicitBorrowContract(stmt));
   if (nestsBorrowedState(declaredReturnType) &&
       !isBorrowedCarrierReference(declaredReturnType)) {
     report(stmt.name(),
@@ -3897,8 +3896,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
            "GTI-S2045");
   } else if (isBorrowReturningType(declaredReturnType) &&
              !intrinsicDeclaration && !hasReturnBorrowSummary &&
-             functionInfo != nullptr &&
-             !stmt.hasFunctionAttribute("borrowed_from") &&
+             functionInfo != nullptr && !hasExplicitBorrowContract(stmt) &&
              // A complete conditional contract comes from the body, but it
              // cannot choose between several eligible owners: that signature
              // is ambiguous for a carrier just as for a plain reference.

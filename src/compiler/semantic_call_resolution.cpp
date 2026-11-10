@@ -7082,7 +7082,7 @@ auto SemanticVisitor::Impl::resolveOperator(
   if (selected.declaration != nullptr &&
       selected.returnBorrowOrigin == BorrowOriginKind::None &&
       selected.returnType.kind == SemanticType::Reference &&
-      selected.declaration->hasFunctionAttribute("borrowed_from")) {
+      hasExplicitBorrowContract(*selected.declaration)) {
     const GenericReturnBorrowContract contract = genericReturnBorrowContract(
         *selected.declaration, selected.returnType, selected.parameterTypes,
         selected.ownerClass, selected.staticMember);

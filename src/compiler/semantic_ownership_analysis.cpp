@@ -6844,6 +6844,10 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
         contract.missing = true;
         return contract;
       }
+      // Like the attribute, a region on a result this instance makes owned
+      // (neither a reference nor a conditional borrow carrier) is inert.
+      if (!reference && !isBorrowReturningType(returnType))
+        return contract;
       contract.origin = BorrowOriginKind::Argument;
       contract.parameter = lifetime.parameters.front();
       if (lifetime.parameters.size() > 1)

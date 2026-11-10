@@ -289,11 +289,13 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
     if (!resolved.returnBorrowParameter &&
         !operation->hasFunctionAttribute("borrowed_from") &&
         hasExplicitBorrowContract(*operation)) {
-      const auto contract = genericReturnBorrowContract(
-          *operation, resolved.returnType, resolved.parameterTypes, 0, false);
-      if (contract.origin == BorrowOriginKind::Argument &&
-          contract.parameters.size() <= 1)
-        resolved.returnBorrowParameter = contract.parameter;
+      // Like the attribute, the region names its parameter directly: the
+      // result may be dependent, made a reference only by an instance.
+      const auto lifetime =
+          explicitLifetimeResult(*operation, resolved.parameterTypes, 0);
+      if (lifetime.kind == ExplicitLifetimeResult::Kind::Region &&
+          lifetime.parameters.size() == 1)
+        resolved.returnBorrowParameter = lifetime.parameters.front();
       else
         reject(operation->name(),
                "must bind its result region to exactly one parameter");

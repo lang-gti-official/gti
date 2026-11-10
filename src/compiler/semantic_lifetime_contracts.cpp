@@ -192,12 +192,12 @@ auto SemanticVisitor::Impl::declaredContractParameter(
   }
   if (!hasExplicitBorrowContract(syntax))
     return std::nullopt;
-  const auto contract =
-      genericReturnBorrowContract(syntax, returnType, parameterTypes, 0, false);
-  if (contract.origin != BorrowOriginKind::Argument ||
-      contract.parameters.size() > 1)
+  (void)returnType;
+  const auto lifetime = explicitLifetimeResult(syntax, parameterTypes, 0);
+  if (lifetime.kind != ExplicitLifetimeResult::Kind::Region ||
+      lifetime.parameters.size() != 1)
     return std::nullopt;
-  return contract.parameter;
+  return lifetime.parameters.front();
 }
 
 // RFC 0004 elision as a complete declaration contract, from types alone. Every

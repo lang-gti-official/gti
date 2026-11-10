@@ -251,7 +251,7 @@ namespace std {
     typename value_type;
     typename residual_type;
     bool has_value(T& value);
-    [[borrowed_from(value)]] value_type take_value(T value);
+    value_type<a> take_value<lifetime a>(T<a> value);
     residual_type take_residual(T value);
   };
 
@@ -692,7 +692,7 @@ for <T, E> concept std::tryable<expected<T, E>> {
   using value_type = T;
   using residual_type = std::unexpected_value<E>;
   constexpr bool has_value(expected<T, E>& value) { return value.has_value(); }
-  [[borrowed_from(value)]] constexpr T take_value(expected<T, E> value) {
+  constexpr T<a> take_value<lifetime a>(expected<T, E, a> value) {
     if constexpr (std::meta::type<T>().is_void()) {
       std::move(value).value();
     } else {
