@@ -4525,10 +4525,9 @@ private:
         return;
       }
       lowered.storedDependency = dependency->second;
-    } else if (lowered.storedDependency != 0) {
-      valid = false;
-      return;
     }
+    // A later record that omits the stored dependency carries less, not a
+    // contradiction: the loan keeps the dependency already recorded.
     if (lowered.lifecycleBound && !loan.lifecycleBound) {
       valid = false;
       return;

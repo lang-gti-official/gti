@@ -268,6 +268,7 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
   std::vector<std::size_t> namedParameters;
   bool receiverSupplies = method;
   bool parametersSupply = !method;
+  bool storedOnly = false;
   if (function.explicitReturnBorrowOrigin) {
     switch (function.returnBorrowOrigin) {
     case BorrowOriginKind::Receiver:
@@ -287,6 +288,14 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
       return std::nullopt;
     }
   }
+  // A result written with a region the class binds names the receiver's
+  // stored regions, not the receiver itself (`int&<data> get()` in
+  // `S<lifetime data>`), whether or not that counts as an explicit contract.
+  if (method)
+    if (const FunctionDecl *syntax = function.bodyDeclaration())
+      storedOnly = explicitLifetimeResult(*syntax, function.parameterTypes,
+                                          function.ownerClass)
+                       .classBinder;
   const auto named = [&](std::size_t index) {
     return namedParameters.empty() ||
            std::find(namedParameters.begin(), namedParameters.end(), index) !=
@@ -296,7 +305,7 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
     const SemanticType receiver = concreteReceiver.kind == SemanticType::Class
                                       ? concreteReceiver
                                       : openClassType(function.ownerClass);
-    if (receiverMutability != ReceiverMutability::Consuming)
+    if (receiverMutability != ReceiverMutability::Consuming && !storedOnly)
       sources.push_back({BorrowOriginKind::Receiver,
                          0,
                          {},
@@ -365,11 +374,19 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
     if (!supplied)
       return std::nullopt;
   }
-  // A direct reference borrowed whole from one supplier is exactly its base
-  // origin; a complete contract would only restate it.
-  if (directReference && summary.dependencies.size() == 1 &&
-      summary.dependencies.front().sourceFields.empty() &&
-      summary.dependencies.front().sourceConditions.empty())
+  // A result borrowed whole from one supplier, in every stored path and with
+  // no conditional alternative, is exactly its base origin; a complete
+  // contract would only restate it.
+  const auto &first = summary.dependencies.front();
+  if (summary.possibleAlternatives.empty() &&
+      std::all_of(summary.dependencies.begin(), summary.dependencies.end(),
+                  [&](const BorrowedFieldOrigin &dependency) {
+                    return dependency.origin == first.origin &&
+                           dependency.parameter == first.parameter &&
+                           dependency.sourceFields.empty() &&
+                           dependency.sourceConditions.empty() &&
+                           dependency.resultConditions.empty();
+                  }))
     return std::nullopt;
   return summary;
 }
