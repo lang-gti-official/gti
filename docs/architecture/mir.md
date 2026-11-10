@@ -4750,6 +4750,15 @@ environment, which owns any release obligation it contains, as a caller owns
 a method's receiver; the capture's stored entry is therefore not
 cleanup-bound there, so the body is not bound by a destructor it never runs.
 
+A payload enum whose alternative holds a cleanup-bound carrier by value is a
+cleanup-bound carrier too. Its payload construction produces the enum's
+lifecycle-bound `Stored` loan, whose complete dependency set the conditional
+origin flow proves from the exact ordered inputs; the loan then follows the
+enum's drop obligation like a class carrier's. Moving a constructed carrier
+into the payload forwards that carrier's external ancestry: the payload's
+dependency is not a child of the consumed carrier's group, while a copied
+carrier's still is.
+
 A body-local reference may share an existing semantic owner identity while
 capturing an accessor's different runtime referent. Lowering accepts that
 address only when its live, nonescaping call-result chain reaches exactly the

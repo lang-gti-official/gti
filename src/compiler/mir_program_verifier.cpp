@@ -14361,6 +14361,13 @@ constructedCompleteBorrowFact(const MirProgram &program, const MirBody &body,
         !completeBorrowSetHasTypedShape(program, type, *inputs[index]))
       return std::nullopt;
     for (auto dependency : inputs[index]->dependencies) {
+      // Moving a constructed carrier into the payload forwards its external
+      // ancestry; the payload does not borrow the consumed carrier's group.
+      if (stage->callInputKind == HirCallInputKind::MoveValue)
+        if (const MirLoan *group = body.findLoan(dependency.parent);
+            group != nullptr && group->kind == MirLoanKind::Stored &&
+            !group->entry)
+          dependency.parent = group->parent;
       dependency.designatedFields.insert(dependency.designatedFields.begin(),
                                          field);
       for (auto &condition : dependency.conditions)
@@ -17243,12 +17250,35 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
                ? selected
                : nullptr;
   };
+  // A payload enum whose alternative holds such a carrier by value keeps that
+  // carrier's cleanup-bound dependency until the enum's own cleanup.
   const auto boundCarrier = [&](const SemanticType &type) {
-    return carrierClass(type) != nullptr || carrierLambda(type) != nullptr;
+    const auto bound = [&](const auto &self, const SemanticType &candidate,
+                           std::size_t depth) -> bool {
+      if (carrierClass(candidate) != nullptr ||
+          carrierLambda(candidate) != nullptr)
+        return true;
+      const MirPayloadEnum *enumeration =
+          candidate.kind == SemanticType::Enum && depth < 8
+              ? program.findPayloadEnum(candidate)
+              : nullptr;
+      if (enumeration == nullptr)
+        return false;
+      for (const auto &variant : enumeration->variants)
+        for (const auto &payload : variant.payloadTypes)
+          if (self(self, payload, depth + 1))
+            return true;
+      return false;
+    };
+    return bound(bound, type, 0);
   };
   const auto closureFormation = [](const MirInstruction &instruction) {
     return instruction.kind == MirInstructionKind::Compute &&
            instruction.operation == MirOperation::Closure;
+  };
+  const auto payloadConstruction = [](const MirInstruction &instruction) {
+    return instruction.kind == MirInstructionKind::Compute &&
+           instruction.operation == MirOperation::PayloadConstruct;
   };
   // The Call, Construct, Borrow or closure formation that produces each
   // loan, absent when none or several do.
@@ -17258,7 +17288,8 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
         (location.instruction->kind != MirInstructionKind::Call &&
          location.instruction->kind != MirInstructionKind::Construct &&
          location.instruction->kind != MirInstructionKind::Borrow &&
-         !closureFormation(*location.instruction))) {
+         !closureFormation(*location.instruction) &&
+         !payloadConstruction(*location.instruction))) {
       continue;
     }
     const auto [entry, first] =
@@ -17432,7 +17463,8 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
           producingInstruction->result &&
           (producingInstruction->kind == MirInstructionKind::Call ||
            producingInstruction->kind == MirInstructionKind::Construct ||
-           closureFormation(*producingInstruction))) ||
+           closureFormation(*producingInstruction) ||
+           payloadConstruction(*producingInstruction))) ||
          (((loan.kind == MirLoanKind::Return &&
             body.returnType == carrierType) ||
            (loan.kind == MirLoanKind::Stored && loan.storedField != 0 &&
@@ -17635,16 +17667,21 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
     const bool exactStored =
         ownedEntry ||
         (loan.kind == MirLoanKind::Stored && !loan.entry && !loan.escapes &&
-         loan.storedField == 0 &&
-         (producer->instruction->kind == MirInstructionKind::Call ||
-          producer->instruction->kind == MirInstructionKind::Construct ||
-          // A closure formation retains a moved-in capture's dependency.
-          (closureFormation(*producer->instruction) &&
-           carrierLambda(carrierType) != nullptr)) &&
-         producer->instruction->result &&
-         producer->instruction->borrowAccess == loan.access &&
-         (producer->instruction->borrowOrigin == BorrowOriginKind::Receiver ||
-          producer->instruction->borrowOrigin == BorrowOriginKind::Argument));
+         loan.storedField == 0 && producer->instruction->result &&
+         (((producer->instruction->kind == MirInstructionKind::Call ||
+            producer->instruction->kind == MirInstructionKind::Construct ||
+            // A closure formation retains a moved-in capture's dependency.
+            (closureFormation(*producer->instruction) &&
+             carrierLambda(carrierType) != nullptr)) &&
+           producer->instruction->borrowAccess == loan.access &&
+           (producer->instruction->borrowOrigin == BorrowOriginKind::Receiver ||
+            producer->instruction->borrowOrigin ==
+                BorrowOriginKind::Argument)) ||
+          // A payload construction's complete dependency set is proved by
+          // the conditional-origin flow from its exact ordered inputs.
+          (payloadConstruction(*producer->instruction) &&
+           producer->instruction->info.type == carrierType &&
+           producer->instruction->hirValue == loan.producedBy)));
     if (!exactStored) {
       return verificationFailure(
           body, owner,
