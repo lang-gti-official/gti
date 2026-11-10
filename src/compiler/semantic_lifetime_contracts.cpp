@@ -175,6 +175,31 @@ auto SemanticVisitor::Impl::hasExplicitBorrowContract(
                      });
 }
 
+// The one parameter a declaration's explicit result contract names, however
+// it is spelled: the borrowed_from attribute's argument, or the parameter its
+// result region binds. Empty for an inferred, receiver or multi-supplier one.
+auto SemanticVisitor::Impl::declaredContractParameter(
+    const FunctionDecl &syntax, const SemanticType &returnType,
+    std::span<const SemanticType> parameterTypes) const
+    -> std::optional<std::size_t> {
+  if (const auto *origin = syntax.findFunctionAttribute("borrowed_from")) {
+    if (!origin->argument)
+      return std::nullopt;
+    for (std::size_t index = 0; index < syntax.parameters().size(); ++index)
+      if (syntax.parameters()[index].name.lexeme == origin->argument->lexeme)
+        return index;
+    return std::nullopt;
+  }
+  if (!hasExplicitBorrowContract(syntax))
+    return std::nullopt;
+  const auto contract =
+      genericReturnBorrowContract(syntax, returnType, parameterTypes, 0, false);
+  if (contract.origin != BorrowOriginKind::Argument ||
+      contract.parameters.size() > 1)
+    return std::nullopt;
+  return contract.parameter;
+}
+
 // RFC 0004 elision as a complete declaration contract, from types alone. Every
 // reference-bearing result path may be supplied by every eligible input: a
 // free function's reference and borrowed-state parameters, or a method's

@@ -3048,6 +3048,11 @@ private:
   hasExplicitBorrowContract(const FunctionDecl &syntax);
   // RFC 0004 shadow phase: MIR reports body-local borrow conflicts.
   [[nodiscard]] static bool mirBorrowAuthority();
+  // The single parameter an explicit result contract names, either spelling.
+  [[nodiscard]] std::optional<std::size_t>
+  declaredContractParameter(const FunctionDecl &syntax,
+                            const SemanticType &returnType,
+                            std::span<const SemanticType> parameterTypes) const;
   // RFC 0004 shadow phase: contracts come only from signatures.
   [[nodiscard]] static bool signatureContractDefaults();
   // RFC 0004 elision: the complete contract a signature alone implies.

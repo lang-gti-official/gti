@@ -17,7 +17,7 @@ for concept std::tryable<Reading> {
   using residual_type = std::string;
 
   bool has_value(Reading& result) { return result.error.empty(); }
-  [[borrowed_from(result)]] int& take_value(Reading result) {
+  int&<a> take_value<lifetime a>(Reading<a> result) {
     return result.value;
   }
   std::string take_residual(mut Reading result) {
@@ -50,7 +50,7 @@ for concept std::tryable<Editing> {
   using value_type = mut int&;
   using residual_type = std::string;
   bool has_value(Editing& result) { return result.error.empty(); }
-  [[borrowed_from(result)]] mut int& take_value(mut Editing result) {
+  mut int&<a> take_value<lifetime a>(mut Editing<a> result) {
     return result.value;
   }
   std::string take_residual(mut Editing result) {
@@ -115,7 +115,7 @@ for concept std::tryable<BorrowedParse> {
       case BorrowedParse::failed: return false;
     }
   }
-  [[borrowed_from(result)]] int& take_value(mut BorrowedParse result) {
+  int&<a> take_value<lifetime a>(mut BorrowedParse<a> result) {
     switch (std::move(result)) {
       case BorrowedParse::ready(value): return value;
       case BorrowedParse::failed(error): std::panic("not a successful parse");

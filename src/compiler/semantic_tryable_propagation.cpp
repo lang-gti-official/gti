@@ -57,7 +57,7 @@ auto SemanticVisitor::Impl::protocolOperationCall(
   auto origin = functionReturnBorrowSummary(
       call.returnType, call.parameterTypes, 0, false, IntrinsicKind::None);
   if (candidate.declaration != nullptr &&
-      candidate.declaration->hasFunctionAttribute("borrowed_from")) {
+      hasExplicitBorrowContract(*candidate.declaration)) {
     const auto contract = genericReturnBorrowContract(
         *candidate.declaration, call.returnType, call.parameterTypes, 0, false);
     origin = {.origin = contract.origin,

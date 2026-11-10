@@ -284,6 +284,20 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
                "borrowed_from");
       }
     }
+    // RFC 0004: a result region the operation binds names the same parameter
+    // the borrowed_from attribute would.
+    if (!resolved.returnBorrowParameter &&
+        !operation->hasFunctionAttribute("borrowed_from") &&
+        hasExplicitBorrowContract(*operation)) {
+      const auto contract = genericReturnBorrowContract(
+          *operation, resolved.returnType, resolved.parameterTypes, 0, false);
+      if (contract.origin == BorrowOriginKind::Argument &&
+          contract.parameters.size() <= 1)
+        resolved.returnBorrowParameter = contract.parameter;
+      else
+        reject(operation->name(),
+               "must bind its result region to exactly one parameter");
+    }
     conceptInfo.operations.push_back(std::move(resolved));
   }
 }
@@ -777,12 +791,11 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
       // checked against the declaration in the ordinary return-origin checker.
       if (operation.returnBorrowParameter &&
           expectedReturn.kind == SemanticType::Reference) {
-        const auto *origin = function->findFunctionAttribute("borrowed_from");
         const auto parameter = *operation.returnBorrowParameter;
-        if (origin == nullptr || !origin->argument ||
-            parameter >= function->parameters().size() ||
-            origin->argument->lexeme !=
-                function->parameters()[parameter].name.lexeme) {
+        const std::optional<std::size_t> declared = declaredContractParameter(
+            *function, candidate.returnType, candidate.parameterTypes);
+        if (!declared || parameter >= function->parameters().size() ||
+            *declared != parameter) {
           reportConformanceError(
               function->name(),
               "Operation '" + function->name().lexeme +
@@ -1416,13 +1429,12 @@ auto SemanticVisitor::Impl::protocolBorrowContractFailure(
         !containsOpenTypeParameter(returnType))
       continue;
     const auto *function = candidate.declaration;
-    const auto *origin =
-        function ? function->findFunctionAttribute("borrowed_from") : nullptr;
     const auto parameter = *operation.returnBorrowParameter;
-    if (!origin || !origin->argument ||
-        parameter >= function->parameters().size() ||
-        origin->argument->lexeme !=
-            function->parameters()[parameter].name.lexeme)
+    const std::optional<std::size_t> declared =
+        function ? declaredContractParameter(*function, candidate.returnType,
+                                             candidate.parameterTypes)
+                 : std::nullopt;
+    if (!declared || *declared != parameter)
       return index;
   }
   return std::nullopt;
