@@ -115,7 +115,10 @@ function-contract-name = "test" | "noreturn" | "track_caller" | "discardable" | 
    direct calls. Neither changes the declared result type.
    discardable permits ignoring a non-void function or method result; it
    does not change evaluation, failure, cleanup, borrowing or the result type.
-   borrowed_from selects one checked reference parameter, the single external
+   borrowed_from is the compatibility spelling of a result-region contract and
+   is slated for deprecation: `[[borrowed_from(x)]] T& f(T& x)` means
+   `T&<a> f<lifetime a>(T&<a> x)`. It selects one checked reference parameter,
+   the single external
    dependency of a by-value carrier parameter, or a non-static
    receiver as the returned reference's owner. Safe returns must preserve it.
    On a declaration whose result type is a generic parameter it binds only the
