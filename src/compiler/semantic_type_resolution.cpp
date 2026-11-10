@@ -5237,7 +5237,15 @@ auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
     // Publishing the complete value carries its own cleanup obligation (and
     // remains subject to ordinary copy/move checks). It does not carry the
     // obligations of separate local objects that the value merely references.
-    if (retained->lifecycleBound &&
+    // A reference copied out of a cleanup-bound carrier's stored field names
+    // that field's external referent, which outlives the carrier and its
+    // cleanup (Rust accepts returning a `&'a T` field of a value with Drop).
+    // Under MIR authority, MIR verifies the returned loan's ancestry; the
+    // carrier's own cleanup obligation does not travel with the reference.
+    const bool externalReferenceReturn =
+        mirBorrowAuthority() &&
+        currentReturnType.kind == SemanticType::Reference && !returnsCarrier;
+    if (retained->lifecycleBound && !externalReferenceReturn &&
         !(returnsCarrier && retained->id == loan->id)) {
       const Symbol *cleanupCarrier = nullptr;
       for (const auto &scope : scopes)
