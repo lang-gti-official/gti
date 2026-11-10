@@ -3,12 +3,15 @@
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
 #include "gti/support.h"
+#include "mir_loan_liveness.h"
 #include "mir_source_debug.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <tuple>
@@ -147,6 +150,15 @@ public:
           borrowedTemporaryTransfers.insert(argument.value);
         }
       }
+    }
+    if (std::getenv("GTI_TMP_LOAN_ENDS")) { // TMP agreement instrument
+      const auto agreement =
+          compareLoanEnds(source, deriveLoanEnds(source),
+                          std::getenv("GTI_TMP_LOAN_ENDS")[0] == '2');
+      std::cerr << "loan-ends loans=" << agreement.loans
+                << " agree=" << agreement.agree
+                << " early-plan=" << agreement.semanticEarlyPlan
+                << " differ=" << agreement.differ << "\n";
     }
     for (const HirStatement &statement : source.statements) {
       statements.emplace(statement.id, &statement);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gti/diagnostic.h"
 #include "gti/mir.h"
 #include "gti/mir_effects.h"
 
@@ -17,6 +18,10 @@ struct MirLoweringError {
 struct MirLoweringResult {
   MirProgram program;
   std::vector<MirLoweringError> errors;
+  // User-facing borrow and lifetime rejections from the MIR borrow checker,
+  // the single authority for body-local borrow validity. Unlike `errors`,
+  // these are source diagnostics of a well-formed program, not ICEs.
+  std::vector<Diagnostic> diagnostics;
 
   [[nodiscard]] bool valid() const { return program.valid(); }
 };

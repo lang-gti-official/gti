@@ -624,6 +624,7 @@ add_library(
   "src/compiler/lowered_program_printer.cpp"
   "src/compiler/mir.cpp"
   "src/compiler/mir_body_lowering.cpp"
+  "src/compiler/mir_loan_liveness.cpp"
   "src/compiler/mir_dominance.cpp"
   "src/compiler/mir_failure_effects.cpp"
   "src/compiler/mir_hosted_startup_builder.cpp"

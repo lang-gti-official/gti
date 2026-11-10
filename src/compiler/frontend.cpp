@@ -968,6 +968,15 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   mirProgress.finish();
   result.mirValid = mir.valid();
   result.mir = std::move(mir.program);
+  if (!mir.diagnostics.empty()) {
+    // A borrow-checker rejection explains why the program was refused; any
+    // construction failure it caused is a consequence, not an ICE.
+    for (Diagnostic &diagnostic : mir.diagnostics)
+      result.diagnostics.push_back(std::move(diagnostic));
+    result.mirValid = false;
+    applyAuditPolicy();
+    return result;
+  }
   if (!result.mirValid) {
     const SourceUnit *entry =
         result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
