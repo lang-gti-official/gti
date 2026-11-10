@@ -12448,6 +12448,20 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
              left.shareCapable == right.shareCapable &&
              left.relocation == right.relocation;
     };
+    // L-OWN-02: a text-dependent value keeps its own ownership and copy
+    // capability but is marked borrowed and non-reseatable; its text
+    // dependency is checked by the text relay contracts, not by the
+    // parameter's structural traits. A copy of it is an ordinary copy input.
+    const auto textDependentCopy = [&](const SemanticTypeTraits &source,
+                                       const SemanticTypeTraits &parameter) {
+      auto marked = parameter;
+      marked.copyAssignable = false;
+      marked.moveAssignable = false;
+      marked.containsBorrowedState = true;
+      marked.transferCapable = false;
+      marked.shareCapable = false;
+      return !parameter.containsBorrowedState && sameCallInputTraits(source, marked);
+    };
     const auto validOwnedValueInputType = [](const ExpressionInfo &info) {
       return info.type.kind == SemanticType::Class ||
              info.type.kind == SemanticType::Lambda ||
@@ -12484,8 +12498,10 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           sameLifetimeConversionShape(place->type, input.info.type) &&
           (place->sourceValue == input.hirValue || entryPackElement) &&
           place->traits.copyable &&
-          sameCallInputTraits(place->traits, input.info.traits);
+          (sameCallInputTraits(place->traits, input.info.traits) ||
+           textDependentCopy(place->traits, input.info.traits));
       if (!exactSource) {
+        if (std::getenv("GTI_TRACE_MIR_SHAPE")) std::fprintf(stderr, "[copyin] validType=%d copyable=%d borrowedOk=%d opCopy=%d place=%d shapeEq=%d srcEq=%d pack=%d placeCopy=%d traitsEq=%d placeType=%d inType=%d\n", validOwnedValueInputType(input.info), input.info.traits.copyable, (!input.info.traits.containsBorrowedState || input.info.type.kind == SemanticType::Class || input.info.type.kind == SemanticType::Enum), operand.kind == MirOperandKind::Copy, place != nullptr, place && sameLifetimeConversionShape(place->type, input.info.type), place && place->sourceValue == input.hirValue, entryPackElement, place && place->traits.copyable, place && sameCallInputTraits(place->traits, input.info.traits), place ? (int)place->type.kind : -1, (int)input.info.type.kind); if (std::getenv("GTI_TRACE_MIR_SHAPE") && place) { const auto &l = place->traits; const auto &r = input.info.traits; std::fprintf(stderr, "[copyin] own=%d/%d drop=%d/%d cp=%d/%d mv=%d/%d ca=%d/%d ma=%d/%d bs=%d/%d tc=%d/%d sc=%d/%d rel=%d/%d\n", (int)l.ownership, (int)r.ownership, (int)l.drop, (int)r.drop, l.copyable, r.copyable, l.movable, r.movable, l.copyAssignable, r.copyAssignable, l.moveAssignable, r.moveAssignable, l.containsBorrowedState, r.containsBorrowedState, l.transferCapable, r.transferCapable, l.shareCapable, r.shareCapable, (int)l.relocation, (int)r.relocation); std::function<std::string(const SemanticType&)> d = [&](const SemanticType &t) { std::string o = std::to_string((int)t.kind) + (t.kind == SemanticType::Class ? "#" + std::to_string((unsigned long long)t.classId) : std::string()); if (t.referenceLifetime.specified()) o += "&" + std::to_string((int)t.referenceLifetime.kind) + ":" + std::to_string((unsigned long long)t.referenceLifetime.id); for (auto lt : t.lifetimeArguments) o += "<" + std::to_string((int)lt.kind) + ":" + std::to_string((unsigned long long)lt.id) + ">"; if (!t.arguments.empty()) { o += "("; for (auto &a : t.arguments) o += d(a) + ","; o += ")"; } return o; }; std::fprintf(stderr, "[copyin] place=%s input=%s\n", d(place->type).c_str(), d(input.info.type).c_str()); } // TEMP-TRACE
         return shapeTraceReject(__LINE__); // TEMP-TRACE
       }
       if (!input.preparedParameterDrop) {
@@ -14949,7 +14965,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                        instruction.receiver ? (validOperand(*instruction.receiver) ? 1 : 0) : 2, // TEMP-TRACE
                        instruction.loan ? (validLoan(*instruction.loan) ? 1 : 0) : 2, // TEMP-TRACE
                        instruction.result ? (validValue(*instruction.result) ? 1 : 0) : 2, badOperand, // TEMP-TRACE
-                       invalidLoanValueEvidence ? 1 : 0, validInstructionShape(instruction) ? 1 : 0); std::fprintf(stderr, "[shape]   operation=%d typeKind=%d ops=%zu literal=%d intrinsic=%d\n", (int)instruction.operation, (int)instruction.info.type.kind, instruction.operands.size(), instruction.literal.has_value(), (int)instruction.intrinsic); // TEMP-TRACE
+                       invalidLoanValueEvidence ? 1 : 0, validInstructionShape(instruction) ? 1 : 0); std::fprintf(stderr, "[shape]   inputKind=%d role=%d operation=%d typeKind=%d ops=%zu literal=%d intrinsic=%d\n", (int)instruction.callInputKind, instruction.callInputRole ? (int)*instruction.callInputRole : -1, (int)instruction.operation, (int)instruction.info.type.kind, instruction.operands.size(), instruction.literal.has_value(), (int)instruction.intrinsic); // TEMP-TRACE
           if (badOperand >= 0) { const auto &op = instruction.operands[badOperand]; // TEMP-TRACE
             std::fprintf(stderr, "[shape]   operand kind=%d place=%llu value=%llu loan=%llu typeKind=%d\n", static_cast<int>(op.kind), // TEMP-TRACE
                          (unsigned long long)op.place, (unsigned long long)op.value, (unsigned long long)op.loan, static_cast<int>(op.type.kind)); } // TEMP-TRACE

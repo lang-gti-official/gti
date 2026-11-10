@@ -10252,6 +10252,7 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
   }
   const ConstructorInfo &constructor = *owner->designatedConstructor;
   std::vector<const Expr *> inputs(owner->fields.size(), nullptr);
+  std::vector<const ExprPtr *> inputSyntax(owner->fields.size(), nullptr);
   std::vector<SemanticType> types;
   std::optional<std::size_t> previous;
   bool valid = true;
@@ -10289,6 +10290,7 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
     }
     previous = index;
     inputs[index] = expr.arguments()[i].get();
+    inputSyntax[index] = &expr.arguments()[i];
     const SemanticType actual =
         analyzeInitializer(expr.arguments()[i], types[index]);
     const bool needsExplicitNumericConversion =
@@ -10376,6 +10378,7 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
     if (inputs[index] == nullptr) {
       const VariableDecl &field = *owner->fields[index].declaration;
       inputs[index] = field.initializer().get();
+      inputSyntax[index] = &field.initializer();
       if (inputs[index] == nullptr) {
         report(expr.brace(),
                "Missing initializer for field '" + field.name().lexeme +
@@ -10399,10 +10402,39 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
     }
   }
   if (valid) {
+    // Like a written construction, bind the executable constructor
+    // instance's lifted regions and apply its contract to the field inputs.
+    SemanticLifetimeApplication application;
+    if (const auto canonical = canonicalizeExecutableInstance(
+            {.kind = InstanceAnalysisKind::Constructor, .declaration = constructor.id,
+             .classTypes = target.arguments, .classValues = target.valueArguments});
+        canonical && canonical->parameterTypes.size() == types.size()) {
+      CallableCandidate lifetimeCandidate;
+      auto universalOwner = openClassType(owner->id);
+      universalOwner.arguments = canonical->classTypes;
+      universalOwner.valueArguments = target.valueArguments;
+      lifetimeCandidate.returnType = std::move(universalOwner);
+      lifetimeCandidate.parameterTypes = canonical->parameterTypes;
+      lifetimeCandidate.lifetimeApplication.bindings = canonical->lifetimeApplication.bindings;
+      lifetimeCandidate.ownerClass = owner->id;
+      lifetimeCandidate.dispatchOwner = target;
+      lifetimeCandidate.dispatchOwner.arguments = canonical->classTypes;
+      lifetimeCandidate.lifetimeContract = canonical->lifetimeContract;
+      lifetimeCandidate.requirements = canonical->requirements;
+      std::vector<AnalyzedCallArgument> arguments;
+      for (std::size_t index = 0; index < inputs.size(); ++index)
+        arguments.push_back({.type = semanticModel.typeOf(*inputs[index]),
+                             .expression = inputSyntax[index]});
+      if (applyCallLifetimeContract(lifetimeCandidate, arguments, expr.brace(), nullptr, false)) {
+        commitLifetimeApplication(lifetimeCandidate.lifetimeApplication);
+        application = lifetimeCandidate.lifetimeApplication;
+      }
+    }
     ResolvedConstructionInfo construction{
         .constructor = constructor.id,
         .declaration = constructor.declaration,
         .constructedType = target,
+        .lifetimeApplication = std::move(application),
         .parameterTypes = std::move(types),
         .designatedArguments = std::move(inputs)};
     if (!textOrigins.empty()) {
