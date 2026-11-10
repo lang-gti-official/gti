@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import tarfile
+import time
 
 import lsp_compatibility
 import release_artifacts
@@ -138,6 +139,10 @@ def all_releases(api):
     raise ValueError("release inventory exceeded bound")
 
 
+# Seconds to wait between listings for a newly created draft to appear.
+DRAFT_LISTING_DELAYS = (2, 4, 8, 16, 30)
+
+
 def publish(directory, plan, api=source.request):
     manifest = json.loads((directory / "lsp.json").read_text())
     for key, value in (("source", plan["sha"]), ("run_id", plan["run_id"]),
@@ -181,7 +186,13 @@ def publish(directory, plan, api=source.request):
         # GitHub's release-by-tag lookup never returns a draft (a draft has no
         # tag until it is published), so find the draft in the full listing
         # and read its current assets by release id.
-        matches = [r for r in all_releases(api) if r["tag_name"] == tag]
+        # The listing lags a just-created draft by a few seconds, so wait for
+        # it to appear; a duplicate is never transient.
+        for delay in (*DRAFT_LISTING_DELAYS, None):
+            matches = [r for r in all_releases(api) if r["tag_name"] == tag]
+            if matches or delay is None:
+                break
+            time.sleep(delay)
         if len(matches) != 1:
             raise ValueError("component draft missing or duplicated during publication")
         release = api(f"{BASE}/releases/{matches[0]['id']}")
