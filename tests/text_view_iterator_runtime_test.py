@@ -84,10 +84,10 @@ def main():
                 'std::detail::text_view_sentinel finish(std::string_view& view) { return view.end(); } '
                 'int main() { return 0; }', "GTI-S2024"),
             "owner-invalidation": ('import std.string;\nint main() { mut std::string owner{"abc"}; '
-                'std::string_view view = owner.view(); auto cursor = view.begin(); owner.clear(); return int(*cursor); }', "GTI-S2017"),
+                'std::string_view view = owner.view(); auto cursor = view.begin(); owner.clear(); return *cursor == \'a\' ? 0 : 1; }', "GTI-S2017"),
             "argument-invalidates-owner": ('import std.string;\nstd::size_t erase(mut std::string& owner) { '
                 'owner.clear(); return std::size_t(0); } int main() { mut std::string owner{"abc"}; '
-                'std::string_view view = owner.view(); auto cursor = view.iterator_at(erase(owner)); return int(*cursor); }', "GTI-S2017"),
+                'std::string_view view = owner.view(); auto cursor = view.iterator_at(erase(owner)); return *cursor == \'a\' ? 0 : 1; }', "GTI-S2017"),
             "readonly-element": ('import std.string_view;\nint main() { std::string_view view = "abc"; '
                 'mut auto cursor = view.begin(); *cursor = \'z\'; return 0; }', "GTI-S2002"),
             "escaped-view-shell": ('import std.string;\nimport std.string_view;\nstd::string_view_iterator escape(std::string& owner) { '

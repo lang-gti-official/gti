@@ -97,7 +97,8 @@ public:
 
 void require_random<I>(I iterator) requires std::random_access_iterator<I> {}
 
-std::string_view& select_text(std::string_view& view, mut int& events) {
+std::string_view&<a> select_text<lifetime a>(std::string_view&<a> view,
+                                          mut int& events) {
   events = events * 10 + 1;
   return view;
 }
