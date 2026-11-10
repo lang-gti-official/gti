@@ -73,7 +73,7 @@ foreach(suite IN LISTS gti_bounded_tests)
 endforeach()
 # Which backends the runtime harnesses exercise (tests/backend_modes.py).
 # The shipped backend is the default; the deprecated C++ backend runs only
-# in the scheduled C++ job. A developer may override GTI_TEST_BACKENDS in
+# in the hand-dispatched C++ job. A developer may override GTI_TEST_BACKENDS in
 # the environment of a direct harness run; under CTest the ENVIRONMENT
 # property below overrides the caller's environment, so a tree selects its
 # policy at configure time (`cmake -DGTI_TEST_BACKENDS=cpp <build>`).
@@ -377,10 +377,27 @@ foreach(suite IN LISTS gti_throughput_tests)
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "end-to-end")
   endif()
   # The frozen C++ backend's own tests (scripts/validation_checks.py
-  # CPP_ONLY_PREFIXES, which test_throughput_registration keeps in step): they
-  # exist only with GTI_ENABLE_CPP_BACKEND, and only the hand-dispatched C++
-  # job runs them.
-  if(suite MATCHES "^(cpp_mir_|cpp_debug_artifacts|lowered_program_corpus_census)")
+  # CPP_ONLY_PREFIXES, which test_throughput_registration keeps in step) run
+  # only in a build with GTI_ENABLE_CPP_BACKEND, which only the hand-dispatched
+  # C++ job configures; elsewhere they are disabled.
+  if(suite MATCHES "^(cpp_mir_|cpp_debug_artifacts|lowered_program_corpus_census|benchmark_harness|runtime_performance_workloads|compile_time_harness)")
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "cpp-backend")
+    if(NOT GTI_ENABLE_CPP_BACKEND)
+      set_property(TEST "${suite}" PROPERTY DISABLED TRUE)
+    endif()
   endif()
 endforeach()
+
+# Without the frozen C++ backend, the targets that link it are left out of
+# the default build, so a configured tree builds and its C++-only entries above
+# are reported as disabled rather than as missing executables. Only C++-only
+# entries may use such a target.
+if(NOT GTI_ENABLE_CPP_BACKEND)
+  get_property(gti_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(test_target IN LISTS gti_test_targets)
+    get_target_property(test_target_links "${test_target}" LINK_LIBRARIES)
+    if(test_target_links AND "gti_cpp_backend" IN_LIST test_target_links)
+      set_target_properties("${test_target}" PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    endif()
+  endforeach()
+endif()

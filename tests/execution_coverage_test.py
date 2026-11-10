@@ -16,7 +16,7 @@ of these:
   backend rejects it; `keep_cpp(flags)` is empty there);
 * it selects no backend at all, so the compiler's default, LLVM, executes it;
 * or it is a C++-only entry by name (`scripts/validation_checks.py`
-  `CPP_ONLY_PREFIXES`), which only the scheduled C++ job runs;
+  `CPP_ONLY_PREFIXES`), which only the hand-dispatched C++ job runs;
 * or it is listed in ALLOWED_SPELLINGS with the reason the spelling is the
   contract under test (a CLI option check, say) rather than a mode table.
 

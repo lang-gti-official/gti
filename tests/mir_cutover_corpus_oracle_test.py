@@ -7,7 +7,7 @@ retired AST/HIR executable emitter. Keeping that emitter callable would defeat
 the hard cutover, so this oracle checks the contracts that remain meaningful:
 
 * every shipped example passes the sealed whole-program MIR plan;
-* in the scheduled C++ profile, reviewed body identities appear in generated C++ (their count
+* in the hand-dispatched C++ profile, reviewed body identities appear in generated C++ (their count
   against the census budget is advisory, tests/advisory_checks.py: the
   reviewed number moves with ordinary changes, and mir_census_regression
   reports the same budget);

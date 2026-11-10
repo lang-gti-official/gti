@@ -11,7 +11,7 @@ import tempfile
 from backend_modes import cpp_modes, is_llvm_mode, native_modes, record_symptom, unsupported
 
 # LLVM compiler owners and source-policy storage share the process provider.
-# The scheduled C++ backend retains its separate native owner allocation family.
+# The frozen C++ backend retains its separate native owner allocation family.
 LLVM_UNSUPPORTED = {}
 
 

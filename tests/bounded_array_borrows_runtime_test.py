@@ -19,7 +19,7 @@ def main():
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="gti-array-borrow-") as tmp:
         tmp = Path(tmp)
-        if cpp_modes():  # C++ limitation evidence only under the scheduled C++ profile
+        if cpp_modes():  # C++ limitation evidence only under the hand-dispatched C++ profile
             require_cpp_limitation(compiler, root / "examples/182-bounded-array-borrows.gti",
                                    tmp / "unsupported.cpp", os.environ.copy())
         cleanup = tmp / "cleanup.gti"

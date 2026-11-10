@@ -163,7 +163,7 @@ class DecisionTests(unittest.TestCase):
 
     def probe(self, name="probe"):
         return runner.probe(self.case, "gti", "c++", self.root / name,
-                            variant="original", configuration=("O0", "c++23"), timeout=1)
+                            variant="original", configuration=("O0", "llvm"), timeout=1)
 
     def test_success_and_retained_oracle_disagreement(self):
         with patch.object(runner, "run_process", self.fake_commands([self.case.oracle()] * 2)):
@@ -175,7 +175,7 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(parsed, self.case)
         self.assertEqual(retained, failure)
         self.assertEqual(len(failure["observations"]), 3)
-        self.assertIn("--keep-cpp", failure["observations"][0]["command"])
+        self.assertNotIn("--keep-cpp", failure["observations"][0]["command"])
         self.assertIn("--verbose", failure["observations"][0]["command"])
         self.assertTrue((self.root / "bad/002-run.stdout").is_file())
 
@@ -243,7 +243,7 @@ class DecisionTests(unittest.TestCase):
     def test_reducer_preserves_kind_and_regenerates_oracle(self):
         signature = {"kind": "oracle-mismatch", "stage": "run", "channels": ["stdout"]}
         record = {"schema": "gti-feature-interaction-failure-v1", "signature": signature,
-                  "case": self.case.record(), "variant": "original", "configuration": ["O0", "c++23"],
+                  "case": self.case.record(), "variant": "original", "configuration": ["O0", "llvm"],
                   "expected": list(self.case.oracle()), "observations": []}
         def injected(case, *args, **kwargs):
             observed = dict(record, case=case.record(), expected=list(case.oracle()))
@@ -266,7 +266,7 @@ class DecisionTests(unittest.TestCase):
 
     def test_reducer_budget_and_disappeared_failure(self):
         record = {"signature": {"kind": "internal", "stage": "build"},
-                  "variant": "original", "configuration": ["O0", "c++23"]}
+                  "variant": "original", "configuration": ["O0", "llvm"]}
         output = self.root / "limited"
         output.mkdir()
         with patch.object(runner, "probe", return_value=dict(record, case=self.case.record())):
@@ -302,17 +302,16 @@ class DecisionTests(unittest.TestCase):
     def test_triage_measures_each_admission_boundary(self):
         build = {"kind": "internal", "stage": "build", "code": "GTI-B0001", "reason": "invariant"}
         run = {"kind": "oracle-mismatch", "stage": "run", "channels": ["stdout"]}
-        for index, (mir_ok, cpp_ok, signature, boundary) in enumerate((
-            (False, False, build, "before-verified-mir"),
-            (True, False, build, "cpp-emission"),
-            (True, True, build, "native-build-or-driver"),
-            (True, True, run, "native-execution"),
+        for index, (mir_ok, signature, boundary) in enumerate((
+            (False, build, "before-verified-mir"),
+            (True, build, "native-build-or-driver"),
+            (True, run, "native-execution"),
         )):
-            prior = {"signature": signature, "variant": "original", "configuration": ["O0", "c++23"]}
+            prior = {"signature": signature, "variant": "original", "configuration": ["O0", "llvm"]}
             def admission(command, timeout):
                 if "--version" in command:
                     return subprocess.CompletedProcess(command, 0, "gti test\n", "")
-                accepted = mir_ok if "--emit-mir" in command else cpp_ok
+                accepted = mir_ok
                 if accepted:
                     Path(command[command.index("-o") + 1]).touch()
                 return subprocess.CompletedProcess(command, 0 if accepted else 65, "",
@@ -324,13 +323,12 @@ class DecisionTests(unittest.TestCase):
             report = json.loads((output / "triage.json").read_text())
             self.assertEqual(report["observed_boundary"], boundary)
             self.assertEqual(report["phases"]["mir"]["accepted"], mir_ok)
-            self.assertEqual(report["phases"]["cpp"]["accepted"], cpp_ok)
+            self.assertNotIn("cpp", report["phases"])
             self.assertTrue((output / "002-mir.stderr").exists())
-            self.assertTrue((output / "003-cpp.stdout").exists())
 
     def test_triage_replacement_and_missing_artifact_are_not_admission(self):
         prior = {"signature": {"kind": "internal", "stage": "build"},
-                 "variant": "renamed", "configuration": ["O3", "c++20"]}
+                 "variant": "renamed", "configuration": ["O3", "llvm"]}
         replacement = dict(prior, signature={"kind": "rejected-valid", "stage": "build"})
         output = self.root / "triage-replaced"
         output.mkdir()
@@ -342,7 +340,7 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(report["status"], "replaced")
         self.assertEqual(report["observed_boundary"], "not-reproduced")
         self.assertFalse(report["phases"]["mir"]["accepted"])
-        self.assertFalse(report["phases"]["cpp"]["accepted"])
+        self.assertNotIn("cpp", report["phases"])
 
 
 if __name__ == "__main__":

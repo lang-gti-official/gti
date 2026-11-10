@@ -182,7 +182,7 @@ class ProfileControls(unittest.TestCase):
                 argv = ["oracle", "/unused/gti", str(ROOT), str(baseline), "/unused/runtime", "--backend", "cpp", "--case", "087-associative-containers.gti", "--case", "089-library-workflow.gti"]
                 with patch.object(sys, "argv", argv), patch.object(oracle, "build_and_run", side_effect=emitted) as run:
                     self.assertEqual(oracle.main(), 0)
-                    self.assertEqual(run.call_count, 2)  # One scheduled C++ profile per example.
+                    self.assertEqual(run.call_count, 2)  # One hand-dispatched C++ profile per example.
                 # A body-identity count outside the budget is advisory; a
                 # program that exits nonzero still fails.
                 def drifted(*arguments):
