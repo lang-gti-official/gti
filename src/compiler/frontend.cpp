@@ -1242,6 +1242,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         if (!check.diagnostics.empty()) {
           for (Diagnostic &diagnostic : check.diagnostics)
             result.diagnostics.push_back(std::move(diagnostic));
+          // A borrow rejection is a semantic error of the program, as it is
+          // when semantics checks body-local borrows.
+          if (!check.internal)
+            result.semanticValid = false;
           result.mirValid = false;
           applyAuditPolicy();
           return result;
@@ -1302,6 +1306,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         !check.diagnostics.empty() && !check.internal) {
       for (Diagnostic &diagnostic : check.diagnostics)
         result.diagnostics.push_back(std::move(diagnostic));
+      result.semanticValid = false;
       applyAuditPolicy();
       return result;
     }
