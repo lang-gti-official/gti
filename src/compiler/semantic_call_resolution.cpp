@@ -744,9 +744,12 @@ auto SemanticVisitor::Impl::validateCallableReturn(
       returnType.kind == SemanticType::Reference &&
       requirement->returnType == callExpressionType(returnType))
     return true;
+  // A region-carrying value (a text view, a borrowed carrier) converts the
+  // same way as a reference: same shape, regions proved below.
   if (application && application->complete &&
-      requirement->returnType.kind == SemanticType::Reference &&
-      returnType.kind == SemanticType::Reference) {
+      ((requirement->returnType.kind == SemanticType::Reference &&
+        returnType.kind == SemanticType::Reference) ||
+       eraseTypeLifetimes(requirement->returnType) == eraseTypeLifetimes(returnType))) {
     std::vector<LifetimeBound> resultObligations;
     const auto adjusted = constrainLifetimeType(
         returnType, requirement->returnType, 1, resultObligations);

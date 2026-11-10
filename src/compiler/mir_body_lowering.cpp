@@ -15833,6 +15833,7 @@ private:
             // This owner identity's previous carrier was already consumed
             // (moved into this very call, e.g. std::next(std::move(it))). The
             // call's own result loan now carries the same external owners.
+            if (std::getenv("GTI_TRACE_MIR_BODY")) std::fprintf(stderr, "[consumedid] semantic=%llu existing=%llu -> %llu\n", (unsigned long long)semanticLoan, (unsigned long long)existing->id, (unsigned long long)retainedLoan); // TEMP-TRACE
             output.loans[existing->id - 1].semanticLoan = 0;
             semanticLoans.insert_or_assign(semanticLoan, retainedLoan);
           } else {
@@ -15937,6 +15938,7 @@ private:
           if (retained.parent != expectedParent &&
               !exactRuntimeTransferParent && !exactAccessorParent &&
               !exactAccessorReceiverParent) {
+            if (std::getenv("GTI_TRACE_MIR_BODY")) { const auto *rp = retained.parent ? output.findLoan(retained.parent) : nullptr; const auto *ep = expectedParent ? output.findLoan(expectedParent) : nullptr; std::fprintf(stderr, "[parentmm] retained=%llu kind=%d src=p%llu parent=%llu(kind=%d src=p%llu) expected=%llu(kind=%d src=p%llu) desiredKind=%d semParent=%llu init=%d ctor=%d fn=%d origin=%d\n", (unsigned long long)retainedLoan, (int)retained.kind, (unsigned long long)retained.source, (unsigned long long)retained.parent, rp ? (int)rp->kind : -1, rp ? (unsigned long long)rp->source : 0ull, (unsigned long long)expectedParent, ep ? (int)ep->kind : -1, ep ? (unsigned long long)ep->source : 0ull, (int)desired->kind, (unsigned long long)desired->parent, initializer ? (int)initializer->kind : -1, initializer && initializer->constructorTarget.has_value(), initializer && initializer->functionTarget.has_value(), initializer ? (int)initializer->borrowOrigin : -1); } // TEMP-TRACE
             { valid = false; GTI_INVALID2(); } // TEMP-TRACE-INVALID2
           }
           recordLoanIdentity(retainedLoan, *desired, *statement.binding);
