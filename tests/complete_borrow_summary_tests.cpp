@@ -690,11 +690,11 @@ int main() { return 0; }
     }
   }
   const auto explicitConstraint = analyze(R"gti(
-[[borrowed_from(value)]] int& selected(int& value, int& other) {
+int&<a> selected<lifetime a>(int&<a> value, int& other) {
   return value;
 }
 int& inferred(int& value) { return value; }
-[[borrowed_from(value)]] T& selected_generic<T>(T& value) { return value; }
+T&<a> selected_generic<T, lifetime a>(T&<a> value) { return value; }
 [[borrowed_from(value)]] T copied_generic<T>(T value) { return value; }
 int main() {
   int first = 1;

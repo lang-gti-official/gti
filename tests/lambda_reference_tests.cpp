@@ -158,10 +158,8 @@ int main() {
                 lang::AccessMode::Mutable);
 
   checkAccepted("lambda-shared-local-reborrow.gti", R"gti(
-[[borrowed_from(value)]]
-int& invoke<F>(F& callback, mut int& value) { return callback(value); }
-[[borrowed_from(value)]]
-int& invoke_owned<F>(F callback, mut int& value) { return callback(value); }
+int&<a> invoke<F, lifetime a>(F& callback, mut int&<a> value) { return callback(value); }
+int&<a> invoke_owned<F, lifetime a>(F callback, mut int&<a> value) { return callback(value); }
 void observe_generic<T>(mut T& value) {
   auto observe = [](mut T& source) -> T& { return source; };
   T& result = observe(value);
@@ -184,8 +182,7 @@ int main() {
                 lang::AccessMode::ReadOnly);
 
   checkAccepted("lambda-generic-mutable-result.gti", R"gti(
-[[borrowed_from(value)]]
-mut int& invoke<F>(F& callback, mut int& value) { return callback(value); }
+mut int&<a> invoke<F, lifetime a>(F& callback, mut int&<a> value) { return callback(value); }
 int main() {
   auto relay = [](mut int& value) -> mut int& { return value; };
   mut int number = 9;

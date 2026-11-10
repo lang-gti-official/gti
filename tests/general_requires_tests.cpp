@@ -1112,7 +1112,7 @@ struct Box {
 public:
   Box() = default;
 };
-[[borrowed_from(left)]] int& select(int& left, int& right) { return left; }
+int&<a> select<lifetime a>(int&<a> left, int& right) { return left; }
 concept readable<C, T> = requires(C& owner) {
   { *owner } -> T& [[borrowed_from(owner)]];
 };
@@ -1120,10 +1120,10 @@ concept editable<C, T> = requires(mut C& owner, int offset) {
   { owner.edit() } -> mut T& [[borrowed_from(owner)]];
   { owner[offset] } -> mut T& [[borrowed_from(owner)]];
 };
-[[borrowed_from(owner)]] T& peek<C, T>(C& owner) requires readable<C, T> {
+T&<a> peek<C, T, lifetime a>(C&<a> owner) requires readable<C, T> {
   return *owner;
 }
-[[borrowed_from(owner)]] mut T& edit<C, T>(mut C& owner) requires editable<C, T> {
+mut T&<a> edit<C, T, lifetime a>(mut C&<a> owner) requires editable<C, T> {
   return owner.edit();
 }
 void store<C, T>(mut C& owner, T value) requires editable<C, T> {
@@ -1522,7 +1522,7 @@ int main() { return 0; }
 concept readable<C> = requires(C& owner) {
   { owner.read() } -> int& [[borrowed_from(owner)]];
 };
-[[borrowed_from(input)]] int& escape<C>(C& input)
+int&<a> escape<C, lifetime a>(C&<a> input)
     requires readable<C> && std::default_initializable<C> {
   C local = C();
   return local.read();
@@ -1554,7 +1554,7 @@ concept from_receiver<C> = requires(C& owner, int& input) {
 concept from_argument<C> = requires(C& owner, int& input) {
   { owner.select(input) } -> int& [[borrowed_from(input)]];
 };
-[[borrowed_from(owner)]] int& select<C>(C& owner, int& input)
+int&<a> select<C, lifetime a>(C&<a> owner, int& input)
     requires from_receiver<C> || from_argument<C> {
   return owner.select(input);
 }
@@ -1564,7 +1564,7 @@ int main() { return 0; }
            "GTI-S2000");
 
   accepted(check(root, directory, "borrowed_call_is_not_owned_result", R"(
-[[borrowed_from(value)]] int& reference(int& value) { return value; }
+int&<a> reference<lifetime a>(int&<a> value) { return value; }
 class Borrower {
   int value = 1;
 public:

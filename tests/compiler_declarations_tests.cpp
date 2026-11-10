@@ -2068,7 +2068,7 @@ class Maker {
 public:
   static Maker create();
   int take() &&;
-  [[borrowed_from(input)]] static int& relay(int& input);
+  static int&<a> relay<lifetime a>(int&<a> input);
 };
 Maker Maker::create() { return Maker(); }
 int Maker::take() && { return 7; }
@@ -2092,7 +2092,7 @@ int main() {
   const auto secondParameter = lang::Frontend().analyze(
       "split-contract-position.gti", R"(
 struct Relay {
-  [[borrowed_from(selected)]] static int& choose(int& other, int& selected);
+  static int&<a> choose<lifetime a>(int& other, int&<a> selected);
 public:
   Relay() = default;
 };
@@ -9550,8 +9550,7 @@ void missing_parameter<Args...>() {}
 void wrong_type<Args...>(int... values) {}
 void mutable_pack<Args...>(mut Args... values) {}
 void forwarding_pack<Args...>(Args&&... values) {}
-[[borrowed_from(first)]]
-int& borrowed_result<Args...>(int& first, Args&... values) { return first; }
+int&<a> borrowed_result<lifetime a, Args...>(int&<a> first, Args&... values) { return first; }
 void direct_use<Args...>(Args... values) { values; }
 void local_pack<Args...>(Args... values) { Args local; }
 void bad_forward<Args...>(Args... values) { fixed(values...); }

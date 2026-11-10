@@ -229,7 +229,7 @@ int main() { std::string_view text = "a\0bc"; return inspect(relay(text)); }
 
 OWNER_ADDRESSES = r'''
 import std.memory;
-[[borrowed_from(owner)]] unsafe mut int& claim(int* address, mut int& owner) {
+unsafe mut int&<a> claim<lifetime a>(int* address, mut int&<a> owner) {
   unsafe { return *address; }
 }
 bool present(c_string text) { return text != nullptr; }
@@ -304,7 +304,7 @@ int main() {
 '''
 
 RAW_CLAIMS = r'''
-[[borrowed_from(owner)]] unsafe mut int& claim(int* address, mut int& owner) {
+unsafe mut int&<a> claim<lifetime a>(int* address, mut int&<a> owner) {
   unsafe { return *address; }
 }
 int main() {
@@ -332,8 +332,8 @@ int main() {
 '''
 
 CONDITIONAL_REFERENCES = r'''
-[[borrowed_from(owner)]] unsafe int& choose<Owner>(
-    const int* left, const int* right, bool last, Owner& owner) {
+unsafe int&<a> choose<Owner, lifetime a>(
+    const int* left, const int* right, bool last, Owner&<a> owner) {
   unsafe {
     if (last) { return *right; }
     return *left;

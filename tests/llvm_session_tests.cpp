@@ -77,7 +77,7 @@ int place_components(mut int& input, int offset) {
 int raw_components(int* input, int offset) {
   unsafe { return input[offset]; }
 }
-[[borrowed_from(owner)]] unsafe mut int& raw_claim_components(int* address, mut int& owner) {
+unsafe mut int&<a> raw_claim_components<lifetime a>(int* address, mut int&<a> owner) {
   unsafe { return *address; }
 }
 int main() {
