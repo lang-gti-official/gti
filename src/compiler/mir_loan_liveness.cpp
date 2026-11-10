@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <variant>
 
 namespace lang {
 namespace {
@@ -206,6 +208,12 @@ bool conflictsWithLoan(const HirBody &body, const StatementTree &tree,
 
 MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
   MirDerivedLoanEnds result;
+  std::function<bool(const HirStatement &, const HirLoan &,
+                     const std::vector<HirStatementId> &, MirDerivedLoanEnds &)>
+      conditionalPlan;
+  std::function<bool(const HirStatement &, const HirLoan &,
+                     const std::vector<HirStatementId> &, MirDerivedLoanEnds &)>
+      switchPlan;
   const StatementTree tree(body);
 
   std::unordered_map<SymbolId, HirBindingId> bindingOfSymbol;
@@ -331,6 +339,170 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
     }
   }
 
+  const auto within = [&](HirStatementId statement, HirStatementId root) {
+    for (HirStatementId cursor = statement; cursor != 0;
+         cursor = tree.parentOf(cursor))
+      if (cursor == root)
+        return true;
+    return false;
+  };
+  std::function<bool(HirStatementId)> cannotFallThrough =
+      [&](HirStatementId id) -> bool {
+    const HirStatement *statement = body.findStatement(id);
+    if (statement == nullptr)
+      return false;
+    switch (statement->kind) {
+    case HirStatementKind::Return:
+    case HirStatementKind::Break:
+    case HirStatementKind::Continue:
+      return true;
+    case HirStatementKind::Block:
+      return !statement->statements.empty() &&
+             cannotFallThrough(statement->statements.back());
+    case HirStatementKind::If:
+      return statement->body && statement->elseBranch &&
+             cannotFallThrough(*statement->body) &&
+             cannotFallThrough(*statement->elseBranch);
+    default:
+      return false;
+    }
+  };
+  const auto armList = [&](HirStatementId arm) {
+    const HirStatement *statement = body.findStatement(arm);
+    if (statement != nullptr && statement->kind == HirStatementKind::Block)
+      return statement->statements;
+    return std::vector<HirStatementId>{arm};
+  };
+  // A literal condition makes one arm unreachable: it needs no end point.
+  const auto constantCondition =
+      [&](const HirStatement &conditional) -> std::optional<bool> {
+    if (!conditional.condition)
+      return std::nullopt;
+    const HirValue *value = body.findValue(*conditional.condition);
+    if (value == nullptr || value->kind != HirValueKind::Literal ||
+        !value->literal)
+      return std::nullopt;
+    if (const auto *flag = std::get_if<bool>(&*value->literal))
+      return *flag;
+    return std::nullopt;
+  };
+  struct Point {
+    int kind; // 0 after, 1 then entry, 2 else entry
+    HirStatementId statement;
+  };
+  // End points inside an if statement's arms: after the last use in an arm
+  // that uses the loan (recursing into a nested if), at the entry of one that
+  // does not, none for an arm that cannot fall through after its last use.
+  std::function<bool(const HirStatement &, const HirLoan &,
+                     const std::vector<HirStatementId> &, std::vector<Point> &,
+                     bool &, bool &)>
+      armEndpoints;
+  armEndpoints = [&](const HirStatement &conditional, const HirLoan &loan,
+                     const std::vector<HirStatementId> &own,
+                     std::vector<Point> &points, bool &conflict,
+                     bool &fallsThrough) -> bool {
+    const std::optional<bool> constant = constantCondition(conditional);
+    for (int branch = 0; branch < 2; ++branch) {
+      if (constant && *constant == (branch == 1))
+        continue; // unreachable arm
+      const std::optional<HirStatementId> arm =
+          branch == 0 ? conditional.body : conditional.elseBranch;
+      const int entryKind = branch == 0 ? 1 : 2;
+      std::vector<HirStatementId> armUses;
+      if (arm)
+        for (const HirStatementId use : own)
+          if (within(use, *arm))
+            armUses.push_back(use);
+      const std::vector<HirStatementId> list =
+          arm ? armList(*arm) : std::vector<HirStatementId>{};
+      if (list.empty() || !cannotFallThrough(list.back()))
+        fallsThrough = true;
+      if (armUses.empty()) {
+        points.push_back({entryKind, conditional.id});
+        for (const HirStatementId statement : list)
+          if (conflictsWithLoan(body, tree, statement, loan.place.root,
+                                loan.access))
+            conflict = true;
+        continue;
+      }
+      std::optional<std::size_t> lastIndex;
+      for (const HirStatementId use : armUses) {
+        HirStatementId cursor = use;
+        while (cursor != 0 &&
+               std::find(list.begin(), list.end(), cursor) == list.end())
+          cursor = tree.parentOf(cursor);
+        const auto at = std::find(list.begin(), list.end(), cursor);
+        if (at == list.end())
+          return false;
+        const auto index = static_cast<std::size_t>(at - list.begin());
+        if (!lastIndex || index > *lastIndex)
+          lastIndex = index;
+      }
+      for (std::size_t index = *lastIndex + 1; index < list.size(); ++index)
+        if (conflictsWithLoan(body, tree, list[index], loan.place.root,
+                              loan.access))
+          conflict = true;
+      const HirStatement *last = body.findStatement(list[*lastIndex]);
+      if (last == nullptr)
+        return false;
+      if (last->kind == HirStatementKind::Variable ||
+          last->kind == HirStatementKind::Expression) {
+        points.push_back({0, last->id});
+        continue;
+      }
+      if (cannotFallThrough(last->id))
+        continue; // the arm leaves with the loan; its exit retires it
+      if (last->kind == HirStatementKind::If) {
+        bool nestedFallsThrough = false;
+        if (!armEndpoints(*last, loan, own, points, conflict,
+                          nestedFallsThrough))
+          return false;
+        continue;
+      }
+      return false;
+    }
+    return true;
+  };
+  // The plan applies when a later access conflicts with the loan, or when the
+  // if cannot fall through.
+  conditionalPlan = [&](const HirStatement &conditional, const HirLoan &loan,
+                        const std::vector<HirStatementId> &own,
+                        MirDerivedLoanEnds &ends) -> bool {
+    std::vector<Point> points;
+    bool conflict = false;
+    bool fallsThrough = false;
+    if (!armEndpoints(conditional, loan, own, points, conflict, fallsThrough))
+      return false;
+    if (!conflict && fallsThrough)
+      return false;
+    for (const Point &point : points) {
+      auto &target = point.kind == 0   ? ends.after[point.statement]
+                     : point.kind == 1 ? ends.thenEntry[point.statement]
+                                       : ends.elseEntry[point.statement];
+      target.push_back(loan.semanticLoan);
+    }
+    return true;
+  };
+  // A loan whose only use in a switch is its subject ends at every arm's
+  // entry, and after the switch when no default arm exists.
+  switchPlan = [&](const HirStatement &selection, const HirLoan &loan,
+                   const std::vector<HirStatementId> &own,
+                   MirDerivedLoanEnds &ends) -> bool {
+    for (const HirStatementId use : own)
+      if (use != selection.id && within(use, selection.id))
+        return false;
+    bool hasDefault = false;
+    for (const HirSwitchArm &arm : selection.switchArms)
+      for (const auto &label : arm.labels)
+        if (label.isDefault)
+          hasDefault = true;
+    for (std::size_t arm = 0; arm < selection.switchArms.size(); ++arm)
+      ends.switchArmEntry[{selection.id, arm}].push_back(loan.semanticLoan);
+    if (!hasDefault)
+      ends.after[selection.id].push_back(loan.semanticLoan);
+    return true;
+  };
+
   for (const HirLoan &loan : body.loans) {
     // An entry loan is the caller's: it outlives the whole body.
     if (loan.entry)
@@ -356,10 +528,16 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
       end = tree.parentOf(end);
     if (end == 0)
       continue;
+    const HirStatement *ending = body.findStatement(end);
+    if (ending != nullptr && ending->kind == HirStatementKind::If &&
+        conditionalPlan(*ending, loan, own, result))
+      continue;
+    if (ending != nullptr && ending->kind == HirStatementKind::Switch &&
+        switchPlan(*ending, loan, own, result))
+      continue;
     // A loan still live when the body completes is retired by the body's
     // exit (or escapes through a return), not after a statement. Nested
     // blocks retire it after their last statement like any other.
-    const HirStatement *ending = body.findStatement(end);
     if (ending == nullptr || tree.lastInList(end) ||
         ending->kind == HirStatementKind::Return ||
         ending->kind == HirStatementKind::Break ||
