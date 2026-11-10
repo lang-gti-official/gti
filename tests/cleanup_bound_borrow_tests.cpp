@@ -171,13 +171,15 @@ int main() {
              std::string{std::istreambuf_iterator<char>(input), {}});
   }
   const std::string mixedOwner = R"gti(
-class Mixed {
-  Resource& resource;
+class Mixed<lifetime r> {
+  Resource&<r> resource;
   mut int local;
 public:
-  Mixed(Resource& resource) : resource(resource), local(7) {}
+  Mixed(Resource&<r> resource) : resource(resource), local(7) {}
   int& get() { return this.local; }
-  Resource& external() { return this.resource; }
+  // The external referent's region, not the receiver's: Rust's
+  // `fn external(&self) -> &'r Resource`.
+  Resource&<r> external() { return this.resource; }
   void reset() mut { this.local = 9; }
   ~Mixed() {}
 };
@@ -213,18 +215,19 @@ int main() { Resource resource{}; Mixed first{resource};
 }
 )gti");
   const std::string nestedView = R"gti(
-class View {
-  Resource& owner;
+class View<lifetime r> {
+  Resource&<r> owner;
 public:
-  View(Resource& owner) : owner(owner) {}
-  Resource& get() { return this.owner; }
+  View(Resource&<r> owner) : owner(owner) {}
+  Resource&<r> get() { return this.owner; }
 };
-class Wrapper {
-  View view;
+class Wrapper<lifetime r> {
+  View<r> view;
   mut int scratch;
 public:
-  Wrapper(Resource& owner) : view(View(owner)), scratch(0) {}
-  View binding() { return this.view; }
+  Wrapper(Resource&<r> owner) : view(View(owner)), scratch(0) {}
+  // The copied view carries the stored region, not the wrapper shell.
+  View<r> binding() { return this.view; }
   void touch() mut { this.scratch++; }
   int inspect() mut {
     auto copy = this.binding();
