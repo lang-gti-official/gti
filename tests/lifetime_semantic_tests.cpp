@@ -314,13 +314,15 @@ int main() {
 }
 )gti",
         true);
+  // Elision with two eligible inputs is the ordinary ambiguous-dependency
+  // diagnostic (Rust: missing lifetime specifier), not a relationship error.
   check("ambiguous-elision", R"gti(
 int& choose(int& first, int& second, bool pick_first) {
   if (pick_first) { return first; }
   return second;
 }
 )gti",
-        false, "GTI-S2127");
+        false, "GTI-S2017");
   check("declared-outlives", R"gti(
 int&<shorter> shorten<lifetime longer, lifetime shorter>(int&<longer> input)
   requires outlives<longer, shorter> { return input; }

@@ -7068,6 +7068,20 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
   const std::string code = info.returnType.kind == SemanticType::Reference
                                ? "GTI-S2017"
                                : "GTI-S2045";
+  // A result declared `static` names its region: what fails is that region
+  // relationship, not an ambiguous elision.
+  if (explicitLifetimeResult(function, info.parameterTypes, info.ownerClass)
+          .kind == ExplicitLifetimeResult::Kind::Static) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2127", DiagnosticPhase::Semantics, function.name(),
+        "The result is declared 'static', but a return does not borrow one "
+        "exact static storage place.");
+    diagnostic.hints.emplace_back(
+        "Return a global or static place, or declare the result with a "
+        "region a parameter supplies.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return;
+  }
   Diagnostic diagnostic;
   if (summary.eligibleParameters > 1) {
     const std::string dependencyDescription =

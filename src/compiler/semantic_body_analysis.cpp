@@ -13159,9 +13159,22 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
     if (!reportMissingLambdaCapture(expr.name()) &&
         !reportInvisibleSymbol(expr.name(), expr.name().lexeme,
                                resolveGlobally(expr.name()))) {
-      report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
-             "GTI-S2001");
-      diagnostics.back().missingIncludeName = expr.name().lexeme;
+      // A lifetime binder names a region, never a runtime value.
+      bool lifetimeBinder = false;
+      if (currentFunctionDeclaration != nullptr)
+        for (const auto &parameter :
+             currentFunctionDeclaration->lifetimeParameters())
+          lifetimeBinder |= parameter.name.lexeme == expr.name().lexeme;
+      if (lifetimeBinder) {
+        report(expr.name(),
+               "Lifetime '" + expr.name().lexeme +
+                   "' names a region, not a value.",
+               "GTI-S2126");
+      } else {
+        report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
+               "GTI-S2001");
+        diagnostics.back().missingIncludeName = expr.name().lexeme;
+      }
     }
     requestSession.recoveryCauses.insert_or_assign(
         &expr,

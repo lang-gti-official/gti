@@ -383,8 +383,7 @@ auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
 auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
     std::vector<std::pair<std::string, std::string>> required,
     std::span<const Parameter> parameters,
-    const std::vector<const ExprPtr *> &arguments, const Token &site)
-    -> void {
+    const std::vector<const ExprPtr *> &arguments, const Token &site) -> void {
   // A parameter written in `static` requires a static argument.
   for (const auto &parameter : parameters)
     if (parameter.type.referenceLifetime &&
@@ -429,14 +428,23 @@ auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
       return;
     std::vector<std::string> names;
     collectRegionNames(parameters[index].type, names);
+    // A by-value argument that carries no borrowed state borrows nothing:
+    // its regions are unconstrained (a phantom region may be `static`).
+    const auto *info = *arguments[index]
+                           ? semanticModel.findExpression(**arguments[index])
+                           : nullptr;
+    const bool free = !parameters[index].type.reference && info != nullptr &&
+                      !typeTraits(info->type).containsBorrowedState;
     for (const auto &name : names)
       if (name != "static")
-        mapping.emplace_back(name, callerRegion(*arguments[index]));
+        mapping.emplace_back(name, free ? std::string("<free>")
+                                        : callerRegion(*arguments[index]));
     mapping.emplace_back("<static parameter " + parameters[index].name.lexeme +
                              ">",
                          callerRegion(*arguments[index]));
   }
-  const auto mapped = [&](const std::string &region) -> std::optional<std::string> {
+  const auto mapped =
+      [&](const std::string &region) -> std::optional<std::string> {
     if (region == "static")
       return region;
     for (const auto &[from, to] : mapping)
@@ -445,7 +453,8 @@ auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
     return std::nullopt;
   };
   const auto relations = declaredOutlives(caller);
-  const auto holds = [&](const std::string &longer, const std::string &shorter) {
+  const auto holds = [&](const std::string &longer,
+                         const std::string &shorter) {
     if (longer == shorter || longer == "static")
       return true;
     if (shorter == "<local>")
@@ -464,15 +473,16 @@ auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
   for (const auto &[longer, shorter] : required) {
     const auto from = mapped(longer);
     const auto to = mapped(shorter);
-    if (!from || !to || holds(*from, *to))
+    if (!from || !to || *from == "<free>" || *to == "<free>" ||
+        holds(*from, *to))
       continue;
     const auto spell = [](const std::string &region) {
       return region.front() == '<' ? std::string("the argument's region")
                                    : "'" + region + "'";
     };
     report(site,
-           "This call requires " + spell(*from) + " to outlive " +
-               spell(*to) + ", which the caller does not establish.",
+           "This call requires " + spell(*from) + " to outlive " + spell(*to) +
+               ", which the caller does not establish.",
            "GTI-S2127");
     return;
   }
