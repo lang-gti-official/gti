@@ -13455,8 +13455,10 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
             "lexical end is required across control flow.");
       }
       // Shadow phase: under MIR borrow authority the MIR borrow checker
-      // reports body-local conflicts; semantics only records them.
-      if (!mirBorrowAuthority())
+      // reports body-local conflicts; semantics only records them. Raw-access
+      // audit observations are not borrow-checker conflicts: MIR assigns raw
+      // addresses no loans, so the audit keeps reporting its own findings.
+      if (!mirBorrowAuthority() || conflictIndex >= mandatoryConflicts)
         diagnostics.emplace_back(std::move(conflict.diagnostic));
     }
   }
