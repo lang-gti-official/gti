@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include <cstdlib>
+
 #include <iterator>
 
 namespace lang {
@@ -670,7 +672,9 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
                            substitution);
   concreteFunction.returnedTextReference =
       textReferenceReturnSummary(concreteFunction, concreteOwner);
-  if (!concreteFunction.explicitReturnBorrowOrigin) {
+  static const bool signatureContracts =
+      std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr; // shadow experiment
+  if (!concreteFunction.explicitReturnBorrowOrigin && !signatureContracts) {
     if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
             dynamicTextReturnBorrowSummary(concreteFunction, concreteOwner)) {
       concreteFunction.returnBorrowOrigin = dynamicText->origin;

@@ -5883,6 +5883,8 @@ auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
 
 auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     const FunctionInfo &function) -> void {
+  if (std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr)
+    return; // shadow experiment: no body-inferred complete contract
   // Reanalysis must not retain a primary/earlier body's complete fact when
   // this body now has unknown, recursive or nonreturning result evidence.
   const FunctionId id = function.id;
@@ -6759,8 +6761,12 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
     summary.origin = BorrowOriginKind::Argument;
     summary.parameters.clear();
   } else if (summary.eligibleParameters > 1 &&
-             summary.access == AccessMode::ReadOnly &&
-             storedReferencePaths(returnType).size() > 1) {
+             (summary.access == AccessMode::ReadOnly ||
+              signatureContractDefaults()) &&
+             (storedReferencePaths(returnType).size() > 1 ||
+              signatureContractDefaults())) {
+    // RFC 0004 elision: an unannotated result borrows from every eligible
+    // input. Callers then keep all of them borrowed while it is live.
     summary.origin = BorrowOriginKind::Argument;
   } else {
     summary.parameters.clear();
@@ -12860,6 +12866,11 @@ auto SemanticVisitor::Impl::conflictIsInConditionalArm(
           conflictIndex < conditional.thenArm.conflictEnd) ||
          (conflictIndex >= conditional.elseArm.conflictBegin &&
           conflictIndex < conditional.elseArm.conflictEnd);
+}
+
+auto SemanticVisitor::Impl::signatureContractDefaults() -> bool {
+  static const bool enabled = std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+  return enabled;
 }
 
 auto SemanticVisitor::Impl::mirBorrowAuthority() -> bool {
