@@ -136,8 +136,7 @@ namespace std {
             std::cerr << " [origin=" << static_cast<int>(field.origin)
                       << " argument=" << field.parameter << " source=";
             for (const auto &part : field.sourceFields)
-              std::cerr << static_cast<int>(part.kind) << ':' << part.field
-                        << ':' << part.baseOwner << ':' << part.index << '/';
+              std::cerr << part << '/';
             std::cerr << " conditions=" << field.sourceConditions.size() << ']';
           }
           std::cerr << '\n';
@@ -157,10 +156,8 @@ namespace std {
                   if (const auto *declaration =
                           result.semantics.findFunction(target->declaration)) {
                     std::cerr
-                        << "  declaration lifetime-origin="
-                        << static_cast<int>(
-                               declaration->lifetimeContract.origin)
-                        << " valid=" << declaration->lifetimeContract.valid()
+                        << "  declaration origin="
+                        << static_cast<int>(declaration->returnBorrowOrigin)
                         << " explicit-origin="
                         << declaration->explicitReturnBorrowOrigin
                         << " complete="
