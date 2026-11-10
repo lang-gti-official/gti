@@ -18401,6 +18401,25 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
          source->conditions == mapping.sourceConditions;
 }
 
+// A derived group may name the runtime parent it was produced under, a
+// formal's entry loan, while independent replay of the same value publishes
+// the entry's suppliers without that nesting. Every other component of the
+// supplier must agree exactly.
+[[nodiscard]] static bool entryParentedSupplier(const MirBody &body,
+                                                const MirLoanDependency &claim,
+                                                const MirLoanDependency &observed) {
+  if (claim == observed)
+    return true;
+  if (observed.parent != 0 || claim.parent == 0)
+    return false;
+  const auto *parent = body.findLoan(claim.parent);
+  if (!parent || !parent->entry)
+    return false;
+  auto unparented = claim;
+  unparented.parent = 0;
+  return unparented == observed;
+}
+
 [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
 normalizedCompleteReturnBorrow(const MirProgram &program,
                                const MirFunctionInstance &function,
@@ -19180,14 +19199,8 @@ private:
       const bool exactSuppliers =
           exact.size() == fact.dependencies.size() &&
           std::equal(exact.begin(), exact.end(), fact.dependencies.begin(),
-                     [](const MirLoanDependency &claim, const MirLoanDependency &observed) {
-                       if (claim == observed)
-                         return true;
-                       if (observed.parent != 0)
-                         return false;
-                       auto unparented = claim;
-                       unparented.parent = 0;
-                       return unparented == observed;
+                     [&](const MirLoanDependency &claim, const MirLoanDependency &observed) {
+                       return entryParentedSupplier(body, claim, observed);
                      });
       if (!input || !publication || input->kind != MirLoanKind::Stored ||
           input->escapes || input->storedDependency ||
@@ -19931,9 +19944,15 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
              producer.operation == MirOperation::Closure))) &&
           producer.result && *producer.result <= flow.values.size()) {
         const auto &fact = flow.values[*producer.result - 1];
+        const auto claimed = loanDependencies(loan);
         valid = loan.kind == MirLoanKind::Stored && !loan.escapes &&
                 loan.producedBy == producer.hirValue && fact &&
-                (loanDependencies(loan) == fact->dependencies ||
+                (claimed == fact->dependencies ||
+                 (claimed.size() == fact->dependencies.size() &&
+                  std::equal(claimed.begin(), claimed.end(), fact->dependencies.begin(),
+                             [&](const MirLoanDependency &claim, const MirLoanDependency &observed) {
+                               return entryParentedSupplier(body, claim, observed);
+                             })) ||
                  equalCompleteBorrowSetsInBody(
                      body, MirBorrowDependencySet{.dependencies = loanDependencies(loan)},
                      MirBorrowDependencySet{.dependencies = fact->dependencies}));
