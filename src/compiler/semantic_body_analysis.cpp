@@ -3853,6 +3853,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   }
   validateFunctionPacks(stmt, genericParameters);
   validateOperatorDeclaration(stmt, methodDeclaration);
+  if (functionInfo != nullptr && !instanceAnalysisActive)
+    validateSignatureRegions(stmt, *functionInfo);
   // RFC 0004: a signature whose elision yields a complete contract has one.
   const bool hasReturnBorrowSummary =
       functionInfo != nullptr &&
@@ -5356,6 +5358,9 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
            "GTI-S2021");
     return;
   }
+  if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr && currentClass)
+    validateReturnedFieldRegion(*currentFunctionDeclaration, *currentClass,
+                                stmt.value());
   if (currentReturnType == SemanticType::Void) {
     if (stmt.value()) {
       const SemanticType valueType = analyze(stmt.value());

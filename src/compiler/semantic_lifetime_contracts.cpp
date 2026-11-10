@@ -153,6 +153,119 @@ auto SemanticVisitor::Impl::constructorLifetimeSuppliers(
   return suppliers;
 }
 
+auto SemanticVisitor::Impl::validateSignatureRegions(
+    const FunctionDecl &syntax, const FunctionInfo &function) -> void {
+  std::vector<std::string> bound;
+  for (const auto &parameter : syntax.lifetimeParameters())
+    bound.push_back(parameter.name.lexeme);
+  if (function.ownerClass != 0)
+    if (const auto *owner = classInfo(function.ownerClass).declaration) {
+      for (const auto &parameter : owner->lifetimeParameters())
+        bound.push_back(parameter.name.lexeme);
+      for (const auto &pattern : owner->genericArgumentPatterns())
+        collectRegionNames(pattern, bound);
+    }
+  // A region use is bound by an enclosing binder, or is static/this/_.
+  const auto checkType = [&](const auto &self, const TypeRef &type,
+                             std::vector<std::string> &scope) -> void {
+    const std::size_t restore = scope.size();
+    if (type.lifetimeBinder)
+      for (const auto &parameter : type.lifetimeBinder->parameters)
+        scope.push_back(parameter.name.lexeme);
+    if (type.referenceLifetime &&
+        type.referenceLifetime->name.kind == TokenKind::IDENTIFIER) {
+      const Token &name = type.referenceLifetime->name;
+      if (name.lexeme != "_" && name.lexeme != "static" &&
+          name.lexeme != "this" && !contains(scope, name.lexeme))
+        report(name,
+               "Unknown lifetime '" + name.lexeme +
+                   "'; declare it as `lifetime " + name.lexeme +
+                   "` in the function's or class's binder list.",
+               "GTI-S2126");
+    }
+    for (const auto &argument : type.arguments)
+      self(self, argument, scope);
+    scope.resize(restore);
+  };
+  checkType(checkType, syntax.returnType(), bound);
+  for (const auto &parameter : syntax.parameters())
+    checkType(checkType, parameter.type, bound);
+
+  // Thread storage ends with its thread: it does not live for `static`
+  // (Rust likewise refuses a 'static borrow of a thread_local).
+  if (function.returnBorrowOrigin == BorrowOriginKind::Global &&
+      function.returnBorrowPlace &&
+      requestSession.threadLocalDeclarations.contains(
+          function.returnBorrowPlace->root) &&
+      explicitLifetimeResult(syntax, function.parameterTypes,
+                             function.ownerClass)
+              .kind == ExplicitLifetimeResult::Kind::Static)
+    report(syntax.name(),
+           "A 'static' result cannot borrow thread-local storage; it ends "
+           "with its thread.",
+           "GTI-S2127");
+  // A result region the function binds must come from a parameter that
+  // carries it, or one that carries a region declared to outlive it.
+  if (std::any_of(syntax.parameters().begin(), syntax.parameters().end(),
+                  [](const Parameter &parameter) { return parameter.pack; }))
+    return;
+  const auto lifetime =
+      explicitLifetimeResult(syntax, function.parameterTypes,
+                             function.staticMember ? 0 : function.ownerClass);
+  if (lifetime.kind != ExplicitLifetimeResult::Kind::Region ||
+      lifetime.classBinder || !lifetime.parameters.empty() ||
+      !contains(bound, lifetime.region))
+    return;
+  if (const auto region = resultRegion(syntax.returnType()))
+    report(*region,
+           "No parameter supplies the result's region '" + lifetime.region +
+               "': none carries it or a region declared to outlive it.",
+           "GTI-S2127");
+}
+
+auto SemanticVisitor::Impl::validateReturnedFieldRegion(
+    const FunctionDecl &syntax, ClassId owner, const ExprPtr &value) -> void {
+  if (!value || owner == 0)
+    return;
+  const auto lifetime = explicitLifetimeResult(syntax, {}, owner);
+  if (!lifetime.classBinder)
+    return;
+  const Expr *returned = value.get();
+  while (const auto *group = exprAs<Grouping>(returned))
+    returned = group->expression().get();
+  // A receiver field: `this.f` or the implicit `f`.
+  std::optional<Token> fieldName;
+  if (const auto *get = exprAs<Get>(returned);
+      get != nullptr && exprAs<This>(get->object().get()) != nullptr)
+    fieldName = get->name();
+  else if (const auto *variable = exprAs<Variable>(returned))
+    fieldName = variable->name();
+  if (!fieldName)
+    return;
+  const auto *declaration = classInfo(owner).declaration;
+  if (declaration == nullptr)
+    return;
+  for (const auto &member : declaration->members()) {
+    const auto *field = stmtAs<VariableDecl>(member.get());
+    if (field == nullptr || field->name().lexeme != fieldName->lexeme)
+      continue;
+    // A local of the same name shadows the field.
+    if (exprAs<Variable>(returned) != nullptr &&
+        resolve(*fieldName) != nullptr &&
+        resolve(*fieldName)->bindingKind != SemanticBindingKind::Field)
+      return;
+    std::vector<std::string> names;
+    collectRegionNames(field->type(), names);
+    if (!names.empty() && !contains(names, lifetime.region))
+      report(*fieldName,
+             "Field '" + fieldName->lexeme + "' holds region '" +
+                 names.front() + "', but the result declares region '" +
+                 lifetime.region + "'.",
+             "GTI-S2127");
+    return;
+  }
+}
+
 auto SemanticVisitor::Impl::hasExplicitBorrowContract(
     const FunctionDecl &syntax) -> bool {
   if (syntax.hasFunctionAttribute("borrowed_from"))
@@ -245,12 +358,23 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
   };
   std::vector<Source> sources;
   // A value's stored regions, each reached through its own field path.
+  // The class region a stored-region result names (`int&<a> get()`).
+  std::string storedRegion;
   const auto addStored = [&](BorrowOriginKind origin, std::size_t parameter,
                              const SemanticType &type) -> bool {
     const auto paths = storedReferenceInventory(type);
     if (!paths)
       return false;
     for (const auto &path : *paths) {
+      // A result in one class region is supplied only by fields written in
+      // that region; a field that writes no region holds the implicit one.
+      if (origin == BorrowOriginKind::Receiver && !storedRegion.empty() &&
+          !path.fields.empty() && path.fields.front().declaration != nullptr) {
+        std::vector<std::string> names;
+        collectRegionNames(path.fields.front().declaration->type(), names);
+        if (!names.empty() && !contains(names, storedRegion))
+          continue;
+      }
       auto fields = storedFieldSymbols(type, path.fields);
       auto conditions = storedConditionSymbols(type, path.conditions);
       if (fields.size() != path.fields.size() || !conditions)
@@ -292,10 +416,13 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
   // stored regions, not the receiver itself (`int&<data> get()` in
   // `S<lifetime data>`), whether or not that counts as an explicit contract.
   if (method)
-    if (const FunctionDecl *syntax = function.bodyDeclaration())
-      storedOnly = explicitLifetimeResult(*syntax, function.parameterTypes,
-                                          function.ownerClass)
-                       .classBinder;
+    if (const FunctionDecl *syntax = function.bodyDeclaration()) {
+      const auto lifetime = explicitLifetimeResult(
+          *syntax, function.parameterTypes, function.ownerClass);
+      storedOnly = lifetime.classBinder;
+      if (lifetime.classBinder)
+        storedRegion = lifetime.region;
+    }
   const auto named = [&](std::size_t index) {
     return namedParameters.empty() ||
            std::find(namedParameters.begin(), namedParameters.end(), index) !=

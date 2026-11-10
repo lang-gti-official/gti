@@ -10087,6 +10087,14 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
         updated.returnType, updated.parameterTypes, updated.ownerClass,
         updated.staticMember, updated.intrinsic);
+    // A result written `static` never elides to a parameter: only static
+    // storage, which the body's global-origin inference proves, supplies it.
+    if (const FunctionDecl *syntax = updated.bodyDeclaration();
+        syntax != nullptr &&
+        explicitLifetimeResult(*syntax, updated.parameterTypes,
+                               updated.ownerClass)
+                .kind == ExplicitLifetimeResult::Kind::Static)
+      summary = FunctionReturnBorrowSummary{.access = summary.access};
     // Text-view relays (L-OWN-02) keep their own derivation until text views
     // get a signature rule; stored-field refinement is body inference.
     if (const std::optional<FunctionReturnBorrowSummary> dynamicText =

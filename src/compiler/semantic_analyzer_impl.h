@@ -3046,6 +3046,15 @@ private:
   // A `[[borrowed_from]]` attribute or a result written with a region.
   [[nodiscard]] static bool
   hasExplicitBorrowContract(const FunctionDecl &syntax);
+  // RFC 0004 declaration rules: every region a signature names is bound
+  // (GTI-S2126), and a result region a function binds has a supplying
+  // parameter (GTI-S2127).
+  void validateSignatureRegions(const FunctionDecl &syntax,
+                                const FunctionInfo &function);
+  // A method result in one class region cannot return a receiver field
+  // written in another (GTI-S2127).
+  void validateReturnedFieldRegion(const FunctionDecl &syntax, ClassId owner,
+                                   const ExprPtr &value);
   // RFC 0004 shadow phase: MIR reports body-local borrow conflicts.
   [[nodiscard]] static bool mirBorrowAuthority();
   // The single parameter an explicit result contract names, either spelling.
