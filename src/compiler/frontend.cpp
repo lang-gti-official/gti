@@ -101,6 +101,15 @@ std::string conflictMessage(const MirBorrowRejection &borrow,
                  "may still be live."
                : "Cannot create a read-only borrow while an overlapping "
                  "mutable borrow may still be live.";
+  // A mutable call (its receiver or a mutable argument) uses the storage a
+  // live loan still borrows.
+  if (borrow.write && (borrow.instruction == MirInstructionKind::CallInput ||
+                       borrow.instruction == MirInstructionKind::Call))
+    return "A mutable call cannot use storage while a reference borrowed "
+           "from it may still be live.";
+  if (borrow.instruction == MirInstructionKind::Move)
+    return "Cannot move storage while an overlapping borrow may still be "
+           "live.";
   if (borrow.write)
     return "Cannot assign to storage while an overlapping borrow may still "
            "be live.";
@@ -125,7 +134,12 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       if (explained->loanOrigin)
         diagnostic.related.push_back(
             {*explained->loanOrigin, "Retained borrow originates here."});
-      if (explained->laterUse) {
+      if (explained->lifecycleBound)
+        diagnostic.hints.emplace_back(
+            "This borrow protects a resource until its carrier is destroyed, "
+            "not merely until its last read. End the carrier's scope before "
+            "accessing the owner again.");
+      else if (explained->laterUse) {
         diagnostic.related.push_back(
             {*explained->laterUse, "The borrowed value is used later here."});
         diagnostic.hints.emplace_back(

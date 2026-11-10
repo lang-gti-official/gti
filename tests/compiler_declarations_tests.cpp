@@ -5,6 +5,15 @@
 
 namespace {
 
+// A retained-loan conflict, in the legacy semantic checker's wording or the
+// MIR borrow checker's.
+bool hasBorrowConflict(const std::vector<lang::Diagnostic> &diagnostics) {
+  return hasDiagnostic(diagnostics,
+                       "while a reference borrowed from it may still be "
+                       "live") ||
+         hasDiagnostic(diagnostics, "overlapping borrow may still be live");
+}
+
 // Backend-neutral MIR lookups. Declaration emission facts are asserted on the
 // verified MIR a backend consumes, never on generated backend text.
 const lang::HirFunctionInstance *
@@ -531,9 +540,7 @@ int main() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidatedSpan.canGenerateCode() &&
              hasDiagnosticCode(invalidatedSpan.diagnostics, "GTI-S2017") &&
-             hasDiagnostic(invalidatedSpan.diagnostics,
-                           "while a reference borrowed from it may still be "
-                           "live"),
+             hasBorrowConflict(invalidatedSpan.diagnostics),
          "mutating an owner while a copied read-only span is live should be "
          "rejected by the ordinary retained-loan rule");
 
@@ -585,9 +592,7 @@ int main() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidatedTextView.canGenerateCode() &&
              hasDiagnosticCode(invalidatedTextView.diagnostics, "GTI-S2017") &&
-             hasDiagnostic(invalidatedTextView.diagnostics,
-                           "while a reference borrowed from it may still be "
-                           "live"),
+             hasBorrowConflict(invalidatedTextView.diagnostics),
          "a concrete generic relay must preserve a dynamic string_view owner "
          "dependency and reject mutation while that result is live");
 
@@ -812,9 +817,7 @@ int main() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidatedCString.canGenerateCode() &&
              hasDiagnosticCode(invalidatedCString.diagnostics, "GTI-S2017") &&
-             hasDiagnostic(invalidatedCString.diagnostics,
-                           "while a reference borrowed from it may still be "
-                           "live"),
+             hasBorrowConflict(invalidatedCString.diagnostics),
          "mutating a string while one of its C-string pointers remains live "
          "should be rejected");
 

@@ -69,11 +69,13 @@ programConstantLiteral(const ConstantValue &constant) {
 // Explains a rejected access that overlaps a live loan: where that loan was
 // created, and the first later source statement that reads one of the
 // bindings carrying it (or a reborrow derived from it), which is what keeps
-// it live across the access.
+// it live across the access. A cleanup-bound loan is instead live until its
+// carrier is destroyed, whatever its last read.
 void explainConflict(const MirBody &mir, const HirBody &body, MirLoanId loanId,
                      const SourceSpan &rejected,
                      std::optional<SourceSpan> &origin,
-                     std::optional<SourceSpan> &laterUse) {
+                     std::optional<SourceSpan> &laterUse,
+                     bool &lifecycleBound) {
   const MirLoan *loan = mir.findLoan(loanId);
   if (loan == nullptr)
     return;
@@ -109,7 +111,11 @@ void explainConflict(const MirBody &mir, const HirBody &body, MirLoanId loanId,
         break;
       }
 
-  if (symbols.empty())
+  lifecycleBound = std::any_of(
+      mir.loans.begin(), mir.loans.end(), [&](const MirLoan &candidate) {
+        return family.contains(candidate.id) && candidate.lifecycleBound;
+      });
+  if (symbols.empty() || lifecycleBound)
     return;
   for (const HirStatement &statement : body.statements) {
     if (!statement.source || !statement.source->extent())
@@ -17559,11 +17565,12 @@ MirBody MirLowerer::lowerBody(
           anchor ? anchor : sourceFor(value);
       std::optional<SourceSpan> loanOrigin;
       std::optional<SourceSpan> laterUse;
+      bool lifecycleBound = false;
       if ((error.borrow.kind == MirBorrowRejectionKind::Conflict ||
            error.borrow.kind == MirBorrowRejectionKind::ParentUse) &&
           rejectedAt)
         explainConflict(result, body, error.borrow.loan, *rejectedAt,
-                        loanOrigin, laterUse);
+                        loanOrigin, laterUse, lifecycleBound);
       errors.push_back({.body = {kind, owner},
                         .block = error.block,
                         .instruction = error.instruction,
@@ -17572,6 +17579,7 @@ MirBody MirLowerer::lowerBody(
                         .borrow = error.borrow,
                         .loanOrigin = loanOrigin,
                         .laterUse = laterUse,
+                        .lifecycleBound = lifecycleBound,
                         .temporaryDestroyed = temporaryDestroyed &&
                                               error.borrow.kind ==
                                                   MirBorrowRejectionKind::

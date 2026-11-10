@@ -654,9 +654,14 @@ int main() {
                  !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
              "a stored shared ancestor conflicts once with its live exclusive "
              "result in semantics");
+      // The MIR borrow checker reports a conflicting call at the place it
+      // uses (the receiver), the legacy checker at its closing parenthesis.
+      const auto place = source.find("owner", source.find(conflict));
       expect(error && !error->primary.source.empty() &&
-                 error->primary.start == use &&
-                 error->primary.end == use + (secondPublication ? 1 : 5) &&
+                 ((error->primary.start == use &&
+                   error->primary.end == use + (secondPublication ? 1 : 5)) ||
+                  (error->primary.start == place &&
+                   error->primary.end == place + 5)) &&
                  error->related.size() == 1 &&
                  error->related[0].span.source == error->primary.source &&
                  error->related[0].span.start == origin &&
