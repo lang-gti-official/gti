@@ -703,6 +703,13 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       concreteFunction.returnBorrowPlace = fields->place;
     }
   }
+  // RFC 0004: contracts come only from signatures. An unannotated borrowed
+  // result is bounded by every eligible input; MIR checks the body against it.
+  if (signatureContracts && !concreteFunction.explicitReturnBorrowOrigin)
+    if (const FunctionDecl *syntax = concreteFunction.bodyDeclaration())
+      if (auto complete = signatureCompleteReturnBorrow(
+              concreteFunction, syntax->receiverMutability()))
+        concreteFunction.completeReturnBorrow = std::move(*complete);
   semanticModel.record(*function->declaration, std::move(concreteFunction));
   function->bodyDeclaration()->accept(*this);
   validateDefaultArgumentCycles();
@@ -3822,9 +3829,13 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   }
   validateFunctionPacks(stmt, genericParameters);
   validateOperatorDeclaration(stmt, methodDeclaration);
+  // RFC 0004: a signature whose elision yields a complete contract has one.
   const bool hasReturnBorrowSummary =
       functionInfo != nullptr &&
-      functionInfo->returnBorrowOrigin != BorrowOriginKind::None;
+      (functionInfo->returnBorrowOrigin != BorrowOriginKind::None ||
+       (signatureContractDefaults() &&
+        signatureCompleteReturnBorrow(*functionInfo, stmt.receiverMutability())
+            .has_value()));
   const SemanticType declaredReturnType =
       typeOf(stmt.returnType(), stmt.returnMutability());
   // A source body can establish a complete conditional return contract without

@@ -167,4 +167,128 @@ auto SemanticVisitor::Impl::hasExplicitBorrowContract(
                      });
 }
 
+// RFC 0004 elision as a complete declaration contract, from types alone. Every
+// reference-bearing result path may be supplied by every eligible input: a
+// free function's reference and borrowed-state parameters, or a method's
+// receiver (its own storage unless consumed, and the regions it stores). A
+// mutable result path accepts only mutable sources. The body is checked
+// against this upper bound in MIR; nothing is inferred from it.
+auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
+    const FunctionInfo &function, ReceiverMutability receiverMutability)
+    -> std::optional<FunctionBorrowDependencySummary> {
+  const SemanticType &result = function.returnType;
+  const bool directReference =
+      result.kind == SemanticType::Reference && result.arguments.size() == 1;
+  std::optional<std::vector<StoredReferencePath>> inventory;
+  if (directReference)
+    inventory = std::vector<StoredReferencePath>{{.reference = result}};
+  else
+    inventory = storedReferenceInventory(result);
+  if (!inventory || inventory->empty())
+    return std::nullopt;
+  const auto alternatives =
+      directReference ? std::optional{std::vector<BorrowAlternativePath>{}}
+                      : storedBorrowAlternativeInventory(result);
+  if (!alternatives)
+    return std::nullopt;
+
+  struct Source {
+    BorrowOriginKind origin;
+    std::size_t parameter;
+    std::vector<SymbolId> fields;
+    std::vector<BorrowDependencyCondition> conditions;
+    AccessMode access;
+    // The stored reference this source reaches; Unknown for caller storage,
+    // which may hold a referent of any type.
+    SemanticType reference = SemanticType::Unknown;
+  };
+  std::vector<Source> sources;
+  // A value's stored regions, each reached through its own field path.
+  const auto addStored = [&](BorrowOriginKind origin, std::size_t parameter,
+                             const SemanticType &type) -> bool {
+    const auto paths = storedReferenceInventory(type);
+    if (!paths)
+      return false;
+    for (const auto &path : *paths) {
+      auto fields = storedFieldSymbols(type, path.fields);
+      auto conditions = storedConditionSymbols(type, path.conditions);
+      if (fields.size() != path.fields.size() || !conditions)
+        return false;
+      sources.push_back({origin, parameter, std::move(fields),
+                         std::move(*conditions), path.reference.referenceAccess,
+                         path.reference});
+    }
+    return true;
+  };
+  if (function.ownerClass != 0 && !function.staticMember) {
+    const SemanticType receiver = openClassType(function.ownerClass);
+    if (receiverMutability != ReceiverMutability::Consuming)
+      sources.push_back({BorrowOriginKind::Receiver,
+                         0,
+                         {},
+                         {},
+                         receiverAllowsMutation(receiverMutability)
+                             ? AccessMode::Mutable
+                             : AccessMode::ReadOnly});
+    if (!addStored(BorrowOriginKind::Receiver, 0, receiver))
+      return std::nullopt;
+  } else {
+    for (std::size_t index = 0; index < function.parameterTypes.size();
+         ++index) {
+      const SemanticType &parameter = function.parameterTypes[index];
+      if (parameter.kind == SemanticType::Reference &&
+          parameter.arguments.size() == 1) {
+        sources.push_back({BorrowOriginKind::Argument,
+                           index,
+                           {},
+                           {},
+                           parameter.referenceAccess});
+        if (typeTraits(parameter.arguments.front()).containsBorrowedState &&
+            !addStored(BorrowOriginKind::Argument, index,
+                       parameter.arguments.front()))
+          return std::nullopt;
+      } else if (typeTraits(parameter).containsBorrowedState &&
+                 !addStored(BorrowOriginKind::Argument, index, parameter)) {
+        return std::nullopt;
+      }
+    }
+  }
+
+  FunctionBorrowDependencySummary summary{.possibleAlternatives =
+                                              *alternatives};
+  for (const auto &path : *inventory) {
+    auto fields = storedFieldSymbols(result, path.fields);
+    auto conditions = storedConditionSymbols(result, path.conditions);
+    if (fields.size() != path.fields.size() || !conditions)
+      return std::nullopt;
+    const AccessMode access = path.reference.referenceAccess;
+    bool supplied = false;
+    for (const Source &source : sources) {
+      if (access == AccessMode::Mutable && source.access != AccessMode::Mutable)
+        continue;
+      // A stored reference supplies only a referent of its own type.
+      if (source.reference.kind == SemanticType::Reference &&
+          (source.reference.arguments.size() != 1 ||
+           path.reference.arguments.size() != 1 ||
+           source.reference.arguments.front() !=
+               path.reference.arguments.front()))
+        continue;
+      supplied = true;
+      BorrowedFieldOrigin dependency{.resultFields = fields,
+                                     .origin = source.origin,
+                                     .parameter = source.parameter,
+                                     .sourceFields = source.fields,
+                                     .access = access,
+                                     .resultConditions = *conditions,
+                                     .sourceConditions = source.conditions};
+      if (std::find(summary.dependencies.begin(), summary.dependencies.end(),
+                    dependency) == summary.dependencies.end())
+        summary.dependencies.push_back(std::move(dependency));
+    }
+    if (!supplied)
+      return std::nullopt;
+  }
+  return summary;
+}
+
 } // namespace lang

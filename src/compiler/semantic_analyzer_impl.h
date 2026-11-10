@@ -3050,6 +3050,10 @@ private:
   [[nodiscard]] static bool mirBorrowAuthority();
   // RFC 0004 shadow phase: contracts come only from signatures.
   [[nodiscard]] static bool signatureContractDefaults();
+  // RFC 0004 elision: the complete contract a signature alone implies.
+  [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
+  signatureCompleteReturnBorrow(const FunctionInfo &function,
+                                ReceiverMutability receiverMutability);
   // Constructor parameters whose written types name a region the class binds.
   // Empty when the class declares no regions: the inferred model applies.
   [[nodiscard]] std::vector<std::size_t>
