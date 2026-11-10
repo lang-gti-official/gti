@@ -3297,4 +3297,7 @@ private:
   std::uint64_t snapshotId_ = 0;
 };
 
+// The token that anchors a diagnostic about an expression.
+[[nodiscard]] Token expressionAnchorToken(const Expr &expression);
+
 } // namespace lang

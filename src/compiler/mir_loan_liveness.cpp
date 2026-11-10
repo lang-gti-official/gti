@@ -227,6 +227,12 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
   for (const HirStatement &statement : body.statements)
     if (statement.binding)
       declaringStatement.emplace(*statement.binding, statement.id);
+  // A payload binding is declared by its switch: its loan is created in the
+  // switch's region, not in the arm.
+  for (const HirStatement &statement : body.statements)
+    for (const HirSwitchArm &arm : statement.switchArms)
+      for (const auto &payload : arm.payloadBindings)
+        declaringStatement.emplace(payload.binding, statement.id);
 
   // Statements that read each binding.
   std::unordered_map<HirBindingId, std::vector<HirStatementId>> readers;
@@ -268,6 +274,9 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
           binding = &candidate;
       if (binding != nullptr && binding->payloadPattern != nullptr &&
           loan.carriers.size() == 1)
+        unconfined.insert(loan.semanticLoan);
+      // A carrier with no source symbol is invisible to last-use tracking.
+      if (binding != nullptr && binding->info.symbol == 0)
         unconfined.insert(loan.semanticLoan);
       const auto declared = declaringStatement.find(carrier);
       if (loan.access == AccessMode::Mutable &&
@@ -610,6 +619,10 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
     for (const HirStatementId use : own)
       if (use != selection.id && within(use, selection.id))
         return false;
+    // Binding a payload uses the subject's authority at that arm's entry.
+    for (const HirSwitchArm &arm : selection.switchArms)
+      if (!arm.payloadBindings.empty())
+        return false;
     bool hasDefault = false;
     for (const HirSwitchArm &arm : selection.switchArms)
       for (const auto &label : arm.labels)
@@ -800,7 +813,8 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
     // A loan still live when the body completes is retired by the body's
     // exit (or escapes through a return), not after a statement. Nested
     // blocks retire it after their last statement like any other.
-    if (ending == nullptr || tree.lastInList(end) ||
+    if (ending == nullptr ||
+        (tree.lastInList(end) && ending->kind != HirStatementKind::Switch) ||
         ending->kind == HirStatementKind::Return ||
         ending->kind == HirStatementKind::Break ||
         ending->kind == HirStatementKind::Continue) {

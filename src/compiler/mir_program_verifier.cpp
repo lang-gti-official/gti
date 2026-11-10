@@ -7038,11 +7038,16 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
     }
     if (instance.returnBorrowOrigin == BorrowOriginKind::None) {
       if (block.terminator.returnLoan) {
-        return verificationFailure(
+        MirVerificationResult rejected = verificationFailure(
             body, instance.id,
             "return escapes a loan but the function has no return "
             "dependency summary",
             block.id);
+        if (!rejected.errors.empty())
+          rejected.errors.back().borrow = {
+              .kind = MirBorrowRejectionKind::Escape,
+              .loan = *block.terminator.returnLoan};
+        return rejected;
       }
       continue;
     }

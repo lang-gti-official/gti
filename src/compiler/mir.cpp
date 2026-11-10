@@ -3989,13 +3989,25 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         if (loanState == MirLoanFlowState::Reserved && !write) {
           continue;
         }
-        return failure(body, owner,
-                       std::string(write ? "write" : "read") +
-                           " of a place conflicts with active " +
-                           (loan.access == AccessMode::Mutable ? "mutable "
-                                                               : "read-only ") +
-                           "loan " + std::to_string(loan.id) + " in " + context,
-                       block.id, instruction);
+        MirVerificationResult rejected =
+            failure(body, owner,
+                    std::string(write ? "write" : "read") +
+                        " of a place conflicts with active " +
+                        (loan.access == AccessMode::Mutable ? "mutable "
+                                                            : "read-only ") +
+                        "loan " + std::to_string(loan.id) + " in " + context,
+                    block.id, instruction);
+        MirInstructionKind rejectedKind = MirInstructionKind::Compute;
+        for (const MirInstruction &candidate : block.instructions)
+          if (candidate.id == instruction)
+            rejectedKind = candidate.kind;
+        rejected.errors.back().borrow = {.kind =
+                                             MirBorrowRejectionKind::Conflict,
+                                         .write = write,
+                                         .loanAccess = loan.access,
+                                         .loan = loan.id,
+                                         .instruction = rejectedKind};
+        return rejected;
       }
       return std::nullopt;
     };

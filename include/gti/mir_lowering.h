@@ -3,6 +3,7 @@
 #include "gti/diagnostic.h"
 #include "gti/mir.h"
 #include "gti/mir_effects.h"
+#include "gti/mir_verifier.h"
 
 namespace lang {
 
@@ -13,6 +14,9 @@ struct MirLoweringError {
   MirInstructionId instruction = 0;
   std::optional<SourceSpan> source;
   std::string message;
+  // Set when the verifier rejected the source program's borrows rather than
+  // finding an internal inconsistency.
+  MirBorrowRejection borrow;
 };
 
 struct MirLoweringResult {

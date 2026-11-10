@@ -16867,11 +16867,19 @@ MirBody MirLowerer::lowerBody(
                 statement && statement->source)
               anchor = statement->source->extent();
           }
+      // A borrow rejection is reported at the rejected access itself.
+      if (error.borrow.kind != MirBorrowRejectionKind::None)
+        if (const HirValue *rejected = body.findValue(value);
+            rejected != nullptr && rejected->source != nullptr)
+          if (const Token token = expressionAnchorToken(*rejected->source);
+              !token.lexeme.empty())
+            anchor = tokenSpan(token);
       errors.push_back({.body = {kind, owner},
                         .block = error.block,
                         .instruction = error.instruction,
                         .source = anchor ? anchor : sourceFor(value),
-                        .message = error.message});
+                        .message = error.message,
+                        .borrow = error.borrow});
     }
     if (!lowerer->rejection() && lowerer->proof().valid())
       errors.push_back({.body = {kind, owner},

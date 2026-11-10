@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include <cstdlib>
+
 #include <stdexcept>
 
 namespace lang {
@@ -12860,6 +12862,14 @@ auto SemanticVisitor::Impl::conflictIsInConditionalArm(
           conflictIndex < conditional.elseArm.conflictEnd);
 }
 
+auto SemanticVisitor::Impl::mirBorrowAuthority() -> bool {
+  static const bool enabled = [] {
+    const char *mode = std::getenv("GTI_BORROW_AUTHORITY");
+    return mode != nullptr && std::string_view(mode) == "mir";
+  }();
+  return enabled;
+}
+
 auto SemanticVisitor::Impl::reportBorrowConflict(
     const Token &token, const std::vector<SemanticLoanId> &loans,
     std::string message, bool rawAudit) -> void {
@@ -12878,7 +12888,8 @@ auto SemanticVisitor::Impl::reportBorrowConflict(
           : makeDiagnostic("GTI-S2017", DiagnosticPhase::Semantics, token,
                            std::move(message));
   if (loanFlow.currentStatement == nullptr || loanFlow.currentRegion == 0) {
-    diagnostics.emplace_back(std::move(diagnostic));
+    if (rawAudit || !mirBorrowAuthority())
+      diagnostics.emplace_back(std::move(diagnostic));
     return;
   }
   auto &pending = rawAudit ? loanFlow.rawAuditConflicts : loanFlow.conflicts;
@@ -13153,7 +13164,10 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
             "Place the borrowed value in a narrower block when an explicit "
             "lexical end is required across control flow.");
       }
-      diagnostics.emplace_back(std::move(conflict.diagnostic));
+      // Shadow phase: under MIR borrow authority the MIR borrow checker
+      // reports body-local conflicts; semantics only records them.
+      if (!mirBorrowAuthority())
+        diagnostics.emplace_back(std::move(conflict.diagnostic));
     }
   }
   loanFlow.conflicts.resize(mandatoryConflicts);

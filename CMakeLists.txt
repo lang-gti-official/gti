@@ -592,6 +592,7 @@ add_library(
   "gti_compiler" STATIC
   "src/compiler/backend.cpp"
   $<TARGET_OBJECTS:gti_semantic_analysis>
+  "src/compiler/ast_anchor.cpp"
   "src/compiler/ast_clone.cpp"
   "src/compiler/ast_printer.cpp"
   "src/compiler/binary_float.cpp"

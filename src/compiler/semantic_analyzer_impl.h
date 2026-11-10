@@ -3046,6 +3046,8 @@ private:
   // A `[[borrowed_from]]` attribute or a result written with a region.
   [[nodiscard]] static bool
   hasExplicitBorrowContract(const FunctionDecl &syntax);
+  // RFC 0004 shadow phase: MIR reports body-local borrow conflicts.
+  [[nodiscard]] static bool mirBorrowAuthority();
   // Constructor parameters whose written types name a region the class binds.
   // Empty when the class declares no regions: the inferred model applies.
   [[nodiscard]] std::vector<std::size_t>
