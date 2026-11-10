@@ -185,6 +185,28 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     else
       add(span, escapeMessage);
   };
+  // A return relays a formal the signature does not name as its supplier.
+  const auto addSupplier = [&](SourceSpan span, MirBodyKind kind,
+                               std::size_t owner) {
+    std::string supplier;
+    std::string description = "value";
+    if (kind == MirBodyKind::Function)
+      for (const auto &candidate : hir.functionInstances())
+        if (candidate.id == owner && candidate.source != nullptr) {
+          const auto &parameters = candidate.source->parameters();
+          if (candidate.returnBorrowParameter < parameters.size())
+            supplier = parameters[candidate.returnBorrowParameter].name.lexeme;
+          if (candidate.source->returnType().reference)
+            description = "reference";
+        }
+    add(span,
+        "Returned " + description +
+            " does not relay the exact external owner dependency carried by " +
+            (supplier.empty() ? std::string("its declared supplier")
+                              : "parameter '" + supplier + "'") +
+            ".",
+        "GTI-S2085");
+  };
   // A write conflict anchored at the declaration rather than in its body is
   // the function's exit drop of storage it owns. A returned borrow stays live
   // there: it depends on storage that does not outlive the call, and under a
@@ -285,10 +307,15 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
   };
   for (const MirLoweringError &error : mir.errors) {
     // The provisional program proof reports an escape without a body source.
-    if (error.borrow.kind == MirBorrowRejectionKind::Escape && !error.source)
+    if ((error.borrow.kind == MirBorrowRejectionKind::Escape ||
+         error.borrow.kind == MirBorrowRejectionKind::Supplier) &&
+        !error.source)
       if (const auto span =
               escapeSpan(error.body.kind, error.body.owner, error.block)) {
-        addEscape(*span, error.body.kind, error.body.owner);
+        if (error.borrow.kind == MirBorrowRejectionKind::Supplier)
+          addSupplier(*span, error.body.kind, error.body.owner);
+        else
+          addEscape(*span, error.body.kind, error.body.owner);
         continue;
       }
     if (error.borrow.kind == MirBorrowRejectionKind::None || !error.source) {
@@ -325,14 +352,19 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
   for (const MirVerificationError &error : verifyMirProgram(program).errors) {
     if (error.message == "MIR program is marked invalid")
       continue;
-    const auto span = error.borrow.kind == MirBorrowRejectionKind::Escape
-                          ? escapeSpan(error.bodyKind, error.owner, error.block)
-                          : std::nullopt;
+    const auto span =
+        error.borrow.kind == MirBorrowRejectionKind::Escape ||
+                error.borrow.kind == MirBorrowRejectionKind::Supplier
+            ? escapeSpan(error.bodyKind, error.owner, error.block)
+            : std::nullopt;
     if (!span) {
       check.internal = true;
       continue;
     }
-    addEscape(*span, error.bodyKind, error.owner);
+    if (error.borrow.kind == MirBorrowRejectionKind::Supplier)
+      addSupplier(*span, error.bodyKind, error.owner);
+    else
+      addEscape(*span, error.bodyKind, error.owner);
   }
   return check;
 }

@@ -7649,6 +7649,13 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
       if (bodyLocal && !rejected.errors.empty())
         rejected.errors.back().borrow = {.kind = MirBorrowRejectionKind::Escape,
                                          .loan = *block.terminator.returnLoan};
+      // A loan rooted in another formal is a borrow the signature does not
+      // permit, not malformed MIR.
+      else if (source->root == MirPlaceRootKind::Binding &&
+               !rejected.errors.empty())
+        rejected.errors.back().borrow = {
+            .kind = MirBorrowRejectionKind::Supplier,
+            .loan = *block.terminator.returnLoan};
       return rejected;
     }
     if (!instance.returnBorrowParameters.empty()) {

@@ -21,6 +21,9 @@ enum class MirBorrowRejectionKind {
   Escape,
   // A parent loan is used while a child reborrow of it is still live.
   ParentUse,
+  // A returned borrow comes from a formal parameter its signature does not
+  // name as a supplier of the result.
+  Supplier,
 };
 
 struct MirBorrowRejection {
