@@ -7123,6 +7123,30 @@ auto SemanticVisitor::Impl::resolveOperator(
       }
     }
   }
+  // RFC 0004: an operator on a concrete instance takes the signature
+  // contract that instance states, as an ordinary method call does.
+  if (signatureContractDefaults() && operatorBorrowFields.empty() &&
+      selected.declaration != nullptr &&
+      (selected.returnType.kind == SemanticType::Class ||
+       (selected.returnType.kind == SemanticType::Reference &&
+        selected.ownerClass != 0))) {
+    const FunctionDemandScope pauseDemand(semanticModel, nullptr);
+    const FunctionInfo *declaration = semanticModel.findFunction(selected.id);
+    if (declaration == nullptr && instanceBaseModel != nullptr)
+      declaration = instanceBaseModel->findFunction(selected.id);
+    if (declaration != nullptr)
+      if (const FunctionDecl *syntax = declaration->bodyDeclaration()) {
+        FunctionInfo concrete = *declaration;
+        concrete.returnType = selected.returnType;
+        concrete.parameterTypes = selected.parameterTypes;
+        if (const auto complete = signatureCompleteReturnBorrow(
+                concrete, syntax->receiverMutability(),
+                selected.dispatchOwner.kind == SemanticType::Class
+                    ? selected.dispatchOwner
+                    : receiverType))
+          operatorBorrowFields = complete->dependencies;
+      }
+  }
   ResolvedOperatorInfo resolved{
       .function = selected.id,
       .declaration = selected.declaration,

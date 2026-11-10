@@ -1,14 +1,16 @@
 import std.string;
 struct SingleSentinel { public: SingleSentinel() = default; };
 
-class BorrowingIterator<T> {
-  T& value;
+// The iterator stores a region of the range; its elements live as long as
+// that region, not as long as the iterator.
+class BorrowingIterator<T, lifetime range> {
+  T&<range> value;
   mut uint64_t position = 0;
 
 public:
-  BorrowingIterator(T& source) : value(source) {}
+  BorrowingIterator(T&<range> source) : value(source) {}
 
-  T& operator*() { return this.value; }
+  T&<range> operator*() { return this.value; }
 
   void operator++() mut { this.position++; }
 
