@@ -269,7 +269,13 @@ int main() {
         "TextReader escape() { std::string owner = std::string(\"text\"); "
         "std::string_view view = owner.view(); return TextReader(view); }"}) {
     const auto rejected = run(invalid);
-    expect(!rejected.semanticValid &&
+    // Under MIR borrow authority the MIR borrow checker reports the same
+    // rejection after semantics (an implicitly `static` carrier result's
+    // escape as GTI-S2127); it never reaches code generation.
+    expect((!rejected.semanticValid ||
+            (!rejected.mirValid &&
+             (hasDiagnosticCode(rejected.diagnostics, "GTI-S2017") ||
+              hasDiagnosticCode(rejected.diagnostics, "GTI-S2127")))) &&
                !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
            "checked text reference rejects invalidation or escape before MIR");
   }
@@ -2358,7 +2364,9 @@ int main() {
             "for (auto& item : borrowed.value().elements()) { " +
             operation + " return item.read(); } return 0; }",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-    expect(invalid.syntaxValid && !invalid.semanticValid &&
+    // The MIR borrow checker may report the conflict after semantics.
+    expect(invalid.syntaxValid &&
+               (!invalid.semanticValid || !invalid.mirValid) &&
                hasDiagnosticCode(invalid.diagnostics, "GTI-S2017") &&
                !hasDiagnosticCode(invalid.diagnostics, "GTI-B0001"),
            "retained shared element still prevents owner mutation/movement");

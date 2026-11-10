@@ -302,6 +302,7 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     if (!error.borrow.write || !error.source ||
         error.body.kind != MirBodyKind::Function ||
         (!staticResult(error.body.kind, error.body.owner) &&
+         !implicitStaticResult(error.body.kind, error.body.owner) &&
          escapingLoan(error) == nullptr))
       return false;
     for (const auto &candidate : hir.functionInstances())

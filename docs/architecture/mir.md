@@ -4538,7 +4538,10 @@ reference parameter and no parameter holding a borrow) is implicitly `static`
 in the same way when every stored reference path is read-only: its stored
 call loan is rooted at the returned carrier value, a return that holds no
 reference proves its empty alternative through the reconstructed complete
-flow, and any other root is an escape reported as GTI-S2127.
+flow, and any other root is an escape reported as GTI-S2127. Writing, moving
+or dropping that carrier's own storage (including its materialization as a
+temporary receiver) never conflicts with the self-rooted loan: no caller owner
+protects the static referents it holds.
 Unretained loans must still reach their selected
 full-expression `EndBorrow`; retained mutable loans follow the semantic lexical
 endpoint. The MIR profile remains metadata: mutable process-wide storage is

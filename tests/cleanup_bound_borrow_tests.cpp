@@ -81,16 +81,21 @@ void positive(const std::string &name, const std::string &source) {
     expect(lang::verifyMirProgram(result.mir).valid(), name + " verifies");
 }
 void negative(const std::string &name, const std::string &source,
-              const std::string &expectedCode = "GTI-S2017") {
+              const std::string &expectedCode = "GTI-S2017",
+              const std::string &staticResultCode = "") {
   const auto result = analyze(source);
   if (std::getenv("GTI_TEST_DUMP_DIAGNOSTICS") != nullptr) {
     std::cerr << name << '\n';
     show(result);
   }
+  // Under signature contracts (RFC 0004) a result no input supplies is
+  // implicitly `static`; MIR rejects its escape as that region's failure.
   const bool semanticError = std::any_of(
       result.diagnostics.begin(), result.diagnostics.end(), [&](const auto &d) {
         return d.severity == lang::DiagnosticSeverity::Error &&
-               d.code == expectedCode;
+               (d.code == expectedCode ||
+                (!staticResultCode.empty() && d.code == staticResultCode &&
+                 std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr));
       });
   if (result.canGenerateCode() || !semanticError)
     show(result);
@@ -344,7 +349,7 @@ public:
 Outer bad() { Resource local{}; return Outer(local); }
 int main() { auto escaped = bad(); return 0; }
 )gti",
-           "GTI-S2045");
+           "GTI-S2045", "GTI-S2127");
   negative("nested construction cannot retain a by-value owned parameter",
            R"gti(
 class Outer {
@@ -480,7 +485,7 @@ int main() { mut Resource owner{}; Box<Guard> box{Guard(owner)};
 Guard bad() { Resource owner{}; return Guard(owner); }
 int main() { auto guard = bad(); return 0; }
 )gti",
-           "GTI-S2045");
+           "GTI-S2045", "GTI-S2127");
   negative("cleanup cannot upgrade a shared reference", R"gti(
 class Bad {
   Resource& resource;

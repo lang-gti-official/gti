@@ -769,6 +769,26 @@ findMirMovedTemporaryMaterialization(const MirBody &body, const MirPlace &place,
   return result;
 }
 
+// A static carrier result's stored loan (RFC 0004) is rooted at the carrier
+// value its call produced: no caller owner protects its referents, which the
+// callee proved are immutable static storage. Writing, moving or dropping the
+// carrier's own storage cannot invalidate them.
+[[nodiscard]] bool staticCarrierRootLoan(const MirBody &body,
+                                         const MirLoan &loan) {
+  const MirPlace *source = body.findPlace(loan.source);
+  const MirValue *value =
+      source != nullptr && source->root == MirPlaceRootKind::Value
+          ? body.findValue(source->value)
+          : nullptr;
+  return loan.kind == MirLoanKind::Stored && !loan.entry &&
+         loan.parent == 0 && loan.storedDependency == 0 &&
+         loan.additionalDependencies.empty() && value != nullptr &&
+         source->projections.empty() &&
+         source->type == value->info.type &&
+         value->info.traits.containsBorrowedState &&
+         loan.producedBy == value->sourceValue;
+}
+
 MirTemporaryCarrierDependency
 findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
   if ((place.root != MirPlaceRootKind::Value &&
@@ -819,8 +839,10 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
   // while lifetime dataflow keeps its full ancestry live through cleanup.
   const auto stableOwner = [&](MirPlaceId id) {
     const auto *owner = body.findPlace(id);
-    return owner != nullptr && owner->root != MirPlaceRootKind::Value &&
-           owner->root != MirPlaceRootKind::Temporary;
+    return owner != nullptr && ((owner->root != MirPlaceRootKind::Value &&
+                                 owner->root != MirPlaceRootKind::Temporary) ||
+                                (id == loan->source &&
+                                 staticCarrierRootLoan(body, *loan)));
   };
   if (!stableOwner(loan->source) ||
       std::any_of(loan->additionalDependencies.begin(),
@@ -4036,6 +4058,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                                                       bindingLoans, active));
             });
         const bool primaryConflict =
+            !staticCarrierRootLoan(body, loan) &&
             overlapsProtected(protectedPlace) &&
             (write || loan.access == AccessMode::Mutable);
         if (!primaryConflict && !additionalConflict) {
