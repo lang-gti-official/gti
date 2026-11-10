@@ -129,9 +129,13 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
         diagnostic.related.push_back(
             {*explained->laterUse, "The borrowed value is used later here."});
         diagnostic.hints.emplace_back(
-            "Finish using the borrowed value before changing or moving its "
-            "owner, or perform the owner operation before creating the "
-            "borrow. Choose an order that preserves the intended effects.");
+            explained->temporaryDestroyed
+                ? "Store the temporary in a named local that outlives every "
+                  "use of the borrowed value."
+                : "Finish using the borrowed value before changing or moving "
+                  "its owner, or perform the owner operation before creating "
+                  "the borrow. Choose an order that preserves the intended "
+                  "effects.");
       }
     }
     if (std::none_of(check.diagnostics.begin(), check.diagnostics.end(),
@@ -346,6 +350,11 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
             "GTI-S2085");
       else
         addEscape(span, error.body.kind, error.body.owner);
+    } else if (error.temporaryDestroyed) {
+      add(*error.source,
+          "Borrowed value is derived from temporary storage that is destroyed "
+          "while the borrow may still be live.",
+          "GTI-S2045", &error);
     } else {
       add(*error.source,
           conflictMessage(error.borrow,

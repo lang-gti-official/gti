@@ -17528,11 +17528,19 @@ MirBody MirLowerer::lowerBody(
     for (const auto &error : lowerer->proof().errors) {
       HirValueId value = 0;
       std::optional<SourceSpan> anchor;
+      bool temporaryDestroyed = false;
       if (const auto *block = result.findBlock(error.block))
         for (const auto &instruction : block->instructions)
           if (instruction.id == error.instruction) {
             value = instruction.hirValue != 0 ? instruction.hirValue
                                               : instruction.callSite;
+            if (instruction.kind == MirInstructionKind::Drop &&
+                instruction.destination)
+              if (const MirPlace *place =
+                      result.findPlace(*instruction.destination))
+                temporaryDestroyed =
+                    place->root == MirPlaceRootKind::Temporary ||
+                    place->root == MirPlaceRootKind::Value;
             if (const auto *statement =
                     body.findStatement(instruction.hirStatement);
                 statement && statement->source)
@@ -17563,7 +17571,11 @@ MirBody MirLowerer::lowerBody(
                         .message = error.message,
                         .borrow = error.borrow,
                         .loanOrigin = loanOrigin,
-                        .laterUse = laterUse});
+                        .laterUse = laterUse,
+                        .temporaryDestroyed = temporaryDestroyed &&
+                                              error.borrow.kind ==
+                                                  MirBorrowRejectionKind::
+                                                      Conflict});
     }
     if (!lowerer->rejection() && lowerer->proof().valid())
       errors.push_back({.body = {kind, owner},
