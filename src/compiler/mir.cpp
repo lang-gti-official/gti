@@ -3917,12 +3917,19 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                            });
               });
           if (overlapsDescendant) {
-            return failure(body, owner,
-                           "loan " + std::to_string(place.throughLoan) +
-                               " is used through storage covered by an active "
-                               "child reborrow in " +
-                               context,
-                           block.id, instruction);
+            MirVerificationResult rejected = failure(
+                body, owner,
+                "loan " + std::to_string(place.throughLoan) +
+                    " is used through storage covered by an active child "
+                    "reborrow in " +
+                    context,
+                block.id, instruction);
+            rejected.errors.back().borrow = {
+                .kind = MirBorrowRejectionKind::ParentUse,
+                .write = write,
+                .loanAccess = body.loans[place.throughLoan - 1].access,
+                .loan = place.throughLoan};
+            return rejected;
           }
         }
         if (write &&

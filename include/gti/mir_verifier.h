@@ -19,6 +19,8 @@ enum class MirBorrowRejectionKind {
   Conflict,
   // A returned or stored borrow outlives the storage it depends on.
   Escape,
+  // A parent loan is used while a child reborrow of it is still live.
+  ParentUse,
 };
 
 struct MirBorrowRejection {

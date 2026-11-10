@@ -81,6 +81,19 @@ Token writtenPlaceToken(const Expr &expression) {
             static_cast<const Grouping &>(expression).expression())
       return writtenPlaceToken(*inner);
     break;
+  case ExprKind::DereferenceSet:
+    if (const auto &object =
+            static_cast<const DereferenceSet &>(expression).object())
+      return expressionAnchorToken(*object);
+    break;
+  case ExprKind::IndexSet:
+    if (const auto &object = static_cast<const IndexSet &>(expression).object())
+      return expressionAnchorToken(*object);
+    break;
+  case ExprKind::Set:
+    if (const auto &object = static_cast<const Set &>(expression).object())
+      return expressionAnchorToken(*object);
+    break;
   default:
     break;
   }

@@ -39,6 +39,9 @@ struct MirBorrowCheck {
 };
 
 std::string conflictMessage(const MirBorrowRejection &borrow) {
+  if (borrow.kind == MirBorrowRejectionKind::ParentUse)
+    return "Cannot use a parent loan while an overlapping child reborrow may "
+           "still be live.";
   if (borrow.instruction == MirInstructionKind::Borrow)
     return borrow.write || borrow.loanAccess == AccessMode::ReadOnly
                ? "Cannot create a mutable borrow while an overlapping borrow "
@@ -952,7 +955,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       const ProgressScope progress(options.progress,
                                    ProgressPhase::HirLowering);
       HirLoweringScope scope{.reachablePrefix = options.lowerReachableOnly};
-      if (options.lowerReachableOnly && options.lowerLibraryReachableOnly &&
+      // Every application body must reach the MIR borrow checker, so its
+      // units are lowered completely whenever lowering is reachability-scoped.
+      if (options.lowerReachableOnly &&
+          (options.lowerLibraryReachableOnly || mirBorrowAuthority()) &&
           !options.lowerEntryUnitOnly) {
         std::vector<std::pair<std::size_t, std::size_t>> complete;
         for (const SourceUnit &unit : result.sourceGraph.sourceUnits()) {
@@ -1098,6 +1104,18 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       if (!complete.valid()) {
         MirBorrowCheck check =
             mirBorrowDiagnostics(complete, complete.program, result.hir);
+        // A body only this check lowers must not hide an internal failure.
+        if (check.internal && check.diagnostics.empty())
+          check.diagnostics.push_back(makeDiagnostic(
+              "GTI-B0001", DiagnosticPhase::Backend,
+              complete.errors.empty() || !complete.errors.front().source
+                  ? SourceSpan{entryPath.string(), 0, 0, 1}
+                  : *complete.errors.front().source,
+              "Internal compiler error: failed to construct valid MIR for "
+              "borrow checking. " +
+                  (complete.errors.empty() ? std::string()
+                                           : complete.errors.front().message) +
+                  "."));
         if (!check.diagnostics.empty()) {
           for (Diagnostic &diagnostic : check.diagnostics)
             result.diagnostics.push_back(std::move(diagnostic));

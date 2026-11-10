@@ -16870,11 +16870,9 @@ MirBody MirLowerer::lowerBody(
       // A borrow rejection is reported at the rejected access itself.
       if (error.borrow.kind != MirBorrowRejectionKind::None) {
         const HirValue *rejected = body.findValue(value);
-        // A write is reported at the place it writes, not its operator.
+        // An access is reported at the place it uses, not its operator.
         if (rejected != nullptr && rejected->source != nullptr)
-          if (const Token token =
-                  error.borrow.write ? writtenPlaceToken(*rejected->source)
-                                     : expressionAnchorToken(*rejected->source);
+          if (const Token token = writtenPlaceToken(*rejected->source);
               !token.lexeme.empty())
             anchor = tokenSpan(token);
       }
