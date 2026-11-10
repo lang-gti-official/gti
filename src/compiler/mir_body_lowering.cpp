@@ -4719,6 +4719,36 @@ private:
           // Its carrier has already materialized every external origin. Map
           // those existing places; never use the selected runtime address as
           // a replacement for an omitted owner.
+          // The carrier names a reference formal's owner by its referent,
+          // where semantics names the formal: prefer the carrier's own place.
+          if (concreteSource == 0 && loan.referenceSelection)
+            if (const MirLoan *carrier = output.findLoan(lowered.parent)) {
+              std::vector<MirPlaceId> carried{carrier->source};
+              for (const auto &owner : carrier->additionalDependencies)
+                carried.push_back(owner.source);
+              for (const MirPlaceId id : carried) {
+                const auto *place = output.findPlace(id);
+                if (place == nullptr)
+                  continue;
+                const bool referent =
+                    place->root == MirPlaceRootKind::Binding &&
+                    place->projections.size() == 1 &&
+                    place->projections.front().kind ==
+                        MirProjectionKind::Dereference &&
+                    std::any_of(output.places.begin(), output.places.end(),
+                                [&](const MirPlace &formal) {
+                                  return formal.root ==
+                                             MirPlaceRootKind::Binding &&
+                                         formal.binding == place->binding &&
+                                         formal.projections.empty() &&
+                                         matches(formal.id);
+                                });
+                if (matches(id) || referent) {
+                  concreteSource = id;
+                  break;
+                }
+              }
+            }
           if (concreteSource == 0 && loan.referenceSelection)
             for (const auto &place : output.places)
               if (place.root != MirPlaceRootKind::Value && matches(place.id)) {
