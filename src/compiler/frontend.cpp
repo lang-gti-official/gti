@@ -73,7 +73,45 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
                      }))
       check.diagnostics.push_back(std::move(diagnostic));
   };
+  // Program-level rejections (escapes through a return) anchor at the
+  // returned expression of the function body that publishes them.
+  const auto escapeSpan = [&](MirBodyKind kind, std::size_t owner,
+                              MirBlockId blockId) -> std::optional<SourceSpan> {
+    if (kind != MirBodyKind::Function)
+      return std::nullopt;
+    const MirFunctionInstance *function = nullptr;
+    for (const auto &candidate : program.functionInstances())
+      if (candidate.id == owner)
+        function = &candidate;
+    const HirFunctionInstance *source = nullptr;
+    for (const auto &candidate : hir.functionInstances())
+      if (candidate.id == owner)
+        source = &candidate;
+    const MirBlock *block =
+        function ? function->body.findBlock(blockId) : nullptr;
+    const HirValue *returned =
+        block && source ? source->body.findValue(block->terminator.hirValue)
+                        : nullptr;
+    // A reference return names its value through the return statement.
+    if (returned == nullptr && block && source)
+      if (const HirStatement *statement =
+              source->body.findStatement(block->terminator.hirStatement);
+          statement != nullptr && statement->value)
+        returned = source->body.findValue(*statement->value);
+    if (returned != nullptr && returned->source != nullptr)
+      if (const Token token = expressionAnchorToken(*returned->source);
+          !token.lexeme.empty())
+        return tokenSpan(token);
+    return std::nullopt;
+  };
   for (const MirLoweringError &error : mir.errors) {
+    // The provisional program proof reports an escape without a body source.
+    if (error.borrow.kind == MirBorrowRejectionKind::Escape && !error.source)
+      if (const auto span =
+              escapeSpan(error.body.kind, error.body.owner, error.block)) {
+        add(*span, escapeMessage);
+        continue;
+      }
     if (error.borrow.kind == MirBorrowRejectionKind::None || !error.source) {
       check.internal = true;
       continue;
@@ -84,32 +122,12 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
   }
   if (!mir.errors.empty())
     return check;
-  // Program-level rejections (escapes through a return) anchor at the
-  // returned expression of the function body that publishes them.
   for (const MirVerificationError &error : verifyMirProgram(program).errors) {
     if (error.message == "MIR program is marked invalid")
       continue;
-    std::optional<SourceSpan> span;
-    if (error.borrow.kind == MirBorrowRejectionKind::Escape &&
-        error.bodyKind == MirBodyKind::Function) {
-      const MirFunctionInstance *function = nullptr;
-      for (const auto &candidate : program.functionInstances())
-        if (candidate.id == error.owner)
-          function = &candidate;
-      const HirFunctionInstance *source = nullptr;
-      for (const auto &candidate : hir.functionInstances())
-        if (candidate.id == error.owner)
-          source = &candidate;
-      const MirBlock *block =
-          function ? function->body.findBlock(error.block) : nullptr;
-      const HirValue *returned =
-          block && source ? source->body.findValue(block->terminator.hirValue)
-                          : nullptr;
-      if (returned != nullptr && returned->source != nullptr)
-        if (const Token token = expressionAnchorToken(*returned->source);
-            !token.lexeme.empty())
-          span = tokenSpan(token);
-    }
+    const auto span = error.borrow.kind == MirBorrowRejectionKind::Escape
+                          ? escapeSpan(error.bodyKind, error.owner, error.block)
+                          : std::nullopt;
     if (!span) {
       check.internal = true;
       continue;

@@ -219,7 +219,8 @@ MirLowerer::lowerVerified(const HirProgram &source,
       provisional.errors.push_back({.body = {error.bodyKind, error.owner},
                                     .block = error.block,
                                     .instruction = error.instruction,
-                                    .message = error.message});
+                                    .message = error.message,
+                                    .borrow = error.borrow});
     provisional.program.valid_ = false;
     return provisional;
   }
