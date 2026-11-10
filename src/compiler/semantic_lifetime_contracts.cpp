@@ -1001,6 +1001,46 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
   const Expr *returned = value.get();
   while (const auto *group = exprAs<Grouping>(returned))
     returned = group->expression().get();
+  const auto relations = declaredOutlives(syntax);
+  // A disjunctive requires clause proves the relation only when every
+  // alternative does (each one, plus the conjunctive relations).
+  const auto alternatives = declaredOutlivesAlternatives(syntax.requiresClause());
+  const auto outlivesTarget = [&](const std::string &longer) {
+    if (longer == target || longer == "static")
+      return true;
+    const auto reaches = [&](const auto &extra) {
+      std::vector<std::string> reached{longer};
+      for (bool grew = true; grew;) {
+        grew = false;
+        for (const auto *set : {&relations, &extra})
+          for (const auto &[from, to] : *set)
+            if (contains(reached, from) && !contains(reached, to)) {
+              reached.push_back(to);
+              grew = true;
+            }
+      }
+      return contains(reached, target);
+    };
+    if (alternatives.empty())
+      return reaches(decltype(relations){});
+    return std::all_of(alternatives.begin(), alternatives.end(), reaches);
+  };
+  // A returned reference parameter supplies its own written region.
+  if (const auto *variable = exprAs<Variable>(returned)) {
+    for (const auto &parameter : syntax.parameters())
+      if (parameter.name.lexeme == variable->name().lexeme &&
+          parameter.type.reference && parameter.type.referenceLifetime) {
+        const std::string supplier =
+            parameter.type.referenceLifetime->name.lexeme;
+        if (supplier != "_" && !outlivesTarget(supplier))
+          report(variable->name(),
+                 "The returned parameter's region '" + supplier +
+                     "' is not declared to outlive the result's region '" +
+                     target + "'.",
+                 "GTI-S2127");
+      }
+    return;
+  }
   const auto *call = exprAs<Call>(returned);
   const auto *resolved = call ? semanticModel.findCall(*call) : nullptr;
   if (resolved == nullptr || resolved->declaration == nullptr)
@@ -1009,7 +1049,6 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
   const auto calleeRegion = resultRegion(callee.returnType());
   if (!calleeRegion || calleeRegion->kind != TokenKind::IDENTIFIER)
     return;
-  const auto relations = declaredOutlives(syntax);
   const auto outlives = [&](const std::string &longer) {
     if (longer == target || longer == "static")
       return true;
