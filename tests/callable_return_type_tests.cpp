@@ -63,8 +63,7 @@ int main() {
   lang::setLoweredProgramSealValidation(true);
   rejected(R"(
 import std.meta;
-[[borrowed_from(value)]]
-std::meta::callable_return_type<F> borrow<F>(F& fn, int& value, int& other) {
+std::meta::callable_return_type<F, a> borrow<F, lifetime a>(F& fn, int&<a> value, int& other) {
   return fn(other);
 }
 int main() {
@@ -89,8 +88,7 @@ int main() {
            "GTI-S2017", "must derive from read-only parameter 'value'");
   rejected(R"(
 import std.meta;
-[[borrowed_from(value)]]
-std::meta::callable_return_type<F> borrow<F>(F& fn, int& value) { return fn(value); }
+std::meta::callable_return_type<F, a> borrow<F, lifetime a>(F& fn, int&<a> value) { return fn(value); }
 int main() {
   mut int owner = 42;
   auto same = [](int& value) -> int& { return value; };
@@ -102,8 +100,7 @@ int main() {
            "GTI-S2017", "overlapping borrow");
   rejected(R"(
 import std.meta;
-[[borrowed_from(value)]]
-std::meta::callable_return_type<F> borrow<F>(F& fn, int& value) { return fn(value); }
+std::meta::callable_return_type<F, a> borrow<F, lifetime a>(F& fn, int&<a> value) { return fn(value); }
 int& bad() {
   int owner = 42;
   auto same = [](int& value) -> int& { return value; };
@@ -114,8 +111,7 @@ int main() { return bad(); }
            "GTI-S2017", "reference");
   const auto borrowed = analyze(R"(
 import std.meta;
-[[borrowed_from(value)]]
-std::meta::callable_return_type<F> borrow<F>(F& fn, int& value, int& other) {
+std::meta::callable_return_type<F, a> borrow<F, lifetime a>(F& fn, int&<a> value, int& other) {
   return fn(value);
 }
 int main() {
@@ -176,8 +172,7 @@ using Empty = std::meta::callable_return_type<void()>;
 using MutableAction = std::meta::callable_return_type<void() mut>;
 Number identity(Number value) { return value; }
 Empty nothing() { return; }
-[[borrowed_from(value)]]
-std::meta::callable_return_type<int&(int&)> shared(int& value) { return value; }
+std::meta::callable_return_type<int&(int&), a> shared<lifetime a>(int&<a> value) { return value; }
 int main() {
   int value = 0;
   int& result = shared(value);

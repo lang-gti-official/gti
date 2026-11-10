@@ -1,7 +1,6 @@
 import std.meta;
 
-[[borrowed_from(value)]]
-std::meta::callable_return_type<F> borrow<F>(F& function, int& value) {
+std::meta::callable_return_type<F, a> borrow<F, lifetime a>(F& function, int&<a> value) {
   return function(value);
 }
 
