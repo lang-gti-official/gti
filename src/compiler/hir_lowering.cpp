@@ -2198,6 +2198,11 @@ private:
     lifecycleValid =
         lifecycleValid && analysis->model.verifySourceDebug().empty();
     retainInstanceSymbols(analysis->model);
+    if (std::any_of(analysis->diagnostics.begin(), analysis->diagnostics.end(),
+                    [](const Diagnostic &diagnostic) {
+                      return diagnostic.severity == DiagnosticSeverity::Error;
+                    }))
+      failedFunctionAnalyses.insert(id);
     appendInstanceDiagnostics(std::move(analysis->diagnostics),
                               snapshot.instantiationSite,
                               functionDiscoveryDepths[id - 1].origin);
@@ -2433,7 +2438,11 @@ private:
     const SemanticModel *model = baseModel;
     if (concreteInstance) {
       SemanticInstanceAnalysis *analysis = ensureFunctionAnalysis(snapshot.id);
-      if (analysis == nullptr) {
+      // A concrete body whose reanalysis reported an error has no meaning to
+      // lower. Its failed expressions keep no instance record, so lowering
+      // would read the primary body's facts through the delta and admit
+      // instances still naming this instance's own generic parameters.
+      if (analysis == nullptr || failedFunctionAnalyses.contains(snapshot.id)) {
         lifecycleValid = false;
         currentReceiverType = enclosingReceiverType;
         currentReceiverAccess = enclosingReceiverAccess;
@@ -7821,6 +7830,8 @@ private:
   std::unordered_map<HirFunctionInstanceId,
                      std::unique_ptr<SemanticInstanceAnalysis>>
       functionAnalyses;
+  // Function instances whose concrete reanalysis reported an error.
+  std::unordered_set<HirFunctionInstanceId> failedFunctionAnalyses;
   std::unordered_map<HirConstructorInstanceId,
                      std::unique_ptr<SemanticInstanceAnalysis>>
       constructorAnalyses;
