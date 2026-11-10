@@ -676,6 +676,7 @@ module.exports = grammar({
           field("return_type", $.type),
           "operator",
           field("operator", seq("(", ")")),
+          optional(field("type_parameters", $.lifetime_parameter_clause)),
           field("parameters", $.parameter_clause),
           optional(
             choice(field("mutable", "mut"), field("consuming", "&&")),
@@ -724,6 +725,7 @@ module.exports = grammar({
               ">=",
             ),
           ),
+          optional(field("type_parameters", $.lifetime_parameter_clause)),
           field("parameters", $.parameter_clause),
           optional(choice(field("mutable", "mut"), field("consuming", "&&"))),
           optional(field("constraints", $.requires_clause)),
@@ -1509,8 +1511,13 @@ module.exports = grammar({
         "{", repeat1(seq(
           optional(field("unsafe", "unsafe")), choice(seq(
             "{", field("expression", $._expression_not_comma), "}",
-            optional(seq("->", optional("mut"), field("result_type", $.type),
-              optional(seq("[[", "borrowed_from", "(", field("borrow_origin", $.identifier), ")", "]]")))), ";",
+            optional(seq("->", optional("mut"), choice(
+              seq(field("result_type", $.type),
+                optional(seq("[[", "borrowed_from", "(", field("borrow_origin", $.identifier), ")", "]]"))),
+              // `auto<r>`: an inferred carrier result with a named region.
+              seq(field("result_type", alias("auto", $.primitive_type)),
+                "<", field("result_region", $.lifetime_argument), ">"),
+            ))), ";",
           ), $.iteration_requirement),
         )), "}",
       ),

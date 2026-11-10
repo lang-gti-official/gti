@@ -6848,10 +6848,45 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
       // (neither a reference nor a conditional borrow carrier) is inert.
       if (!reference && !isBorrowReturningType(returnType))
         return contract;
-      contract.origin = BorrowOriginKind::Argument;
-      contract.parameter = lifetime.parameters.front();
-      if (lifetime.parameters.size() > 1)
-        contract.parameters = lifetime.parameters;
+      {
+        // A region written on a supplier this instance makes owned supplies
+        // nothing, and a mutable result needs a supplier that can grant
+        // mutable access. Over a pack this selects its borrowing elements.
+        std::vector<SemanticType> expanded;
+        for (const SemanticType &type : parameterTypes)
+          SemanticType::appendExpandedArgument(expanded, type);
+        std::vector<std::size_t> suppliers;
+        for (const std::size_t position : lifetime.parameters) {
+          if (position >= expanded.size()) {
+            suppliers.push_back(position);
+            continue;
+          }
+          const SemanticType &type = expanded[position];
+          const auto inventory = storedReferenceInventory(type);
+          const bool mutableExternal =
+              inventory &&
+              std::any_of(
+                  inventory->begin(), inventory->end(), [](const auto &path) {
+                    return path.reference.kind == SemanticType::Reference &&
+                           path.reference.referenceAccess ==
+                               AccessMode::Mutable;
+                  });
+          const bool borrows = type.kind == SemanticType::Reference ||
+                               (inventory && !inventory->empty());
+          if (borrows &&
+              (contract.access == AccessMode::ReadOnly || mutableExternal ||
+               borrowAccess(type) == AccessMode::Mutable))
+            suppliers.push_back(position);
+        }
+        if (suppliers.empty()) {
+          contract.missing = true;
+          return contract;
+        }
+        contract.origin = BorrowOriginKind::Argument;
+        contract.parameter = suppliers.front();
+        if (suppliers.size() > 1)
+          contract.parameters = std::move(suppliers);
+      }
       return contract;
     }
     return contract;

@@ -264,6 +264,24 @@ concept readable<C, T> = requires(C&<owner> owner) { { *owner } -> T&<owner>; };
   (void)unbound.parse();
   expect(unbound.hadError(),
          "a requirement result region must be bound by a parameter");
+
+  lang::Lexer inferredLexer;
+  lang::Parser inferred(inferredLexer.scan(
+      "concept view<S> = requires(S&<r> source) { { source.window() } -> "
+      "auto<r>; };",
+      "requirement-inferred-region.gti"));
+  (void)inferred.parse();
+  expect(!inferredLexer.hadError() && !inferred.hadError(),
+         "an inferred requirement result may name its region");
+
+  lang::Lexer typedLexer;
+  lang::Parser typed(typedLexer.scan(
+      "concept view<S> = requires(S&<r> source) { { source.window() } -> "
+      "auto<int>; };",
+      "requirement-inferred-type.gti"));
+  (void)typed.parse();
+  expect(typed.hadError(),
+         "an inferred requirement result takes only a region");
 }
 
 void testQuantifiedAndReceiverSyntax() {

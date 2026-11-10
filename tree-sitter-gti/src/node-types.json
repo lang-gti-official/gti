@@ -4426,10 +4426,24 @@
           }
         ]
       },
+      "result_region": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "lifetime_argument",
+            "named": true
+          }
+        ]
+      },
       "result_type": {
         "multiple": true,
         "required": false,
         "types": [
+          {
+            "type": "primitive_type",
+            "named": true
+          },
           {
             "type": "type",
             "named": true
@@ -5241,6 +5255,16 @@
         "types": [
           {
             "type": "type",
+            "named": true
+          }
+        ]
+      },
+      "type_parameters": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "lifetime_parameter_clause",
             "named": true
           }
         ]

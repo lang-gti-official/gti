@@ -4416,6 +4416,20 @@ private:
       if (match({TokenKind::MUT}))
         resultAccess = previous();
       TypeRef requiredResult = parseType();
+      // `auto<r>` infers a borrow-carrying result whose region is `r`.
+      // Only a requirement result names a region on an inferred type.
+      if (requiredResult.name.last().kind == TokenKind::AUTO &&
+          !requiredResult.reference && match({TokenKind::LESS})) {
+        std::vector<TypeRef> arguments;
+        do {
+          arguments.emplace_back(parseGenericArgument());
+        } while (match({TokenKind::COMMA}));
+        consumeGenericClose("Expect '>' after result regions.");
+        requiredResult.lifetimeArguments = takeLifetimeArguments(arguments);
+        if (!arguments.empty())
+          throw error(arguments.front().name.last(),
+                      "An inferred requirement result takes only a region.");
+      }
       if (resultAccess && !requiredResult.reference)
         throw error(
             *resultAccess,

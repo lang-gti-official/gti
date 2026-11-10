@@ -444,8 +444,8 @@ int main() {
   }));
   // `-> auto` infers the carrier type; the origin is still checked. An
   // unannotated result promises an owned value, so a borrowing view fails it.
-  static_assert(requires(Reading& source) {
-    { source.window() } -> auto [[borrowed_from(source)]];
+  static_assert(requires(Reading&<r> source) {
+    { source.window() } -> auto<r>;
   });
   static_assert(!(requires(Reading& source, Reading&<other> other) {
     { source.window() } -> Window<other>;
