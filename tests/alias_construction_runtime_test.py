@@ -11,10 +11,10 @@ from pathlib import Path
 import sys
 import tempfile
 
-from backend_execution import Endpoint, execute
+from backend_execution import Endpoint, execute, selected_endpoints
 
-ENDPOINTS = (Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),
-             Endpoint('llvm', 'O0'), Endpoint('llvm', 'O2'))
+ENDPOINTS = selected_endpoints((Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),
+                                Endpoint('llvm', 'O0'), Endpoint('llvm', 'O2')))
 
 # 7 + 7 + 5, then 6 + 9.
 EXPECTED = (0, '19\n15\n', '')

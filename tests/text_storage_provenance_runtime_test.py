@@ -23,7 +23,7 @@ import os
 import sys
 import tempfile
 
-from backend_execution import Endpoint, execute
+from backend_execution import Endpoint, execute, selected_endpoints
 
 
 ARRAY_ELEMENTS = r'''
@@ -554,8 +554,8 @@ CASES = {
         0, 'derived\nderived\nspecial\nheld\n', '')),
 }
 
-ENDPOINTS = (Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),
-             Endpoint('llvm', 'O0'), Endpoint('llvm', 'O2'))
+ENDPOINTS = selected_endpoints((Endpoint('cpp', 'O0', 'c++20'), Endpoint('cpp', 'O2', 'c++20'),
+                                Endpoint('llvm', 'O0'), Endpoint('llvm', 'O2')))
 
 
 def main() -> None:

@@ -10,8 +10,6 @@ root = "tests/main.gti"
 
 [profiles.dev]
 optimization = 0
-cpp-standard = "c++23"
 
 [profiles.release]
 optimization = 3
-cpp-standard = "c++23"

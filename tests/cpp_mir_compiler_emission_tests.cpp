@@ -10,7 +10,6 @@
 #include "gti/mir.h"
 #include "gti/optimizer.h"
 #include "gti/parser.h"
-#include "gti/semantic_analyzer.h"
 #include "gti/source_loader.h"
 
 #include "cpp_backend_test_support.h"
