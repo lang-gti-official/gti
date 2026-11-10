@@ -116,11 +116,9 @@ struct FrontendOptions {
   // When false, HIR analyses but does not lower the bodies of library-only
   // instances (compiler-trusted declarations whose arguments name only
   // compiler-trusted types); see HirLoweringScope::omitLibraryOnlyBodies.
-  // Editor snapshots clear it; code generation requires it. Omission applies
-  // only with `stopAfter == Hir` for now: MIR has no signature-only instance
-  // form, so analysis through MIR lowers these bodies and checks them. Once
-  // MIR lowers an omitted instance as a declaration whose callers are checked
-  // against its signature contract, this restriction is lifted.
+  // Editor snapshots clear it; code generation requires it. With
+  // `stopAfter == Mir`, MIR lowers each omitted instance as a signature-only
+  // declaration and checks its callers against that declaration.
   bool lowerLibraryOnlyInstanceBodies = true;
   // Report raw-pointer audit findings located inside compiler-trusted units
   // (the prelude and the standard library) to an application. Off by default:

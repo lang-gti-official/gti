@@ -917,14 +917,21 @@ The LSP also clears `lowerLibraryOnlyInstanceBodies`. A library-only
 instance (a compiler-trusted declaration whose arguments name only
 compiler-trusted types) is analysed and its own diagnostics are reported; its
 callers depend only on its signature contract, so the editor does not need
-its body. While analysis stops at HIR, HIR then omits that body, and instances
-that only such a body would request, such as a library class instantiated
-inside a library-only function, are left to the library's check by the same
-rule (see "Library-only instance bodies" in [hir.md](hir.md)). MIR has no
-signature-only instance form yet, so the frontend honours the option only for
-analysis that stops at HIR: an editor snapshot currently lowers and checks
-library-only bodies too (see "Current Limits"). An instance of the open
-file's own types is lowered completely and reaches what `gti check` reaches.
+its body. HIR omits that body, and instances that only such a body would
+request, such as a library class instantiated inside a library-only function,
+are left to the library's check by the same rule (see "Library-only instance
+bodies" in [hir.md](hir.md)). MIR lowers the instance as a signature-only
+declaration and checks the open file's calls against it (see "Signature-only
+declarations" in [mir.md](mir.md)). Some MIR rules still verify a call or a
+summary only against a lowered body, so a signature-only analysis can be
+rejected where complete lowering is accepted, never the reverse. The LSP
+therefore publishes a signature-only analysis that MIR accepts, and when MIR
+rejects one it analyses the snapshot again with library-only bodies and
+publishes that result: the published diagnostics are always those of complete
+lowering. The trace's `analysis` record reports `hirOmittedInstanceBodies`
+and `mirSignatureOnlyFallback` (see "Current Limits"). An instance of the
+open file's own types is lowered completely and reaches what `gti check`
+reaches.
 The LSP releases HIR, failure metadata and MIR as soon as the analysis
 returns, once their diagnostics are in the result, so retained snapshots hold
 syntax, semantics, and source identity only. Code generation remains
@@ -1394,20 +1401,35 @@ function-local names: identities visible outside the entry document's
   a reusable semantic checkpoint, and durable symbol identity is not
   implemented. Trace evidence, not the old complete-HIR baseline, should select
   the next repeated-edit optimization.
-- Editor MIR lowers and checks library-only instance bodies, because MIR has
-  no signature-only instance form; the frontend therefore ignores
-  `lowerLibraryOnlyInstanceBodies = false` when analysis runs through MIR.
-  Measured with a message-flow probe (`didOpen`, then `didChange` edits with
-  `GTI_LSP_UPDATE_DEBOUNCE_MS=0`, time to the matching
-  `publishDiagnostics`, phases from `GTI_LSP_FRONTEND_TRACE`) on
-  `examples/089-library-workflow.gti`: a steady edit takes about 280 ms when
-  stopping at HIR and about 630 ms through MIR (HIR 47 -> 88 ms over 138 ->
-  564 function instances, MIR stage 300 ms). Lowering the 144 library-only
-  instances as signature-only declarations measured about 345 ms (MIR stage
-  about 54 ms) in a prototype; that form, a HIR marker for omitted instances
-  carrying their parameter bindings and MIR lowering them as declarations, is
-  the next editor-latency step. Lifting the restriction above needs no LSP
-  change.
+- Editor MIR checks callers of library-only instances against signature-only
+  declarations, but MIR does not yet accept every call to a declaration as it
+  accepts the call to the lowered body (see "Signature-only declarations" in
+  [mir.md](mir.md)). A snapshot MIR rejects is analysed a second time with
+  library-only bodies (`mirSignatureOnlyFallback` in the trace), so such a
+  snapshot costs both analyses. Measured with a message-flow probe
+  (`didOpen`, then `didChange` edits with `GTI_LSP_UPDATE_DEBOUNCE_MS=0`, time
+  to the matching `publishDiagnostics`, phases from `GTI_LSP_FRONTEND_TRACE`)
+  on `examples/089-library-workflow.gti`, a steady edit fell from about
+  750-820 ms to about 370-410 ms (HIR 107 -> 59 ms over 564 -> 138 function
+  instances with 144 omitted bodies, MIR stage 360 -> 52 ms). Of the 197
+  single-file examples, 35 valid ones take the second analysis, such as
+  `examples/058-formatted-output.gti` (a steady edit 234 -> 320 ms): their
+  calls use a temporary argument, owned-pointee projection, stored-carrier
+  return or persistent-storage borrow that MIR verifies only against a
+  lowered callee.
+  Across the test fixtures the share is higher (542 of 1637). Removing that
+  fallback needs the MIR rules listed there to take their facts from the
+  signature contract.
+- Omitting a library-only body also leaves undiscovered the instances only
+  that body requests, and their instance diagnostics with them, even when a
+  library-only argument causes the error: `std::vector<std::string_view>`'s
+  `push_back` requests the storage helper whose analysis reports
+  `GTI-S2045`, so `gti check` rejects
+  `tests/coverage/rejections/own-x12-view-in-vector.gti` and the editor
+  publishes nothing. It was the only such difference across the examples and
+  test fixtures. Reporting them needs the closure of an omitted instance to
+  be discovered, or remembered as diagnostic-free from an earlier complete
+  lowering.
 - Lifetime binders (`lifetime a` and region names bound by class argument
   patterns) have no semantic symbols, so the LSP gives them no semantic token,
   hover, definition, references or completion; Tree-sitter highlights them.

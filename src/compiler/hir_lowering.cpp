@@ -2482,6 +2482,19 @@ private:
 
     if (omitBody) {
       ++output.omittedInstanceBodies;
+      // A signature-only instance: the facts recorded above and the
+      // parameter bindings are what MIR declares and checks callers against.
+      // Binding lowering can enqueue instances, so nothing holds a reference
+      // into the instance vectors across it.
+      HirBody signature;
+      std::vector<HirBindingId> parameterBindings;
+      for (const Parameter &parameter :
+           declaration->bodyDeclaration()->parameters())
+        parameterBindings.push_back(lowerBinding(parameter, *model, signature));
+      output.program.functions[index].bodyOmitted = true;
+      output.program.functions[index].body = std::move(signature);
+      output.program.functions[index].parameterBindings =
+          std::move(parameterBindings);
       currentReceiverType = enclosingReceiverType;
       currentReceiverAccess = enclosingReceiverAccess;
       currentSourceFunctionName = enclosingSourceFunctionName;
@@ -2662,6 +2675,20 @@ private:
                          classValueArguments, snapshot.typeArguments,
                          snapshot.valueArguments)) {
       ++output.omittedInstanceBodies;
+      // A signature-only instance, as for functions: its complete borrow
+      // summary and parameter bindings, without initializers or body.
+      HirBody signature;
+      std::vector<HirBindingId> parameterBindings;
+      for (const Parameter &parameter : snapshot.source->parameters())
+        parameterBindings.push_back(
+            lowerBinding(parameter, analysis->model, signature));
+      HirConstructorInstance &omitted = output.program.constructors[index];
+      omitted.bodyOmitted = true;
+      if (const auto *concrete =
+              analysis->model.findConstructor(*snapshot.source))
+        omitted.completeBorrow = concrete->completeBorrow;
+      omitted.body = std::move(signature);
+      omitted.parameterBindings = std::move(parameterBindings);
       currentReceiverType = enclosingReceiverType;
       currentReceiverAccess = enclosingReceiverAccess;
       currentSourceFunctionName = enclosingSourceFunctionName;
@@ -2953,6 +2980,7 @@ private:
         omitInstanceBody(ownerInfo->sourceUnit, owner.typeArguments,
                          owner.valueArguments, {}, {})) {
       ++output.omittedInstanceBodies;
+      output.program.destructors[index].bodyOmitted = true;
       currentReceiverType = enclosingReceiverType;
       currentReceiverAccess = enclosingReceiverAccess;
       currentSourceFunctionName = enclosingSourceFunctionName;

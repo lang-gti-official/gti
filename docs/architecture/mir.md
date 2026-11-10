@@ -4304,6 +4304,33 @@ the verified reverse-order recipe before retiring the inert native array
 shell. Arrays embedded in allocated objects use the same recipe. Native array
 destruction is not a substitute for releasing checked ownership resources.
 
+### Signature-only declarations
+
+Editor analysis omits the bodies of library-only instances in HIR (see
+"Library-only instance bodies" in [hir.md](hir.md)); each such function,
+constructor or destructor arrives marked `bodyOmitted` with its parameter
+bindings and signature facts. MIR lowers it as a `Declaration`: the exact
+bodyless skeleton above, with the instance's recorded parameter types, return
+and constructor borrow summaries, owned-pointee projection and ownerless-text
+facts unchanged, and no initializers. Code generation and `gti check` never
+omit bodies, so their MIR is unchanged.
+
+A declaration is not yet a complete signature contract for every MIR rule.
+Program summaries derived from bodies treat it conservatively: it may raise a
+defined failure, and its persistent-storage access is unknown, so a caller
+holding a borrow of a global across the call is rejected. Several verifier
+rules also admit a call shape only for a `Source` callee (a temporary argument
+input, owned hosted-startup arguments, callable argument descriptors, and
+dependent text relays), and the summary proofs of a declaration's own
+owned-pointee projection, stored-carrier and receiver-carrier returns,
+stored field mappings, constructor borrow summary and published text result
+are checked against a body it does not have. Each of these makes verification
+stricter, never weaker, so the editor publishes a signature-only result only
+when MIR accepts it and otherwise analyses again with the bodies (see
+[lsp.md](lsp.md)). Accepting signature-only callees exactly as lowered bodies
+requires a signature-only definition kind whose summaries come from the
+signature contract in those rules.
+
 ## Controlled Optimization Edits
 
 The private `verifyMirBodyWithPlaceQueries` entry observes the same body verifier
