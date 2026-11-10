@@ -8683,6 +8683,18 @@ private:
           movedBorrowCarrierBinding(arguments[value.borrowArgument]) != 0) {
         parent = output.loans[originLoan - 1].parent;
       }
+      // A consuming call's reference result in its class's region borrows
+      // the consumed carrier's external referent: it forwards that
+      // carrier's ancestry rather than reborrowing the consumed Stored loan.
+      if (kind == MirLoanKind::CallResult && originLoan != 0 &&
+          originLoan <= output.loans.size() &&
+          output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
+          !output.loans[originLoan - 1].entry &&
+          value.borrowOrigin == BorrowOriginKind::Receiver &&
+          value.callableInvocation &&
+          *value.callableInvocation == CallableInvocationCapability::Once &&
+          parent == originLoan)
+        parent = output.loans[originLoan - 1].parent;
       if (parent == 0 && kind == MirLoanKind::Stored &&
           isLifecycleBoundBorrowCarrier(value.info.type)) {
         const auto *dependency =
@@ -12630,6 +12642,26 @@ private:
         const auto transferred = callResultTransferredFrom.find(existing);
         const auto oldParent = semanticLoans.find(desired->parent);
         const auto *published = output.findLoan(existing);
+        // A consuming call whose result forwards its consumed carrier's
+        // ancestry (a class-region reference result) published the exact
+        // external referent beside that carrier's Stored loan: same source,
+        // same parent. Keep it rather than reborrowing the consumed carrier.
+        const MirLoan *consumedStored = oldParent != semanticLoans.end()
+                                            ? output.findLoan(oldParent->second)
+                                            : nullptr;
+        if (published != nullptr && consumedStored != nullptr &&
+            published->kind == MirLoanKind::CallResult &&
+            consumedStored->kind == MirLoanKind::Stored &&
+            !consumedStored->entry &&
+            published->source == consumedStored->source &&
+            published->parent == consumedStored->parent &&
+            value->callableInvocation &&
+            *value->callableInvocation == CallableInvocationCapability::Once) {
+          recordLoanIdentity(existing, *desired, binding);
+          return {.kind = MirOperandKind::Loan,
+                  .loan = existing,
+                  .type = value->info.type};
+        }
         if (transferred != callResultTransferredFrom.end() &&
             oldParent != semanticLoans.end() &&
             std::find(transferred->second.begin(), transferred->second.end(),
@@ -12753,7 +12785,15 @@ private:
           // publication. Derived call-result chains still normalize through
           // their semantic parent below so parent suspension/reactivation is
           // preserved.
-          if (sourceLoan.parent == 0) {
+          // A consuming call that transferred its receiver's stored
+          // ancestry publishes a result reborrowing that Stored dependency:
+          // it too is the exact external referent (`T&<data> take() &&`).
+          const bool transferredStored =
+              sourceLoan.parent != 0 &&
+              output.loans[sourceLoan.parent - 1].kind == MirLoanKind::Stored &&
+              output.loans[sourceLoan.parent - 1].producedBy != 0 &&
+              !output.loans[sourceLoan.parent - 1].entry;
+          if (sourceLoan.parent == 0 || transferredStored) {
             recordLoanIdentity(existing, *desired, binding);
             return {.kind = MirOperandKind::Loan,
                     .loan = existing,
