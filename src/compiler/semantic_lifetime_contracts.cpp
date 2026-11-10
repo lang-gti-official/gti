@@ -488,6 +488,147 @@ auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
   }
 }
 
+auto SemanticVisitor::Impl::validateConstructorFieldRegions(
+    const ConstructorDecl &constructor, const ClassDecl &owner) -> void {
+  std::vector<std::string> binders;
+  for (const auto &parameter : owner.lifetimeParameters())
+    binders.push_back(parameter.name.lexeme);
+  if (binders.empty())
+    return; // The implicit region is fed by every borrow input.
+  for (const auto &initializer : constructor.initializers()) {
+    if (initializer.target.name.segments.size() != 1 ||
+        initializer.arguments.size() != 1)
+      continue;
+    const VariableDecl *field = nullptr;
+    for (const auto &member : owner.members())
+      if (const auto *candidate = stmtAs<VariableDecl>(member.get());
+          candidate != nullptr &&
+          candidate->name().lexeme == initializer.target.name.last().lexeme)
+        field = candidate;
+    if (field == nullptr || !field->type().referenceLifetime)
+      continue;
+    const std::string &region = field->type().referenceLifetime->name.lexeme;
+    if (!contains(binders, region))
+      continue;
+    const Expr *argument = initializer.arguments.front().get();
+    while (const auto *group = exprAs<Grouping>(argument))
+      argument = group->expression().get();
+    const auto *variable = exprAs<Variable>(argument);
+    if (variable == nullptr)
+      continue;
+    for (const auto &parameter : constructor.parameters()) {
+      if (parameter.name.lexeme != variable->name().lexeme ||
+          !parameter.type.reference)
+        continue;
+      const auto written = parameter.type.referenceLifetime
+                               ? parameter.type.referenceLifetime->name.lexeme
+                               : std::string();
+      if (written == region || written == "static")
+        break;
+      report(variable->name(),
+             "Field '" + field->name().lexeme + "' stores region '" + region +
+                 "', but parameter '" + parameter.name.lexeme + "' " +
+                 (written.empty() ? std::string("elides its region")
+                                  : "is written in region '" + written + "'") +
+                 "; write `" + parameter.name.lexeme + "` as `&<" + region +
+                 ">`.",
+             "GTI-S2127");
+      break;
+    }
+  }
+}
+
+auto SemanticVisitor::Impl::callerRegionOf(const FunctionDecl &caller,
+                                           const ExprPtr &argument)
+    -> std::string {
+  const Expr *expression = argument.get();
+  while (const auto *group = exprAs<Grouping>(expression))
+    expression = group->expression().get();
+  const auto *variable = exprAs<Variable>(expression);
+  if (variable == nullptr)
+    return "<local>";
+  const Symbol *symbol = resolve(variable->name());
+  if (symbol == nullptr)
+    return "<local>";
+  if (symbol->bindingKind == SemanticBindingKind::GlobalVariable &&
+      (symbol->variableDeclaration == nullptr ||
+       !symbol->variableDeclaration->isThreadLocal()))
+    return "static";
+  if (symbol->bindingKind == SemanticBindingKind::Parameter)
+    for (const auto &parameter : caller.parameters())
+      if (parameter.name.lexeme == variable->name().lexeme) {
+        if (const auto region = argumentRegion(parameter.type);
+            region && *region != "_" &&
+            parameter.type.name.last().lexeme != *region)
+          return *region;
+        return "<param " + parameter.name.lexeme + ">";
+      }
+  return "<local>";
+}
+
+auto SemanticVisitor::Impl::validateReturnedCallRegion(
+    const FunctionDecl &syntax, const ExprPtr &value) -> void {
+  if (!value)
+    return;
+  const auto declared = resultRegion(syntax.returnType());
+  if (!declared || declared->kind != TokenKind::IDENTIFIER)
+    return;
+  const std::string target = declared->lexeme;
+  bool functionBound = false;
+  for (const auto &parameter : syntax.lifetimeParameters())
+    functionBound |= parameter.name.lexeme == target;
+  if (!functionBound)
+    return;
+  const Expr *returned = value.get();
+  while (const auto *group = exprAs<Grouping>(returned))
+    returned = group->expression().get();
+  const auto *call = exprAs<Call>(returned);
+  const auto *resolved = call ? semanticModel.findCall(*call) : nullptr;
+  if (resolved == nullptr || resolved->declaration == nullptr)
+    return;
+  const FunctionDecl &callee = *resolved->declaration;
+  const auto calleeRegion = resultRegion(callee.returnType());
+  if (!calleeRegion || calleeRegion->kind != TokenKind::IDENTIFIER)
+    return;
+  const auto relations = declaredOutlives(syntax);
+  const auto outlives = [&](const std::string &longer) {
+    if (longer == target || longer == "static")
+      return true;
+    std::vector<std::string> reached{longer};
+    for (bool grew = true; grew;) {
+      grew = false;
+      for (const auto &[from, to] : relations)
+        if (contains(reached, from) && !contains(reached, to)) {
+          reached.push_back(to);
+          grew = true;
+        }
+    }
+    return contains(reached, target);
+  };
+  const auto &parameters = callee.parameters();
+  const auto &arguments = call->arguments();
+  for (std::size_t index = 0;
+       index < parameters.size() && index < arguments.size(); ++index) {
+    if (parameters[index].pack)
+      return;
+    std::vector<std::string> names;
+    collectRegionNames(parameters[index].type, names);
+    if (!contains(names, calleeRegion->lexeme))
+      continue;
+    const std::string supplier = callerRegionOf(syntax, arguments[index]);
+    if (outlives(supplier))
+      continue;
+    report(call->paren(),
+           "The returned call's region is supplied by " +
+               (supplier.front() == '<' ? std::string("an argument's region")
+                                        : "'" + supplier + "'") +
+               ", which is not declared to outlive the result's region '" +
+               target + "'.",
+           "GTI-S2127");
+    return;
+  }
+}
+
 auto SemanticVisitor::Impl::hasExplicitBorrowContract(
     const FunctionDecl &syntax) -> bool {
   if (syntax.hasFunctionAttribute("borrowed_from"))

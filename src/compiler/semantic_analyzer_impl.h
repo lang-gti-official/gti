@@ -3059,6 +3059,16 @@ private:
   // concepts (alternatives excluded: none is guaranteed).
   [[nodiscard]] std::vector<std::pair<std::string, std::string>>
   declaredOutlives(const FunctionDecl &syntax) const;
+  // In a class with explicit lifetime binders, a field written in region R
+  // is bound only from a constructor parameter written in R (GTI-S2127).
+  void validateConstructorFieldRegions(const ConstructorDecl &constructor,
+                                       const ClassDecl &owner);
+  // A returned call whose result region several caller regions supply lives
+  // as long as the shortest; each must outlive the declared result region.
+  void validateReturnedCallRegion(const FunctionDecl &syntax,
+                                  const ExprPtr &value);
+  [[nodiscard]] std::string callerRegionOf(const FunctionDecl &caller,
+                                           const ExprPtr &argument);
   // A call proves each relation its callee requires in the caller's regions
   // (GTI-S2127).
   void validateCallLifetimeRequirements(const FunctionDecl &callee,

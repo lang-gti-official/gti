@@ -228,7 +228,7 @@ public:
 
   // The source owner, not a raw address, retains the checked dependency.
   // Public containers provide as_span() factories over this same contract.
-  span(std::detail::prefix_owner<T>& source, size_t offset, size_t count)
+  span(std::detail::prefix_owner<T>&<source> source, size_t offset, size_t count)
       : data(source), first_position(offset), element_count(count) {
     if (offset > source.length()) { gti_internal::index_bounds_check(offset, source.length()); }
     size_t remaining = source.length() - offset;

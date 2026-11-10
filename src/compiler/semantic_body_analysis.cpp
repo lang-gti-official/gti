@@ -2295,6 +2295,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   }
 
   const ClassInfo &owner = classInfo(*currentClass);
+  if (owner.declaration != nullptr && !instanceAnalysisActive)
+    validateConstructorFieldRegions(stmt, *owner.declaration);
   const ConstructorInfo *constructorInfo = semanticModel.findConstructor(stmt);
   const bool directOwningPayloadTransport =
       stmt.body() != nullptr && constructorInfo != nullptr &&
@@ -5404,6 +5406,8 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     }
     forceProgramStorageBoundaryAccess(stmt.value());
     validateReferenceReturn(currentReturnType, valueType, stmt.value());
+    if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr)
+      validateReturnedCallRegion(*currentFunctionDeclaration, stmt.value());
     noteReturnedFormalReference(*stmt.value());
     if (expressionNeverReturns(stmt.value().get()))
       return;
