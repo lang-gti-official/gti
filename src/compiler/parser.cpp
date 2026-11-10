@@ -1493,6 +1493,7 @@ private:
                                    peekAt(1).lexeme == "lifetime";
     if ((!operatorName || operatorLifetimes) && check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
+      reclassifyLateLifetimeArguments(type);
       if (operatorLifetimes &&
           std::any_of(genericParameters.begin(), genericParameters.end(),
                       [](const GenericParameter &parameter) {
@@ -2894,12 +2895,44 @@ private:
     return lifetimes;
   }
 
+  // A function's return type precedes its binder list. Once the binders are
+  // declared, an unresolved argument there that names one is a lifetime.
+  void reclassifyLateLifetimeArguments(TypeRef &type) {
+    for (auto &argument : type.arguments) {
+      if (argument.genericArgumentSyntax ==
+              GenericArgumentSyntax::UnresolvedIdentifier &&
+          lifetimeBinderInScope(argument.name.last().lexeme))
+        argument.genericArgumentSyntax = GenericArgumentSyntax::Lifetime;
+      reclassifyLateLifetimeArguments(argument);
+    }
+    auto moved = takeLifetimeArguments(type.arguments);
+    type.lifetimeArguments.insert(type.lifetimeArguments.end(),
+                                  std::make_move_iterator(moved.begin()),
+                                  std::make_move_iterator(moved.end()));
+    if (type.qualifiedOwner) {
+      TypeRef owner = *type.qualifiedOwner;
+      reclassifyLateLifetimeArguments(owner);
+      type.qualifiedOwner = std::make_shared<const TypeRef>(std::move(owner));
+    }
+  }
+
   void declareLifetimeBinder(const std::string &name) {
     if (!lifetimeScopes.empty())
       lifetimeScopes.back().push_back(name);
   }
 
   // A class argument pattern such as `int&<source>` binds `source`.
+  static void collectPatternRegions(const TypeRef &type,
+                                    std::vector<std::string> &names) {
+    if (type.referenceLifetime &&
+        type.referenceLifetime->name.kind == TokenKind::IDENTIFIER)
+      names.push_back(type.referenceLifetime->name.lexeme);
+    for (const auto &argument : type.lifetimeArguments)
+      names.push_back(argument.name.last().lexeme);
+    for (const auto &argument : type.arguments)
+      collectPatternRegions(argument, names);
+  }
+
   void declarePatternLifetimeBinders(const TypeRef &pattern) {
     if (pattern.referenceLifetime &&
         pattern.referenceLifetime->name.kind == TokenKind::IDENTIFIER &&
@@ -4285,6 +4318,10 @@ private:
   std::vector<std::unique_ptr<MemberRequirement>>
   expressionRequirements(Token keyword) {
     const NestingGuard nesting = enterNesting(keyword);
+    // RFC 0004: a region written in a requirement parameter's type is bound
+    // there, as in a class argument pattern; a result naming it borrows from
+    // that parameter, exactly as [[borrowed_from(parameter)]] states.
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     std::vector<TypeRef> parameters;
     std::vector<Token> bindings;
     if (match({TokenKind::LEFT_PAREN})) {
@@ -4310,6 +4347,7 @@ private:
                             return other.lexeme == binding.lexeme;
                           }))
             throw error(binding, "Duplicate requirement parameter name.");
+          declarePatternLifetimeBinders(parameter);
           parameters.push_back(std::move(parameter));
           bindings.push_back(std::move(binding));
         } while (match({TokenKind::COMMA}));
@@ -4404,6 +4442,32 @@ private:
         consume(TokenKind::RIGHT_PAREN, "Expect ')' after borrow origin.");
         consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after borrow origin.");
         consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after borrow origin.");
+      }
+      if (!borrowedFrom) {
+        std::optional<std::string> region;
+        if (requiredResult.referenceLifetime &&
+            requiredResult.referenceLifetime->name.kind ==
+                TokenKind::IDENTIFIER)
+          region = requiredResult.referenceLifetime->name.lexeme;
+        else if (!requiredResult.lifetimeArguments.empty())
+          region = requiredResult.lifetimeArguments.front().name.last().lexeme;
+        if (region) {
+          for (std::size_t index = 0; index < parameters.size(); ++index) {
+            std::vector<std::string> names;
+            collectPatternRegions(parameters[index], names);
+            if (std::find(names.begin(), names.end(), *region) != names.end()) {
+              if (borrowedFrom)
+                throw error(bindings[index],
+                            "A requirement result region must be bound by "
+                            "exactly one requirement parameter.");
+              borrowedFrom = bindings[index];
+            }
+          }
+          if (!borrowedFrom)
+            throw error(requiredResult.name.last(),
+                        "A requirement result region must be bound by a "
+                        "requirement parameter.");
+        }
       }
       consume(TokenKind::SEMICOLON, "Expect ';' after required result type.");
       const bool inferredResult =

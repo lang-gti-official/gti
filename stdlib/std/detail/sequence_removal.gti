@@ -3,19 +3,19 @@ export module detail_sequence_removal_impl;
 // One exclusive sequence borrow covers every permutation. Predicate calls
 // receive read-only elements and finish before any element is moved.
 export namespace std::detail {
-concept permutable_sequence<Range> = requires(Range& source, mut Range& target, size_t index) {
+concept permutable_sequence<Range> = requires(Range&<source> source, mut Range& target, size_t index) {
   { source.size() } -> size_t;
-  { source[index] } -> auto& [[borrowed_from(source)]];
+  { source[index] } -> auto&<source>;
   { target.swap_elements(index, index) } -> void;
 };
 
-concept indexed_predicate<Predicate, Range> = requires(mut Predicate& predicate, Range& source, size_t index) {
-  { source[index] } -> auto& [[borrowed_from(source)]];
+concept indexed_predicate<Predicate, Range> = requires(mut Predicate& predicate, Range&<source> source, size_t index) {
+  { source[index] } -> auto&<source>;
   { predicate(source[index]) } -> bool;
 };
 
-concept indexed_equality<Range, T> = std::equality_comparable<T> && requires(Range& source, size_t index) {
-  { source[index] } -> T& [[borrowed_from(source)]];
+concept indexed_equality<Range, T> = std::equality_comparable<T> && requires(Range&<source> source, size_t index) {
+  { source[index] } -> T&<source>;
 };
 
 bool removal_matches<Range, Predicate>(Range& values, size_t index, mut Predicate& predicate)

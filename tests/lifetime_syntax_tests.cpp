@@ -247,6 +247,25 @@ struct Pick {
   expect(typed.hadError(), "an operator overload cannot bind a type");
 }
 
+void testRequirementResultRegions() {
+  const std::string source = R"(
+concept readable<C, T> = requires(C&<owner> owner) { { *owner } -> T&<owner>; };
+)";
+  lang::Lexer lexer;
+  lang::Parser parser(lexer.scan(source, "requirement-regions.gti"));
+  (void)parser.parse();
+  expect(!lexer.hadError() && !parser.hadError(),
+         "a requirement result may name a region its parameter binds");
+
+  lang::Lexer unboundLexer;
+  lang::Parser unbound(unboundLexer.scan(
+      "concept bad<C, T> = requires(C& owner) { { *owner } -> T&<other>; };",
+      "requirement-unbound-region.gti"));
+  (void)unbound.parse();
+  expect(unbound.hadError(),
+         "a requirement result region must be bound by a parameter");
+}
+
 void testQuantifiedAndReceiverSyntax() {
   const std::string source = R"(
 using Callback = for<lifetime a, lifetime b>
@@ -665,6 +684,7 @@ struct Derived<Args...> : public Base {
 
 int main() {
   testOperatorLifetimeBinders();
+  testRequirementResultRegions();
   testDeclarationSyntax();
   testContextualKeywordAndLookahead();
   testCloneAndPrinter();

@@ -129,7 +129,7 @@ for concept std::tryable<BorrowedParse> {
   }
 };
 
-[[borrowed_from(owner)]] BorrowedParse borrowed_parse(int& owner, bool fail) {
+BorrowedParse<a> borrowed_parse<lifetime a>(int&<a> owner, bool fail) {
   if (fail) return BorrowedParse::failed(std::string("bad"));
   return BorrowedParse::ready(owner);
 }

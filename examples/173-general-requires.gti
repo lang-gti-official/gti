@@ -22,8 +22,8 @@ constexpr bool declares_reference<T>() {
   }
   return found;
 }
-concept symbolically_readable_cell<T> = declares_reference<T>() && requires(T& cell) {
-  { *cell } -> auto& [[borrowed_from(cell)]];
+concept symbolically_readable_cell<T> = declares_reference<T>() && requires(T&<cell> cell) {
+  { *cell } -> auto&<cell>;
 };
 int accepts_cell<symbolically_readable_cell T>(T& cell) { return 1; }
 int forwards_cell<T>(GenericCell<T>& cell) { return accepts_cell(cell); }
@@ -99,15 +99,15 @@ concept invokes<F, Arg, Result> = requires(F& function, Arg& argument) {
 };
 
 // A reference result names the borrowed input that bounds its lifetime.
-concept readable_cell<C, T> = requires(C& owner) {
-  { *owner } -> T& [[borrowed_from(owner)]];
+concept readable_cell<C, T> = requires(C&<owner> owner) {
+  { *owner } -> T&<owner>;
 };
-concept editable_cell<C, T> = requires(mut C& owner) {
-  { owner.edit() } -> mut T& [[borrowed_from(owner)]];
+concept editable_cell<C, T> = requires(mut C&<owner> owner) {
+  { owner.edit() } -> mut T&<owner>;
 };
 concept observable_cell<C> = requires(C& owner) { { *owner }; };
-concept inferred_editable_cell<C> = requires(mut C& owner) {
-  { *owner } -> mut auto& [[borrowed_from(owner)]];
+concept inferred_editable_cell<C> = requires(mut C&<owner> owner) {
+  { *owner } -> mut auto&<owner>;
 };
 bool matches_cell<C>(C& owner, int value) requires observable_cell<C> {
   return *owner == value;
@@ -152,8 +152,8 @@ public:
   Window window() { return Window(this.value); }
   void advance() mut { this.value += 1; }
 };
-concept windowed<S> = requires(S& source) {
-  { source.window() } -> Window [[borrowed_from(source)]];
+concept windowed<S> = requires(S&<source> source) {
+  { source.window() } -> Window<source>;
 };
 concept advancing<S> = requires(mut S& source) { { source.advance() } -> void; };
 int read_then_advance<S>(mut S& source) requires windowed<S> && advancing<S> {
@@ -439,16 +439,16 @@ int main() {
   put_cell(cell, 13);
   put_cell_at(cell, std::ptrdiff_t(0), 14);
   if (peek_cell<Cell, int>(cell) != 14) { return 12; }
-  static_assert(!(requires(Cell& owner, Cell& other) {
-    { *owner } -> int& [[borrowed_from(other)]];
+  static_assert(!(requires(Cell& owner, Cell&<other> other) {
+    { *owner } -> int&<other>;
   }));
   // `-> auto` infers the carrier type; the origin is still checked. An
   // unannotated result promises an owned value, so a borrowing view fails it.
   static_assert(requires(Reading& source) {
     { source.window() } -> auto [[borrowed_from(source)]];
   });
-  static_assert(!(requires(Reading& source, Reading& other) {
-    { source.window() } -> Window [[borrowed_from(other)]];
+  static_assert(!(requires(Reading& source, Reading&<other> other) {
+    { source.window() } -> Window<other>;
   }));
   static_assert(!(requires(Reading& source) { { source.window() } -> Window; }));
   mut Reading reading{};
