@@ -416,6 +416,12 @@ add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
 add_executable(gti_fresh_callable_borrow_tests fresh_callable_borrow_tests.cpp)
 target_link_libraries(gti_fresh_callable_borrow_tests PRIVATE gti_compiler)
 add_test(NAME fresh_callable_borrow COMMAND gti_fresh_callable_borrow_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME borrow_dependency_monotonicity
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/borrow_dependency_monotonicity.py"
+            --self-test)
+endif()
 add_executable(gti_mir_loan_normalization_tests mir_loan_normalization_tests.cpp)
 target_link_libraries(gti_mir_loan_normalization_tests PRIVATE gti_compiler)
 add_test(NAME mir_loan_normalization COMMAND gti_mir_loan_normalization_tests)

@@ -21,13 +21,15 @@ public:
 
 int read(Counter& counter) { return counter.value; }
 void increment(mut Counter& counter) { counter.bump(); }
+Counter& same(Counter& counter) { return counter; }
 
 int main() {
   mut Counter first = Counter();
   Counter second = Counter();
   increment(first);
   Counter& view = second;
-  return read(view) + read(first) + 40;
+  Counter& again = same(view);
+  return read(again) + read(first) + 40;
 }
 )";
 
@@ -53,6 +55,11 @@ std::string print(const lang::MirProgram &program) {
 
 std::string normalized(const lang::MirProgram &program) {
   return print(lang::normalizeLoanBookkeeping(program));
+}
+
+std::string dependencyNormalized(const lang::MirProgram &program) {
+  return print(lang::normalizeBorrowDependencies(
+      lang::normalizeLoanBookkeeping(program)));
 }
 
 bool isEndBorrow(const lang::MirInstruction &instruction) {
@@ -343,6 +350,143 @@ void normalizationFailsClosed() {
          "an instruction ID outside its body is refused");
 }
 
+// The dependency mode erases borrow-dependency metadata and nothing else.
+void borrowDependenciesNormalizeAway() {
+  const lang::MirProgram reference = lowered();
+  lang::MirProgram candidate = reference;
+  std::size_t calls = 0;
+  std::size_t parents = 0;
+  std::size_t borrows = 0;
+  anyBody(candidate, [&](lang::MirBody &body) {
+    for (auto &loan : body.loans) {
+      if (loan.parent != 0)
+        ++parents;
+      loan.parent = loan.parent == 0 ? 1 : 0;
+      loan.storedDependency += 1;
+      loan.additionalDependencies.push_back({.source = 1});
+      if (loan.kind == lang::MirLoanKind::CallResult)
+        loan.source += 1;
+    }
+    for (auto &value : body.values)
+      if (value.borrowDependencies)
+        value.borrowDependencies->dependencies.push_back({.source = 1});
+    for (auto &block : body.blocks)
+      for (auto &instruction : block.instructions) {
+        if (instruction.kind == lang::MirInstructionKind::Borrow)
+          for (auto &operand : instruction.operands)
+            if (operand.kind == lang::MirOperandKind::Loan &&
+                body.loans.size() > 1) {
+              operand.loan = operand.loan == 1 ? 2 : 1;
+              ++borrows;
+            }
+        if (instruction.kind == lang::MirInstructionKind::Call &&
+            instruction.borrowOrigin != lang::BorrowOriginKind::None) {
+          instruction.borrowArguments.push_back(instruction.borrowArgument);
+          instruction.borrowFields.push_back(
+              {.origin = lang::BorrowOriginKind::Receiver});
+          instruction.borrowAccess = lang::AccessMode::Mutable;
+          ++calls;
+        }
+      }
+    return false;
+  });
+  for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+           candidate.functionInstances()))
+    if (function.returnBorrowOrigin != lang::BorrowOriginKind::None) {
+      function.returnBorrowParameters.push_back(0);
+      function.explicitReturnBorrowOrigin =
+          !function.explicitReturnBorrowOrigin;
+    }
+  expect(calls != 0 && parents != 0 && borrows != 0,
+         "the fixture has contract calls, parent loans and reborrows");
+  expect(normalized(reference) != normalized(candidate),
+         "dependency metadata differs after loan normalization alone");
+  expect(dependencyNormalized(reference) == dependencyNormalized(candidate),
+         "borrow-dependency metadata normalizes away");
+}
+
+// A call target, a moved Drop and a Loan operand's kind stay differences.
+void dependencyModeKeepsOtherFacts() {
+  const lang::MirProgram reference = lowered();
+  lang::MirProgram call = reference;
+  expect(anyBody(call,
+                 [](lang::MirBody &body) {
+                   for (auto &block : body.blocks)
+                     for (auto &instruction : block.instructions)
+                       if (instruction.kind == lang::MirInstructionKind::Call &&
+                           instruction.borrowOrigin !=
+                               lang::BorrowOriginKind::None &&
+                           instruction.functionTarget) {
+                         *instruction.functionTarget += 1;
+                         return true;
+                       }
+                   return false;
+                 }),
+         "the fixture has a contract call");
+  expect(dependencyNormalized(reference) != dependencyNormalized(call),
+         "a changed call target survives dependency normalization");
+
+  lang::MirProgram drop = reference;
+  expect(anyBody(drop,
+                 [](lang::MirBody &body) {
+                   for (auto &block : body.blocks) {
+                     auto &instructions = block.instructions;
+                     for (std::size_t index = 1; index < instructions.size();
+                          ++index)
+                       if (instructions[index].kind ==
+                               lang::MirInstructionKind::Drop &&
+                           !isEndBorrow(instructions[index - 1])) {
+                         std::swap(instructions[index - 1],
+                                   instructions[index]);
+                         return true;
+                       }
+                   }
+                   return false;
+                 }),
+         "the fixture has a Drop to move");
+  expect(dependencyNormalized(reference) != dependencyNormalized(drop),
+         "a moved Drop survives dependency normalization");
+
+  lang::MirProgram operand = reference;
+  expect(anyBody(operand,
+                 [](lang::MirBody &body) {
+                   for (auto &block : body.blocks)
+                     for (auto &instruction : block.instructions)
+                       if (instruction.kind == lang::MirInstructionKind::Borrow)
+                         for (auto &input : instruction.operands)
+                           if (input.kind == lang::MirOperandKind::Loan) {
+                             input.kind = lang::MirOperandKind::Address;
+                             return true;
+                           }
+                   return false;
+                 }),
+         "the fixture has a reborrow operand");
+  expect(dependencyNormalized(reference) != dependencyNormalized(operand),
+         "a reborrow operand's kind survives dependency normalization");
+
+  lang::MirProgram missing = reference;
+  expect(anyBody(missing,
+                 [](lang::MirBody &body) {
+                   for (auto &block : body.blocks)
+                     for (auto &instruction : block.instructions)
+                       if (instruction.kind == lang::MirInstructionKind::Borrow)
+                         for (auto &input : instruction.operands)
+                           if (input.kind == lang::MirOperandKind::Loan) {
+                             input.loan = body.loans.size() + 5;
+                             return true;
+                           }
+                   return false;
+                 }),
+         "the fixture has a reborrow operand to break");
+  bool refused = false;
+  try {
+    (void)lang::normalizeBorrowDependencies(missing);
+  } catch (const lang::MirLoanNormalizationError &) {
+    refused = true;
+  }
+  expect(refused, "a reborrow of an unknown loan is refused");
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -353,6 +497,8 @@ int main(int argc, char **argv) {
       {"instruction_references_remap_consistently",
        instructionReferencesRemapConsistently},
       {"normalization_fails_closed", normalizationFailsClosed},
+      {"borrow_dependencies_normalize_away", borrowDependenciesNormalizeAway},
+      {"dependency_mode_keeps_other_facts", dependencyModeKeepsOtherFacts},
   };
   return runNamedTests(argc, argv, tests, "MIR loan normalization");
 }

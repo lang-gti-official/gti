@@ -62,6 +62,41 @@ remapped reference names the same instruction, and each refusal. Any change to
 what the normalizer erases, or to its EndBorrow attribution allowlist, needs
 owner review.
 
+The owner later decided that borrow contracts come only from signatures: an
+unannotated borrowed result borrows from every borrow-carrying input
+(reference parameters, parameters whose type carries borrowed state, and the
+receiver), where `main` infers narrower contracts from bodies. Call-result
+dependency metadata may therefore widen, under these conditions:
+
+1. Instructions, places, calls, moves, control flow, drops and machine code
+   stay strictly compared.
+2. An automated monotonicity check over the same corpus replaces manual
+   review: for every call result, the new dependency set is a superset of the
+   old one, and every added dependency is a borrow-carrying input of the
+   callee, as the conservative default predicts. A set that shrinks or gains
+   anything else fails and is reported individually.
+3. The gate prints a summary (counts per example and every failure), so the
+   widening stays visible without line-by-line review.
+
+The gate therefore compares MIR with `--mir-normalize-loans
+--mir-normalize-borrow-dependencies`. `normalizeBorrowDependencies` clears
+exactly the dependency fields its header lists: loan parents, stored and
+additional dependencies and transferred-from loans; for call-published
+(CallResult and Stored) loans also the primary source, field path and
+conditions; the contents of value dependency sets; the borrow-contract fields
+of Call, Construct and CallBody instructions; the parent-loan reference of a
+Borrow's Loan operand (its operand kind and place stay compared); and the
+function, constructor and lambda return-borrow contract rows. It refuses a
+Borrow whose parent operand names no loan of its body. The widening itself is
+checked by `tests/borrow_dependency_monotonicity.py` over the two
+`--emit-borrow-dependencies` dumps; a call or contract present in only one dump
+fails too, and an element is compared exactly (root, source fields and result
+fields), so replacing a field-specific dependency by its root counts as a
+shrink. `borrow_dependency_monotonicity` self-tests that check on synthetic
+dumps, and `mir_loan_normalization` proves that dependency-only changes
+normalize away while a call target, a moved Drop and a Loan operand's kind
+still differ. Extending either list needs owner review.
+
 ## Terminal switch continuations and C++ text-borrow admission
 
 `mir_full_expression` analyzes the issue #309 generic accessor and independently

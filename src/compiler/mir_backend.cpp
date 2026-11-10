@@ -17,10 +17,16 @@ BackendArtifact MirBackend::generate(LoweredProgram program) {
         "MIR backend refuses to serialize an invalid lowered program");
   }
   const MirProgram &mir = verified->program().mir();
+  std::string contents;
+  if (options.normalizeBorrowDependencies)
+    contents = MirPrinter().print(
+        normalizeBorrowDependencies(normalizeLoanBookkeeping(mir)));
+  else if (options.normalizeLoanBookkeeping)
+    contents = MirPrinter().print(normalizeLoanBookkeeping(mir));
+  else
+    contents = MirPrinter().print(mir);
   return {.kind = BackendArtifactKind::Source,
-          .contents = options.normalizeLoanBookkeeping
-                          ? MirPrinter().print(normalizeLoanBookkeeping(mir))
-                          : MirPrinter().print(mir),
+          .contents = std::move(contents),
           .extension = ".mir"};
 }
 

@@ -18,6 +18,9 @@ struct MirBackendOptions {
   // (`mir_loan_normalization.h`). An inspection view only; the verified
   // program itself is unchanged.
   bool normalizeLoanBookkeeping = false;
+  // Additionally erase borrow-dependency metadata, after loan bookkeeping
+  // (normalizeBorrowDependencies in `mir_loan_normalization.h`).
+  bool normalizeBorrowDependencies = false;
 };
 
 class MirBackend final : public Backend {

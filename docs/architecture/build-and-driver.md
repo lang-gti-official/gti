@@ -2213,6 +2213,19 @@ across runs: the module identifier is the fixed `gti.native.v<abi>`, the
 triple is the host's, and only `!gti.source` function provenance names
 absolute paths, those of the loaded sources themselves.
 
+For the signature-contract part of that gate, `--emit-mir
+--mir-normalize-borrow-dependencies` (which requires `--emit-mir` and applies
+after loan normalization) additionally erases borrow-dependency metadata
+(`normalizeBorrowDependencies`), and `--emit-borrow-dependencies` writes
+`<entry>.borrows.json`: every call or construction whose result carries
+borrowed state, with its dependency set in callee terms, and every callee's
+contract row, in the `gti-borrow-dependencies-v1` schema documented in
+`include/gti/driver/borrow_dependencies.h`. The dump reads the canonical MIR
+and identifies bodies and callees by qualified names and semantic type
+spellings rather than numeric IDs, and each call by its ordinal among calls of
+the same callee in its body. It is an emission mode with the same restrictions
+as `--emit-llvm`.
+
 Direct compilation also exposes opt-in optimizer observability without
 changing the selected backend:
 

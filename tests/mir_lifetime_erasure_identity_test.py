@@ -6,11 +6,22 @@ Compiles every example with a reference compiler (built from the main commit
 the lifetime change is based on) and a candidate compiler. For every example
 the reference compiles, the candidate must produce:
 
-  mir          byte-identical `--emit-mir --mir-normalize-loans` output. The
-               normalizer erases only loan bookkeeping: semantic loan numbers,
-               EndBorrow placement and the instruction-ID shifts it causes
-               (src/compiler/mir_loan_normalization.h). Drops, cleanup and
-               every other MIR fact still compare exactly.
+  mir          byte-identical `--emit-mir --mir-normalize-loans
+               --mir-normalize-borrow-dependencies` output. The normalizers
+               erase only loan bookkeeping (semantic loan numbers, EndBorrow
+               placement and the instruction-ID shifts it causes) and
+               borrow-dependency metadata (src/compiler/
+               mir_loan_normalization.h). Instructions, places, calls, moves,
+               control flow, drops and every other MIR fact compare exactly.
+  borrow-dependencies
+               the borrow-dependency monotonicity check over the two
+               `--emit-borrow-dependencies` dumps
+               (tests/borrow_dependency_monotonicity.py): every call result
+               and callee contract exists in both, its dependency set only
+               grows, and only by borrow-carrying inputs of the callee. Each
+               violation is reported individually, and a summary gives each
+               example's calls compared, calls widened, dependencies added and
+               failures.
   llvm-ir-O0   byte-identical `--emit-llvm -O0` output, except that each
                compiler's own standard-library root is spelled `<stdlib>`:
                `!gti.source` provenance names absolute source paths, and the
@@ -36,6 +47,7 @@ Usage: mir_lifetime_erasure_identity_test.py REFERENCE_GTI REFERENCE_STDLIB
 import argparse
 import collections
 import concurrent.futures
+import json
 import os
 import re
 import shutil
@@ -45,6 +57,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import borrow_dependency_monotonicity
+
 # Lifetime syntax: a `lifetime` binder, a reference or type region argument
 # (`&<a>`, `<static>`), `for<lifetime ...>`, or an `outlives<...>` requirement.
 LIFETIME_SYNTAX = re.compile(
@@ -52,7 +66,7 @@ LIFETIME_SYNTAX = re.compile(
 
 PROFILES = ([], ["--execution-profile", "concurrent"])
 LEVELS = ("O0", "O3")
-CATEGORIES = ("mir", *(f"llvm-ir-{level}" for level in LEVELS),
+CATEGORIES = ("mir", "borrow-dependencies", *(f"llvm-ir-{level}" for level in LEVELS),
               *(f"run-{level}" for level in LEVELS))
 COMPILE_TIMEOUT = 600
 RUN_TIMEOUT = 60
@@ -147,6 +161,7 @@ def main() -> int:
     concurrent_examples = 0
     lifetime_examples: list[str] = []
     skipped: list[str] = []
+    dependency_summary: list[tuple[str, collections.Counter]] = []
 
     scratch_context = (tempfile.TemporaryDirectory() if arguments.keep is None
                        else None)
@@ -167,7 +182,8 @@ def main() -> int:
         def artifact(compiler: Compiler, label: str) -> Path:
             return directory / f"{compiler.role}.{label}"
 
-        normalized = ["--emit-mir", "--mir-normalize-loans"]
+        normalized = ["--emit-mir", "--mir-normalize-loans",
+                      "--mir-normalize-borrow-dependencies"]
         profile = None
         reference_mir = (1, b"")
         for candidate_profile in PROFILES:
@@ -210,6 +226,22 @@ def main() -> int:
             result["failures"].append(
                 ("mir", "normalized MIR differs: " +
                  first_difference(reference_mir[1], candidate_mir[1])))
+
+        old_dump, new_dump = compare(["--emit-borrow-dependencies"],
+                                     "borrows.json")
+        if old_dump[0] != 0 or new_dump[0] != 0:
+            result["failures"].append(
+                ("borrow-dependencies",
+                 f"dump exit {new_dump[0]}, reference exit {old_dump[0]}"))
+        else:
+            try:
+                dependency_failures, statistics = borrow_dependency_monotonicity.check(
+                    json.loads(old_dump[1]), json.loads(new_dump[1]))
+            except (ValueError, KeyError) as error:
+                dependency_failures, statistics = [f"unreadable dump: {error}"], {}
+            result["dependencies"] = statistics
+            result["failures"].extend(("borrow-dependencies", failure)
+                                      for failure in dependency_failures)
 
         for level in LEVELS:
             category = f"llvm-ir-{level}"
@@ -270,6 +302,12 @@ def main() -> int:
                     failures[category].append(f"{name}: {detail}")
                 for category in result["nondeterministic"]:
                     nondeterministic.append(f"{name}: {category}")
+                if "dependencies" in result:
+                    statistics = collections.Counter(result["dependencies"])
+                    statistics["failures"] = sum(
+                        category == "borrow-dependencies"
+                        for category, _ in result["failures"])
+                    dependency_summary.append((name, statistics))
     finally:
         if scratch_context:
             scratch_context.cleanup()
@@ -288,6 +326,21 @@ def main() -> int:
     if skipped:
         print(f"[skipped] {len(skipped)} example(s) the reference does not "
               f"compile: {', '.join(skipped)}")
+    print("[borrow-dependency summary] example: calls compared, calls "
+          "widened, dependencies added, contracts compared, contracts "
+          "widened, contract dependencies added, failures")
+    totals = collections.Counter()
+    for name, statistics in dependency_summary:
+        totals.update(statistics)
+        print(f"  {name}: {statistics['calls_compared']}, "
+              f"{statistics['calls_widened']}, {statistics['calls_added']}, "
+              f"{statistics['contracts_compared']}, "
+              f"{statistics['contracts_widened']}, "
+              f"{statistics['contracts_added']}, {statistics['failures']}")
+    print(f"  total: {totals['calls_compared']}, {totals['calls_widened']}, "
+          f"{totals['calls_added']}, {totals['contracts_compared']}, "
+          f"{totals['contracts_widened']}, {totals['contracts_added']}, "
+          f"{totals['failures']}")
     total = sum(len(entries) for entries in failures.values())
     timings.sort(reverse=True)
     slowest = ", ".join(f"{name} {seconds:.1f}s"

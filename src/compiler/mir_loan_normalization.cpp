@@ -242,4 +242,108 @@ MirProgram normalizeLoanBookkeeping(MirProgram program) {
   return program;
 }
 
+namespace {
+
+// See the header: these are the only fields the dependency mode clears.
+void clearDependencySet(std::optional<MirBorrowDependencySet> &set) {
+  if (set)
+    *set = MirBorrowDependencySet{};
+}
+
+void clearDependencySummary(
+    std::optional<FunctionBorrowDependencySummary> &summary) {
+  if (summary)
+    *summary = FunctionBorrowDependencySummary{};
+}
+
+[[nodiscard]] bool isContractCall(const MirInstruction &instruction) {
+  return instruction.kind == MirInstructionKind::Call ||
+         instruction.kind == MirInstructionKind::Construct ||
+         instruction.kind == MirInstructionKind::CallBody;
+}
+
+void normalizeBodyDependencies(MirBody &body, MirBodyAddress address) {
+  for (MirLoan &loan : body.loans) {
+    loan.parent = 0;
+    loan.storedDependency = 0;
+    loan.additionalDependencies.clear();
+    if (loan.referenceSelection)
+      loan.referenceSelection->transferredFrom = 0;
+    // A call-published loan's primary dependency is chosen from the callee
+    // contract; every other loan's source is the place its own Borrow names.
+    if (loan.kind == MirLoanKind::CallResult ||
+        loan.kind == MirLoanKind::Stored) {
+      loan.source = 0;
+      loan.designatedFields.clear();
+      loan.conditions.clear();
+    }
+  }
+  for (MirValue &value : body.values)
+    clearDependencySet(value.borrowDependencies);
+  for (MirBlock &block : body.blocks) {
+    for (MirInstruction &instruction : block.instructions) {
+      if (instruction.kind == MirInstructionKind::Borrow) {
+        for (MirOperand &operand : instruction.operands) {
+          if (operand.kind != MirOperandKind::Loan)
+            continue;
+          if (operand.loan != 0 && body.findLoan(operand.loan) == nullptr)
+            throw MirLoanNormalizationError(
+                "dependency normalization refuses Borrow i" +
+                std::to_string(instruction.id) + " in " + describe(address) +
+                ": its parent operand names no loan of the body");
+          operand.loan = 0;
+        }
+      }
+      if (!isContractCall(instruction))
+        continue;
+      instruction.borrowOrigin = BorrowOriginKind::None;
+      instruction.borrowArgument = 0;
+      instruction.borrowArguments.clear();
+      instruction.borrowFields.clear();
+      instruction.borrowAccess = AccessMode::ReadOnly;
+      instruction.borrowPlace.reset();
+      instruction.restoresReferenceResult = false;
+      instruction.restoredBorrowFields.clear();
+    }
+  }
+}
+
+} // namespace
+
+MirProgram normalizeBorrowDependencies(MirProgram program) {
+  for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
+    MirBody *body = findMirBody(program, address);
+    if (body == nullptr)
+      throw MirLoanNormalizationError(
+          "dependency normalization cannot resolve " + describe(address));
+    normalizeBodyDependencies(*body, address);
+  }
+  for (MirFunctionInstance &function : owned(program.functionInstances())) {
+    function.explicitReturnBorrowOrigin = false;
+    function.returnBorrowOrigin = BorrowOriginKind::None;
+    function.returnBorrowParameter = 0;
+    function.returnBorrowAccess = AccessMode::ReadOnly;
+    function.returnBorrowParameters.clear();
+    function.returnBorrowFields.clear();
+    clearDependencySummary(function.completeReturnBorrow);
+    function.returnBorrowPlace.reset();
+    function.restoresReferenceResult = false;
+    function.restoredBorrowFields.clear();
+  }
+  for (MirConstructorInstance &constructor :
+       owned(program.constructorInstances())) {
+    constructor.borrowOrigin = BorrowOriginKind::None;
+    constructor.borrowParameter = 0;
+    constructor.borrowAccess = AccessMode::ReadOnly;
+    constructor.borrowParameters.clear();
+    clearDependencySummary(constructor.completeBorrow);
+  }
+  for (MirLambdaInstance &lambda : owned(program.lambdaInstances())) {
+    lambda.returnBorrowOrigin = BorrowOriginKind::None;
+    lambda.returnBorrowParameter = 0;
+    lambda.returnBorrowAccess = AccessMode::ReadOnly;
+  }
+  return program;
+}
+
 } // namespace lang

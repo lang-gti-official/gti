@@ -212,7 +212,9 @@ struct Options {
   bool emitCpp = false;
   bool emitMir = false;
   bool emitLlvm = false;
+  bool emitBorrowDependencies = false;
   bool mirNormalizeLoans = false;
+  bool mirNormalizeBorrowDependencies = false;
   bool emitNativeHeader = false;
   bool keepCpp = false;
   bool debugInfo = false;
@@ -388,8 +390,14 @@ void printUsage(std::ostream &stream) {
          "      --mir-normalize-loans\n"
          "                       With --emit-mir, erase loan bookkeeping "
          "(RFC 0004 erasure gate).\n"
+         "      --mir-normalize-borrow-dependencies\n"
+         "                       With --emit-mir, also erase borrow-dependency "
+         "metadata.\n"
          "      --emit-llvm      Emit the optimized LLVM IR the LLVM backend "
          "would compile.\n"
+         "      --emit-borrow-dependencies\n"
+         "                       Emit call-result borrow dependencies as JSON "
+         "(RFC 0004 gate).\n"
          "      --emit-native-header\n"
          "                       Emit a C17 and C++20/C++23 compatible C ABI "
          "header.\n"
@@ -865,6 +873,14 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
       options.emitLlvm = true;
       continue;
     }
+    if (argument == "--mir-normalize-borrow-dependencies") {
+      options.mirNormalizeBorrowDependencies = true;
+      continue;
+    }
+    if (argument == "--emit-borrow-dependencies") {
+      options.emitBorrowDependencies = true;
+      continue;
+    }
     if (argument == "--emit-cpp") {
       options.emitCpp = true;
       continue;
@@ -954,14 +970,21 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
     std::cerr << "gti: --mir-normalize-loans requires --emit-mir\n";
     return ArgumentResult::ExitFailure;
   }
+  if (options.mirNormalizeBorrowDependencies && !options.emitMir) {
+    std::cerr << "gti: --mir-normalize-borrow-dependencies requires "
+                 "--emit-mir\n";
+    return ArgumentResult::ExitFailure;
+  }
   if (options.debugInfo &&
-      (options.emitMir || options.emitLlvm || options.emitNativeHeader)) {
+      (options.emitMir || options.emitLlvm || options.emitBorrowDependencies ||
+       options.emitNativeHeader)) {
     std::cerr << "gti: debug info requires executable or backend "
                  "representation output\n";
     return ArgumentResult::ExitFailure;
   }
-  if (options.backendSelected && (options.emitCpp || options.emitNativeHeader ||
-                                  options.emitMir || options.emitLlvm)) {
+  if (options.backendSelected &&
+      (options.emitCpp || options.emitNativeHeader || options.emitMir ||
+       options.emitLlvm || options.emitBorrowDependencies)) {
     std::cerr << "gti: --backend selects executable generation and cannot be "
                  "combined with an explicit emission mode\n";
     return ArgumentResult::ExitFailure;
@@ -979,7 +1002,7 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
     return ArgumentResult::ExitFailure;
   }
   if ((options.emitCpp || options.emitNativeHeader || options.emitMir ||
-       options.emitLlvm) &&
+       options.emitLlvm || options.emitBorrowDependencies) &&
       options.keepCpp) {
     std::cerr << "gti: emission modes and --keep-cpp cannot be used "
                  "together\n";
@@ -988,20 +1011,22 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
   if (static_cast<int>(options.emitCpp) +
           static_cast<int>(options.emitNativeHeader) +
           static_cast<int>(options.emitMir) +
-          static_cast<int>(options.emitLlvm) >
+          static_cast<int>(options.emitLlvm) +
+          static_cast<int>(options.emitBorrowDependencies) >
       1) {
-    std::cerr << "gti: --emit-cpp, --emit-mir, --emit-llvm, and "
-                 "--emit-native-header cannot be used together\n";
+    std::cerr << "gti: --emit-cpp, --emit-mir, --emit-llvm, "
+                 "--emit-borrow-dependencies, and --emit-native-header cannot "
+                 "be used together\n";
     return ArgumentResult::ExitFailure;
   }
   if ((options.emitCpp || options.emitNativeHeader || options.emitMir ||
-       options.emitLlvm) &&
+       options.emitLlvm || options.emitBorrowDependencies) &&
       !options.compilerArguments.empty()) {
     std::cerr << "gti: native compiler arguments require executable output\n";
     return ArgumentResult::ExitFailure;
   }
   if ((options.emitCpp || options.emitNativeHeader || options.emitMir ||
-       options.emitLlvm) &&
+       options.emitLlvm || options.emitBorrowDependencies) &&
       options.buildReport) {
     std::cerr << "gti: --build-report requires executable output\n";
     return ArgumentResult::ExitFailure;
@@ -1024,6 +1049,9 @@ ArgumentResult parseArguments(int argc, char *argv[], Options &options) {
       options.output = defaultMirPath(options.input);
     } else if (options.emitLlvm) {
       options.output = defaultLlvmIrPath(options.input);
+    } else if (options.emitBorrowDependencies) {
+      options.output = options.input.parent_path() /
+                       (options.input.stem().string() + ".borrows.json");
     } else if (options.emitNativeHeader) {
       options.output = defaultNativeHeaderPath(options.input);
     } else {
@@ -2626,11 +2654,12 @@ int runDirect(const Options &options, const char *driver) {
       terminalStyle, progressMode, options.input.filename().string(),
       "direct, " + lang::driver::targetTriple(target),
       lang::cli::optimizationNumber(options.optimization), options.verbose,
-      progressSelected || !(options.emitCpp || options.emitMir ||
-                            options.emitLlvm || options.emitNativeHeader));
+      progressSelected ||
+          !(options.emitCpp || options.emitMir || options.emitLlvm ||
+            options.emitBorrowDependencies || options.emitNativeHeader));
 
   if (options.emitCpp || options.emitNativeHeader || options.emitMir ||
-      options.emitLlvm) {
+      options.emitLlvm || options.emitBorrowDependencies) {
     // Direct mode is manifest-independent: command-line limits over defaults.
     const lang::driver::CompilationRequest request =
         lang::driver::CompilationRequest(
@@ -2650,10 +2679,15 @@ int runDirect(const Options &options, const char *driver) {
         : options.emitMir
             ? lang::driver::compileToMir(
                   request,
-                  {.normalizeLoanBookkeeping = options.mirNormalizeLoans},
+                  {.normalizeLoanBookkeeping = options.mirNormalizeLoans,
+                   .normalizeBorrowDependencies =
+                       options.mirNormalizeBorrowDependencies},
                   progress.observer())
         : options.emitLlvm
             ? lang::driver::compileToLlvmIr(request, progress.observer())
+        : options.emitBorrowDependencies
+            ? lang::driver::compileToBorrowDependencies(request,
+                                                        progress.observer())
             : lang::driver::compileToCpp(request, progress.observer());
     progress.suspend();
     if (!compilation.succeeded()) {
@@ -2674,7 +2708,9 @@ int runDirect(const Options &options, const char *driver) {
                 << (options.emitNativeHeader ? "native header"
                     : options.emitMir        ? "MIR output"
                     : options.emitLlvm       ? "LLVM IR output"
-                                             : "backend representation output")
+                    : options.emitBorrowDependencies
+                        ? "borrow-dependency output"
+                        : "backend representation output")
                 << " '" << options.output.string() << "'\n";
       return exitCode(ExitStatus::Usage);
     }

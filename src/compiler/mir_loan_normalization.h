@@ -74,4 +74,53 @@ public:
 
 [[nodiscard]] MirProgram normalizeLoanBookkeeping(MirProgram program);
 
+// Borrow-dependency normalization for the RFC 0004 signature-contract gate.
+//
+// The owner decided that borrow contracts come only from signatures: an
+// unannotated borrowed result borrows from every borrow-carrying input, where
+// main infers a narrower set from the body. Call-result dependency metadata
+// therefore legitimately widens. This mode erases exactly that metadata so the
+// rest of MIR still compares byte for byte; the widening itself is checked
+// separately for monotonicity from `--emit-borrow-dependencies`
+// (gti/driver/borrow_dependencies.h). It is applied after
+// normalizeLoanBookkeeping and clears only:
+//
+//   MirLoan, every kind: parent, storedDependency, additionalDependencies and
+//     referenceSelection->transferredFrom (the loans and places a loan
+//     depends on). For CallResult and Stored loans, whose primary dependency
+//     call lowering selects from the callee contract, also source,
+//     designatedFields and conditions (that primary dependency's place, field
+//     path and alternative conditions). Other loans keep their source: it is
+//     the place their own Borrow names. Loan id, kind, access, carriers,
+//     storedField, lifecycleBound, twoPhase, entry, escapes and the rest of
+//     referenceSelection stay compared.
+//   MirValue::borrowDependencies: the set's contents; whether a set is
+//     recorded at all stays compared.
+//   Call, Construct and CallBody instructions: borrowOrigin, borrowArgument,
+//     borrowArguments, borrowFields, borrowAccess, borrowPlace,
+//     restoresReferenceResult and restoredBorrowFields. Closure computes keep
+//     their capture borrow origin.
+//   Borrow instructions: the `loan` of each MirOperandKind::Loan operand,
+//     which names the parent loan, i.e. the dependency edge in instruction
+//     form. The operand's kind, place, value and type stay compared, as do
+//     the Borrow's own result loan and every Loan operand of other
+//     instructions (call inputs, calls, initializations).
+//   MirFunctionInstance: explicitReturnBorrowOrigin, returnBorrowOrigin,
+//     returnBorrowParameter, returnBorrowAccess, returnBorrowParameters,
+//     returnBorrowFields, the contents of completeReturnBorrow (its presence
+//     stays compared), returnBorrowPlace, restoresReferenceResult and
+//     restoredBorrowFields.
+//   MirConstructorInstance: borrowOrigin, borrowParameter, borrowAccess,
+//     borrowParameters and the contents of completeBorrow.
+//   MirLambdaInstance: returnBorrowOrigin, returnBorrowParameter and
+//     returnBorrowAccess (not serialized today).
+//
+// Instructions, places, values, calls, moves, control flow, drops, lifecycle
+// events, text-relay contracts and effect summaries are untouched. A widened
+// dependency that creates or removes a loan row still shifts loan IDs and so
+// still differs. It throws MirLoanNormalizationError when a Borrow's parent
+// operand names no loan of its body. Extending this list requires owner
+// review, like the loan-bookkeeping normalizer above.
+[[nodiscard]] MirProgram normalizeBorrowDependencies(MirProgram program);
+
 } // namespace lang

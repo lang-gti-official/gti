@@ -296,4 +296,10 @@ compileToMir(const CompilationRequest &request, MirBackendOptions options,
 compileToLlvmIr(const CompilationRequest &request,
                 ProgressObserver *progress = nullptr);
 
+// The RFC 0004 borrow-dependency inventory of the canonical MIR as JSON
+// (`borrowDependencyReport` in gti/driver/borrow_dependencies.h).
+[[nodiscard]] CompilationResult
+compileToBorrowDependencies(const CompilationRequest &request,
+                            ProgressObserver *progress = nullptr);
+
 } // namespace lang::driver

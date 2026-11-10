@@ -1,5 +1,7 @@
 #include "gti/driver/compilation.h"
 
+#include "gti/driver/borrow_dependencies.h"
+
 #include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/llvm_backend.h"
@@ -525,6 +527,35 @@ CompilationResult compileToLlvmIr(const CompilationRequest &request,
   options.textualIr = true;
   LlvmBackend backend(options);
   return compileWithBackend(llvm.withDefinitionClosure(), backend, progress);
+}
+
+CompilationResult compileToBorrowDependencies(const CompilationRequest &request,
+                                              ProgressObserver *progress) {
+  FrontendResult frontend = analyze(
+      request, loadCompilationInputs(request, progress), progress, true);
+  CompilationResult result;
+  result.testCases = frontend.testCases;
+  if (!frontend.canGenerateCode()) {
+    result.status = CompilationStatus::FrontendFailure;
+    result.sources = std::move(frontend.sources);
+    result.diagnostics = std::move(frontend.diagnostics);
+    return result;
+  }
+  try {
+    result.artifact =
+        BackendArtifact{.kind = BackendArtifactKind::Source,
+                        .contents = borrowDependencyReport(frontend),
+                        .extension = ".json"};
+    result.status = CompilationStatus::Success;
+  } catch (const std::exception &error) {
+    result.status = CompilationStatus::BackendFailure;
+    result.backendFailureDetails =
+        std::string("Backend: borrow-dependencies\nDetail: ") + error.what() +
+        "\n";
+  }
+  result.sources = std::move(frontend.sources);
+  result.diagnostics = std::move(frontend.diagnostics);
+  return result;
 }
 
 } // namespace lang::driver
