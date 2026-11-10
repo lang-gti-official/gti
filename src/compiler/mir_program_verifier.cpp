@@ -1728,6 +1728,40 @@ callableSignatureMatches(const MirCallableSignature &signature,
 uniqueMirClassInstanceForType(const MirProgram &program,
                               const SemanticType &type);
 
+// The type of a field reached by a Field projection of `owner`: its own
+// declared field or one a non-interface base declares, since an inherited
+// field is projected from the derived place by the base's field symbol.
+[[nodiscard]] std::optional<SemanticType>
+mirFieldTypeThroughBases(const MirProgram &program,
+                         const MirClassInstance &owner, SymbolId symbol,
+                         std::size_t depth = 0) {
+  if (depth > 64)
+    return std::nullopt;
+  std::optional<SemanticType> found;
+  for (const auto &candidate : owner.declaredFields)
+    if (candidate.symbol == symbol) {
+      if (found)
+        return std::nullopt;
+      found = candidate.type;
+    }
+  if (found)
+    return found;
+  for (const HirBaseInstance &base : owner.structuralBases) {
+    if (base.interface)
+      continue;
+    const auto *instance = uniqueMirClassInstanceForType(program, base.type);
+    if (instance == nullptr)
+      continue;
+    if (auto inherited =
+            mirFieldTypeThroughBases(program, *instance, symbol, depth + 1)) {
+      if (found)
+        return std::nullopt;
+      found = std::move(inherited);
+    }
+  }
+  return found;
+}
+
 [[nodiscard]] bool exactRetainedOwnedPointee(const MirProgram &program,
                                              const MirBody &body,
                                              const MirFunctionInstance *caller,
@@ -5347,8 +5381,19 @@ findStoredCarrierReferenceInventory(const MirProgram &program,
          (instance->destructor && !instance->lifecycleBoundBorrowCarrier))) {
       invalid = true;
     }
+    // A base subobject's references are the derived object's own, named by
+    // the declaring base's field symbols (an inherited field is a Field
+    // projection of the derived place). They precede the derived fields.
     for (const HirBaseInstance &base : instance->structuralBases) {
-      invalid = invalid || (!base.interface && containsBorrow(base.type));
+      if (base.interface || !containsBorrow(base.type))
+        continue;
+      auto inherited = self(self, base.type);
+      if (!inherited) {
+        invalid = true;
+        continue;
+      }
+      for (auto &path : *inherited)
+        references.push_back(std::move(path));
     }
     for (const MirClassFieldInfo &field : instance->declaredFields) {
       auto children = childInventory(field.type);
@@ -5454,6 +5499,23 @@ findStoredCarrierAlternativeInventory(const MirProgram &program,
                                  instance->captureSymbols[index], nullptr);
         } else if (const auto *instance =
                        uniqueMirClassInstanceForType(program, current)) {
+          // Base subobject alternatives are the derived object's own.
+          for (const HirBaseInstance &base : instance->structuralBases) {
+            if (base.interface)
+              continue;
+            const auto baseTraits = storagePayloadTraits(program, base.type);
+            if (!baseTraits) {
+              complete = false;
+              continue;
+            }
+            if (!baseTraits->containsBorrowedState)
+              continue;
+            auto inherited = self(self, base.type);
+            complete &= inherited.has_value();
+            if (inherited)
+              for (auto &path : *inherited)
+                result.push_back(std::move(path));
+          }
           for (const auto &field : instance->declaredFields)
             complete &= appendChildren(field.type, field.symbol, nullptr);
         } else
@@ -6607,20 +6669,12 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
   if (path.fields.empty() || depth > program.constructorInstances().size())
     return std::nullopt;
   const auto &body = instance.body;
-  const auto initializer =
-      std::find_if(instance.initializers.begin(), instance.initializers.end(),
-                   [&](const auto &candidate) {
-                     return candidate.field == path.fields.front();
-                   });
-  if (initializer == instance.initializers.end())
-    return std::nullopt;
-  const auto published =
-      std::find_if(body.loans.begin(), body.loans.end(), [&](const auto &loan) {
-        return loan.kind == MirLoanKind::Stored && loan.escapes &&
-               loan.storedField == initializer->field;
+  const auto initializer = std::find_if(
+      instance.initializers.begin(), instance.initializers.end(),
+      [&](const auto &candidate) {
+        return candidate.kind == ConstructorInitializerTargetKind::Field &&
+               candidate.field == path.fields.front();
       });
-  if (published == body.loans.end())
-    return std::nullopt;
   const auto formal = [&](MirPlaceId source) -> std::optional<std::size_t> {
     const auto canonical = borrowSourceForPlace(body, source, 0);
     const auto *place = canonical ? body.findPlace(*canonical) : nullptr;
@@ -6640,6 +6694,55 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
   BorrowedFieldOrigin result{.resultFields = path.fields,
                              .origin = BorrowOriginKind::Argument,
                              .access = path.reference.referenceAccess};
+  if (initializer == instance.initializers.end()) {
+    // An inherited path is stored by a base initializer: replay the base
+    // constructor's own origin for the same flattened path, then the exact
+    // reference argument this body published into the base subobject.
+    for (const auto &base : instance.initializers) {
+      if (base.kind != ConstructorInitializerTargetKind::Base ||
+          !base.constructorTarget)
+        continue;
+      const auto basePaths =
+          findStoredCarrierReferences(program, base.targetType);
+      if (std::none_of(basePaths.begin(), basePaths.end(),
+                       [&](const auto &candidate) {
+                         return candidate.fields == path.fields;
+                       }))
+        continue;
+      const auto *callee =
+          program.findConstructorInstance(*base.constructorTarget);
+      const auto child =
+          callee ? constructorFieldOrigin(program, *callee, path, depth + 1)
+                 : std::nullopt;
+      if (!child || !child->sourceFields.empty() ||
+          child->parameter >= base.arguments.size() ||
+          child->parameter >= callee->parameterTypes.size())
+        return std::nullopt;
+      const HirValueId argument = base.arguments[child->parameter];
+      const auto published = std::find_if(
+          body.loans.begin(), body.loans.end(), [&](const auto &loan) {
+            return loan.kind == MirLoanKind::Stored && loan.escapes &&
+                   loan.storedField == 0 && loan.producedBy == argument;
+          });
+      if (published == body.loans.end())
+        return std::nullopt;
+      const auto parameter = formal(published->source);
+      if (!parameter || *parameter >= instance.parameterTypes.size() ||
+          instance.parameterTypes[*parameter] !=
+              callee->parameterTypes[child->parameter])
+        return std::nullopt;
+      result.parameter = *parameter;
+      return result;
+    }
+    return std::nullopt;
+  }
+  const auto published =
+      std::find_if(body.loans.begin(), body.loans.end(), [&](const auto &loan) {
+        return loan.kind == MirLoanKind::Stored && loan.escapes &&
+               loan.storedField == initializer->field;
+      });
+  if (published == body.loans.end())
+    return std::nullopt;
   if (initializer->storesReference) {
     const auto parameter = formal(published->source);
     if (!parameter || path.fields.size() != 1 ||
@@ -7838,6 +7941,67 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
   std::unordered_set<std::size_t> dependencyParameters;
   std::size_t storedInitializers = 0;
   for (const MirConstructorInitializer &initializer : instance.initializers) {
+    if (initializer.kind == ConstructorInitializerTargetKind::Base) {
+      // A base storing references publishes each reference argument its
+      // selected constructor summarizes into this object's base subobject.
+      const auto *target =
+          initializer.constructorTarget
+              ? program.findConstructorInstance(*initializer.constructorTarget)
+              : nullptr;
+      if (target == nullptr ||
+          target->borrowOrigin != BorrowOriginKind::Argument)
+        continue;
+      std::vector<std::size_t> suppliers = target->borrowParameters;
+      if (suppliers.empty())
+        suppliers.push_back(target->borrowParameter);
+      for (const std::size_t supplier : suppliers) {
+        if (supplier >= initializer.arguments.size() ||
+            supplier >= target->parameterTypes.size() ||
+            target->parameterTypes[supplier].kind != SemanticType::Reference)
+          return invalidSummary("base initializer stores a dependency that "
+                                "is not an exact reference argument");
+        const HirValueId argument = initializer.arguments[supplier];
+        const auto matching = std::find_if(
+            body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
+              return loan.kind == MirLoanKind::Stored && loan.escapes &&
+                     loan.storedField == 0 &&
+                     (loan.producedBy == argument ||
+                      (loan.entry && loan.producedBy == 0)) &&
+                     !initializerLoans.contains(loan.id);
+            });
+        if (matching == body.loans.end() ||
+            matching->access !=
+                target->parameterTypes[supplier].referenceAccess)
+          return invalidSummary(
+              "base initializer reference is missing its exact escaping loan");
+        const std::optional<MirPlaceId> canonicalSource =
+            borrowSourceForPlace(body, matching->source, 0);
+        const MirPlace *source =
+            canonicalSource ? body.findPlace(*canonicalSource) : nullptr;
+        const auto parameter =
+            source == nullptr
+                ? instance.parameterBindings.end()
+                : std::find(instance.parameterBindings.begin(),
+                            instance.parameterBindings.end(), source->binding);
+        const std::size_t parameterIndex = static_cast<std::size_t>(
+            std::distance(instance.parameterBindings.begin(), parameter));
+        const bool summarized =
+            instance.borrowParameters.empty()
+                ? parameterIndex == instance.borrowParameter
+                : std::find(instance.borrowParameters.begin(),
+                            instance.borrowParameters.end(),
+                            parameterIndex) != instance.borrowParameters.end();
+        if (source == nullptr || source->root != MirPlaceRootKind::Binding ||
+            !summarized)
+          return invalidSummary(
+              "base initializer loan does not originate from the summarized "
+              "formal parameter");
+        dependencyParameters.insert(parameterIndex);
+        initializerLoans.insert(matching->id);
+      }
+      ++storedInitializers;
+      continue;
+    }
     const auto nestedCarrier =
         findStoredCarrierReference(program, initializer.targetType);
     if (!initializer.storesReference && !nestedCarrier) {
@@ -15498,12 +15662,9 @@ completeBorrowSourcePath(const MirProgram &program,
       }
     } else if (const auto *owner =
                    uniqueMirClassInstanceForType(program, type)) {
-      for (const auto &candidate : owner->declaredFields)
-        if (candidate.symbol == symbol) {
-          if (field != SemanticType::Unknown)
-            return std::nullopt;
-          field = candidate.type;
-        }
+      if (const auto declared =
+              mirFieldTypeThroughBases(program, *owner, symbol))
+        field = *declared;
     }
     if (field == SemanticType::Unknown)
       return std::nullopt;
@@ -20945,7 +21106,11 @@ verifyMirProgramContracts(const MirProgram &program) {
                  initializer.kind == ConstructorInitializerTargetKind::Base &&
                  !initializer.storesReference && !initializer.ownedParameter &&
                  (selectedConstructor || selectedGeneratedDefault) &&
-                 !base->traits.containsBorrowedState &&
+                 // A base storing forwarded references stages too; its
+                 // constructor's summary publishes them separately.
+                 (!base->traits.containsBorrowedState ||
+                  (selectedConstructor && hasStage &&
+                   target->borrowOrigin == BorrowOriginKind::Argument)) &&
                  base->type == initializer.targetType &&
                  std::any_of(constructorOwner->bases.begin(),
                              constructorOwner->bases.end(),

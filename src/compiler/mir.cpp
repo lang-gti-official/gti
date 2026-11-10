@@ -14489,9 +14489,41 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             return false;
           }
           const MirLoan *retained = body.findLoan(source.loan);
+          // A reference read out of one field of a local composed carrier
+          // publishes that field's own dependency (designated by the exact
+          // field path the runtime place reads), not the carrier's group.
+          const auto localFieldSource = [&]() -> std::optional<MirPlaceId> {
+            const MirPlace *runtime = body.findPlace(source.place);
+            if (retained == nullptr || retained->entry || retained->escapes ||
+                !retained->conditions.empty() || runtime == nullptr ||
+                runtime->root != MirPlaceRootKind::Binding ||
+                std::find(retained->carriers.begin(), retained->carriers.end(),
+                          runtime->binding) == retained->carriers.end() ||
+                runtime->projections.size() < 2 ||
+                runtime->projections.back().kind !=
+                    MirProjectionKind::Dereference)
+              return std::nullopt;
+            std::vector<SymbolId> path;
+            for (std::size_t index = 0; index + 1 < runtime->projections.size();
+                 ++index) {
+              if (runtime->projections[index].kind != MirProjectionKind::Field)
+                return std::nullopt;
+              path.push_back(runtime->projections[index].field);
+            }
+            if (retained->designatedFields == path)
+              return retained->source;
+            for (const auto &dependency : retained->additionalDependencies)
+              if (dependency.designatedFields == path &&
+                  dependency.conditions.empty() && dependency.source != 0)
+                return dependency.source;
+            return std::nullopt;
+          }();
           if (retained == nullptr || retained->kind != MirLoanKind::Stored ||
-              retained->source != produced.source ||
-              retained->access != produced.access ||
+              (retained->source != produced.source &&
+               localFieldSource != produced.source) ||
+              (retained->access != produced.access &&
+               !(localFieldSource &&
+                 produced.access == AccessMode::ReadOnly)) ||
               source.type != instruction.info.type) {
             return false;
           }

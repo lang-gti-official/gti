@@ -470,6 +470,20 @@ public:
             (void)appendInstruction(std::move(initialize));
             constructorRollback.push_back(rollback);
           }
+          if (initializer.kind == ConstructorInitializerTargetKind::Base) {
+            // A base that stores references keeps the supplied referents in
+            // this object's base subobject: each reference argument its
+            // constructor summarizes escapes into `this`, exactly as a
+            // reference field initializer does.
+            for (const std::size_t index :
+                 storedBaseReferenceArguments(initializer))
+              markStoredBorrow(
+                  initializer.arguments[index], 0,
+                  program
+                      .findConstructorInstance(*initializer.constructorTarget)
+                      ->parameterTypes[index]
+                      .referenceAccess);
+          }
           if (initializer.storesReference &&
               initializer.arguments.size() == 1) {
             markStoredBorrow(initializer.arguments.front(), initializer.field,
@@ -712,6 +726,28 @@ private:
   // semantic formal supplies access and referent type; the existing place
   // engine supplies its evaluated address. No referent value is loaded merely
   // to pass this borrow, and the base cannot retain it.
+  // The reference arguments a base initializer's selected constructor stores
+  // in the base subobject, by its own borrow summary.
+  std::vector<std::size_t> storedBaseReferenceArguments(
+      const HirConstructorInitializer &initializer) const {
+    const auto *target =
+        initializer.kind == ConstructorInitializerTargetKind::Base &&
+                initializer.constructorTarget
+            ? program.findConstructorInstance(*initializer.constructorTarget)
+            : nullptr;
+    if (target == nullptr || target->borrowOrigin != BorrowOriginKind::Argument)
+      return {};
+    std::vector<std::size_t> result = target->borrowParameters;
+    if (result.empty())
+      result.push_back(target->borrowParameter);
+    std::erase_if(result, [&](std::size_t index) {
+      return index >= initializer.arguments.size() ||
+             index >= target->parameterTypes.size() ||
+             target->parameterTypes[index].kind != SemanticType::Reference;
+    });
+    return result;
+  }
+
   bool forwardedBaseReference(const HirConstructorInitializer &initializer,
                               std::size_t index) const {
     const auto *target =
@@ -818,8 +854,16 @@ private:
           return candidate.id == initializer.base &&
                  candidate.type == initializer.targetType;
         });
+    // A base storing references stages like any other when each reference
+    // its constructor stores is one forwarded incoming reference; that
+    // argument's escape into the base subobject is published separately.
+    const auto stored = storedBaseReferenceArguments(initializer);
     if (base == program.classInstances().end() ||
-        base->traits.containsBorrowedState) {
+        (base->traits.containsBorrowedState &&
+         (stored.empty() ||
+          !std::all_of(stored.begin(), stored.end(), [&](std::size_t index) {
+            return forwardedBaseReference(initializer, index);
+          })))) {
       return nullptr;
     }
     if (!initializer.constructorTarget &&
@@ -8943,7 +8987,25 @@ private:
         }
       }
       if (!value.borrowFields.empty()) {
+        // The primary dependency is the first mapped field's own supplier,
+        // which need not be the first summarized supplier (a constructor may
+        // store its parameters in another order, as a base initializer
+        // passing them swapped does).
+        MirPlaceId primarySource = 0;
+        if (const auto &front = value.borrowFields.front();
+            front.origin == BorrowOriginKind::Argument &&
+            front.sourceFields.empty() &&
+            front.parameter != value.borrowArgument) {
+          HirValue selected = value;
+          selected.borrowArgument = front.parameter;
+          selected.borrowFields = {front};
+          primarySource = borrowOriginPlace(selected, originCall);
+          if (primarySource == 0)
+            valid = false;
+        }
         auto &published = output.loans[loan - 1];
+        if (primarySource != 0)
+          published.source = primarySource;
         published.designatedFields = value.borrowFields.front().resultFields;
         published.additionalDependencies.clear();
         for (std::size_t index = 1; index < value.borrowFields.size();
@@ -9826,6 +9888,22 @@ private:
       if (!value.borrowFields.empty()) {
         output.loans[loan - 1].designatedFields =
             value.borrowFields.front().resultFields;
+        // The primary dependency is the first mapped field's own supplier,
+        // which need not be the first summarized supplier (a constructor may
+        // store its parameters in another order, as a base initializer
+        // passing them swapped does).
+        if (const auto &front = value.borrowFields.front();
+            front.origin == BorrowOriginKind::Argument &&
+            front.parameter != value.borrowArgument) {
+          HirValue selected = value;
+          selected.borrowArgument = front.parameter;
+          selected.borrowFields = {front};
+          if (const auto primary = borrowOriginPlace(selected, originConstruct);
+              primary != 0)
+            output.loans[loan - 1].source = primary;
+          else
+            valid = false;
+        }
         output.loans[loan - 1].additionalDependencies.clear();
         for (std::size_t index = 1; index < value.borrowFields.size();
              ++index) {
@@ -16039,6 +16117,9 @@ private:
                                              output.returnType.referenceAccess);
         if (borrow.loan != 0) {
           MirLoanId storedCarrierEntry = 0;
+          // The reference parameter's shell loan, when storedCarrierEntry is
+          // the external dependency that shell reaches.
+          MirLoanId carrierShellEntry = 0;
           MirLoanId referenceParameterEntry = 0;
           if (const std::optional<HirBindingId> summarized =
                   returnBorrowParameterBinding();
@@ -16055,10 +16136,107 @@ private:
               storedCarrierEntry = borrow.loan;
             } else if (candidate.kind == MirLoanKind::Parameter &&
                        candidate.entry && carriedByParameter) {
-              referenceParameterEntry = borrow.loan;
+              // A stored reference read through a reference parameter to
+              // its carrier publishes the carrier's external dependency, as
+              // a by-value carrier parameter does; the parameter's own
+              // referent is not the returned address.
+              const MirLoanId storedId = candidate.storedDependency;
+              const MirPlaceId carrierPlace = candidate.source;
+              // placeForValue may append places; look both up afterwards.
+              const MirPlace *runtime =
+                  output.findPlace(placeForValue(*statement.value));
+              const MirPlace *carrier = output.findPlace(carrierPlace);
+              const MirLoan *stored = output.findLoan(storedId);
+              if (stored != nullptr && stored->kind == MirLoanKind::Stored &&
+                  stored->entry && !stored->designatedFields.empty() &&
+                  stored->source == carrierPlace && runtime != nullptr &&
+                  carrier != nullptr &&
+                  carrier->type.kind == SemanticType::Reference &&
+                  carrier->type.arguments.size() == 1 &&
+                  runtime->type != carrier->type.arguments.front() &&
+                  runtime->root == MirPlaceRootKind::Binding &&
+                  runtime->binding == carrier->binding &&
+                  runtime->projections.size() > 1 &&
+                  runtime->projections.front().kind ==
+                      MirProjectionKind::Dereference &&
+                  runtime->projections.back().kind ==
+                      MirProjectionKind::Dereference) {
+                storedCarrierEntry = stored->id;
+                carrierShellEntry = borrow.loan;
+              } else
+                referenceParameterEntry = borrow.loan;
             }
           }
-          if (storedCarrierEntry != 0) {
+          // A reference read out of one stored reference field of a local
+          // carrier names that field's own dependency, not the carrier's
+          // whole group: each field of a composed carrier keeps its own
+          // origin (a base subobject's fields included).
+          MirPlaceId localCarrierFieldSource = 0;
+          MirPlaceId localCarrierFieldPlace = 0;
+          if (storedCarrierEntry == 0 && referenceParameterEntry == 0 &&
+              borrow.loan <= output.loans.size()) {
+            const MirLoanId carrierId = borrow.loan;
+            const MirPlaceId runtimePlace = placeForValue(*statement.value);
+            const MirLoan &carrier = output.loans[carrierId - 1];
+            const MirPlace *runtime = output.findPlace(runtimePlace);
+            std::vector<SymbolId> path;
+            bool fieldRead =
+                carrier.kind == MirLoanKind::Stored && !carrier.entry &&
+                !carrier.escapes && !carrier.twoPhase &&
+                !carrier.referenceSelection && carrier.conditions.empty() &&
+                !carrier.designatedFields.empty() && runtime != nullptr &&
+                runtime->root == MirPlaceRootKind::Binding &&
+                std::find(carrier.carriers.begin(), carrier.carriers.end(),
+                          runtime->binding) != carrier.carriers.end() &&
+                runtime->projections.size() > 1 &&
+                runtime->projections.back().kind ==
+                    MirProjectionKind::Dereference;
+            for (std::size_t index = 0;
+                 fieldRead && index + 1 < runtime->projections.size();
+                 ++index) {
+              const auto &projection = runtime->projections[index];
+              fieldRead = projection.kind == MirProjectionKind::Field &&
+                          projection.field != 0;
+              path.push_back(projection.field);
+            }
+            if (fieldRead) {
+              if (carrier.designatedFields == path)
+                localCarrierFieldSource = carrier.source;
+              for (const auto &dependency : carrier.additionalDependencies)
+                if (dependency.designatedFields == path &&
+                    dependency.conditions.empty() && dependency.source != 0)
+                  localCarrierFieldSource =
+                      localCarrierFieldSource == 0 ? dependency.source : 0;
+              localCarrierFieldPlace = runtimePlace;
+            }
+          }
+          if (localCarrierFieldSource != 0) {
+            const HirValue *value = findValue(*statement.value);
+            const MirLoan carrier = output.loans[borrow.loan - 1];
+            const MirLoanId published =
+                createLoan(MirLoanKind::Return, localCarrierFieldSource,
+                           output.returnType.referenceAccess, *statement.value);
+            output.loans[published - 1].storedDependency =
+                carrier.storedDependency;
+            (void)appendInstruction(
+                {.kind = MirInstructionKind::Borrow,
+                 .hirValue = *statement.value,
+                 .operands = {{.kind = MirOperandKind::Loan,
+                               .place = localCarrierFieldPlace,
+                               .loan = carrier.id,
+                               .type = value->info.type}},
+                 .loan = published,
+                 .info = value->info});
+            (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                     .hirValue = *statement.value,
+                                     .loan = carrier.id});
+            removeLoanFromState(carrier.id, scopes, bindingLoans);
+            output.loans[published - 1].escapes = true;
+            borrow = {.kind = MirOperandKind::Loan,
+                      .place = localCarrierFieldPlace,
+                      .loan = published,
+                      .type = value->info.type};
+          } else if (storedCarrierEntry != 0) {
             const HirValue *value = findValue(*statement.value);
             const MirPlaceId runtimePlace = placeForValue(*statement.value);
             const MirPlace *runtime = output.findPlace(runtimePlace);
@@ -16081,6 +16259,14 @@ private:
               // retire the by-value carrier parameter's body-local entry loan
               // at the same instruction boundary.
               const MirLoan retainedLoan = output.loans[storedCarrierEntry - 1];
+              // The shell retires first: its stored dependency may not end
+              // before it.
+              if (carrierShellEntry != 0) {
+                (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                         .hirValue = *statement.value,
+                                         .loan = carrierShellEntry});
+                removeLoanFromState(carrierShellEntry, scopes, bindingLoans);
+              }
               const MirLoanId published =
                   createLoan(MirLoanKind::Return, retainedLoan.source,
                              retainedLoan.access, *statement.value);
@@ -16091,14 +16277,14 @@ private:
                    .hirValue = *statement.value,
                    .operands = {{.kind = MirOperandKind::Loan,
                                  .place = runtimePlace,
-                                 .loan = borrow.loan,
+                                 .loan = storedCarrierEntry,
                                  .type = value->info.type}},
                    .loan = published,
                    .info = value->info});
               (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
                                        .hirValue = *statement.value,
-                                       .loan = borrow.loan});
-              removeLoanFromState(borrow.loan, scopes, bindingLoans);
+                                       .loan = storedCarrierEntry});
+              removeLoanFromState(storedCarrierEntry, scopes, bindingLoans);
               output.loans[published - 1].escapes = true;
               borrow = {.kind = MirOperandKind::Loan,
                         .place = runtimePlace,
