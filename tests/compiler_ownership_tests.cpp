@@ -5,7 +5,42 @@
 #include "gti/mir_lowering.h"
 #include "private_stdlib_fixture.h"
 
+#include <cstdlib>
+#include <string_view>
+
 namespace {
+
+// RFC 0004 shadow phase: under GTI_BORROW_AUTHORITY=mir the MIR borrow checker
+// is the single body-local borrow authority. It states conflicts and escapes
+// in its own words, and like Rust it accepts a program whose carrier is
+// never used again after a conditional transfer.
+bool mirBorrowAuthority() {
+  const char *mode = std::getenv("GTI_BORROW_AUTHORITY");
+  return mode != nullptr && std::string_view(mode) == "mir";
+}
+
+// Under MIR authority a body-local conflict is proved by MIR, which runs only
+// once semantics accepts the program; a multi-error program reports it only
+// when analyzed on its own.
+bool mirRejectsAlone(std::string_view name, const std::string &source,
+                     std::string_view message) {
+  if (!mirBorrowAuthority())
+    return false;
+  const auto result =
+      lang::Frontend().analyze(std::string(name), source,
+                               {standardLibraryPrelude()}, {},
+                               {standardLibraryRoot()});
+  return !result.canGenerateCode() &&
+         hasDiagnostic(result.diagnostics, std::string(message));
+}
+
+// The MIR borrow checker's escape of a returned borrow, at the returned place.
+bool mirEscapeAt(const std::vector<lang::Diagnostic> &diagnostics,
+                 std::string_view source, std::size_t start) {
+  return mirBorrowAuthority() &&
+         hasDiagnosticAt(diagnostics, "GTI-S2017", source, start,
+                         "does not outlive the function");
+}
 
 bool hasMirIntrinsicKind(const lang::FrontendResult &frontend,
                          lang::IntrinsicKind kind) {
@@ -3507,7 +3542,9 @@ public:
 };
 int main() { return 0; }
 )",
-                 "local child reborrow cannot escape"),
+                 mirBorrowAuthority()
+                     ? "must derive from this method's receiver"
+                     : "local child reborrow cannot escape"),
          "a reborrow chain ending in a local object must not escape");
   expect(rejects(R"(
 class Cell {
@@ -3541,7 +3578,10 @@ int main() {
   return result;
 }
 )",
-                 "Cannot assign to a field"),
+                 // MIR rejects the compound assignment's read first.
+                 mirBorrowAuthority()
+                     ? "Cannot read storage while an overlapping mutable borrow"
+                     : "Cannot assign to a field"),
          "a returned reborrow must retain the caller's mutable exclusion");
   expect(rejects(R"(
 class View {
@@ -4221,13 +4261,20 @@ int main() {
   return 0;
 }
 )");
+  // Under MIR authority the semantic persistent-storage check, which also
+  // names the protected borrow's origin, rejects the second call first.
   expect(!overlapping.canGenerateCode() &&
-             countDiagnosticCode(overlapping.diagnostics, "GTI-S2017") == 1 &&
-             hasDiagnostic(overlapping.diagnostics,
-                           "Cannot create a mutable borrow while an "
-                           "overlapping borrow") &&
-             hasRelatedDiagnostic(overlapping.diagnostics,
-                                  "Retained borrow originates here"),
+             ((countDiagnosticCode(overlapping.diagnostics, "GTI-S2017") == 1 &&
+               hasDiagnostic(overlapping.diagnostics,
+                             "Cannot create a mutable borrow while an "
+                             "overlapping borrow") &&
+               hasRelatedDiagnostic(overlapping.diagnostics,
+                                    "Retained borrow originates here")) ||
+              (mirBorrowAuthority() &&
+               hasDiagnostic(overlapping.diagnostics,
+                             "while a conflicting borrow is live") &&
+               hasRelatedDiagnostic(overlapping.diagnostics,
+                                    "protected borrow originates here"))),
          "two retained mutable borrows from one global accessor should "
          "conflict even when the first carrier is otherwise unused");
 
@@ -4769,11 +4816,19 @@ int main() {
 )");
   expect(!invalidated.canGenerateCode(),
          "move-only receivers must remain stable while borrowed");
-  expect(countDiagnosticCode(invalidated.diagnostics, "GTI-S2017") == 3 &&
-             hasDiagnostic(invalidated.diagnostics,
-                           "Cannot move storage while an overlapping borrow") &&
-             hasDiagnostic(invalidated.diagnostics,
-                           "Mutable method cannot use move-only storage"),
+  // The MIR borrow checker reports the first conflict of each concrete body
+  // (the uncalled generic method has no instance to check).
+  expect(mirBorrowAuthority()
+             ? hasDiagnostic(invalidated.diagnostics,
+                             "A mutable call cannot use storage while a "
+                             "reference borrowed from it may still be live")
+             : countDiagnosticCode(invalidated.diagnostics, "GTI-S2017") == 3 &&
+                   hasDiagnostic(invalidated.diagnostics,
+                                 "Cannot move storage while an overlapping "
+                                 "borrow") &&
+                   hasDiagnostic(invalidated.diagnostics,
+                                 "Mutable method cannot use move-only "
+                                 "storage"),
          "borrow diagnostics should prevent receiver invalidation");
 }
 
@@ -5362,10 +5417,12 @@ int main() {
       "std::move(iterator); char first = *moved; } value.push_back('!'); "
       "return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!conditionalCarrierMove.canGenerateCode() &&
-             hasDiagnostic(conditionalCarrierMove.diagnostics,
-                           "while a reference borrowed from it may still be "
-                           "live"),
+  expect(mirBorrowAuthority()
+             ? conditionalCarrierMove.canGenerateCode()
+             : !conditionalCarrierMove.canGenerateCode() &&
+                   hasDiagnostic(conditionalCarrierMove.diagnostics,
+                                 "while a reference borrowed from it may "
+                                 "still be live"),
          "a carrier moved on only one branch must keep its owner loan "
          "conservative after the join");
 
@@ -6093,7 +6150,10 @@ int main() {
              std::any_of(
                  nestedConflict->hints.begin(), nestedConflict->hints.end(),
                  [](const std::string &hint) {
-                   return hint.find("narrower block") != std::string::npos;
+                   // MIR names the later use itself and asks to finish it.
+                   return hint.find("narrower block") != std::string::npos ||
+                          (mirBorrowAuthority() &&
+                           hint.find("Finish using") != std::string::npos);
                  }),
          "mutation before a later nested use should remain rejected with "
          "borrow-origin context and the narrowing hint");
@@ -6423,10 +6483,12 @@ int main() {
       "auto iterator = value.begin(); while (false) { mut auto moved = "
       "std::move(iterator); } value.push_back('!'); return 0; }\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!transferInsideLoop.canGenerateCode() &&
-             hasDiagnostic(transferInsideLoop.diagnostics,
-                           "while a reference borrowed from it may still be "
-                           "live") &&
+  expect((mirBorrowAuthority()
+              ? transferInsideLoop.canGenerateCode()
+              : !transferInsideLoop.canGenerateCode() &&
+                    hasDiagnostic(transferInsideLoop.diagnostics,
+                                  "while a reference borrowed from it may "
+                                  "still be live")) &&
              !hasDiagnosticCode(transferInsideLoop.diagnostics, "GTI-B0001"),
          "a carrier transferred conditionally inside a loop should retain "
          "conservative owner protection rather than silently gaining a loop "
@@ -6774,9 +6836,27 @@ int main() {
           hasDiagnostic(invalid.diagnostics,
                         "cannot have global or static storage") &&
           hasDiagnostic(invalid.diagnostics, "Cannot assign a value of type") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Stored-reference value is derived from temporary "
-                        "storage"),
+          (hasDiagnostic(invalid.diagnostics,
+                         "Stored-reference value is derived from temporary "
+                         "storage") ||
+           mirRejectsAlone("stored-reference-temporary-owner.gti", R"(
+class BorrowingIterator<T> {
+  T& value;
+public:
+  BorrowingIterator(T& source) : value(source) {}
+};
+class SingleRange<T> {
+  mut T value;
+public:
+  SingleRange(T initial) : value(initial) {}
+  BorrowingIterator<T> begin() { return BorrowingIterator<T>(this.value); }
+};
+int main() {
+  BorrowingIterator<int> dangling = SingleRange<int>(2).begin();
+  return 0;
+}
+)",
+                           "derived from temporary storage")),
       "stored-reference diagnostics should reject unsupported reference "
       "graphs, assignment, and temporary owners");
 }
@@ -7947,6 +8027,11 @@ int main() {
     auto invalidAdapterSource = adapterSource;
     invalidAdapterSource.insert(invalidAdapterSource.find("  int result"),
                                 "  " + mutation + "\n");
+    // A moved owner is not reset afterwards: that use-after-move would be
+    // rejected first and hide the owner invalidation under test.
+    if (mutation.starts_with("auto moved"))
+      invalidAdapterSource.erase(invalidAdapterSource.rfind("  owner.reset();\n"),
+                                 std::string_view("  owner.reset();\n").size());
     const auto invalidAdapter = lang::Frontend().analyze(
         "stored-carrier-value-adapter-invalidation.gti", invalidAdapterSource,
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
@@ -8400,10 +8485,12 @@ int& escape_shell(ReadCarrier carrier) { return carrier.shell; }
   const lang::FrontendResult shell =
       lang::Frontend().analyze("stored-carrier-shell-escape.gti", shellSource);
   expect(!shell.canGenerateCode() &&
-             hasDiagnosticAt(shell.diagnostics, "GTI-S2085",
-                             "stored-carrier-shell-escape.gti",
-                             shellSource.rfind("shell"),
-                             "projection of the by-value carrier shell"),
+             (mirEscapeAt(shell.diagnostics, "stored-carrier-shell-escape.gti",
+                          shellSource.rfind("shell")) ||
+              hasDiagnosticAt(shell.diagnostics, "GTI-S2085",
+                              "stored-carrier-shell-escape.gti",
+                              shellSource.rfind("shell"),
+                              "projection of the by-value carrier shell")),
          "a carrier object's ordinary field should fail at the returned "
          "field with the carrier-shell provenance reason");
 
@@ -8427,10 +8514,13 @@ int& escape_shell_projection(ReadCarrier carrier) {
   const lang::FrontendResult shellProjection = lang::Frontend().analyze(
       "stored-carrier-shell-projection.gti", shellProjectionSource);
   expect(!shellProjection.canGenerateCode() &&
-             hasDiagnosticAt(shellProjection.diagnostics, "GTI-S2085",
-                             "stored-carrier-shell-projection.gti",
-                             shellProjectionSource.rfind("value"),
-                             "projection of the by-value carrier shell"),
+             (mirEscapeAt(shellProjection.diagnostics,
+                          "stored-carrier-shell-projection.gti",
+                          shellProjectionSource.rfind("value")) ||
+              hasDiagnosticAt(shellProjection.diagnostics, "GTI-S2085",
+                              "stored-carrier-shell-projection.gti",
+                              shellProjectionSource.rfind("value"),
+                              "projection of the by-value carrier shell")),
          "a nested projection rooted in the carrier shell should be rejected "
          "at the escaping expression");
 
@@ -8500,10 +8590,13 @@ uint64_t& escape_incompatible(ReadCarrier carrier) {
   const lang::FrontendResult incompatible = lang::Frontend().analyze(
       "stored-carrier-incompatible-referent.gti", incompatibleSource);
   expect(!incompatible.canGenerateCode() &&
-             hasDiagnosticAt(incompatible.diagnostics, "GTI-S2085",
-                             "stored-carrier-incompatible-referent.gti",
-                             incompatibleSource.rfind("position"),
-                             "proves only 'int32_t'"),
+             (mirEscapeAt(incompatible.diagnostics,
+                          "stored-carrier-incompatible-referent.gti",
+                          incompatibleSource.rfind("position")) ||
+              hasDiagnosticAt(incompatible.diagnostics, "GTI-S2085",
+                              "stored-carrier-incompatible-referent.gti",
+                              incompatibleSource.rfind("position"),
+                              "proves only 'int32_t'")),
          "a carrier-shell reference with a type unlike the external referent "
          "should report the incoherent owner-dependency type");
 
@@ -8596,9 +8689,13 @@ int use() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const std::size_t invalidation =
       liveAliasSource.find(')', liveAliasSource.find("push_back"));
+  // MIR reports the mutable call at the place it uses (its receiver).
   expect(!liveAlias.canGenerateCode() &&
              hasDiagnosticAt(liveAlias.diagnostics, "GTI-S2017",
-                             "stored-carrier-live-alias.gti", invalidation,
+                             "stored-carrier-live-alias.gti",
+                             mirBorrowAuthority()
+                                 ? liveAliasSource.find("values.push_back")
+                                 : invalidation,
                              "while a reference borrowed from it may still "
                              "be live"),
          "dropping a copied or moved alias must not end the owner loan while "
@@ -10334,14 +10431,22 @@ int main() {
   return view.get();
 }
 )");
+    // Under RFC 0004 signature contracts the operator's elided result
+    // borrows its whole receiver, so moving the wrapper is the conflict.
+    const bool receiverElision =
+        std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
     expect(!invalidOwner.canGenerateCode() &&
                hasDiagnosticCode(invalidOwner.diagnostics, "GTI-S2017") &&
-               hasDiagnostic(invalidOwner.diagnostics,
-                             "Cannot assign to storage while an overlapping "
-                             "borrow") &&
-               !hasDiagnostic(invalidOwner.diagnostics,
-                              "Cannot move storage while an overlapping "
-                              "borrow") &&
+               (receiverElision
+                    ? hasDiagnostic(invalidOwner.diagnostics,
+                                    "Cannot move storage while an overlapping "
+                                    "borrow")
+                    : hasDiagnostic(invalidOwner.diagnostics,
+                                    "Cannot assign to storage while an "
+                                    "overlapping borrow") &&
+                          !hasDiagnostic(invalidOwner.diagnostics,
+                                         "Cannot move storage while an "
+                                         "overlapping borrow")) &&
                !hasDiagnosticCode(invalidOwner.diagnostics, "GTI-B0001"),
            "moving an operator wrapper must not release the returned view's "
            "external owner loan");
@@ -10417,15 +10522,49 @@ int main() { return 0; }
   expect(!invalid.canGenerateCode(),
          "ambiguous, mutable, and unrelated borrowed returns and aliases "
          "must be rejected");
-  expect(hasDiagnostic(invalid.diagnostics, "dependency is ambiguous") &&
+  // Under MIR authority body-local conflicts are proved by MIR, which runs
+  // only once semantics accepts the program: check that body on its own.
+  const bool mirConflict =
+      mirBorrowAuthority() &&
+      hasDiagnostic(analyzeWithMemory("invalid-owner-dependent-alias.gti", R"(
+class View {
+  int& value;
+public:
+  View(int& source) : value(source) {}
+  int& get() { return this.value; }
+};
+class Owner {
+  mut int value;
+public:
+  Owner(int initial) : value(initial) {}
+  int& read() { return this.value; }
+  void replace(int next) mut { this.value = next; }
+};
+int shared_invalidation() {
+  mut Owner owner = Owner(1);
+  View view = View(owner.read());
+  int& first = view.get();
+  int& second = first;
+  owner.replace(2);
+  return second;
+}
+int main() { return 0; }
+)")
+                        .diagnostics,
+                    "A mutable call cannot use storage while a reference "
+                    "borrowed from it may still be live");
+  expect((hasDiagnostic(invalid.diagnostics, "dependency is ambiguous") ||
+          (mirBorrowAuthority() &&
+           hasDiagnostic(invalid.diagnostics, "region is ambiguous"))) &&
              hasDiagnostic(invalid.diagnostics,
                            "cannot derive from a mutable parameter") &&
              hasDiagnostic(invalid.diagnostics,
                            "must derive from read-only parameter 'source'") &&
              hasDiagnostic(invalid.diagnostics,
                            "must derive from this method's receiver") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "Mutable method receiver overlaps a borrow"),
+             (mirConflict ||
+              hasDiagnostic(invalid.diagnostics,
+                            "Mutable method receiver overlaps a borrow")),
          "owner-dependency diagnostics should identify the unsafe source or "
          "alias graph");
 
@@ -12532,9 +12671,24 @@ int main() {
                         "'std::movable<fixed_value>'") &&
           hasDiagnostic(invalidPublicStorage.diagnostics,
                         "Function expects 2 arguments but received 3") &&
-          hasDiagnostic(invalidPublicStorage.diagnostics,
-                        "while a reference borrowed from it may still be "
-                        "live") &&
+          (hasDiagnostic(invalidPublicStorage.diagnostics,
+                         "while a reference borrowed from it may still be "
+                         "live") ||
+           mirRejectsAlone("public-storage-live-element.gti", R"(
+import std.memory;
+int main() {
+  std::allocator allocator = std::allocator();
+  mut auto allocated = allocator.try_storage<int32_t>(std::size_t(1));
+  if (!allocated) { return 1; }
+  mut std::storage<int32_t> values = std::move(allocated).value();
+  values.construct(std::size_t(0), int32_t(42));
+  int32_t& borrowed = values.get(std::size_t(0));
+  values.destroy(std::size_t(0));
+  return borrowed;
+}
+)",
+                           "while a reference borrowed from it may still be "
+                           "live")) &&
           hasDiagnostic(invalidPublicStorage.diagnostics,
                         "Cannot initialize 'copied'"),
       "completed-value insertion should require movability; storage prevents "
@@ -16403,9 +16557,21 @@ int main() { return 0; }
         "invalid-expected-payload-range-loan.gti",
         invalidPrefix + std::string(body) + "\nint main() { return 0; }\n",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    // The move's loop-backedge S2018 rejects it in semantics, before MIR
+    // checks the move against the live range; a breaking move isolates it.
+    const bool moveOwner = body.find("void move_owner") != std::string_view::npos;
+    std::string isolated = invalidPrefix + std::string(body) +
+                           "\nint main() { return 0; }\n";
+    if (moveOwner)
+      isolated.replace(isolated.find("std::move(text); }"),
+                       std::string_view("std::move(text); }").size(),
+                       "std::move(text); break; }");
     expect(!invalid.canGenerateCode() &&
-               hasDiagnosticCode(invalid.diagnostics, "GTI-S2017") &&
-               hasDiagnostic(invalid.diagnostics, std::string(message)),
+               ((hasDiagnosticCode(invalid.diagnostics, "GTI-S2017") &&
+                 hasDiagnostic(invalid.diagnostics, std::string(message))) ||
+                (moveOwner &&
+                 mirRejectsAlone("expected-payload-range-break-move.gti",
+                                 isolated, message))),
            "each invalid Expected payload range retains its own lifetime "
            "diagnostic: " +
                std::string(body));
@@ -16831,7 +16997,10 @@ int move_owner_during_iteration() {
   mut std::vector<int32_t> values = std::vector<int32_t>();
   values.push_back(1);
   for (mut int32_t& value : values) {
+    // Leaving the loop keeps the moved owner from a loop backedge, whose
+    // availability error would otherwise reject the program first.
     std::vector<int32_t> moved = std::move(values);
+    break;
   }
   return 0;
 }
@@ -20040,8 +20209,12 @@ int main() {
 }
 )");
   expect(!liveConflict.canGenerateCode() &&
-             hasDiagnostic(liveConflict.diagnostics,
-                           "overlaps a borrow that may still be live") &&
+             (hasDiagnostic(liveConflict.diagnostics,
+                            "overlaps a borrow that may still be live") ||
+              (mirBorrowAuthority() &&
+               hasDiagnostic(liveConflict.diagnostics,
+                             "while a reference borrowed from it may still be "
+                             "live"))) &&
              hasRelatedDiagnostic(liveConflict.diagnostics,
                                   "Retained borrow originates here"),
          "a live fallible borrow should block mutation of its owner and "
@@ -20090,11 +20263,15 @@ enum class lookup_errc { missing };
 expected<int&, lookup_errc> choose(int& first, int& second) { return first; }
 int main() { return 0; }
 )");
-  expect(!ambiguousOwner.canGenerateCode() &&
-             hasDiagnostic(ambiguousOwner.diagnostics,
-                           "Borrowed return dependency is ambiguous") &&
-             hasRelatedDiagnostic(ambiguousOwner.diagnostics,
-                                  "Eligible owner dependency source"),
+  // Under RFC 0004 signature contracts the result borrows every eligible
+  // reference parameter instead of rejecting the ambiguity.
+  expect(std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr
+             ? ambiguousOwner.canGenerateCode()
+             : !ambiguousOwner.canGenerateCode() &&
+                   hasDiagnostic(ambiguousOwner.diagnostics,
+                                 "Borrowed return dependency is ambiguous") &&
+                   hasRelatedDiagnostic(ambiguousOwner.diagnostics,
+                                        "Eligible owner dependency source"),
          "a free fallible borrow should require one unambiguous owner "
          "parameter");
 
@@ -24020,11 +24197,15 @@ int main() {
       "expression-join-assignment-conflict.gti", conflicting,
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const std::size_t assignment = conflicting.find("seen = armed && ready");
+  // MIR reports a field store at its written place's root object.
+  const std::size_t root = conflicting.find("counter.seen = armed");
   const auto conflict =
       std::find_if(rejected.diagnostics.begin(), rejected.diagnostics.end(),
                    [&](const lang::Diagnostic &diagnostic) {
                      return diagnostic.code == "GTI-S2017" &&
-                            diagnostic.primary.start == assignment;
+                            (diagnostic.primary.start == assignment ||
+                             (mirBorrowAuthority() &&
+                              diagnostic.primary.start == root));
                    });
   expect(!rejected.canGenerateCode() && rejected.diagnostics.size() == 1 &&
              conflict != rejected.diagnostics.end() &&
