@@ -213,14 +213,22 @@ class IndependentLSP(unittest.TestCase):
                 self.assertEqual(file.read_bytes(), (root / 'repeat' / file.name).read_bytes())
             releases = []; commands = []; fail = [True]
             def api(path):
+                # Mirror GitHub: the listing includes drafts, a tag lookup
+                # never finds one, and a release is readable by its id.
                 if '/releases?' in path: return releases
                 if '/git/ref/' in path: return {'object':{'sha':SHA}}
-                if '/releases/tags/' in path: return releases[0]
+                if '/releases/tags/' in path:
+                    found = [r for r in releases if r['tag_name'] == path.rsplit('/', 1)[1] and not r['draft']]
+                    if not found: raise subprocess.CalledProcessError(1, ['gh', 'api', path])
+                    return found[0]
+                if '/releases/' in path:
+                    return next(r for r in releases if str(r['id']) == path.rsplit('/', 1)[1])
                 raise AssertionError(path)
             def command(args, check):
                 commands.append(args)
                 if args[2] == 'create':
-                    releases.append(dict(tag_name=args[3], target_commitish=SHA, draft=True, assets=[]))
+                    releases.append(dict(id=900 + len(releases), tag_name=args[3], target_commitish=SHA,
+                                         draft=True, assets=[]))
                 elif args[2] == 'upload':
                     if fail[0] and releases[0]['assets']:
                         fail[0] = False
