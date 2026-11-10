@@ -12706,13 +12706,22 @@ auto SemanticVisitor::Impl::createRetainedLoan(
     return 0;
   }
   const SemanticLoanId id = nextSemanticLoanId++;
+  if (std::getenv("GTI_TRACE_CRL2")) { const auto *ancestor = parent ? semanticModel.findLoan(parent) : nullptr; std::fprintf(stderr, "[crl2] id=%llu kind=%d parent=%llu parentKind=%d parentSd=%llu line=%d\n", (unsigned long long)id, (int)kind, (unsigned long long)parent, ancestor ? (int)ancestor->kind : -1, ancestor ? (unsigned long long)ancestor->storedDependency : 0ull, origin ? expressionToken(*origin).line : -1); } // TEMP-TRACE
   const bool lifecycleBound = lifecycleBoundBorrowCarrierFor(carrier.type);
+  // A loan below a parent that retains a stored owner keeps that owner for
+  // its whole lifetime (MIR: a child preserves its parent's stored
+  // dependency). Callers that select a different exact group overwrite it.
+  SemanticLoanId inheritedStoredDependency = 0;
+  if (parent != 0)
+    if (const auto *ancestor = semanticModel.findLoan(parent))
+      inheritedStoredDependency = ancestor->storedDependency;
   semanticModel.recordLoan({.id = id,
                             .kind = kind,
                             .origin = origin,
                             .owner = owner,
                             .receiverOrigin = receiverOrigin,
                             .parent = parent,
+                            .storedDependency = inheritedStoredDependency,
                             .entry = entry,
                             .place = std::move(place),
                             .access = access,
