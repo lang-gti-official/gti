@@ -28,7 +28,7 @@ public:
   Guard() = default;
 };
 int accept(int& value) { return value; }
-[[borrowed_from(value)]] int& reference_path(int& value) {
+int&<a> reference_path<lifetime a>(int&<a> value) {
   auto absent = Observation();
   return absent.view();
 }

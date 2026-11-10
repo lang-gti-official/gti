@@ -2,8 +2,7 @@ import std.memory;
 
 struct Reading { mut int value = 42;  public: Reading() = default; };
 
-[[borrowed_from(owner)]]
-unsafe T& observe<T, Owner>(const T* address, Owner& owner) {
+unsafe T&<a> observe<T, Owner, lifetime a>(const T* address, Owner&<a> owner) {
   unsafe { return *address; }
 }
 
