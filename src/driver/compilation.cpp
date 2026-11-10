@@ -1,6 +1,11 @@
 #include "gti/driver/compilation.h"
 
+#ifndef GTI_HAS_CPP_BACKEND
+#define GTI_HAS_CPP_BACKEND 0
+#endif
+#if GTI_HAS_CPP_BACKEND
 #include "gti/cpp_backend.h"
+#endif
 #include "gti/frontend.h"
 #include "gti/llvm_backend.h"
 #include "gti/lowered_program_builder.h"
@@ -419,13 +424,37 @@ CheckResult checkCompilation(const CompilationRequest &request,
   return result;
 }
 
+bool cppBackendAvailable() noexcept { return GTI_HAS_CPP_BACKEND != 0; }
+
+std::string_view cppBackendUnavailableMessage() noexcept {
+  return "the C++ backend is not included in this toolchain; it is frozen and "
+         "built only with -DGTI_ENABLE_CPP_BACKEND=ON. Use the default LLVM "
+         "backend.";
+}
+
+namespace {
+
+// Constructs the frozen C++ backend, or reports that this toolchain omits it.
+std::unique_ptr<Backend> makeCppBackend(const CompilationRequest &request) {
+#if GTI_HAS_CPP_BACKEND
+  return std::make_unique<CppBackend>(request.cppStandard(),
+                                      request.debugInfo());
+#else
+  (void)request;
+  throw std::invalid_argument(std::string(cppBackendUnavailableMessage()));
+#endif
+}
+
+} // namespace
+
 CompilationResult compileToCpp(const CompilationRequest &request,
                                ProgressObserver *progress) {
   if (request.llvmInstrumentation() != LlvmInstrumentationMode::None)
     throw std::invalid_argument(
         "LLVM instrumentation requires the LLVM backend");
-  CppBackend backend(request.cppStandard(), request.debugInfo());
-  return compileWithBackend(request.withDefinitionClosure(), backend, progress);
+  const std::unique_ptr<Backend> backend = makeCppBackend(request);
+  return compileWithBackend(request.withDefinitionClosure(), *backend,
+                            progress);
 }
 
 namespace {
@@ -458,8 +487,7 @@ namespace {
 std::unique_ptr<Backend> selectedBackend(const CompilationRequest &request) {
   switch (request.backend()) {
   case BackendKind::Cpp:
-    return std::make_unique<CppBackend>(request.cppStandard(),
-                                        request.debugInfo());
+    return makeCppBackend(request);
   case BackendKind::Llvm:
     return std::make_unique<LlvmBackend>(llvmBackendOptions(request));
   }
@@ -489,9 +517,9 @@ CompilationResult compileToCpp(const CompilationRequest &request,
   if (request.llvmInstrumentation() != LlvmInstrumentationMode::None)
     throw std::invalid_argument(
         "LLVM instrumentation requires the LLVM backend");
-  CppBackend backend(request.cppStandard(), request.debugInfo());
+  const std::unique_ptr<Backend> backend = makeCppBackend(request);
   return compileWithLoadedInputs(request.withDefinitionClosure(),
-                                 std::move(inputs), backend, progress);
+                                 std::move(inputs), *backend, progress);
 }
 
 CompilationResult compileToNativeHeader(const CompilationRequest &request,

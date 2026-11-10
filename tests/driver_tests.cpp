@@ -289,15 +289,14 @@ int main() {
                  lang::BackendKind::Llvm &&
              lang::defaultBackend(
                  {.os = "macos", .vendor = "apple", .arch = "x86_64"}) ==
-                 lang::BackendKind::Cpp &&
+                 lang::BackendKind::Llvm &&
              lang::defaultBackend(
                  {.os = "linux", .vendor = "unknown", .arch = "x86_64"}) ==
                  lang::BackendKind::Llvm &&
              lang::defaultBackend(
                  {.os = "linux", .vendor = "unknown", .arch = "arm64"}) ==
-                 lang::BackendKind::Cpp,
-         "LLVM is the default backend on the promoted macOS arm64 and Linux "
-         "x86_64 targets only");
+                 lang::BackendKind::Llvm,
+         "LLVM is the default backend on every target");
   const lang::TargetInfo target{
       .os = "linux", .vendor = "unknown", .arch = "x86_64"};
   const lang::driver::CompilationRequest request(
@@ -309,22 +308,18 @@ int main() {
   expect(request.target().os == "linux" &&
              request.optimization() == lang::OptimizationLevel::O1 &&
              request.cppStandard() == lang::CppStandard::Cpp23 &&
-             request.backend() == lang::BackendKind::Cpp &&
+             request.backend() == lang::BackendKind::Llvm &&
              !request.optimizationOutputs().requested(),
-         "compilation requests should retain target and backend policy");
+         "compilation requests should retain target and default to LLVM");
 
+  // MIR inspection runs the complete shared pipeline on any target, so it
+  // proves target propagation without depending on a native backend.
   const lang::driver::CompilationResult result =
-      lang::driver::compileToCpp(request);
+      lang::driver::compileToMir(request);
   expect(result.succeeded(),
          "the driver should compile a valid whole-program request");
-  const lang::driver::CompilationResult selectedCpp =
-      lang::driver::compileToSelectedBackend(request);
-  expect(selectedCpp.succeeded() && selectedCpp.artifact && result.artifact &&
-             selectedCpp.artifact->contents == result.artifact->contents,
-         "the selected executable backend should default to C++");
 
-  const lang::driver::CompilationRequest llvmRequest =
-      request.withBackend(lang::BackendKind::Llvm);
+  const lang::driver::CompilationRequest llvmRequest = request;
   const lang::driver::CompilationResult llvmResult =
       lang::driver::compileToSelectedBackend(llvmRequest);
   const auto llvmDiagnostic =
@@ -336,8 +331,9 @@ int main() {
   const bool hostTarget =
       target.os == host.os && target.vendor == host.vendor &&
       target.arch == host.arch && target.dataLayout == host.dataLayout;
-  expect(request.backend() == lang::BackendKind::Cpp &&
-             llvmRequest.backend() == lang::BackendKind::Llvm,
+  expect(request.withBackend(lang::BackendKind::Cpp).backend() ==
+                 lang::BackendKind::Cpp &&
+             request.backend() == lang::BackendKind::Llvm,
          "executable backend selection remains immutable");
   if (hostTarget)
     expect(llvmResult.succeeded() && llvmResult.artifact &&
@@ -351,7 +347,7 @@ int main() {
                    std::string::npos,
            "foreign target selection remains a structured limitation");
   RecordingProgress progress;
-  const auto withProgress = lang::driver::compileToCpp(request, &progress);
+  const auto withProgress = lang::driver::compileToMir(request, &progress);
   expect(withProgress.succeeded() && result.artifact && withProgress.artifact &&
              withProgress.artifact->contents == result.artifact->contents,
          "observing compilation must preserve byte-identical artifacts");
@@ -371,7 +367,7 @@ int main() {
   expect(writeFile(broken, "int main() { return missing; }\n"),
          "the failed progress fixture should be writable");
   RecordingProgress failedProgress;
-  const auto failed = lang::driver::compileToCpp(
+  const auto failed = lang::driver::compileToMir(
       lang::driver::CompilationRequest(broken, request.standardLibrary(),
                                        target, request.optimization(),
                                        request.cppStandard()),
@@ -387,15 +383,12 @@ int main() {
              !result.optimizationReport,
          "ordinary driver compilation should not capture optimizer output");
   if (result.artifact) {
-    expect(
-        result.artifact->contents.find(
-            "// GTI verified-MIR body: scalar-cfg-v1") != std::string::npos &&
-            result.artifact->contents.find("static_cast<std::int32_t>(41)") !=
-                std::string::npos &&
-            result.artifact->contents.find("static_cast<std::int32_t>(82)") ==
-                std::string::npos,
-        "one resolved target must reach frontend conditionals and backend "
-        "emission");
+    expect(result.artifact->contents.find("literal=u64:41") !=
+                   std::string::npos &&
+               result.artifact->contents.find("literal=u64:82") ==
+                   std::string::npos,
+           "one resolved target must reach frontend conditionals and backend "
+           "emission");
   }
 
   const lang::driver::CompilationRequest observedRequest(
@@ -403,7 +396,7 @@ int main() {
       lang::OptimizationLevel::O1, lang::CppStandard::Cpp23, {}, {},
       {.capturePreMir = true, .capturePostMir = true, .captureReport = true});
   const lang::driver::CompilationResult observed =
-      lang::driver::compileToCpp(observedRequest);
+      lang::driver::compileToMir(observedRequest);
   expect(observed.succeeded() && observed.preOptimizationMir &&
              observed.postOptimizationMir && observed.optimizationReport &&
              *observed.preOptimizationMir != *observed.postOptimizationMir &&
@@ -420,7 +413,7 @@ int main() {
   expect(writeFile(invalidSource, "int main( { return 0; }\n"),
          "the invalid driver fixture should be writable");
   const lang::driver::CompilationResult invalid =
-      lang::driver::compileToCpp(lang::driver::CompilationRequest(
+      lang::driver::compileToMir(lang::driver::CompilationRequest(
           invalidSource, lang::standardLibraryLayout(temporary.root()), target,
           lang::OptimizationLevel::O0, lang::CppStandard::Cpp23));
   expect(!invalid.succeeded() &&
@@ -464,25 +457,26 @@ void testDefinitionClosureWithoutEntryPoint() {
   expect(!checked.succeeded(), "explicit closure rejects a missing definition");
   for (bool loaded : {false, true}) {
     const auto result =
-        loaded ? lang::driver::compileToCpp(
+        loaded ? lang::driver::compileToSelectedBackend(
                      fragment, lang::driver::loadCompilationInputs(fragment))
-               : lang::driver::compileToCpp(fragment);
+               : lang::driver::compileToSelectedBackend(fragment);
     expect(result.status == lang::driver::CompilationStatus::FrontendFailure &&
                !result.artifact && result.diagnostics.size() == 1 &&
                result.diagnostics.front().code == "GTI-S2106" &&
                result.diagnostics.front().primary.start ==
                    missing.find("missing(4)"),
-           "both C++ entry paths reject the selected call before backend work");
+           "both executable entry paths reject the selected call before "
+           "backend work");
   }
   expect(writeFile(source,
                    "int unused(int value);\nint answer() { return 42; }\n"),
          "unused declaration control is writable");
-  expect(lang::driver::compileToCpp(fragment).succeeded(),
-         "C++ emission permits unused declarations and needs no main");
+  expect(lang::driver::compileToSelectedBackend(fragment).succeeded(),
+         "executable emission permits unused declarations and needs no main");
   expect(writeFile(source, "extern \"C\" { int abs(int value); }\n"
                            "int answer() { return abs(-7); }\n"),
          "foreign definition control is writable");
-  expect(lang::driver::compileToCpp(fragment).succeeded(),
+  expect(lang::driver::compileToSelectedBackend(fragment).succeeded(),
          "native linkage retains its independent definition contract");
 }
 
@@ -1576,7 +1570,12 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
   TemporaryDirectory temporary;
   const std::filesystem::path project = temporary.root() / "project";
   const std::filesystem::path managedRoot = project / "build/gti";
+  // The whole-program cache is proven on the shipped LLVM path. The frozen C++
+  // backend's own cache cases run only in a toolchain that includes it.
+  const bool cppAvailable = lang::driver::cppBackendAvailable();
   const std::filesystem::path generated =
+      managedRoot / "dev/host/intermediate/app.gti.o";
+  const std::filesystem::path generatedCpp =
       managedRoot / "dev/host/intermediate/app.gti.cpp";
   const std::filesystem::path output = managedRoot / "dev/host/app";
   const std::filesystem::path source = project / "main.gti";
@@ -1662,15 +1661,19 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
           lang::RawPointerAuditMode rawPointerAudit =
               lang::RawPointerAuditMode::Off,
           bool debugInfo = false) {
+        // Retaining C++ or choosing a C++ standard selects the C++ backend.
+        const bool cpp = keepCpp || standard != lang::CppStandard::Cpp23;
         return lang::driver::buildExecutable(
             lang::driver::ExecutableBuildRequest(
                 lang::driver::CompilationRequest(
                     source, toolchain.standardLibrary, std::move(target),
                     optimization, standard, {}, {}, {}, std::move(warnings),
-                    debugInfo, std::move(packageWarnings), rawPointerAudit),
-                toolchain, generated, output, nativeCompiler,
-                std::move(nativeInputs), keepCpp, true, false, managed,
-                std::nullopt, cache));
+                    debugInfo, std::move(packageWarnings), rawPointerAudit)
+                    .withBackend(cpp ? lang::BackendKind::Cpp
+                                     : lang::BackendKind::Llvm),
+                toolchain, cpp ? generatedCpp : generated, output,
+                nativeCompiler, std::move(nativeInputs), keepCpp, true, false,
+                managed, std::nullopt, cache));
       };
 
   const lang::driver::ExecutableBuildResult first =
@@ -1701,22 +1704,22 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
     std::cerr << "whole-program cache first-build warning: "
               << *first.cache.warning << '\n';
   }
-  expect(first.succeeded() &&
-             first.cache.status == lang::driver::BuildCacheStatus::Miss &&
-             first.nativeProcess && first.nativeProcess->succeeded() &&
-             !first.cache.key.empty() &&
-             std::filesystem::is_regular_file(first.cache.entry / "metadata") &&
-             std::filesystem::is_regular_file(first.cache.entry /
-                                              "generated.cpp") &&
-             std::filesystem::is_regular_file(first.cache.entry / "executable"),
-         "the first project build should compile natively and atomically "
-         "publish a complete content-addressed cache entry");
+  expect(
+      first.succeeded() &&
+          first.cache.status == lang::driver::BuildCacheStatus::Miss &&
+          first.nativeProcess && first.nativeProcess->succeeded() &&
+          !first.cache.key.empty() &&
+          std::filesystem::is_regular_file(first.cache.entry / "metadata") &&
+          std::filesystem::is_regular_file(first.cache.entry / "artifact.o") &&
+          std::filesystem::is_regular_file(first.cache.entry / "executable"),
+      "the first project build should compile natively and atomically "
+      "publish a complete content-addressed cache entry");
   const std::string firstKey = first.cache.key;
   const std::filesystem::path firstEntry = first.cache.entry;
   expect(
-      firstEntry.parent_path() == cache.root / "v4" &&
-          readFile(firstEntry / "metadata").starts_with("gti-build-cache-v4\n"),
-      "the current one-root driver request should publish only the v4 "
+      firstEntry.parent_path() == cache.root / "v5" &&
+          readFile(firstEntry / "metadata").starts_with("gti-build-cache-v5\n"),
+      "the current one-root driver request should publish only the v5 "
       "symbol- and test-aware ordered-prelude cache schema");
 
   std::error_code removeError;
@@ -1864,14 +1867,16 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
          "optimization policy should participate in whole-program cache "
          "identity");
 
-  const lang::driver::ExecutableBuildResult standardChange =
-      build(lang::OptimizationLevel::O0, {}, false, lang::CppStandard::Cpp20);
-  expect(standardChange.succeeded() &&
-             standardChange.cache.status ==
-                 lang::driver::BuildCacheStatus::Miss &&
-             standardChange.cache.key != firstKey,
-         "the selected backend C++ standard should participate in cache "
-         "identity");
+  if (cppAvailable) {
+    const lang::driver::ExecutableBuildResult standardChange =
+        build(lang::OptimizationLevel::O0, {}, false, lang::CppStandard::Cpp20);
+    expect(standardChange.succeeded() &&
+               standardChange.cache.status ==
+                   lang::driver::BuildCacheStatus::Miss &&
+               standardChange.cache.key != firstKey,
+           "the selected backend C++ standard should participate in cache "
+           "identity");
+  }
 
   lang::TargetInfo concurrentTarget = lang::TargetInfo::host();
   concurrentTarget.executionProfile = lang::ExecutionProfile::Concurrent;
@@ -2445,15 +2450,22 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
          "a digest mismatch should never be used and should be replaced only "
          "after a successful native rebuild");
 
-  const lang::driver::ExecutableBuildResult retainedCpp =
-      build(lang::OptimizationLevel::O0, {}, true);
-  expect(retainedCpp.succeeded() &&
-             retainedCpp.cache.status == lang::driver::BuildCacheStatus::Hit &&
-             retainedCpp.generatedSourceRetained &&
-             std::filesystem::is_regular_file(generated) &&
-             readFile(generated) == retainedCpp.compilation.artifact->contents,
-         "keep-cpp should restore verified generated source on a cache hit "
-         "without changing cache identity");
+  if (cppAvailable) {
+    const lang::driver::ExecutableBuildResult cppFirst =
+        build(lang::OptimizationLevel::O0, {}, true);
+    const lang::driver::ExecutableBuildResult retainedCpp =
+        build(lang::OptimizationLevel::O0, {}, true);
+    expect(cppFirst.succeeded() && retainedCpp.succeeded() &&
+               retainedCpp.cache.status ==
+                   lang::driver::BuildCacheStatus::Hit &&
+               retainedCpp.cache.key == cppFirst.cache.key &&
+               retainedCpp.generatedSourceRetained &&
+               std::filesystem::is_regular_file(generatedCpp) &&
+               readFile(generatedCpp) ==
+                   retainedCpp.compilation.artifact->contents,
+           "keep-cpp should restore verified generated source on a cache hit "
+           "without changing cache identity");
+  }
 
   const std::string publishedExecutable = readFile(output);
   std::filesystem::remove_all(firstEntry, removeError);
@@ -2471,8 +2483,8 @@ void testWholeProgramBuildCache(const std::filesystem::path &testExecutable) {
              afterDeletion.cache.status ==
                  lang::driver::BuildCacheStatus::Miss &&
              afterDeletion.nativeProcess &&
-             afterDeletion.cache.entry.parent_path() == cache.root / "v4",
-         "a deleted v4 cache entry should ignore a same-key v3 entry and "
+             afterDeletion.cache.entry.parent_path() == cache.root / "v5",
+         "a deleted v5 cache entry should ignore a same-key v3 entry and "
          "degrade to a clean rebuild");
 
   const lang::driver::ExecutableBuildResult unmanagedCache =
@@ -2808,9 +2820,12 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
                          const std::filesystem::path &buildEntry,
                          const lang::driver::ToolchainLayout &buildToolchain,
                          lang::CppStandard standard,
-                         lang::ConfigurationFlags flags = {}) {
+                         lang::ConfigurationFlags flags = {},
+                         lang::BackendKind backend = lang::BackendKind::Llvm) {
     const std::filesystem::path generated =
-        temporary.root() / ("generated-" + std::string(suffix) + ".cpp");
+        temporary.root() /
+        ("generated-" + std::string(suffix) +
+         (backend == lang::BackendKind::Cpp ? ".cpp" : ".o"));
     const std::filesystem::path output =
         temporary.root() / ("program-" + std::string(suffix));
     const std::filesystem::path report =
@@ -2819,7 +2834,8 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
         lang::driver::CompilationRequest(
             buildEntry, buildToolchain.standardLibrary,
             lang::TargetInfo::host(), lang::OptimizationLevel::O0, standard, {},
-            std::move(flags)),
+            std::move(flags))
+            .withBackend(backend),
         buildToolchain, generated, output,
         lang::driver::discoverNativeCompiler(), nestedNativeInputs, false, true,
         false, std::nullopt, std::nullopt, std::nullopt,
@@ -2849,27 +2865,23 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
                    std::filesystem::weakly_canonical(dependency) &&
                !unit.material.sha256.empty();
       });
-  const bool hasRuntimeHeader = std::any_of(
-      firstProvenance.runtime.headers.begin(),
-      firstProvenance.runtime.headers.end(),
-      [](const lang::driver::BuildRuntimeHeaderProvenance &header) {
-        return header.kind == lang::driver::BuildRuntimeHeaderKind::Runtime &&
-               !header.material.sha256.empty();
-      });
-  expect(hasDependency && hasRuntimeHeader &&
+  expect(hasDependency &&
              firstProvenance.runtime.archive.canonicalPath ==
                  std::filesystem::weakly_canonical(runtimeLibrary) &&
              firstProvenance.producerExecutable.canonicalPath ==
                  std::filesystem::weakly_canonical(testExecutable) &&
-             !firstProvenance.nativeCompilerExecutable.sha256.empty() &&
-             std::find(firstProvenance.nativeCommand.begin(),
-                       firstProvenance.nativeCommand.end(),
-                       "-MD") != firstProvenance.nativeCommand.end() &&
-             std::find(firstProvenance.nativeCommand.begin(),
-                       firstProvenance.nativeCommand.end(),
-                       "-MF") != firstProvenance.nativeCommand.end(),
+             !firstProvenance.nativeCompilerExecutable.sha256.empty(),
          "build provenance should retain exact loaded source, used runtime, "
-         "producer, native compiler, and depfile-bearing argv facts");
+         "producer and native compiler facts");
+  // Runtime headers and a depfile exist only when generated C++ is compiled;
+  // the LLVM path links an object.
+  const auto hasDepfileArguments =
+      [](const lang::driver::BuildProvenance &value) {
+        return std::find(value.nativeCommand.begin(), value.nativeCommand.end(),
+                         "-MD") != value.nativeCommand.end() &&
+               std::find(value.nativeCommand.begin(), value.nativeCommand.end(),
+                         "-MF") != value.nativeCommand.end();
+      };
   expect((firstProvenance.compilerBuild.state ==
           lang::driver::CompilerSourceState::Unavailable) ==
              !firstProvenance.compilerBuild.commit.has_value(),
@@ -2936,8 +2948,6 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
 
   // GTI owns its expected representation, so a C++20 build consumes exactly
   // the runtime materials of the C++23 build and no standard-specific header.
-  const lang::driver::ExecutableBuildResult cpp20 =
-      build("cpp20", entry, toolchain, lang::CppStandard::Cpp20);
   const auto runtimeSummary = [](const lang::driver::BuildProvenance &value) {
     std::string summary = value.runtime.materialsSha256;
     for (const lang::driver::BuildRuntimeHeaderProvenance &header :
@@ -2947,21 +2957,43 @@ void testBuildProvenance(const std::filesystem::path &testExecutable) {
     }
     return summary;
   };
-  expect(cpp20.succeeded() && cpp20.provenance &&
-             cpp20.provenance->runtime.materialsSha256 ==
-                 firstProvenance.runtime.materialsSha256 &&
-             std::all_of(
-                 cpp20.provenance->runtime.headers.begin(),
-                 cpp20.provenance->runtime.headers.end(),
-                 [](const lang::driver::BuildRuntimeHeaderProvenance &header) {
-                   return header.logicalIdentity.starts_with("gti/");
-                 }),
-         "a C++20 build should consume the C++23 build's runtime materials "
-         "(status=" +
-             std::to_string(static_cast<int>(cpp20.status)) + ", detail=" +
-             cpp20.driverDiagnostic.value_or("none") + ", C++20 materials=" +
-             (cpp20.provenance ? runtimeSummary(*cpp20.provenance) : "none") +
-             ", C++23 materials=" + runtimeSummary(firstProvenance) + ")");
+  if (lang::driver::cppBackendAvailable()) {
+    const lang::driver::ExecutableBuildResult cpp23 =
+        build("cpp23", entry, toolchain, lang::CppStandard::Cpp23, {},
+              lang::BackendKind::Cpp);
+    const lang::driver::ExecutableBuildResult cpp20 =
+        build("cpp20", entry, toolchain, lang::CppStandard::Cpp20, {},
+              lang::BackendKind::Cpp);
+    expect(cpp23.succeeded() && cpp23.provenance &&
+               std::any_of(
+                   cpp23.provenance->runtime.headers.begin(),
+                   cpp23.provenance->runtime.headers.end(),
+                   [](const auto &header) {
+                     return header.kind ==
+                                lang::driver::BuildRuntimeHeaderKind::Runtime &&
+                            !header.material.sha256.empty();
+                   }) &&
+               hasDepfileArguments(*cpp23.provenance),
+           "C++ build provenance should retain used runtime headers and "
+           "depfile-bearing argv facts");
+    expect(
+        cpp23.succeeded() && cpp23.provenance && cpp20.succeeded() &&
+            cpp20.provenance &&
+            cpp20.provenance->runtime.materialsSha256 ==
+                cpp23.provenance->runtime.materialsSha256 &&
+            std::all_of(
+                cpp20.provenance->runtime.headers.begin(),
+                cpp20.provenance->runtime.headers.end(),
+                [](const lang::driver::BuildRuntimeHeaderProvenance &header) {
+                  return header.logicalIdentity.starts_with("gti/");
+                }),
+        "a C++20 build should consume the C++23 build's runtime materials "
+        "(status=" +
+            std::to_string(static_cast<int>(cpp20.status)) + ", detail=" +
+            cpp20.driverDiagnostic.value_or("none") + ", C++20 materials=" +
+            (cpp20.provenance ? runtimeSummary(*cpp20.provenance) : "none") +
+            ", C++23 materials=" + runtimeSummary(*cpp23.provenance) + ")");
+  }
 
   expect(writeFile(dependency, "export module dependency;\nexport int "
                                "dependency_value() { return 2; }\n"),

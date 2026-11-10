@@ -98,7 +98,8 @@ The affected source-module, driver, cache and LSP consumers, `compiler_pipeline`
 and native O0/O3 smoke remain focused acceptance obligations. Post-integration
 full validation proves the complete inventory on Linux x64 and the `darwin`
 set on macOS arm64 (what differs on the platform) before the change can
-reach nightly; the deprecated C++ backend is proven weekly at `c++23 -O3`.
+reach nightly. The frozen C++ backend is not part of validation; it is built
+and tested only by the hand-dispatched `cpp-backend.yml`.
 
 Runtime harnesses take their modes from `tests/backend_modes.py`
 (`native_modes()`: `llvm-O0` and `llvm-O3` under the default

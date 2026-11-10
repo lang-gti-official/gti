@@ -18,32 +18,29 @@ workflow skill, and use its helper with `--repo <task-worktree>`.
 GTI is an independent, experimental, statically typed systems language with
 strong C++ syntax familiarity, explicit ownership, and deterministic cleanup.
 Its goal is a fully usable systems language with excellent safety and sound
-architecture. LLVM is the primary development backend. The C++ backend is
-deprecated as the primary backend and receives bug fixes only through v1.0.
-LLVM is the shipped default on macOS arm64 and Linux x86_64. The C++ backend
-is proven on its own schedule under one profile (`c++23 -O3`, the scheduled
-C++ job), never per change and never as a per-feature differential against
-LLVM, as rustc treats its non-primary codegen backends. GTI is not a C++
-wrapper, and neither backend defines its semantics.
+architecture. LLVM is the only developed backend and the shipped default on
+every target. The C++ backend is frozen and separated from default builds,
+tests, CI and releases; its code stays in the tree for a possible future
+reintroduction. GTI is not a C++ wrapper, and no backend defines its
+semantics.
 
 ## Backend Development Policy
 
-- Prioritize new backend capabilities, optimization and feature implementation
-  in LLVM. Do not implement C++ feature parity or catch-up work during the
-  pre-1.0 campaign. C++ changes are limited to bug fixes needed to preserve its
-  existing behavior and usefulness as an oracle, including repairs for shared
-  interface changes. Do not disguise missing feature support as a bug fix.
+- LLVM is the only developed backend and the default on every target. All
+  backend capabilities, optimization and feature work target LLVM.
+- The C++ backend is frozen and separated from default builds, tests, CI and
+  releases. Its code stays in the tree, built only with
+  `-DGTI_ENABLE_CPP_BACKEND=ON`; shared compiler changes carry no obligation
+  to keep it compiling or passing, and no general test may build or run it.
+  Its own tests run only in the hand-dispatched `cpp-backend.yml`.
 - The shipped backend gets the execution coverage: every runtime harness runs
   its fixtures on LLVM (`llvm-O0` and `llvm-O3`, via `tests/backend_modes.py`),
-  and no fixture may lose its last execution mode. C++ modes run only in the
-  scheduled C++ job; a C++ bug-fix PR declares the relevant tests as its
-  T0/T1 so the gate re-runs them. Do not extend C++ merely to make a new
-  LLVM feature testable, and do not weaken LLVM acceptance.
-- After v1.0, C++ catch-up may be reconsidered by an explicit owner decision;
-  development does not automatically resume and parity is not promised. This
-  policy does not remove the backend or prematurely change CLI defaults.
-- See [ADR 031](docs/decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25)
-  for the budget rationale, support distinction and promotion boundary.
+  and no fixture may lose its last execution mode. Assert language behaviour
+  through diagnostics, semantic facts, MIR or LLVM execution, never generated
+  C++ text. Do not weaken LLVM acceptance.
+- Reintroducing the C++ backend is a future owner decision and a port, not a
+  toggle. See [ADR 031](docs/decisions/031-native-llvm-backend-foundation.md#c-backend-separation-2026-11-10)
+  for the separation and the earlier budget rationale.
 
 ## Language Direction
 
@@ -192,13 +189,15 @@ wrapper, and neither backend defines its semantics.
   build window, whether or not the helper runs it:
   `python3 scripts/build_window.py --kind build -- cmake --build <tree> ...` and
   `python3 scripts/build_window.py --kind suite -- ctest --test-dir <tree> -LE cpp-backend ...`.
-  Local runs follow the CI test policy: a configured tree exports
-  `GTI_TEST_BACKENDS=llvm` to every harness, so runtime harnesses exercise the
-  shipped backend, and the C++-only entries carry the `cpp-backend` label, so
-  broad runs exclude them. C++-backend bug fixes configure
-  `-DGTI_TEST_BACKENDS=cpp` (or `both`), run their harnesses and
-  `-L cpp-backend`, and dispatch `cpp-backend.yml` on the PR branch for
-  exact-candidate CI evidence.
+  Local runs follow the CI test policy: the frozen C++ backend is not built
+  (`GTI_ENABLE_CPP_BACKEND` is off), a configured tree exports
+  `GTI_TEST_BACKENDS=llvm` to every harness, and no general test may build or
+  run the C++ backend; assert language behaviour through diagnostics, semantic
+  facts, MIR or LLVM execution, never generated C++. Shared compiler changes
+  carry no obligation to keep the C++ backend compiling. Deliberate C++ backend
+  work configures `-DGTI_ENABLE_CPP_BACKEND=ON -DGTI_TEST_BACKENDS=cpp`, runs
+  `-L cpp-backend`, and dispatches `cpp-backend.yml` by hand
+  ([ADR 031](docs/decisions/031-native-llvm-backend-foundation.md#c-backend-separation-2026-11-10)).
   The window is one counted semaphore under the Git common directory, shared
   by every worktree and session on the machine, so concurrent agents stop
   stacking full suites on each other. Focused tests (`ctest -R '^name$'`, one

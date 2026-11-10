@@ -69,10 +69,13 @@ prove a C++ backend regression first. C++ is deprecated as the primary backend:
 only bug fixes preserve its supported comparison-oracle behavior through v1.0;
 new features need not be implemented twice. Catch-up after v1.0 is a possible
 future owner decision, not automatic or part of 1.0 acceptance. LLVM is the
-default on macOS arm64 since the owner's 2026-10-27 promotion and on Linux
-x86_64 since 2026-10-29. C++ remains the default on other targets until
-the [LLVM campaign](implementation-sequence.md#llvm-production-backend-campaign)
-passes full current-language conformance there, including Linux. Self-hosting,
+default on every target since 2026-11-10, when the owner separated the frozen
+C++ backend from default builds, tests, CI and releases
+([ADR 031](../decisions/031-native-llvm-backend-foundation.md#c-backend-separation-2026-11-10)).
+LLVM native emission still supports only macOS arm64 and Linux x86_64; other
+targets wait for the
+[LLVM campaign](implementation-sequence.md#llvm-production-backend-campaign)'s
+conformance evidence. Self-hosting,
 separate compilation and a stable ABI for ordinary GTI objects remain separate
 goals rather than automatic prerequisites of systems readiness. A source
 package registry already exists; its historical non-requirement is not evidence

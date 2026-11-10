@@ -169,7 +169,7 @@ public:
       std::vector<ProjectExport> exports = {},
       ConfigurationFlags declaredConfigurationFlags = {},
       bool rawPointerAuditLibraryFindings = false,
-      BackendKind backend = BackendKind::Cpp,
+      BackendKind backend = BackendKind::Llvm,
       std::vector<std::string> compiledFunctions = {},
       std::optional<CompiledLibraryImport> compiledImport = {},
       std::vector<CompiledLibraryImport> compiledImports = {});

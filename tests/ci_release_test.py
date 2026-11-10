@@ -349,8 +349,11 @@ def nightly_contract(root):
     # CTest's per-test ENVIRONMENT property (from the configure-time cache
     # default) overrides a job's environment, so the policy must be configured.
     assert cpp.count("-DGTI_TEST_BACKENDS=cpp") == 2, "every C++ job configure selects the C++ backend policy"
+    assert cpp.count("-DGTI_ENABLE_CPP_BACKEND=ON") == 2, "the frozen C++ backend is built only where it is tested"
     assert "merge_group" not in cpp and "pull_request" not in cpp, "the C++ backend never gates"
-    assert "schedule:" in cpp.split("\njobs:\n", 1)[0]
+    triggers = cpp.split("\njobs:\n", 1)[0]
+    assert "schedule:" not in triggers and "workflow_dispatch:" in triggers, "the C++ backend runs only by hand"
+    assert "issues: write" not in cpp and "full_validation_report.py" not in cpp, "the C++ backend opens no issue"
     assert "validation_checks.py ci-gate" in verdict and "--event full_validation" in verdict
     assert "--shard-reports" in verdict
     cpp_jobs = jobs((root / ".github/workflows/cpp-backend.yml").read_text())

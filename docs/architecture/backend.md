@@ -1,14 +1,13 @@
 # Backend And Native Handoff
 
 
-Status: current architecture. LLVM is the primary development backend and the
-default on macOS arm64 and Linux x86_64. C++ is deprecated as the primary backend and maintained
-with bug fixes only through v1.0 as a comparison oracle. It remains the default
-on other targets until LLVM passes O-LLVM-16 there; a future C++ catch-up
-requires a separate owner decision. See
-[ADR 031's backend policy](../decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25)
-and its [macOS arm64](../decisions/031-native-llvm-backend-foundation.md#default-backend-on-macos-arm64-2026-10-27)
-and [Linux x86_64](../decisions/031-native-llvm-backend-foundation.md#default-backend-on-linux-x86_64-2026-10-29) promotions.
+Status: current architecture. LLVM is the only developed backend and the
+default on every target; a target it does not support reports `GTI-B0003`.
+The C++ backend is frozen and separated from default builds, tests, CI and
+releases: its code remains, built only with `-DGTI_ENABLE_CPP_BACKEND=ON`, and
+selecting it in a toolchain without it is a configuration error. Reintroducing
+it requires a separate owner decision. See
+[ADR 031's C++ backend separation](../decisions/031-native-llvm-backend-foundation.md#c-backend-separation-2026-11-10).
 
 GTI ships a native LLVM backend and a C++ source backend, and either can be
 selected on any target. Unsupported required LLVM shapes reject with
@@ -6306,8 +6305,8 @@ The C++ comparator still relocates nested/default scalar fields in
 address-sensitive probes, and rejects the class-array argument/copy/move and
 side-effecting reference-initializer fixtures in its representation vocabulary.
 These cases have explicit native-only
-oracles, not claimed C++ parity; the scheduled C++ job runs supported
-comparators at `c++23 -O3` only.
+oracles, not claimed C++ parity; only the hand-dispatched C++ job runs
+supported comparators, at `c++23 -O3`.
 `llvm_target_layout_abi` observes exact post-failure cleanup traces after real
 checked field, array and prepared-return calls, not just terminal exit codes.
 

@@ -1,6 +1,7 @@
 #include "gti/driver/project.h"
 #include "gti/backend.h"
 #include "gti/driver/artifact.h"
+#include "gti/driver/compilation.h"
 
 #include "gti/driver/process.h"
 #include "gti/format_config.h"
@@ -526,6 +527,20 @@ selectProfile(const ProjectManifest &manifest, std::string_view requested,
           "GTI-B1005", profile->declaration,
           "LLVM project builds cannot use C++ backend retention or --std; "
           "select backend 'cpp' or disable keep-cpp and remove --std."));
+      return nullptr;
+    }
+    // An explicit backend wins; otherwise --std and keep-cpp select C++.
+    const std::optional<BackendKind> explicitBackend =
+        overrides.backend ? overrides.backend : profile->backend;
+    const bool selectsCpp =
+        explicitBackend ? *explicitBackend == BackendKind::Cpp
+                        : overrides.cppStandard.has_value() ||
+                              overrides.keepCpp.value_or(profile->keepCpp);
+    if (selectsCpp && !cppBackendAvailable()) {
+      diagnostics.push_back(projectDiagnostic(
+          "GTI-B1005", profile->declaration,
+          "Profile '" + profile->name + "' selects the C++ backend: " +
+              std::string(cppBackendUnavailableMessage())));
       return nullptr;
     }
     return profile;

@@ -249,6 +249,42 @@ Linux failures common to both defaults are recorded rather than attributed to
 LLVM: three C++-backend cases under GCC, three LSP harness timeouts and
 host-speed timeouts on the shared runners.
 
+## C++ Backend Separation (2026-11-10)
+
+The owner separated the frozen C++ backend from default builds, tests, CI and
+releases. Maintaining it as a comparison oracle had pulled its limitations into
+unrelated work: about ninety general test files asserted language behaviour
+through generated C++ text, so an LLVM-only feature that the C++ backend
+correctly refused broke tests that had nothing to do with C++. The weekly lane
+had never passed. This supersedes the bug-fix and comparison-oracle commitments
+of the [backend development policy](#backend-development-policy-2026-10-25) and
+the per-target defaults of the two promotions above.
+
+- LLVM is the default backend on every target. `defaultBackend(TargetInfo)`
+  always returns LLVM; a target the LLVM backend does not support reports that
+  error instead of falling back to C++.
+- The C++ backend's code stays in the tree, frozen, behind the CMake option
+  `GTI_ENABLE_CPP_BACKEND` (off by default). Default builds, CI, nightlies,
+  betas and stable releases neither build nor install it.
+- In a toolchain without it, explicitly selecting C++ (`--backend cpp`,
+  `--std`, `--keep-cpp`, `--emit-cpp`, or a profile's `backend = "cpp"` or
+  `keep-cpp`) is a configuration error: `GTI-B1005` at the profile for project
+  builds, a usage error for direct invocations. There is no silent fallback.
+- No general test may build or run the C++ backend. Tests assert language
+  behaviour through backend-neutral oracles: diagnostics, semantic facts, MIR,
+  and LLVM execution. Assertions about C++ representation live only in the
+  C++-only entries (`cpp_mir_*`, `cpp_debug_artifacts`,
+  `lowered_program_corpus_census`).
+- `cpp-backend.yml` runs only when dispatched by hand. It never runs on a
+  schedule, gates a change, opens an issue or blocks a channel.
+- Shared compiler changes carry no obligation to keep the C++ backend
+  compiling or passing. Accept that it will drift from MIR: reintroducing it is
+  a future owner decision and a port, not a toggle.
+
+Cross-backend comparison is no longer part of validation. LLVM O0 and O3 must
+still agree on every shipped example (`mir_cutover_corpus_oracle`), alongside
+native execution, sanitizer and installed-toolchain evidence.
+
 ## Current Status
 
 The foundation and O-LLVM-02/03 establish build, package, driver, CLI,

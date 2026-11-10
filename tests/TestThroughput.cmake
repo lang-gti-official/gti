@@ -82,6 +82,10 @@ set(GTI_TEST_BACKENDS "llvm" CACHE STRING
 if(NOT GTI_TEST_BACKENDS MATCHES "^(llvm|cpp|both)$")
   message(FATAL_ERROR "GTI_TEST_BACKENDS must be llvm, cpp or both")
 endif()
+if(NOT GTI_TEST_BACKENDS STREQUAL "llvm" AND NOT GTI_ENABLE_CPP_BACKEND)
+  message(FATAL_ERROR
+          "GTI_TEST_BACKENDS=${GTI_TEST_BACKENDS} needs -DGTI_ENABLE_CPP_BACKEND=ON")
+endif()
 foreach(suite IN LISTS gti_bounded_tests)
   set_property(TEST "${suite}" APPEND PROPERTY ENVIRONMENT
     "GTI_TEST_BACKENDS=${GTI_TEST_BACKENDS}")
@@ -373,9 +377,9 @@ foreach(suite IN LISTS gti_throughput_tests)
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "end-to-end")
   endif()
   # The frozen C++ backend's own tests (scripts/validation_checks.py
-  # CPP_ONLY_PREFIXES, which test_throughput_registration keeps in step): the
-  # scheduled C++ job runs them; broad local runs exclude them with
-  # `-LE cpp-backend`.
+  # CPP_ONLY_PREFIXES, which test_throughput_registration keeps in step): they
+  # exist only with GTI_ENABLE_CPP_BACKEND, and only the hand-dispatched C++
+  # job runs them.
   if(suite MATCHES "^(cpp_mir_|cpp_debug_artifacts|lowered_program_corpus_census)")
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "cpp-backend")
   endif()

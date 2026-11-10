@@ -890,22 +890,22 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 | PR or merge group | component | always fails: a batch component cannot merge directly |
 
 `validation_checks.py shard` executes one cost-balanced shard of a test set.
-The deprecated C++ backend runs only in `cpp-backend.yml` (weekly and on
-dispatch; `--test-set cpp` over the full inventory with
-`GTI_TEST_BACKENDS=cpp`, plus the C++ emitter's own tests under ASan/UBSan);
-its failure opens the `cpp-backend` issue and never blocks the queue, full
-validation or a channel. Harness mode tables come from
+The frozen C++ backend is separated from default builds, tests and CI
+([ADR 031](../decisions/031-native-llvm-backend-foundation.md#c-backend-separation-2026-11-10)):
+it is built only with `-DGTI_ENABLE_CPP_BACKEND=ON`, and only the
+hand-dispatched `cpp-backend.yml` builds and tests it (`--test-set cpp` over
+the full inventory with `GTI_TEST_BACKENDS=cpp`, plus the C++ emitter's own
+tests under ASan/UBSan). It never runs on a schedule, opens an issue, or blocks
+the queue, full validation or a channel. Harness mode tables come from
 `tests/backend_modes.py`: `llvm-O0` and `llvm-O3` by default, `c++23 -O3` under
-`GTI_TEST_BACKENDS=cpp`. The C++-only CTest entries (`cpp_mir_*`,
-`cpp_debug_artifacts`, `lowered_program_corpus_census`) run only there; they
-carry the CTest label `cpp-backend`, which `test_throughput_registration`
-keeps equal to `CPP_ONLY_PREFIXES`. Local validation follows the same policy:
-a configured tree exports `GTI_TEST_BACKENDS` (`llvm` by default) to every
-harness, and broad local runs pass `-LE cpp-backend`. A C++-backend bug fix
-configures `-DGTI_TEST_BACKENDS=cpp` (or `both`), runs its harnesses and
-`-L cpp-backend` locally, and gets exact-candidate CI evidence by dispatching
-the weekly workflow on its branch (`gh workflow run cpp-backend.yml --ref
-<branch>`); the gate's declared-test re-run stays on the shipped backend.
+`GTI_TEST_BACKENDS=cpp`, which configuration rejects unless the C++ backend is
+enabled. The C++-only CTest entries (`cpp_mir_*`, `cpp_debug_artifacts`,
+`lowered_program_corpus_census`) exist only in such a build; they carry the
+CTest label `cpp-backend`, which `test_throughput_registration` keeps equal to
+`CPP_ONLY_PREFIXES`. No general test may build or run the C++ backend. Local
+C++ backend work configures `-DGTI_ENABLE_CPP_BACKEND=ON
+-DGTI_TEST_BACKENDS=cpp`, runs `-L cpp-backend`, and dispatches the workflow
+on its branch (`gh workflow run cpp-backend.yml --ref <branch>`).
 Four long aggregates (`compiler_pipeline`, `allocator_raw_audit_independence`,
 `body_analysis_order`, `instance_reuse`) are also registered as per-suite,
 per-source or corpus-partition entries; a sharded run executes the parts and
