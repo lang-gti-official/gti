@@ -15,6 +15,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_text_modes
+
 FAILURE_REPORT = (
     "runtime error[GTI-R0007]: index_out_of_bounds in fixed_array"
 )
@@ -97,38 +99,41 @@ def main() -> int:
 
         # The emitted C++ must consume every checked array write status:
         # each helper call's status local has to feed the failure branch
-        # that publishes the failure record.
-        generated_path = root / "oob-write.cpp"
-        emitted = run(
-            [
-                str(compiler),
-                str(failing[0][1]),
-                "-O0",
-                "--emit-cpp",
-                "-o",
-                str(generated_path),
-            ]
-        )
-        if emitted.returncode != 0:
-            return fail("emit O0", emitted)
-        generated = generated_path.read_text(encoding="utf8")
-        statuses = re.findall(
-            r"(__gti_mir_failure_status_\d+) = "
-            r"::gti_internal::backend::mir_checked_array_write_v1\(",
-            generated,
-        )
-        if not statuses:
-            sys.stderr.write(
-                "generated C++ lost the checked array write helper\n"
+        # that publishes the failure record. A probe of the frozen C++
+        # backend's text: it runs only when GTI_TEST_BACKENDS selects C++.
+        for _label, cpp_flags, _native in cpp_text_modes():
+            generated_path = root / "oob-write.cpp"
+            emitted = run(
+                [
+                    str(compiler),
+                    str(failing[0][1]),
+                    "-O0",
+                    *cpp_flags,
+                    "--emit-cpp",
+                    "-o",
+                    str(generated_path),
+                ]
             )
-            return 1
-        for status in statuses:
-            if f"if ({status}.code == GTI_FAILURE_CODE_NONE_V1)" not in generated:
+            if emitted.returncode != 0:
+                return fail("emit O0", emitted)
+            generated = generated_path.read_text(encoding="utf8")
+            statuses = re.findall(
+                r"(__gti_mir_failure_status_\d+) = "
+                r"::gti_internal::backend::mir_checked_array_write_v1\(",
+                generated,
+            )
+            if not statuses:
                 sys.stderr.write(
-                    f"generated C++ discards {status} instead of branching "
-                    "to the failure successor\n"
+                    "generated C++ lost the checked array write helper\n"
                 )
                 return 1
+            for status in statuses:
+                if f"if ({status}.code == GTI_FAILURE_CODE_NONE_V1)" not in generated:
+                    sys.stderr.write(
+                        f"generated C++ discards {status} instead of branching "
+                        "to the failure successor\n"
+                    )
+                    return 1
 
     return 0
 

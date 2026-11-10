@@ -281,37 +281,39 @@ def main() -> int:
         built = run([str(compiler), str(source_path), "-o", str(executable)])
         if built.returncode != 0:
             return fail(built)
-        emitted = root / "member-chain.cpp"
-        emission = run(
-            [
-                str(compiler),
-                str(source_path),
-                "--emit-cpp",
-                "-o",
-                str(emitted),
-            ]
-        )
-        if emission.returncode != 0:
-            return fail(emission)
-        generated = emitted.read_text(encoding="utf8")
-        # The receiver-carrying call spells its staged borrowed place and
-        # the qualified transformed member name; both member bodies emit
-        # in the failure form.
-        if (
-            "stages a borrowed place" not in generated
-            or "(*this).::__gti_program::Meter::" not in generated
-            or "checked_scale__gti_mir_failure(" not in generated
-            or generated.count(
-                "// GTI verified-MIR body: scalar-cfg-failure-v1"
+        for _cpp_label, cpp_flags, _cpp_native in cpp_text_modes():
+            emitted = root / "member-chain.cpp"
+            emission = run(
+                [
+                    str(compiler),
+                    str(source_path),
+                    *cpp_flags,
+                    "--emit-cpp",
+                    "-o",
+                    str(emitted),
+                ]
             )
-            < 2
-        ):
-            sys.stderr.write(
-                "the member chain should reach checked_scale through the "
-                "transformed receiver-call convention: a staged borrowed "
-                "receiver and the qualified derived member name\n"
-            )
-            return 1
+            if emission.returncode != 0:
+                return fail(emission)
+            generated = emitted.read_text(encoding="utf8")
+            # The receiver-carrying call spells its staged borrowed place and
+            # the qualified transformed member name; both member bodies emit
+            # in the failure form.
+            if (
+                "stages a borrowed place" not in generated
+                or "(*this).::__gti_program::Meter::" not in generated
+                or "checked_scale__gti_mir_failure(" not in generated
+                or generated.count(
+                    "// GTI verified-MIR body: scalar-cfg-failure-v1"
+                )
+                < 2
+            ):
+                sys.stderr.write(
+                    "the member chain should reach checked_scale through the "
+                    "transformed receiver-call convention: a staged borrowed "
+                    "receiver and the qualified derived member name\n"
+                )
+                return 1
         executed = run([str(executable)])
         # The record written inside the transformed member must surface
         # through the caller's receiver call and the boundary wrapper: the
@@ -354,25 +356,26 @@ def main() -> int:
         built = run([str(compiler), str(source_path), "-o", str(executable)])
         if built.returncode != 0:
             return fail(built)
-        emitted = run(
-            [str(compiler), str(source_path), "--emit-cpp", "-o",
-             str(root / "generic-member.cpp")]
-        )
-        generated = (root / "generic-member.cpp").read_text(encoding="utf8")
-        if (
-            emitted.returncode != 0
-            or "mir_failure_constructor_tag_v1<" not in generated
-            or "scalar-cfg-constructor-failure-v1 constructor-instance"
-            not in generated
-            or "push_back__gti_mir_failure(" not in generated
-            or "erase__gti_mir_failure(" not in generated
-            or "// GTI MIR reparent into p" not in generated
-        ):
-            sys.stderr.write(
-                "the generic owner should publish its transformed "
-                "constructor and closed member-call component\n"
+        for _cpp_label, cpp_flags, _cpp_native in cpp_text_modes():
+            emitted = run(
+                [str(compiler), str(source_path), *cpp_flags, "--emit-cpp", "-o",
+                 str(root / "generic-member.cpp")]
             )
-            return 1
+            generated = (root / "generic-member.cpp").read_text(encoding="utf8")
+            if (
+                emitted.returncode != 0
+                or "mir_failure_constructor_tag_v1<" not in generated
+                or "scalar-cfg-constructor-failure-v1 constructor-instance"
+                not in generated
+                or "push_back__gti_mir_failure(" not in generated
+                or "erase__gti_mir_failure(" not in generated
+                or "// GTI MIR reparent into p" not in generated
+            ):
+                sys.stderr.write(
+                    "the generic owner should publish its transformed "
+                    "constructor and closed member-call component\n"
+                )
+                return 1
         executed = run([str(executable)])
         # The source-defined vector checks its public logical bound before
         # reaching the prefix owner. Pin that actual detector, not the retired
@@ -413,26 +416,27 @@ def main() -> int:
         built = run([str(compiler), str(source_path), "-o", str(executable)])
         if built.returncode != 0:
             return fail(built)
-        emitted = run(
-            [str(compiler), str(source_path), "--emit-cpp", "-o",
-             str(root / "chain-print.cpp")]
-        )
-        generated = (root / "chain-print.cpp").read_text(encoding="utf8")
-        # The integer print chain publishes concrete transformed siblings
-        # backed by verified MIR, with the array-walking digit printer in
-        # the transformed failure form.
-        if (
-            emitted.returncode != 0
-            or generated.count(
-                "scalar-cfg-failure-v1 function-instance") < 3
-            or "print_integral__gti_mir_failure(" not in generated
-            or "mir_checked_array_read_v1(" not in generated
-        ):
-            sys.stderr.write(
-                "integer println should emit per-instance specializations "
-                "from verified MIR\n"
+        for _cpp_label, cpp_flags, _cpp_native in cpp_text_modes():
+            emitted = run(
+                [str(compiler), str(source_path), *cpp_flags, "--emit-cpp", "-o",
+                 str(root / "chain-print.cpp")]
             )
-            return 1
+            generated = (root / "chain-print.cpp").read_text(encoding="utf8")
+            # The integer print chain publishes concrete transformed siblings
+            # backed by verified MIR, with the array-walking digit printer in
+            # the transformed failure form.
+            if (
+                emitted.returncode != 0
+                or generated.count(
+                    "scalar-cfg-failure-v1 function-instance") < 3
+                or "print_integral__gti_mir_failure(" not in generated
+                or "mir_checked_array_read_v1(" not in generated
+            ):
+                sys.stderr.write(
+                    "integer println should emit per-instance specializations "
+                    "from verified MIR\n"
+                )
+                return 1
         executed = run([str(executable)])
         if executed.returncode != 0 or executed.stdout != "42\n":
             sys.stderr.write(
@@ -463,20 +467,21 @@ def main() -> int:
         built = run([str(compiler), str(source_path), "-o", str(executable)])
         if built.returncode != 0:
             return fail(built)
-        generated = run(
-            [str(compiler), str(source_path), "--emit-cpp", "-o",
-             str(root / "bounds.cpp")]
-        )
-        if (
-            generated.returncode != 0
-            or "mir_checked_array_read_v1("
-            not in (root / "bounds.cpp").read_text(encoding="utf8")
-        ):
-            sys.stderr.write(
-                "the bounds fixture should read its element through the "
-                "checked fixed-array helper from verified MIR\n"
+        for _cpp_label, cpp_flags, _cpp_native in cpp_text_modes():
+            generated = run(
+                [str(compiler), str(source_path), *cpp_flags, "--emit-cpp", "-o",
+                 str(root / "bounds.cpp")]
             )
-            return 1
+            if (
+                generated.returncode != 0
+                or "mir_checked_array_read_v1("
+                not in (root / "bounds.cpp").read_text(encoding="utf8")
+            ):
+                sys.stderr.write(
+                    "the bounds fixture should read its element through the "
+                    "checked fixed-array helper from verified MIR\n"
+                )
+                return 1
         executed = run([str(executable)])
         if (
             executed.returncode != 70

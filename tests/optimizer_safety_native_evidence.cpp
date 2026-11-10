@@ -1,11 +1,10 @@
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/llvm_backend.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimizer.h"
 #include "temporary_directory.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -50,16 +49,6 @@ std::string readFile(const std::filesystem::path &path) {
                      std::istreambuf_iterator<char>());
 }
 
-std::size_t occurrences(std::string_view text, std::string_view needle) {
-  std::size_t count = 0;
-  std::size_t offset = 0;
-  while ((offset = text.find(needle, offset)) != std::string_view::npos) {
-    ++count;
-    offset += needle.size();
-  }
-  return count;
-}
-
 const lang::HirFunctionInstance *
 findFunction(const lang::FrontendResult &frontend, std::string_view name) {
   const auto found =
@@ -96,9 +85,79 @@ std::size_t functionDischarges(const lang::FrontendResult &frontend,
   return count;
 }
 
+// Program-wide MIR safety facts. A discharged check carries its proof on the
+// instruction; a retained check still owns a local failure origin with that
+// outcome code and no matching discharge.
+template <typename Visit>
+void forEachInstruction(const lang::MirProgram &program, Visit visit) {
+  for (const lang::MirBodyAddress address :
+       lang::enumerateMirBodyAddresses(program)) {
+    const lang::MirBody *body = lang::findMirBody(program, address);
+    if (body == nullptr) {
+      continue;
+    }
+    for (const lang::MirBlock &block : body->blocks) {
+      for (const lang::MirInstruction &instruction : block.instructions) {
+        if (!instruction.tombstone) {
+          visit(instruction);
+        }
+      }
+    }
+  }
+}
+
+std::size_t programDischarges(const lang::MirProgram &program,
+                              lang::MirSafetyCheckFamily family,
+                              std::vector<lang::MirOperation> operations = {}) {
+  std::size_t count = 0;
+  forEachInstruction(program, [&](const lang::MirInstruction &instruction) {
+    if (!operations.empty() &&
+        std::find(operations.begin(), operations.end(),
+                  instruction.operation) == operations.end()) {
+      return;
+    }
+    count += static_cast<std::size_t>(
+        std::count_if(instruction.safetyDischarges.begin(),
+                      instruction.safetyDischarges.end(),
+                      [family](const lang::MirSafetyDischarge &discharge) {
+                        return discharge.family == family;
+                      }));
+  });
+  return count;
+}
+
+std::size_t retainedChecks(const lang::MirProgram &program,
+                           lang::DefinedFailureCode code,
+                           std::vector<lang::MirOperation> operations = {}) {
+  std::size_t count = 0;
+  forEachInstruction(program, [&](const lang::MirInstruction &instruction) {
+    if (!operations.empty() &&
+        std::find(operations.begin(), operations.end(),
+                  instruction.operation) == operations.end()) {
+      return;
+    }
+    const bool checks = std::any_of(
+        instruction.definedFailure.localOrigins.begin(),
+        instruction.definedFailure.localOrigins.end(),
+        [&](const lang::DefinedFailureOrigin &origin) {
+          return std::any_of(origin.outcomes.begin(), origin.outcomes.end(),
+                             [&](const lang::DefinedFailureOutcome &outcome) {
+                               return outcome.code == code;
+                             });
+        });
+    const bool discharged =
+        std::any_of(instruction.safetyDischarges.begin(),
+                    instruction.safetyDischarges.end(),
+                    [&](const lang::MirSafetyDischarge &discharge) {
+                      return discharge.outcome.code == code;
+                    });
+    count += checks && !discharged ? 1U : 0U;
+  });
+  return count;
+}
+
 struct EmittedProgram {
   lang::OptimizedProgram optimized;
-  std::string cpp;
   std::filesystem::path artifact;
 };
 
@@ -118,18 +177,24 @@ EmittedProgram emitProgram(const lang::FrontendResult &frontend,
            "optimizer should produce coherent MIR for " + std::string(label));
     return {.optimized = std::move(optimized)};
   }
-  const lang::BackendArtifact generated =
-      gti_test::emitCpp(frontend, optimized.sourceMir, optimized.mir,
-                        optimized.report.transformations);
+  // Native evidence is unoptimized LLVM code generation: every observed
+  // difference between levels comes from verified GTI MIR proofs.
+  lang::BackendArtifact generated;
+  try {
+    generated = lang::LlvmBackend().generate(gti_test::lowerProgram(
+        frontend, optimized.sourceMir, optimized.mir, lang::TargetInfo::host(),
+        optimized.report.transformations));
+  } catch (const std::exception &error) {
+    expect(false, "LLVM backend threw for " + std::string(label) + ": " +
+                      error.what());
+  }
   expect(!generated.contents.empty(),
-         "C++ backend should accept verified safety proofs for " +
+         "LLVM backend should accept verified safety proofs for " +
              std::string(label));
   const std::filesystem::path artifact =
-      directory / (std::string(label) + ".cpp");
-  std::ofstream(artifact) << generated.contents;
-  return {.optimized = std::move(optimized),
-          .cpp = generated.contents,
-          .artifact = artifact};
+      directory / (std::string(label) + ".o");
+  std::ofstream(artifact, std::ios::binary) << generated.contents;
+  return {.optimized = std::move(optimized), .artifact = artifact};
 }
 
 struct RunResult {
@@ -467,11 +532,15 @@ void testBoundedLogicalSizeEmission(const std::string &compiler,
                                         directory, "bounded-o0");
   const EmittedProgram o2 = emitProgram(frontend, lang::OptimizationLevel::O2,
                                         directory, "bounded-o2");
-  constexpr std::string_view checkedBounds =
-      "::gti_internal::backend::mir_checked_index_bounds_v1(";
-  expect(occurrences(o2.cpp, checkedBounds) <
-             occurrences(o0.cpp, checkedBounds),
-         "a proved public logical-size check should emit no target operation");
+  const auto code = lang::DefinedFailureCode::IndexOutOfBounds;
+  expect(retainedChecks(o2.optimized.mir, code) <
+                 retainedChecks(o0.optimized.mir, code) &&
+             programDischarges(o2.optimized.mir,
+                               lang::MirSafetyCheckFamily::Bounds) >
+                 programDischarges(o0.optimized.mir,
+                                   lang::MirSafetyCheckFamily::Bounds),
+         "a proved public logical-size check should retain no checked "
+         "operation");
 
   const std::filesystem::path o0Binary =
       build(compiler, o0.artifact, directory, "bounded-o0");
@@ -589,16 +658,15 @@ void testRelationalBoundsEmission(const std::string &compiler,
                                         directory, "relational-o0");
   const EmittedProgram o2 = emitProgram(frontend, lang::OptimizationLevel::O2,
                                         directory, "relational-o2");
-  constexpr std::string_view checkedBounds =
-      "::gti_internal::backend::mir_checked_index_bounds_v1(";
+  const auto code = lang::DefinedFailureCode::IndexOutOfBounds;
   // The whole program also carries library checks other proofs may remove;
   // optimizer_safety pins the per-function counts.
-  expect(occurrences(o0.cpp, checkedBounds) >=
-             occurrences(o2.cpp, checkedBounds) + 2,
-         "O2 should emit no target operation for the two relationally proved "
-         "checks (O0 " +
-             std::to_string(occurrences(o0.cpp, checkedBounds)) + ", O2 " +
-             std::to_string(occurrences(o2.cpp, checkedBounds)) + ")");
+  expect(retainedChecks(o0.optimized.mir, code) >=
+             retainedChecks(o2.optimized.mir, code) + 2,
+         "O2 should retain no checked operation for the two relationally "
+         "proved checks (O0 " +
+             std::to_string(retainedChecks(o0.optimized.mir, code)) + ", O2 " +
+             std::to_string(retainedChecks(o2.optimized.mir, code)) + ")");
 
   const std::filesystem::path o0Binary =
       build(compiler, o0.artifact, directory, "relational-o0");
@@ -979,77 +1047,58 @@ int main(int argc, char **argv) {
            "source-defined storage must not retain a private sparse-slot pass");
   }
 
-  constexpr std::string_view checkedArrayCall =
-      " = ::gti_internal::backend::mir_checked_array_read_v1(";
-  constexpr std::string_view checkedAddCall =
-      " = ::gti_internal::backend::mir_checked_add_v1";
-  constexpr std::string_view checkedArrayWriteCall =
-      " = ::gti_internal::backend::mir_checked_array_write_v1(";
-  constexpr std::string_view checkedRemainderCall =
-      "::gti_internal::backend::mir_checked_remainder_v1";
-  constexpr std::string_view nonzeroRemainderCall =
-      "::gti_internal::backend::mir_nonzero_remainder_v1";
-  constexpr std::string_view publicPrefixBoundsCall =
-      "::gti_internal::backend::mir_checked_index_bounds_v1(";
-  for (const auto &program : programs)
-    for (const auto retired :
-         {"::gti_internal::backend::mir_prefix_read_v1(",
-          "::gti_internal::backend::mir_prefix_read_mut_v1(",
-          "::gti_internal::backend::prefix_storage_read_unchecked(",
-          "::gti_internal::backend::prefix_storage_read_mut_unchecked("})
-      expect(program.cpp.find(retired) == std::string::npos,
-             "source prefix access must not revive a retired native helper");
-  // Compound assignments now stage their read, arithmetic and write as
-  // separate MIR operations. Observe the checked scalar multiply and its
-  // discharged expression, not the retired fused compound-assignment spelling.
-  constexpr std::string_view checkedMultiply =
-      " = ::gti_internal::backend::mir_checked_multiply_v1<std::int32_t>(";
-  constexpr std::string_view dischargedMultiply = " * __gti_mir_v_";
-  const auto multiplyCounts = [&](std::string_view needle) {
-    return " (O0=" + std::to_string(occurrences(o0.cpp, needle)) +
-           ", O2=" + std::to_string(occurrences(o2.cpp, needle)) +
-           ", O3=" + std::to_string(occurrences(o3.cpp, needle)) + ")";
+  // The removed checks are MIR facts: each proved check carries its discharge
+  // and owns no retained failure origin, while near misses keep theirs. O3
+  // adds no safety proof beyond O2.
+  const auto summary = [&](std::string_view what, std::size_t at0,
+                           std::size_t at2, std::size_t at3) {
+    return std::string(" (") + std::string(what) +
+           ": O0=" + std::to_string(at0) + ", O2=" + std::to_string(at2) +
+           ", O3=" + std::to_string(at3) + ")";
   };
-  expect(occurrences(o2.cpp, checkedMultiply) <
-                 occurrences(o0.cpp, checkedMultiply) &&
-             occurrences(o2.cpp, checkedMultiply) ==
-                 occurrences(o3.cpp, checkedMultiply),
-         "proved staged multiplication must remove native checked calls" +
-             multiplyCounts(checkedMultiply));
-  expect(occurrences(o2.cpp, dischargedMultiply) >
-                 occurrences(o0.cpp, dischargedMultiply) &&
-             occurrences(o2.cpp, dischargedMultiply) ==
-                 occurrences(o3.cpp, dischargedMultiply),
-         "proved staged multiplication must emit native scalar multiplication" +
-             multiplyCounts(dischargedMultiply));
-  expect(occurrences(o2.cpp, checkedArrayCall) <
-                 occurrences(o0.cpp, checkedArrayCall) &&
-             occurrences(o2.cpp, checkedAddCall) <
-                 occurrences(o0.cpp, checkedAddCall) &&
-             occurrences(o2.cpp, checkedArrayWriteCall) <
-                 occurrences(o0.cpp, checkedArrayWriteCall) &&
-             occurrences(o2.cpp, checkedRemainderCall) <
-                 occurrences(o0.cpp, checkedRemainderCall) &&
-             occurrences(o0.cpp, nonzeroRemainderCall) == 0 &&
-             occurrences(o2.cpp, nonzeroRemainderCall) > 0 &&
-             occurrences(o2.cpp, publicPrefixBoundsCall) > 0 &&
-             occurrences(o2.cpp, checkedArrayCall) ==
-                 occurrences(o3.cpp, checkedArrayCall) &&
-             occurrences(o2.cpp, checkedAddCall) ==
-                 occurrences(o3.cpp, checkedAddCall) &&
-             occurrences(o2.cpp, checkedArrayWriteCall) ==
-                 occurrences(o3.cpp, checkedArrayWriteCall) &&
-             occurrences(o2.cpp, checkedRemainderCall) ==
-                 occurrences(o3.cpp, checkedRemainderCall) &&
-             occurrences(o2.cpp, nonzeroRemainderCall) ==
-                 occurrences(o3.cpp, nonzeroRemainderCall) &&
-             occurrences(o2.cpp, publicPrefixBoundsCall) ==
-                 occurrences(o3.cpp, publicPrefixBoundsCall),
-         "native -O0 source should expose removed safe calls while preserving "
-         "the checked near-miss calls");
-  expect(occurrences(o2.cpp, publicPrefixBoundsCall) <
-             occurrences(o0.cpp, publicPrefixBoundsCall),
-         "native -O2 source should remove a proved public prefix bounds call");
+  const auto expectProved = [&](std::string_view what,
+                                lang::MirSafetyCheckFamily family,
+                                lang::DefinedFailureCode code,
+                                std::vector<lang::MirOperation> operations,
+                                std::string_view message) {
+    const std::size_t d0 =
+        programDischarges(o0.optimized.mir, family, operations);
+    const std::size_t d2 =
+        programDischarges(o2.optimized.mir, family, operations);
+    const std::size_t d3 =
+        programDischarges(o3.optimized.mir, family, operations);
+    const std::size_t r0 = retainedChecks(o0.optimized.mir, code, operations);
+    const std::size_t r2 = retainedChecks(o2.optimized.mir, code, operations);
+    const std::size_t r3 = retainedChecks(o3.optimized.mir, code, operations);
+    expect(d0 == 0 && d2 > d0 && d2 == d3 && r2 < r0 && r2 == r3,
+           std::string(message) +
+               summary(std::string(what) + " discharges", d0, d2, d3) +
+               summary(std::string(what) + " retained", r0, r2, r3));
+  };
+  expectProved(
+      "multiply", lang::MirSafetyCheckFamily::ArithmeticOverflow,
+      lang::DefinedFailureCode::IntegerOverflow,
+      {lang::MirOperation::Multiply, lang::MirOperation::MultiplyAssign},
+      "proved staged multiplication must remove checked native "
+      "multiplication");
+  expectProved("add", lang::MirSafetyCheckFamily::ArithmeticOverflow,
+               lang::DefinedFailureCode::IntegerOverflow,
+               {lang::MirOperation::Add},
+               "proved addition must remove its checked native operation");
+  expectProved("bounds", lang::MirSafetyCheckFamily::Bounds,
+               lang::DefinedFailureCode::IndexOutOfBounds, {},
+               "proved fixed-array reads/writes and public prefix bounds "
+               "checks must remove their checked native operation");
+  expectProved("remainder", lang::MirSafetyCheckFamily::ArithmeticDomain,
+               lang::DefinedFailureCode::ModuloByZero, {},
+               "proved remainders must become nonzero native remainders");
+  expect(retainedChecks(o2.optimized.mir,
+                        lang::DefinedFailureCode::IndexOutOfBounds) > 0 &&
+             retainedChecks(o2.optimized.mir,
+                            lang::DefinedFailureCode::ModuloByZero) > 0 &&
+             retainedChecks(o2.optimized.mir,
+                            lang::DefinedFailureCode::IntegerOverflow) > 0,
+         "native -O2 should preserve the checked near-miss operations");
 
   std::vector<std::filesystem::path> binaries;
   for (std::size_t index = 0; index < programs.size(); ++index) {

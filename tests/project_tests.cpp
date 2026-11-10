@@ -3818,34 +3818,24 @@ void testBackendProfileAuthority() {
              omitted.plan->generatedSource().extension() ==
                  (hostDefault == BackendKind::Llvm ? ".o" : ".cpp"),
          "omitted backend selects the target's default and its artifact kind");
-  expect(writeFile(manifest, prefix + "keep-cpp = true\n"),
-         "C++ retention profile is writable");
-  const auto retained = resolve();
-  expect(retained.succeeded() && retained.plan->backend() == BackendKind::Cpp &&
-             retained.plan->generatedSource().extension() == ".cpp",
-         "C++ retention without a backend keeps the C++ backend it configures");
+  // C++-backend plan selection (C++ retention, an explicit C++ override)
+  // is covered by cpp_mir_driver (tests/cpp_mir_driver_tests.cpp).
   expect(writeFile(manifest, prefix + "backend = \"llvm\"\n"),
          "LLVM profile is writable");
   const auto profile = resolve();
   ProjectBuildOverrides llvm;
   llvm.backend = BackendKind::Llvm;
   const auto explicitLlvm = resolve(llvm);
-  ProjectBuildOverrides cpp;
-  cpp.backend = BackendKind::Cpp;
-  const auto overridden = resolve(cpp);
-  expect(profile.succeeded() && explicitLlvm.succeeded() &&
-             overridden.succeeded(),
+  expect(profile.succeeded() && explicitLlvm.succeeded(),
          "profile and explicit executable backend policies resolve");
-  if (profile.plan && explicitLlvm.plan && overridden.plan) {
+  if (profile.plan && explicitLlvm.plan) {
     expect(profile.plan->backend() == BackendKind::Llvm &&
                profile.plan->generatedSource().extension() == ".o" &&
-               overridden.plan->backend() == BackendKind::Cpp &&
-               overridden.plan->generatedSource().extension() == ".cpp",
-           "explicit backend overrides the profile before artifact planning");
+               explicitLlvm.plan->backend() == BackendKind::Llvm &&
+               explicitLlvm.plan->generatedSource().extension() == ".o",
+           "the LLVM profile and override plan an LLVM object artifact");
     expect(profile.plan->projectModelIdentity() ==
-                   explicitLlvm.plan->projectModelIdentity() &&
-               profile.plan->projectModelIdentity() !=
-                   overridden.plan->projectModelIdentity(),
+               explicitLlvm.plan->projectModelIdentity(),
            "cache policy binds the effective backend, not whether it was "
            "explicit");
   }
@@ -3858,9 +3848,8 @@ void testBackendProfileAuthority() {
          "LLVM rejects a C++-specific CLI standard");
   expect(writeFile(manifest, prefix + "backend = \"llvm\"\nkeep-cpp = true\n"),
          "conflicting profile is writable");
-  expect(
-      !resolve().succeeded() && resolve(cpp).succeeded(),
-      "effective backend authority decides whether profile retention is valid");
+  expect(!resolve().succeeded(),
+         "an LLVM profile rejects its own C++ representation retention");
   llvm.cppStandard.reset();
   expect(resolve(llvm).succeeded(),
          "an explicit retention disable repairs an LLVM profile conflict");

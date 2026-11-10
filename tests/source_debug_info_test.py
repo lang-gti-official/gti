@@ -156,8 +156,9 @@ def main():
                      "-o", emitted], root)
             if is_cpp_mode(flags):
                 assert '#line ' in emitted.read_text(encoding="utf-8")
-        run([gti, source, "--emit-cpp", "-g", "--no-debug-info", "-o", generated], root)
-        assert '#line ' not in generated.read_text(encoding="utf-8")
+        if cpp_modes():
+            run([gti, source, "--emit-cpp", "-g", "--no-debug-info", "-o", generated], root)
+            assert '#line ' not in generated.read_text(encoding="utf-8")
         support = root / "support.gti"
         support.write_text(
             (
@@ -198,12 +199,16 @@ def main():
         assert rejected.returncode and "debug info" in rejected.stderr
 
         project = root / "project"
+        # The C++ profile also retains the C++ text, whose #line mapping
+        # follows the profile's debug-info setting.
+        cpp_project = bool(cpp_modes())
         (project / "src").mkdir(parents=True)
         (project / "src/main.gti").write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
         (project / "gti.toml").write_text(
             'manifest-version = 1\n[package]\nname = "debugger_test"\nversion = "0.1.0"\n'
             '[targets.app]\nkind = "executable"\nroot = "src/main.gti"\n'
-            '[profiles.dev]\noptimization = 0\nkeep-cpp = true\ndebug-info = true\n',
+            '[profiles.dev]\noptimization = 0\n' + ('keep-cpp = true\n' if cpp_project else '')
+            + 'debug-info = true\n',
             encoding="utf-8")
         result = run([gti, "build", "--verbose", "--build-report", "report.json"], project)
         assert "debug-info=true" in result.stdout + result.stderr
@@ -214,16 +219,20 @@ def main():
         assert metadata["schemaVersion"] == 15
         assert next(p for p in metadata["profiles"] if p["name"] == "dev")["debugInfo"] is True
         assert next(p for p in metadata["targets"][0]["outputs"] if p["profile"] == "dev")["debugInfo"] is True
-        project_cpp = next((project / "build").rglob("app.gti.cpp"))
-        assert '#line ' in project_cpp.read_text(encoding="utf-8")
+        project_executable = next(path for path in (project / "build").rglob("app")
+                                  if path.is_file() and path.parent.name != ".gti-intermediate")
+        project_cpp = project_executable.parent / ".gti-intermediate" / "app.gti.cpp"
+        if cpp_project:
+            assert '#line ' in project_cpp.read_text(encoding="utf-8")
         result = run([gti, "build", "--verbose", "--no-debug-info"], project)
         assert "debug-info=false" in result.stdout + result.stderr
-        assert '#line ' not in project_cpp.read_text(encoding="utf-8")
+        if cpp_project:
+            assert '#line ' not in project_cpp.read_text(encoding="utf-8")
         run([gti, "build", "--all", "-g"], project)
         rebuilt = run([gti, "build", "-g", "--verbose"], project)
         assert "gti: cache hit " in rebuilt.stderr, rebuilt.stderr
-        assert '#line ' in project_cpp.read_text(encoding="utf-8")
-        project_executable = project_cpp.parent.parent / "app"
+        if cpp_project:
+            assert '#line ' in project_cpp.read_text(encoding="utf-8")
         project_bundle = Path(str(project_executable) + ".dSYM")
         if sys.platform == "darwin":
             assert (project_bundle / ".gti-debug-symbols").is_file()

@@ -109,7 +109,7 @@ def main():
         source = root / "main.gti"
         source.write_text(SOURCE)
         for mode, status in ((None, 0), ("off", 0), ("warn", 0), ("strict", 65)):
-            command = [str(gti), str(source), "--emit-cpp", "-o", str(root / "out.cpp")]
+            command = [str(gti), str(source), "--emit-mir", "-o", str(root / "out.mir")]
             if mode:
                 command.append(f"--raw-pointer-audit={mode}")
             result = run(command, root, status)
@@ -120,7 +120,7 @@ def main():
         # application by default; the flag opts in, and Strict then promotes them.
         library = root / "library.gti"
         library.write_text(LIBRARY_SOURCE)
-        library_command = [str(gti), str(library), "--emit-cpp", "-o", str(root / "library.cpp")]
+        library_command = [str(gti), str(library), "--emit-mir", "-o", str(root / "library.mir")]
         hidden = run([*library_command, "--raw-pointer-audit=warn"], root)
         assert not library_findings(hidden.stderr), hidden.stderr
         shown = run([*library_command, "--raw-pointer-audit=warn",
@@ -133,7 +133,7 @@ def main():
         run([*library_command, "--raw-pointer-audit-library-findings",
              "--no-raw-pointer-audit-library-findings"], root, 64)
         # Promoted strict findings are errors, not suppressible advisory warnings.
-        run([str(gti), str(source), "--emit-cpp", "--raw-pointer-audit=strict", "-Wno-raw-pointer-violation"], root, 65)
+        run([str(gti), str(source), "--emit-mir", "--raw-pointer-audit=strict", "-Wno-raw-pointer-violation"], root, 65)
         for args in (["--raw-pointer-audit=bad"], ["--raw-pointer-audit"],
                      ["--raw-pointer-audit=off", "--raw-pointer-audit=warn"]):
             run([str(gti), str(source), *args], root, 64)

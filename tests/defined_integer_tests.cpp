@@ -2,7 +2,7 @@
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <array>
@@ -428,16 +428,12 @@ int main() {
          "defined integer arithmetic should produce valid MIR");
 
   if (result.canGenerateCode()) {
-    const std::string generated = gti_test::emitCppText(result);
-    for (const std::string_view helper :
-         {"wrapping_add", "wrapping_sub", "wrapping_mul", "saturating_add",
-          "saturating_sub", "saturating_mul", "integer_add_overflow_flag",
-          "integer_subtract_overflow_flag", "integer_multiply_overflow_flag"}) {
-      expect(generated.find("::gti_internal::backend::" + std::string(helper) +
-                            "(") != std::string::npos,
-             "production MIR emission should lower each ordinary std wrapper "
-             "through the selected private helper");
-    }
+    std::string error;
+    expect(gti_test::llvmEmits(result, lang::OptimizationLevel::O0,
+                               lang::TargetInfo::host(), &error),
+           "production MIR emission should lower each ordinary std wrapper "
+           "natively: " +
+               error);
   }
 }
 
@@ -481,25 +477,6 @@ int after = 42;
          "declarations");
 }
 
-void testHelpersRequireExpectedSurface() {
-  const lang::FrontendResult result =
-      analyze("defined-integer-unrelated.gti", "int main() { return 0; }");
-  expect(result.canGenerateCode(),
-         "an unrelated program should remain valid without expected support");
-  for (const lang::CppStandard standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    const std::string generated = gti_test::emitCppText(result, standard);
-    expect(generated.find("#include <expected>") == std::string::npos &&
-               generated.find("#include <nonstd/expected.hpp>") ==
-                   std::string::npos &&
-               generated.find("using expected_result =") == std::string::npos &&
-               generated.find("inline constexpr expected_result<") ==
-                   std::string::npos,
-           "programs without expected values should not emit checked-result "
-           "helpers or their native dependency");
-  }
-}
-
 void testPublicApiRejectsUnsupportedTypes() {
   const lang::FrontendResult floating =
       analyze("defined-integer-float.gti",
@@ -525,7 +502,6 @@ int main() {
   testPublicApiAndLowering();
   testPublicApiRejectsUnsupportedTypes();
   testFailedConstexprObservation();
-  testHelpersRequireExpectedSurface();
   if (failures != 0) {
     std::cerr << failures << " defined integer arithmetic test(s) failed\n";
     return 1;

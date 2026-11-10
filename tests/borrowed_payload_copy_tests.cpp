@@ -1,4 +1,7 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
 
 int main() {
   const std::string prefix = R"gti(
@@ -72,8 +75,12 @@ int main() {
   expect(positive.canGenerateCode(), "shared class and multi-origin enum "
                                      "copies retain exact dependency groups");
   if (positive.canGenerateCode()) {
-    expect(!gti_test::emitCppText(positive).empty(),
-           "copied borrowed enums retain native representation");
+    expect(lang::verifyMirProgram(positive.mir).valid(),
+           "copied borrowed enums produce verified MIR");
+    std::string error;
+    expect(gti_test::llvmEmits(positive, lang::OptimizationLevel::O0,
+                               lang::TargetInfo::host(), &error),
+           "copied borrowed enums retain native representation: " + error);
     std::size_t aliases = 0;
     for (const auto &function : positive.mir.functionInstances())
       for (const auto &loan : function.body.loans) {

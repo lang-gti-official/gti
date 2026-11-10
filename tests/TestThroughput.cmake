@@ -350,7 +350,7 @@ endif()
 get_property(gti_throughput_tests DIRECTORY PROPERTY TESTS)
 set_property(TEST ${gti_throughput_tests} APPEND PROPERTY LABELS "coverage-full")
 set(gti_fast_feedback_tests
-  compiler_library_boundary cpp_backend_library_boundary driver_library_boundary
+  compiler_library_boundary driver_library_boundary
   project_model executable_entry_semantics include_suggestions
   raw_pointer_pipeline raw_borrow_contract raw_access_contract
   mir_full_expression mir_program_initialization mir_hosted_startup

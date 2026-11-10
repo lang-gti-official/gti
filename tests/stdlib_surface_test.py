@@ -16,6 +16,7 @@ from typing import Any
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from native_fixture_build import build_fixture
+from backend_modes import cpp_modes
 from llvm_case_context import CaseContext, source_digest
 from internal_module_fixture import private_library, private_source
 
@@ -400,6 +401,28 @@ def case_context(case: dict[str, Any], repository: pathlib.Path) -> dict:
     }
 
 
+def executed_case(case: dict[str, Any]) -> dict[str, Any]:
+    """The case as this run builds it: the shipped LLVM backend unless C++ is selected.
+
+    An implicit backend is the shipped one; spelling it keeps a native provider
+    on the driver's own link path instead of the C++ text. A C++ positive case
+    executes on LLVM unless GTI_TEST_BACKENDS selects the C++ backend, so no
+    case loses its execution; C++ rejection controls run only under the C++
+    profile (`selected_cases`).
+    """
+    if case.get("backend") is None or (case["backend"] == "cpp" and not cpp_modes()):
+        return {**case, "backend": "llvm"}
+    return case
+
+
+def selected_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Cases this run executes: C++ rejection controls need the C++ backend."""
+    if cpp_modes():
+        return cases
+    return [case for case in cases
+            if not (case.get("backend") == "cpp" and case["mode"] == "diagnostic")]
+
+
 def run_case(
     case: dict[str, Any], compiler: pathlib.Path, cxx: pathlib.Path,
     runtime_library: pathlib.Path, repository: pathlib.Path, scratch: pathlib.Path,
@@ -475,21 +498,22 @@ def main() -> int:
         scratch = pathlib.Path(temporary)
         def execute(case):
             run_case(
-                case,
+                executed_case(case),
                 compiler,
                 cxx,
                 runtime_library,
                 repository,
                 scratch,
             )
-        run_cases([(case["id"], case) for case in manifest["cases"]],
+        cases = selected_cases(manifest["cases"])
+        run_cases([(case["id"], case) for case in cases],
                   execute, arguments.jobs)
     executable = sum(
         entry["status"] == "executable" for entry in manifest["entries"]
     )
     print(
         f"stdlib surface passed: {executable} executable entries, "
-        f"{len(manifest['cases'])} O0/O3 or diagnostic cases"
+        f"{len(cases)} O0/O3 or diagnostic cases"
     )
     return 0
 

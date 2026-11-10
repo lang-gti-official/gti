@@ -1,9 +1,8 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 #include "gti/native_header.h"
-#include "native_symbol_spelling.h"
+#include "lowered_program_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -160,18 +159,31 @@ int main() {
                header.find("char take_char(char ") != std::string::npos &&
                header.find("_Bool take_bool(_Bool ") != std::string::npos,
            "C17 header prototypes must retain primitive C identities");
-    const auto artifact =
-        gti_test::emitCpp(result, lang::CppStandard::Cpp20, target);
-    expect(artifact.contents.find(
-               wordSpelling + " " +
-               gti_test::nativeSpelling(artifact.contents, "take_word")) !=
-               std::string::npos,
+    const auto declaration = [&](std::string_view name) {
+      for (const auto &row : lowered.declarations()) {
+        const auto *function =
+            std::get_if<lang::LoweredFunctionDeclaration>(&row.payload);
+        if (function != nullptr && function->qualifiedName == name)
+          return function;
+      }
+      return static_cast<const lang::LoweredFunctionDeclaration *>(nullptr);
+    };
+    const auto *word = declaration("take_word");
+    expect(word != nullptr && word->linkage == lang::LanguageLinkage::C &&
+               word->returnType == *longType &&
+               word->returnType.nativeCScalar == longType->nativeCScalar &&
+               word->parameters.size() == 1 &&
+               word->parameters.front().type == *longType &&
+               word->returnType != *longLongType,
            "native C declarations must preserve long rather than substitute an "
            "equal-width type");
-    expect(artifact.contents.find(
-               "char " +
-               gti_test::nativeSpelling(artifact.contents, "take_char")) !=
-               std::string::npos,
+    const auto charType = T::nativeCScalarType(C::Char, target);
+    const auto *character = declaration("take_char");
+    expect(charType && character != nullptr &&
+               character->returnType == *charType &&
+               character->returnType.nativeCScalar == C::Char &&
+               character->parameters.size() == 1 &&
+               character->parameters.front().type.nativeCScalar == C::Char,
            "native plain char must not become signed char or a GTI code unit");
   }
   return failures ? 1 : 0;

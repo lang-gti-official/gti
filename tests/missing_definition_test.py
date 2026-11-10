@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_text_modes
 from lsp_smoke_test import LspSession, lsp_position
 from lsp_project_facts_test import diagnostics_for, open_document
 
@@ -22,7 +23,9 @@ def main():
                             "return value.expired() ? 0 : 1; }\n")
         for source_path in (fixtures / "f7-undefined-user-function.gti", bodyless):
             name = source_path.stem
-            for mode in ([], ["--emit-cpp"]):
+            # An executable build rejects it; so does C++ emission, when the
+            # backend policy selects the C++ backend (tests/backend_modes.py).
+            for mode in ([], *([["--emit-cpp"]] if cpp_text_modes() else [])):
                 rejected = subprocess.run(
                     [compiler, str(source_path), *mode, "--cxx",
                      str(root / "no-native-compiler"), "--progress=never",

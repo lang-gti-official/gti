@@ -1,4 +1,7 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
 
 namespace {
 // expected<T, E> is the prelude's ordinary source class.
@@ -31,18 +34,14 @@ const lang::MirInstruction *definition(const lang::MirBody &body,
   return nullptr;
 }
 
-// Backend admission is body analysis plus the text vocabulary. The source
-// expected class publishes through the generic class vocabulary, which leaves
-// lifecycle forgeries of its owned results to body analysis.
-bool admitted(const lang::MirProgram &program,
-              const lang::CppMirBodyEmissionMap &rows,
-              const lang::MirFunctionInstance &function) {
-  const lang::CppMirBodyEmitter emitter(program, rows);
-  const lang::MirBodyAddress address{lang::MirBodyKind::Function, function.id};
-  return emitter.analyze(address).ready() &&
-         (function.mayRaiseDefinedFailure
-              ? emitter.supportsFailureBodyText(address)
-              : emitter.supportsBodyText(address));
+// The shipped backend accepts the verified program; reports why it did not.
+bool emitsNative(const lang::FrontendResult &frontend) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  if (!emitted)
+    std::cerr << "native emission: " << error << '\n';
+  return emitted;
 }
 } // namespace
 
@@ -59,15 +58,13 @@ int main() {
                lang::verifyMirProgram(frontend.mir).valid(),
            "void propagation with a lexical owning error has verified MIR");
     if (frontend.canGenerateCode()) {
-      const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+      expect(emitsNative(frontend),
+             "void Expected success and error observers share an emitted slot");
       std::size_t checked = 0;
       for (const auto &function : frontend.mir.functionInstances()) {
         const auto *hir = frontend.hir.findFunctionInstance(function.id);
         if (!hir || !hir->source || hir->source->name().lexeme != "pipeline")
           continue;
-        expect(
-            admitted(frontend.mir, rows, function),
-            "void Expected success and error observers share an emitted slot");
         for (const auto &block : function.body.blocks) {
           for (const auto &instruction : block.instructions) {
             // `?` observes a void success through the tryable protocol.
@@ -86,8 +83,7 @@ int main() {
               for (auto &candidate : candidateBlock.instructions)
                 if (candidate.id == instruction.id)
                   candidate.info.type = lang::SemanticType::Int32;
-            expect(!lang::verifyMirProgram(malformed).valid() &&
-                       !admitted(malformed, rows, *changed),
+            expect(!lang::verifyMirProgram(malformed).valid(),
                    "admission still rejects a forged void-success result type");
           }
         }
@@ -121,8 +117,6 @@ expected<void, Error> complete(bool fail) {
 )");
   expect(passive.canGenerateCode(), "cleanup-free move-only error is valid");
   if (passive.canGenerateCode()) {
-    const lang::CppMirBodyEmissionMap passiveRows(
-        buildRows(passive, passive.mir));
     std::size_t checked = 0;
     for (const auto &function : passive.mir.functionInstances()) {
       const auto *hir = passive.hir.findFunctionInstance(function.id);
@@ -131,10 +125,19 @@ expected<void, Error> complete(bool fail) {
           !isExpected(passive, function.returnType))
         continue;
       ++checked;
-      expect(admitted(passive.mir, passiveRows, function),
-             "cleanup-free error propagation remains emit-ready");
     }
     expect(checked == 3, "scalar and void cleanup-free error results checked");
+    // Native emission of this fixture is an LLVM gap (O-LLVM-06); the
+    // frozen cpp_mir_owned_expected_error keeps the C++ admission check. The
+    // verified lowered program every backend consumes must accept it.
+    bool lowered = true;
+    try {
+      (void)gti_test::lowerOptimizedProgram(passive);
+    } catch (const std::exception &error) {
+      std::cerr << error.what() << '\n';
+      lowered = false;
+    }
+    expect(lowered, "cleanup-free error propagation remains emit-ready");
   }
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/owned_expected_error.gti";
@@ -149,7 +152,7 @@ expected<void, Error> complete(bool fail) {
          "MIR");
   if (!frontend.canGenerateCode())
     return 1;
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  expect(emitsNative(frontend), "owning-error Expected bodies are admitted");
   std::size_t wrappers = 0;
   std::size_t publications = 0;
   std::size_t bodies = 0;
@@ -167,8 +170,6 @@ expected<void, Error> complete(bool fail) {
         name != "forwarded_text")
       continue;
     ++bodies;
-    expect(admitted(frontend.mir, rows, function),
-           "owning-error Expected body is admitted: " + name);
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
         const auto *destination =
@@ -229,10 +230,6 @@ expected<void, Error> complete(bool fail) {
             expect(!lang::verifyMirProgram(malformed).valid(),
                    "passive Expected success requires exact binding activation "
                    "and drop metadata");
-            expect(!admitted(malformed, rows, function),
-                   "emission rejects malformed passive Expected binding "
-                   "publication: " +
-                       std::to_string(mutation));
           }
         }
         // unexpected(e) is the prelude's source factory: it consumes its
@@ -271,8 +268,6 @@ expected<void, Error> complete(bool fail) {
           expect(!lang::verifyMirProgram(malformed).valid(),
                  "MIR rejects missing or wrong Unexpected source/wrapper "
                  "ownership");
-          expect(!admitted(malformed, rows, function),
-                 "emission fails closed on invalid Unexpected ownership");
         }
       }
       if (block.terminator.kind != lang::MirTerminatorKind::Return ||
@@ -305,10 +300,6 @@ expected<void, Error> complete(bool fail) {
             expect(!lang::verifyMirProgram(malformed).valid(),
                    "Expected result publication requires its unconditional "
                    "handoff");
-            expect(!admitted(malformed, rows, function),
-                   "emitter cannot publish an owning result without exact "
-                   "handoff: " +
-                       name + " mutation " + std::to_string(mutation));
           }
         }
       }

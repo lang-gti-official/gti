@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import native_modes
+
 
 def run(command, *, success=True):
     result = subprocess.run(command, text=True, capture_output=True, timeout=90)
@@ -120,11 +122,10 @@ int main() {
          wrapped.record.value + derived.value + argument.value == 68 ? 0 : 3;
 }
 ''')
-        for backend in ("llvm", "cpp"):
-            for level in ("-O0", "-O3"):
-                binary = root / f"available-{backend}-{level}"
-                run([compiler, str(source), "--backend", backend, level, "-o", str(binary)])
-                run([str(binary)])
+        for mode, flags, _native in native_modes():
+            binary = root / f"available-{mode}"
+            run([compiler, str(source), *flags, "-o", str(binary)])
+            run([str(binary)])
         example = repository / "examples/005-objects.gti"
         binary = root / "objects"
         run([compiler, str(example), "--backend", "llvm", "-O3", "-o", str(binary)])

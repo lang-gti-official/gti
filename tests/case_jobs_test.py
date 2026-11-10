@@ -194,7 +194,8 @@ class CaseJobsTests(unittest.TestCase):
                 normalized = tuple(pathlib.Path(arg).name
                                    if pathlib.Path(arg).parent == output.parent else arg
                                    for arg in command)
-                if "--emit-cpp" in command:
+                # Source-diagnostic negatives stop at a non-native emission.
+                if "--emit-mir" in command or "--emit-cpp" in command:
                     negatives.append((normalized, source.read_text()))
                     return subprocess.CompletedProcess(
                         command, 0 if corrupt == source.stem else 65, "",

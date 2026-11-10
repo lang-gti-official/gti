@@ -1,8 +1,9 @@
 #include "../src/compiler/mir_verification_queries.h"
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
+#include "gti/lowered_program_printer.h"
 #include "gti/mir.h"
 #include "gti/mir_effects.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -118,12 +119,16 @@ int main() {
              "no unsafe mechanical fix for a pointee audit finding");
     }
   }
-  if (off.canGenerateCode() && warn.canGenerateCode())
-    for (const auto standard :
-         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
-      expect(gti_test::emitCppText(off, standard) ==
-                 gti_test::emitCppText(warn, standard),
-             "Off and Warn emit identical source-result pointer code");
+  if (off.canGenerateCode() && warn.canGenerateCode()) {
+    std::string error;
+    expect(lang::LoweredProgramPrinter().print(
+               gti_test::lowerOptimizedProgram(off)) ==
+                   lang::LoweredProgramPrinter().print(
+                       gti_test::lowerOptimizedProgram(warn)) &&
+               gti_test::llvmEmits(off, lang::OptimizationLevel::O0,
+                                   lang::TargetInfo::host(), &error),
+           "Off and Warn lower identical source-result pointer code " + error);
+  }
 
   // Unlike provenance observations, declared pointer compatibility and
   // constness cannot be disabled by any audit policy.
@@ -245,10 +250,10 @@ int main() {
       }
   expect(conversions >= 4,
          "source aliases and helpers lower to MIR conversions");
-  for (const auto standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
-    expect(!gti_test::emitCppText(result, standard).empty(),
-           "production MIR emission supports conversion");
+  std::string error;
+  expect(gti_test::llvmEmits(result, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &error),
+         "production native emission supports conversion " + error);
 }
 void negatives() {
   negative("cannot drop const", R"(using P = int*;

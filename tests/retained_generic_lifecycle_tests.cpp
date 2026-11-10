@@ -1,15 +1,9 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
 #include "gti/mir_lowering.h"
 
-namespace lang {
-struct CppMirRepresentationSnapshotTestAccess {
-  static void reseal(CppMirRepresentationSnapshot &snapshot) {
-    snapshot.inventorySeal_ = CppMirRepresentationSnapshot::InventorySeal{
-        snapshot.mir, snapshot.bodies, snapshot.data, snapshot.declarationRoots,
-        snapshot.thunks};
-  }
-};
-} // namespace lang
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
 
 namespace {
 std::string source(std::string_view destructor) {
@@ -66,30 +60,6 @@ void checkCompatible(std::string_view destructor) {
       expect(destructorInstance->mayRaiseDefinedFailure == !destructor.empty(),
              "positive fixtures exercise both raising and nonraising source "
              "cleanup");
-      auto rows = lang::buildCppMirBodyEmissionMapRows(
-          lowered, lang::CppStandard::Cpp23);
-      const auto overlay = lang::cppMirApplyGenericOwnerDestructorTypeOverlays(
-          rows, lowered, *destructorInstance);
-      expect(overlay && *overlay != 0,
-             "valid concrete owner receives a dependent destructor overlay");
-      for (int mutation = 0; mutation != 2; ++mutation) {
-        auto malformed = lowered;
-        if (mutation == 0) {
-          auto *owner = const_cast<lang::LoweredClassInstance *>(
-              malformed.findClassInstance(cleanup->classInstance));
-          owner->typeArguments.front() = lang::SemanticType::Bool;
-        } else {
-          auto *owner = const_cast<lang::MirClassInstance *>(
-              malformed.mir().findClassInstance(cleanup->classInstance));
-          owner->type.valueArguments.emplace_back();
-        }
-        auto mutatedRows = lang::buildCppMirBodyEmissionMapRows(
-            lowered, lang::CppStandard::Cpp23);
-        expect(!lang::cppMirApplyGenericOwnerDestructorTypeOverlays(
-                   mutatedRows, malformed, *destructorInstance),
-               "overlay independently rejects mismatched concrete owner "
-               "arguments");
-      }
     }
     for (const auto form :
          {lang::LoweredLifecycleCleanupForm::OrdinaryClass,
@@ -107,114 +77,32 @@ void checkCompatible(std::string_view destructor) {
   }
   expect(retained == 2,
          "both closure and nested owner retain exact cleanup items");
-  for (const auto standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    const auto built =
-        lang::buildCppMirRepresentationSnapshot(lowered, standard);
-    expect(built.valid(),
-           "retained owner needs a complete representation snapshot");
-    if (!built.valid())
+  // Each fixture Owner constructor, for the closure and the nominal
+  // instance, is its own MIR constructor body in the verified program.
+  std::size_t constructors = 0;
+  for (const auto &instance : lowered.mir().constructorInstances()) {
+    const auto *source = frontend.hir.findConstructorInstance(instance.id);
+    if (source == nullptr ||
+        source->sourceUnit != frontend.sourceGraph.entryUnit() ||
+        instance.parameterTypes.size() != 1 ||
+        (instance.parameterTypes.front().kind != lang::SemanticType::Lambda &&
+         instance.parameterTypes.front().kind != lang::SemanticType::Class))
       continue;
-    for (const auto &thunk : built.snapshot->thunks) {
-      const auto *cleanup =
-          std::get_if<lang::CppMirLifecycleCleanupThunk>(&thunk.payload);
-      if (cleanup == nullptr ||
-          cleanup->form != lang::CppMirLifecycleCleanupForm::RetainedPrimary)
-        continue;
-      for (const auto form :
-           {lang::CppMirLifecycleCleanupForm::OrdinaryClass,
-            lang::CppMirLifecycleCleanupForm::ConcreteSpecialization}) {
-        auto malformed = *built.snapshot;
-        for (auto &candidate : malformed.thunks)
-          if (candidate.identity == thunk.identity)
-            std::get<lang::CppMirLifecycleCleanupThunk>(candidate.payload)
-                .form = form;
-        lang::CppMirRepresentationSnapshotTestAccess::reseal(malformed);
-        const auto plan =
-            lang::planCppMirProgram(frontend.mir, std::move(malformed));
-        expect(
-            std::any_of(plan.issues.begin(), plan.issues.end(),
-                        [](const auto &issue) {
-                          return issue.kind ==
-                                 lang::CppMirPlanIssueKind::InvalidThunkPayload;
-                        }),
-            "C++ planner independently rejects wrong cleanup form after "
-            "resealing");
-      }
-    }
-    try {
-      const auto text = lang::CppBackend(standard).generate(lowered).contents;
-      const std::string declaration = "Owner<Callable>::~Owner() noexcept";
-      const auto first = text.find(declaration);
-      expect(first != std::string::npos &&
-                 text.find(declaration, first + 1) == std::string::npos,
-             "compatible instances share exactly one dependent destructor");
-      expect(
-          text.find("Owner<void>") == std::string::npos,
-          "unnameable closure must never become a void owner specialization");
-      const std::string constructor =
-          "Owner<Callable>::Owner(std::conditional_t<"
-          "(!std::is_reference_v<Callable> && "
-          "::gti_internal::backend::byte_transport<"
-          "std::remove_cvref_t<Callable>>::value), const Callable &, Callable>";
-      const auto firstConstructor = text.find(constructor);
-      expect(firstConstructor != std::string::npos &&
-                 text.find(constructor, firstConstructor + 1) ==
-                     std::string::npos,
-             "closure and nominal field publication comments do not split "
-             "constructor representation");
-      for (const auto &instance : lowered.mir().constructorInstances()) {
-        // Only the fixture's Owner constructors; prelude constructors such as
-        // expected's are emitted in their failure form.
-        const auto *source = frontend.hir.findConstructorInstance(instance.id);
-        if (source == nullptr ||
-            source->sourceUnit != frontend.sourceGraph.entryUnit() ||
-            instance.parameterTypes.size() != 1 ||
-            (instance.parameterTypes.front().kind !=
-                 lang::SemanticType::Lambda &&
-             instance.parameterTypes.front().kind != lang::SemanticType::Class))
-          continue;
-        const std::string marker =
-            "// GTI verified-MIR body: scalar-cfg-v1 constructor-instance " +
-            std::to_string(instance.id) + "\n";
-        const auto firstMarker = text.find(marker);
-        expect(firstMarker != std::string::npos &&
-                   text.find(marker, firstMarker + 1) == std::string::npos,
-               "canonicalized closure and nominal publication retains every "
-               "exact constructor marker once");
-      }
-      for (const auto &item : lowered.generatedItems()) {
-        const auto *cleanup =
-            std::get_if<lang::LoweredLifecycleCleanupItem>(&item.payload);
-        if (cleanup == nullptr ||
-            cleanup->form != lang::LoweredLifecycleCleanupForm::RetainedPrimary)
-          continue;
-        const std::string branch = "__gti_cleanup_instance == " +
-                                   std::to_string(cleanup->classInstance);
-        const auto start = text.find(branch);
-        expect(start != std::string::npos,
-               "source body grouping preserves each concrete aggregate cleanup "
-               "branch");
-        const auto *owner =
-            frontend.mir.findClassInstance(cleanup->classInstance);
-        if (start != std::string::npos && owner != nullptr) {
-          const auto end = text.find("return sequence.success();", start);
-          const auto branchText = text.substr(start, end - start);
-          const bool closure =
-              owner->type.arguments.front().kind == lang::SemanticType::Lambda;
-          expect(branchText.find(closure
-                                     ? "__gti_mir_closure_cleanup_failure"
-                                     : "__gti_mir_unique_cleanup_failure<") !=
-                     std::string::npos,
-                 "capture and nominal field cleanup retain distinct exact "
-                 "representations");
-        }
-      }
-    } catch (const std::exception &error) {
-      std::cerr << error.what() << '\n';
-      expect(false, "compatible nested owner lifecycle must emit");
-    }
+    ++constructors;
+    expect(!instance.body.blocks.empty(),
+           "each closure and nominal owner constructor has its own MIR body");
   }
+  expect(constructors == 2,
+         "the closure and the nested owner each select one constructor");
+  expect(lang::verifyMirProgram(lowered.mir()).valid() &&
+             lang::verifyLoweredProgram(lowered).empty(),
+         "compatible nested owner lifecycle lowers to a verified program");
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  if (!emitted)
+    std::cerr << error << '\n';
+  expect(emitted, "compatible nested owner lifecycle must emit");
 }
 
 void checkDifferentBodiesFailClosed() {
@@ -253,22 +141,28 @@ void checkDifferentBodiesFailClosed() {
   frontend.mir = loweredMir.program;
   const auto lowered =
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
-  expect(lang::buildCppMirRepresentationSnapshot(lowered).valid(),
-         "distinct cleanup reaches representation grouping after snapshot "
-         "admission");
-  bool rejected = false;
-  try {
-    static_cast<void>(lang::CppBackend().generate(lowered));
-  } catch (const std::logic_error &error) {
-    rejected = std::string_view(error.what())
-                   .find("generic-owner destructor instances have incompatible "
-                         "MIR representations") != std::string_view::npos;
-    if (!rejected)
-      std::cerr << "unexpected boundary: " << error.what() << '\n';
+  expect(lang::verifyLoweredProgram(lowered).empty(),
+         "distinct cleanup behavior lowers to a verified program");
+  std::size_t distinct = 0;
+  for (const auto &instance : lowered.mir().destructorInstances()) {
+    const auto *owner = lowered.mir().findClassInstance(instance.owner);
+    if (owner != nullptr && owner->type.arguments.size() == 1 &&
+        (owner->type.arguments.front().kind == lang::SemanticType::Lambda ||
+         owner->type.arguments.front().kind == lang::SemanticType::Class))
+      ++distinct;
   }
-  expect(
-      rejected,
-      "distinct concrete cleanup bodies cannot silently share the first body");
+  expect(distinct == 2,
+         "each concrete owner keeps its own destructor instance");
+  // The native backend emits each concrete destructor instance from its own
+  // MIR body; the frozen C++ backend's refusal to group incompatible bodies
+  // is checked by cpp_mir_retained_generic_lifecycle.
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  if (!emitted)
+    std::cerr << error << '\n';
+  expect(emitted,
+         "distinct concrete cleanup bodies compile from their own MIR bodies");
 }
 
 void checkDestructorCannotConsumeFieldAgain() {

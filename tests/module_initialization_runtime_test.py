@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
 from project_cli_smoke_test import executable_named
 
 
@@ -14,7 +15,8 @@ def main():
     compiler = str(pathlib.Path(sys.argv[1]).resolve())
     root = pathlib.Path(tempfile.mkdtemp(prefix="gti-module-initialization-"))
     try:
-        for backend in ("llvm", "cpp"):
+        # LLVM always; the C++ backend only when GTI_TEST_BACKENDS selects it.
+        for backend in ("llvm", "cpp") if cpp_modes() else ("llvm",):
             project = root / backend
             project.mkdir()
             sources = {

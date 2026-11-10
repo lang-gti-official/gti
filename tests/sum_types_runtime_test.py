@@ -4,7 +4,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -32,6 +32,10 @@ def main() -> int:
                 sys.stderr.write(executed.stderr)
                 return 1
 
+        # The lowering representation is C++ text; it is checked only when
+        # the backend policy selects the C++ backend (tests/backend_modes.py).
+        if not cpp_text_modes():
+            return 0
         emitted = root / "sum-types.cpp"
         emission = run(
             [str(compiler), str(source), "--emit-cpp", "-o", str(emitted)]

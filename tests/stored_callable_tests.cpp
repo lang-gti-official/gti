@@ -1,8 +1,41 @@
-#include "../src/compiler/cpp_mir_body_emitter.h"
-#include "../src/compiler/cpp_mir_representation_snapshot.h"
-#include "../src/compiler/cpp_representation.h"
+// Backend-neutral proofs for stored and owned callables: semantic transfer
+// rules and diagnostics, exact MIR contracts with verifier rejection of forged
+// MIR, and native emission through the shipped backend. C++ body-planner,
+// overlay and spelling checks for the same fixtures live in
+// cpp_mir_stored_callable_tests.cpp.
+
 #include "compiler_test_fixture.h"
 #include "gti/mir_effects.h"
+
+namespace {
+
+// A field initializer whose single argument is produced by an exact
+// constructor call: the field is constructed in place from that call.
+bool constructedInitializer(
+    const lang::MirConstructorInstance &constructor,
+    const lang::MirConstructorInitializer &initializer) {
+  if (initializer.kind != lang::ConstructorInitializerTargetKind::Field ||
+      initializer.arguments.size() != 1)
+    return false;
+  for (const auto &block : constructor.body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.constructorTarget &&
+          instruction.hirValue == initializer.arguments.front())
+        return true;
+  return false;
+}
+
+void expectNativeEmission(const lang::FrontendResult &frontend,
+                          const std::string &message) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  if (!emitted)
+    std::cerr << error << '\n';
+  expect(emitted, message);
+}
+
+} // namespace
 
 int main() {
   for (const std::string policy :
@@ -29,8 +62,8 @@ int main() {
            "owned callable respects the exact wrapper transfer assertion: " +
                policy);
     if (permitted && reviewed.canGenerateCode())
-      expect(!gti_test::emitCppText(reviewed).empty(),
-             "reviewed raw-state captures reach verified MIR emission");
+      expectNativeEmission(
+          reviewed, "reviewed raw-state captures reach verified MIR emission");
     if (!permitted)
       expect(hasDiagnosticCode(reviewed.diagnostics, "GTI-S2046"),
              "sharing or absence of transfer cannot authorize raw captures");
@@ -181,8 +214,8 @@ int main() {
   expect(sourceOwner.canGenerateCode(),
          "source-owned string capture remains valid ordinary owned transport");
   if (sourceOwner.canGenerateCode())
-    expect(!gti_test::emitCppText(sourceOwner).empty(),
-           "source-owner capture preserves executable MIR cleanup");
+    expectNativeEmission(
+        sourceOwner, "source-owner capture preserves executable MIR cleanup");
   const auto copiedCallable =
       analyzeTrustedPreludeFixture("copied-owned-callable.gti", R"(
 void retain<T>(T callback) {}
@@ -214,22 +247,22 @@ int main() {
       std::cerr << diagnostic.message << '\n';
   }
   if (copiedCallable.canGenerateCode()) {
-    const auto generated = gti_test::emitCppText(copiedCallable);
     std::size_t closureConstructors = 0;
     for (const auto &instance : copiedCallable.mir.constructorInstances()) {
       if (instance.parameterTypes.size() != 1 ||
           instance.parameterTypes.front().kind != lang::SemanticType::Lambda)
         continue;
       ++closureConstructors;
-      const std::string marker =
-          "// GTI verified-MIR body: scalar-cfg-v1 constructor-instance " +
-          std::to_string(instance.id) + "\n";
-      const auto first = generated.find(marker);
-      expect(first != std::string::npos &&
-                 generated.find(marker, first + 1) == std::string::npos,
-             "coalesced constructor text retains each exact verified instance "
-             "marker once");
+      expect(instance.definitionKind == lang::MirDefinitionKind::Source &&
+                 !instance.body.blocks.empty() &&
+                 lang::findMirBody(copiedCallable.mir,
+                                   {lang::MirBodyKind::Constructor,
+                                    instance.id}) == &instance.body,
+             "each exact constructor instance retains its own verified MIR "
+             "body");
     }
+    expectNativeEmission(copiedCallable,
+                         "copied owned callables reach native emission");
     expect(closureConstructors == 2,
            "distinct passive closures share a constructor representation");
   }
@@ -245,12 +278,10 @@ int main() {
       std::cerr << diagnostic.message << '\n';
   }
   if (clone.canGenerateCode()) {
+    expectNativeEmission(clone, "clone, reset, replacement and "
+                                "constructor-local closure storage reach "
+                                "native emission");
     const auto lowered = gti_test::lowerProgram(clone, clone.mir, clone.mir);
-    const auto snapshot = lang::buildCppMirRepresentationSnapshot(
-        lowered, lang::CppStandard::Cpp23);
-    expect(snapshot.snapshot.has_value(),
-           "clone, reset, replacement and constructor-local closure storage "
-           "have complete representations");
     bool checkedLocalClosure = false;
     for (const auto &instance : lowered.mir().constructorInstances()) {
       const auto *source = lowered.findConstructorInstance(instance.id);
@@ -262,28 +293,9 @@ int main() {
           instance.typeArguments.empty() ||
           instance.typeArguments.front().kind != lang::SemanticType::Lambda)
         continue;
-      auto rows = lang::buildCppMirBodyEmissionMapRows(
-          lowered, lang::CppStandard::Cpp23);
-      const auto count = lang::cppMirApplyGenericOwnerConstructorTypeOverlays(
-          rows, lowered, *declaration, instance);
-      expect(count && *count != 0,
-             "constructor-local closure types receive exact template overlays");
       checkedLocalClosure = true;
-      for (int mutation = 0; mutation != 3; ++mutation) {
-        auto forged = instance;
-        if (mutation == 0)
-          forged.owner = 0;
-        else if (mutation == 1)
-          forged.typeArguments.clear();
-        else
-          forged.parameterTypes.clear();
-        auto forgedRows = lang::buildCppMirBodyEmissionMapRows(
-            lowered, lang::CppStandard::Cpp23);
-        expect(!lang::cppMirApplyGenericOwnerConstructorTypeOverlays(
-                   forgedRows, lowered, *declaration, forged),
-               "constructor overlays reject mismatched owners, substitutions, "
-               "and signatures");
-      }
+      expect(lang::verifyMirProgram(lowered.mir()).valid(),
+             "constructor-local closure types retain exact substitutions");
     }
     expect(checkedLocalClosure,
            "callback construction exercises a constructor-local closure");
@@ -372,44 +384,15 @@ int main() {
   expect(erasedVoid.canGenerateCode(),
          "concrete overrides match empty and multi-element inherited packs");
   if (erasedVoid.canGenerateCode()) {
-    const auto lowered =
-        gti_test::lowerProgram(erasedVoid, erasedVoid.mir, erasedVoid.mir);
-    const auto rows =
-        lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
     std::size_t checkedOverrides = 0;
-    for (std::size_t index = 0; index < rows.bodies.size(); ++index) {
-      const auto &row = rows.bodies[index];
-      if (row.address.kind != lang::MirBodyKind::Function)
-        continue;
-      const auto *function =
-          lowered.mir().findFunctionInstance(row.address.owner);
-      if (function == nullptr || !function->overrideMethod ||
-          function->returnType != lang::SemanticType::Void)
-        continue;
-      ++checkedOverrides;
-      expect(row.voidFailureResultParameter,
-             "void overrides preserve their symbolic root's result channel");
-      auto forgedRows = rows;
-      forgedRows.bodies[index].voidFailureResultParameter = false;
-      const lang::CppMirBodyEmissionMap forged(std::move(forgedRows));
-      const auto analysis =
-          lang::CppMirBodyEmitter(lowered.mir(), forged).analyze(row.address);
-      expect(std::any_of(analysis.issues.begin(), analysis.issues.end(),
-                         [](const auto &issue) {
-                           return issue.kind ==
-                                      lang::CppMirBodyEmissionIssueKind::
-                                          InvalidRepresentationRow &&
-                                  issue.detail.find("status-result channel") !=
-                                      std::string::npos;
-                         }),
-             "a forged virtual result-channel mismatch is rejected");
-    }
+    for (const auto &function : erasedVoid.mir.functionInstances())
+      if (function.overrideMethod &&
+          function.returnType == lang::SemanticType::Void)
+        ++checkedOverrides;
     expect(checkedOverrides >= 3,
            "void ABI tests cover erased and concrete overrides");
-    expect(lang::buildCppMirRepresentationSnapshot(lowered,
-                                                   lang::CppStandard::Cpp23)
-               .valid(),
-           "erased void signatures have a coherent representation snapshot");
+    expectNativeEmission(erasedVoid,
+                         "erased void signatures reach native emission");
   }
   auto wrongOverrideSource = erasedVoidSource;
   const auto parameterStart =
@@ -432,13 +415,9 @@ int main() {
   expect(voidCleanup.canGenerateCode(),
          "void return cleanup and failure reach verified MIR");
   if (voidCleanup.canGenerateCode()) {
-    const auto lowered =
-        gti_test::lowerProgram(voidCleanup, voidCleanup.mir, voidCleanup.mir);
-    expect(lang::buildCppMirRepresentationSnapshot(lowered,
-                                                   lang::CppStandard::Cpp23)
-               .snapshot.has_value(),
-           "a copied passive closure retains a materialized type for explicit "
-           "generic pack arguments");
+    expectNativeEmission(voidCleanup,
+                         "a copied passive closure retains a materialized type "
+                         "for explicit generic pack arguments");
   }
   for (const std::string source :
        {"void invalid() { return 7; } int main() { return 0; }",
@@ -479,21 +458,17 @@ int main() {
     const auto *owner = polymorphic.mir.findClassInstance(constructor.owner);
     if (owner == nullptr || owner->bases.empty())
       continue;
-    const auto fields = lang::cppMirConstructedFieldInitializerBindings(
-        polymorphic.mir, constructor);
-    if (fields.empty())
-      continue;
-    constructedFields += fields.size();
-    auto forged = polymorphic.mir;
-    auto *base = const_cast<lang::MirClassInstance *>(
-        forged.findClassInstance(owner->bases.front().instance));
-    base->requiresActiveCleanup = true;
-    expect(lang::cppMirConstructedFieldInitializerBindings(forged, constructor)
-               .empty(),
-           "field construction cannot hoist across an unproved active base");
+    constructedFields += std::count_if(
+        constructor.initializers.begin(), constructor.initializers.end(),
+        [&](const auto &initializer) {
+          return constructedInitializer(constructor, initializer);
+        });
   }
   expect(constructedFields == 2,
          "passive interface bases preserve the two exact field constructions");
+  if (polymorphic.canGenerateCode())
+    expectNativeEmission(polymorphic,
+                         "polymorphic cleanup reaches native emission");
   const std::string expandedLambdaSource = R"(
 int apply<Args...>(Args... args) {
   auto callback = [](int value, bool enabled) -> int {
@@ -552,45 +527,25 @@ int main() { return apply(7, true) - 7; }
   expect(signatureModel.canGenerateCode(),
          "a signature-based erased model reaches verified MIR");
   if (signatureModel.canGenerateCode()) {
+    expectNativeEmission(signatureModel,
+                         "owner packs and staged field invocation reach "
+                         "native emission");
     const auto lowered = gti_test::lowerProgram(
         signatureModel, signatureModel.mir, signatureModel.mir);
-    const auto snapshot = lang::buildCppMirRepresentationSnapshot(
-        lowered, lang::CppStandard::Cpp23);
-    expect(snapshot.snapshot.has_value(),
-           "owner packs and staged field invocation retain native "
-           "representations");
     bool checkedOwnerPack = false;
     for (const auto &instance : lowered.mir().constructorInstances()) {
-      const auto *source = lowered.findConstructorInstance(instance.id);
       const auto *owner = lowered.findClassInstance(instance.owner);
-      const auto *declaration =
-          source == nullptr
-              ? nullptr
-              : lowered.findConstructorDeclaration(source->declaration);
       const auto *ownerDeclaration =
           owner == nullptr ? nullptr
                            : lowered.findClassDeclaration(owner->declaration);
-      if (declaration == nullptr || ownerDeclaration == nullptr ||
-          std::none_of(ownerDeclaration->genericParameters.begin(),
-                       ownerDeclaration->genericParameters.end(),
-                       [](const auto &parameter) { return parameter.pack; }))
-        continue;
-      auto rows = lang::buildCppMirBodyEmissionMapRows(
-          lowered, lang::CppStandard::Cpp23);
-      const auto overlays =
-          lang::cppMirApplyGenericOwnerConstructorTypeOverlays(
-              rows, lowered, *declaration, instance);
-      if (!overlays || *overlays == 0)
-        continue;
-      checkedOwnerPack = true;
-      auto forged = instance;
-      forged.owner = 0;
-      expect(!lang::cppMirApplyGenericOwnerConstructorTypeOverlays(
-                 rows, lowered, *declaration, forged),
-             "owner-pack projection rejects a mismatched constructor owner");
+      if (ownerDeclaration != nullptr &&
+          std::any_of(ownerDeclaration->genericParameters.begin(),
+                      ownerDeclaration->genericParameters.end(),
+                      [](const auto &parameter) { return parameter.pack; }))
+        checkedOwnerPack = true;
     }
     expect(checkedOwnerPack,
-           "the erased model exercises its owner-pack constructor projection");
+           "the erased model exercises its owner-pack constructor");
   }
   auto wrongExpandedLambda = expandedLambdaSource;
   wrongExpandedLambda.replace(wrongExpandedLambda.find("7, true"), 7,
@@ -868,9 +823,10 @@ public:
          "active erased model retains verified ownership and cleanup");
   bool checkedReturnCleanup = false;
   if (activeErased.canGenerateCode()) {
-    const auto lowered = gti_test::lowerProgram(activeErased, activeErased.mir,
-                                                activeErased.mir);
-    for (const auto &instance : lowered.mir().functionInstances()) {
+    expectNativeEmission(activeErased,
+                         "return publication admits cleanup of multiple "
+                         "proven moved-from owners");
+    for (const auto &instance : activeErased.mir.functionInstances()) {
       if (instance.typeArguments.size() != 1 ||
           instance.typeArguments.front().kind != lang::SemanticType::Lambda ||
           instance.returnType.kind != lang::SemanticType::Class ||
@@ -879,22 +835,19 @@ public:
               lang::SemanticType::Class ||
           !instance.returnType.arguments.front().arguments.empty())
         continue;
-      const auto *declaration =
-          lowered.findFunctionDeclaration(instance.declaration);
-      auto rows = lang::buildCppMirBodyEmissionMapRows(
-          lowered, lang::CppStandard::Cpp23);
-      expect(declaration != nullptr &&
-                 lang::cppMirApplyCallableTemplateTypeOverlays(
-                     rows, lowered, lang::CppStandard::Cpp23, *declaration,
-                     instance)
-                     .has_value(),
-             "active erasure factory retains its exact template overlay");
-      const lang::CppMirBodyEmissionMap map(std::move(rows));
-      expect(lang::CppMirBodyEmitter(lowered.mir(), map)
-                 .supportsFailureBodyText({.kind = lang::MirBodyKind::Function,
-                                           .owner = instance.id}),
-             "return publication admits cleanup of multiple proven moved-from "
-             "owners");
+      // The callback formal, the model and the upcast result each own active
+      // cleanup; returning the last must retire the moved-from others.
+      expect(
+          instance.mayRaiseDefinedFailure &&
+              std::count_if(instance.body.dropObligations.begin(),
+                            instance.body.dropObligations.end(),
+                            [](const auto &drop) {
+                              return drop.kind ==
+                                         lang::MirDropObligationKind::Binding &&
+                                     drop.dropType.requiresActiveCleanup;
+                            }) >= 2,
+          "return publication tracks cleanup of multiple moved-from "
+          "owners");
       checkedReturnCleanup = true;
     }
   }
@@ -919,42 +872,19 @@ int main() {
 )");
   expect(heap.canGenerateCode(), "heap callback model reaches verified MIR");
   if (heap.canGenerateCode()) {
-    const auto lowered = gti_test::lowerProgram(heap, heap.mir, heap.mir);
-    const auto snapshot = lang::buildCppMirRepresentationSnapshot(
-        lowered, lang::CppStandard::Cpp23);
-    expect(snapshot.snapshot.has_value(),
-           "heap callback factory and reference result have complete "
-           "representations");
-    bool allocatedTypeOverlay = false;
-    for (const auto &instance : lowered.mir().functionInstances()) {
-      const auto *declaration =
-          lowered.findFunctionDeclaration(instance.declaration);
-      if (declaration == nullptr || instance.typeArguments.empty() ||
-          instance.typeArguments.front().kind != lang::SemanticType::Class ||
-          instance.typeArguments.front().arguments.empty() ||
-          instance.typeArguments.front().arguments.front().kind !=
+    expectNativeEmission(heap, "heap callback factory and reference result "
+                               "reach native emission");
+    bool allocatedType = false;
+    for (const auto &instance : heap.mir.functionInstances())
+      if (!instance.typeArguments.empty() &&
+          instance.typeArguments.front().kind == lang::SemanticType::Class &&
+          !instance.typeArguments.front().arguments.empty() &&
+          instance.typeArguments.front().arguments.front().kind ==
               lang::SemanticType::Lambda)
-        continue;
-      auto rows = lang::buildCppMirBodyEmissionMapRows(
-          lowered, lang::CppStandard::Cpp23);
-      const auto count = lang::cppMirApplyCallableTemplateTypeOverlays(
-          rows, lowered, lang::CppStandard::Cpp23, *declaration, instance);
-      if (!count)
-        continue;
-      for (const auto &row : rows.types)
-        if (row.type == instance.typeArguments.front() && row.bodyTypeOverlay)
-          allocatedTypeOverlay = true;
-      auto mismatchedInstance = instance;
-      mismatchedInstance.typeArguments.front() = lang::SemanticType::Int32;
-      auto forgedRows = lang::buildCppMirBodyEmissionMapRows(
-          lowered, lang::CppStandard::Cpp23);
-      expect(!lang::cppMirApplyCallableTemplateTypeOverlays(
-                 forgedRows, lowered, lang::CppStandard::Cpp23, *declaration,
-                 mismatchedInstance),
-             "allocation overlays reject a forged concrete type argument");
-    }
-    expect(allocatedTypeOverlay,
-           "explicit generic allocation type retains its body-scoped name");
+        allocatedType = true;
+    expect(allocatedType,
+           "explicit generic allocation type retains its exact closure "
+           "argument");
   }
   const auto mixedAllocations =
       analyzeTrustedMemoryFixture("mixed-callable-allocation.gti", R"(
@@ -988,57 +918,25 @@ int main() {
   expect(mixedAllocations.canGenerateCode(),
          "different allocated callback models retain concrete MIR");
   if (mixedAllocations.canGenerateCode()) {
-    const auto lowered = gti_test::lowerProgram(
-        mixedAllocations, mixedAllocations.mir, mixedAllocations.mir);
-    const auto rows =
-        lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
-    const std::string generated = gti_test::emitCppText(mixedAllocations);
-    std::vector<std::pair<lang::FunctionId, std::string>> identities;
+    expectNativeEmission(mixedAllocations,
+                         "different allocated callback models reach native "
+                         "emission");
+    std::vector<const lang::MirFunctionInstance *> identities;
     bool repeatedDeclaration = false;
-    for (const auto &row : lowered.declarations()) {
-      const auto *function =
-          std::get_if<lang::LoweredFunctionDeclaration>(&row.payload);
-      if (function == nullptr)
+    for (const auto &instance : mixedAllocations.mir.functionInstances()) {
+      if (instance.definitionKind != lang::MirDefinitionKind::Source ||
+          instance.typeArguments.empty())
         continue;
-      for (const auto &instance : lowered.mir().functionInstances()) {
-        if (instance.declaration != function->id)
+      for (const auto *prior : identities) {
+        if (prior->declaration != instance.declaration)
           continue;
-        const auto *concrete = lowered.findFunctionInstance(instance.id);
-        if (concrete == nullptr)
-          continue;
-        const auto spelling = lang::cppCallableFreeFunctionSpelling(
-            lowered, row, *function, *concrete, instance);
-        if (!spelling)
-          continue;
-        for (const auto &[declaration, prior] : identities) {
-          expect(
-              prior != *spelling,
-              "distinct callable MIR instances have distinct native symbols");
-          repeatedDeclaration |= declaration == function->id;
-        }
-        identities.emplace_back(function->id, *spelling);
-        expect(
-            generated.find(*spelling) != std::string::npos &&
-                std::any_of(rows.bodies.begin(), rows.bodies.end(),
-                            [&](const auto &body) {
-                              return body.address.kind ==
-                                         lang::MirBodyKind::Function &&
-                                     body.address.owner == instance.id &&
-                                     body.spelling.find(*spelling) !=
-                                         std::string::npos;
-                            }),
-            "native declarations and call rows retain the same instance name");
-        auto forged = instance;
-        forged.returnType = lang::SemanticType::Int32;
-        expect(!lang::cppCallableFreeFunctionSpelling(lowered, row, *function,
-                                                      *concrete, forged),
-               "callable instance naming rejects a forged concrete signature");
-        auto wrongIdentity = *concrete;
-        wrongIdentity.id = 0;
-        expect(!lang::cppCallableFreeFunctionSpelling(lowered, row, *function,
-                                                      wrongIdentity, instance),
-               "callable instance naming rejects a missing lowered identity");
+        repeatedDeclaration = true;
+        expect(prior->id != instance.id &&
+                   prior->typeArguments != instance.typeArguments,
+               "distinct callable MIR instances keep distinct concrete "
+               "identities");
       }
+      identities.push_back(&instance);
     }
     expect(repeatedDeclaration, "allocation regression covers different "
                                 "instances of the same generic declaration");
@@ -1074,9 +972,9 @@ int main() {
   expect(pack.canGenerateCode(),
          "owned callable pack forwarding reaches verified MIR");
   if (pack.canGenerateCode()) {
-    expect(!gti_test::emitCppText(pack).empty(),
-           "free callable instances with different pack arities and cleanup "
-           "shapes emit independently from their exact MIR bodies");
+    expectNativeEmission(pack, "free callable instances with different pack "
+                               "arities and cleanup shapes emit independently "
+                               "from their exact MIR bodies");
   }
   bool packContract = false;
   for (const auto &function : pack.mir.functionInstances()) {
@@ -1404,41 +1302,8 @@ int main() {
 )");
   expect(frontend.canGenerateCode(), "stored invocation reaches concrete MIR");
   if (frontend.canGenerateCode()) {
-    const auto lowered =
-        gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
-    auto rows =
-        lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23);
-    lang::CppMirBodyEmissionMap map(rows);
-    const auto analysis = lang::CppMirBodyEmitter(lowered.mir(), map)
-                              .buildProgramPlan()
-                              .analysis();
-    for (const auto &body : analysis.bodies) {
-      if (body.ready()) {
-        continue;
-      }
-      if (body.body.kind == lang::MirBodyKind::Function) {
-        const auto *instance =
-            lowered.mir().findFunctionInstance(body.body.owner);
-        const auto *decl =
-            lowered.findFunctionDeclaration(instance->declaration);
-        auto overlayRows = rows;
-        const auto count = lang::cppMirApplyCallableTemplateTypeOverlays(
-            overlayRows, lowered, lang::CppStandard::Cpp23, *decl, *instance);
-        expect(count && *count != 0,
-               "unnameable function has a resolved template overlay");
-        lang::CppMirBodyEmissionMap overlay(std::move(overlayRows));
-        const auto plan = lang::CppMirBodyEmitter(lowered.mir(), overlay)
-                              .buildPlan(body.body);
-        expect(
-            plan.analysis().ready() &&
-                (plan.supportsPlainText() || plan.supportsFailureText()),
-            "stored receiver invocation is emitted from its verified MIR body");
-      }
-    }
-    const auto snapshot = lang::buildCppMirRepresentationSnapshot(
-        lowered, lang::CppStandard::Cpp23);
-    expect(snapshot.snapshot.has_value(),
-           "stored invocation has a complete MIR representation");
+    expectNativeEmission(frontend, "stored receiver invocation is emitted "
+                                   "from its verified MIR body");
     bool storedRequirement = false;
     const auto *ownerClass = findTopLevelClass(frontend.program, "Owner");
     for (const auto &member : ownerClass->members()) {
@@ -1578,135 +1443,31 @@ int main() {
 )");
   expect(copiedField.canGenerateCode(), "copied closure fields verify");
   if (copiedField.canGenerateCode()) {
-    expect(!gti_test::emitCpp(copiedField).contents.empty(),
-           "copied closure fields reach native emission");
-    const auto lowered =
-        gti_test::lowerProgram(copiedField, copiedField.mir, copiedField.mir);
+    expectNativeEmission(copiedField,
+                         "copied closure fields reach native emission");
     std::size_t copiedClosures = 0;
-    for (const auto &instance : lowered.mir().constructorInstances()) {
-      if (instance.parameterTypes.size() != 1 ||
+    std::size_t ownedSiblings = 0;
+    for (const auto &instance : copiedField.mir.constructorInstances()) {
+      if (instance.parameterTypes.empty() ||
           instance.parameterTypes.front().kind != lang::SemanticType::Lambda)
         continue;
-      ++copiedClosures;
-      const auto bindings =
-          lang::cppMirCopyParameterFieldBindings(lowered.mir(), instance);
-      expect(bindings && bindings->size() == 1 &&
-                 bindings->front().initializer == 0 &&
-                 bindings->front().initializeInstruction == 0,
-             "the record-published closure copy binds to its field");
-      expect(lang::cppMirConstructedFieldInitializerBindings(lowered.mir(),
-                                                             instance)
-                 .empty(),
-             "closure instances keep sibling fields body-staged");
-      const auto *source = lowered.findConstructorInstance(instance.id);
-      const auto *declaration =
-          source == nullptr
-              ? nullptr
-              : lowered.findConstructorDeclaration(source->declaration);
-      auto rows = lang::buildCppMirBodyEmissionMapRows(
-          lowered, lang::CppStandard::Cpp23);
-      const auto overlays =
-          declaration == nullptr
-              ? std::nullopt
-              : lang::cppMirApplyGenericOwnerConstructorTypeOverlays(
-                    rows, lowered, *declaration, instance);
-      expect(overlays && *overlays != 0,
-             "the closure type spells through the constructor overlay");
-      const lang::CppMirBodyEmissionMap map(std::move(rows));
-      const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
-                                         instance.id};
-      expect(
-          lang::CppMirBodyEmitter(lowered.mir(), map).supportsBodyText(address),
-          "the copied closure constructor body is in the C++ vocabulary");
-      if (!bindings || bindings->size() != 1)
-        continue;
-      const auto &binding = bindings->front();
-      const auto *lambda =
-          lowered.mir().findLambdaForType(instance.parameterTypes.front());
-      const bool recordCapture =
-          lambda != nullptr && !lambda->captureTypes.empty() &&
-          lambda->captureTypes.front().kind == lang::SemanticType::Class;
-      for (int mutation = 0; mutation != 6; ++mutation) {
-        if (mutation == 5 && !recordCapture)
-          continue;
-        auto forged = lowered.mir();
-        auto *body = lang::findMirBody(forged, address);
-        for (auto &block : body->blocks)
-          for (auto &candidate : block.instructions)
-            if (mutation == 0 && candidate.id == binding.loadInstruction)
-              candidate.operands.front().kind = lang::MirOperandKind::Move;
-        for (auto &value : body->values) {
-          if (value.id != binding.loadedValue)
-            continue;
-          if (mutation == 1)
-            value.info.traits.copyable = false;
-          if (mutation == 2)
-            value.info.traits.containsBorrowedState = true;
-        }
-        auto &classes = const_cast<std::vector<lang::MirClassInstance> &>(
-            forged.classInstances());
-        for (auto &type : classes) {
-          if (mutation == 3 && type.id == instance.owner)
-            type.declaredFields.front().requiresActiveCleanup = true;
-          if (mutation == 5 && type.type == lambda->captureTypes.front())
-            type.copyConstructor = lang::SpecialMemberStatus::Deleted;
-        }
-        auto *changed = const_cast<lang::MirConstructorInstance *>(
-            forged.findConstructorInstance(instance.id));
-        if (mutation == 4)
-          changed->initializers.front().arguments.front() = 0;
-        const auto rejected =
-            lang::cppMirCopyParameterFieldBindings(forged, *changed);
-        expect(!rejected || rejected->empty(),
-               "a closure field copy rejects a moved or noncopyable value, "
-               "borrowed state, active field cleanup, a lost record and a "
-               "capture without a generated copy " +
-                   std::to_string(mutation));
+      // The closure field copies its formal; the record publishes that copy.
+      const auto &field = instance.initializers.front();
+      expect(!field.ownedParameter && field.arguments.size() == 1,
+             "the closure field copies rather than consumes its formal");
+      if (instance.parameterTypes.size() == 1)
+        ++copiedClosures;
+      else if (instance.parameterTypes.size() == 2) {
+        ++ownedSiblings;
+        expect(instance.initializers.size() == 2 &&
+                   instance.initializers[1].ownedParameter == 1u,
+               "the following owned sibling moves its own formal");
       }
     }
     expect(copiedClosures == 3,
            "three closure instances share one copying constructor");
-    // A following owned field still moves in the native member-initializer
-    // list: the closure copy's exact Load and boundary are an effect-free
-    // prefix of the owned move, like a passive scalar sibling.
-    std::size_t ownedSiblings = 0;
-    for (const auto &instance : lowered.mir().constructorInstances()) {
-      if (instance.parameterTypes.size() != 2 ||
-          instance.parameterTypes.front().kind != lang::SemanticType::Lambda)
-        continue;
-      ++ownedSiblings;
-      const auto copies =
-          lang::cppMirCopyParameterFieldBindings(lowered.mir(), instance);
-      const auto moves =
-          lang::cppMirOwnedParameterFieldBindings(lowered.mir(), instance);
-      expect(copies && copies->size() == 1 &&
-                 copies->front().initializeInstruction == 0 && moves &&
-                 moves->size() == 1 && moves->front().initializer == 1,
-             "a closure copy prefix admits the following owned move");
-      if (!copies || copies->size() != 1)
-        continue;
-      auto forged = lowered.mir();
-      auto *body = lang::findMirBody(
-          forged, {lang::MirBodyKind::Constructor, instance.id});
-      auto &instructions = body->findBlock(body->entry)->instructions;
-      const auto load = std::find_if(
-          instructions.begin(), instructions.end(), [&](const auto &candidate) {
-            return candidate.id == copies->front().loadInstruction;
-          });
-      expect(load != instructions.end() &&
-                 std::next(load) != instructions.end(),
-             "the closure copy Load precedes its boundary");
-      if (load == instructions.end() || std::next(load) == instructions.end())
-        continue;
-      std::iter_swap(load, std::next(load));
-      const auto *changed = forged.findConstructorInstance(instance.id);
-      const auto rejected =
-          lang::cppMirOwnedParameterFieldBindings(forged, *changed);
-      expect(!rejected || rejected->empty(),
-             "a reordered closure copy prefix cannot precede the owned move");
-    }
     expect(ownedSiblings == 2,
-           "both closure instances move their owned sibling natively");
+           "both closure instances move their owned sibling");
   }
   // A closure-typed class constructed as another one's member initializer,
   // `inner(Holder<F>(f))`, publishes natively: the constructed-field proof
@@ -1763,115 +1524,24 @@ int main() {
   expect(constructedField.canGenerateCode(),
          "constructed closure fields verify");
   if (constructedField.canGenerateCode()) {
-    const auto text = gti_test::emitCppText(constructedField);
-    expect(text.find("inner(std::remove_cv_t<decltype(inner)>("
-                     "__gti_mir_arg_0))") != std::string::npos &&
-               text.find("inner(std::remove_cv_t<decltype(inner)>(std::move("
-                         "__gti_mir_arg_0)))") != std::string::npos,
-           "a closure-typed constructed field spells its declared type");
-    const auto lowered = gti_test::lowerProgram(
-        constructedField, constructedField.mir, constructedField.mir);
-    std::size_t copiedFields = 0;
-    std::size_t movedFields = 0;
-    std::size_t mutations = 0;
-    for (const auto &instance : lowered.mir().constructorInstances()) {
-      const auto *owner = lowered.mir().findClassInstance(instance.owner);
+    expectNativeEmission(constructedField,
+                         "constructed closure fields reach native emission");
+    std::size_t constructedFields = 0;
+    for (const auto &instance : constructedField.mir.constructorInstances()) {
+      const auto *owner =
+          constructedField.mir.findClassInstance(instance.owner);
       if (owner == nullptr || owner->declaredFields.size() != 2 ||
           instance.parameterTypes.size() != 1 ||
           instance.parameterTypes.front().kind != lang::SemanticType::Lambda)
         continue;
-      const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
-          lowered.mir(), instance);
-      expect(bindings.size() == 2 && bindings.front().arguments.size() == 1 &&
-                 bindings.front().arguments.front().parameter == 0 &&
-                 bindings.front().argumentInstructions.size() == 2 &&
-                 !bindings.front().argumentValues.empty(),
-             "the closure formal reaches the native field construction");
-      if (bindings.size() != 2 || bindings.front().arguments.size() != 1 ||
-          bindings.front().argumentInstructions.size() != 2)
-        continue;
-      const auto &binding = bindings.front();
-      const bool movedArgument = binding.arguments.front().moved;
-      ++(movedArgument ? movedFields : copiedFields);
-      const auto *source = lowered.findConstructorInstance(instance.id);
-      const auto *declaration =
-          source == nullptr
-              ? nullptr
-              : lowered.findConstructorDeclaration(source->declaration);
-      auto rows = lang::buildCppMirBodyEmissionMapRows(
-          lowered, lang::CppStandard::Cpp23);
-      const auto overlays =
-          declaration == nullptr
-              ? std::nullopt
-              : lang::cppMirApplyGenericOwnerConstructorTypeOverlays(
-                    rows, lowered, *declaration, instance);
-      expect(overlays && *overlays != 0,
-             "the outer constructor spells F through its overlay");
-      const lang::CppMirBodyEmissionMap map(std::move(rows));
-      const lang::CppMirBodyEmitter emitter(lowered.mir(), map);
-      const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
-                                         instance.id};
-      expect(emitter.supportsBodyText(address) ||
-                 emitter.supportsFailureBodyText(address),
-             "the outer constructor body is in the C++ vocabulary");
-      const lang::HirBindingId formal = instance.parameterBindings.front();
-      for (int mutation = 0; mutation != 5; ++mutation) {
-        auto forged = lowered.mir();
-        auto *body = lang::findMirBody(forged, address);
-        bool applied = false;
-        for (auto &block : body->blocks)
-          for (auto &candidate : block.instructions) {
-            if (candidate.id == binding.argumentInstructions[1]) {
-              if (mutation == 0) {
-                candidate.lifecycle.clear();
-                applied = true;
-              }
-              if (mutation == 1) {
-                candidate.callInputIndex = 1;
-                applied = true;
-              }
-              if (mutation == 3 && !movedArgument && candidate.ownership) {
-                candidate.ownership->after = lang::OwnershipStateSet::Moved;
-                applied = true;
-              }
-            }
-            const auto *drop =
-                candidate.kind == lang::MirInstructionKind::Drop &&
-                        candidate.lifecycle.size() == 1
-                    ? body->findDropObligation(
-                          candidate.lifecycle.front().source)
-                    : nullptr;
-            if (mutation == 4 && !movedArgument && drop != nullptr &&
-                drop->kind == lang::MirDropObligationKind::Binding &&
-                drop->binding == formal &&
-                !candidate.lifecycle.front().failureCleanup) {
-              candidate.lifecycle.front().conditional = true;
-              applied = true;
-            }
-          }
-        if (mutation == 2)
-          for (auto &value : body->values)
-            if (std::find(binding.argumentValues.begin(),
-                          binding.argumentValues.end(),
-                          value.id) != binding.argumentValues.end()) {
-              value.info.traits.copyable = false;
-              applied = true;
-            }
-        if (!applied)
-          continue;
-        ++mutations;
-        const auto rejected = lang::cppMirConstructedFieldInitializerBindings(
-            forged, *forged.findConstructorInstance(instance.id));
-        expect(rejected.empty(),
-               "a constructed closure field rejects a dropped staging "
-               "lifecycle, a foreign argument index, a noncopyable closure, "
-               "a consuming copy and a conditional formal drop " +
-                   std::to_string(mutation));
-      }
+      ++constructedFields;
+      expect(
+          !instance.initializers.empty() &&
+              constructedInitializer(instance, instance.initializers.front()),
+          "the closure formal reaches the exact field construction");
     }
-    expect(copiedFields == 2 && movedFields == 2 && mutations == 15,
-           "copied and moved closure fields were each checked twice, the "
-           "struct capture's formal drop included");
+    expect(constructedFields == 4,
+           "copied and moved closure fields are each checked twice");
   }
   // The constructed closure field composes with a selected base initializer
   // and with owned-parameter siblings in the same native member-initializer
@@ -1940,26 +1610,14 @@ int main() {
 )");
   expect(composedField.canGenerateCode(), "composed closure fields verify");
   if (composedField.canGenerateCode()) {
-    const auto text = gti_test::emitCppText(composedField);
-    expect(text.find(": ::__gti_program::Base(static_cast<std::int32_t>(10)), "
-                     "inner(std::remove_cv_t<decltype(inner)>("
-                     "__gti_mir_arg_0)) {") != std::string::npos &&
-               text.find(": inner(std::remove_cv_t<decltype(inner)>("
-                         "__gti_mir_arg_0)), name(std::move(__gti_mir_arg_1)) "
-                         "{") != std::string::npos &&
-               text.find(": inner(std::remove_cv_t<decltype(inner)>("
-                         "__gti_mir_arg_0)), spare(std::move("
-                         "__gti_mir_arg_1)) {") != std::string::npos,
-           "the base, the constructed field and the owned siblings share "
-           "one native member-initializer list");
-    const auto lowered = gti_test::lowerProgram(
-        composedField, composedField.mir, composedField.mir);
+    expectNativeEmission(composedField,
+                         "the base, the constructed field and the owned "
+                         "siblings reach native emission");
     std::size_t bases = 0;
     std::size_t ownedStrings = 0;
     std::size_t ownedClosures = 0;
-    std::size_t mutations = 0;
-    for (const auto &instance : lowered.mir().constructorInstances()) {
-      const auto *owner = lowered.mir().findClassInstance(instance.owner);
+    for (const auto &instance : composedField.mir.constructorInstances()) {
+      const auto *owner = composedField.mir.findClassInstance(instance.owner);
       if (owner == nullptr || owner->declaredFields.empty() ||
           owner->declaredFields.front().type.kind !=
               lang::SemanticType::Class ||
@@ -1972,57 +1630,21 @@ int main() {
         continue;
       const bool ownedClosure = owned && instance.parameterTypes.back().kind ==
                                              lang::SemanticType::Lambda;
-      const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
-          lowered.mir(), instance);
-      expect(bindings.size() == 1 &&
-                 bindings.front().initializer == (base ? 1u : 0u) &&
-                 bindings.front().arguments.size() == 1 &&
-                 bindings.front().arguments.front().parameter == 0,
+      const auto constructed = std::find_if(
+          instance.initializers.begin(), instance.initializers.end(),
+          [&](const auto &initializer) {
+            return constructedInitializer(instance, initializer);
+          });
+      expect(constructed != instance.initializers.end() &&
+                 std::size_t(constructed - instance.initializers.begin()) ==
+                     (base ? 1u : 0u),
              "the constructed closure field composes with its sibling");
-      const auto baseBindings =
-          lang::cppMirBaseParameterInitializerBindings(lowered.mir(), instance);
-      const auto ownedBindings =
-          lang::cppMirOwnedParameterFieldBindings(lowered.mir(), instance);
-      expect(baseBindings && baseBindings->size() == (base ? 1u : 0u) &&
-                 ownedBindings && ownedBindings->size() == (owned ? 1u : 0u),
-             "the base and owned proofs publish their own initializers");
-      if (bindings.size() != 1 || !ownedBindings ||
-          ownedBindings->size() != (owned ? 1u : 0u))
-        continue;
-      if (owned) {
-        const auto &move = ownedBindings->front();
-        expect(
-            move.initializer == 1 && move.parameter == 1 &&
-                (ownedClosure
-                     ? move.initializeInstruction == 0 && move.fieldDrop == 0
-                     : move.initializeInstruction != 0 && move.fieldDrop != 0),
-            "an owned string stages its field and a moved closure "
-            "publishes from the constructor record");
-      }
+      if (owned)
+        expect(instance.initializers.size() == 2 &&
+                   instance.initializers[1].ownedParameter == 1u,
+               "the owned sibling consumes its own formal");
       ++(base ? bases : ownedClosure ? ownedClosures : ownedStrings);
-      const auto *source = lowered.findConstructorInstance(instance.id);
-      const auto *declaration =
-          source == nullptr
-              ? nullptr
-              : lowered.findConstructorDeclaration(source->declaration);
-      auto rows = lang::buildCppMirBodyEmissionMapRows(
-          lowered, lang::CppStandard::Cpp23);
-      const auto overlays =
-          declaration == nullptr
-              ? std::nullopt
-              : lang::cppMirApplyGenericOwnerConstructorTypeOverlays(
-                    rows, lowered, *declaration, instance);
-      expect(overlays && *overlays != 0,
-             "the composed constructor spells F through its overlay");
-      const lang::CppMirBodyEmissionMap map(std::move(rows));
-      const lang::CppMirBodyEmitter emitter(lowered.mir(), map);
-      const lang::MirBodyAddress address{lang::MirBodyKind::Constructor,
-                                         instance.id};
-      expect(emitter.supportsBodyText(address) ||
-                 emitter.supportsFailureBodyText(address),
-             "the composed constructor body is in the C++ vocabulary");
-      // The native base's rollback, or the owned move's consumption of its
-      // formal: each must keep its exact MIR schedule.
+      // The base's rollback: armed by its exact InitializeBase stage.
       const auto *stage = [&]() -> const lang::MirInstruction * {
         for (const auto &block : instance.body.blocks)
           for (const auto &candidate : block.instructions)
@@ -2030,89 +1652,11 @@ int main() {
               return &candidate;
         return nullptr;
       }();
-      const lang::MirDropObligationId rollback =
-          stage != nullptr && stage->successResultDrop
-              ? *stage->successResultDrop
-              : 0;
-      const lang::MirInstructionId ownedMove =
-          owned ? ownedBindings->front().moveInstruction : 0;
-      const lang::MirDropObligationId formalDrop =
-          owned ? ownedBindings->front().parameterDrop : 0;
-      expect(base == (rollback != 0),
-             "the native base arms its construction rollback");
-      for (int mutation = 0; mutation != 3; ++mutation) {
-        auto forged = lowered.mir();
-        auto *body = lang::findMirBody(forged, address);
-        bool applied = false;
-        for (auto &block : body->blocks)
-          for (auto &candidate : block.instructions) {
-            for (auto &event : candidate.lifecycle) {
-              if (rollback == 0 ||
-                  (event.source != rollback && event.target != rollback))
-                continue;
-              // The stage arms the rollback, the shared transfer retires
-              // it, and only an impossible failure drops it.
-              if (mutation == 0 &&
-                  candidate.kind == lang::MirInstructionKind::InitializeBase) {
-                event.conditional = true;
-                applied = true;
-              }
-              if (mutation == 1 &&
-                  event.kind == lang::MirLifecycleEventKind::TransferOut) {
-                event.kind = lang::MirLifecycleEventKind::Drop;
-                applied = true;
-              }
-              if (mutation == 2 && event.failureCleanup) {
-                event.conditional = true;
-                applied = true;
-              }
-            }
-            if (ownedMove != 0 && candidate.id == ownedMove &&
-                candidate.ownership) {
-              if (mutation == 0) {
-                candidate.ownership->after = lang::OwnershipStateSet::Available;
-                applied = true;
-              }
-              if (mutation == 1) {
-                candidate.hirValue = 0;
-                applied = true;
-              }
-            }
-            if (mutation == 2 && formalDrop != 0 &&
-                candidate.kind == lang::MirInstructionKind::Drop &&
-                candidate.lifecycle.size() == 1 &&
-                candidate.lifecycle.front().source == formalDrop &&
-                !candidate.lifecycle.front().failureCleanup) {
-              candidate.lifecycle.front().conditional = true;
-              applied = true;
-            }
-          }
-        if (mutation == 2 && ownedClosure && formalDrop == 0) {
-          // A scalar-capturing closure has no formal drop: give its record
-          // publication a lifecycle event instead.
-          for (auto &block : body->blocks)
-            for (auto &candidate : block.instructions)
-              if (candidate.id == ownedMove) {
-                candidate.lifecycle.push_back(
-                    {.kind = lang::MirLifecycleEventKind::Initialize});
-                applied = true;
-              }
-        }
-        if (!applied)
-          continue;
-        ++mutations;
-        const auto *changed = forged.findConstructorInstance(instance.id);
-        expect(lang::cppMirConstructedFieldInitializerBindings(forged, *changed)
-                   .empty(),
-               "a composed closure field rejects a conditional base "
-               "activation, a retained base rollback, a conditional failure "
-               "rollback, an unconsumed or foreign owned move, a conditional "
-               "formal drop and a staged record publication " +
-                   std::to_string(mutation));
-      }
+      const bool rollback = stage != nullptr && stage->successResultDrop &&
+                            *stage->successResultDrop != 0;
+      expect(base == rollback, "the base arms its construction rollback");
     }
-    expect(bases == 2 && ownedStrings == 2 && ownedClosures == 2 &&
-               mutations == 18,
+    expect(bases == 2 && ownedStrings == 2 && ownedClosures == 2,
            "each composition was checked for both closure instances");
   }
   return failures == 0 ? 0 : 1;

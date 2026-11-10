@@ -1,6 +1,6 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -159,11 +159,8 @@ void pair(std::string_view label, std::string_view type,
     }
   }
   for (auto level : {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3})
-    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
-      check(!gti_test::emitCppText(inferredResult, standard,
-                                   lang::TargetInfo::host(), level)
-                 .empty(),
-            "backend consumes resolved checked references");
+    check(gti_test::llvmEmits(inferredResult, level),
+          "backend consumes resolved checked references");
 }
 } // namespace
 
@@ -256,11 +253,8 @@ int main() {
   if (lambda.canGenerateCode()) {
     for (auto level :
          {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3})
-      for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
-        check(!gti_test::emitCppText(lambda, standard, lang::TargetInfo::host(),
-                                     level)
-                   .empty(),
-              "checked lambda references use the materialized MIR environment");
+      check(gti_test::llvmEmits(lambda, level),
+            "checked lambda references use the materialized MIR environment");
     for (const auto &function : lambda.mir.functionInstances())
       for (const auto &loan : function.body.loans) {
         if (loan.kind != lang::MirLoanKind::Local)

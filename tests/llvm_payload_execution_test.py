@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from backend_modes import cpp_modes
 from llvm_evidence_manifest import build_manifest
 
 
@@ -588,8 +589,12 @@ def main():
     if selected and selected not in CASES and selected not in FAILURES and selected not in REJECT:
         raise ValueError(f"unknown payload case: {selected}")
     env = {**os.environ, "NO_COLOR": "1"}
-    endpoints = (Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23"),
-                 *(Endpoint("llvm", mode) for mode in ("O0", "O1", "O2", "O3")))
+    # LLVM executes every case at every level; the C++ comparator joins only
+    # when GTI_TEST_BACKENDS selects the C++ profile.
+    cpp_selected = bool(cpp_modes())
+    endpoints = ((Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23")) if cpp_selected else ()) + \
+        tuple(Endpoint("llvm", mode) for mode in ("O0", "O1", "O2", "O3"))
+    llvm_endpoints = tuple(endpoint for endpoint in endpoints if endpoint.backend == "llvm")
     with tempfile.TemporaryDirectory(prefix="gti-llvm-payloads-") as directory:
         work = Path(directory)
         for name, source in CASES.items():
@@ -598,11 +603,16 @@ def main():
             path = work / f"{name}.gti"
             path.write_text((root / "examples/llvm/payloads-and-unions.gti").read_text()
                             if source is None else source, encoding="utf-8")
-            for endpoint in endpoints[2:] if name in COMPARATOR_GAPS else endpoints:
+            for endpoint in llvm_endpoints if name in COMPARATOR_GAPS else endpoints:
                 result = execute(gti, root, work / f"{name}-{endpoint}", path, endpoint, env)
                 if result.error or result.observable != (0, "", ""):
                     raise AssertionError(f"{name} {endpoint}: {result}")
-            scope = "LLVM O0-O3 (recorded C++ vocabulary gap)" if name in COMPARATOR_GAPS else "C++20/23 and LLVM O0-O3"
+            if not cpp_selected:
+                scope = "LLVM O0-O3"
+            elif name in COMPARATOR_GAPS:
+                scope = "LLVM O0-O3 (recorded C++ vocabulary gap)"
+            else:
+                scope = "C++20/23 and LLVM O0-O3"
             print(f"{name}: {scope} passed", flush=True)
         for name, (source, code, message) in FAILURES.items():
             if selected and name != selected:
@@ -624,7 +634,7 @@ def main():
                 continue
             path = work / f"{name}.gti"
             path.write_text(source, encoding="utf-8")
-            for backend in ("cpp", "llvm"):
+            for backend in (("cpp", "llvm") if cpp_selected else ("llvm",)):
                 output = work / f"reject-{name}-{backend}"
                 output.write_text("preserved", encoding="utf-8")
                 result = subprocess.run([str(gti), str(path), "--backend", backend,

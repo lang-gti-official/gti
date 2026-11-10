@@ -8,6 +8,7 @@ import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from backend_modes import cpp_modes
 
 
 def main():
@@ -30,7 +31,8 @@ def main():
                  f"{fixture.name}:{primary}; secondary [GTI-R0002]\n")
     cases = ((0, "DLO", ""), (70, "DLO", ordinary(secondary)),
              (70, "D", emergency), (70, "DLO", ordinary(later)))
-    endpoints = [Endpoint("cpp", "O3", "c++23"),
+    # The C++ comparator runs only when GTI_TEST_BACKENDS selects it.
+    endpoints = [*(Endpoint("cpp", "O3", "c++23") for _ in cpp_modes()),
                  *(Endpoint("llvm", f"O{level}") for level in range(4))]
     env = {**os.environ, "NO_COLOR": "1"}
     with tempfile.TemporaryDirectory(prefix="gti-llvm-cleanup-context-") as temporary:

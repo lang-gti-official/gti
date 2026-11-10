@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+from backend_modes import cpp_modes
 from case_jobs import configured_jobs, positive_jobs, run_cases
 from sanitizer_support import scaled_timeout
 
@@ -20,13 +21,15 @@ def main():
     fixtures = Path(__file__).parent / "fixtures"
     environment = dict(os.environ)
     environment["GTI_STDLIB_PATH"] = str(fixtures.parent.parent / "stdlib")
-    # Keep the direct stores under LLVM and the separate C++ read companion
-    # explicit: #70's existing local reference-field store bug is not evidence
-    # against or a substitute for the complete MIR publication contract.
-    profiles = (("temporary_cursor_cleanup_provider", ("llvm", "cpp")),
-                ("borrowed_text_field_reborrow", ("llvm", "cpp")),
+    # Every fixture executes on the shipped LLVM backend. The C++ profile runs
+    # beside it only when GTI_TEST_BACKENDS selects it: #70's existing local
+    # reference-field store bug is not evidence against or a substitute for
+    # the complete MIR publication contract.
+    backends = ("llvm", "cpp") if cpp_modes() else ("llvm",)
+    profiles = (("temporary_cursor_cleanup_provider", backends),
+                ("borrowed_text_field_reborrow", backends),
                 ("receiver_field_carriers", ("llvm",)),
-                ("receiver_field_carriers_read", ("cpp",)))
+                ("receiver_field_carriers_read", backends))
     with tempfile.TemporaryDirectory(prefix="gti-borrow-origin-") as temporary:
         root = Path(temporary)
 

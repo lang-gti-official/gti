@@ -5,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_text_modes
+
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, text=True, capture_output=True, check=False)
@@ -65,31 +67,33 @@ int main() {
         source.write_text(source_text, encoding="utf8")
 
         for optimization in ("O0", "O3"):
-            generated = root / f"class-value-lifecycle-{optimization}.cpp"
-            emitted = run(
-                [
-                    str(compiler),
-                    str(source),
-                    f"-{optimization}",
-                    "--emit-cpp",
-                    "-o",
-                    str(generated),
-                ]
-            )
-            if emitted.returncode != 0:
-                return fail(emitted)
-            generated_text = generated.read_text(encoding="utf8")
-            required_fragments = (
-                "construct_representation_at(__gti_mir_out_result",
-                ".construction_address()",
-                ".mark_constructed()",
-            )
-            if any(fragment not in generated_text for fragment in required_fragments):
-                sys.stderr.write(
-                    "class-valued failure publication did not use the "
-                    "verified-MIR uninitialized result protocol\n"
+            for _cpp_label, cpp_flags, _cpp_native in cpp_text_modes():
+                generated = root / f"class-value-lifecycle-{optimization}.cpp"
+                emitted = run(
+                    [
+                        str(compiler),
+                        str(source),
+                        f"-{optimization}",
+                        *cpp_flags,
+                        "--emit-cpp",
+                        "-o",
+                        str(generated),
+                    ]
                 )
-                return 1
+                if emitted.returncode != 0:
+                    return fail(emitted)
+                generated_text = generated.read_text(encoding="utf8")
+                required_fragments = (
+                    "construct_representation_at(__gti_mir_out_result",
+                    ".construction_address()",
+                    ".mark_constructed()",
+                )
+                if any(fragment not in generated_text for fragment in required_fragments):
+                    sys.stderr.write(
+                        "class-valued failure publication did not use the "
+                        "verified-MIR uninitialized result protocol\n"
+                    )
+                    return 1
 
             executable = root / f"class-value-lifecycle-{optimization}"
             built = run(

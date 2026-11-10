@@ -23,6 +23,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from backend_modes import native_modes  # noqa: E402  (tests/backend_modes.py)
+
 HEADER = re.compile(r"//\s*expected exit status:\s*(\d+)")
 LEVELS = ("O0", "O1", "O2", "O3")
 
@@ -59,12 +62,15 @@ def main(argv: list[str]) -> int:
             continue
 
         # Every level, not just -O0. These reproduce at all of them, so a fix
-        # that only lands on one would otherwise read as complete.
+        # that only lands on one would otherwise read as complete. The modes
+        # come from tests/backend_modes.py: the shipped LLVM backend unless
+        # GTI_TEST_BACKENDS selects the frozen C++ backend too.
+        modes = native_modes(levels=LEVELS)
         statuses: dict[str, str] = {}
-        for level in LEVELS:
+        for level, flags, _native in modes:
             output = scratch / f"{source.stem}-{level}"
             built = subprocess.run(
-                [str(gti), str(source), f"-{level}", "--std", "c++23",
+                [str(gti), str(source), *flags,
                  "-o", str(output), "--cxx", cxx],
                 capture_output=True, text=True, timeout=600)
             if built.returncode != 0:
@@ -81,15 +87,15 @@ def main(argv: list[str]) -> int:
             statuses[level] = str(ran.returncode)
 
         correct = {lvl for lvl, got in statuses.items() if got == str(expected)}
-        if len(correct) == len(LEVELS):
+        if len(correct) == len(modes):
             print(f"{source.name:<44} FIXED (exits {expected} at every level)")
             fixed += 1
         elif correct:
             # A partial fix is the outcome most worth shouting about.
-            spread = ", ".join(f"{lvl}={statuses[lvl]}" for lvl in LEVELS)
+            spread = ", ".join(f"{lvl}={got}" for lvl, got in statuses.items())
             print(f"{source.name:<44} PARTIAL (expected {expected}; {spread})")
         else:
-            spread = ", ".join(f"{lvl}={statuses[lvl]}" for lvl in LEVELS)
+            spread = ", ".join(f"{lvl}={got}" for lvl, got in statuses.items())
             print(f"{source.name:<44} STILL-WRONG (expected {expected}; "
                   f"{spread})")
 

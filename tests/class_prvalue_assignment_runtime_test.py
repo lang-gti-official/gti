@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 INCOMING_CLEANUP_CHECK = (
@@ -93,152 +93,152 @@ def main() -> int:
                          "division_by_zero" not in executed.stderr)):
                     return fail(f"run {name}/{mode}", executed)
 
-        generated_path = root / "class-prvalue-assignment.cpp"
-        emitted = run(
-            [
-                str(compiler),
-                str(positive),
-                "-O0",
-                "--std",
-                "c++23",
-                "--emit-cpp",
-                "-o",
-                str(generated_path),
-            ]
-        )
-        if emitted.returncode != 0:
-            return fail("emit C++23/O0", emitted)
-        generated = generated_path.read_text(encoding="utf8")
-
-        # Slot names are body-local, so scope every count to one emitted body.
-        bodies: list[list[str]] = []
-        for line in generated.split("\n"):
-            if "// GTI verified-MIR body:" in line:
-                bodies.append([])
-            if bodies:
-                bodies[-1].append(line)
-
-        # Every cleanup-owning prvalue assignment keeps MIR's exact schedule:
-        # the temporary is constructed into its own staging slot, the
-        # old destination is cleaned before publication, then the destination
-        # is move-assigned and the moved-from shell is immediately retired.
-        # A failed old-value cleanup instead destroys the unpublished value.
-        publication = re.compile(
-            r"^\s*__gti_mir_p_\d+\.get\(\) = "
-            r"std::move\((__gti_mir_p_\d+)\.get\(\)\);$"
-        )
-        raising = 0
-        plain = 0
-        for lines in bodies:
-            body = "\n".join(lines)
-            for index, line in enumerate(lines):
-                matched = publication.match(line)
-                if matched is None:
-                    continue
-                slot = matched.group(1)
-                retirement = re.compile(
-                    r"^\s*(?:__gti_mir_drop_success_\d+ = )?"
-                    + re.escape(slot)
-                    + r"\.destroy(?:_with_failure)?\("
-                )
-                following = lines[index + 1] if index + 1 < len(lines) else ""
-                if retirement.match(following) is None:
-                    sys.stderr.write(
-                        f"staging slot {slot} is not retired immediately after "
-                        f"its publication: {following!r}\n"
-                    )
-                    return 1
-                # A fallible replacement has two mutually exclusive textual
-                # drops: the success shell and the failure's unpublished value.
-                # Bind both to the exact replacement branch and block labels,
-                # rather than mistaking textual count for execution count.
-                labels = re.findall(r"(__gti_mir_bb_\d+): \{", "\n".join(lines[:index]))
-                guarded_pattern = re.compile(
-                    r"if \((__gti_mir_replacement_success_\d+)\) \{\s*"
-                    r"goto (" + re.escape(labels[-1]) + r");\s*\} else \[\[unlikely\]\] \{\s*"
-                    + INCOMING_CLEANUP_CHECK + r"\s*goto (__gti_mir_bb_\d+);"
-                ) if labels else None
-                guarded = guarded_pattern.search(body) if guarded_pattern else None
-                expected_drops = 1
-                if guarded is not None:
-                    rollback_pattern = re.compile(
-                        re.escape(guarded.group(3)) + r": \{\s*"
-                        + cleanup_scope(guarded.group(3)) +
-                        r"// GTI MIR failure-record \d+ cleanup\s*"
-                        r"std::memset\(&__gti_mir_cleanup_failure_record, 0, sizeof\(__gti_mir_cleanup_failure_record\)\);\s*"
-                        r"__gti_mir_drop_success_\d+ = " + re.escape(slot)
-                        + r"\.(?:destroy_with_failure|template destroy_unique_aggregate_with_failure<\d+>)\("
-                    )
-                    rollback = rollback_pattern.search(body)
-                    if rollback is None:
-                        sys.stderr.write(f"missing rollback of {slot}\n")
-                        return 1
-                    missing_guard = re.sub(INCOMING_CLEANUP_CHECK, "", guarded.group(0), count=1)
-                    missing_scope = re.sub(cleanup_scope(guarded.group(3)), "", rollback.group(0), count=1)
-                    if (guarded_pattern.search(missing_guard) is not None or
-                            rollback_pattern.search(missing_scope) is not None):
-                        sys.stderr.write("replacement proof accepts missing inherited-cleanup protection\n")
-                        return 1
-                    expected_drops = 2
-                destructions = re.findall(
-                    r"(?<![\w.])"
-                    + re.escape(slot)
-                    + r"\.(?:destroy|destroy_with_failure|template destroy_unique_aggregate_with_failure<\d+>)\(",
-                    body,
-                )
-                if len(destructions) != expected_drops:
-                    sys.stderr.write(
-                        f"staging slot {slot} is destroyed "
-                        f"{len(destructions)} textual times; expected "
-                        f"{expected_drops} across exclusive paths\n"
-                    )
-                    return 1
-                constructions = re.findall(
-                    r"(?<![\w.])" + re.escape(slot) + r"\.construct\(", body
-                )
-                placements = re.findall(
-                    r"::new \(static_cast<void \*>\("
-                    + re.escape(slot)
-                    + r"\.construction_address\(\)\)\) [\w:]+\("
-                    r"::gti_internal::backend::mir_failure_constructor_tag_v1<",
-                    body,
-                )
-                if len(constructions) + len(placements) != 1:
-                    sys.stderr.write(
-                        f"staging slot {slot} is constructed "
-                        f"{len(constructions) + len(placements)} times; "
-                        "expected exactly once\n"
-                    )
-                    return 1
-                if placements:
-                    raising += 1
-                else:
-                    plain += 1
-
-        # Two raising constructions (the plain and conditional std::string
-        # assignments) and two non-raising ones (the plain and loop tracked
-        # assignments).
-        if raising != 2 or plain != 2:
-            sys.stderr.write(
-                "generated C++ lost a staged prvalue assignment: "
-                f"{raising} raising and {plain} plain, expected 2 and 2\n"
+        for _cpp_label, cpp_flags, _cpp_native in cpp_text_modes():
+            generated_path = root / "class-prvalue-assignment.cpp"
+            emitted = run(
+                [
+                    str(compiler),
+                    str(positive),
+                    "-O0",
+                    *cpp_flags,
+                    "--emit-cpp",
+                    "-o",
+                    str(generated_path),
+                ]
             )
-            return 1
+            if emitted.returncode != 0:
+                return fail("emit C++23/O0", emitted)
+            generated = generated_path.read_text(encoding="utf8")
 
-        # A cleanup-free passive class has no staging slot at all: MIR gives
-        # the prvalue no storage, so the construction spells directly in the
-        # assignment's value position.
-        fused = re.findall(
-            r"__gti_mir_p_\d+\.get\(\) = ::__gti_program::pair\("
-            r"__gti_mir_v_\d+, __gti_mir_v_\d+\);",
-            generated,
-        )
-        if len(fused) != 1:
-            sys.stderr.write(
-                "generated C++ lost the fused passive prvalue assignment "
-                f"(found {len(fused)}, expected 1)\n"
+            # Slot names are body-local, so scope every count to one emitted body.
+            bodies: list[list[str]] = []
+            for line in generated.split("\n"):
+                if "// GTI verified-MIR body:" in line:
+                    bodies.append([])
+                if bodies:
+                    bodies[-1].append(line)
+
+            # Every cleanup-owning prvalue assignment keeps MIR's exact schedule:
+            # the temporary is constructed into its own staging slot, the
+            # old destination is cleaned before publication, then the destination
+            # is move-assigned and the moved-from shell is immediately retired.
+            # A failed old-value cleanup instead destroys the unpublished value.
+            publication = re.compile(
+                r"^\s*__gti_mir_p_\d+\.get\(\) = "
+                r"std::move\((__gti_mir_p_\d+)\.get\(\)\);$"
             )
-            return 1
+            raising = 0
+            plain = 0
+            for lines in bodies:
+                body = "\n".join(lines)
+                for index, line in enumerate(lines):
+                    matched = publication.match(line)
+                    if matched is None:
+                        continue
+                    slot = matched.group(1)
+                    retirement = re.compile(
+                        r"^\s*(?:__gti_mir_drop_success_\d+ = )?"
+                        + re.escape(slot)
+                        + r"\.destroy(?:_with_failure)?\("
+                    )
+                    following = lines[index + 1] if index + 1 < len(lines) else ""
+                    if retirement.match(following) is None:
+                        sys.stderr.write(
+                            f"staging slot {slot} is not retired immediately after "
+                            f"its publication: {following!r}\n"
+                        )
+                        return 1
+                    # A fallible replacement has two mutually exclusive textual
+                    # drops: the success shell and the failure's unpublished value.
+                    # Bind both to the exact replacement branch and block labels,
+                    # rather than mistaking textual count for execution count.
+                    labels = re.findall(r"(__gti_mir_bb_\d+): \{", "\n".join(lines[:index]))
+                    guarded_pattern = re.compile(
+                        r"if \((__gti_mir_replacement_success_\d+)\) \{\s*"
+                        r"goto (" + re.escape(labels[-1]) + r");\s*\} else \[\[unlikely\]\] \{\s*"
+                        + INCOMING_CLEANUP_CHECK + r"\s*goto (__gti_mir_bb_\d+);"
+                    ) if labels else None
+                    guarded = guarded_pattern.search(body) if guarded_pattern else None
+                    expected_drops = 1
+                    if guarded is not None:
+                        rollback_pattern = re.compile(
+                            re.escape(guarded.group(3)) + r": \{\s*"
+                            + cleanup_scope(guarded.group(3)) +
+                            r"// GTI MIR failure-record \d+ cleanup\s*"
+                            r"std::memset\(&__gti_mir_cleanup_failure_record, 0, sizeof\(__gti_mir_cleanup_failure_record\)\);\s*"
+                            r"__gti_mir_drop_success_\d+ = " + re.escape(slot)
+                            + r"\.(?:destroy_with_failure|template destroy_unique_aggregate_with_failure<\d+>)\("
+                        )
+                        rollback = rollback_pattern.search(body)
+                        if rollback is None:
+                            sys.stderr.write(f"missing rollback of {slot}\n")
+                            return 1
+                        missing_guard = re.sub(INCOMING_CLEANUP_CHECK, "", guarded.group(0), count=1)
+                        missing_scope = re.sub(cleanup_scope(guarded.group(3)), "", rollback.group(0), count=1)
+                        if (guarded_pattern.search(missing_guard) is not None or
+                                rollback_pattern.search(missing_scope) is not None):
+                            sys.stderr.write("replacement proof accepts missing inherited-cleanup protection\n")
+                            return 1
+                        expected_drops = 2
+                    destructions = re.findall(
+                        r"(?<![\w.])"
+                        + re.escape(slot)
+                        + r"\.(?:destroy|destroy_with_failure|template destroy_unique_aggregate_with_failure<\d+>)\(",
+                        body,
+                    )
+                    if len(destructions) != expected_drops:
+                        sys.stderr.write(
+                            f"staging slot {slot} is destroyed "
+                            f"{len(destructions)} textual times; expected "
+                            f"{expected_drops} across exclusive paths\n"
+                        )
+                        return 1
+                    constructions = re.findall(
+                        r"(?<![\w.])" + re.escape(slot) + r"\.construct\(", body
+                    )
+                    placements = re.findall(
+                        r"::new \(static_cast<void \*>\("
+                        + re.escape(slot)
+                        + r"\.construction_address\(\)\)\) [\w:]+\("
+                        r"::gti_internal::backend::mir_failure_constructor_tag_v1<",
+                        body,
+                    )
+                    if len(constructions) + len(placements) != 1:
+                        sys.stderr.write(
+                            f"staging slot {slot} is constructed "
+                            f"{len(constructions) + len(placements)} times; "
+                            "expected exactly once\n"
+                        )
+                        return 1
+                    if placements:
+                        raising += 1
+                    else:
+                        plain += 1
+
+            # Two raising constructions (the plain and conditional std::string
+            # assignments) and two non-raising ones (the plain and loop tracked
+            # assignments).
+            if raising != 2 or plain != 2:
+                sys.stderr.write(
+                    "generated C++ lost a staged prvalue assignment: "
+                    f"{raising} raising and {plain} plain, expected 2 and 2\n"
+                )
+                return 1
+
+            # A cleanup-free passive class has no staging slot at all: MIR gives
+            # the prvalue no storage, so the construction spells directly in the
+            # assignment's value position.
+            fused = re.findall(
+                r"__gti_mir_p_\d+\.get\(\) = ::__gti_program::pair\("
+                r"__gti_mir_v_\d+, __gti_mir_v_\d+\);",
+                generated,
+            )
+            if len(fused) != 1:
+                sys.stderr.write(
+                    "generated C++ lost the fused passive prvalue assignment "
+                    f"(found {len(fused)}, expected 1)\n"
+                )
+                return 1
 
         rejected = run(
             [

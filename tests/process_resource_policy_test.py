@@ -8,7 +8,7 @@ import platform
 import shutil
 import subprocess
 import tempfile
-from backend_modes import is_llvm_mode, native_modes, record_symptom, unsupported
+from backend_modes import cpp_modes, is_llvm_mode, native_modes, record_symptom, unsupported
 
 # LLVM compiler owners and source-policy storage share the process provider.
 # The scheduled C++ backend retains its separate native owner allocation family.
@@ -148,13 +148,19 @@ def main():
             assert not result.stdout and not result.stderr, result
             print(f"process provider {label}: passed", flush=True)
         source = root / "tests/fixtures/process_resource_policy.gti"
-        emitted = []
-        for audit in ("off", "warn"):
-            output = temporary / f"audit-{audit}.cpp"
-            run([compiler, str(source), "--emit-cpp", "-o", str(output),
-                 f"--raw-pointer-audit={audit}"], environment)
-            emitted.append(output.read_bytes())
-        assert emitted[0] == emitted[1], "optional auditing changed provider code"
+        # The verified MIR every backend consumes is the neutral evidence; the
+        # C++ text joins it only when GTI_TEST_BACKENDS selects the C++ profile.
+        representations = [("--emit-mir", "mir")]
+        if cpp_modes():
+            representations.append(("--emit-cpp", "cpp"))
+        for emission, suffix in representations:
+            emitted = []
+            for audit in ("off", "warn"):
+                output = temporary / f"audit-{audit}.{suffix}"
+                run([compiler, str(source), emission, "-o", str(output),
+                     f"--raw-pointer-audit={audit}"], environment)
+                emitted.append(output.read_bytes())
+            assert emitted[0] == emitted[1], f"optional auditing changed provider code ({suffix})"
         print("process provider Off/Warn parity: passed", flush=True)
 
 

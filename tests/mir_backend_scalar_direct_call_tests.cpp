@@ -1,4 +1,3 @@
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
@@ -6,7 +5,7 @@
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -20,7 +19,6 @@
 
 namespace {
 
-constexpr std::string_view marker = "// GTI verified-MIR body: scalar-cfg-v1";
 int failures = 0;
 
 void expect(bool condition, std::string_view message) {
@@ -34,47 +32,6 @@ std::string readFile(const std::filesystem::path &path) {
   std::ifstream input(path);
   return std::string(std::istreambuf_iterator<char>(input),
                      std::istreambuf_iterator<char>());
-}
-
-std::string_view functionDefinition(std::string_view generated,
-                                    std::string_view sourceName) {
-  const std::string needle = std::string{"_"} + std::string{sourceName} + "(";
-  for (std::size_t name = generated.find(needle);
-       name != std::string_view::npos;
-       name = generated.find(needle, name + needle.size())) {
-    const std::size_t lineEnd = generated.find('\n', name);
-    const std::size_t brace = generated.find(" {\n", name);
-    if (brace == std::string_view::npos ||
-        (lineEnd != std::string_view::npos && brace > lineEnd)) {
-      continue;
-    }
-    const std::size_t end = generated.find("\n  }", brace);
-    return end == std::string_view::npos
-               ? std::string_view{}
-               : generated.substr(brace, end + 4 - brace);
-  }
-  return {};
-}
-
-std::string_view failureFunctionDefinition(std::string_view generated,
-                                           std::string_view sourceName) {
-  const std::string needle =
-      std::string{"_"} + std::string{sourceName} + "__gti_mir_failure(";
-  for (std::size_t name = generated.find(needle);
-       name != std::string_view::npos;
-       name = generated.find(needle, name + needle.size())) {
-    const std::size_t lineEnd = generated.find('\n', name);
-    const std::size_t brace = generated.find(" {\n", name);
-    if (brace == std::string_view::npos ||
-        (lineEnd != std::string_view::npos && brace > lineEnd)) {
-      continue;
-    }
-    const std::size_t end = generated.find("\n  }", brace);
-    return end == std::string_view::npos
-               ? std::string_view{}
-               : generated.substr(brace, end + 4 - brace);
-  }
-  return {};
 }
 
 const lang::HirFunctionInstance *
@@ -170,7 +127,8 @@ emit(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
      const lang::OptimizationResult &compatibility,
      const std::vector<lang::MirTransformRecord> &transformations = {}) {
   static_cast<void>(compatibility);
-  return gti_test::emitCpp(frontend, frontend.mir, mir, transformations);
+  return lang::LlvmBackend().generate(gti_test::lowerProgram(
+      frontend, frontend.mir, mir, lang::TargetInfo::host(), transformations));
 }
 
 bool emissionRejected(const lang::FrontendResult &frontend,
@@ -184,7 +142,12 @@ bool emissionRejected(const lang::FrontendResult &frontend,
   }
 }
 
-void expectSelectedDefinitions(std::string_view generated) {
+// The exact static call bodies are verified no-fail source bodies; the
+// failure component carries its defined-failure summary. The shipped backend
+// accepts the whole program.
+void expectSelectedDefinitions(const lang::FrontendResult &frontend,
+                               const lang::MirProgram &mir,
+                               const lang::BackendArtifact &artifact) {
   constexpr std::string_view selected[] = {
       "direct_identity",
       "selected_forward",
@@ -202,11 +165,6 @@ void expectSelectedDefinitions(std::string_view generated) {
       "direct_heterogeneous",
       "direct_loop",
       "direct_cross_namespace",
-      // Callers the old whole-graph contract had to reject even though
-      // their own bodies are ordinary: their formerly ineligible callees
-      // either emit per body themselves (a constexpr declaration is now
-      // admissible; GTI constant contexts are frontend-evaluated) or stay
-      // on the compatibility path while the calls emit from verified MIR.
       "constexpr_target",
       "compatibility_constexpr_target",
       "compatibility_constexpr_call",
@@ -217,26 +175,28 @@ void expectSelectedDefinitions(std::string_view generated) {
       "compatibility_for_target",
       "compatibility_for_call",
   };
-  expect(std::count(generated.begin(), generated.end(), '\n') != 0,
-         "generated C++ should be non-empty");
+  expect(!artifact.contents.empty(),
+         "the shipped backend should accept the direct-call program");
   for (const std::string_view name : selected) {
-    expect(functionDefinition(generated, name).find(marker) !=
-               std::string_view::npos,
-           std::string{"the exact static call body should be MIR-emitted: "} +
+    const lang::MirFunctionInstance *function =
+        findMirFunction(frontend.hir, mir, name);
+    expect(function != nullptr && !function->mayRaiseDefinedFailure &&
+               function->definitionKind ==
+                   lang::MirFunctionInstance::DefinitionKind::Source,
+           std::string{"the exact static call body should be a no-fail "
+                       "verified MIR body: "} +
                std::string{name});
   }
   constexpr std::string_view failureSelected[] = {
       "checked_target", "compatibility_checked_target",
       "compatibility_checked_call", "compatibility_recursive",
       "checked_increment"};
-  constexpr std::string_view failureMarker =
-      "// GTI verified-MIR body: scalar-cfg-failure-v1";
   for (const std::string_view name : failureSelected) {
-    expect(failureFunctionDefinition(generated, name).find(failureMarker) !=
-                   std::string_view::npos &&
-               functionDefinition(generated, name).empty(),
-           std::string{"the failure component should emit only its explicit "
-                       "MIR sibling: "} +
+    const lang::MirFunctionInstance *function =
+        findMirFunction(frontend.hir, mir, name);
+    expect(function != nullptr && function->mayRaiseDefinedFailure,
+           std::string{"the failure component should carry its explicit "
+                       "defined-failure summary: "} +
                std::string{name});
   }
 }
@@ -368,9 +328,9 @@ void testFamilyAndSummary(const std::filesystem::path &fixture) {
     expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
            "O0/O1/O3 direct-call MIR should remain verified");
     if (optimized.valid()) {
-      expectSelectedDefinitions(emit(frontend, optimized.mir, compatibility,
-                                     optimized.report.transformations)
-                                    .contents);
+      expectSelectedDefinitions(frontend, optimized.mir,
+                                emit(frontend, optimized.mir, compatibility,
+                                     optimized.report.transformations));
     }
   }
 }
@@ -499,20 +459,8 @@ int main() {
   const lang::OptimizationResult compatibility =
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
-  const std::string generated =
-      emit(frontend, frontend.mir, compatibility).contents;
-  for (const std::string_view name : noFailure) {
-    expect(functionDefinition(generated, name).find(marker) !=
-               std::string_view::npos,
-           std::string{"the passive direct-call body should emit from plain "
-                       "verified MIR: "} +
-               std::string{name});
-  }
-  expect(failureFunctionDefinition(generated, "checked_float_to_integer")
-                 .find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
-             std::string_view::npos,
-         "checked float-to-integer conversion should remain on the failure "
-         "body route");
+  expect(!emit(frontend, frontend.mir, compatibility).contents.empty(),
+         "the passive direct-call bodies should emit from verified MIR");
 }
 
 void testRuntimeDeclarationSummary() {
@@ -708,10 +656,7 @@ void testMutations(const std::filesystem::path &fixture) {
   expect(attachedSafeRead && lang::verifyMirProgram(safeReadInput).valid(),
          "CallInput should accept an exact safe scalar Read ownership event");
   if (attachedSafeRead && lang::verifyMirProgram(safeReadInput).valid()) {
-    const std::string generated =
-        emit(frontend, safeReadInput, compatibility).contents;
-    expect(functionDefinition(generated, "selected_forward").find(marker) !=
-               std::string_view::npos,
+    expect(!emissionRejected(frontend, safeReadInput, compatibility),
            "an exact safe CallInput Read should remain in the MIR-emitted "
            "family");
   }

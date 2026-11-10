@@ -3,7 +3,6 @@
 #include "gti/ast_printer.h"
 #include "gti/backend.h"
 #include "gti/binary_float.h"
-#include "gti/cpp_backend.h"
 #include "gti/executable_path.h"
 #include "gti/format_config.h"
 #include "gti/formatter.h"
@@ -20,7 +19,8 @@
 #include "gti/standard_library.h"
 #include "gti/support.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
+#include "lowered_program_test_support.h"
 
 #include <algorithm>
 #include <array>
@@ -124,11 +124,12 @@ concreteBackendSymbols(std::string_view text, std::string_view marker,
   return result;
 }
 
-[[maybe_unused]] std::string
-emitAnalyzedSource(std::string_view source,
-                   lang::TargetInfo target = lang::TargetInfo::host(),
-                   lang::CppStandard standard = lang::CppStandard::Cpp23) {
-  const lang::FrontendResult frontend =
+// Analyzes a backend-neutral emission fixture and requires that it completes verified MIR lowering. Assert on the
+// returned MIR/HIR/semantics, or on gti_test::llvmEmits for native emission.
+[[maybe_unused]] lang::FrontendResult
+analyzeEmissionFixture(std::string_view source,
+                       lang::TargetInfo target = lang::TargetInfo::host()) {
+  lang::FrontendResult frontend =
       lang::Frontend({.target = target})
           .analyze("compiler-emission-fixture.gti", std::string(source));
   expect(frontend.canGenerateCode(),
@@ -139,9 +140,11 @@ emitAnalyzedSource(std::string_view source,
       std::cerr << "Unexpected emission-fixture diagnostic: "
                 << diagnostic.message << '\n';
     }
-    return {};
+  } else {
+    expect(lang::verifyMirProgram(frontend.mir).valid(),
+           "an emission fixture should produce verified MIR");
   }
-  return gti_test::emitCppText(frontend, standard, std::move(target));
+  return frontend;
 }
 
 [[maybe_unused]] bool hasDiagnostic(const lang::SemanticVisitor &semantic,

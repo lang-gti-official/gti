@@ -1,13 +1,10 @@
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "../src/compiler/cpp_mir_body_emitter.h"
-#include "../src/compiler/cpp_mir_representation_snapshot.h"
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -59,6 +56,16 @@ bool hasMessage(const lang::FrontendResult &result, std::string_view text) {
                        return diagnostic.message.find(text) !=
                               std::string::npos;
                      });
+}
+
+// The shipped backend accepts the verified MIR program.
+void expectBackendAccepts(const lang::FrontendResult &frontend,
+                          const lang::TargetInfo &target,
+                          lang::OptimizationLevel level,
+                          std::string_view message) {
+  std::string error;
+  expect(gti_test::llvmEmits(frontend, level, target, &error),
+         std::string(message) + (error.empty() ? "" : ": " + error));
 }
 
 void printDiagnostics(const lang::FrontendResult &result) {
@@ -212,25 +219,20 @@ void testDormantImport() {
     }
     const lang::LoweredProgram lowered =
         gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, target);
-    const std::string cpp =
-        lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
+    // The C++ mutex representation spelling is covered by
+    // cpp_mir_mutex_tests.cpp. An unused import executes no mutex operation.
+    std::size_t mutexInstructions = 0;
+    lang::MirProgram inspected = frontend.mir;
+    forEachInstruction(
+        inspected, [&](lang::MirBody &, lang::MirInstruction &instruction) {
+          mutexInstructions += isMutex(instruction.intrinsic) ? 1 : 0;
+        });
     expect(lang::verifyLoweredProgram(lowered).empty() &&
-               cpp.find("#include <mutex>") == std::string::npos &&
-               cpp.find("class mutex_value final") == std::string::npos &&
-               cpp.find("class mutex_lock_token final") == std::string::npos,
+               mutexInstructions == 0,
            "a dormant mutex import should not enable native mutex support");
-    // Retained generic library classes name both representation templates,
-    // so the templates must be declared for the native compiler (#164).
-    const std::size_t firstUse =
-        cpp.find("::gti_internal::backend::mutex_value<T>");
-    const std::size_t storage =
-        cpp.find("template <typename T> class mutex_value;");
-    const std::size_t token =
-        cpp.find("template <typename T> class mutex_lock_token;");
-    expect(storage != std::string::npos && token != std::string::npos &&
-               storage < firstUse && token < firstUse,
-           "a dormant mutex import should declare, but not define, the mutex "
-           "representations before generic declarations name them");
+    expectBackendAccepts(frontend, target, lang::OptimizationLevel::O0,
+                         "a dormant mutex import compiles in both execution "
+                         "profiles");
   }
 }
 
@@ -292,19 +294,12 @@ void testPublicPipeline() {
   expect(lang::verifyLoweredProgram(lowered).empty(),
          "mutex synchronization should cross the sealed LoweredProgram "
          "boundary");
-  const std::string cpp20 =
-      lang::CppBackend(lang::CppStandard::Cpp20).generate(lowered).contents;
-  const std::string cpp23 =
-      lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
-  for (const std::string *cpp : {&cpp20, &cpp23}) {
-    expect(cpp->find("#include <mutex>") != std::string::npos &&
-               cpp->find("class mutex_value final") != std::string::npos &&
-               cpp->find("class mutex_lock_token final") != std::string::npos &&
-               cpp->find("mutex_lock(") != std::string::npos &&
-               cpp->find("mutex_unlock(") != std::string::npos,
-           "both native standards should consume the sealed mutex and guard "
-           "vocabulary");
-  }
+  // The native standards' mutex and guard vocabulary is covered by
+  // cpp_mir_mutex_tests.cpp; the shipped backend consumes the same sealed
+  // synchronization records.
+  expectBackendAccepts(frontend, target, lang::OptimizationLevel::O3,
+                       "the shipped backend should consume the sealed mutex "
+                       "and guard vocabulary");
 }
 
 void testNativeProcessRetirement() {
@@ -456,132 +451,44 @@ void testReferencePrefixBeforeOwnedField() {
         !constructor.initializers.back().ownedParameter)
       continue;
     found = true;
-    const auto bindings =
-        lang::cppMirOwnedParameterFieldBindings(frontend.mir, constructor);
-    expect(bindings && bindings->size() == 1 &&
-               bindings->front().initializeInstruction != 0,
-           "stored reference prefix preserves exact owned-field publication");
-    for (int mutation = 0; mutation != 4; ++mutation) {
-      auto malformed = frontend.mir;
-      auto &changed = const_cast<lang::MirConstructorInstance &>(
-          *malformed.findConstructorInstance(constructor.id));
-      auto &entry = *changed.body.findBlock(changed.body.entry);
-      if (mutation == 0)
-        std::swap(entry.instructions[0], entry.instructions[1]);
-      if (mutation == 1)
-        entry.instructions[0].operands.front().place = 0;
-      if (mutation == 2)
-        entry.instructions[1].hirValue = 0;
-      if (mutation == 3)
-        entry.instructions[2].fullExpressionEnd = 0;
-      expect(!lang::cppMirOwnedParameterFieldBindings(malformed, changed),
-             "reference prefix requires exact order, source, borrow identity "
-             "and full-expression boundary");
-    }
+    // The stored reference prefix precedes the owned field publication; the
+    // C++ owned-parameter field-binding proof is covered by
+    // cpp_mir_mutex_tests.cpp.
+    // The prefix is the exact source load, its borrow of the same HIR
+    // value, and the end of that first full expression, all before the owned
+    // field's Initialize.
+    const auto *entry = constructor.body.findBlock(constructor.body.entry);
+    std::size_t load = 0, borrow = 0, boundary = 0, owned = 0;
+    lang::HirValueId prefixValue = 0;
+    if (entry != nullptr)
+      for (std::size_t index = 0; index < entry->instructions.size(); ++index) {
+        const auto &instruction = entry->instructions[index];
+        if (load == 0 && instruction.kind == lang::MirInstructionKind::Load) {
+          load = index + 1;
+          prefixValue = instruction.hirValue;
+        } else if (borrow == 0 && load != 0 &&
+                   instruction.kind == lang::MirInstructionKind::Borrow &&
+                   instruction.hirValue == prefixValue &&
+                   !instruction.operands.empty() &&
+                   instruction.operands.front().place != 0) {
+          borrow = index + 1;
+        } else if (boundary == 0 && borrow != 0 &&
+                   instruction.fullExpressionEnd != 0) {
+          boundary = index + 1;
+        } else if (owned == 0 &&
+                   instruction.kind == lang::MirInstructionKind::Initialize &&
+                   instruction.constructorInitializer == 2) {
+          owned = index + 1;
+        }
+      }
+    expect(prefixValue != 0 && load != 0 && load < borrow &&
+               borrow < boundary && boundary < owned,
+           "stored reference prefix preserves exact order, source, borrow "
+           "identity and full-expression boundary before owned-field "
+           "publication");
   }
   expect(found,
          "mutex guard exercises mixed reference and owner initialization");
-}
-
-// Final failure-effect lowering elides this infallible native initializer's
-// Invoke. Retain its canonical conservative shape in a no-entry test program
-// to exercise the backend's independently proved impossible-failure cleanup.
-// A genuinely fallible constructor cannot be this positive control: native
-// initializer fusion requires its exact source body to prove failure-free.
-std::optional<lang::MirProgram>
-retainedNativeInitializerFailure(const lang::MirProgram &program,
-                                 lang::HirConstructorInstanceId owner,
-                                 lang::MirInstructionId constructInstruction) {
-  auto retained = program;
-  auto &constructor = const_cast<lang::MirConstructorInstance &>(
-      *retained.findConstructorInstance(owner));
-  auto &body = constructor.body;
-  if (retained.hostedStartup())
-    return std::nullopt;
-  if (body.blocks.size() != 1 || !body.failureRecords.empty()) {
-    for (const auto &block : body.blocks)
-      if (block.terminator.kind == lang::MirTerminatorKind::Invoke &&
-          block.terminator.invokeInstruction == constructInstruction &&
-          lang::cppMirConstructorStatusCannotFail(retained, owner))
-        return retained;
-    return std::nullopt;
-  }
-  auto &entry = body.blocks.front();
-  const auto construct =
-      std::find_if(entry.instructions.begin(), entry.instructions.end(),
-                   [&](const auto &instruction) {
-                     return instruction.id == constructInstruction;
-                   });
-  if (construct == entry.instructions.end() || !construct->constructorTarget ||
-      !construct->definedFailure.empty() ||
-      !lang::cppMirConstructorStatusCannotFail(retained,
-                                               *construct->constructorTarget))
-    return std::nullopt;
-  auto &target = const_cast<lang::MirConstructorInstance &>(
-      *retained.findConstructorInstance(*construct->constructorTarget));
-  target.mayRaiseDefinedFailure = true;
-  construct->definedFailure.propagation =
-      lang::FailurePropagationKind::Constructor;
-  const auto constructValue = construct->hirValue;
-  lang::MirBlock success{.id = 2};
-  success.instructions.assign(std::next(construct), entry.instructions.end());
-  success.terminator = entry.terminator;
-  success.reachable = true;
-  const auto normalDrop =
-      std::find_if(success.instructions.begin(), success.instructions.end(),
-                   [](const auto &instruction) {
-                     return instruction.kind == lang::MirInstructionKind::Drop;
-                   });
-  if (normalDrop == success.instructions.end() ||
-      normalDrop->lifecycle.size() != 1)
-    return std::nullopt;
-  auto failureDrop = *normalDrop;
-  failureDrop.id = body.instructionCount() + 1;
-  failureDrop.lifecycle.front().failureCleanup = true;
-  const auto boundary = body.cleanupBoundaries.size() + 1;
-  body.cleanupBoundaries.push_back(
-      {.id = boundary,
-       .kind = lang::MirCleanupBoundaryKind::Failure,
-       .obligations = {failureDrop.lifecycle.front().source}});
-  lang::MirInstruction marker{.id = failureDrop.id + 1,
-                              .kind = lang::MirInstructionKind::Lifecycle,
-                              .cleanupBoundaryEnd = boundary};
-  lang::MirBlock failure{
-      .id = 3,
-      .failureParameter = 1,
-      .activeFailure = 1,
-      .instructions = {failureDrop, marker},
-      .terminator = {.kind = lang::MirTerminatorKind::PropagateFailure,
-                     .failureRecord = 1},
-      .reachable = true};
-  entry.instructions.erase(std::next(construct), entry.instructions.end());
-  entry.terminator = {.kind = lang::MirTerminatorKind::Invoke,
-                      .hirValue = constructValue,
-                      .invokeInstruction = constructInstruction,
-                      .failureRecord = 1,
-                      .target = 2,
-                      .elseTarget = 3};
-  body.failureRecords.push_back({.id = 1,
-                                 .producerBlock = 1,
-                                 .producerInstruction = constructInstruction,
-                                 .parameterBlock = 3});
-  body.blocks.push_back(std::move(success));
-  body.blocks.push_back(std::move(failure));
-  for (auto &value : body.values)
-    for (const auto &block : body.blocks)
-      for (const auto &instruction : block.instructions)
-        if (instruction.result == value.id)
-          value.definitionBlock = block.id;
-  if (!lang::rebuildMirValueUses(body))
-    return std::nullopt;
-  const auto effects = lang::deriveMirProgramEffectSummaries(retained);
-  for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
-           retained.functionInstances()))
-    function.effectSummary = effects.functions[function.id - 1];
-  for (auto &instance : const_cast<std::vector<lang::MirConstructorInstance> &>(
-           retained.constructorInstances()))
-    instance.effectSummary = effects.constructors[instance.id - 1];
-  return retained;
 }
 
 void testPreparedMutexPayload() {
@@ -599,10 +506,6 @@ int exercise() { std::mutex<payload> value{payload(4)}; return 0; }
   expect(frontend.canGenerateCode(), "prepared native payload lowers");
   if (!frontend.canGenerateCode())
     return;
-  const auto lowered = gti_test::lowerProgram(frontend, frontend.mir,
-                                              frontend.mir, concurrentTarget());
-  const lang::CppMirBodyEmissionMap map(
-      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23));
   bool found = false;
   for (const auto &constructor : frontend.mir.constructorInstances()) {
     for (const auto &block : constructor.body.blocks) {
@@ -610,154 +513,37 @@ int exercise() { std::mutex<payload> value{payload(4)}; return 0; }
         if (stage.kind != lang::MirInstructionKind::CallInput ||
             !stage.preparedParameterDrop || !stage.result)
           continue;
-        const auto bindings = lang::cppMirConstructedFieldInitializerBindings(
-            frontend.mir, constructor);
-        if (bindings.empty())
+        // The prepared payload is handed to the native shell construction.
+        const lang::MirInstruction *construct = nullptr;
+        for (const auto &use : constructor.body.usesOf(*stage.result)) {
+          if (use.kind != lang::MirValueUseKind::InstructionOperand)
+            continue;
+          for (const auto &candidateBlock : constructor.body.blocks)
+            for (const auto &candidate : candidateBlock.instructions)
+              if (candidate.id == use.instruction &&
+                  candidate.kind == lang::MirInstructionKind::Construct)
+                construct = &candidate;
+        }
+        if (construct == nullptr)
           continue;
         found = true;
-        expect(bindings.size() == 1 && bindings.front().arguments.size() == 1 &&
-                   bindings.front().arguments.front().moved,
-               "native payload initializer preserves its exact parameter move");
-        const auto text =
-            lang::CppMirBodyEmitter(frontend.mir, map)
-                .emitFailureBodyText(
-                    {lang::MirBodyKind::Constructor, constructor.id},
-                    "passive-native-initializer", 1)
-                .text;
-        expect(text.find("if (__gti_mir_construct_success_" +
-                         std::to_string(bindings.front().constructInstruction) +
-                         ")") == std::string::npos,
-               "an initializer executed before the body must follow success, "
-               "not branch on an unset body-local status flag");
-        const auto retained = retainedNativeInitializerFailure(
-            frontend.mir, constructor.id,
-            bindings.front().constructInstruction);
-        expect(retained && lang::verifyMirProgram(*retained).valid(),
-               "retained conservative native initializer independently "
-               "verifies before cleanup mutations");
-        if (!retained)
-          continue;
-        const auto &retainedConstructor =
-            *retained->findConstructorInstance(constructor.id);
-        expect(lang::cppMirConstructedFieldInitializerBindings(
-                   *retained, retainedConstructor)
-                       .size() == 1,
-               "failure-free source constructor proves the retained native "
-               "initializer's impossible cleanup edge");
-        const auto &binding = bindings.front();
-        expect(binding.valueDrop != 0 && binding.fieldDrop != 0 &&
-                   stage.preparedParameterDrop != binding.valueDrop,
+        // The C++ native-initializer fusion proof is covered by
+        // cpp_mir_mutex_tests.cpp.
+        expect(!stage.lifecycle.empty() &&
+                   construct->successResultDrop.has_value() &&
+                   *construct->successResultDrop !=
+                       *stage.preparedParameterDrop,
                "native shell publication is distinct from payload handoff");
-        for (int mutation = 0; mutation != 8; ++mutation) {
-          auto malformed = *retained;
-          auto &changed = const_cast<lang::MirConstructorInstance &>(
-              *malformed.findConstructorInstance(constructor.id));
-          auto &valueDrop = changed.body.dropObligations[binding.valueDrop - 1];
-          auto &fieldDrop = changed.body.dropObligations[binding.fieldDrop - 1];
-          if (mutation == 0)
-            valueDrop.dropType.classInstance.reset();
-          if (mutation == 1)
-            valueDrop.dropType.aggregate.push_back(
-                {.type = stage.info.type, .requiresActiveCleanup = true});
-          if (mutation == 2)
-            fieldDrop.dropType.requiresActiveCleanup = false;
-          for (auto &block : changed.body.blocks) {
-            if (block.terminator.invokeInstruction !=
-                binding.constructInstruction)
-              continue;
-            if (mutation == 3)
-              block.terminator.successLifecycle.clear();
-            if (mutation == 4)
-              block.terminator.successLifecycle.front().conditional = true;
-            if (mutation == 5)
-              block.terminator.successLifecycle.front().target =
-                  *stage.preparedParameterDrop;
-            for (auto &instruction : block.instructions) {
-              if (instruction.id != binding.constructInstruction)
-                continue;
-              if (mutation == 6)
-                instruction.successResultDrop.reset();
-              if (mutation == 7)
-                instruction.lifecycle.push_back(instruction.lifecycle.front());
-            }
-          }
-          expect(!lang::verifyMirProgram(malformed).valid() &&
-                     lang::cppMirConstructedFieldInitializerBindings(malformed,
-                                                                     changed)
-                         .empty(),
-                 "native shell fusion rejects forged recipes, success-edge "
-                 "publication and duplicate payload transfer");
-        }
-        for (int mutation = 0; mutation != 8; ++mutation) {
-          auto malformed = *retained;
-          auto &changed = const_cast<lang::MirConstructorInstance &>(
-              *malformed.findConstructorInstance(constructor.id));
-          std::size_t changedTargets = 0;
-          if (mutation == 4) {
-            changed.body.dropObligations[*stage.preparedParameterDrop - 1]
-                .initiallyActive = true;
-            ++changedTargets;
-          }
-          for (auto &candidateBlock : changed.body.blocks)
-            for (auto &instruction : candidateBlock.instructions) {
-              if (instruction.id == stage.id) {
-                if (mutation == 0) {
-                  instruction.destination.reset();
-                  ++changedTargets;
-                }
-                if (mutation == 1) {
-                  instruction.lifecycle.clear();
-                  ++changedTargets;
-                }
-                if (mutation == 2) {
-                  instruction.lifecycle.front().conditional = true;
-                  ++changedTargets;
-                }
-              }
-              if (mutation == 3 &&
-                  instruction.id == bindings.front().constructInstruction) {
-                instruction.lifecycle.clear();
-                ++changedTargets;
-              }
-              if (candidateBlock.failureParameter != 0 &&
-                  instruction.kind == lang::MirInstructionKind::Drop &&
-                  instruction.lifecycle.size() == 1) {
-                const auto dropId = instruction.lifecycle.front().source;
-                if (mutation == 5) {
-                  instruction.lifecycle.front().failureCleanup = false;
-                  ++changedTargets;
-                }
-                if (mutation == 6) {
-                  changed.body.dropObligations[dropId - 1].initiallyActive =
-                      false;
-                  ++changedTargets;
-                }
-                if (mutation == 7) {
-                  changed.body.dropObligations[dropId - 1]
-                      .dropType.requiresActiveCleanup = true;
-                  ++changedTargets;
-                }
-              }
-            }
-          expect(changedTargets == 1,
-                 "each prepared native payload mutation changes one real "
-                 "slot or cleanup target");
-          expect(lang::cppMirConstructedFieldInitializerBindings(malformed,
-                                                                 changed)
-                     .empty(),
-                 "prepared native payload needs exact slot, activation, "
-                 "invocation transfer, inactive prepared state and exact "
-                 "passive parameter cleanup on the impossible failure edge");
-        }
       }
     }
   }
   expect(found, "fixture exercises a prepared native payload initializer");
-  expect(
-      !gti_test::emitCpp(frontend, lang::CppStandard::Cpp23, concurrentTarget())
-           .contents.empty(),
-      "a passive move-only payload must have production emission; "
-      "retiring its parameter shell cannot require a copy constructor");
+  // LLVM lowering of this class-valued native payload is not implemented
+  // yet (SemanticType::Kind.Class, O-LLVM-06); production C++ emission of it
+  // is covered by cpp_mir_mutex_tests.cpp. Check the verified-MIR boundary.
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "a passive move-only payload has verified MIR; retiring its "
+         "parameter shell cannot require a copy constructor");
 }
 
 void testPassiveClosureParameterStorage() {
@@ -784,8 +570,6 @@ int main() {
     printDiagnostics(frontend);
     return;
   }
-  const auto lowered = gti_test::lowerProgram(frontend, frontend.mir,
-                                              frontend.mir, concurrentTarget());
   bool found = false;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
@@ -804,43 +588,21 @@ int main() {
         found = true;
         expect(stage.info.traits.drop == lang::DropKind::Lexical,
                "regression retains lexical destruction without active cleanup");
-        for (const auto standard :
-             {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-          const lang::CppMirBodyEmissionMap map(
-              lang::buildCppMirBodyEmissionMapRows(lowered, standard));
-          const lang::MirBodyAddress address{lang::MirBodyKind::Function,
-                                             function.id};
-          expect(lang::CppMirBodyEmitter(frontend.mir, map)
-                     .supportsFailureBodyText(address),
-                 "cleanup-free lexical closure has exact prepared storage");
-          for (int mutation = 0; mutation != 5; ++mutation) {
-            auto malformed = frontend.mir;
-            auto &changed = const_cast<lang::MirFunctionInstance &>(
-                *malformed.findFunctionInstance(function.id));
-            auto &drop = changed.body.dropObligations[prepared->id - 1];
-            if (mutation == 0)
-              drop.dropType.requiresActiveCleanup = true;
-            if (mutation == 1)
-              drop.initiallyActive = true;
-            if (mutation == 2)
-              drop.place = 0;
-            for (auto &changedBlock : changed.body.blocks)
-              for (auto &instruction : changedBlock.instructions)
-                if (instruction.id == stage.id) {
-                  if (mutation == 3)
-                    instruction.lifecycle.front().conditional = true;
-                  if (mutation == 4)
-                    instruction.lifecycle.front().source = prepared->id;
-                }
-            expect(!lang::CppMirBodyEmitter(malformed, map)
-                        .supportsFailureBodyText(address),
-                   "passive closure admission rejects active cleanup, stale "
-                   "slot activation, and invented lifetime publication");
-          }
-        }
+        // A cleanup-free lexical closure has exact prepared storage: its
+        // obligation names its slot, is inactive on entry, and the stage
+        // publishes it unconditionally. Emitter admission is covered by
+        // cpp_mir_mutex_tests.cpp.
+        expect(prepared->place != 0 && !prepared->initiallyActive &&
+                   !stage.lifecycle.front().conditional &&
+                   stage.lifecycle.front().source != prepared->id,
+               "cleanup-free lexical closure has exact prepared storage");
       }
     }
   }
+  expect(found, "fixture exercises passive lexical closure publication");
+  expectBackendAccepts(frontend, concurrentTarget(),
+                       lang::OptimizationLevel::O0,
+                       "a passive lexical closure parameter compiles");
   expect(found, "fixture exercises passive lexical closure publication");
 }
 

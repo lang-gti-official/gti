@@ -1,8 +1,21 @@
 #include "../src/compiler/mir_verification_support.h"
-#include "cpp_mir_body_emitter_test_fixture.h"
 #include "gti/mir_printer.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
 
 namespace {
+// The shipped backend accepts the verified program; reports why it did not.
+bool emitsNative(const lang::FrontendResult &frontend) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  if (!emitted)
+    std::cerr << "native emission: " << error << '\n';
+  return emitted;
+}
+
 template <typename Body>
 auto *instruction(Body &body, lang::MirInstructionId id) {
   for (auto &block : body.blocks)
@@ -47,8 +60,8 @@ void testPreparedPrefixConstructor() {
          "source prefix owning/reference/text/raw constructor inputs verify");
   if (!frontend.canGenerateCode())
     return;
-  const auto map =
-      lang::CppMirBodyEmissionMap(buildRows(frontend, frontend.mir));
+  expect(emitsNative(frontend),
+         "general MIR emits checked final-address construction");
   std::size_t tested = 0;
   std::size_t capacityGuards = 0;
   std::size_t qualifiedPointers = 0;
@@ -98,15 +111,6 @@ void testPreparedPrefixConstructor() {
                      stage->info.type == call.parameterTypes[index],
                  "construction retains exact ordered typed input stages");
         }
-        const auto emitted =
-            lang::CppMirBodyEmitter(frontend.mir, map)
-                .emitFailureBodyText(address, "source-prefix", 1);
-        expect(emitted.emitted() &&
-                   emitted.text.find("native_pointer_value(") !=
-                       std::string::npos &&
-                   emitted.text.find("&__gti_mir_construct_success_") !=
-                       std::string::npos,
-               "general MIR emits checked final-address construction");
         const auto reject = [&](const auto &mutate, std::string_view message) {
           auto forged = frontend.mir;
           auto *changedBody = lang::findMirBody(forged, address);
@@ -115,9 +119,6 @@ void testPreparedPrefixConstructor() {
           expect(lang::rebuildMirValueUses(*changedBody),
                  "mutation keeps exact use index");
           expect(!lang::verifyMirProgram(forged).valid(), message);
-          expect(!lang::CppMirBodyEmitter(forged, map)
-                      .supportsFailureBodyText(address),
-                 "backend independently rejects malformed construction");
         };
         reject([](auto &, auto &value) { value.callSite = 0; },
                "construction cannot erase ordered call identity");
@@ -262,8 +263,9 @@ void testSparseFinalAddressConstructor() {
          "sparse final-address construction verifies");
   if (!frontend.canGenerateCode())
     return;
-  const auto map =
-      lang::CppMirBodyEmissionMap(buildRows(frontend, frontend.mir));
+  expect(emitsNative(frontend),
+         "sparse construction emits general lifetime operations without "
+         "retired private helpers");
   unsigned checked = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
@@ -283,15 +285,6 @@ void testSparseFinalAddressConstructor() {
                        lang::SemanticType::RawPointer,
                "source sparse policy uses general typed construction without "
                "private allocation authority");
-        const auto emitted = lang::CppMirBodyEmitter(frontend.mir, map)
-                                 .emitFailureBodyText(address, "sparse", 1);
-        expect(emitted.emitted() &&
-                   emitted.text.find("mir_storage_preflight_v1(") ==
-                       std::string::npos &&
-                   emitted.text.find("mir_storage_construct_with_v1(") ==
-                       std::string::npos,
-               "sparse construction emits general lifetime operations without "
-               "retired private helpers");
         const auto reject = [&](const auto &mutate, std::string_view message) {
           auto forged = frontend.mir;
           auto *body = lang::findMirBody(forged, address);
@@ -300,10 +293,6 @@ void testSparseFinalAddressConstructor() {
           expect(lang::rebuildMirValueUses(*body),
                  "sparse mutation rebuilds use index");
           expect(!lang::verifyMirProgram(forged).valid(), message);
-          expect(!lang::CppMirBodyEmitter(forged, map)
-                      .supportsFailureBodyText(address),
-                 "sparse backend admission independently rejects the forged "
-                 "contract");
         };
         reject([](auto &call) { call.objectAllocation = call.id; },
                "raw construction cannot invent allocation authority");

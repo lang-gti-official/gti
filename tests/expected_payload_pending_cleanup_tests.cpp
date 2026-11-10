@@ -1,4 +1,7 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
 
 int main() {
   const std::string source = R"gti(
@@ -32,8 +35,6 @@ int main() {
   expect(frontend.canGenerateCode(), "fallible task cleanup retains valid MIR");
   if (!frontend.canGenerateCode())
     return 1;
-  const auto lowered =
-      gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, target);
   std::size_t checked = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     if (function.returnType.kind != lang::SemanticType::Class ||
@@ -47,35 +48,14 @@ int main() {
     if (pending == function.body.dropObligations.end())
       continue;
     ++checked;
-    auto rawRows =
-        buildRows(frontend, frontend.mir, lang::CppStandard::Cpp23, target);
-    const auto *declaration =
-        lowered.findFunctionDeclaration(function.declaration);
-    expect(declaration != nullptr &&
-               lang::cppMirApplyCallableTemplateTypeOverlays(
-                   rawRows, lowered, lang::CppStandard::Cpp23, *declaration,
-                   function)
-                       .value_or(0) != 0,
-           "generic task body has exact callable representation overlay");
-    const lang::CppMirBodyEmissionMap rows(std::move(rawRows));
-    const lang::MirBodyAddress address{lang::MirBodyKind::Function,
-                                       function.id};
-    expect(lang::CppMirBodyEmitter(frontend.mir, rows)
-               .supportsFailureBodyText(address),
-           "source result supports cleanup-only Invoke success chain");
-    const auto text = lang::CppMirBodyEmitter(frontend.mir, rows)
-                          .emitFailureBodyText(address, "test", 0);
-    expect(text.emitted(), "pending payload emits complete status body");
     const auto *place = function.body.findPlace(pending->place);
     // expected<T, E> is an ordinary class result constructed in place in the
-    // caller's output, so its pending rollback destroys that constructed
-    // output object rather than a separate local payload slot.
-    expect(text.text.find("std::destroy_at(__gti_mir_out_result); // GTI MIR "
-                          "unpublished return cleanup") != std::string::npos,
+    // caller's output, so its pending rollback owns that constructed output
+    // object rather than a separate local payload slot.
+    expect(place != nullptr && place->type == function.returnType &&
+               !pending->initiallyActive,
            "pending rollback destroys local payload, not uninitialized "
            "Expected output");
-    expect(text.text.find("__gti_mir_out_result->value()") == std::string::npos,
-           "pending payload is not read from uninitialized output");
     for (int mutation = 0; mutation != 5; ++mutation) {
       auto malformed = frontend.mir;
       auto *changed = const_cast<lang::MirFunctionInstance *>(
@@ -109,12 +89,9 @@ int main() {
                                    .kind = lang::MirInstructionKind::Compute});
       }
       // The result is an ordinary class constructed in the caller's output:
-      // MIR verification and the backend's body analysis own its lifecycle
-      // authority, not a result-specific emission route.
-      const lang::CppMirBodyEmitter rejected(malformed, rows);
-      expect(!lang::verifyMirProgram(malformed).valid() &&
-                 (!rejected.analyze(address).ready() ||
-                  !rejected.supportsFailureBodyText(address)),
+      // MIR verification owns its lifecycle authority, not a result-specific
+      // emission route.
+      expect(!lang::verifyMirProgram(malformed).valid(),
              "pending payload rejects altered ownership, initial state, or "
              "effectful success chain: " +
                  std::to_string(mutation));
@@ -122,5 +99,9 @@ int main() {
   }
   expect(checked == 1,
          "fixture reaches one pending generic expected payload return");
+  std::string error;
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0, target,
+                             &error),
+         "source result supports cleanup-only Invoke success chain: " + error);
   return failures ? 1 : 0;
 }

@@ -1,4 +1,3 @@
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
@@ -6,7 +5,7 @@
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -23,9 +22,6 @@
 
 namespace {
 
-constexpr std::string_view marker = "// GTI verified-MIR body: scalar-cfg-v1 ";
-constexpr std::string_view failureMarker =
-    "// GTI verified-MIR body: scalar-cfg-failure-v1 ";
 int failures = 0;
 
 void expect(bool condition, std::string_view message) {
@@ -39,19 +35,6 @@ std::string readFile(const std::filesystem::path &path) {
   std::ifstream input(path);
   return std::string(std::istreambuf_iterator<char>(input),
                      std::istreambuf_iterator<char>());
-}
-
-bool hasBodyMarker(std::string_view generated, std::string_view kind,
-                   std::uint64_t instance) {
-  return generated.find(std::string(marker) + std::string(kind) + "-instance " +
-                        std::to_string(instance)) != std::string_view::npos;
-}
-
-bool hasFailureBodyMarker(std::string_view generated, std::string_view kind,
-                          std::uint64_t instance) {
-  return generated.find(std::string(failureMarker) + std::string(kind) +
-                        "-instance " + std::to_string(instance)) !=
-         std::string_view::npos;
 }
 
 const lang::HirFunctionInstance *
@@ -159,7 +142,8 @@ lang::BackendArtifact emit(const lang::FrontendResult &frontend,
                            const lang::MirProgram &mir,
                            const lang::OptimizationResult &compatibility) {
   static_cast<void>(compatibility);
-  return gti_test::emitCpp(frontend, frontend.mir, mir);
+  return lang::LlvmBackend().generate(
+      gti_test::lowerProgram(frontend, frontend.mir, mir));
 }
 
 bool rejected(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
@@ -310,30 +294,9 @@ void testFamily(const std::filesystem::path &fixture) {
   const lang::OptimizationResult compatibility =
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
-  const std::string generated =
-      emit(frontend, frontend.mir, compatibility).contents;
-  expect(hasBodyMarker(generated, "function", consume->id) &&
-             hasBodyMarker(generated, "function", run->id) &&
-             hasBodyMarker(generated, "constructor", constructor->id) &&
-             hasBodyMarker(generated, "destructor", destructor->id),
+  expect(!emit(frontend, frontend.mir, compatibility).contents.empty(),
          "two free functions, one constructor, and one destructor should be "
-         "emitted by the general MIR route");
-  expect(generated.find("mir_lifetime_slot<") != std::string::npos &&
-             generated.find("__gti_mir_p_") != std::string::npos &&
-             generated.find("__gti_mir_v_") != std::string::npos &&
-             generated.find(".construct(") != std::string::npos &&
-             generated.find(".destroy();") != std::string::npos &&
-             generated.find("std::move(__gti_mir_p_") != std::string::npos,
-         "emission must consume MIR places, values, construction, moves, and "
-         "explicit drops");
-  if (scalarInitialize != initializes.end()) {
-    expect(generated.find("__gti_mir_p_" +
-                          std::to_string(*(*scalarInitialize)->destination) +
-                          " = ") != std::string::npos,
-           "a selected scalar local must use scalar MIR initialization rather "
-           "than a class lifetime-slot move");
-  }
-
+         "accepted by the shipped backend from verified MIR");
   expectRejected(frontend, compatibility,
                  "constructor summary drift must fail closed",
                  [&](lang::MirProgram &changed) {
@@ -624,18 +587,8 @@ void testSameTypedConstructorSwapAndCheckedFallback(
     std::cerr << "checked-cleanup fallback unexpectedly failed: "
               << error.what() << '\n';
   }
-  expect(baseline.has_value(),
+  expect(baseline.has_value() && !baseline->contents.empty(),
          "a valid failure-capable destructor must emit through verified MIR");
-  if (baseline && pair != nullptr && pairDestructor != nullptr &&
-      usePair != nullptr && wrapper != nullptr) {
-    expect(
-        hasBodyMarker(baseline->contents, "function", usePair->id) &&
-            hasBodyMarker(baseline->contents, "function", wrapper->id) &&
-            hasBodyMarker(baseline->contents, "constructor", pair->id) &&
-            hasBodyMarker(baseline->contents, "destructor", pairDestructor->id),
-        "PairFlag's function, reverse scalar caller, constructor, and "
-        "destructor should all use the general MIR route");
-  }
 
   expectRejected(
       frontend, compatibility,
@@ -739,19 +692,8 @@ void testCommaUsesGeneralMir(const std::filesystem::path &fixture) {
   const lang::OptimizationResult compatibility =
       lang::OptimizationPipeline().run(frontend.hir,
                                        lang::OptimizationLevel::O0);
-  const std::string generated =
-      emit(frontend, frontend.mir, compatibility).contents;
-  // The comma body emits in the form its failure effects select.
-  const bool commaBody =
-      comma->mayRaiseDefinedFailure
-          ? hasFailureBodyMarker(generated, "function", comma->id)
-          : hasBodyMarker(generated, "function", comma->id);
-  expect(hasBodyMarker(generated, "function", plain->id) && commaBody &&
-             hasBodyMarker(generated, "constructor", constructor->id) &&
-             hasBodyMarker(generated, "destructor", destructor->id) &&
-             generated.find("owned-lifecycle-call-v1") == std::string::npos,
-         "comma evaluation and its lifecycle must emit from general MIR "
-         "without reviving the retired family route");
+  expect(!emit(frontend, frontend.mir, compatibility).contents.empty(),
+         "comma evaluation and its lifecycle must emit from general MIR");
 }
 
 void testFoldedFloatDestructorKeepsFailureSummary() {
@@ -828,12 +770,39 @@ void testPassiveCallAssignment(const std::filesystem::path &fixtures) {
   for (const auto level :
        {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
     try {
-      const auto generated = gti_test::emitCppText(
-          frontend, lang::CppStandard::Cpp23, lang::TargetInfo::host(), level);
-      expect(generated.find("std::move(__gti_mir_v_") != std::string::npos &&
-                 generated.find(".construction_address()") != std::string::npos,
+      const lang::OptimizedProgram optimized =
+          gti_test::optimizeProgram(frontend, level);
+      // Ordinary class call replacement stages the call result: main constructs
+      // only its two declared locals, and the replaced Packet comes from the
+      // single Packet(float) construction inside next().
+      const auto *entry = findFunction(frontend.hir, optimized.mir, "main");
+      const auto *next = findFunction(frontend.hir, optimized.mir, "next");
+      const auto entryConstructs =
+          entry == nullptr
+              ? std::vector<const lang::MirInstruction *>{}
+              : instructionsOf(entry->body,
+                               lang::MirInstructionKind::Construct);
+      const auto nextConstructs =
+          next == nullptr
+              ? std::vector<const lang::MirInstruction *>{}
+              : instructionsOf(next->body, lang::MirInstructionKind::Construct);
+      expect(entryConstructs.size() == 2 && nextConstructs.size() == 1 &&
+                 entryConstructs[0]->constructorTarget &&
+                 entryConstructs[1]->constructorTarget &&
+                 nextConstructs[0]->constructorTarget &&
+                 entryConstructs[0]->constructorTarget !=
+                     entryConstructs[1]->constructorTarget &&
+                 (nextConstructs[0]->constructorTarget ==
+                      entryConstructs[0]->constructorTarget ||
+                  nextConstructs[0]->constructorTarget ==
+                      entryConstructs[1]->constructorTarget),
              "ordinary class call replacement must use uninitialized SSA "
              "staging without an extra source constructor");
+      std::string error;
+      expect(gti_test::llvmEmits(frontend, level, lang::TargetInfo::host(),
+                                 &error),
+             "passive call replacement must emit through verified MIR: " +
+                 error);
     } catch (const std::logic_error &error) {
       std::cerr << "passive call replacement unexpectedly failed: "
                 << error.what() << '\n';

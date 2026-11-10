@@ -6,7 +6,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 def run(command: list[str], environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -67,34 +67,36 @@ def main() -> int:
                 sys.stderr.write(f"MIR lost callable contract {contract!r}\n")
                 return 1
 
-        cpp_path = root / "program.cpp"
-        emitted_cpp = run(
-            [
-                str(compiler),
-                str(source),
-                "--emit-cpp",
-                "--std",
-                "c++23",
-                "-O1",
-                "-o",
-                str(cpp_path),
-            ],
-            environment,
-        )
-        if emitted_cpp.returncode != 0:
-            return fail("emit C++", emitted_cpp)
-        generated = cpp_path.read_text(encoding="utf-8")
-        for frontend_only in (
-            "concept read_callable",
-            "concept predicate",
-            "concept comparator",
-            "@compiler_constraint",
-        ):
-            if frontend_only in generated:
-                sys.stderr.write(
-                    f"backend leaked frontend-only concept {frontend_only!r}\n"
-                )
-                return 1
+        # Probe of the frozen C++ backend's text: it runs only when
+        # GTI_TEST_BACKENDS selects C++.
+        for _label, cpp_flags, _native in cpp_text_modes():
+            cpp_path = root / "program.cpp"
+            emitted_cpp = run(
+                [
+                    str(compiler),
+                    str(source),
+                    "--emit-cpp",
+                    *cpp_flags,
+                    "-O1",
+                    "-o",
+                    str(cpp_path),
+                ],
+                environment,
+            )
+            if emitted_cpp.returncode != 0:
+                return fail("emit C++", emitted_cpp)
+            generated = cpp_path.read_text(encoding="utf-8")
+            for frontend_only in (
+                "concept read_callable",
+                "concept predicate",
+                "concept comparator",
+                "@compiler_constraint",
+            ):
+                if frontend_only in generated:
+                    sys.stderr.write(
+                        f"backend leaked frontend-only concept {frontend_only!r}\n"
+                    )
+                    return 1
 
         negative_cases = (
             (

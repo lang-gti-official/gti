@@ -3,6 +3,247 @@
 
 namespace {
 
+// Backend-neutral oracles: assertions about emitted programs are made on the
+// verified MIR (and the shipped LLVM backend), never on generated C++ text.
+[[maybe_unused]] const lang::MirFunctionInstance *
+mirFunctionNamed(const lang::FrontendResult &frontend,
+                 const lang::MirProgram &program,
+                 std::string_view qualifiedName) {
+  for (const lang::MirFunctionInstance &function :
+       program.functionInstances()) {
+    const lang::FunctionInfo *info =
+        frontend.semantics.findFunction(function.declaration);
+    if (info != nullptr && info->qualifiedName == qualifiedName) {
+      return &function;
+    }
+  }
+  return nullptr;
+}
+
+[[maybe_unused]] const lang::MirFunctionInstance *
+mirFunctionNamed(const lang::FrontendResult &frontend,
+                 std::string_view qualifiedName) {
+  return mirFunctionNamed(frontend, frontend.mir, qualifiedName);
+}
+
+[[maybe_unused]] const lang::MirClassInstance *
+mirClassNamed(const lang::FrontendResult &frontend,
+              std::string_view qualifiedName) {
+  for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
+    const lang::ClassTypeInfo *info =
+        frontend.semantics.findClassType(instance.declaration);
+    if (info != nullptr && info->qualifiedName == qualifiedName) {
+      return &instance;
+    }
+  }
+  return nullptr;
+}
+
+template <typename Predicate>
+[[maybe_unused]] bool anyMirInstruction(const lang::MirBody &body,
+                                        Predicate predicate) {
+  for (const lang::MirBlock &block : body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (!instruction.tombstone && predicate(instruction)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Every executable body of `program`: functions, constructors, destructors,
+// lambdas, class field initializers and the merged program module.
+template <typename Visitor>
+[[maybe_unused]] void forEachMirBody(const lang::MirProgram &program,
+                                     Visitor visitor) {
+  visitor(program.module());
+  for (const auto &function : program.functionInstances())
+    visitor(function.body);
+  for (const auto &constructor : program.constructorInstances())
+    visitor(constructor.body);
+  for (const auto &destructor : program.destructorInstances())
+    visitor(destructor.body);
+  for (const auto &lambda : program.lambdaInstances())
+    visitor(lambda.body);
+  for (const auto &instance : program.classInstances()) {
+    visitor(instance.fieldInitializers);
+    visitor(instance.staticFieldInitializers);
+  }
+}
+
+template <typename Predicate>
+[[maybe_unused]] bool anyProgramInstruction(const lang::MirProgram &program,
+                                            Predicate predicate) {
+  bool found = false;
+  forEachMirBody(program, [&](const lang::MirBody &body) {
+    found = found || anyMirInstruction(body, predicate);
+  });
+  return found;
+}
+
+[[maybe_unused]] bool isMirIntegerLiteral(const lang::MirInstruction &item,
+                                          std::uint64_t magnitude) {
+  if (item.operation != lang::MirOperation::Literal || !item.literal)
+    return false;
+  const auto *value = std::get_if<std::uint64_t>(&*item.literal);
+  return value != nullptr && *value == magnitude;
+}
+
+[[maybe_unused]] bool hasMirIntegerLiteral(const lang::MirBody &body,
+                                           std::uint64_t magnitude) {
+  return anyMirInstruction(body, [&](const lang::MirInstruction &item) {
+    return isMirIntegerLiteral(item, magnitude);
+  });
+}
+
+[[maybe_unused]] bool hasMirIntegerLiteral(const lang::MirProgram &program,
+                                           std::uint64_t magnitude) {
+  return anyProgramInstruction(program, [&](const lang::MirInstruction &item) {
+    return isMirIntegerLiteral(item, magnitude);
+  });
+}
+
+// Text reaching the program as a MIR string literal or a constant program
+// storage initializer.
+[[maybe_unused]] bool mirContainsText(const lang::MirProgram &program,
+                                      std::string_view text) {
+  const bool literal =
+      anyProgramInstruction(program, [&](const lang::MirInstruction &item) {
+        const auto *value =
+            item.literal ? std::get_if<std::string>(&*item.literal) : nullptr;
+        return value != nullptr && value->find(text) != std::string::npos;
+      });
+  const auto &steps = program.programInitializationPlan().steps;
+  return literal ||
+         std::any_of(steps.begin(), steps.end(), [&](const auto &step) {
+           const auto *value =
+               step.dataConstant ? std::get_if<std::string>(&*step.dataConstant)
+                                 : nullptr;
+           return value != nullptr && value->find(text) != std::string::npos;
+         });
+}
+
+// The defined-failure outcomes an instruction's checked operation can raise.
+[[maybe_unused]] std::vector<lang::DefinedFailureOutcome>
+mirFailureOutcomes(const lang::MirProgram &program,
+                   const lang::MirInstruction &instruction) {
+  std::vector<lang::DefinedFailureOutcome> outcomes;
+  for (const lang::FailureSiteId site : instruction.localFailureSites) {
+    for (const lang::FailureSiteDescriptor &descriptor :
+         program.failureMetadata().sites()) {
+      if (descriptor.id == site) {
+        outcomes.insert(outcomes.end(), descriptor.outcomes.begin(),
+                        descriptor.outcomes.end());
+      }
+    }
+  }
+  return outcomes;
+}
+
+// A Compute of `operation` whose checked evaluation can raise exactly the
+// given defined failure (and, when `type` is not Unknown, in that domain).
+[[maybe_unused]] bool hasCheckedMirOperation(
+    const lang::MirProgram &program, const lang::MirBody &body,
+    lang::MirOperation operation, lang::DefinedFailureCode code,
+    lang::DefinedFailureDetail detail,
+    const lang::SemanticType &type = lang::SemanticType::Unknown) {
+  return anyMirInstruction(body, [&](const lang::MirInstruction &item) {
+    if (item.operation != operation ||
+        (type != lang::SemanticType::Unknown && item.info.type != type))
+      return false;
+    const auto outcomes = mirFailureOutcomes(program, item);
+    return std::any_of(outcomes.begin(), outcomes.end(), [&](auto outcome) {
+      return outcome.code == code && outcome.detail == detail;
+    });
+  });
+}
+
+[[maybe_unused]] bool hasCheckedMirOperation(
+    const lang::MirProgram &program, lang::MirOperation operation,
+    lang::DefinedFailureCode code, lang::DefinedFailureDetail detail,
+    const lang::SemanticType &type = lang::SemanticType::Unknown) {
+  bool found = false;
+  forEachMirBody(program, [&](const lang::MirBody &body) {
+    found = found || hasCheckedMirOperation(program, body, operation, code,
+                                            detail, type);
+  });
+  return found;
+}
+
+// A Compute of `operation` with no checked failure: it lowers directly.
+[[maybe_unused]] bool hasUncheckedMirOperation(const lang::MirBody &body,
+                                               lang::MirOperation operation) {
+  return anyMirInstruction(body, [&](const lang::MirInstruction &item) {
+    return item.kind == lang::MirInstructionKind::Compute &&
+           item.operation == operation && item.localFailureSites.empty();
+  });
+}
+
+[[maybe_unused]] bool hasUncheckedMirOperation(const lang::MirProgram &program,
+                                               lang::MirOperation operation) {
+  bool found = false;
+  forEachMirBody(program, [&](const lang::MirBody &body) {
+    found = found || hasUncheckedMirOperation(body, operation);
+  });
+  return found;
+}
+
+[[maybe_unused]] bool
+callsMirFunction(const lang::MirBody &body,
+                 const lang::MirFunctionInstance *callee) {
+  return callee != nullptr &&
+         anyMirInstruction(body, [&](const lang::MirInstruction &item) {
+           return item.kind == lang::MirInstructionKind::Call &&
+                  item.functionTarget == callee->id;
+         });
+}
+
+[[maybe_unused]] const lang::MirProgramInitializationStep *
+mirStorageStep(const lang::FrontendResult &frontend,
+               const lang::MirProgram &program,
+               std::string_view qualifiedName) {
+  for (const auto &step : program.programInitializationPlan().steps) {
+    const lang::SymbolRecord *symbol =
+        frontend.semantics.database().findSymbol(step.symbol);
+    if (symbol != nullptr && symbol->qualifiedName == qualifiedName) {
+      return &step;
+    }
+  }
+  return nullptr;
+}
+
+[[maybe_unused]] const lang::MirProgramInitializationStep *
+mirStorageStep(const lang::FrontendResult &frontend,
+               std::string_view qualifiedName) {
+  return mirStorageStep(frontend, frontend.mir, qualifiedName);
+}
+
+// The exact constant integer a program-storage step publishes as data.
+[[maybe_unused]] bool
+storesMirInteger(const lang::MirProgramInitializationStep *step, bool negative,
+                 std::uint64_t magnitude) {
+  const auto *value =
+      step == nullptr || !step->dataConstant
+          ? nullptr
+          : std::get_if<lang::ConstantInteger>(&*step->dataConstant);
+  return value != nullptr && value->negative == negative &&
+         value->magnitude == magnitude;
+}
+
+// True when the shipped native backend accepts the program; reports why not.
+[[maybe_unused]] bool
+llvmAccepts(const lang::FrontendResult &frontend,
+            lang::OptimizationLevel level = lang::OptimizationLevel::O0,
+            const lang::TargetInfo &target = lang::TargetInfo::host()) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(frontend, level, target, &error);
+  if (!emitted) {
+    std::cerr << "LLVM emission failed: " << error << '\n';
+  }
+  return emitted;
+}
+
 void testSemanticVisitorRequestReuse() {
   // Checked borrow ancestry uses exact source-unit/declaration identities.
   // Supply those facts even when exercising the lower-level visitor directly.
@@ -1171,19 +1412,59 @@ int main() {
   expect(validSemantic.check(validProgram),
          "mutable bindings should permit mutation");
 
-  const std::string generated = emitAnalyzedSource(validSource);
-  expect(generated.find("_identity(std::int32_t __gti_mir_arg_0)") !=
-                 std::string::npos &&
-             generated.find("__gti_mir_p_1 = __gti_mir_arg_0") !=
-                 std::string::npos,
+  const lang::FrontendResult lowered = analyzeEmissionFixture(validSource);
+  const lang::MirFunctionInstance *identity =
+      mirFunctionNamed(lowered, "identity");
+  const lang::MirPlace *parameterPlace = nullptr;
+  if (identity != nullptr && identity->parameterBindings.size() == 1) {
+    for (const lang::MirPlace &place : identity->body.places) {
+      if (place.root == lang::MirPlaceRootKind::Binding &&
+          place.binding == identity->parameterBindings.front() &&
+          place.projections.empty()) {
+        parameterPlace = &place;
+      }
+    }
+  }
+  expect(identity != nullptr && identity->parameterTypes.size() == 1 &&
+             identity->parameterTypes.front() == lang::SemanticType::Int32 &&
+             parameterPlace != nullptr &&
+             parameterPlace->type == lang::SemanticType::Int32 &&
+             anyMirInstruction(identity->body,
+                               [&](const lang::MirInstruction &item) {
+                                 return item.kind ==
+                                            lang::MirInstructionKind::Load &&
+                                        !item.operands.empty() &&
+                                        item.operands.front().place ==
+                                            parameterPlace->id;
+                               }),
          "parameters should enter verified MIR through exact typed places");
-  expect(generated.find("__gti_mir_p_1 = __gti_mir_v_1") != std::string::npos,
+  const lang::MirFunctionInstance *mainFunction =
+      mirFunctionNamed(lowered, "main");
+  std::vector<lang::MirPlaceId> initialized;
+  std::vector<lang::MirPlaceId> assigned;
+  if (mainFunction != nullptr) {
+    for (const lang::MirBlock &block : mainFunction->body.blocks) {
+      for (const lang::MirInstruction &item : block.instructions) {
+        if (item.kind == lang::MirInstructionKind::Initialize &&
+            item.destination)
+          initialized.push_back(*item.destination);
+        if (item.kind == lang::MirInstructionKind::Assign && item.destination)
+          assigned.push_back(*item.destination);
+      }
+    }
+  }
+  expect(initialized.size() == 2 && initialized[0] != initialized[1],
          "immutable variables should retain distinct MIR storage after "
          "semantic immutability checks");
-  expect(
-      generated.find("mir_checked_add_v1<std::int32_t>") != std::string::npos &&
-          generated.find("__gti_mir_p_2 = __gti_mir_v_4") != std::string::npos,
-      "mut variables should lower through explicit MIR updates");
+  expect(mainFunction != nullptr && initialized.size() == 2 &&
+             assigned.size() == 1 && assigned.front() == initialized[1] &&
+             hasCheckedMirOperation(lowered.mir, mainFunction->body,
+                                    lang::MirOperation::Add,
+                                    lang::DefinedFailureCode::IntegerOverflow,
+                                    lang::DefinedFailureDetail::Addition,
+                                    lang::SemanticType::Int32) &&
+             llvmAccepts(lowered),
+         "mut variables should lower through explicit MIR updates");
 
   auto invalidTokens = lexer.scan(R"(
 class Box {
@@ -1316,10 +1597,22 @@ int main() {
   expect(validSemantic.check(validProgram),
          "explicit discard and void calls should pass semantic checks");
 
-  const std::string generated = emitAnalyzedSource(validSource);
-  expect(generated.find("calculate();") != std::string::npos &&
-             generated.find("[[discard]]") == std::string::npos,
-         "discard should be a GTI-only call-site attribute");
+  const lang::FrontendResult lowered = analyzeEmissionFixture(validSource);
+  const lang::MirFunctionInstance *calculate =
+      mirFunctionNamed(lowered, "calculate");
+  const lang::MirFunctionInstance *mainFunction =
+      mirFunctionNamed(lowered, "main");
+  expect(mainFunction != nullptr && calculate != nullptr &&
+             anyMirInstruction(
+                 mainFunction->body,
+                 [&](const lang::MirInstruction &item) {
+                   return item.kind == lang::MirInstructionKind::Call &&
+                          item.functionTarget == calculate->id && item.result &&
+                          mainFunction->body.usesOf(*item.result).empty();
+                 }) &&
+             llvmAccepts(lowered),
+         "discard should be a GTI-only call-site attribute: the call executes "
+         "and its result is dropped");
 
   const std::string invalidSource = R"(
 int calculate() { return 7; }
@@ -1696,11 +1989,18 @@ int main() { return print(0); }
   expect(semantic.check(program),
          "user code should be able to declare a function named print");
 
-  const std::string generated = emitAnalyzedSource(source);
-  expect(generated.find("std::int32_t __gti_fn_") != std::string::npos &&
-             generated.find("_print(std::int32_t __gti_mir_arg_0)") !=
-                 std::string::npos &&
-             generated.find("_print(__gti_mir_v_") != std::string::npos,
+  const lang::FrontendResult lowered = analyzeEmissionFixture(source);
+  const lang::MirFunctionInstance *print = mirFunctionNamed(lowered, "print");
+  const lang::MirFunctionInstance *mainFunction =
+      mirFunctionNamed(lowered, "main");
+  expect(print != nullptr &&
+             print->definitionKind == lang::MirDefinitionKind::Source &&
+             print->returnType == lang::SemanticType::Int32 &&
+             print->parameterTypes.size() == 1 &&
+             print->parameterTypes.front() == lang::SemanticType::Int32 &&
+             mainFunction != nullptr &&
+             callsMirFunction(mainFunction->body, print) &&
+             llvmAccepts(lowered),
          "print should lower as a normal function");
 }
 

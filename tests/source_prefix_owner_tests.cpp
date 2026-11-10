@@ -1,8 +1,8 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 #include "private_stdlib_fixture.h"
 
 #include <algorithm>
@@ -52,9 +52,19 @@ int main() {
       return 1;
     }
   }
-  const auto cpp = gti_test::emitCppText(frontend);
-  if (cpp.find("// GTI verified-MIR body:") == std::string::npos)
+  // The prefix owner's bodies go through verified MIR to native emission.
+  const auto entry = std::find_if(
+      frontend.mir.functionInstances().begin(),
+      frontend.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind != lang::ProgramEntryKind::None;
+      });
+  if (!lang::verifyMirProgram(frontend.mir).valid() ||
+      entry == frontend.mir.functionInstances().end() ||
+      entry->definitionKind != lang::MirDefinitionKind::Source ||
+      entry->body.blocks.empty() || !gti_test::llvmEmits(frontend)) {
+    std::cerr << "source prefix owner did not reach verified MIR emission\n";
     return 1;
+  }
   auto forged = frontend.mir;
   bool changed = false;
   bool validEffects = true;
@@ -95,12 +105,20 @@ int main(int argc, std::vector<std::string> argv) { return argc; }
     std::cerr << "source prefix hosted argument contract did not lower\n";
     return 1;
   }
-  const auto hostedText = gti_test::emitCppText(hosted);
-  if (hostedText.find("__gti_cleanup_context(&__gti_failure_record") ==
-          std::string::npos ||
-      hostedText.find(
-          "__gti_arguments).template __gti_mir_unique_cleanup_failure<") ==
-          std::string::npos) {
+  // Hosted argument cleanup is an explicit failure-propagating MIR startup
+  // recipe the backend consumes. Its C++ spelling lives in
+  // cpp_mir_source_prefix_owner_tests.cpp.
+  const auto &hostedPlan = hosted.mir.hostedStartupPlan();
+  if (!hostedPlan ||
+      std::none_of(
+          hostedPlan->operations.begin(), hostedPlan->operations.end(),
+          [](const auto &operation) {
+            return operation.kind == lang::MirHostedStartupOperationKind::
+                                         DropFailureCleanup &&
+                   operation.failureBehavior ==
+                       lang::MirHostedStartupFailureBehavior::Propagate;
+          }) ||
+      !gti_test::llvmEmits(hosted)) {
     std::cerr << "hosted argument cleanup did not consume its MIR recipe\n";
     return 1;
   }
@@ -130,9 +148,7 @@ int main(int argc, std::vector<std::string> argv) { return argc; }
       std::istreambuf_iterator<char>(forwardedInput), {}};
   const auto forwarded = gti_test::analyzePrivateMemoryFixture(
       forwardedPath.string(), forwardedSource);
-  if (!forwarded.canGenerateCode() ||
-      gti_test::emitCppText(forwarded).find(
-          "GTI MIR unpublished return cleanup") == std::string::npos) {
+  if (!forwarded.canGenerateCode() || !gti_test::llvmEmits(forwarded)) {
     std::cerr
         << "forwarded expected result did not retain unpublished cleanup\n";
     return 1;
@@ -190,9 +206,7 @@ int main(int argc, std::vector<std::string> argv) { return argc; }
                                   {}};
   const auto payload = gti_test::analyzePrivateMemoryFixture(
       payloadPath.string(), payloadSource);
-  if (!payload.canGenerateCode() ||
-      gti_test::emitCppText(payload).find(
-          "GTI MIR unpublished return cleanup") == std::string::npos) {
+  if (!payload.canGenerateCode() || !gti_test::llvmEmits(payload)) {
     std::cerr << "owning enum return lost its unpublished cleanup recipe\n";
     return 1;
   }

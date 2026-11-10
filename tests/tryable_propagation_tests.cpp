@@ -1,6 +1,6 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -52,10 +52,28 @@ int main() {
       dump(result);
       return;
     }
-    const std::string cpp = gti_test::emitCpp(result).contents;
+    std::string error;
+    expect(lang::verifyMirProgram(result.mir).valid() &&
+               gti_test::llvmEmits(result, lang::OptimizationLevel::O0,
+                                   lang::TargetInfo::host(), &error),
+           message + " (native emission failed: " + error + ")");
     for (const std::string &fragment : fragments) {
-      expect(cpp.find(fragment) != std::string::npos,
-             message + " (emitted C++ lacks '" + fragment + "')");
+      bool called = false;
+      for (const auto &function : result.mir.functionInstances())
+        for (const auto &block : function.body.blocks)
+          for (const auto &instruction : block.instructions) {
+            const auto *callee = instruction.functionTarget
+                                     ? result.mir.findFunctionInstance(
+                                           *instruction.functionTarget)
+                                     : nullptr;
+            const auto *info =
+                callee ? result.semantics.findFunction(callee->declaration)
+                       : nullptr;
+            called |= info != nullptr &&
+                      info->qualifiedName.find(fragment) != std::string::npos;
+          }
+      expect(called,
+             message + " (MIR calls no function in '" + fragment + "')");
     }
   };
   const auto rejected = [&](const std::string &source, const char *code,

@@ -1,6 +1,8 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
 
 #include "gti/mir_printer.h"
+#include "gti/semantic_model.h"
 
 int main() {
   const auto fixtures =
@@ -83,7 +85,6 @@ int main() {
              frontend.mir, lang::SemanticType::arrayOf(particle->type, 0)) ==
              lang::RelocationKind::Bitwise,
          "zero-length concrete arrays retain element relocation eligibility");
-  const auto cpp = gti_test::emitCppText(frontend);
   bool rawBitwise = false;
   bool rawStructural = false;
   for (const auto &function : frontend.mir.functionInstances())
@@ -100,10 +101,10 @@ int main() {
       }
   expect(rawBitwise && rawStructural,
          "source sparse relocation retains both exact typed strategies");
-  expect(cpp.find("mir_storage_relocate_v1") == std::string::npos &&
-             cpp.find("::gti_internal::backend::mir_object_relocate_v1(") !=
-                 std::string::npos &&
-             cpp.find("mir_prefix_relocate_v1") == std::string::npos,
+  // Both strategies are the one general typed ObjectRelocate operation, and
+  // the shipped backend lowers it. The C++ helper spelling lives in
+  // cpp_mir_structural_relocation_tests.cpp.
+  expect(gti_test::llvmEmits(frontend),
          "sparse and prefix source storage both use general typed relocation "
          "without a private prefix fallback");
   for (int mutation = 0; mutation != 5; ++mutation) {
@@ -141,7 +142,7 @@ int main() {
            "retain coherent relocation metadata");
     if (!composition.canGenerateCode())
       continue;
-    expect(!gti_test::emitCppText(composition).empty(),
+    expect(gti_test::llvmEmits(composition),
            "composed relocation metadata reaches the production backend");
     for (const auto &instance : composition.mir.classInstances()) {
       if (!instance.cOpaqueHandle)
@@ -206,7 +207,7 @@ int main() {
   expect(dependentResult.canGenerateCode(),
          "dependent fields preserve declared and active relocation guarantees");
   if (dependentResult.canGenerateCode())
-    expect(!gti_test::emitCppText(dependentResult).empty(),
+    expect(gti_test::llvmEmits(dependentResult),
            "concrete dependent relocation remains verified through MIR");
   for (const std::string constraint :
        {"std::numeric", "std::signed_numeric", "std::integral",
@@ -234,7 +235,7 @@ int main() {
             constraint);
     if (numeric.canGenerateCode())
       expect(
-          !gti_test::emitCppText(numeric).empty(),
+          gti_test::llvmEmits(numeric),
           "numeric vector and unrelated record uses reach verified emission");
   }
   for (const std::string requirement :

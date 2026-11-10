@@ -1,9 +1,8 @@
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <array>
@@ -166,6 +165,41 @@ lang::MirInstruction *findAtomic(lang::MirProgram &program,
   return found;
 }
 
+// Memory orders the verified lowered program hands every backend.
+std::array<bool, static_cast<std::size_t>(lang::AtomicMemoryOrder::Count)>
+loweredOrders(const lang::LoweredProgram &lowered) {
+  std::array<bool, static_cast<std::size_t>(lang::AtomicMemoryOrder::Count)>
+      orders{};
+  lang::MirProgram copy = lowered.mir();
+  forEachInstruction(copy, [&](lang::MirBody &, lang::MirInstruction &item) {
+    if (!isAtomic(item.intrinsic))
+      return;
+    if (item.synchronization.order)
+      orders[static_cast<std::size_t>(*item.synchronization.order)] = true;
+    if (item.synchronization.failureOrder)
+      orders[static_cast<std::size_t>(*item.synchronization.failureOrder)] =
+          true;
+  });
+  return orders;
+}
+
+bool allOrders(const lang::LoweredProgram &lowered) {
+  const auto orders = loweredOrders(lowered);
+  return std::all_of(orders.begin(), orders.end(),
+                     [](bool used) { return used; });
+}
+
+// The shipped backend accepts the verified program; reports why it did not.
+bool emitsNative(const lang::FrontendResult &frontend,
+                 lang::OptimizationLevel level,
+                 const lang::TargetInfo &target) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(frontend, level, target, &error);
+  if (!emitted)
+    std::cerr << "native emission: " << error << '\n';
+  return emitted;
+}
+
 void testDormantImport() {
   lang::TargetInfo single = concurrentTarget();
   single.executionProfile = lang::ExecutionProfile::SingleThreaded;
@@ -187,22 +221,17 @@ void testDormantImport() {
     }
     const lang::LoweredProgram lowered =
         gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, target);
-    const std::string cpp =
-        lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
+    lang::MirProgram loweredMir = lowered.mir();
+    std::size_t atomicInstructions = 0;
+    forEachInstruction(loweredMir,
+                       [&](lang::MirBody &, lang::MirInstruction &item) {
+                         atomicInstructions += isAtomic(item.intrinsic) ? 1 : 0;
+                       });
     expect(lang::verifyLoweredProgram(lowered).empty() &&
-               cpp.find("#include <atomic>") == std::string::npos &&
-               cpp.find("class atomic_value final") == std::string::npos,
+               atomicInstructions == 0 &&
+               emitsNative(frontend, lang::OptimizationLevel::O0, target),
            "a dormant import should cross the backend without enabling its "
            "atomic support vocabulary");
-    // The retained generic library class names the representation template,
-    // so the template must be declared for the native compiler (#164).
-    const std::size_t declaration =
-        cpp.find("template <typename T> class atomic_value;");
-    expect(declaration != std::string::npos &&
-               declaration <
-                   cpp.find("::gti_internal::backend::atomic_value<T>"),
-           "a dormant atomic import should declare, but not define, the "
-           "atomic representation before generic declarations name it");
   }
 }
 
@@ -275,18 +304,20 @@ void testPublicPipeline() {
   expect(lang::verifyLoweredProgram(lowered).empty(),
          "atomic synchronization should cross the sealed LoweredProgram "
          "boundary");
-  const std::string cpp20 =
-      lang::CppBackend(lang::CppStandard::Cpp20).generate(lowered).contents;
-  const std::string cpp23 =
-      lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
-  for (const std::string *cpp : {&cpp20, &cpp23}) {
-    expect(cpp->find("#include <atomic>") != std::string::npos &&
-               cpp->find("class atomic_value final") != std::string::npos &&
-               cpp->find("atomic_compare_exchange(") != std::string::npos &&
-               cpp->find("std::memory_order_seq_cst") != std::string::npos,
-           "both native standards should consume the verified atomic "
-           "vocabulary and exact order");
+  for (const lang::IntrinsicKind kind :
+       {lang::IntrinsicKind::AtomicLoad, lang::IntrinsicKind::AtomicStore,
+        lang::IntrinsicKind::AtomicExchange,
+        lang::IntrinsicKind::AtomicCompareExchange}) {
+    expect(atomicCount(lowered.mir(), kind) == atomicCount(frontend.mir, kind),
+           "the sealed backend input retains every atomic operation");
   }
+  const auto orders = loweredOrders(lowered);
+  expect(orders[static_cast<std::size_t>(
+             lang::AtomicMemoryOrder::SequentiallyConsistent)] &&
+             std::count(orders.begin(), orders.end(), true) == 1 &&
+             emitsNative(frontend, lang::OptimizationLevel::O3, target),
+         "the shipped backend should consume the verified atomic vocabulary "
+         "and exact order");
 }
 
 void testScalarDomain() {
@@ -511,15 +542,10 @@ void testExplicitOrders() {
 
   const lang::LoweredProgram lowered = gti_test::lowerProgram(
       frontend, frontend.mir, frontend.mir, concurrentTarget());
-  const std::string cpp =
-      lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
-  for (std::string_view spelling :
-       {"std::memory_order_relaxed", "std::memory_order_acquire",
-        "std::memory_order_release", "std::memory_order_acq_rel",
-        "std::memory_order_seq_cst"}) {
-    expect(cpp.find(spelling) != std::string::npos,
-           "the backend should lower each verified atomic order explicitly");
-  }
+  expect(allOrders(lowered) &&
+             emitsNative(frontend, lang::OptimizationLevel::O0,
+                         concurrentTarget()),
+         "the backend should lower each verified atomic order explicitly");
 
   const auto expectInvalidOrder = [&](const std::string &name,
                                       const std::string &expression) {
@@ -666,19 +692,12 @@ void testFetchOperations() {
                              target, optimized.report.transformations);
   expect(lang::verifyLoweredProgram(lowered).empty(),
          "verified fetch loops should cross the sealed backend boundary");
-  for (const lang::CppStandard standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    const std::string cpp =
-        lang::CppBackend(standard).generate(lowered).contents;
-    expect(cpp.find("atomic_compare_exchange(") != std::string::npos &&
-               cpp.find("std::memory_order_relaxed") != std::string::npos &&
-               cpp.find("std::memory_order_acquire") != std::string::npos &&
-               cpp.find("std::memory_order_release") != std::string::npos &&
-               cpp.find("std::memory_order_acq_rel") != std::string::npos &&
-               cpp.find("std::memory_order_seq_cst") != std::string::npos,
-           "both native standards should emit the source-defined CAS loops "
-           "with every verified fetch order");
-  }
+  expect(atomicCount(lowered.mir(),
+                     lang::IntrinsicKind::AtomicCompareExchange) != 0 &&
+             allOrders(lowered) &&
+             emitsNative(frontend, lang::OptimizationLevel::O3, target),
+         "the shipped backend should emit the source-defined CAS loops with "
+         "every verified fetch order");
 
   for (const std::string operation : {"fetch_add", "fetch_or"}) {
     const lang::FrontendResult invalid =

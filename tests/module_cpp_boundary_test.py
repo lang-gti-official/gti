@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
+
 
 def run(command, directory, label):
     result = subprocess.run(command, capture_output=True, text=True, timeout=60)
@@ -60,6 +62,10 @@ def main():
             "int helper(){return 20;} export int left(){return helper();}",
             "int helper(){return 22;} export int right(){return helper();}", True),
     }
+    # Every case links and runs on the shipped backend. The frozen C++
+    # backend's namespace-collision rejections run only when
+    # GTI_TEST_BACKENDS selects C++.
+    backends = ("llvm", "cpp") if cpp_modes() else ("llvm",)
     try:
         for name, (left, right, cpp_supported) in cases.items():
             directory = root / name
@@ -69,7 +75,7 @@ def main():
             source = directory / "main.gti"
             source.write_text('import "left.gti"; import "right.gti"; '
                               'int main(){return left()+right()-42;}')
-            for backend in ("llvm", "cpp"):
+            for backend in backends:
                 binary = directory / (backend + (".exe" if sys.platform == "win32" else ""))
                 previous = None
                 if backend == "cpp" and not cpp_supported:

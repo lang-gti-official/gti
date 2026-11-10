@@ -1,11 +1,10 @@
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <iostream>
@@ -24,38 +23,6 @@ void expect(bool condition, std::string_view message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
-}
-
-std::size_t count(std::string_view text, std::string_view needle) {
-  std::size_t result = 0;
-  for (std::size_t position = text.find(needle); position != std::string::npos;
-       position = text.find(needle, position + needle.size())) {
-    ++result;
-  }
-  return result;
-}
-
-std::string_view functionDefinition(std::string_view generated,
-                                    std::string_view sourceName) {
-  const std::string needle = std::string{"_"} + std::string{sourceName} + "(";
-  std::size_t definition = std::string_view::npos;
-  for (std::size_t name = generated.find(needle);
-       name != std::string_view::npos;
-       name = generated.find(needle, name + needle.size())) {
-    const std::size_t lineEnd = generated.find('\n', name);
-    const std::size_t brace = generated.find(" {\n", name);
-    if (brace != std::string_view::npos &&
-        (lineEnd == std::string_view::npos || brace < lineEnd)) {
-      definition = brace;
-      break;
-    }
-  }
-  const std::size_t end = definition == std::string_view::npos
-                              ? definition
-                              : generated.find("\n  }", definition);
-  return definition == std::string_view::npos || end == std::string_view::npos
-             ? std::string_view{}
-             : generated.substr(definition, end + 4 - definition);
 }
 
 lang::FrontendResult analyze(std::string name, std::string source) {
@@ -165,12 +132,47 @@ lang::OptimizedProgram optimize(const lang::FrontendResult &frontend,
                                            .compatibility = &compatibility});
 }
 
+// Lowers `mir` against the frontend's canonical source MIR and hands the
+// verified lowered program to the shipped backend. Rejection of incoherent
+// input is a std::logic_error from lowering or the backend; an unsupported
+// backend feature is a different error and is never counted as rejection.
 lang::BackendArtifact
 emit(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
      const lang::OptimizationResult &compatibility,
      const std::vector<lang::MirTransformRecord> &transformations = {}) {
   static_cast<void>(compatibility);
-  return gti_test::emitCpp(frontend, frontend.mir, mir, transformations);
+  return lang::LlvmBackend().generate(gti_test::lowerProgram(
+      frontend, frontend.mir, mir, lang::TargetInfo::host(), transformations));
+}
+
+const lang::MirFunctionInstance *
+sourceFunction(const lang::FrontendResult &frontend,
+               const lang::MirProgram &mir, std::string_view name) {
+  for (const lang::HirFunctionInstance &function :
+       frontend.hir.functionInstances()) {
+    if (function.source != nullptr && function.source->name().lexeme == name) {
+      return mir.findFunctionInstance(function.id);
+    }
+  }
+  return nullptr;
+}
+
+std::size_t identityFoldLiterals(const lang::MirFunctionInstance *function) {
+  std::size_t result = 0;
+  if (function == nullptr) {
+    return result;
+  }
+  for (const lang::MirBlock &block : function->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      result += !instruction.tombstone &&
+                        instruction.operation == lang::MirOperation::Literal &&
+                        instruction.literalProvenance.kind ==
+                            lang::MirLiteralProvenanceKind::IdentityFold
+                    ? 1U
+                    : 0U;
+    }
+  }
+  return result;
 }
 
 void testVerifiedMirRouteAndOptimizationCoherence() {
@@ -195,68 +197,29 @@ void testVerifiedMirRouteAndOptimizationCoherence() {
 
   const lang::BackendArtifact o0Artifact =
       emit(frontend, o0.mir, o0Compatibility);
-  constexpr std::string_view marker = "// GTI verified-MIR body: scalar-cfg-v1";
-  expect(count(o0Artifact.contents,
-               "// GTI verified-MIR body: scalar-cfg-v1 function-instance") ==
-             10,
-         "exactly the ten scalar bodies of this fixture should use general "
-         "MIR body emission");
-  expect(count(o0Artifact.contents,
-               "// GTI verified-MIR body: scalar-cfg-v1 module-instance") == 1,
-         "the fixture's empty module body should emit from verified MIR");
-  expect(o0Artifact.contents.find("__gti_mir_arg_0") != std::string::npos &&
-             o0Artifact.contents.find("__gti_mir_v_") != std::string::npos,
-         "the selected definitions should name MIR parameters and SSA values");
-  // The checked component uses only the explicit defined-failure ABI. An
-  // ordinary wrapper here would terminate before its caller's MIR cleanup.
-  expect(
-      count(o0Artifact.contents,
-            "// GTI verified-MIR body: scalar-cfg-failure-v1") == 4 &&
-          functionDefinition(o0Artifact.contents, "compatibility_checked")
-              .empty() &&
-          o0Artifact.contents.find("compatibility_checked__gti_mir_failure(") !=
-              std::string::npos,
-      "the checked arithmetic sibling should emit its transformed "
-      "failure-form body without an ordinary boundary wrapper");
-  expect(o0Artifact.contents.find("checked_leaf__gti_mir_failure(") !=
-                 std::string::npos &&
-             o0Artifact.contents.find("__gti_mir_call_success_") !=
-                 std::string::npos,
-         "checked_caller should reach checked_leaf through the transformed "
-         "convention");
-  expect(functionDefinition(o0Artifact.contents, "compatibility_identity")
-                 .find("// GTI verified-MIR body: scalar-cfg-v1") !=
-             std::string_view::npos,
-         "the completed leaf gate should coexist with the next verified-MIR "
-         "local-storage family");
-  expect(
-      functionDefinition(o0Artifact.contents, "mir_i8_identity")
-                  .find("std::int8_t") != std::string_view::npos &&
-          functionDefinition(o0Artifact.contents, "mir_i64_max")
-                  .find("static_cast<std::int64_t>(9223372036854775807)") !=
-              std::string_view::npos &&
-          functionDefinition(o0Artifact.contents, "mir_u64_max")
-                  .find("18446744073709551615ULL") != std::string_view::npos &&
-          functionDefinition(o0Artifact.contents, "mir_noop").find("return;") !=
-              std::string_view::npos,
-      "the bounded family should preserve a signed narrow parameter, "
-      "signed and unsigned integer extrema, and a void leaf");
-  const std::string_view mirSecond =
-      functionDefinition(o0Artifact.contents, "mir_second");
-  expect(o0Artifact.contents.find(
-             "mir_second(std::int8_t __gti_mir_arg_0, std::int32_t "
-             "__gti_mir_arg_1, std::uint64_t __gti_mir_arg_2)") !=
-                 std::string::npos &&
-             mirSecond.find("= __gti_mir_arg_1;") != std::string_view::npos,
-         "MIR parameter bindings should retain source order and load the "
-         "selected second parameter");
-  expect(
-      functionDefinition(o0Artifact.contents, "compatibility_bool_identity")
-                  .find(marker) != std::string_view::npos &&
-          functionDefinition(o0Artifact.contents, "compatibility_char_identity")
-                  .find(marker) != std::string_view::npos,
-      "bool and character identity bodies are admitted per body by the "
-      "general emitter");
+  expect(!o0Artifact.contents.empty(),
+         "the shipped backend should accept the verified O0 scalar family");
+  // The checked component uses only the explicit defined-failure ABI: the
+  // checked bodies, and their caller, carry a defined-failure summary while
+  // the plain scalar leaves do not.
+  for (const std::string_view name :
+       {"compatibility_checked", "checked_leaf", "checked_caller"}) {
+    const lang::MirFunctionInstance *function =
+        sourceFunction(frontend, o0.mir, name);
+    expect(function != nullptr && function->mayRaiseDefinedFailure,
+           std::string(name) + " should carry a defined-failure summary");
+  }
+  for (const std::string_view name :
+       {"mir_identity", "mir_constant", "mir_i8_identity", "mir_second",
+        "mir_i64_max", "mir_u64_max", "mir_noop", "compatibility_identity",
+        "compatibility_bool_identity", "compatibility_char_identity"}) {
+    const lang::MirFunctionInstance *function =
+        sourceFunction(frontend, o0.mir, name);
+    expect(function != nullptr && !function->mayRaiseDefinedFailure &&
+               function->definitionKind ==
+                   lang::MirFunctionInstance::DefinitionKind::Source,
+           std::string(name) + " should be a no-fail verified source body");
+  }
 
   const lang::OptimizationResult o1Compatibility =
       pipeline.run(frontend.hir, lang::OptimizationLevel::O1);
@@ -265,33 +228,15 @@ void testVerifiedMirRouteAndOptimizationCoherence() {
   expect(o1.valid() && lang::verifyMirProgram(o1.mir).valid(),
          "the O1 transformed production MIR input should be fully verified");
   if (o1.valid()) {
-    const lang::BackendArtifact o1Artifact =
-        emit(frontend, o1.mir, o1Compatibility, o1.report.transformations);
-    const lang::BackendArtifact o1WithO0Compatibility =
-        emit(frontend, o1.mir, o0Compatibility, o1.report.transformations);
-    expect(count(o1Artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
-                                      "function-instance") == 10,
-           "the same bodies should remain selected after MIR optimization");
-    const std::string_view o0Constant =
-        functionDefinition(o0Artifact.contents, "mir_constant");
-    const std::string_view o1Constant =
-        functionDefinition(o1Artifact.contents, "mir_constant");
-    expect(
-        o0Constant.find("__gti_mir_v_2 = __gti_mir_v_1;") !=
-                std::string_view::npos &&
-            o1Constant.find("__gti_mir_v_2 = static_cast<std::int32_t>(42);") !=
-                std::string_view::npos &&
-            o1Constant.find("__gti_mir_v_2 = __gti_mir_v_1;") ==
-                std::string_view::npos,
-        "the marked constant body should execute the verified O1 "
-        "Identity-to-Literal MIR rewrite");
-    expect(count(o1WithO0Compatibility.contents,
-                 "// GTI verified-MIR body: scalar-cfg-v1 "
-                 "function-instance") == 10 &&
-               functionDefinition(o1WithO0Compatibility.contents,
-                                  "mir_constant") == o1Constant,
-           "verified optimized MIR should control the selected body even "
-           "when the compatibility optimizer supplies its O0 result");
+    expect(!emit(frontend, o1.mir, o1Compatibility, o1.report.transformations)
+                .contents.empty(),
+           "the shipped backend should accept the verified O1 program");
+    expect(identityFoldLiterals(
+               sourceFunction(frontend, o0.mir, "mir_constant")) == 0 &&
+               identityFoldLiterals(
+                   sourceFunction(frontend, o1.mir, "mir_constant")) == 1,
+           "the marked constant body should execute the verified O1 "
+           "Identity-to-Literal MIR rewrite");
 
     lang::MirProgram laundered = o1.mir;
     auto &launderedFunctions =
@@ -364,7 +309,7 @@ int main() { return identity(0); }
     rejected = true;
   }
   expect(rejected,
-         "CppBackend should reject an unverified MIR program before body "
+         "the backend should reject an unverified MIR program before body "
          "selection");
 }
 
@@ -442,7 +387,7 @@ int main() { return stable() - 7; }
     rejected = true;
   }
   expect(rejected,
-         "CppBackend should reject a mixed snapshot at entry even when no "
+         "the backend should reject a mixed snapshot at entry even when no "
          "body can enter the first MIR family");
 }
 
@@ -753,118 +698,6 @@ int32_t dormant(int32_t value) { return value; }
          "closed before compatibility emission");
 }
 
-void testJointHirMirLiteralForgeryIsRejected() {
-  lang::FrontendResult frontend = analyze("joint-literal-forgery.gti", R"(
-int64_t huge() { return 9223372036854775807; }
-int main() { return huge() == int64_t(9223372036854775807) ? 0 : 1; }
-)");
-  if (!frontend.canGenerateCode()) {
-    expect(false, "the joint-literal fixture should pass the frontend");
-    return;
-  }
-  const lang::OptimizationResult compatibility =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact baseline =
-      emit(frontend, frontend.mir, compatibility);
-  expect(functionDefinition(baseline.contents, "huge")
-                 .find("// GTI verified-MIR body: scalar-cfg-v1") !=
-             std::string_view::npos,
-         "the signed literal boundary fixture must enter the selected MIR "
-         "family before mutation");
-
-  auto &hirFunctions = const_cast<std::vector<lang::HirFunctionInstance> &>(
-      frontend.hir.functionInstances());
-  auto &mirFunctions = const_cast<std::vector<lang::MirFunctionInstance> &>(
-      frontend.mir.functionInstances());
-  lang::HirValue *hirLiteral = nullptr;
-  lang::MirInstruction *mirLiteral = nullptr;
-  for (lang::HirFunctionInstance &function : hirFunctions) {
-    if (function.entryKind != lang::ProgramEntryKind::None) {
-      continue;
-    }
-    for (lang::HirValue &value : function.body.values) {
-      if (value.kind == lang::HirValueKind::Literal && value.literal) {
-        hirLiteral = &value;
-        break;
-      }
-    }
-  }
-  for (lang::MirFunctionInstance &function : mirFunctions) {
-    if (function.entryKind != lang::ProgramEntryKind::None) {
-      continue;
-    }
-    for (lang::MirInstruction &instruction :
-         function.body.blocks.front().instructions) {
-      if (instruction.operation == lang::MirOperation::Literal &&
-          instruction.literal) {
-        mirLiteral = &instruction;
-        break;
-      }
-    }
-  }
-  expect(hirLiteral != nullptr && mirLiteral != nullptr,
-         "the joint-literal fixture should expose matching HIR/MIR literals");
-  if (hirLiteral == nullptr || mirLiteral == nullptr) {
-    return;
-  }
-  const auto *sourceLiteral =
-      dynamic_cast<const lang::LiteralExpr *>(hirLiteral->source);
-  expect(sourceLiteral != nullptr,
-         "the selected HIR literal should retain its exact AST source");
-  if (sourceLiteral == nullptr) {
-    return;
-  }
-  constexpr std::uint64_t forgedMagnitude =
-      std::numeric_limits<std::uint64_t>::max();
-  const_cast<lang::Literal &>(sourceLiteral->value()) =
-      lang::Literal{forgedMagnitude};
-  hirLiteral->literal = lang::Literal{forgedMagnitude};
-  mirLiteral->literal = lang::Literal{forgedMagnitude};
-  expect(lang::verifyMirProgram(frontend.mir).valid(),
-         "the forged signed magnitude should remain generally MIR-valid so "
-         "the selected-family representation gate is exercised");
-  bool rejected = false;
-  try {
-    (void)emit(frontend, frontend.mir, compatibility);
-  } catch (const std::logic_error &) {
-    rejected = true;
-  }
-  expect(rejected,
-         "a jointly forged AST/HIR/MIR bare literal outside int64_t must be "
-         "rejected rather than emitted through implementation-defined C++");
-}
-
-void testEnumSwitchLoadIsNotAReturnCopy() {
-  auto frontend = analyze("enum-switch-return-copy.gti", R"(
-enum class State : uint8_t { cold, hot };
-State select(State value) {
-  switch (value) {
-  case State::cold: return State::hot;
-  default: return State::cold;
-  }
-}
-State identity(State value) { return value; }
-int main() { return identity(select(State::cold)) == State::hot ? 0 : 1; }
-)");
-  if (!frontend.canGenerateCode())
-    return;
-  const auto compatibility = lang::OptimizationPipeline().run(
-      frontend.hir, lang::OptimizationLevel::O0);
-  const auto artifact = emit(frontend, frontend.mir, compatibility);
-  const auto selected = functionDefinition(artifact.contents, "select");
-  const auto identity = functionDefinition(artifact.contents, "identity");
-  expect(!selected.empty() &&
-             selected.find("switch (") != std::string_view::npos &&
-             selected.find(" = __gti_mir_p_1;") != std::string_view::npos &&
-             selected.find("spells at its Return") == std::string_view::npos,
-         "a switch subject load must execute even when its type matches the "
-         "function result");
-  expect(!identity.empty() &&
-             identity.find("return __gti_mir_p_1;") != std::string_view::npos,
-         "the actual unique Return still supports direct copy publication");
-}
-
 } // namespace
 
 // An untyped non-negative literal widening into a larger scalar field
@@ -895,9 +728,7 @@ int main() { mut C c = C(); return 0; }
                                        lang::OptimizationLevel::O0);
   const lang::BackendArtifact artifact =
       emit(frontend, frontend.mir, compatibility);
-  expect(artifact.contents.find("int main()") != std::string::npos &&
-             artifact.contents.find("__gti_entry__gti_mir_failure(") !=
-                 std::string::npos,
+  expect(!artifact.contents.empty(),
          "the widening constructor's program should reach code generation");
 }
 
@@ -909,8 +740,6 @@ int main() {
   testLeafCannotDriftIntoCfgFamily();
   testForgedValidLiteralIsRejected();
   testMissingEligibleInstanceIsRejected();
-  testJointHirMirLiteralForgeryIsRejected();
-  testEnumSwitchLoadIsNotAReturnCopy();
   testImplicitLiteralWideningConstructorStageVerifies();
   return failures == 0 ? 0 : 1;
 }

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 
+from backend_modes import cpp_modes
 from llvm_evidence_manifest import build_manifest
 from llvm_place_execution_test import PASSIVE_ARRAYS
 
@@ -82,7 +83,9 @@ def main():
         run(f"native-C{level}", [args.cc, "-std=c17", f"-O{level}", "-Wall", "-Wextra", "-Werror",
              "-I", output, "-I", root / "runtime/include", "-c", native.with_suffix(".c"), "-o", obj])
         objects.append(obj)
-    modes = [("cpp", "c++20", 3), ("cpp", "c++23", 3),
+    # C++ comparators join only when GTI_TEST_BACKENDS selects the C++ backend.
+    cpp_selected = bool(cpp_modes())
+    modes = [*((("cpp", "c++20", 3), ("cpp", "c++23", 3)) if cpp_selected else ()),
              *(("llvm", None, level) for level in range(4))]
     executions = 0
     for name, source_text in cases.items():
@@ -120,7 +123,7 @@ def main():
     for name, (source_text, code) in REJECTIONS.items():
         source = output / (name + ".gti")
         source.write_text(source_text)
-        for backend in ("cpp", "llvm"):
+        for backend in (("cpp", "llvm") if cpp_selected else ("llvm",)):
             for level in (0, 3):
                 tag = f"reject-{name}-{backend}-{level}"
                 binary = output / tag

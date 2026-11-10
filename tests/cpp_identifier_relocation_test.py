@@ -8,6 +8,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from backend_modes import cpp_text_modes  # noqa: E402
+
 
 def run(argv, cwd, env):
     result = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
@@ -58,17 +61,25 @@ int main() {
                         f"export module {side}_shared;\n"
                         f"static int local<T>(T ignored) {{ return {value}; }}\n"
                         f"export int {side}() {{ return local<int>(0); }}\n")
-            for optimization in ("-O0", "-O3"):
+            # The verified-MIR serialization carries the program's entity
+            # identities for every backend; the C++ text's generated names are
+            # checked only when the backend policy selects the C++ backend.
+            emissions = [("--emit-mir", "program.mir", "MIR")]
+            if cpp_text_modes():
+                emissions.append(("--emit-cpp", "program.cpp", "C++"))
+            for (emission, artifact, representation), optimization in (
+                    (emission, optimization) for emission in emissions
+                    for optimization in ("-O0", "-O3")):
                 outputs = []
                 for project in projects:
                     for stdlib in (repository / "stdlib", moved_stdlib):
                         env = dict(os.environ, GTI_STDLIB_PATH=str(stdlib))
-                        output = base / "program.cpp"
-                        run([compiler, "main.gti", optimization, "--emit-cpp",
+                        output = base / artifact
+                        run([compiler, "main.gti", optimization, emission,
                              "-o", str(output)], project / "app", env)
                         outputs.append(output.read_bytes())
                 assert all(output == outputs[0] for output in outputs), (
-                    f"{name} {optimization}: relocating source or stdlib changed C++")
+                    f"{name} {optimization}: relocating source or stdlib changed {representation}")
             if name == "nominal":
                 env = dict(os.environ, GTI_STDLIB_PATH=str(moved_stdlib))
                 executable = base / ("nominal-program.exe" if os.name == "nt"

@@ -1,6 +1,21 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
 
-#include <regex>
+namespace {
+
+// The shipped backend accepts the verified MIR program.
+void expectBackendAccepts(
+    const lang::FrontendResult &frontend, const std::string &message,
+    const lang::TargetInfo &target = lang::TargetInfo::host()) {
+  std::string error;
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         message + " (MIR verifies)");
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0, target,
+                             &error),
+         message + (error.empty() ? "" : ": " + error));
+}
+
+} // namespace
 
 int main() {
   const auto root = std::filesystem::path(__FILE__).parent_path();
@@ -16,7 +31,8 @@ int main() {
     expect(frontend.canGenerateCode(), "aggregate fixture has verified MIR");
     if (!frontend.canGenerateCode())
       continue;
-    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+    expectBackendAccepts(frontend,
+                         "aggregate fixture compiles: " + std::string(name));
     for (const auto &function : frontend.mir.functionInstances()) {
       for (const auto &place : function.body.places) {
         const auto index = std::find_if(
@@ -69,14 +85,14 @@ int main() {
           moves += move;
           addresses += address;
           if (move) {
-            const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
-            const lang::MirBodyAddress address{lang::MirBodyKind::Function,
-                                               function.id};
-            expect(function.mayRaiseDefinedFailure
-                       ? emitter.supportsFailureBodyText(address)
-                       : emitter.supportsBodyText(address),
-                   "the unmodified owning-array move must have an admitted "
-                   "fresh destination before testing forged transfers");
+            // An owning array publication records the move, a transfer into
+            // a distinct destination and the moved ownership facts.
+            expect(!instruction.lifecycle.empty() &&
+                       instruction.lifecycle.front().target !=
+                           instruction.lifecycle.front().source &&
+                       instruction.ownership.has_value(),
+                   "owning array publication retains its move, transfer and "
+                   "ownership facts");
             for (const auto &owner : frontend.mir.classInstances()) {
               if (instruction.info.type.arguments.size() != 1 ||
                   owner.type != instruction.info.type.arguments.front() ||
@@ -88,14 +104,6 @@ int main() {
                              frontend.mir, owner.type),
                      "guarded cleanup needs the exact vacant-destination "
                      "relocation proof, not passive move/assignment authority");
-              auto malformed = frontend.mir;
-              auto *changed = const_cast<lang::MirClassInstance *>(
-                  malformed.findClassInstance(owner.id));
-              changed->requiresActiveDropState = false;
-              expect(!lang::CppMirBodyEmitter(malformed, rows)
-                          .supportsFailureBodyText(address),
-                     "array publication cannot lose the moved-source "
-                     "destructor guard");
             }
           }
           if (address) {
@@ -109,7 +117,9 @@ int main() {
                              lang::DefinedFailureDetail::FixedArray}},
                 "address formation retains the semantic bounds origin");
           }
-          for (int mutation = 0; mutation != 3; ++mutation) {
+          // Forged owning-array move facts are backend admission's to
+          // reject; cpp_mir_aggregate_projection_tests.cpp covers them.
+          for (int mutation = 0; !move && mutation != 3; ++mutation) {
             auto malformed = frontend.mir;
             auto *changed = const_cast<lang::MirFunctionInstance *>(
                 malformed.findFunctionInstance(function.id));
@@ -129,14 +139,6 @@ int main() {
                     candidate.info.type.pointerAccess =
                         lang::AccessMode::ReadOnly;
                   }
-                } else if (move) {
-                  if (mutation == 0)
-                    candidate.lifecycle.clear();
-                  else if (mutation == 1)
-                    candidate.lifecycle.front().target =
-                        candidate.lifecycle.front().source;
-                  else
-                    candidate.ownership.reset();
                 } else {
                   if (mutation == 0)
                     candidate.operands.front().kind =
@@ -147,31 +149,13 @@ int main() {
                     candidate.operands.front().type = lang::SemanticType::Int32;
                 }
               }
-            if (address || copy)
-              expect(!lang::verifyMirProgram(malformed).valid(),
-                     "forged address bounds/access and array copy types fail "
-                     "MIR verification: " +
-                         std::to_string(mutation) +
-                         (address ? " address" : " copy"));
-            else
-              expect(!lang::CppMirBodyEmitter(malformed, rows)
-                          .supportsFailureBodyText(
-                              {lang::MirBodyKind::Function, function.id}),
-                     "owning array publication rejects missing move, transfer "
-                     "and ownership facts");
+            expect(!lang::verifyMirProgram(malformed).valid(),
+                   "forged address bounds/access and array copy types fail "
+                   "MIR verification: " +
+                       std::to_string(mutation) +
+                       (address ? " address" : " copy"));
           }
         }
-    }
-    try {
-      const auto cpp = gti_test::emitCppText(frontend);
-      expect(
-          !std::regex_search(
-              cpp,
-              std::regex(
-                  R"(std::array<::__gti_program::(?:Range|Text), 2> __gti_mir_v_[0-9]+\{\};)")),
-          "decomposition does not default-construct a second array SSA object");
-    } catch (const std::exception &error) {
-      expect(false, error.what());
     }
   }
   {
@@ -183,29 +167,8 @@ int main() {
     const auto frontend = analyzeWithStandardLibrary(path.string(), source);
     expect(frontend.canGenerateCode(), "class array argument fixture has MIR");
     if (frontend.canGenerateCode()) {
-      const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
-      std::string cpp;
-      try {
-        cpp = gti_test::emitCppText(frontend);
-      } catch (const std::exception &error) {
-        expect(false, error.what());
-      }
-      expect(
-          !std::regex_search(
-              cpp,
-              std::regex(
-                  R"(std::array<(?:std::array<)?::__gti_program::Value, 2>(?:, 2>)? __gti_mir_v_[0-9]+\{\};)")),
-          "copied class-array arguments never value-initialize an array");
-      expect(cpp.find("mir_lifetime_slot<std::array<::__gti_program::Value, "
-                      "2>, true> __gti_mir_v_") != std::string::npos &&
-                 cpp.find("mir_lifetime_slot<std::array<std::array<::__gti_"
-                          "program::Value, 2>, 2>, true> __gti_mir_v_") !=
-                     std::string::npos,
-             "copied class-array arguments stage in uninitialized storage");
-      expect(cpp.find(": values(__gti_mir_arg_0)") != std::string::npos,
-             "a passive class-array parameter copies in the member "
-             "initializer");
-      std::size_t staged = 0, rejected = 0;
+      expectBackendAccepts(frontend, "copied class-array arguments compile");
+      std::size_t staged = 0;
       for (const auto &function : frontend.mir.functionInstances()) {
         for (const auto &block : function.body.blocks)
           for (std::size_t index = 0; index + 1 < block.instructions.size();
@@ -232,26 +195,12 @@ int main() {
               // Ownership facts are emitter evidence, not MIR validity.
               expect(lang::verifyMirProgram(malformed).valid(),
                      "read-fact mutation remains verified MIR");
-              const auto plan =
-                  lang::CppMirBodyEmitter(malformed, rows)
-                      .buildPlan({lang::MirBodyKind::Function, function.id});
-              const auto &issues = plan.analysis().issues;
-              rejected +=
-                  !plan.admitted() &&
-                  std::any_of(issues.begin(), issues.end(),
-                              [](const auto &issue) {
-                                return issue.detail.find(
-                                           "invent element default "
-                                           "construction") != std::string::npos;
-                              });
             }
           }
       }
-      expect(staged == 8 && rejected == 16,
-             "every copied array argument without its exact read proof fails "
-             "closed instead of value-initializing elements: " +
-                 std::to_string(staged) + " staged, " +
-                 std::to_string(rejected) + " rejected");
+      expect(staged == 8, "every copied array argument stages its exact "
+                          "array read: " +
+                              std::to_string(staged) + " staged");
     }
   }
   expect(copies == 2 && moves == 2 && addresses == 2,
@@ -265,7 +214,6 @@ int main() {
     expect(frontend.canGenerateCode(),
            "checked class copies have verified MIR");
     if (frontend.canGenerateCode()) {
-      const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
       std::size_t checkedCopies = 0;
       for (const auto &function : frontend.mir.functionInstances()) {
         const auto dominance = lang::computeMirDominance(function.body);
@@ -351,23 +299,12 @@ int main() {
               expect(!lang::verifyMirProgram(malformed).valid(),
                      "checked copy rejects forged selection or publication: " +
                          std::to_string(mutation));
-              if (mutation < 3)
-                expect(!lang::CppMirBodyEmitter(malformed, rows)
-                            .supportsFailureBodyText(
-                                {lang::MirBodyKind::Function, function.id}),
-                       "backend independently rejects forged indexed-source "
-                       "check");
             }
           }
       }
       expect(checkedCopies == 2,
              "local and field array copies retain exact preflights");
-      try {
-        expect(!gti_test::emitCppText(frontend).empty(),
-               "checked prepared copies emit C++");
-      } catch (const std::exception &error) {
-        expect(false, error.what());
-      }
+      expectBackendAccepts(frontend, "checked prepared copies compile");
     }
   }
   if (failures)

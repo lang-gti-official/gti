@@ -1,7 +1,10 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "lowered_program_test_support.h"
+#include "mir_test_fixture.h"
+
+#include "gti/lowered_program.h"
 
 namespace {
-using namespace gti_test::cpp_mir_body_emitter_fixture;
 
 void checkMutations(const lang::FrontendResult &frontend) {
   std::size_t reservations = 0;
@@ -220,7 +223,6 @@ void checkNegative(std::string declarations, std::string body,
 } // namespace
 
 int main() {
-  using namespace gti_test::cpp_mir_body_emitter_fixture;
   const auto fixture = std::filesystem::path(__FILE__).parent_path() /
                        "fixtures/operator_place_composition.gti";
   std::ifstream stream(fixture);
@@ -250,20 +252,12 @@ int main() {
         optimized.report.transformations);
     expect(lang::verifyLoweredProgram(lowered).empty(),
            "production lowered snapshot is coherent");
-    for (const auto standard :
-         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      lang::CppMirBodyEmissionMap rows(
-          lang::buildCppMirBodyEmissionMapRows(lowered, standard));
-      lang::CppMirBodyEmitter emitter(optimized.mir, rows);
-      for (const auto &function : optimized.mir.functionInstances()) {
-        const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
-                                           .owner = function.id};
-        expect(emitter.analyze(address).ready() &&
-                   (emitter.supportsBodyText(address) ||
-                    emitter.supportsFailureBodyText(address)),
-               "production backend supports verified operator-place schedules");
-      }
-    }
+    std::string error;
+    expect(
+        gti_test::llvmEmits(frontend, level, lang::TargetInfo::host(), &error),
+        "production backend supports verified operator-place schedules");
+    if (!error.empty())
+      std::cerr << error << '\n';
   }
   const auto declarations = source.substr(0, source.find("int main()"));
   const auto global = analyzeWithStandardLibrary(

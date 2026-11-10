@@ -49,8 +49,8 @@ def main():
         ):
             path = scratch / f"{name}.gti"
             path.write_text(source)
-            rejected = run([str(compiler), str(path), "--progress", "never", "--emit-cpp",
-                            "-o", str(scratch / "bad.cpp")], expected=65)
+            rejected = run([str(compiler), str(path), "--progress", "never", "--emit-mir",
+                            "-o", str(scratch / "bad.mir")], expected=65)
             assert "error[GTI-S" in rejected.stderr and "GTI-B0001" not in rejected.stderr, rejected
             if name == "owning-copy":
                 assert "GTI-S2003" in rejected.stderr and "Cannot assign a value of type 'OwnedValue'" in rejected.stderr, rejected

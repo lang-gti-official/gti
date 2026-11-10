@@ -1,6 +1,19 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
 
 namespace {
+// The shipped backend accepts the verified program; reports why it did not.
+bool emitsNative(const lang::FrontendResult &frontend) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  if (!emitted)
+    std::cerr << "native emission: " << error << '\n';
+  return emitted;
+}
+
 void checkNamedBorrowRejection() {
   const std::string text = R"gti(
 class Ticket {
@@ -427,15 +440,8 @@ int main() {
   }
   expect(staged == 3,
          "fixture has three directly prepared cleanup-free closures");
-  try {
-    const auto cpp = gti_test::emitCppText(frontend);
-    expect(
-        cpp.find("fresh closure already occupies its prepared argument slot") !=
-            std::string::npos,
-        "fresh closure remains staged before constructor invocation");
-  } catch (const std::exception &error) {
-    expect(false, error.what());
-  }
+  expect(emitsNative(frontend),
+         "fresh closure remains staged before constructor invocation");
 }
 
 void checkAccessorSpellings() {
@@ -497,26 +503,11 @@ void checkRetainedMemberPackRepresentation() {
          "retained owner supports exact empty/scalar/closure member packs");
   if (!frontend.canGenerateCode())
     return;
-  try {
-    const auto cpp = gti_test::emitCppText(frontend);
-    expect(
-        cpp.find("_accept__gti_mir_failure<std::int32_t>") !=
-                std::string::npos &&
-            cpp.find("_accept__gti_mir_failure<std::int32_t, std::int32_t>") !=
-                std::string::npos,
-        "retained owner member packs spell exact passive template arguments");
-    for (const auto arity : {0, 1, 2, 3})
-      expect(cpp.find("if constexpr (sizeof...(Args) == " +
-                      std::to_string(arity) + ")") != std::string::npos,
-             "pack selector guards indexed identities by exact arity before "
-             "type formation");
-    expect(cpp.find("std::tuple_element_t<2, std::tuple<Args...>>") !=
-               std::string::npos,
-           "mixed-arity fixture actually exercises a third-element closure "
-           "selector");
-  } catch (const std::exception &error) {
-    expect(false, error.what());
-  }
+  // The exact passive template spelling of each pack arity is C++
+  // representation (cpp_mir_consuming_owned_pointee); every backend must
+  // still accept the verified empty/scalar/closure member packs.
+  expect(emitsNative(frontend),
+         "retained owner member packs reach native emission");
 }
 
 void checkMaterializedPackReceiver() {
@@ -529,14 +520,8 @@ void checkMaterializedPackReceiver() {
          "local closure pack invocation has valid MIR");
   if (!frontend.canGenerateCode())
     return;
-  try {
-    expect(
-        !gti_test::emitCppText(frontend).empty(),
-        "materialized pack receiver is not mistaken for a pending SSA borrow");
-  } catch (const std::exception &error) {
-    expect(false, error.what());
-  }
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  expect(emitsNative(frontend),
+         "materialized pack receiver is not mistaken for a pending SSA borrow");
   int checked = 0;
   for (const auto &function : frontend.mir.functionInstances())
     for (const auto &block : function.body.blocks)
@@ -558,10 +543,7 @@ void checkMaterializedPackReceiver() {
             changed->callInputRole = lang::MirCallInputRole::Argument;
           else
             changed->operands.front().kind = lang::MirOperandKind::Copy;
-          expect(!lang::verifyMirProgram(forged).valid() &&
-                     !lang::CppMirBodyEmitter(forged, rows)
-                          .supportsFailureBodyText(
-                              {lang::MirBodyKind::Function, function.id}),
+          expect(!lang::verifyMirProgram(forged).valid(),
                  "materialized receiver exemption requires exact call-site, "
                  "receiver role and borrow operation");
         }

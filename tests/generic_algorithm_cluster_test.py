@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 def run(
@@ -54,7 +54,7 @@ def instance_declaration(mir: str, instance: str) -> str | None:
 def emit_artifact(
     compiler: pathlib.Path,
     source: pathlib.Path,
-    option: str,
+    options: str | tuple[str, ...],
     output: pathlib.Path,
     environment: dict[str, str],
 ) -> subprocess.CompletedProcess[str]:
@@ -62,7 +62,7 @@ def emit_artifact(
         [
             str(compiler),
             str(source),
-            option,
+            *((options,) if isinstance(options, str) else options),
             "-O0",
             "-o",
             str(output),
@@ -107,85 +107,93 @@ def main() -> int:
             if not valid_mir(mir):
                 return fail_text(f"emit MIR {label}", "artifact is not marked valid")
 
-            cpp_path = root / f"{label}.cpp"
-            emitted_cpp = emit_artifact(
-                compiler, source, "--emit-cpp", cpp_path, environment
-            )
-            if emitted_cpp.returncode != 0:
-                return fail(f"emit C++ {label}", emitted_cpp)
-            artifacts[label] = (mir, cpp_path.read_text(encoding="utf-8"))
+            # The concrete-definition identities below are read from the C++
+            # text, so they run only under the C++ profile; the MIR contract
+            # checks hold on every backend.
+            generated = None
+            for _cpp_label, cpp_flags, _cpp_native in cpp_text_modes():
+                cpp_path = root / f"{label}.cpp"
+                emitted_cpp = emit_artifact(
+                    compiler, source, (*cpp_flags, "--emit-cpp"), cpp_path, environment
+                )
+                if emitted_cpp.returncode != 0:
+                    return fail(f"emit C++ {label}", emitted_cpp)
+                generated = cpp_path.read_text(encoding="utf-8")
+            artifacts[label] = (mir, generated)
 
         find_mir, find_generated = artifacts["find-count"]
-        find_rows = concrete_instances(find_generated, "find")
-        count_rows = concrete_instances(find_generated, "count")
-        if len(find_rows) != 2 or len(count_rows) != 2:
-            return fail_text(
-                "backend identity",
-                f"expected two concrete find/count definitions, got "
-                f"find={len(find_rows)}/count={len(count_rows)}",
-            )
-        find_declarations = {
-            instance_declaration(find_mir, instance)
-            for _, instance in find_rows
-        }
-        count_declarations = {
-            instance_declaration(find_mir, instance)
-            for _, instance in count_rows
-        }
-        if (
-            None in find_declarations
-            or None in count_declarations
-            or len(find_declarations) != 1
-            or len(count_declarations) != 1
-            or find_declarations == count_declarations
-        ):
-            return fail_text(
-                "MIR identity",
-                f"concrete definitions did not map to one distinct MIR "
-                f"declaration each: find={find_declarations}/"
-                f"count={count_declarations}",
-            )
-
-        # Public type aliases retain the iterator's native primary. Concrete
-        # function identities and their exact MIR declaration mapping above
-        # remain mandatory in either class representation.
-        vector_iterator = (
-            r"(?:__gti_type_[0-9a-f]{64}_vector_iterator|"
-            r"::__gti_program::__gti_std::detail::vector_iterator<std::int32_t, 0>)"
-        )
-        find_backend_patterns = (
-            r"__gti_inst_[0-9a-f]{64}_find__gti_mir_failure\("
-            r"[^;]*move_only_iterator[^;]*move_only_sentinel",
-            r"__gti_inst_[0-9a-f]{64}_find__gti_mir_failure\("
-            rf"[^;]*{vector_iterator}[^;]*vector_sentinel",
-            r"__gti_inst_[0-9a-f]{64}_count__gti_mir_failure\("
-            r"[^;]*move_only_iterator[^;]*move_only_sentinel",
-            r"__gti_inst_[0-9a-f]{64}_count__gti_mir_failure\("
-            rf"[^;]*{vector_iterator}[^;]*vector_sentinel",
-        )
-        for pattern in find_backend_patterns:
-            if re.search(pattern, find_generated) is None:
+        if find_generated is not None:
+            find_rows = concrete_instances(find_generated, "find")
+            count_rows = concrete_instances(find_generated, "count")
+            if len(find_rows) != 2 or len(count_rows) != 2:
                 return fail_text(
-                    "backend identity", f"missing specialization matching {pattern!r}"
+                    "backend identity",
+                    f"expected two concrete find/count definitions, got "
+                    f"find={len(find_rows)}/count={len(count_rows)}",
+                )
+            find_declarations = {
+                instance_declaration(find_mir, instance)
+                for _, instance in find_rows
+            }
+            count_declarations = {
+                instance_declaration(find_mir, instance)
+                for _, instance in count_rows
+            }
+            if (
+                None in find_declarations
+                or None in count_declarations
+                or len(find_declarations) != 1
+                or len(count_declarations) != 1
+                or find_declarations == count_declarations
+            ):
+                return fail_text(
+                    "MIR identity",
+                    f"concrete definitions did not map to one distinct MIR "
+                    f"declaration each: find={find_declarations}/"
+                    f"count={count_declarations}",
                 )
 
-        for_each_mir, for_each_generated = artifacts["for-each"]
-        for_each_rows = concrete_instances(for_each_generated, "for_each")
-        for_each_declarations = {
-            instance_declaration(for_each_mir, instance)
-            for _, instance in for_each_rows
-        }
-        if (
-            len(for_each_rows) != 2
-            or None in for_each_declarations
-            or len(for_each_declarations) != 1
-        ):
-            return fail_text(
-                "MIR identity",
-                f"expected two concrete for_each definitions with one MIR "
-                f"declaration, got rows={len(for_each_rows)}/"
-                f"declarations={for_each_declarations}",
+            # Public type aliases retain the iterator's native primary. Concrete
+            # function identities and their exact MIR declaration mapping above
+            # remain mandatory in either class representation.
+            vector_iterator = (
+                r"(?:__gti_type_[0-9a-f]{64}_vector_iterator|"
+                r"::__gti_program::__gti_std::detail::vector_iterator<std::int32_t, 0>)"
             )
+            find_backend_patterns = (
+                r"__gti_inst_[0-9a-f]{64}_find__gti_mir_failure\("
+                r"[^;]*move_only_iterator[^;]*move_only_sentinel",
+                r"__gti_inst_[0-9a-f]{64}_find__gti_mir_failure\("
+                rf"[^;]*{vector_iterator}[^;]*vector_sentinel",
+                r"__gti_inst_[0-9a-f]{64}_count__gti_mir_failure\("
+                r"[^;]*move_only_iterator[^;]*move_only_sentinel",
+                r"__gti_inst_[0-9a-f]{64}_count__gti_mir_failure\("
+                rf"[^;]*{vector_iterator}[^;]*vector_sentinel",
+            )
+            for pattern in find_backend_patterns:
+                if re.search(pattern, find_generated) is None:
+                    return fail_text(
+                        "backend identity", f"missing specialization matching {pattern!r}"
+                    )
+
+        for_each_mir, for_each_generated = artifacts["for-each"]
+        if for_each_generated is not None:
+            for_each_rows = concrete_instances(for_each_generated, "for_each")
+            for_each_declarations = {
+                instance_declaration(for_each_mir, instance)
+                for _, instance in for_each_rows
+            }
+            if (
+                len(for_each_rows) != 2
+                or None in for_each_declarations
+                or len(for_each_declarations) != 1
+            ):
+                return fail_text(
+                    "MIR identity",
+                    f"expected two concrete for_each definitions with one MIR "
+                    f"declaration, got rows={len(for_each_rows)}/"
+                    f"declarations={for_each_declarations}",
+                )
         callable_contract_counts = {
             "combined contract": for_each_mir.count(
                 "boundary=confined;transport=exact-return:"
@@ -208,44 +216,46 @@ def main() -> int:
                 f"expected {expected_contract_counts}, got {callable_contract_counts}",
             )
 
-        for_each_backend_patterns = (
-            r"__gti_inst_[0-9a-f]{64}_for_each__gti_mir_failure\("
-            r"[^;]*iteration_iterator[^;]*iteration_sentinel[^;]*read_observer",
-            r"__gti_inst_[0-9a-f]{64}_for_each__gti_mir_failure\("
-            rf"[^;]*{vector_iterator}"
-            r"[^;]*vector_sentinel"
-            r"[^;]*mutable_observer",
-        )
-        for pattern in for_each_backend_patterns:
-            if re.search(pattern, for_each_generated) is None:
-                return fail_text(
-                    "backend identity", f"missing specialization matching {pattern!r}"
-                )
+        if for_each_generated is not None:
+            for_each_backend_patterns = (
+                r"__gti_inst_[0-9a-f]{64}_for_each__gti_mir_failure\("
+                r"[^;]*iteration_iterator[^;]*iteration_sentinel[^;]*read_observer",
+                r"__gti_inst_[0-9a-f]{64}_for_each__gti_mir_failure\("
+                rf"[^;]*{vector_iterator}"
+                r"[^;]*vector_sentinel"
+                r"[^;]*mutable_observer",
+            )
+            for pattern in for_each_backend_patterns:
+                if re.search(pattern, for_each_generated) is None:
+                    return fail_text(
+                        "backend identity", f"missing specialization matching {pattern!r}"
+                    )
 
         complete_mir, complete_generated = artifacts["complete-range"]
-        expected_complete_instances = {
-            "all_of": 2,
-            "fill": 2,
-            "for_each": 1,
-            "measured_size": 2,
-        }
-        for name, expected_count in expected_complete_instances.items():
-            rows = concrete_instances(complete_generated, name)
-            declarations = {
-                instance_declaration(complete_mir, instance)
-                for _, instance in rows
+        if complete_generated is not None:
+            expected_complete_instances = {
+                "all_of": 2,
+                "fill": 2,
+                "for_each": 1,
+                "measured_size": 2,
             }
-            if (
-                len(rows) != expected_count
-                or None in declarations
-                or len(declarations) != 1
-            ):
-                return fail_text(
-                    "complete-range identity",
-                    f"expected {expected_count} concrete {name} definitions "
-                    f"with one MIR declaration, got rows={len(rows)}/"
-                    f"declarations={declarations}",
-                )
+            for name, expected_count in expected_complete_instances.items():
+                rows = concrete_instances(complete_generated, name)
+                declarations = {
+                    instance_declaration(complete_mir, instance)
+                    for _, instance in rows
+                }
+                if (
+                    len(rows) != expected_count
+                    or None in declarations
+                    or len(declarations) != 1
+                ):
+                    return fail_text(
+                        "complete-range identity",
+                        f"expected {expected_count} concrete {name} definitions "
+                        f"with one MIR declaration, got rows={len(rows)}/"
+                        f"declarations={declarations}",
+                    )
         if complete_mir.count("range-iterations 1") != 5:
             return fail_text(
                 "complete-range MIR",

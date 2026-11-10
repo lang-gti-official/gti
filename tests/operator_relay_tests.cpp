@@ -1,8 +1,34 @@
 #include "../src/compiler/mir_verification_queries.h"
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "gti/lowered_program.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
 
 namespace {
-using namespace gti_test::cpp_mir_body_emitter_fixture;
+using namespace gti_test::mir_fixture;
+
+// The shipped backend consumes a verified lowered program natively.
+bool nativeEmits(const lang::LoweredProgram &lowered, std::string *error) {
+  try {
+    return !lang::LlvmBackend().generate(lowered).contents.empty();
+  } catch (const std::exception &failure) {
+    if (error != nullptr)
+      *error = failure.what();
+    return false;
+  }
+}
+
+// Whether production lowering and the shipped backend accept `mir` as both
+// the source and optimized program.
+bool backendAdmits(const lang::FrontendResult &frontend,
+                   const lang::MirProgram &mir) {
+  try {
+    return nativeEmits(
+        gti_test::lowerProgram(frontend, mir, mir, lang::TargetInfo::host()),
+        nullptr);
+  } catch (const std::exception &) {
+    return false;
+  }
+}
 
 std::string readFixture(std::string_view name) {
   const auto path = std::filesystem::path(__FILE__).parent_path() / "fixtures" /
@@ -27,26 +53,13 @@ void checkBackend(const lang::FrontendResult &frontend,
         optimized.report.transformations);
     expect(lang::verifyLoweredProgram(lowered).empty(),
            "lowered snapshot is coherent");
-    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      lang::CppMirBodyEmissionMap rows(
-          lang::buildCppMirBodyEmissionMapRows(lowered, standard));
-      lang::CppMirBodyEmitter emitter(optimized.mir, rows);
-      for (const auto &function : optimized.mir.functionInstances()) {
-        const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
-                                           .owner = function.id};
-        const bool admitted = emitter.analyze(address).ready() &&
-                              (emitter.supportsBodyText(address) ||
-                               emitter.supportsFailureBodyText(address));
-        if (!admitted)
-          std::cerr << "Backend rejection: " << fixture << ", function "
-                    << function.id << ", declaration " << function.declaration
-                    << ", level " << static_cast<int>(level) << ", standard "
-                    << static_cast<int>(standard) << '\n';
-        expect(admitted,
-               "both production standard modes admit each exact function "
-               "schedule");
-      }
-    }
+    std::string error;
+    const bool admitted = nativeEmits(lowered, &error);
+    if (!admitted)
+      std::cerr << "Backend rejection: " << fixture << ", level "
+                << static_cast<int>(level) << ": " << error << '\n';
+    expect(admitted, "the shipped backend admits each exact function "
+                     "schedule at every optimization level");
   }
 }
 
@@ -197,17 +210,8 @@ void checkFieldMutations(const lang::FrontendResult &frontend) {
           changed.type = lang::SemanticType::Int32;
         (void)lang::rebuildMirValueUses(*body);
         bool rejected = !lang::verifyMirProgram(malformed).valid();
-        if (!rejected) {
-          const auto lowered = gti_test::lowerProgram(
-              frontend, malformed, malformed, lang::TargetInfo::host());
-          lang::CppMirBodyEmissionMap rows(lang::buildCppMirBodyEmissionMapRows(
-              lowered, lang::CppStandard::Cpp20));
-          lang::CppMirBodyEmitter emitter(malformed, rows);
-          rejected = !emitter
-                          .analyze({.kind = lang::MirBodyKind::Function,
-                                    .owner = function.id})
-                          .ready();
-        }
+        if (!rejected)
+          rejected = !backendAdmits(frontend, malformed);
         expect(rejected, "wrong range owner, field, indirection or referent "
                          "type fails closed");
       }
@@ -268,21 +272,6 @@ void checkFieldMutations(const lang::FrontendResult &frontend) {
             << " rejected executing access upgrades\n";
 }
 
-bool emitterAdmits(const lang::FrontendResult &frontend,
-                   const lang::MirProgram &mir,
-                   decltype(lang::MirBodyAddress{}.owner) function) {
-  const auto lowered =
-      gti_test::lowerProgram(frontend, mir, mir, lang::TargetInfo::host());
-  lang::CppMirBodyEmissionMap rows(
-      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp20));
-  lang::CppMirBodyEmitter emitter(mir, rows);
-  const lang::MirBodyAddress address{.kind = lang::MirBodyKind::Function,
-                                     .owner = function};
-  return emitter.analyze(address).ready() &&
-         (emitter.supportsBodyText(address) ||
-          emitter.supportsFailureBodyText(address));
-}
-
 // A view observer may read a call-produced SSA view directly; forged
 // receiver category, type, identity or failure contract must fail closed.
 void checkViewObserverMutations(const lang::FrontendResult &frontend) {
@@ -333,7 +322,7 @@ void checkViewObserverMutations(const lang::FrontendResult &frontend) {
           }
           (void)lang::rebuildMirValueUses(body);
           expect(!lang::verifyMirProgram(malformed).valid() ||
-                     !emitterAdmits(frontend, malformed, function.id),
+                     !backendAdmits(frontend, malformed),
                  "forged view observer receiver or failure contract fails "
                  "closed");
         }

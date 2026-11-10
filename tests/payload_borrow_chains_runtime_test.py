@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Run nested payload returns and mixed bindings on both executable backends."""
+"""Run nested payload returns and mixed bindings on the selected executable backends."""
 
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+
+from backend_modes import cpp_modes
 
 
 LOCAL_ESCAPE = """\
@@ -54,7 +56,8 @@ def main() -> int:
         rejected.write_text(LOCAL_ESCAPE, encoding="utf-8")
         mutable = directory / "mutable-nested.gti"
         mutable.write_text(MUTABLE_NESTED, encoding="utf-8")
-        for backend in ("llvm", "cpp"):
+        # The C++ backend joins only when GTI_TEST_BACKENDS selects it.
+        for backend in (("llvm", "cpp") if cpp_modes() else ("llvm",)):
             for optimization in ("-O0", "-O2"):
                 label = f"{backend} {optimization}"
                 for name, source in (("example", example),

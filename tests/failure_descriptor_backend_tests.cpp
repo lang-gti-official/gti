@@ -1,8 +1,8 @@
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
+#include "lowered_program_test_support.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -10,7 +10,6 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -33,91 +32,22 @@ std::string readFile(const std::filesystem::path &path) {
                      std::istreambuf_iterator<char>());
 }
 
-lang::BackendArtifact emit(const lang::FrontendResult &frontend,
-                           const lang::MirProgram &mir,
-                           const lang::OptimizationResult &compatibility,
-                           lang::CppStandard standard) {
-  static_cast<void>(compatibility);
-  return gti_test::emitCpp(frontend, frontend.mir, mir, standard);
+bool sameFailureMetadata(const lang::FailureMetadata &left,
+                         const lang::FailureMetadata &right) {
+  return left.artifactIdentity() == right.artifactIdentity() &&
+         left.descriptorBytes() == right.descriptorBytes() &&
+         left.sites() == right.sites();
 }
 
-std::string expectedByteArray(std::string_view name,
-                              const std::vector<std::uint8_t> &bytes) {
-  std::ostringstream output;
-  output << "[[maybe_unused]] static constexpr std::uint8_t " << name
-         << "[] = {";
-  for (std::size_t index = 0; index < bytes.size(); ++index) {
-    output << (index % 12 == 0 ? "\n  " : " ")
-           << static_cast<unsigned int>(bytes[index]);
-    if (index + 1 != bytes.size()) {
-      output << ',';
-    }
-  }
-  output << "\n};";
-  return output.str();
-}
-
-std::string expectedSourceArray(const lang::FailureSiteDescriptor &site) {
-  std::ostringstream output;
-  output << "[[maybe_unused]] static constexpr char __gti_failure_source_"
-         << site.id << "_v1[] = {";
-  for (std::size_t index = 0; index < site.logicalSource.size(); ++index) {
-    output << (index % 6 == 0 ? "\n  " : " ") << "static_cast<char>("
-           << static_cast<unsigned int>(
-                  static_cast<unsigned char>(site.logicalSource[index]))
-           << ')';
-    if (index + 1 != site.logicalSource.size()) {
-      output << ',';
-    }
-  }
-  output << "\n};";
-  return output.str();
-}
-
-std::string expectedSite(const lang::FailureSiteDescriptor &site,
-                         lang::FailureSiteId source,
-                         lang::FailureSiteId outcomes) {
-  std::ostringstream output;
-  output << "  {{__gti_failure_source_" << source << "_v1, UINT64_C("
-         << site.logicalSource.size() << ")}, UINT64_C(" << site.line
-         << "), UINT64_C(" << site.start << "), UINT64_C(" << site.end
-         << "), __gti_failure_outcomes_" << outcomes << "_v1, UINT32_C("
-         << site.outcomes.size() << "), UINT32_C(0)},";
-  return output.str();
-}
-
-std::string expectedIdentity(const lang::FailureArtifactIdentity &identity) {
-  std::ostringstream output;
-  output << "        {";
-  for (std::size_t index = 0; index < identity.bytes.size(); ++index) {
-    if (index != 0) {
-      output << ", ";
-    }
-    output << static_cast<unsigned int>(identity.bytes[index]);
-  }
-  output << "},";
-  return output.str();
-}
-
-std::string_view descriptorRegion(std::string_view generated) {
-  std::size_t anchor = generated.find("__gti_failure_source_1_v1");
-  if (anchor == std::string_view::npos) {
-    anchor = generated.find("__gti_failure_canonical_descriptor_v1");
-  }
-  if (anchor == std::string_view::npos) {
-    return {};
-  }
-  const std::size_t begin =
-      generated.rfind("namespace gti_internal::backend {", anchor);
-  const std::size_t close =
-      generated.find("} // namespace gti_internal::backend", anchor);
-  if (begin == std::string_view::npos || close == std::string_view::npos) {
-    return {};
-  }
-  return generated.substr(
-      begin,
-      close + std::string_view{"} // namespace gti_internal::backend"}.size() -
-          begin);
+bool hasOutcome(const lang::FailureMetadata &metadata,
+                lang::DefinedFailureCode code,
+                lang::DefinedFailureDetail detail) {
+  const lang::DefinedFailureOutcome wanted{.code = code, .detail = detail};
+  return std::any_of(
+      metadata.sites().begin(), metadata.sites().end(), [&](const auto &site) {
+        return std::find(site.outcomes.begin(), site.outcomes.end(), wanted) !=
+               site.outcomes.end();
+      });
 }
 
 void testExactDescriptorEmission(const std::filesystem::path &fixture) {
@@ -139,102 +69,58 @@ void testExactDescriptorEmission(const std::filesystem::path &fixture) {
          "MIR should retain the exact canonical frontend failure snapshot");
   expect(metadata.sites().size() == 4,
          "the focused fixture should contain four canonical sites");
+  expect(!metadata.descriptorBytes().empty() &&
+             !metadata.artifactIdentity().isZero(),
+         "the canonical snapshot should carry descriptor bytes and a "
+         "non-zero artifact identity");
 
-  const lang::OptimizationPipeline pipeline;
-  const lang::OptimizationResult compatibility =
-      pipeline.run(frontend.hir, lang::OptimizationLevel::O0);
-  const lang::BackendArtifact artifact =
-      emit(frontend, frontend.mir, compatibility, lang::CppStandard::Cpp23);
-  const std::string &generated = artifact.contents;
-  expect(generated.find("#include <gti/runtime_failure.h>") !=
-             std::string::npos,
-         "production C++ should include the versioned failure ABI header");
-  expect(generated.find(expectedByteArray(
-             "__gti_failure_canonical_descriptor_v1",
-             metadata.descriptorBytes())) != std::string::npos,
-         "generated C++ should retain every canonical descriptor byte");
-  expect(generated.find(expectedIdentity(metadata.artifactIdentity())) !=
-             std::string::npos,
-         "generated C++ should retain the exact SHA-256 artifact identity");
-
-  std::size_t sourceArrays = 0;
-  std::size_t outcomeArrays = 0;
+  // Two sites come from one source and two from the imported source; two
+  // three sites share the addition outcome shape. Equal facts stay equal and
+  // distinct facts stay distinct in the canonical site table.
+  std::vector<std::string> sources;
+  std::vector<std::vector<lang::DefinedFailureOutcome>> outcomeShapes;
   for (const lang::FailureSiteDescriptor &site : metadata.sites()) {
-    const auto source =
-        std::find_if(metadata.sites().begin(), metadata.sites().end(),
-                     [&](const auto &other) {
-                       return other.logicalSource == site.logicalSource;
-                     });
-    const auto outcomes = std::find_if(
-        metadata.sites().begin(), metadata.sites().end(),
-        [&](const auto &other) { return other.outcomes == site.outcomes; });
-    expect(generated.find(expectedSourceArray(*source)) != std::string::npos,
-           "a site should retain its exact counted logical-source bytes");
-    expect(generated.find(expectedSite(site, source->id, outcomes->id)) !=
-               std::string::npos,
-           "a site should retain uint64 line/span facts and outcome count");
-    if (source->id == site.id) {
-      ++sourceArrays;
-    } else {
-      expect(generated.find(expectedSourceArray(site)) == std::string::npos,
-             "identical source bytes share one immutable array");
+    expect(site.end > site.start && site.line > 0 && !site.outcomes.empty(),
+           "a site should retain line/span facts and its outcomes");
+    if (std::find(sources.begin(), sources.end(), site.logicalSource) ==
+        sources.end()) {
+      sources.push_back(site.logicalSource);
     }
-    const auto outcomeDeclaration =
-        "__gti_failure_outcomes_" + std::to_string(site.id) + "_v1[] =";
-    expect((generated.find(outcomeDeclaration) != std::string::npos) ==
-               (outcomes->id == site.id),
-           "only exactly equal ordered outcomes share their array");
-    outcomeArrays += outcomes->id == site.id;
+    if (std::find(outcomeShapes.begin(), outcomeShapes.end(), site.outcomes) ==
+        outcomeShapes.end()) {
+      outcomeShapes.push_back(site.outcomes);
+    }
   }
-  expect(
-      sourceArrays == 2 && outcomeArrays == 2,
-      "distinct sources and outcome shapes remain distinct; duplicates share");
-  expect(generated.find("{GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1, "
-                        "GTI_FAILURE_DETAIL_ADDITION_V1, UINT32_C(0)}") !=
-                 std::string::npos &&
-             generated.find("{GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1, "
-                            "GTI_FAILURE_DETAIL_DIVISION_V1, UINT32_C(0)}") !=
-                 std::string::npos &&
-             generated.find(
-                 "{GTI_FAILURE_CODE_DIVISION_BY_ZERO_V1, "
-                 "GTI_FAILURE_DETAIL_INTEGER_DIVISION_V1, UINT32_C(0)}") !=
-                 std::string::npos,
-         "generated sites should preserve their canonical ABI-v1 outcomes");
-  expect(generated.find("__gti_failure_sites_v1,\n        UINT32_C(4),") !=
-                 std::string::npos &&
-             generated.find("UINT64_C(" +
-                            std::to_string(metadata.descriptorBytes().size()) +
-                            ")};") != std::string::npos,
-         "the artifact descriptor should point at the exact site and byte "
-         "tables");
+  expect(sources.size() == 2,
+         "distinct sources remain distinct; duplicates are equal");
+  expect(outcomeShapes.size() == 2,
+         "distinct outcome shapes remain distinct; duplicates are equal");
+  expect(hasOutcome(metadata, lang::DefinedFailureCode::IntegerOverflow,
+                    lang::DefinedFailureDetail::Addition) &&
+             hasOutcome(metadata, lang::DefinedFailureCode::IntegerOverflow,
+                        lang::DefinedFailureDetail::Division) &&
+             hasOutcome(metadata, lang::DefinedFailureCode::DivisionByZero,
+                        lang::DefinedFailureDetail::IntegerDivision),
+         "canonical sites should preserve their ABI-v1 outcomes");
 
-  const std::string_view baseline = descriptorRegion(generated);
-  expect(!baseline.empty(),
-         "the focused artifact should expose one bounded descriptor region");
+  // Every optimization level hands the backend the exact same canonical
+  // descriptor, and the shipped backend accepts each lowered program.
   for (const lang::OptimizationLevel level :
-       {lang::OptimizationLevel::O1, lang::OptimizationLevel::O3}) {
-    const lang::OptimizationResult levelCompatibility =
-        pipeline.run(frontend.hir, level);
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
+        lang::OptimizationLevel::O3}) {
     const lang::OptimizedProgram optimized =
-        pipeline.run({.hir = frontend.hir,
-                      .mir = frontend.mir,
-                      .level = level,
-                      .compatibility = &levelCompatibility});
-    expect(optimized.valid(),
-           "optimized descriptor snapshots should remain verified");
-    if (optimized.valid()) {
-      expect(descriptorRegion(
-                 gti_test::emitCpp(frontend, optimized.sourceMir, optimized.mir,
-                                   optimized.report.transformations,
-                                   lang::CppStandard::Cpp23)
-                     .contents) == baseline,
-             "O0/O1/O3 must emit byte-identical failure descriptors");
-    }
+        gti_test::optimizeProgram(frontend, level);
+    const lang::LoweredProgram lowered = gti_test::lowerProgram(
+        frontend, optimized.sourceMir, optimized.mir, lang::TargetInfo::host(),
+        optimized.report.transformations);
+    expect(sameFailureMetadata(optimized.mir.failureMetadata(), metadata) &&
+               sameFailureMetadata(lowered.mir().failureMetadata(), metadata),
+           "O0/O1/O3 must lower byte-identical failure descriptors");
+    std::string error;
+    expect(
+        gti_test::llvmEmits(frontend, level, lang::TargetInfo::host(), &error),
+        "the shipped backend should emit the descriptor fixture: " + error);
   }
-  expect(descriptorRegion(emit(frontend, frontend.mir, compatibility,
-                               lang::CppStandard::Cpp20)
-                              .contents) == baseline,
-         "C++20 and C++23 must emit byte-identical failure descriptors");
 }
 
 void testEmptyDescriptorEmission() {
@@ -246,21 +132,17 @@ void testEmptyDescriptorEmission() {
   if (!frontend.canGenerateCode()) {
     return;
   }
-  const lang::OptimizationResult compatibility =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const std::string generated =
-      emit(frontend, frontend.mir, compatibility, lang::CppStandard::Cpp23)
-          .contents;
-  expect(generated.find("        nullptr,\n        UINT32_C(0),") !=
-                 std::string::npos &&
-             generated.find("__gti_failure_sites_v1[]") == std::string::npos &&
-             generated.find(expectedByteArray(
-                 "__gti_failure_canonical_descriptor_v1",
-                 frontend.failureMetadata.descriptorBytes())) !=
-                 std::string::npos,
-         "an empty artifact should retain canonical bytes with a null site "
-         "table");
+  const lang::LoweredProgram lowered =
+      gti_test::lowerOptimizedProgram(frontend, lang::OptimizationLevel::O0);
+  expect(!frontend.failureMetadata.descriptorBytes().empty() &&
+             lowered.mir().failureMetadata().sites().empty() &&
+             sameFailureMetadata(lowered.mir().failureMetadata(),
+                                 frontend.failureMetadata),
+         "an empty artifact should retain canonical bytes with no sites");
+  std::string error;
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &error),
+         "the shipped backend should emit an empty descriptor: " + error);
 }
 
 void testMetadataDriftIsRejected(const std::filesystem::path &fixture) {
@@ -282,13 +164,10 @@ void testMetadataDriftIsRejected(const std::filesystem::path &fixture) {
   expect(!lang::verifyFailureMetadata(drifted.failureMetadata()).valid(),
          "canonical descriptor drift should fail metadata verification");
 
-  const lang::OptimizationResult compatibility =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
   bool rejected = false;
   std::string message;
   try {
-    (void)emit(frontend, drifted, compatibility, lang::CppStandard::Cpp23);
+    (void)gti_test::lowerProgram(frontend, frontend.mir, drifted);
   } catch (const std::logic_error &error) {
     rejected = true;
     message = error.what();

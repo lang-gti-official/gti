@@ -11,7 +11,14 @@ import subprocess
 import sys
 import time
 
+from backend_modes import cpp_modes
 from llvm_evidence_manifest import build_manifest
+
+# The frozen C++ backend's comparator builds run only when GTI_TEST_BACKENDS
+# selects C++; otherwise the LLVM levels agree with each other and with the
+# explicit expected observations.
+CPP_STANDARDS = ("c++20", "c++23") if cpp_modes() else ()
+CPP_BACKENDS = ("cpp",) if cpp_modes() else ()
 
 SOURCE_PATHS = {
     name: f"tests/fixtures/llvm_native_c_abi/{name}.gti" for name in
@@ -151,7 +158,7 @@ def main():
             path = root / SOURCE_PATHS[name]
             objects = [example] if name == "record_example" else [host]
             oracle = None
-            for standard in ("c++20", "c++23"):
+            for standard in CPP_STANDARDS:
                 tag = f"{name}-{standard}-c{c_level}"
                 binary = output / tag
                 run([compiler, path, "--backend", "cpp", "--std", standard, "-O3", "-o",
@@ -169,12 +176,14 @@ def main():
                      "--", *objects], "build-" + tag)
                 result = run([binary], "run-" + tag, expected_exit(name))
                 observe(name, result)
+                if oracle is None:
+                    oracle = result.stdout, result.stderr
                 if (result.stdout, result.stderr) != oracle:
                     raise RuntimeError("native aggregate execution differs from its C++ comparator")
                 executions += 1
     if args.focus != "owned":
         for name in ("reject_native_record_function_field", "reject_native_record_function_input"):
-            for standard in ("c++20", "c++23"):
+            for standard in CPP_STANDARDS:
                 binary = output / f"{name}-{standard}"
                 run([compiler, fixture / (name + ".gti"), "--backend", "cpp", "--std", standard,
                      "-O3", "-o", binary, "--", host], "build-" + binary.name)
@@ -194,7 +203,7 @@ def main():
                 ("reject_native_record_mutable_view", b"GTI-S2054", b":3:80:"),
                 ("reject_native_record_view_return", b"GTI-S2054", b":2:19:"),
                 ("reject_native_record_view_mutation", b"GTI-S2017", b":12:72:")):
-            for backend in ("cpp", "llvm"):
+            for backend in (*CPP_BACKENDS, "llvm"):
                 destination = output / f"{name}-{backend}"
                 sentinel = b"existing native artifact\n"
                 destination.write_bytes(sentinel)

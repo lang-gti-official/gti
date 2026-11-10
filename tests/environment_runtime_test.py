@@ -83,7 +83,7 @@ def main():
                             'auto value = std::move(lookup).expect("environment lookup");\n'
                             'return value.value().view(); }\n'
                             'int main() { return 0; }\n', encoding="utf-8")
-        rejected = run([compiler, dangling, "--emit-cpp", "-o", scratch / "bad.cpp"],
+        rejected = run([compiler, dangling, "--emit-mir", "-o", scratch / "bad.mir"],
                        environment, status=65)
         assert "GTI-S2045" in rejected.stderr and "cannot escape" in rejected.stderr, rejected.stderr
         benchmark = scratch / "benchmark"

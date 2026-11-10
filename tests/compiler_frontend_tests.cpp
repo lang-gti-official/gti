@@ -1,8 +1,6 @@
 #include "compiler_test_fixture.h"
-#include "native_symbol_spelling.h"
 #include "temporary_directory.h"
 
-#include <regex>
 #include <set>
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -10,6 +8,247 @@
 #endif
 
 namespace {
+
+// Backend-neutral oracles: assertions about emitted programs are made on the
+// verified MIR (and the shipped LLVM backend), never on generated C++ text.
+[[maybe_unused]] const lang::MirFunctionInstance *
+mirFunctionNamed(const lang::FrontendResult &frontend,
+                 const lang::MirProgram &program,
+                 std::string_view qualifiedName) {
+  for (const lang::MirFunctionInstance &function :
+       program.functionInstances()) {
+    const lang::FunctionInfo *info =
+        frontend.semantics.findFunction(function.declaration);
+    if (info != nullptr && info->qualifiedName == qualifiedName) {
+      return &function;
+    }
+  }
+  return nullptr;
+}
+
+[[maybe_unused]] const lang::MirFunctionInstance *
+mirFunctionNamed(const lang::FrontendResult &frontend,
+                 std::string_view qualifiedName) {
+  return mirFunctionNamed(frontend, frontend.mir, qualifiedName);
+}
+
+[[maybe_unused]] const lang::MirClassInstance *
+mirClassNamed(const lang::FrontendResult &frontend,
+              std::string_view qualifiedName) {
+  for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
+    const lang::ClassTypeInfo *info =
+        frontend.semantics.findClassType(instance.declaration);
+    if (info != nullptr && info->qualifiedName == qualifiedName) {
+      return &instance;
+    }
+  }
+  return nullptr;
+}
+
+template <typename Predicate>
+[[maybe_unused]] bool anyMirInstruction(const lang::MirBody &body,
+                                        Predicate predicate) {
+  for (const lang::MirBlock &block : body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      if (!instruction.tombstone && predicate(instruction)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Every executable body of `program`: functions, constructors, destructors,
+// lambdas, class field initializers and the merged program module.
+template <typename Visitor>
+[[maybe_unused]] void forEachMirBody(const lang::MirProgram &program,
+                                     Visitor visitor) {
+  visitor(program.module());
+  for (const auto &function : program.functionInstances())
+    visitor(function.body);
+  for (const auto &constructor : program.constructorInstances())
+    visitor(constructor.body);
+  for (const auto &destructor : program.destructorInstances())
+    visitor(destructor.body);
+  for (const auto &lambda : program.lambdaInstances())
+    visitor(lambda.body);
+  for (const auto &instance : program.classInstances()) {
+    visitor(instance.fieldInitializers);
+    visitor(instance.staticFieldInitializers);
+  }
+}
+
+template <typename Predicate>
+[[maybe_unused]] bool anyProgramInstruction(const lang::MirProgram &program,
+                                            Predicate predicate) {
+  bool found = false;
+  forEachMirBody(program, [&](const lang::MirBody &body) {
+    found = found || anyMirInstruction(body, predicate);
+  });
+  return found;
+}
+
+[[maybe_unused]] bool isMirIntegerLiteral(const lang::MirInstruction &item,
+                                          std::uint64_t magnitude) {
+  if (item.operation != lang::MirOperation::Literal || !item.literal)
+    return false;
+  const auto *value = std::get_if<std::uint64_t>(&*item.literal);
+  return value != nullptr && *value == magnitude;
+}
+
+[[maybe_unused]] bool hasMirIntegerLiteral(const lang::MirBody &body,
+                                           std::uint64_t magnitude) {
+  return anyMirInstruction(body, [&](const lang::MirInstruction &item) {
+    return isMirIntegerLiteral(item, magnitude);
+  });
+}
+
+[[maybe_unused]] bool hasMirIntegerLiteral(const lang::MirProgram &program,
+                                           std::uint64_t magnitude) {
+  return anyProgramInstruction(program, [&](const lang::MirInstruction &item) {
+    return isMirIntegerLiteral(item, magnitude);
+  });
+}
+
+// Text reaching the program as a MIR string literal or a constant program
+// storage initializer.
+[[maybe_unused]] bool mirContainsText(const lang::MirProgram &program,
+                                      std::string_view text) {
+  const bool literal =
+      anyProgramInstruction(program, [&](const lang::MirInstruction &item) {
+        const auto *value =
+            item.literal ? std::get_if<std::string>(&*item.literal) : nullptr;
+        return value != nullptr && value->find(text) != std::string::npos;
+      });
+  const auto &steps = program.programInitializationPlan().steps;
+  return literal ||
+         std::any_of(steps.begin(), steps.end(), [&](const auto &step) {
+           const auto *value =
+               step.dataConstant ? std::get_if<std::string>(&*step.dataConstant)
+                                 : nullptr;
+           return value != nullptr && value->find(text) != std::string::npos;
+         });
+}
+
+// The defined-failure outcomes an instruction's checked operation can raise.
+[[maybe_unused]] std::vector<lang::DefinedFailureOutcome>
+mirFailureOutcomes(const lang::MirProgram &program,
+                   const lang::MirInstruction &instruction) {
+  std::vector<lang::DefinedFailureOutcome> outcomes;
+  for (const lang::FailureSiteId site : instruction.localFailureSites) {
+    for (const lang::FailureSiteDescriptor &descriptor :
+         program.failureMetadata().sites()) {
+      if (descriptor.id == site) {
+        outcomes.insert(outcomes.end(), descriptor.outcomes.begin(),
+                        descriptor.outcomes.end());
+      }
+    }
+  }
+  return outcomes;
+}
+
+// A Compute of `operation` whose checked evaluation can raise exactly the
+// given defined failure (and, when `type` is not Unknown, in that domain).
+[[maybe_unused]] bool hasCheckedMirOperation(
+    const lang::MirProgram &program, const lang::MirBody &body,
+    lang::MirOperation operation, lang::DefinedFailureCode code,
+    lang::DefinedFailureDetail detail,
+    const lang::SemanticType &type = lang::SemanticType::Unknown) {
+  return anyMirInstruction(body, [&](const lang::MirInstruction &item) {
+    if (item.operation != operation ||
+        (type != lang::SemanticType::Unknown && item.info.type != type))
+      return false;
+    const auto outcomes = mirFailureOutcomes(program, item);
+    return std::any_of(outcomes.begin(), outcomes.end(), [&](auto outcome) {
+      return outcome.code == code && outcome.detail == detail;
+    });
+  });
+}
+
+[[maybe_unused]] bool hasCheckedMirOperation(
+    const lang::MirProgram &program, lang::MirOperation operation,
+    lang::DefinedFailureCode code, lang::DefinedFailureDetail detail,
+    const lang::SemanticType &type = lang::SemanticType::Unknown) {
+  bool found = false;
+  forEachMirBody(program, [&](const lang::MirBody &body) {
+    found = found || hasCheckedMirOperation(program, body, operation, code,
+                                            detail, type);
+  });
+  return found;
+}
+
+// A Compute of `operation` with no checked failure: it lowers directly.
+[[maybe_unused]] bool hasUncheckedMirOperation(const lang::MirBody &body,
+                                               lang::MirOperation operation) {
+  return anyMirInstruction(body, [&](const lang::MirInstruction &item) {
+    return item.kind == lang::MirInstructionKind::Compute &&
+           item.operation == operation && item.localFailureSites.empty();
+  });
+}
+
+[[maybe_unused]] bool hasUncheckedMirOperation(const lang::MirProgram &program,
+                                               lang::MirOperation operation) {
+  bool found = false;
+  forEachMirBody(program, [&](const lang::MirBody &body) {
+    found = found || hasUncheckedMirOperation(body, operation);
+  });
+  return found;
+}
+
+[[maybe_unused]] bool
+callsMirFunction(const lang::MirBody &body,
+                 const lang::MirFunctionInstance *callee) {
+  return callee != nullptr &&
+         anyMirInstruction(body, [&](const lang::MirInstruction &item) {
+           return item.kind == lang::MirInstructionKind::Call &&
+                  item.functionTarget == callee->id;
+         });
+}
+
+[[maybe_unused]] const lang::MirProgramInitializationStep *
+mirStorageStep(const lang::FrontendResult &frontend,
+               const lang::MirProgram &program,
+               std::string_view qualifiedName) {
+  for (const auto &step : program.programInitializationPlan().steps) {
+    const lang::SymbolRecord *symbol =
+        frontend.semantics.database().findSymbol(step.symbol);
+    if (symbol != nullptr && symbol->qualifiedName == qualifiedName) {
+      return &step;
+    }
+  }
+  return nullptr;
+}
+
+[[maybe_unused]] const lang::MirProgramInitializationStep *
+mirStorageStep(const lang::FrontendResult &frontend,
+               std::string_view qualifiedName) {
+  return mirStorageStep(frontend, frontend.mir, qualifiedName);
+}
+
+// The exact constant integer a program-storage step publishes as data.
+[[maybe_unused]] bool
+storesMirInteger(const lang::MirProgramInitializationStep *step, bool negative,
+                 std::uint64_t magnitude) {
+  const auto *value =
+      step == nullptr || !step->dataConstant
+          ? nullptr
+          : std::get_if<lang::ConstantInteger>(&*step->dataConstant);
+  return value != nullptr && value->negative == negative &&
+         value->magnitude == magnitude;
+}
+
+// True when the shipped native backend accepts the program; reports why not.
+[[maybe_unused]] bool
+llvmAccepts(const lang::FrontendResult &frontend,
+            lang::OptimizationLevel level = lang::OptimizationLevel::O0,
+            const lang::TargetInfo &target = lang::TargetInfo::host()) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(frontend, level, target, &error);
+  if (!emitted) {
+    std::cerr << "LLVM emission failed: " << error << '\n';
+  }
+  return emitted;
+}
 
 void testDefiniteReturnAnalysis() {
   const lang::FrontendResult valid =
@@ -927,17 +1166,33 @@ namespace std { export class PrivateMethod { public: PrivateMethod() {} int secr
          "rejected private-signature member occurrences must remain hidden "
          "from compiler-owned tooling queries");
 
-  const std::string generated = gti_test::emitCppText(imported);
-  expect(generated.find("namespace __gti_std") != std::string::npos &&
-             generated.find("_array {") != std::string::npos &&
-             generated.find("std::array<std::int32_t, 3> values") !=
-                 std::string::npos &&
-             generated.find("::__gti_program::__gti_std::__gti_type_") !=
-                 std::string::npos &&
-             generated.find("template <typename T, std::uint64_t N>\n"
-                            "    class array") == std::string::npos,
-         "std::array should remain source-defined while its selected "
-         "application emits as one concrete GTI-owned class");
+  std::vector<const lang::MirClassInstance *> arrayInstances;
+  for (const lang::MirClassInstance &instance : imported.mir.classInstances()) {
+    const lang::ClassTypeInfo *info =
+        imported.semantics.findClassType(instance.declaration);
+    if (info != nullptr && info->qualifiedName == "std::array")
+      arrayInstances.push_back(&instance);
+  }
+  const bool distinctArrayInstances =
+      arrayInstances.size() == 3 &&
+      arrayInstances[0]->type != arrayInstances[1]->type &&
+      arrayInstances[0]->type != arrayInstances[2]->type &&
+      arrayInstances[1]->type != arrayInstances[2]->type;
+  expect(distinctArrayInstances &&
+             std::all_of(arrayInstances.begin(), arrayInstances.end(),
+                         [&](const lang::MirClassInstance *instance) {
+                           return instance->sourceUnit == arrayId;
+                         }) &&
+             std::any_of(arrayInstances.begin(), arrayInstances.end(),
+                         [](const lang::MirClassInstance *instance) {
+                           return !instance->type.arguments.empty() &&
+                                  instance->type.arguments.front() ==
+                                      lang::SemanticType::Int32 &&
+                                  !instance->declaredFields.empty();
+                         }) &&
+             llvmAccepts(imported),
+         "std::array should remain source-defined while each selected "
+         "application lowers as one concrete GTI-owned class instance");
 
   const lang::FrontendResult distinctStandardNamespace =
       lang::Frontend().analyze(
@@ -957,13 +1212,12 @@ namespace std { export class PrivateMethod { public: PrivateMethod() {} int secr
           {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(distinctStandardNamespace.canGenerateCode(),
          "a user gti_std namespace should remain distinct in GTI");
-  const std::string distinctNamespaceCpp =
-      gti_test::emitCppText(distinctStandardNamespace);
-  expect(
-      distinctNamespaceCpp.find("namespace __gti_std") != std::string::npos &&
-          distinctNamespaceCpp.find("namespace gti_std") != std::string::npos,
-      "the C++ backend should reserve its std remap without claiming the "
-      "user gti_std namespace");
+  expect(mirFunctionNamed(distinctStandardNamespace,
+                          "gti_std::string_view::read") != nullptr &&
+             mirClassNamed(distinctStandardNamespace, "gti_std::string_view") !=
+                 nullptr &&
+             llvmAccepts(distinctStandardNamespace),
+         "a user gti_std namespace should lower under its own GTI identity");
 
   const std::filesystem::path wrapper =
       standardLibraryRoot() / "std/import_test_wrapper.gti";
@@ -1071,19 +1325,27 @@ namespace std { export int cpp_keyword_path_value() { return 0; } }
   }
   expect(tcp.canGenerateCode(),
          "the POSIX std::tcp owner should provide typed open and close");
-  const std::string tcpCpp =
-      gti_test::emitCppText(tcp, lang::CppStandard::Cpp23, linuxTarget);
+  const lang::MirClassInstance *tcpSocket =
+      mirClassNamed(tcp, "std::tcp::socket");
+  const lang::MirFunctionInstance *posixSocket =
+      mirFunctionNamed(tcp, "gti_internal::runtime::socket");
+  const lang::MirFunctionInstance *posixClose =
+      mirFunctionNamed(tcp, "gti_internal::runtime::close");
+  const lang::MirFunctionInstance *socketOpen =
+      mirFunctionNamed(tcp, "std::tcp::socket::open");
+  const lang::MirFunctionInstance *socketClose =
+      mirFunctionNamed(tcp, "std::tcp::socket::close");
   expect(
-      tcpCpp.find("class socket") != std::string::npos &&
-          tcpCpp.find("runtime::" + gti_test::nativeSpelling(tcpCpp, "socket") +
-                      "(") != std::string::npos &&
-          std::regex_search(
-              tcpCpp, std::regex(R"(open__gti_mir_failure\(::__gti_program::)"
-                                 R"(__gti_type_[0-9a-f]+_expected)")) &&
-          tcpCpp.find("runtime::" + gti_test::nativeSpelling(tcpCpp, "close") +
-                      "(") != std::string::npos &&
-          tcpCpp.find("socket(socket &&other) noexcept") != std::string::npos &&
-          tcpCpp.find("// GTI verified-MIR body:") != std::string::npos,
+      tcpSocket != nullptr &&
+          tcpSocket->copyConstructor == lang::SpecialMemberStatus::Deleted &&
+          tcpSocket->moveConstructor == lang::SpecialMemberStatus::Generated &&
+          posixSocket != nullptr && posixSocket->externalSymbol == "socket" &&
+          posixClose != nullptr && posixClose->externalSymbol == "close" &&
+          socketOpen != nullptr && socketClose != nullptr &&
+          callsMirFunction(socketOpen->body, posixSocket) &&
+          callsMirFunction(socketClose->body, posixClose) &&
+          socketOpen->mayRaiseDefinedFailure &&
+          lang::verifyMirProgram(tcp.mir).valid(),
       "the tcp owner should retain private POSIX acquisition and generated "
       "move cleanup");
 
@@ -1265,14 +1527,88 @@ int main() {
   expect(semantic.check(program),
          "break and continue should be valid in nested loop bodies");
 
-  const std::string generated = emitAnalyzedSource(source);
-  expect(generated.find("switch (__gti_mir_bb)") == std::string::npos &&
-             generated.find("__gti_mir_bb =") == std::string::npos &&
-             generated.find("goto __gti_mir_bb_") != std::string::npos &&
-             generated.find("__gti_mir_bb_1: {") != std::string::npos &&
-             generated.find("// GTI verified-MIR body:") != std::string::npos,
-         "the C++ backend should lower loop control through direct verified "
-         "MIR CFG edges");
+  const lang::FrontendResult lowered = analyzeEmissionFixture(source);
+  const lang::HirFunctionInstance *hirMain = nullptr;
+  for (const lang::HirFunctionInstance &instance :
+       lowered.hir.functionInstances()) {
+    if (instance.source != nullptr && instance.source->name().lexeme == "main")
+      hirMain = &instance;
+  }
+  const auto hirStatementOf = [&](lang::HirStatementKind kind) {
+    const lang::HirStatement *found = nullptr;
+    if (hirMain != nullptr) {
+      for (const lang::HirStatement &statement : hirMain->body.statements) {
+        if (statement.kind == kind && found == nullptr)
+          found = &statement;
+      }
+    }
+    return found;
+  };
+  const lang::MirFunctionInstance *mirMain =
+      hirMain == nullptr ? nullptr
+                         : lowered.mir.findFunctionInstance(hirMain->id);
+  const auto blockFor =
+      [&](const lang::HirStatement *statement,
+          lang::MirTerminatorKind kind) -> const lang::MirBlock * {
+    if (mirMain == nullptr || statement == nullptr)
+      return nullptr;
+    for (const lang::MirBlock &block : mirMain->body.blocks) {
+      if (block.terminator.kind == kind &&
+          block.terminator.hirStatement == statement->id)
+        return &block;
+    }
+    return nullptr;
+  };
+  const lang::MirBlock *forCondition =
+      blockFor(hirStatementOf(lang::HirStatementKind::For),
+               lang::MirTerminatorKind::Branch);
+  const lang::MirBlock *whileCondition =
+      blockFor(hirStatementOf(lang::HirStatementKind::While),
+               lang::MirTerminatorKind::Branch);
+  const lang::MirBlock *continueBlock =
+      blockFor(hirStatementOf(lang::HirStatementKind::Continue),
+               lang::MirTerminatorKind::Goto);
+  const lang::MirBlock *breakBlock =
+      blockFor(hirStatementOf(lang::HirStatementKind::Break),
+               lang::MirTerminatorKind::Goto);
+  // Follows direct CFG edges from `from`, never entering `avoid`.
+  const auto reaches = [&](lang::MirBlockId from, lang::MirBlockId to,
+                           lang::MirBlockId avoid) {
+    if (mirMain == nullptr)
+      return false;
+    std::vector<lang::MirBlockId> pending{from};
+    std::vector<bool> seen(mirMain->body.blocks.size() + 1, false);
+    while (!pending.empty()) {
+      const lang::MirBlockId current = pending.back();
+      pending.pop_back();
+      if (current == to)
+        return true;
+      if (current == avoid || current == 0 || current >= seen.size() ||
+          seen[current])
+        continue;
+      seen[current] = true;
+      const lang::MirBlock *block = mirMain->body.findBlock(current);
+      if (block == nullptr)
+        continue;
+      pending.push_back(block->terminator.target);
+      pending.push_back(block->terminator.elseTarget);
+      for (const lang::MirSwitchTarget &target :
+           block->terminator.switchTargets)
+        pending.push_back(target.target);
+    }
+    return false;
+  };
+  expect(forCondition != nullptr && whileCondition != nullptr &&
+             continueBlock != nullptr && breakBlock != nullptr &&
+             reaches(continueBlock->terminator.target, forCondition->id,
+                     whileCondition->id) &&
+             reaches(breakBlock->terminator.target, forCondition->id,
+                     whileCondition->id) &&
+             lang::verifyMirProgram(lowered.mir).valid() &&
+             llvmAccepts(lowered),
+         "loop control should lower through direct verified MIR CFG edges: "
+         "continue advances the outer loop and break leaves only the inner "
+         "loop");
 
   auto invalidTokens = lexer.scan(R"(
 void stop() {
@@ -1432,18 +1768,10 @@ int main() { return run() - 4; }
              dropsMarker(breakBlock),
          "do-while break should clean the body scope and target the loop exit");
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact generated =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
-  // The cleanup-gate narrowing admitted this body to general verified-MIR
-  // emission (its scope owner's cleanup cannot raise); the body-first MIR
-  // structure is pinned above, and the backend now emits the verified
-  // schedule instead of the compatibility do-while text.
-  expect(generated.contents.find("// GTI verified-MIR body: scalar-cfg-v1") !=
-             std::string::npos,
-         "the C++ backend should emit the do-while body from verified MIR");
+  // The body-first MIR structure is pinned above; the shipped backend emits
+  // the verified schedule.
+  expect(llvmAccepts(frontend),
+         "the native backend should emit the do-while body from verified MIR");
 
   const lang::FrontendResult invalidCondition = lang::Frontend().analyze(
       "invalid-do-while.gti", "void run() { do {} while (1); }\n");
@@ -1597,49 +1925,98 @@ int main() {
          "MIR should evaluate one arm in separate blocks and load one merged "
          "result");
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(frontend.hir,
-                                       lang::OptimizationLevel::O0);
-  const lang::BackendArtifact generated =
-      gti_test::emitCpp(frontend, frontend.mir, frontend.mir, optimizations);
   // choose_owner cannot fail, so its plain form stages the selected owner
-  // in the returned value's slot exactly where a failure form would publish
-  // into its result storage, then retires the moved-from sources.
-  const auto publication = generated.contents.find(
-      "__gti_mir_v_4.construct(std::move(__gti_mir_p_4.get()));");
-  const auto retirement =
-      generated.contents.find("__gti_mir_p_4.destroy();", publication);
-  const auto rightCleanup =
-      generated.contents.find("__gti_mir_p_3.destroy();", retirement);
-  const auto leftCleanup =
-      generated.contents.find("__gti_mir_p_2.destroy();", rightCleanup);
-  const auto returnPublication = generated.contents.find(
-      "return std::move(__gti_mir_v_4.get());", publication);
-  expect(generated.contents.find("// GTI verified-MIR body: scalar-cfg-v1") !=
-                 std::string::npos &&
-             generated.contents.find("if (__gti_mir_v_1) {") !=
-                 std::string::npos &&
-             generated.contents.find("goto __gti_mir_bb_2;") !=
-                 std::string::npos &&
-             generated.contents.find("goto __gti_mir_bb_3;") !=
-                 std::string::npos &&
-             generated.contents.find("switch (__gti_mir_bb)") ==
-                 std::string::npos &&
-             generated.contents.find(
-                 "__gti_mir_p_4.construct(std::move(__gti_mir_p_2.get()));") !=
-                 std::string::npos &&
-             generated.contents.find(
-                 "__gti_mir_p_4.construct(std::move(__gti_mir_p_3.get()));") !=
-                 std::string::npos &&
-             publication != std::string::npos &&
-             retirement != std::string::npos &&
-             rightCleanup != std::string::npos &&
-             leftCleanup != std::string::npos &&
-             returnPublication != std::string::npos &&
-             publication < retirement && retirement < rightCleanup &&
-             rightCleanup < leftCleanup && leftCleanup < returnPublication,
-         "the C++ backend should emit scalar conditional control flow from "
-         "verified MIR while preserving explicit ownership transfer");
+  // in the conditional's result slot from the selected source, publishes that
+  // slot as the returned value, then retires the moved-from sources (right,
+  // then left) before returning.
+  const lang::MirFunctionInstance *chooseOwner =
+      mirFunctionNamed(frontend, "choose_owner");
+  const auto parameterPlace = [&](std::size_t index) -> lang::MirPlaceId {
+    if (chooseOwner == nullptr ||
+        chooseOwner->parameterBindings.size() <= index)
+      return 0;
+    for (const lang::MirPlace &place : chooseOwner->body.places) {
+      if (place.root == lang::MirPlaceRootKind::Binding &&
+          place.binding == chooseOwner->parameterBindings[index] &&
+          place.projections.empty())
+        return place.id;
+    }
+    return 0;
+  };
+  const lang::MirPlaceId leftPlace = parameterPlace(1);
+  const lang::MirPlaceId rightPlace = parameterPlace(2);
+  const lang::MirBlock *ownerBranch = nullptr;
+  if (chooseOwner != nullptr) {
+    for (const lang::MirBlock &block : chooseOwner->body.blocks) {
+      if (block.terminator.kind == lang::MirTerminatorKind::Branch &&
+          ownerBranch == nullptr)
+        ownerBranch = &block;
+    }
+  }
+  // An arm moves exactly `source` and initializes the shared result slot.
+  const auto armSlot = [&](lang::MirBlockId id,
+                           lang::MirPlaceId source) -> lang::MirPlaceId {
+    const lang::MirBlock *arm =
+        chooseOwner == nullptr ? nullptr : chooseOwner->body.findBlock(id);
+    if (arm == nullptr || source == 0 ||
+        arm->terminator.kind != lang::MirTerminatorKind::Goto)
+      return 0;
+    bool moved = false;
+    lang::MirPlaceId slot = 0;
+    for (const lang::MirInstruction &item : arm->instructions) {
+      if (item.kind == lang::MirInstructionKind::Move && !item.operands.empty())
+        moved = moved || item.operands.front().place == source;
+      if (item.kind == lang::MirInstructionKind::Initialize && item.destination)
+        slot = *item.destination;
+    }
+    return moved ? slot : 0;
+  };
+  const lang::MirPlaceId leftSlot =
+      ownerBranch == nullptr
+          ? 0
+          : armSlot(ownerBranch->terminator.target, leftPlace);
+  const lang::MirPlaceId rightSlot =
+      ownerBranch == nullptr
+          ? 0
+          : armSlot(ownerBranch->terminator.elseTarget, rightPlace);
+  const lang::MirBlock *ownerMerge =
+      ownerBranch == nullptr || chooseOwner == nullptr
+          ? nullptr
+          : chooseOwner->body.findBlock(
+                chooseOwner->body.findBlock(ownerBranch->terminator.target) ==
+                        nullptr
+                    ? 0
+                    : chooseOwner->body
+                          .findBlock(ownerBranch->terminator.target)
+                          ->terminator.target);
+  std::size_t publication = 0;
+  std::size_t rightCleanup = 0;
+  std::size_t leftCleanup = 0;
+  if (ownerMerge != nullptr) {
+    for (std::size_t index = 0; index < ownerMerge->instructions.size();
+         ++index) {
+      const lang::MirInstruction &item = ownerMerge->instructions[index];
+      if (item.kind == lang::MirInstructionKind::Move &&
+          !item.operands.empty() && item.operands.front().place == leftSlot &&
+          publication == 0)
+        publication = index + 1;
+      if (item.kind == lang::MirInstructionKind::Drop && item.destination &&
+          *item.destination == rightPlace)
+        rightCleanup = index + 1;
+      if (item.kind == lang::MirInstructionKind::Drop && item.destination &&
+          *item.destination == leftPlace)
+        leftCleanup = index + 1;
+    }
+  }
+  expect(chooseOwner != nullptr && !chooseOwner->mayRaiseDefinedFailure &&
+             leftPlace != 0 && rightPlace != 0 && leftSlot != 0 &&
+             leftSlot == rightSlot && ownerMerge != nullptr &&
+             ownerMerge->terminator.kind == lang::MirTerminatorKind::Return &&
+             publication != 0 && rightCleanup != 0 && leftCleanup != 0 &&
+             publication < rightCleanup && rightCleanup < leftCleanup &&
+             llvmAccepts(frontend),
+         "verified MIR should express scalar conditional control flow while "
+         "preserving explicit ownership transfer");
 
   const lang::FrontendResult invalid = lang::Frontend().analyze(
       "invalid-conditional-expression.gti", R"(
@@ -1825,18 +2202,66 @@ int main() {
              loweredSwitch->switchArms[1].labels[0].constant.has_value(),
          "HIR should preserve switch arms and normalized labels for backends");
 
-  const std::string generated = gti_test::emitCppText(frontend);
-  expect(generated.find("switch (__gti_mir_v_") != std::string::npos &&
-             generated.find("case static_cast<::__gti_program::Stage>(0):") !=
-                 std::string::npos &&
-             generated.find("case static_cast<std::uint64_t>(7):") !=
-                 std::string::npos &&
-             generated.find("goto __gti_mir_bb_") != std::string::npos &&
-             generated.find("switch (__gti_mir_bb)") == std::string::npos &&
-             generated.find("__gti_mir_bb_1: {") != std::string::npos &&
-             generated.find("// GTI verified-MIR body:") != std::string::npos,
-         "the C++ backend should emit normalized labels through arm-local MIR "
-         "CFG blocks");
+  const auto switchesIn = [](const lang::MirFunctionInstance *function) {
+    std::vector<const lang::MirTerminator *> result;
+    if (function != nullptr) {
+      for (const lang::MirBlock &block : function->body.blocks) {
+        if (block.terminator.kind == lang::MirTerminatorKind::Switch)
+          result.push_back(&block.terminator);
+      }
+    }
+    return result;
+  };
+  const auto classifySwitches =
+      switchesIn(mirFunctionNamed(frontend, "classify"));
+  const lang::MirTerminator *enumSwitch =
+      classifySwitches.size() == 1 ? classifySwitches.front() : nullptr;
+  expect(enumSwitch != nullptr && enumSwitch->switchTargets.size() == 3 &&
+             std::all_of(enumSwitch->switchTargets.begin(),
+                         enumSwitch->switchTargets.end(),
+                         [](const lang::MirSwitchTarget &target) {
+                           return target.value &&
+                                  target.value->kind ==
+                                      lang::SwitchCaseKind::Enumerator;
+                         }) &&
+             enumSwitch->switchTargets[1].target ==
+                 enumSwitch->switchTargets[2].target &&
+             enumSwitch->switchTargets[0].target !=
+                 enumSwitch->switchTargets[1].target &&
+             enumSwitch->target != enumSwitch->switchTargets[0].target &&
+             enumSwitch->target != enumSwitch->switchTargets[1].target,
+         "MIR should switch on normalized enumerator labels, share grouped "
+         "labels' arm block and keep a distinct default block");
+  const auto mainSwitches = switchesIn(mirFunctionNamed(frontend, "main"));
+  const auto hasLabel = [&](lang::SwitchCaseKind kind,
+                            const lang::SemanticType &type,
+                            std::uint64_t magnitude) {
+    return std::any_of(mainSwitches.begin(), mainSwitches.end(),
+                       [&](const lang::MirTerminator *terminator) {
+                         return std::any_of(
+                             terminator->switchTargets.begin(),
+                             terminator->switchTargets.end(),
+                             [&](const lang::MirSwitchTarget &target) {
+                               return target.value &&
+                                      target.value->kind == kind &&
+                                      target.value->type == type &&
+                                      target.value->value.magnitude ==
+                                          magnitude;
+                             });
+                       });
+  };
+  expect(mainSwitches.size() == 3 &&
+             hasLabel(lang::SwitchCaseKind::Integer, lang::SemanticType::Int32,
+                      0) &&
+             hasLabel(lang::SwitchCaseKind::Integer, lang::SemanticType::Int32,
+                      1) &&
+             hasLabel(lang::SwitchCaseKind::Character, lang::SemanticType::Char,
+                      71) &&
+             hasLabel(lang::SwitchCaseKind::Integer, lang::SemanticType::UInt64,
+                      7) &&
+             llvmAccepts(frontend),
+         "integer, char and wide switches should reach the backend as "
+         "normalized labels on arm-local MIR CFG blocks");
 
   const lang::FrontendResult invalid =
       lang::Frontend().analyze("invalid-switch.gti", R"(
@@ -3079,7 +3504,7 @@ int main() { return used_helper() - 1; }
   expect(functions.contains("initialize_only") &&
              classes.contains("StaticOnly"),
          "unreferenced global and static initialization remain program roots");
-  expect(!gti_test::emitCppText(lowered).empty(),
+  expect(llvmAccepts(lowered),
          "reachable lowering retains valid declarations for aliases and roots");
   const auto complete = analyze(fixture, false);
   const bool completeHasUnused = std::any_of(
@@ -3226,8 +3651,8 @@ int main() {
   expect(completeClient.result.canGenerateCode() &&
              reachedClient.result.canGenerateCode() &&
              reachedClient.functions < completeClient.functions &&
-             gti_test::emitCppText(completeClient.result) ==
-                 gti_test::emitCppText(reachedClient.result),
+             gti_test::emitLlvm(completeClient.result).contents ==
+                 gti_test::emitLlvm(reachedClient.result).contents,
          "library-reachable lowering emits the same program");
   std::filesystem::remove_all(libraryRoot);
 }

@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
+
 
 def run(*args):
     return subprocess.run([str(arg) for arg in args], capture_output=True,
@@ -31,7 +33,8 @@ int main() { return read(3); }
         root = Path(tmp)
         invalid = root / "out-of-bounds.gti"
         invalid.write_text(source)
-        for backend in ("llvm", "cpp"):
+        # The C++ backend runs only when GTI_TEST_BACKENDS selects it.
+        for backend in ("llvm", *(("cpp",) if cpp_modes() else ())):
             for level in ("O0", "O3"):
                 executable = root / f"fresh-{backend}-{level}"
                 built = run(compiler, fixture, "--backend", backend,
