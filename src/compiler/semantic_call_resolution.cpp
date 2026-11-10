@@ -228,7 +228,14 @@ auto SemanticVisitor::Impl::currentReturnBorrowContract() const
                         ? &function->bodyDeclaration()->parameters()
                         : nullptr,
       .parameterTypes = &function->parameterTypes,
-      .lambda = false};
+      .lambda = false,
+      // A callable pattern's result over a still-symbolic pack names lanes
+      // only a concrete instance expands; that instance checks the relay.
+      .deferred =
+          function->bodyDeclaration() != nullptr &&
+          containsOpenTypeParameter(function->returnType) &&
+          patternResultContract(*function->bodyDeclaration(),
+                                function->returnType)};
 }
 
 auto SemanticVisitor::Impl::callableParameterContract(
@@ -7224,23 +7231,33 @@ auto SemanticVisitor::Impl::resolveOperator(
   BorrowOriginKind operatorBorrowOrigin = selected.returnBorrowOrigin;
   std::size_t operatorBorrowParameter = selected.returnBorrowParameter;
   AccessMode operatorBorrowAccess = selected.returnBorrowAccess;
+  std::optional<std::vector<std::size_t>> contractBorrowParameters;
   if (selected.declaration != nullptr &&
-      selected.returnBorrowOrigin == BorrowOriginKind::None &&
       selected.returnType.kind == SemanticType::Reference &&
       (hasExplicitBorrowContract(*selected.declaration) ||
        patternResultContract(*selected.declaration, selected.returnType))) {
+    // The selected instance's expanded lanes decide which pack elements a
+    // region names; a contract resolved over the grouped declaration may
+    // name fewer (RFC 0004: every lane written in the region supplies it).
     const GenericReturnBorrowContract contract = genericReturnBorrowContract(
         *selected.declaration, selected.returnType, selected.parameterTypes,
         selected.ownerClass, selected.staticMember);
-    operatorBorrowOrigin = contract.origin;
-    operatorBorrowParameter = contract.parameter;
-    operatorBorrowAccess = contract.access;
+    if (selected.returnBorrowOrigin == BorrowOriginKind::None ||
+        (contract.origin == selected.returnBorrowOrigin &&
+         contract.origin == BorrowOriginKind::Argument)) {
+      operatorBorrowOrigin = contract.origin;
+      operatorBorrowParameter = contract.parameter;
+      operatorBorrowAccess = contract.access;
+      if (contract.origin == BorrowOriginKind::Argument)
+        contractBorrowParameters = contract.parameters;
+    }
   }
   // A generic operator whose result this call's types make text relays as
   // its instance's own analysis derives, as an ordinary method call does
   // (L-OWN-02).
   std::vector<std::size_t> operatorBorrowParameters =
-      selected.returnBorrowParameters;
+      contractBorrowParameters ? *contractBorrowParameters
+                               : selected.returnBorrowParameters;
   std::vector<BorrowedFieldOrigin> operatorBorrowFields =
       selected.returnBorrowFields;
   if (operatorBorrowOrigin == BorrowOriginKind::None &&

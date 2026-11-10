@@ -491,7 +491,11 @@ concrete instance selects its exact overload from the expanded lanes
 its class's pack to a base constructor the same way. In a class matched by a
 callable pattern `R(Args...)`, a method `R invoke(Args... values)` whose
 instance makes `R` a reference or borrowing carrier states that every
-borrowing lane of `values` may supply its result.
+borrowing lane of `values` may supply its result. Its symbolic body may
+relay a generic callable's reference result there, as in
+`return callable(values...);`; each concrete instance checks that the
+relayed borrow reaches only those lanes. A call through such a method or
+operator binds every lane its instance expands, not only the first.
 
 A type alias may name a reference only when the reference's region is one of
 the alias's own lifetime parameters, as in
