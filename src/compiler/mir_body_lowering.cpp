@@ -8896,6 +8896,23 @@ private:
       }
       const bool twoPhase =
           reserveBorrowResult && stableReservationOrigin(origin);
+      // A fresh carrier receiver whose producer recorded no field map (its
+      // signature contract names the region, not a field) still stores its
+      // sole reference at that one path. A field-mapped result selecting
+      // exactly that path names it on the temporary's own stored group.
+      if (selectedReceiverPlace != nullptr && value.borrowFields.size() == 1 &&
+          value.borrowFields.front().origin == BorrowOriginKind::Receiver &&
+          !value.borrowFields.front().sourceFields.empty())
+        if (const auto carrier = findMirTemporaryCarrierDependency(
+                output, *selectedReceiverPlace);
+            carrier && carrier.loan->kind == MirLoanKind::Stored &&
+            carrier.loan->designatedFields.empty() &&
+            carrier.loan->additionalDependencies.empty() &&
+            carrier.loan->carriers.empty())
+          if (const auto path =
+                  soleStoredReferencePath(selectedReceiverPlace->type);
+              path && path->first == value.borrowFields.front().sourceFields)
+            output.loans[carrier.loan->id - 1].designatedFields = path->first;
       const MirLoanId loan = createLoan(kind, origin, value.borrowAccess,
                                         value.id, 0, 0, parent, twoPhase);
       if (shellContract != nullptr) {
