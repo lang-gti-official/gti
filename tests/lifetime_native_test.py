@@ -331,7 +331,7 @@ int enclosing<T, lifetime a>(T&<a> input, int&<a> token) {
 int main() { int input = 7; return enclosing(input, input) - 8; }
 """,
     "checked_owner_witness_suppliers": """
-[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
+unsafe T&<a> borrow<T, Owner, lifetime a>(const T* address, Owner&<a> owner) { unsafe { return *address; } }
 struct View<lifetime a> {
   int&<a> external; int local = 7;
   View(int&<a> source) : external(source) {}
@@ -373,7 +373,7 @@ int&<owner> read<lifetime a, lifetime owner>(View<a>&<owner> view) { return view
 int main() { int value = 3; View view{value}; return read(view) - 7; }
 """,
     "checked_physical_carrier_owner": """
-[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
+unsafe T&<a> borrow<T, Owner, lifetime a>(const T* address, Owner&<a> owner) { unsafe { return *address; } }
 struct View<lifetime a> {
   int&<a> external; int local = 7;
   View(int&<a> input) : external(input) {}
@@ -425,8 +425,8 @@ int main() {
 }
 """,
     "checked_scalar_owner_witness": """
-[[borrowed_from(owner)]] unsafe T& borrow<T, Owner>(const T* address, Owner& owner) { unsafe { return *address; } }
-[[borrowed_from(owner)]] unsafe mut T& borrow_mut<T, Owner>(T* address, mut Owner& owner) { unsafe { return *address; } }
+unsafe T&<a> borrow<T, Owner, lifetime a>(const T* address, Owner&<a> owner) { unsafe { return *address; } }
+unsafe mut T&<a> borrow_mut<T, Owner, lifetime a>(T* address, mut Owner&<a> owner) { unsafe { return *address; } }
 struct Storage { mut int value = 7; Storage() {} };
 int rewrite(mut int& value) { value = 5; return value; }
 int main() {
@@ -439,12 +439,12 @@ int main() {
 }
 """,
     "checked_mutable_owner_witness": """
-[[borrowed_from(owner)]] unsafe mut T& borrow_mut<T, Owner>(T* address, mut Owner& owner) { unsafe { return *address; } }
+unsafe mut T&<a> borrow_mut<T, Owner, lifetime a>(T* address, mut Owner&<a> owner) { unsafe { return *address; } }
 struct View<lifetime a> {
   int&<a> external; mut int local = 7;
   View(int&<a> source) : external(source) {}
   mut int& edit() mut { unsafe { return borrow_mut(&this.local, this); } }
-  [[borrowed_from(this)]] int& read() { unsafe { return *(&this.local); } }
+  int&<this> read() { unsafe { return *(&this.local); } }
 };
 int main() {
   int external = 3; mut View view{external};
@@ -778,7 +778,7 @@ int&<a> select<lifetime a>(int ignored, int&<a> value) { return value; }
 class Relay<R(Args...)> {
 public:
   Relay() = default;
-  [[borrowed_from(values)]] R invoke(int tag, Args... values) { return select(values...); }
+  R invoke(int tag, Args... values) { return select(values...); }
 };
 using Selected = for<lifetime a> int&<a>(int, int&<a>);
 int main() {
