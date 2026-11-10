@@ -44,6 +44,20 @@ std::optional<Token> resultRegion(const TypeRef &result) {
   return std::nullopt;
 }
 
+// The region one `outlives` argument names: a bare region, or a type's
+// written reference region (`int&<a>`) or first lifetime argument.
+std::optional<std::string> argumentRegion(const TypeRef &argument) {
+  if (argument.referenceLifetime)
+    return argument.referenceLifetime->name.lexeme;
+  if (!argument.lifetimeArguments.empty() &&
+      argument.lifetimeArguments.front().name.segments.size() == 1)
+    return argument.lifetimeArguments.front().name.last().lexeme;
+  if (argument.name.segments.size() == 1 && !argument.reference &&
+      argument.arguments.empty())
+    return argument.name.last().lexeme;
+  return std::nullopt;
+}
+
 bool contains(const std::vector<std::string> &names, const std::string &name) {
   return std::find(names.begin(), names.end(), name) != names.end();
 }
@@ -307,6 +321,159 @@ auto SemanticVisitor::Impl::validateReturnedFieldRegion(
                  names.front() + "', but the result declares region '" +
                  lifetime.region + "'.",
              "GTI-S2127");
+    return;
+  }
+}
+
+auto SemanticVisitor::Impl::declaredOutlives(const FunctionDecl &syntax) const
+    -> std::vector<std::pair<std::string, std::string>> {
+  std::vector<std::pair<std::string, std::string>> relations;
+  const auto add = [&](const ConceptApplication &requirement,
+                       const auto &rename) {
+    if (requirement.arguments.size() != 2)
+      return;
+    const auto longer = argumentRegion(requirement.arguments[0]);
+    const auto shorter = argumentRegion(requirement.arguments[1]);
+    if (longer && shorter)
+      relations.emplace_back(rename(*longer), rename(*shorter));
+  };
+  const auto identity = [](const std::string &region) { return region; };
+  const auto &clause = syntax.requiresClause();
+  if (!clause)
+    return relations;
+  for (const auto &requirement : clause->expression.lifetimeRequirements)
+    add(requirement, identity);
+  for (const auto &application : clause->expression.applications) {
+    auto id = resolveConceptPath(application.name, currentNamespace);
+    if (!id)
+      id = resolveConceptPathGlobally(application.name, currentNamespace);
+    const ConceptDecl *named =
+        id && *id <= concepts.size() ? concepts[*id - 1].declaration : nullptr;
+    if (named == nullptr)
+      continue;
+    const auto parameters = named->lifetimeParameters();
+    std::vector<std::string> arguments;
+    for (const auto &argument : application.arguments)
+      if (const auto region = argumentRegion(argument))
+        arguments.push_back(*region);
+    const auto rename = [&](const std::string &region) -> std::string {
+      for (std::size_t index = 0;
+           index < parameters.size() && index < arguments.size(); ++index)
+        if (parameters[index].name.lexeme == region)
+          return arguments[index];
+      return region;
+    };
+    for (const auto &requirement :
+         named->constraintExpression().lifetimeRequirements)
+      add(requirement, rename);
+  }
+  return relations;
+}
+
+auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
+    const FunctionDecl &callee, std::span<const ExprPtr> arguments,
+    const Token &site) -> void {
+  std::vector<const ExprPtr *> inputs;
+  for (const auto &argument : arguments)
+    inputs.push_back(&argument);
+  validateCallLifetimeRequirements(declaredOutlives(callee),
+                                   callee.parameters(), inputs, site);
+}
+
+auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
+    std::vector<std::pair<std::string, std::string>> required,
+    std::span<const Parameter> parameters,
+    const std::vector<const ExprPtr *> &arguments, const Token &site)
+    -> void {
+  // A parameter written in `static` requires a static argument.
+  for (const auto &parameter : parameters)
+    if (parameter.type.referenceLifetime &&
+        parameter.type.referenceLifetime->name.lexeme == "static")
+      required.emplace_back("<static parameter " + parameter.name.lexeme + ">",
+                            "static");
+  if (required.empty() || currentFunctionDeclaration == nullptr)
+    return;
+  const FunctionDecl &caller = *currentFunctionDeclaration;
+  // The caller-side region of an argument: a parameter's written region (an
+  // elided one is its own anonymous region), `static` for a global, or a
+  // local, which outlives no named region.
+  const auto callerRegion = [&](const ExprPtr &argument) -> std::string {
+    const Expr *expression = argument.get();
+    while (const auto *group = exprAs<Grouping>(expression))
+      expression = group->expression().get();
+    const auto *variable = exprAs<Variable>(expression);
+    if (variable == nullptr)
+      return "<local>";
+    const Symbol *symbol = resolve(variable->name());
+    if (symbol == nullptr)
+      return "<local>";
+    if (symbol->bindingKind == SemanticBindingKind::GlobalVariable &&
+        (symbol->variableDeclaration == nullptr ||
+         !symbol->variableDeclaration->isThreadLocal()))
+      return "static";
+    if (symbol->bindingKind == SemanticBindingKind::Parameter)
+      for (const auto &parameter : caller.parameters())
+        if (parameter.name.lexeme == variable->name().lexeme) {
+          if (const auto region = argumentRegion(parameter.type);
+              region && *region != "_" &&
+              parameter.type.name.last().lexeme != *region)
+            return *region;
+          return "<param " + parameter.name.lexeme + ">";
+        }
+    return "<local>";
+  };
+  std::vector<std::pair<std::string, std::string>> mapping;
+  for (std::size_t index = 0;
+       index < parameters.size() && index < arguments.size(); ++index) {
+    if (parameters[index].pack)
+      return;
+    std::vector<std::string> names;
+    collectRegionNames(parameters[index].type, names);
+    for (const auto &name : names)
+      if (name != "static")
+        mapping.emplace_back(name, callerRegion(*arguments[index]));
+    mapping.emplace_back("<static parameter " + parameters[index].name.lexeme +
+                             ">",
+                         callerRegion(*arguments[index]));
+  }
+  const auto mapped = [&](const std::string &region) -> std::optional<std::string> {
+    if (region == "static")
+      return region;
+    for (const auto &[from, to] : mapping)
+      if (from == region)
+        return to;
+    return std::nullopt;
+  };
+  const auto relations = declaredOutlives(caller);
+  const auto holds = [&](const std::string &longer, const std::string &shorter) {
+    if (longer == shorter || longer == "static")
+      return true;
+    if (shorter == "<local>")
+      return longer != "<local>";
+    std::vector<std::string> reached{longer};
+    for (bool grew = true; grew;) {
+      grew = false;
+      for (const auto &[from, to] : relations)
+        if (contains(reached, from) && !contains(reached, to)) {
+          reached.push_back(to);
+          grew = true;
+        }
+    }
+    return contains(reached, shorter);
+  };
+  for (const auto &[longer, shorter] : required) {
+    const auto from = mapped(longer);
+    const auto to = mapped(shorter);
+    if (!from || !to || holds(*from, *to))
+      continue;
+    const auto spell = [](const std::string &region) {
+      return region.front() == '<' ? std::string("the argument's region")
+                                   : "'" + region + "'";
+    };
+    report(site,
+           "This call requires " + spell(*from) + " to outlive " +
+               spell(*to) + ", which the caller does not establish.",
+           "GTI-S2127");
     return;
   }
 }

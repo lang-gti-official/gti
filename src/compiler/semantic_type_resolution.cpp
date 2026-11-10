@@ -3075,6 +3075,15 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
       .borrowFields = std::move(storedFields),
       .generatedDefault = selected.generatedDefault,
       .kind = selected.kind};
+  // A constructor parameter written `static` requires a static argument.
+  if (selected.constructor != nullptr &&
+      selected.constructor->declaration != nullptr) {
+    std::vector<const ExprPtr *> inputs;
+    for (const auto &argument : arguments)
+      inputs.push_back(argument.expression);
+    validateCallLifetimeRequirements(
+        {}, selected.constructor->declaration->parameters(), inputs, paren);
+  }
   if (conditionalFields && selected.kind == ConstructorKind::Ordinary &&
       !containsOpenTypeParameter(constructedType)) {
     const auto summary = completeConstructorBorrow(resolved, tokenSpan(paren));

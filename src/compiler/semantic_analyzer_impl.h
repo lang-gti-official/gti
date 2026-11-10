@@ -3055,6 +3055,19 @@ private:
   // written in another (GTI-S2127).
   void validateReturnedFieldRegion(const FunctionDecl &syntax, ClassId owner,
                                    const ExprPtr &value);
+  // The `outlives` relations a declaration states, directly or through named
+  // concepts (alternatives excluded: none is guaranteed).
+  [[nodiscard]] std::vector<std::pair<std::string, std::string>>
+  declaredOutlives(const FunctionDecl &syntax) const;
+  // A call proves each relation its callee requires in the caller's regions
+  // (GTI-S2127).
+  void validateCallLifetimeRequirements(const FunctionDecl &callee,
+                                        std::span<const ExprPtr> arguments,
+                                        const Token &site);
+  void validateCallLifetimeRequirements(
+      std::vector<std::pair<std::string, std::string>> required,
+      std::span<const Parameter> parameters,
+      const std::vector<const ExprPtr *> &arguments, const Token &site);
   // RFC 0004 shadow phase: MIR reports body-local borrow conflicts.
   [[nodiscard]] static bool mirBorrowAuthority();
   // The single parameter an explicit result contract names, either spelling.
