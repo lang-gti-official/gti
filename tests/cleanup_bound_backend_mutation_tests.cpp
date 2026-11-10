@@ -718,10 +718,20 @@ public:
     const auto diagnostic =
         std::find_if(invalid.diagnostics.begin(), invalid.diagnostics.end(),
                      [](const auto &item) {
-                       return item.code == "GTI-S2017" &&
-                              item.message.find("cleanup-bound carrier") !=
-                                  std::string::npos;
+                       // Under signature contracts an elided method result
+                       // borrows the whole (local) receiver, so the escape
+                       // is reported against that receiver instead.
+                       return (item.code == "GTI-S2017" &&
+                               item.message.find("cleanup-bound carrier") !=
+                                   std::string::npos) ||
+                              ((item.code == "GTI-S2017" ||
+                                item.code == "GTI-S2045") &&
+                               item.message.find("does not outlive") !=
+                                   std::string::npos);
                      });
+    if (invalid.canGenerateCode() || diagnostic == invalid.diagnostics.end())
+      for (const auto &item : invalid.diagnostics)
+        std::cerr << body << ": " << item.code << ": " << item.message << '\n';
     expect(!invalid.canGenerateCode() &&
                diagnostic != invalid.diagnostics.end(),
            "local or owned-parameter cleanup-bound child cannot escape");

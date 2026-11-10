@@ -708,6 +708,14 @@ int main() {
             "missing-primary-path"}) {
         auto malformed = *control;
         auto &changed = body(malformed, key).loans[loan.id - 1];
+        // A mutation that leaves the dependency set unchanged forges nothing.
+        if (mutation == "wrong-path" &&
+            changed.additionalDependencies.front().designatedFields ==
+                changed.designatedFields) {
+          std::cerr << "note: wrong-path mutation is a no-op for loan "
+                    << loan.id << '\n';
+          continue;
+        }
         if (mutation == "missing")
           changed.additionalDependencies.clear();
         else if (mutation == "wrong-source")

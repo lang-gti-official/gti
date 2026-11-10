@@ -5732,6 +5732,10 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
                      "not outlive this call."
                    : " refers to temporary receiver storage that is destroyed "
                      "at the end of this full expression."));
+      if (receiver != nullptr && *receiver)
+        diagnostic.related.push_back(
+            {tokenSpan(expressionToken(*receiver)),
+             "The result borrows this receiver storage."});
       diagnostic.hints.emplace_back(
           "Return an owned value, or borrow from receiver storage that "
           "outlives "
