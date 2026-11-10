@@ -3067,6 +3067,9 @@ private:
   // as long as the shortest; each must outlive the declared result region.
   void validateReturnedCallRegion(const FunctionDecl &syntax,
                                   const ExprPtr &value);
+  // `requires outlives<T, r>` on a callee: the type bound to T must outlive
+  // r in the caller, by a declared or implied bound (GTI-S2127).
+  void validateCallTypeOutlives(const Call &call, const FunctionDecl &callee);
   [[nodiscard]] std::string callerRegionOf(const FunctionDecl &caller,
                                            const ExprPtr &argument);
   // A call proves each relation its callee requires in the caller's regions

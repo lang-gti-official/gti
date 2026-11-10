@@ -8709,6 +8709,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       valid = validateSelectedFunction(resolved, expr.callee(), expr.paren(),
                                        expr.arguments(), receiverMode) &&
               valid;
+      if (valid && resolved.declaration != nullptr)
+        validateCallTypeOutlives(expr, *resolved.declaration);
       valid = validateConfinedCallableArguments(
                   candidate, resolved, argumentTypes, expr.arguments()) &&
               valid;

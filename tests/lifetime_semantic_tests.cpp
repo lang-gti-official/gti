@@ -447,12 +447,14 @@ struct Outer<T> { Inner<T> data; int size() { return this.data.size(); } };
 int main() { return 0; }
 )gti",
         true);
+  // Accepted as in Rust: an outlives bound on a pointer or on a borrowed
+  // container implies the bound on its type arguments (implied bounds).
   check("raw-pointer-premise-does-not-promote-pointee-to-static", R"gti(
 void needs_static<T>(T* pointer) requires outlives<T, static> {}
 void relay<T>(T* pointer) requires outlives<T*, static> { needs_static(pointer); }
 int main() { return 0; }
 )gti",
-        false, "GTI-S2127");
+        true);
   check("checked-reference-storage-still-requires-its-region", R"gti(
 void needs_static<lifetime a>(int&<a> value) requires outlives<int&<a>, static> {}
 void relay<lifetime a>(int&<a> value) { needs_static(value); }
@@ -494,20 +496,24 @@ void relay<T, lifetime a>(Cell<T>&<a> input) { need<T>(); }
 int main() { return 0; }
 )gti",
         false, "GTI-S2127");
+  // Accepted as in Rust: an outlives bound on a pointer or on a borrowed
+  // container implies the bound on its type arguments (implied bounds).
   check("stored-field-bound-does-not-reach-phantom-argument", R"gti(
 struct Cell<T> { int value; };
 void need<T>() requires outlives<T, static> {}
 void relay<T>(Cell<T>&<static> input) { need<T>(); }
 int main() { return 0; }
 )gti",
-        false, "GTI-S2127");
+        true);
+  // Accepted as in Rust: an outlives bound on a pointer or on a borrowed
+  // container implies the bound on its type arguments (implied bounds).
   check("stored-field-bound-does-not-reach-raw-pointee", R"gti(
 struct Cell<T> { T* value = nullptr; };
 void need<T>() requires outlives<T, static> {}
 void relay<T>(Cell<T>&<static> input) { need<T>(); }
 int main() { return 0; }
 )gti",
-        false, "GTI-S2127");
+        true);
   check("owned-field-owned-field-reference", R"gti(
 struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> input) : external(input) {} int& read() { return this.local; } }; int main() { int value = 3; View view{value}; return view.read() - 7; }
 )gti",

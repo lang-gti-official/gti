@@ -396,30 +396,8 @@ auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
   // The caller-side region of an argument: a parameter's written region (an
   // elided one is its own anonymous region), `static` for a global, or a
   // local, which outlives no named region.
-  const auto callerRegion = [&](const ExprPtr &argument) -> std::string {
-    const Expr *expression = argument.get();
-    while (const auto *group = exprAs<Grouping>(expression))
-      expression = group->expression().get();
-    const auto *variable = exprAs<Variable>(expression);
-    if (variable == nullptr)
-      return "<local>";
-    const Symbol *symbol = resolve(variable->name());
-    if (symbol == nullptr)
-      return "<local>";
-    if (symbol->bindingKind == SemanticBindingKind::GlobalVariable &&
-        (symbol->variableDeclaration == nullptr ||
-         !symbol->variableDeclaration->isThreadLocal()))
-      return "static";
-    if (symbol->bindingKind == SemanticBindingKind::Parameter)
-      for (const auto &parameter : caller.parameters())
-        if (parameter.name.lexeme == variable->name().lexeme) {
-          if (const auto region = argumentRegion(parameter.type);
-              region && *region != "_" &&
-              parameter.type.name.last().lexeme != *region)
-            return *region;
-          return "<param " + parameter.name.lexeme + ">";
-        }
-    return "<local>";
+  const auto callerRegion = [&](const ExprPtr &argument) {
+    return callerRegionOf(caller, argument);
   };
   std::vector<std::pair<std::string, std::string>> mapping;
   for (std::size_t index = 0;
@@ -541,6 +519,10 @@ auto SemanticVisitor::Impl::validateConstructorFieldRegions(
 auto SemanticVisitor::Impl::callerRegionOf(const FunctionDecl &caller,
                                            const ExprPtr &argument)
     -> std::string {
+  // A moved value keeps the regions it carries.
+  if (const ExprPtr *moved = explicitMoveSource(argument);
+      moved != nullptr && *moved)
+    return callerRegionOf(caller, *moved);
   const Expr *expression = argument.get();
   while (const auto *group = exprAs<Grouping>(expression))
     expression = group->expression().get();
@@ -624,6 +606,106 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
                                         : "'" + supplier + "'") +
                ", which is not declared to outlive the result's region '" +
                target + "'.",
+           "GTI-S2127");
+    return;
+  }
+}
+
+auto SemanticVisitor::Impl::validateCallTypeOutlives(const Call &call,
+                                                     const FunctionDecl &callee)
+    -> void {
+  if (currentFunctionDeclaration == nullptr)
+    return;
+  const FunctionDecl &caller = *currentFunctionDeclaration;
+  std::vector<std::string> calleeTypes;
+  for (const auto &parameter : callee.genericParameters())
+    if (!parameter.lifetimeKeyword)
+      calleeTypes.push_back(parameter.name.lexeme);
+  std::vector<std::string> callerTypes;
+  for (const auto &parameter : caller.genericParameters())
+    if (!parameter.lifetimeKeyword)
+      callerTypes.push_back(parameter.name.lexeme);
+  // What the call binds to a callee type parameter: an explicit type
+  // argument, or the written type of an argument whose parameter is T.
+  const auto binding = [&](const std::string &name) -> std::optional<TypeRef> {
+    for (std::size_t index = 0;
+         index < calleeTypes.size() && index < call.typeArguments().size();
+         ++index)
+      if (calleeTypes[index] == name)
+        return call.typeArguments()[index];
+    const auto &parameters = callee.parameters();
+    for (std::size_t index = 0;
+         index < parameters.size() && index < call.arguments().size();
+         ++index) {
+      if (parameters[index].pack ||
+          parameters[index].type.name.segments.size() != 1 ||
+          parameters[index].type.name.last().lexeme != name)
+        continue;
+      const Expr *argument = call.arguments()[index].get();
+      while (const auto *group = exprAs<Grouping>(argument))
+        argument = group->expression().get();
+      const auto *variable = exprAs<Variable>(argument);
+      if (variable == nullptr)
+        continue;
+      for (const auto &own : caller.parameters())
+        if (own.name.lexeme == variable->name().lexeme &&
+            own.type.name.segments.size() == 1 &&
+            contains(callerTypes, own.type.name.last().lexeme)) {
+          TypeRef bound = own.type;
+          bound.reference.reset();
+          return bound;
+        }
+    }
+    return std::nullopt;
+  };
+  // Declared relations, plus Rust's implied bounds: a parameter written
+  // `X<..T..>&<r>` implies T outlives r.
+  auto relations = declaredOutlives(caller);
+  const auto implied = [&](const auto &self, const TypeRef &type,
+                           const std::string &region) -> void {
+    for (const auto &argument : type.arguments) {
+      if (argument.name.segments.size() == 1 &&
+          contains(callerTypes, argument.name.last().lexeme))
+        relations.emplace_back(argument.name.last().lexeme, region);
+      self(self, argument, region);
+    }
+  };
+  for (const auto &parameter : caller.parameters())
+    if (parameter.type.referenceLifetime)
+      implied(implied, parameter.type,
+              parameter.type.referenceLifetime->name.lexeme);
+  const auto holds = [&](const std::string &longer,
+                         const std::string &shorter) {
+    if (longer == shorter)
+      return true;
+    std::vector<std::string> reached{longer};
+    for (bool grew = true; grew;) {
+      grew = false;
+      for (const auto &[from, to] : relations)
+        if (contains(reached, from) &&
+            (!contains(reached, to) || to == "static")) {
+          if (to == shorter || to == "static")
+            return true;
+          reached.push_back(to);
+          grew = true;
+        }
+    }
+    return false;
+  };
+  for (const auto &[longer, shorter] : declaredOutlives(callee)) {
+    if (!contains(calleeTypes, longer) || shorter != "static")
+      continue;
+    const auto bound = binding(longer);
+    if (!bound || bound->name.segments.size() != 1 || bound->reference)
+      continue;
+    const std::string &name = bound->name.last().lexeme;
+    if (!contains(callerTypes, name))
+      continue; // A concrete type: its own regions decide (not checked here).
+    if (holds(name, shorter))
+      continue;
+    report(call.paren(),
+           "This call requires type '" + name + "' to outlive '" + shorter +
+               "', which the caller does not establish.",
            "GTI-S2127");
     return;
   }
