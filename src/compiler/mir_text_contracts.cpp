@@ -16,6 +16,15 @@
 #include <unordered_map>
 #include <utility>
 
+namespace {
+// Text field layout is a representation fact: regions never change which
+// fields of a class instance hold text (RFC 0004).
+[[maybe_unused]] bool sameTextClass(const lang::SemanticType &instance,
+                                    const lang::SemanticType &type) {
+  return instance == type ||
+         lang::eraseTypeLifetimes(instance) == lang::eraseTypeLifetimes(type);
+}
+} // namespace
 namespace lang::mir_detail {
 namespace {
 // Identifies an initializer's supplying value by stored shape. Region
@@ -106,7 +115,7 @@ bool textPublishableClass(const MirProgram &program, const SemanticType &type) {
     return false;
   const auto instance = std::find_if(
       program.classInstances().begin(), program.classInstances().end(),
-      [&](const auto &candidate) { return candidate.type == type; });
+      [&](const auto &candidate) { return sameTextClass(candidate.type, type); });
   return instance != program.classInstances().end() &&
          !instance->traits.containsBorrowedState && instance->bases.empty() &&
          !instance->polymorphic &&
@@ -122,7 +131,7 @@ bool nestedTextClass(const MirProgram &program, const SemanticType &type,
     return false;
   const auto instance = std::find_if(
       program.classInstances().begin(), program.classInstances().end(),
-      [&](const auto &candidate) { return candidate.type == type; });
+      [&](const auto &candidate) { return sameTextClass(candidate.type, type); });
   const auto text = [&](const SemanticType &candidate) {
     return textType(candidate) ||
            (candidate.kind == SemanticType::Class &&
@@ -493,7 +502,7 @@ private:
   bool payloadEnumField(const SemanticType &type, SymbolId field) const {
     const auto instance = std::find_if(
         program.classInstances().begin(), program.classInstances().end(),
-        [&](const auto &candidate) { return candidate.type == type; });
+        [&](const auto &candidate) { return sameTextClass(candidate.type, type); });
     return instance != program.classInstances().end() &&
            std::any_of(instance->declaredFields.begin(),
                        instance->declaredFields.end(), [&](const auto &entry) {
@@ -569,7 +578,7 @@ private:
     std::vector<OwnerlessTextField> fields;
     const auto instance = std::find_if(
         program.classInstances().begin(), program.classInstances().end(),
-        [&](const auto &candidate) { return candidate.type == type; });
+        [&](const auto &candidate) { return sameTextClass(candidate.type, type); });
     if (instance == program.classInstances().end())
       return fields;
     for (const auto &field : instance->declaredFields) {
@@ -3207,9 +3216,10 @@ MirVerificationResult TextContracts::verify() {
                 std::any_of(
                     returned.fields.begin(), returned.fields.end(),
                     [&](const auto &field) { return field != declared; }))
+              { if (std::getenv("GTI_TRACE_SCOPED")) { std::fprintf(stderr, "[tfr] fn=%llu block=%llu known=%d params=%zu fields=%zu declared recv=%d param=%zu field=%llu\n", (unsigned long long)function.id, (unsigned long long)block.id, returned.known, returned.parameters.size(), returned.fields.size(), declared.receiver, declared.parameter, (unsigned long long)declared.field); for (const auto &f : returned.fields) std::fprintf(stderr, "[tfr]   field recv=%d param=%zu field=%llu\n", f.receiver, f.parameter, (unsigned long long)f.field); } // TEMP-TRACE
               fail(context, function.id, nullptr,
                    "text field result returns other text than its declared "
-                   "field");
+                   "field"); } // TEMP-TRACE
           }
     }
   }
@@ -3454,7 +3464,7 @@ bool directTextField(const MirProgram &program, const SemanticType &type,
     return false;
   const auto instance = std::find_if(
       program.classInstances().begin(), program.classInstances().end(),
-      [&](const auto &candidate) { return candidate.type == type; });
+      [&](const auto &candidate) { return sameTextClass(candidate.type, type); });
   return instance != program.classInstances().end() &&
          !instance->traits.containsBorrowedState &&
          std::any_of(instance->declaredFields.begin(),
