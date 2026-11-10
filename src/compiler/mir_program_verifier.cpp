@@ -3917,11 +3917,19 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                 block.id, instruction.id);
           }
         }
+        // RFC 0004 shadow phase: a call that publishes no field mapping for a
+        // signature contract borrows the whole origin, a coarser bound.
+        static const bool signatureCalls =
+            std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+        const bool coarserSignatureFields = signatureCalls &&
+                                            instruction.borrowFields.empty() &&
+                                            !target->returnBorrowFields.empty();
         if (!dependentTextCallPublication(instruction, *target) &&
             (instruction.borrowOrigin != target->returnBorrowOrigin ||
              instruction.borrowArgument != target->returnBorrowParameter ||
              instruction.borrowArguments != target->returnBorrowParameters ||
-             instruction.borrowFields != target->returnBorrowFields ||
+             (instruction.borrowFields != target->returnBorrowFields &&
+              !coarserSignatureFields) ||
              instruction.borrowAccess != target->returnBorrowAccess ||
              instruction.borrowPlace != target->returnBorrowPlace ||
              instruction.restoresReferenceResult !=
@@ -3938,8 +3946,9 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                   "; target origin " +
                   std::to_string(static_cast<int>(target->returnBorrowOrigin)) +
                   ", parameter " +
-                  std::to_string(target->returnBorrowParameter) +
-                  "; differs in" +
+                  std::to_string(target->returnBorrowParameter) + "; target @" +
+                  std::to_string(target->id) + " declaration " +
+                  std::to_string(target->declaration) + "; differs in" +
                   (instruction.borrowArguments != target->returnBorrowParameters
                        ? " parameters"
                        : "") +
