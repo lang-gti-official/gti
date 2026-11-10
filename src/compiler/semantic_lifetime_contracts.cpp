@@ -66,6 +66,94 @@ bool contains(const std::vector<std::string> &names, const std::string &name) {
   return std::find(names.begin(), names.end(), name) != names.end();
 }
 
+using Relations = std::vector<std::pair<std::string, std::string>>;
+
+// Whether `longer` outlives `shorter` under `relations`: by identity,
+// through a chain of relations, or through `static`, which outlives all.
+bool outlivesUnder(const Relations &relations, const std::string &longer,
+                   const std::string &shorter) {
+  if (longer == shorter || longer == "static")
+    return true;
+  std::vector<std::string> reached{longer};
+  for (bool grew = true; grew;) {
+    grew = false;
+    for (const auto &[from, to] : relations)
+      if (contains(reached, from) && !contains(reached, to)) {
+        reached.push_back(to);
+        grew = true;
+      }
+  }
+  return contains(reached, shorter) || contains(reached, "static");
+}
+
+// The region one lifetime position names; empty when elided (`_` included).
+std::optional<std::string> writtenRegion(const TypeRef &argument) {
+  if (argument.name.segments.size() != 1)
+    return std::nullopt;
+  const std::string &name = argument.name.last().lexeme;
+  if (name == "_")
+    return std::nullopt;
+  return name;
+}
+
+std::optional<std::string>
+writtenReferenceRegion(const std::optional<LifetimeArgument> &region) {
+  if (!region || region->name.lexeme == "_")
+    return std::nullopt;
+  return region->name.lexeme;
+}
+
+// The bounds a class's fields imply between its type and lifetime
+// parameters, as (type position, lifetime position): a field written
+// `X<..T..>&<a>` holds a reference valid for `a` to a value of T, so a
+// well-formed application requires T's argument to outlive a's (Rust's
+// implied bounds of a struct with `&'a T`).
+std::vector<std::pair<std::size_t, std::size_t>>
+classOutlivesBounds(const ClassDecl &declaration) {
+  std::vector<std::pair<std::size_t, std::size_t>> bounds;
+  if (!declaration.genericArgumentPatterns().empty())
+    return bounds;
+  const auto &types = declaration.genericParameters();
+  const auto lifetimes = declaration.lifetimeParameters();
+  const auto typeIndex =
+      [&](const std::string &name) -> std::optional<std::size_t> {
+    for (std::size_t index = 0; index < types.size(); ++index)
+      if (!types[index].valueType && types[index].name.lexeme == name)
+        return index;
+    return std::nullopt;
+  };
+  const auto lifetimeIndex =
+      [&](const std::string &name) -> std::optional<std::size_t> {
+    for (std::size_t index = 0; index < lifetimes.size(); ++index)
+      if (lifetimes[index].name.lexeme == name)
+        return index;
+    return std::nullopt;
+  };
+  const auto mentioned = [&](const auto &self, const TypeRef &type,
+                             std::vector<std::size_t> &found) -> void {
+    if (type.name.segments.size() == 1)
+      if (const auto index = typeIndex(type.name.last().lexeme))
+        found.push_back(*index);
+    for (const auto &argument : type.arguments)
+      self(self, argument, found);
+  };
+  const auto visit = [&](const auto &self, const TypeRef &type) -> void {
+    if (const auto region = writtenReferenceRegion(type.referenceLifetime))
+      if (const auto lifetime = lifetimeIndex(*region)) {
+        std::vector<std::size_t> found;
+        mentioned(mentioned, type, found);
+        for (const auto index : found)
+          bounds.emplace_back(index, *lifetime);
+      }
+    for (const auto &argument : type.arguments)
+      self(self, argument);
+  };
+  for (const auto &member : declaration.members())
+    if (const auto *field = stmtAs<VariableDecl>(member.get()))
+      visit(visit, field->type());
+  return bounds;
+}
+
 } // namespace
 
 auto SemanticVisitor::Impl::explicitLifetimeResult(
@@ -376,7 +464,24 @@ auto SemanticVisitor::Impl::declaredOutlives(const FunctionDecl &syntax) const
     return relations;
   for (const auto &requirement : clause->expression.lifetimeRequirements)
     add(requirement, identity);
-  for (const auto &application : clause->expression.applications) {
+  const auto named = namedOutlives(*clause);
+  relations.insert(relations.end(), named.begin(), named.end());
+  return relations;
+}
+
+auto SemanticVisitor::Impl::namedOutlives(const RequiresClause &clause) const
+    -> std::vector<std::pair<std::string, std::string>> {
+  std::vector<std::pair<std::string, std::string>> relations;
+  const auto add = [&](const ConceptApplication &requirement,
+                       const auto &rename) {
+    if (requirement.arguments.size() != 2)
+      return;
+    const auto longer = argumentRegion(requirement.arguments[0]);
+    const auto shorter = argumentRegion(requirement.arguments[1]);
+    if (longer && shorter)
+      relations.emplace_back(rename(*longer), rename(*shorter));
+  };
+  for (const auto &application : clause.expression.applications) {
     auto id = resolveConceptPath(application.name, currentNamespace);
     if (!id)
       id = resolveConceptPathGlobally(application.name, currentNamespace);
@@ -401,6 +506,42 @@ auto SemanticVisitor::Impl::declaredOutlives(const FunctionDecl &syntax) const
       add(requirement, rename);
   }
   return relations;
+}
+
+auto SemanticVisitor::Impl::declaredOutlivesAlternatives(
+    const std::optional<RequiresClause> &clause) const
+    -> std::vector<std::vector<std::pair<std::string, std::string>>> {
+  using Relations = std::vector<std::pair<std::string, std::string>>;
+  std::vector<Relations> alternatives;
+  if (!clause)
+    return {Relations{}};
+  const auto relation = [](const ConceptApplication &requirement,
+                           Relations &relations) {
+    if (requirement.arguments.size() != 2)
+      return;
+    const auto longer = argumentRegion(requirement.arguments[0]);
+    const auto shorter = argumentRegion(requirement.arguments[1]);
+    if (longer && shorter)
+      relations.emplace_back(*longer, *shorter);
+  };
+  const auto &expression = clause->expression;
+  if (expression.lifetimeAlternatives.empty()) {
+    auto &relations = alternatives.emplace_back();
+    for (const auto &requirement : expression.lifetimeRequirements)
+      relation(requirement, relations);
+  } else {
+    for (const auto &alternative : expression.lifetimeAlternatives) {
+      auto &relations = alternatives.emplace_back();
+      for (const auto &requirement : alternative)
+        relation(requirement, relations);
+    }
+  }
+  // Named lifetime concepts are conjoined with every alternative, as
+  // declaredOutlives reads them.
+  const auto named = namedOutlives(*clause);
+  for (auto &relations : alternatives)
+    relations.insert(relations.end(), named.begin(), named.end());
+  return alternatives;
 }
 
 auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
@@ -1353,6 +1494,192 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
                   }))
     return std::nullopt;
   return summary;
+}
+
+auto SemanticVisitor::Impl::conformanceOperationLifetimeFailure(
+    const ConformanceDecl &block, const ConceptDecl &conceptDecl,
+    const FunctionDecl &declared, const FunctionDecl &written) const
+    -> std::optional<std::string> {
+  // The head's lifetime arguments substitute the concept's lifetime
+  // parameters. A parameter the head does not bind keeps a name no block
+  // region can spell.
+  const auto conceptLifetimes = conceptDecl.lifetimeParameters();
+  const auto &headLifetimes = block.target().lifetimeArguments;
+  const auto rename = [&](const std::string &region) -> std::string {
+    for (std::size_t index = 0; index < conceptLifetimes.size(); ++index)
+      if (conceptLifetimes[index].name.lexeme == region)
+        return index < headLifetimes.size()
+                   ? writtenRegion(headLifetimes[index])
+                         .value_or("<elided " + region + ">")
+                   : "<concept " + region + ">";
+    return region;
+  };
+  const auto spell = [](const std::string &region) {
+    return region.front() == '<' ? std::string("an elided region")
+                                 : "'" + region + "'";
+  };
+
+  // Parameter regions. An elided expected region accepts an elided or
+  // inferred one; a written region requires the substituted name exactly.
+  const auto &conceptTypes = conceptDecl.typeParameters();
+  std::optional<std::string> failure;
+  const auto compare = [&](const std::optional<std::string> &expected,
+                           const std::optional<std::string> &actual) {
+    if (failure || !actual)
+      return;
+    if (!expected) {
+      if (*actual == "static")
+        failure = "writes region 'static' where the concept's signature "
+                  "leaves the region to the caller";
+      return;
+    }
+    if (*expected != *actual)
+      failure = "writes region '" + *actual +
+                "' where the concept's "
+                "signature requires " +
+                spell(*expected);
+  };
+  const auto match = [&](const auto &self, const TypeRef &expected,
+                         const TypeRef &actual, bool head) -> void {
+    const auto expectedReference =
+        writtenReferenceRegion(expected.referenceLifetime);
+    compare(expectedReference && !head
+                ? std::optional<std::string>(rename(*expectedReference))
+                : expectedReference,
+            writtenReferenceRegion(actual.referenceLifetime));
+    const TypeRef *source = &expected;
+    if (!head && expected.name.segments.size() == 1 &&
+        expected.arguments.empty() && expected.lifetimeArguments.empty())
+      for (std::size_t index = 0; index < conceptTypes.size(); ++index)
+        if (conceptTypes[index].lexeme == expected.name.last().lexeme &&
+            index < block.target().arguments.size()) {
+          source = &block.target().arguments[index];
+          head = true;
+        }
+    for (std::size_t index = 0; index < actual.lifetimeArguments.size();
+         ++index) {
+      std::optional<std::string> region;
+      if (index < source->lifetimeArguments.size())
+        region = writtenRegion(source->lifetimeArguments[index]);
+      if (region && !head)
+        region = rename(*region);
+      compare(region, writtenRegion(actual.lifetimeArguments[index]));
+    }
+    if (source->arguments.size() == actual.arguments.size())
+      for (std::size_t index = 0; index < actual.arguments.size(); ++index)
+        self(self, source->arguments[index], actual.arguments[index], head);
+  };
+  const auto &expectedParameters = declared.parameters();
+  const auto &actualParameters = written.parameters();
+  for (std::size_t index = 0; index < expectedParameters.size() &&
+                              index < actualParameters.size() && !failure;
+       ++index) {
+    match(match, expectedParameters[index].type, actualParameters[index].type,
+          false);
+    if (failure)
+      return "parameter '" + actualParameters[index].name.lexeme + "' " +
+             *failure;
+  }
+
+  // Requirements: in every alternative the concept operation and the block
+  // establish, some alternative of the written clause must hold.
+  auto assumed = declaredOutlivesAlternatives(declared.requiresClause());
+  for (auto &relations : assumed)
+    for (auto &[longer, shorter] : relations) {
+      longer = rename(longer);
+      shorter = rename(shorter);
+    }
+  const auto blockRelations =
+      declaredOutlivesAlternatives(block.requiresClause());
+  std::vector<Relations> combined;
+  for (const auto &first : assumed)
+    for (const auto &second : blockRelations) {
+      auto both = first;
+      both.insert(both.end(), second.begin(), second.end());
+      combined.push_back(std::move(both));
+    }
+  const auto required = declaredOutlivesAlternatives(written.requiresClause());
+  for (const auto &assumption : combined) {
+    const auto satisfied = [&](const Relations &relations) {
+      return std::all_of(
+          relations.begin(), relations.end(), [&](const auto &relation) {
+            return outlivesUnder(assumption, relation.first, relation.second);
+          });
+    };
+    if (std::any_of(required.begin(), required.end(), satisfied))
+      continue;
+    for (const auto &[longer, shorter] : required.front())
+      if (!outlivesUnder(assumption, longer, shorter))
+        return "requires '" + longer + "' to outlive '" + shorter +
+               "', which the concept's operation does not declare";
+  }
+  return std::nullopt;
+}
+
+auto SemanticVisitor::Impl::validateConformanceAssociatedRegions(
+    const ConformanceTypeCheck &check) -> void {
+  const ConformanceDecl &block = *check.declaration;
+  std::vector<std::string> blockTypes;
+  for (const auto &parameter : check.genericParameters)
+    blockTypes.push_back(parameter.name.lexeme);
+  std::vector<std::string> blockRegions{"static"};
+  for (const auto &parameter : block.lifetimeParameters())
+    blockRegions.push_back(parameter.name.lexeme);
+  // The (type argument, region argument) pairs a nominal application's
+  // fields require, where both name block parameters.
+  const auto applicationBounds = [&](const auto &self, const TypeRef &type,
+                                     Relations &bounds) -> void {
+    const SemanticType resolved = typeOf(type, check.namespaceScope);
+    if (resolved.kind == SemanticType::Class && resolved.classId != 0 &&
+        resolved.classId <= classes.size())
+      if (const auto *declaration = classInfo(resolved.classId).declaration)
+        for (const auto &[typeIndex, lifetimeIndex] :
+             classOutlivesBounds(*declaration)) {
+          if (typeIndex >= type.arguments.size() ||
+              lifetimeIndex >= type.lifetimeArguments.size())
+            continue;
+          const TypeRef &argument = type.arguments[typeIndex];
+          const auto region =
+              writtenRegion(type.lifetimeArguments[lifetimeIndex]);
+          if (!region || argument.reference ||
+              argument.name.segments.size() != 1 ||
+              !argument.arguments.empty() ||
+              !contains(blockTypes, argument.name.last().lexeme) ||
+              !contains(blockRegions, *region))
+            continue;
+          bounds.emplace_back(argument.name.last().lexeme, *region);
+        }
+    for (const auto &argument : type.arguments)
+      self(self, argument, bounds);
+  };
+  // What the head establishes: its patterns' implied bounds, in every
+  // alternative of the block's own declared relations.
+  Relations implied;
+  for (const TypeRef *pattern : check.types)
+    applicationBounds(applicationBounds, *pattern, implied);
+  auto alternatives = declaredOutlivesAlternatives(block.requiresClause());
+  for (auto &relations : alternatives)
+    relations.insert(relations.end(), implied.begin(), implied.end());
+  for (const auto &associated : check.associatedTypes) {
+    Relations required;
+    applicationBounds(applicationBounds, associated.declaration->target(),
+                      required);
+    for (const auto &[longer, shorter] : required) {
+      const bool holds =
+          std::all_of(alternatives.begin(), alternatives.end(),
+                      [&](const Relations &relations) {
+                        return outlivesUnder(relations, longer, shorter);
+                      });
+      if (holds)
+        continue;
+      report(associated.declaration->name(),
+             "Associated type '" + associated.declaration->name().lexeme +
+                 "' requires type '" + longer + "' to outlive '" + shorter +
+                 "', which the conformance block's head does not establish.",
+             "GTI-S2127");
+      break;
+    }
+  }
 }
 
 } // namespace lang

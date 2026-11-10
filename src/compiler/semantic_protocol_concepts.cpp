@@ -228,9 +228,13 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
     if (!operation->genericParameters().empty()) {
       reject(operation->name(), "cannot declare generic parameters");
     }
-    if (operation->requiresClause()) {
+    // Lifetime relations (`outlives`) are part of an operation's signature
+    // contract; type-level requirements belong to the concept.
+    if (operation->requiresClause() &&
+        operation->requiresClause()->expression.root !=
+            ConstraintExpressionNode::invalidIndex) {
       reject(operation->requiresClause()->keyword,
-             "cannot declare a requires clause");
+             "cannot declare a type-level requires clause");
     }
     if (operation->isStatic() || operation->isVirtual() ||
         operation->isConstexpr() || operation->unsafeKeyword() ||
@@ -817,6 +821,18 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
             &operation.declaration->name(), "Operation declared here.");
         continue;
       }
+      if (const auto failure = conformanceOperationLifetimeFailure(
+              declaration, *conceptInfo.declaration, *operation.declaration,
+              *function)) {
+        reportConformanceError(
+            function->name(),
+            "Operation '" + function->name().lexeme + "' " + *failure +
+                "; a conformance operation keeps the lifetime contract "
+                "concept '" +
+                conceptInfo.qualifiedName + "' declares for this block.",
+            &operation.declaration->name(), "Operation declared here.");
+        continue;
+      }
       conformance.operations[*index] = found->second;
     }
     for (std::size_t index = 0; index < defined.size(); ++index) {
@@ -871,6 +887,7 @@ auto SemanticVisitor::Impl::validateConformanceTypes(
                                "cyclic, or exceeds the projection limit.");
       endTypeParameterScope();
     }
+    validateConformanceAssociatedRegions(check);
     registeringConformanceParameters = nullptr;
     requirementScopes.pop_back();
     endTypeParameterScope();

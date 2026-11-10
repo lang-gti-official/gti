@@ -749,9 +749,12 @@ private:
     } while (match({TokenKind::COMMA}));
     consumeGenericClose("Expect '>' after concept arguments.");
     // `outlives<a, b>` relates lifetimes: its arguments are the requirement.
+    std::vector<TypeRef> lifetimes;
     if (!(name.segments.size() == 1 && name.last().lexeme == "outlives"))
-      (void)takeLifetimeArguments(arguments);
-    return {std::move(name), std::move(arguments)};
+      lifetimes = takeLifetimeArguments(arguments);
+    return {.name = std::move(name),
+            .arguments = std::move(arguments),
+            .lifetimeArguments = std::move(lifetimes)};
   }
 
   // Lifetime relations of a constraint sub-expression in disjunctive normal

@@ -494,6 +494,10 @@ struct ConceptApplication {
   // An ordinary constexpr boolean call used as a constraint predicate.
   // The frontend, not a backend expression probe, establishes its value.
   std::shared_ptr<const Expr> predicate;
+  // Lifetime arguments of the written application (`C<T, a>`), in order.
+  // They never take part in satisfaction; a conformance head maps the
+  // concept's lifetime parameters to them (RFC 0004).
+  std::vector<TypeRef> lifetimeArguments;
 };
 
 enum class ConstraintExpressionKind {

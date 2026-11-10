@@ -3072,6 +3072,25 @@ private:
   // concepts (alternatives excluded: none is guaranteed).
   [[nodiscard]] std::vector<std::pair<std::string, std::string>>
   declaredOutlives(const FunctionDecl &syntax) const;
+  // The relations named lifetime concepts in a clause state.
+  [[nodiscard]] std::vector<std::pair<std::string, std::string>>
+  namedOutlives(const RequiresClause &clause) const;
+  // A clause's `outlives` relations in disjunctive normal form: one
+  // conjunction per alternative (exactly one when the clause has no `||`).
+  [[nodiscard]] std::vector<std::vector<std::pair<std::string, std::string>>>
+  declaredOutlivesAlternatives(
+      const std::optional<RequiresClause> &clause) const;
+  // RFC 0004: a conformance operation's parameter regions are the concept
+  // operation's after the head substitutes the concept's parameters, and
+  // its lifetime requirements are implied by the concept operation's and
+  // the block's (Rust's impl-versus-trait rule). Returns the failure.
+  [[nodiscard]] std::optional<std::string> conformanceOperationLifetimeFailure(
+      const ConformanceDecl &block, const ConceptDecl &conceptDecl,
+      const FunctionDecl &declared, const FunctionDecl &written) const;
+  // An associated type is well formed under the block head's implied bounds
+  // and declared relations: it cannot require a block type parameter to
+  // outlive a region the head does not establish (GTI-S2127).
+  void validateConformanceAssociatedRegions(const ConformanceTypeCheck &check);
   // In a class with explicit lifetime binders, a field written in region R
   // is bound only from a constructor parameter written in R (GTI-S2127).
   void validateConstructorFieldRegions(const ConstructorDecl &constructor,
