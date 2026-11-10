@@ -7934,8 +7934,10 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     concreteDeclaration = *declarationInfo;
     concreteDeclaration->returnType = function.returnType;
     concreteDeclaration->parameterTypes = function.parameterTypes;
-    if (const auto fields = storedFieldReturnBorrowSummary(
-            *concreteDeclaration, function.dispatchOwner)) {
+    // RFC 0004 shadow phase: signature contracts are not refined per call.
+    if (signatureContractDefaults()) {
+    } else if (const auto fields = storedFieldReturnBorrowSummary(
+                   *concreteDeclaration, function.dispatchOwner)) {
       concreteDeclaration->returnBorrowOrigin = fields->origin;
       concreteDeclaration->returnBorrowParameter = fields->parameter;
       concreteDeclaration->returnBorrowAccess = fields->access;

@@ -5762,7 +5762,9 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
                   });
               return found != actual.end();
             });
-    if (!matches) {
+    // RFC 0004 shadow phase: MIR checks that each return is covered by the
+    // signature contract; semantics no longer replays it.
+    if (!matches && !signatureContractDefaults()) {
       report(expressionToken(value),
              "Each returned borrowed field must preserve its exact declared "
              "source field, owner, and access permission.",

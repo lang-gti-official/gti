@@ -703,13 +703,33 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       concreteFunction.returnBorrowPlace = fields->place;
     }
   }
-  // RFC 0004: contracts come only from signatures. An unannotated borrowed
-  // result is bounded by every eligible input; MIR checks the body against it.
+  // RFC 0004: contracts come only from signatures. The base origin is the
+  // signature's elision; an unannotated borrowed result is bounded by every
+  // eligible input, and MIR checks the body against that bound.
+  if (signatureContracts && !concreteFunction.explicitReturnBorrowOrigin &&
+      concreteFunction.returnBorrowOrigin == BorrowOriginKind::None) {
+    const FunctionReturnBorrowSummary borrow = functionReturnBorrowSummary(
+        concreteFunction.returnType, concreteFunction.parameterTypes,
+        concreteFunction.ownerClass, concreteFunction.staticMember,
+        concreteFunction.intrinsic, exactMovedReturnParameter(*function));
+    concreteFunction.returnBorrowOrigin = borrow.origin;
+    concreteFunction.returnBorrowParameter = borrow.parameter;
+    concreteFunction.returnBorrowAccess = borrow.access;
+    concreteFunction.returnBorrowParameters = borrow.parameters;
+    concreteFunction.returnBorrowPlace = borrow.place;
+  }
   if (signatureContracts && !concreteFunction.explicitReturnBorrowOrigin)
     if (const FunctionDecl *syntax = concreteFunction.bodyDeclaration())
       if (auto complete = signatureCompleteReturnBorrow(
-              concreteFunction, syntax->receiverMutability()))
+              concreteFunction, syntax->receiverMutability(), concreteOwner)) {
+        // The complete contract also owns the field mapping call lowering
+        // publishes for a carrier (or member reference) result.
+        if (concreteFunction.returnType.kind == SemanticType::Class ||
+            (concreteFunction.returnType.kind == SemanticType::Reference &&
+             concreteFunction.ownerClass))
+          concreteFunction.returnBorrowFields = complete->dependencies;
         concreteFunction.completeReturnBorrow = std::move(*complete);
+      }
   semanticModel.record(*function->declaration, std::move(concreteFunction));
   function->bodyDeclaration()->accept(*this);
   validateDefaultArgumentCycles();

@@ -174,7 +174,8 @@ auto SemanticVisitor::Impl::hasExplicitBorrowContract(
 // mutable result path accepts only mutable sources. The body is checked
 // against this upper bound in MIR; nothing is inferred from it.
 auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
-    const FunctionInfo &function, ReceiverMutability receiverMutability)
+    const FunctionInfo &function, ReceiverMutability receiverMutability,
+    const SemanticType &concreteReceiver)
     -> std::optional<FunctionBorrowDependencySummary> {
   const SemanticType &result = function.returnType;
   const bool directReference =
@@ -221,7 +222,9 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
     return true;
   };
   if (function.ownerClass != 0 && !function.staticMember) {
-    const SemanticType receiver = openClassType(function.ownerClass);
+    const SemanticType receiver = concreteReceiver.kind == SemanticType::Class
+                                      ? concreteReceiver
+                                      : openClassType(function.ownerClass);
     if (receiverMutability != ReceiverMutability::Consuming)
       sources.push_back({BorrowOriginKind::Receiver,
                          0,

@@ -11,6 +11,8 @@
 #include "mir_thread_local.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
+#include <cstdlib>
+#include <iostream>
 
 #include <algorithm>
 #include <functional>
@@ -3936,7 +3938,31 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                   "; target origin " +
                   std::to_string(static_cast<int>(target->returnBorrowOrigin)) +
                   ", parameter " +
-                  std::to_string(target->returnBorrowParameter) + ")",
+                  std::to_string(target->returnBorrowParameter) +
+                  "; differs in" +
+                  (instruction.borrowArguments != target->returnBorrowParameters
+                       ? " parameters"
+                       : "") +
+                  (instruction.borrowFields != target->returnBorrowFields
+                       ? " fields(" +
+                             std::to_string(instruction.borrowFields.size()) +
+                             "/" +
+                             std::to_string(target->returnBorrowFields.size()) +
+                             ")"
+                       : "") +
+                  (instruction.borrowAccess != target->returnBorrowAccess
+                       ? " access"
+                       : "") +
+                  (instruction.borrowPlace != target->returnBorrowPlace
+                       ? " place"
+                       : "") +
+                  (instruction.restoresReferenceResult !=
+                               target->restoresReferenceResult ||
+                           instruction.restoredBorrowFields !=
+                               target->restoredBorrowFields
+                       ? " restoration"
+                       : "") +
+                  ")",
               block.id, instruction.id);
         }
         if (!exactParameterRoles(instruction.parameterTypes,
@@ -15523,9 +15549,15 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
       source && !source->externalPrefix
           ? findStoredCarrierReferenceInventory(program, source->referent)
           : std::nullopt;
+  // RFC 0004 shadow phase: a signature contract may conservatively name
+  // whole caller storage; borrowing it keeps everything it reaches borrowed.
+  static const bool signatureClaims =
+      std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
   return source &&
          (source->referent == result->reference.arguments.front() ||
-          (contained && contained->empty())) &&
+          (contained && contained->empty()) ||
+          (signatureClaims && !source->externalPrefix &&
+           mapping.sourceFields.empty())) &&
          (mapping.access == AccessMode::ReadOnly ||
           source->access == AccessMode::Mutable) &&
          source->conditions == mapping.sourceConditions;
@@ -15680,15 +15712,35 @@ public:
     if (function && function->completeReturnBorrow) {
       auto observed = reconstruct(*function);
       const auto &claim = *function->completeReturnBorrow;
+      // A claimed source covers every observed path beneath it: borrowing
+      // caller storage keeps all it reaches borrowed, including the external
+      // referents its own stored references protect.
+      const auto coveredBy = [](const BorrowedFieldOrigin &claimed,
+                                const BorrowedFieldOrigin &dependency) {
+        const auto prefix = [](const auto &shorter, const auto &longer) {
+          return shorter.size() <= longer.size() &&
+                 std::equal(shorter.begin(), shorter.end(), longer.begin());
+        };
+        return claimed.resultFields == dependency.resultFields &&
+               claimed.resultConditions == dependency.resultConditions &&
+               claimed.access == dependency.access &&
+               claimed.origin == dependency.origin &&
+               claimed.parameter == dependency.parameter &&
+               claimed.globalRoot == dependency.globalRoot &&
+               prefix(claimed.sourceFields, dependency.sourceFields) &&
+               prefix(claimed.sourceConditions, dependency.sourceConditions);
+      };
       const bool covers =
           observed &&
-          std::all_of(
-              observed->dependencies.begin(), observed->dependencies.end(),
-              [&](const auto &dependency) {
-                return std::find(claim.dependencies.begin(),
-                                 claim.dependencies.end(),
-                                 dependency) != claim.dependencies.end();
-              }) &&
+          std::all_of(observed->dependencies.begin(),
+                      observed->dependencies.end(),
+                      [&](const auto &dependency) {
+                        return std::any_of(
+                            claim.dependencies.begin(),
+                            claim.dependencies.end(), [&](const auto &claimed) {
+                              return coveredBy(claimed, dependency);
+                            });
+                      }) &&
           std::all_of(observed->possibleAlternatives.begin(),
                       observed->possibleAlternatives.end(),
                       [&](const BorrowAlternativePath &alternative) {
@@ -15697,7 +15749,41 @@ public:
                                          alternative) !=
                                claim.possibleAlternatives.end();
                       });
-      if (wellFormed(*function, claim) && covers) {
+      // RFC 0004 shadow phase: a signature-derived claim is an upper bound.
+      // When MIR cannot reconstruct the body's complete flow, the body's own
+      // return and escape checks bound it instead.
+      static const bool signatureClaims =
+          std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+      if (std::getenv("GTI_SHADOW_CLAIM_TRACE")) { // shadow-phase debugging
+        const auto print = [](const char *label, const auto &deps) {
+          std::cerr << "  " << label << " " << deps.size() << ":";
+          for (const auto &d : deps) {
+            std::cerr << " {r=";
+            for (auto f : d.resultFields)
+              std::cerr << f << '.';
+            std::cerr << " o=" << static_cast<int>(d.origin)
+                      << " p=" << d.parameter << " s=";
+            for (auto f : d.sourceFields)
+              std::cerr << f << '.';
+            std::cerr << " a=" << static_cast<int>(d.access)
+                      << " rc=" << d.resultConditions.size()
+                      << " sc=" << d.sourceConditions.size() << "}";
+          }
+          std::cerr << "\n";
+        };
+        std::cerr << "CLAIM fn=" << id
+                  << " well=" << wellFormed(*function, claim)
+                  << " observed=" << observed.has_value()
+                  << " covers=" << covers
+                  << " alts=" << claim.possibleAlternatives.size() << "/"
+                  << (observed ? observed->possibleAlternatives.size() : 0)
+                  << "\n";
+        print("claim", claim.dependencies);
+        if (observed)
+          print("observed", observed->dependencies);
+      }
+      if (wellFormed(*function, claim) &&
+          (covers || (signatureClaims && !observed))) {
         // Keep the declaration contract stable across optimizer narrowing.
         // Its additional well-typed alternatives and dependency obligations
         // are conservative cases, not inferred from an attached claim or

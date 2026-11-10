@@ -3052,8 +3052,9 @@ private:
   [[nodiscard]] static bool signatureContractDefaults();
   // RFC 0004 elision: the complete contract a signature alone implies.
   [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
-  signatureCompleteReturnBorrow(const FunctionInfo &function,
-                                ReceiverMutability receiverMutability);
+  signatureCompleteReturnBorrow(
+      const FunctionInfo &function, ReceiverMutability receiverMutability,
+      const SemanticType &concreteReceiver = SemanticType::Unknown);
   // Constructor parameters whose written types name a region the class binds.
   // Empty when the class declares no regions: the inferred model applies.
   [[nodiscard]] std::vector<std::size_t>
