@@ -4783,6 +4783,21 @@ private:
     }
   }
 
+  // placeForValue for a shape query: every place the lookup adds is undone
+  // unless `keep` accepts the result, so a query that does not apply leaves
+  // the body exactly as it was.
+  template <class Keep>
+  [[nodiscard]] MirPlaceId probePlaceForValue(HirValueId id, Keep keep) {
+    const std::size_t places = output.places.size();
+    auto saved = valuePlaces;
+    const MirPlaceId place = placeForValue(id);
+    if (keep(output.findPlace(place)))
+      return place;
+    output.places.resize(places);
+    valuePlaces = std::move(saved);
+    return 0;
+  }
+
   [[nodiscard]] MirPlaceId placeForValue(HirValueId id) {
     ensureThreadLocalValue(id);
     if (const auto found = valuePlaces.find(id); found != valuePlaces.end()) {
@@ -16142,25 +16157,31 @@ private:
               // referent is not the returned address.
               const MirLoanId storedId = candidate.storedDependency;
               const MirPlaceId carrierPlace = candidate.source;
-              // placeForValue may append places; look both up afterwards.
-              const MirPlace *runtime =
-                  output.findPlace(placeForValue(*statement.value));
-              const MirPlace *carrier = output.findPlace(carrierPlace);
               const MirLoan *stored = output.findLoan(storedId);
+              const SemanticType carrierType =
+                  source->type.kind == SemanticType::Reference &&
+                          source->type.arguments.size() == 1
+                      ? SemanticType(source->type.arguments.front())
+                      : SemanticType(SemanticType::Unknown);
+              const HirBindingId carrierBinding = source->binding;
+              const HirValue *returned = findValue(*statement.value);
+              const auto fieldThroughCarrier = [&](const MirPlace *runtime) {
+                return runtime != nullptr &&
+                       runtime->root == MirPlaceRootKind::Binding &&
+                       runtime->binding == carrierBinding &&
+                       runtime->projections.size() > 1 &&
+                       runtime->projections.front().kind ==
+                           MirProjectionKind::Dereference &&
+                       runtime->projections.back().kind ==
+                           MirProjectionKind::Dereference;
+              };
               if (stored != nullptr && stored->kind == MirLoanKind::Stored &&
                   stored->entry && !stored->designatedFields.empty() &&
-                  stored->source == carrierPlace && runtime != nullptr &&
-                  carrier != nullptr &&
-                  carrier->type.kind == SemanticType::Reference &&
-                  carrier->type.arguments.size() == 1 &&
-                  runtime->type != carrier->type.arguments.front() &&
-                  runtime->root == MirPlaceRootKind::Binding &&
-                  runtime->binding == carrier->binding &&
-                  runtime->projections.size() > 1 &&
-                  runtime->projections.front().kind ==
-                      MirProjectionKind::Dereference &&
-                  runtime->projections.back().kind ==
-                      MirProjectionKind::Dereference) {
+                  stored->source == carrierPlace &&
+                  carrierType != SemanticType::Unknown && returned != nullptr &&
+                  returned->info.type != carrierType &&
+                  probePlaceForValue(*statement.value, fieldThroughCarrier) !=
+                      0) {
                 storedCarrierEntry = stored->id;
                 carrierShellEntry = borrow.loan;
               } else
@@ -16176,15 +16197,47 @@ private:
           if (storedCarrierEntry == 0 && referenceParameterEntry == 0 &&
               borrow.loan <= output.loans.size()) {
             const MirLoanId carrierId = borrow.loan;
-            const MirPlaceId runtimePlace = placeForValue(*statement.value);
             const MirLoan &carrier = output.loans[carrierId - 1];
-            const MirPlace *runtime = output.findPlace(runtimePlace);
-            std::vector<SymbolId> path;
-            bool fieldRead =
+            const bool carrierLoan =
                 carrier.kind == MirLoanKind::Stored && !carrier.entry &&
                 !carrier.escapes && !carrier.twoPhase &&
                 !carrier.referenceSelection && carrier.conditions.empty() &&
-                !carrier.designatedFields.empty() && runtime != nullptr &&
+                !carrier.designatedFields.empty();
+            const auto carriedField = [&](const MirPlace *candidate) {
+              if (candidate == nullptr ||
+                  candidate->root != MirPlaceRootKind::Binding ||
+                  std::find(carrier.carriers.begin(), carrier.carriers.end(),
+                            candidate->binding) == carrier.carriers.end() ||
+                  candidate->projections.size() < 2 ||
+                  candidate->projections.back().kind !=
+                      MirProjectionKind::Dereference)
+                return false;
+              std::vector<SymbolId> fields;
+              for (std::size_t index = 0;
+                   index + 1 < candidate->projections.size(); ++index) {
+                if (candidate->projections[index].kind !=
+                    MirProjectionKind::Field)
+                  return false;
+                fields.push_back(candidate->projections[index].field);
+              }
+              if (carrier.designatedFields == fields)
+                return true;
+              return std::any_of(carrier.additionalDependencies.begin(),
+                                 carrier.additionalDependencies.end(),
+                                 [&](const auto &dependency) {
+                                   return dependency.designatedFields ==
+                                              fields &&
+                                          dependency.conditions.empty() &&
+                                          dependency.source != 0;
+                                 });
+            };
+            const MirPlaceId runtimePlace =
+                carrierLoan ? probePlaceForValue(*statement.value, carriedField)
+                            : 0;
+            const MirPlace *runtime = output.findPlace(runtimePlace);
+            std::vector<SymbolId> path;
+            bool fieldRead =
+                carrierLoan && runtime != nullptr &&
                 runtime->root == MirPlaceRootKind::Binding &&
                 std::find(carrier.carriers.begin(), carrier.carriers.end(),
                           runtime->binding) != carrier.carriers.end() &&
@@ -16227,10 +16280,14 @@ private:
                                .type = value->info.type}},
                  .loan = published,
                  .info = value->info});
-            (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
-                                     .hirValue = *statement.value,
-                                     .loan = carrier.id});
-            removeLoanFromState(carrier.id, scopes, bindingLoans);
+            // A cleanup-bound carrier keeps its group until its own drop:
+            // its destructor still reads the stored references.
+            if (!carrier.lifecycleBound) {
+              (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                       .hirValue = *statement.value,
+                                       .loan = carrier.id});
+              removeLoanFromState(carrier.id, scopes, bindingLoans);
+            }
             output.loans[published - 1].escapes = true;
             borrow = {.kind = MirOperandKind::Loan,
                       .place = localCarrierFieldPlace,

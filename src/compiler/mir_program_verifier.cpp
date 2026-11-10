@@ -7410,11 +7410,22 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           return !formal || (instance.returnBorrowParameters.empty() &&
                              source->binding != formal->binding);
         }())) {
-      return verificationFailure(
+      MirVerificationResult rejected = verificationFailure(
           body, instance.id,
           "argument-dependent return does not originate from the "
           "summarized formal parameter",
           block.id);
+      // A return whose loan originates in storage this body owns (a local
+      // binding, not any formal) is a borrow escape, not malformed MIR.
+      const bool bodyLocal =
+          source->root == MirPlaceRootKind::Binding &&
+          std::find(instance.parameterBindings.begin(),
+                    instance.parameterBindings.end(),
+                    source->binding) == instance.parameterBindings.end();
+      if (bodyLocal && !rejected.errors.empty())
+        rejected.errors.back().borrow = {.kind = MirBorrowRejectionKind::Escape,
+                                         .loan = *block.terminator.returnLoan};
+      return rejected;
     }
     if (!instance.returnBorrowParameters.empty()) {
       std::unordered_set<HirBindingId> expected;

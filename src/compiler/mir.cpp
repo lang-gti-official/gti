@@ -14638,6 +14638,10 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               std::next(current) == block.instructions.end()) {
             return false;
           }
+          // A cleanup-bound local carrier keeps its group until its drop;
+          // the field's own external dependency publishes independently.
+          if (localFieldSource && retained->lifecycleBound)
+            return true;
           const MirInstruction &retire = *std::next(current);
           return retire.kind == MirInstructionKind::EndBorrow && retire.loan &&
                  *retire.loan == source.loan &&
