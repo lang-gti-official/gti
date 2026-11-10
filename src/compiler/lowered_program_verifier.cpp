@@ -116,6 +116,7 @@ validGeneratedIdentity(const LoweredGeneratedItemIdentity &identity) {
   case SymbolKind::Method:
   case SymbolKind::Operator:
   case SymbolKind::TypeParameter:
+  case SymbolKind::LifetimeParameter:
   case SymbolKind::ValueParameter:
   case SymbolKind::RequirementParameter:
     return false;

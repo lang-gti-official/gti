@@ -248,6 +248,7 @@ auto SemanticVisitor::Impl::checkResumed(const Program &program) -> bool {
   auto *const enclosingJournal = semanticModel.setCallJournal(&calls);
   lateAnalyzedBodies = &analyzed;
   analyzeBodies(resumeDeclarations, &scope);
+  recordLifetimeNames(program);
   lateAnalyzedBodies = nullptr;
   semanticModel.setCallJournal(enclosingJournal);
   // Required bodies are reached outright; complete analysis reaches all.

@@ -3069,6 +3069,10 @@ private:
   signatureCompleteReturnBorrow(
       const FunctionInfo &function, ReceiverMutability receiverMutability,
       const SemanticType &concreteReceiver = SemanticType::Unknown);
+  // The parser's lifetime name resolution for the units this analysis owns:
+  // unknown region names are reported, and with tooling occurrences each
+  // binder becomes a lifetime symbol its uses reference.
+  void recordLifetimeNames(const Program &program);
   // Constructor parameters whose written types name a region the class binds.
   // Empty when the class declares no regions: the inferred model applies.
   [[nodiscard]] std::vector<std::size_t>

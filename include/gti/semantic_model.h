@@ -1773,6 +1773,7 @@ enum class SemanticCompletionCandidateKind {
   Parameter,
   TypeParameter,
   ValueParameter,
+  LifetimeParameter,
 };
 
 struct SemanticCompletionCandidateRecord {
@@ -1845,6 +1846,9 @@ enum class SymbolKind {
   // denotes runtime storage and may have a concept-dependent type.
   RequirementParameter,
   Macro,
+  // A `lifetime` binder. Lifetimes are erased before semantic types, so the
+  // symbol is syntax-derived navigation identity only.
+  LifetimeParameter,
 };
 
 enum class OccurrenceRole : std::uint32_t {

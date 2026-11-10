@@ -565,6 +565,7 @@ add_library(
   "src/compiler/semantic_requirement_expressions.cpp"
   "src/compiler/semantic_protocol_concepts.cpp"
   "src/compiler/semantic_lifetime_contracts.cpp"
+  "src/compiler/semantic_lifetime_names.cpp"
   "src/compiler/semantic_tryable_propagation.cpp"
   "src/compiler/semantic_declaration_analysis.cpp"
   "src/compiler/semantic_embedding.cpp"

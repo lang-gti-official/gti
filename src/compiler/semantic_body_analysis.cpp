@@ -296,6 +296,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   }
   const auto bodyStart = std::chrono::steady_clock::now();
   analyzeBodies(program.declarations(), nullptr);
+  recordLifetimeNames(program);
   if (workMetrics != nullptr) {
     workMetrics->semanticBodyMicroseconds += static_cast<std::size_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
