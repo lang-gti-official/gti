@@ -5903,7 +5903,10 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
              "GTI-S2045");
       return;
     }
-    if (!function->returnBorrowParameters.empty()) {
+    // RFC 0004: a signature contract bounds the result; a return may borrow
+    // fewer of its suppliers.
+    if (!function->returnBorrowParameters.empty() &&
+        !signatureContractDefaults()) {
       if (std::any_of(parameterSymbols.begin(), parameterSymbols.end(),
                       [&](SymbolId parameter) {
                         return std::none_of(
