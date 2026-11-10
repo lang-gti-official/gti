@@ -10,6 +10,10 @@
 #include "gti/source_loader.h"
 #include "gti/source_owner.h"
 #include "gti/support.h"
+#include <cstdint>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
 
 #include <algorithm>
 #include <chrono>
@@ -383,6 +387,27 @@ Frontend::analyzeLoaded(const std::filesystem::path &entryPath,
 
 FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                         FrontendResult result) const {
+  // RFC 0004 shadow phase only: record each analyzed entry program so the
+  // borrow-checker agreement recorder can replay the test corpus. Removed
+  // with the semantic loan flow.
+  if (const char *harvest = std::getenv("GTI_SHADOW_HARVEST_DIR")) {
+    const SourceUnit *entry =
+        result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+    if (const std::string *text =
+            entry == nullptr ? nullptr
+                             : result.sources.find(entry->path.string())) {
+      std::uint64_t hash = 1469598103934665603ull;
+      for (const unsigned char byte : *text)
+        hash = (hash ^ byte) * 1099511628211ull;
+      std::ostringstream name;
+      name << std::hex << hash << ".gti";
+      std::error_code error;
+      std::filesystem::create_directories(harvest, error);
+      std::ofstream out(std::filesystem::path(harvest) / name.str(),
+                        std::ios::binary);
+      out << *text;
+    }
+  }
   if (!result.sourceValid && !options.analyzeRecoveredSourceGraph) {
     return result;
   }
