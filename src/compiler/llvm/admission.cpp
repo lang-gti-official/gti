@@ -5264,10 +5264,19 @@ public:
       // An entry record that a referenced carrier stores a borrow in its
       // fields names that external referent; like other borrow metadata it
       // has no representation beside the carrier's own layout.
+      // Each further stored path of the same carrier is another abstract
+      // field record of it, with no representation either.
       const bool storedRecord =
           hierarchy && loan.kind == MirLoanKind::Stored && loan.entry &&
           !loan.storedDependency && !loan.designatedFields.empty() &&
-          !loan.referenceSelection && loan.additionalDependencies.empty() &&
+          !loan.referenceSelection &&
+          std::all_of(loan.additionalDependencies.begin(),
+                      loan.additionalDependencies.end(),
+                      [](const MirLoanDependency &dependency) {
+                        return dependency.source == 0 &&
+                               !dependency.designatedFields.empty() &&
+                               dependency.conditions.empty();
+                      }) &&
           loan.conditions.empty() && !loan.twoPhase &&
           dispatchProofs
               .metadata(origin->type.kind == SemanticType::Reference &&
@@ -5306,7 +5315,9 @@ public:
                                    : origin  ? placeClassShape(*origin)
                                              : std::nullopt);
       if (!loan.additionalDependencies.empty())
-        add(Shape::MultipleBorrowOrigins, borrowShape);
+        add(Shape::MultipleBorrowOrigins,
+            storedRecord ? std::optional(Shape::NativeBorrowMetadata)
+                         : borrowShape);
       if (!loan.conditions.empty())
         add(Shape::ConditionalBorrow, borrowShape);
       for (const auto &dependency : loan.additionalDependencies) {
