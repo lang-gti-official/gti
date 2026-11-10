@@ -206,7 +206,7 @@ int main() {
   }
   const std::string multipleOwners = R"gti(
 enum Pair { both(int& first, int& second) };
-[[borrowed_from(input)]] int& select(mut Pair input, bool choose) {
+int&<a> select<lifetime a>(mut Pair<a> input, bool choose) {
   switch (std::move(input)) {
     case Pair::both(first, second):
       if (choose) return first;
@@ -422,7 +422,7 @@ for <std::copyable T> concept std::tryable<Checked<T>> {
   using value_type = T;
   using residual_type = Rejected;
   bool has_value(Checked<T>& result) { return result.code == 0; }
-  [[borrowed_from(result)]] T take_value(Checked<T> result) { return result.value; }
+  T<a> take_value<lifetime a>(Checked<T, a> result) { return result.value; }
   Rejected take_residual(Checked<T> result) { return Rejected(result.code); }
 };
 class Status {
@@ -845,7 +845,7 @@ for concept std::tryable<Reading> {
   using value_type = int&;
   using residual_type = Rejected;
   bool has_value(Reading& value) { return value.code == 0; }
-  [[borrowed_from(value)]] int& take_value(Reading value) {
+  int&<a> take_value<lifetime a>(Reading<a> value) {
     return value.external;
   }
   Rejected take_residual(Reading value) { return Rejected(value.code); }
@@ -882,7 +882,7 @@ for concept std::tryable<Editing> {
   using value_type = mut int&;
   using residual_type = Rejected;
   bool has_value(Editing& value) { return value.code == 0; }
-  [[borrowed_from(value)]] mut int& take_value(mut Editing value) {
+  mut int&<a> take_value<lifetime a>(mut Editing<a> value) {
     return value.external;
   }
   Rejected take_residual(Editing value) { return Rejected(value.code); }
@@ -936,12 +936,12 @@ public:
 };
 )gti";
   rejected(guarded + R"gti(
-[[borrowed_from(value)]] int& escape(Guard value) { return value.owner; }
+int&<a> escape<lifetime a>(Guard<a> value) { return value.owner; }
 int main() { return 0; }
 )gti",
            "GTI-S2017", "cleanup-bound carrier cannot escape");
   rejected(guarded + R"gti(
-[[borrowed_from(value)]] int& escape(Envelope value) {
+int&<a> escape<lifetime a>(Envelope<a> value) {
   return value.guard.owner;
 }
 int main() { return 0; }

@@ -469,7 +469,7 @@ int main() { return choose(true); }
     const auto result = analyze(R"gti(
 import std.panic;
 enum Selected { empty, value(int& owner) };
-[[borrowed_from(input)]] int& selected(mut Selected input, int& other) {
+int&<a> selected<lifetime a>(mut Selected<a> input, int& other) {
   int ignored = other;
   switch (std::move(input)) {
   case Selected::value(owner): return owner;
@@ -589,7 +589,7 @@ int main() { return 0; }
     const std::string declaration =
         "enum Reading { error, value(int& owner) };\n";
     const std::string inspect = R"gti(
-[[borrowed_from(owner)]] Reading inspect(int& owner, bool fail) {
+Reading<a> inspect<lifetime a>(int&<a> owner, bool fail) {
   if (fail) return Reading::error;
   return Reading::value(owner);
 }
@@ -667,9 +667,8 @@ int main() { return 0; }
                   "[[borrowed_from(typo)]] Reading wrong(int& owner) { "
                   "return Reading::value(owner); }\n",
               "GTI-S2099"},
-             {declaration +
-                  "[[borrowed_from(owner)]] Reading wrong(int& owner, "
-                  "int& other) { return Reading::value(other); }\n",
+             {declaration + "Reading<a> wrong<lifetime a>(int&<a> owner, "
+                            "int& other) { return Reading::value(other); }\n",
               "GTI-S2045"},
              {"[[borrowed_from(owner)]] int wrong(int& owner) { "
               "return owner; }\n",
@@ -695,7 +694,7 @@ int&<a> selected<lifetime a>(int&<a> value, int& other) {
 }
 int& inferred(int& value) { return value; }
 T&<a> selected_generic<T, lifetime a>(T&<a> value) { return value; }
-[[borrowed_from(value)]] T copied_generic<T>(T value) { return value; }
+T<a> copied_generic<T, lifetime a>(T<a> value) { return value; }
 int main() {
   int first = 1;
   int second = 2;
@@ -742,11 +741,11 @@ int main() {
   {
     const auto result = analyze(R"gti(
 enum Forwarded { empty, value(int& owner) };
-[[borrowed_from(owner)]] Forwarded make(int& owner, bool empty) {
+Forwarded<a> make<lifetime a>(int&<a> owner, bool empty) {
   if (empty) return Forwarded::empty;
   return Forwarded::value(owner);
 }
-[[borrowed_from(owner)]] Forwarded relay(int& owner) {
+Forwarded<a> relay<lifetime a>(int&<a> owner) {
   return make(owner, false);
 }
 int inspect_forwarded(int& owner) {
@@ -794,7 +793,7 @@ int main() { return 0; }
   {
     const auto result = analyze(R"gti(
 enum Either { left(int& owner), right(int& owner) };
-[[borrowed_from(input)]] int& select_either(mut Either input) {
+int&<a> select_either<lifetime a>(mut Either<a> input) {
   switch (std::move(input)) {
   case Either::left(owner): return owner;
   case Either::right(owner): return owner;

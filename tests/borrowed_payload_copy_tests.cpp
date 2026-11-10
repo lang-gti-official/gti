@@ -23,8 +23,7 @@ int inspect_pair(Pair& held) {
     case Pair::both(first, second): return first + second;
   }
 }
-[[borrowed_from(owner)]]
-Reading clone(int& owner) {
+Reading<a> clone<lifetime a>(int&<a> owner) {
   Reading original = Reading::item(owner);
   Reading copied = original;
   return copied;
@@ -167,8 +166,7 @@ int main() {
   for (const bool copy : {false, true}) {
     const auto nestedReturn =
         analyzeWithStandardLibrary("nested-carrier-return.gti", prefix + R"gti(
-[[borrowed_from(owner)]]
-Holder nested(int& owner) {
+Holder<a> nested<lifetime a>(int&<a> owner) {
   Carrier value = Carrier(owner);
   Holder held = Holder::item(value);
 )gti" + (copy ? "Holder copied = held; return copied;" : "return held;") +

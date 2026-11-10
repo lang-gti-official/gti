@@ -587,7 +587,7 @@ public:
   carrier(int32_t& value) : source(value) {}
 };
 enum holder { one(carrier value), none };
-[[borrowed_from(owner)]] holder escape(int32_t& owner) {
+holder<a> escape<lifetime a>(int32_t&<a> owner) {
   int32_t local = 3;
   carrier value = carrier(local);
   return holder::one(value);

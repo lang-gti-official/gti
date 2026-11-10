@@ -82,7 +82,7 @@ int main() { return consume(0); }
         "observed-owned-field": ("""
 import std.string;
 enum Observed { ready(int& owner), failed(std::string error) };
-[[borrowed_from(owner)]] Observed produce(int& owner) {
+Observed<a> produce<lifetime a>(int&<a> owner) {
   if (owner == 3) return Observed::failed(std::string("bad"));
   return Observed::ready(owner);
 }
@@ -116,8 +116,7 @@ public:
 };
 enum Holder { none, item(Carrier value) };
 enum Reading { none, item(int& value) };
-[[borrowed_from(owner)]]
-Reading clone(int& owner) {
+Reading<a> clone<lifetime a>(int&<a> owner) {
   Reading original = Reading::item(owner);
   Reading copied = original;
   return copied;
