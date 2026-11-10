@@ -3045,6 +3045,11 @@ private:
                          ClassId ownerClass) const;
   // A `[[borrowed_from]]` attribute or a result written with a region.
   [[nodiscard]] static bool hasExplicitBorrowContract(const FunctionDecl &syntax);
+  // Constructor parameters whose written types name a region the class binds.
+  // Empty when the class declares no regions: the inferred model applies.
+  [[nodiscard]] std::vector<std::size_t>
+  constructorLifetimeSuppliers(const ClassDecl &owner,
+                               const ConstructorDecl &constructor) const;
   // The contract an explicit borrowed_from selects for one substitution of a
   // generic-result declaration: None when the substituted result is not a
   // checked reference or conditional reference-bearing result, otherwise the

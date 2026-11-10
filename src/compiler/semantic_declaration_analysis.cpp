@@ -2814,7 +2814,14 @@ auto SemanticVisitor::Impl::makeClassPatternParameters(
     const ClassDecl &declaration, const std::vector<std::string> &scope)
     -> std::vector<GenericParameterInfo> {
   std::vector<GenericParameter> parameters;
+  // A pattern may bind only regions (`IntBorrow<int&<source>>`). Regions are
+  // erased signature metadata, so such a class has no type binder at all.
+  bool bindsRegion = false;
   const auto collect = [&](const auto &self, const TypeRef &type) -> void {
+    if ((type.referenceLifetime &&
+         type.referenceLifetime->name.kind == TokenKind::IDENTIFIER) ||
+        !type.lifetimeArguments.empty())
+      bindsRegion = true;
     if (type.qualifiedOwner) {
       self(self, *type.qualifiedOwner);
     }
@@ -2849,9 +2856,10 @@ auto SemanticVisitor::Impl::makeClassPatternParameters(
   for (const TypeRef &pattern : declaration.genericArgumentPatterns()) {
     collect(collect, pattern);
   }
-  if (parameters.empty()) {
+  if (parameters.empty() && !bindsRegion) {
     report(declaration.name(),
-           "A generic class argument pattern must declare a type parameter.",
+           "A generic class argument pattern must declare a type or lifetime "
+           "parameter.",
            "GTI-S2023");
   }
   // Binding order is independent of public argument order. The ordinary
@@ -7829,6 +7837,19 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
                                        ? AccessMode::Mutable
                                        : stored.access;
         continue;
+      }
+      // A class that binds regions states its constructor's suppliers in the
+      // signature. Whether the body's initializer honors them is body-local
+      // validity, which MIR owns.
+      if (owner.declaration != nullptr) {
+        if (auto suppliers = constructorLifetimeSuppliers(
+                *owner.declaration, *constructor.declaration);
+            suppliers.size() > 1) {
+          constructor.borrowParameter = suppliers.front();
+          constructor.borrowParameters = std::move(suppliers);
+          constructor.borrowAccess = stored.access;
+          continue;
+        }
       }
       const ConstructorInitializer *binding = nullptr;
       for (const ConstructorInitializer &initializer :

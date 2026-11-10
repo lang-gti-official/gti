@@ -6244,6 +6244,14 @@ auto SemanticVisitor::Impl::storedCarrierConstructorParameters(
     const SemanticType &type, const ConstructorInfo &constructor,
     std::span<const SemanticType> parameterTypes) const
     -> std::vector<std::size_t> {
+  // A region-binding class states its suppliers in the constructor signature.
+  if (const ClassInfo *owner = classInfo(type);
+      owner != nullptr && owner->declaration != nullptr &&
+      constructor.declaration != nullptr)
+    if (auto suppliers = constructorLifetimeSuppliers(*owner->declaration,
+                                                      *constructor.declaration);
+        suppliers.size() > 1)
+      return suppliers;
   const auto bindings = storedCarrierConstructorBindings(
       type, constructor.declaration, parameterTypes);
   std::vector<std::size_t> result;

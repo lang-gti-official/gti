@@ -152,8 +152,9 @@ validClassPatternBindings(const LoweredClassDeclaration &declaration) {
                          return parameter.typeArgumentPath.empty();
                        });
   }
-  if (!resolvedTypes(declaration.genericArgumentPatterns) ||
-      declaration.genericParameters.empty()) {
+  // A pattern whose binders were all regions has no type binder after
+  // erasure; it still accepts exactly its erased argument list.
+  if (!resolvedTypes(declaration.genericArgumentPatterns)) {
     return false;
   }
   for (const auto &parameter : declaration.genericParameters) {

@@ -120,15 +120,48 @@ auto SemanticVisitor::Impl::explicitLifetimeResult(
   return result;
 }
 
+auto SemanticVisitor::Impl::constructorLifetimeSuppliers(
+    const ClassDecl &owner, const ConstructorDecl &constructor) const
+    -> std::vector<std::size_t> {
+  std::vector<std::string> classRegions;
+  for (const auto &parameter : owner.lifetimeParameters())
+    classRegions.push_back(parameter.name.lexeme);
+  for (const auto &pattern : owner.genericArgumentPatterns())
+    collectRegionNames(pattern, classRegions);
+  std::vector<std::size_t> suppliers;
+  if (classRegions.empty())
+    return suppliers;
+  const auto &parameters = constructor.parameters();
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
+    if (parameters[index].pack)
+      return {};
+    std::vector<std::string> names;
+    collectRegionNames(parameters[index].type, names);
+    if (std::any_of(names.begin(), names.end(), [&](const std::string &name) {
+          return contains(classRegions, name);
+        }))
+      suppliers.push_back(index);
+  }
+  return suppliers;
+}
+
 auto SemanticVisitor::Impl::hasExplicitBorrowContract(
     const FunctionDecl &syntax) -> bool {
   if (syntax.hasFunctionAttribute("borrowed_from"))
     return true;
   // `static` keeps the inferred static-storage origin; the declared region is
   // checked against it, not substituted for it.
+  // Only a region the function itself binds states a contract the inferred
+  // summary cannot: `this` and class-bound (stored) regions are what the
+  // existing inference already derives from the receiver and its fields.
   const auto region = resultRegion(syntax.returnType());
-  return region && region->lexeme != "_" && region->kind != TokenKind::STATIC &&
-         region->lexeme != "static";
+  if (!region)
+    return false;
+  const auto parameters = syntax.lifetimeParameters();
+  return std::any_of(parameters.begin(), parameters.end(),
+                     [&](const GenericParameter &parameter) {
+                       return parameter.name.lexeme == region->lexeme;
+                     });
 }
 
 } // namespace lang
