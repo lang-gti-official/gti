@@ -151,6 +151,9 @@ public:
         }
       }
     }
+    if (const char *mode = std::getenv("GTI_MIR_LOAN_ENDS");
+        mode != nullptr && std::string_view(mode) == "derived")
+      derivedLoanEnds = deriveLoanEnds(source);
     if (std::getenv("GTI_TMP_LOAN_ENDS")) { // TMP agreement instrument
       const auto agreement =
           compareLoanEnds(source, deriveLoanEnds(source),
@@ -162,7 +165,7 @@ public:
     }
     for (const HirStatement &statement : source.statements) {
       statements.emplace(statement.id, &statement);
-      for (const SemanticLoanId loan : statement.endedLoans) {
+      for (const SemanticLoanId loan : endedAfter(statement)) {
         const auto [entry, inserted] =
             uniqueSemanticLoanEndpoints.emplace(loan, statement.id);
         if (!inserted && entry->second != statement.id)
@@ -9368,7 +9371,7 @@ private:
         const HirStatement *owner = findStatement(endpoint);
         const bool endsHere =
             owner != nullptr &&
-            std::any_of(owner->endedLoans.begin(), owner->endedLoans.end(),
+            std::any_of(endedAfter(*owner).begin(), endedAfter(*owner).end(),
                         [&](SemanticLoanId semantic) {
                           const auto found = semanticLoans.find(semantic);
                           return found != semanticLoans.end() &&
@@ -10426,6 +10429,44 @@ private:
                      parameter) != candidate.carriers.end();
   }
 
+  // Loan end points: during the RFC 0004 shadow phase either the semantic
+  // points HIR transports or the ones MIR derives itself (GTI_MIR_LOAN_ENDS).
+  [[nodiscard]] const std::vector<SemanticLoanId> &
+  endedAfter(const HirStatement &statement) const {
+    if (!derivedLoanEnds)
+      return statement.endedLoans;
+    return derivedList(derivedLoanEnds->after, statement.id);
+  }
+  [[nodiscard]] const std::vector<SemanticLoanId> &
+  thenEntryEnded(const HirStatement &statement) const {
+    if (!derivedLoanEnds)
+      return statement.thenEntryEndedLoans;
+    return derivedList(derivedLoanEnds->thenEntry, statement.id);
+  }
+  [[nodiscard]] const std::vector<SemanticLoanId> &
+  elseEntryEnded(const HirStatement &statement) const {
+    if (!derivedLoanEnds)
+      return statement.elseEntryEndedLoans;
+    return derivedList(derivedLoanEnds->elseEntry, statement.id);
+  }
+  [[nodiscard]] const std::vector<SemanticLoanId> &
+  armEntryEnded(const HirStatement &statement, std::size_t arm) const {
+    if (!derivedLoanEnds)
+      return statement.switchArms[arm].entryEndedLoans;
+    static const std::vector<SemanticLoanId> none;
+    const auto found = derivedLoanEnds->switchArmEntry.find({statement.id, arm});
+    return found == derivedLoanEnds->switchArmEntry.end() ? none
+                                                          : found->second;
+  }
+  [[nodiscard]] static const std::vector<SemanticLoanId> &derivedList(
+      const std::unordered_map<HirStatementId, std::vector<SemanticLoanId>>
+          &lists,
+      HirStatementId statement) {
+    static const std::vector<SemanticLoanId> none;
+    const auto found = lists.find(statement);
+    return found == lists.end() ? none : found->second;
+  }
+
   void endSemanticLoans(const std::vector<SemanticLoanId> &loans,
                         HirStatementId statement) {
     const auto retained = lifecycleRetainedLoans({});
@@ -10487,7 +10528,7 @@ private:
   }
 
   void endSemanticLoans(const HirStatement &statement) {
-    endSemanticLoans(statement.endedLoans, statement.id);
+    endSemanticLoans(endedAfter(statement), statement.id);
   }
 
   [[nodiscard]] static std::unordered_map<MirLoanId, HirStatementId>
@@ -14710,7 +14751,7 @@ private:
     // HIR, not branch lowering, chooses the semantic endpoint. Register its
     // exact identity while lowering nested branches; this grants no endpoint
     // acknowledgement until a call actually emits EndBorrow on that path.
-    for (const SemanticLoanId semantic : statement.endedLoans) {
+    for (const SemanticLoanId semantic : endedAfter(statement)) {
       const auto found = semanticLoans.find(semantic);
       if (found != semanticLoans.end() && loanIsActive(scopes, found->second))
         enclosingTransferredLoanEndpoints.insert_or_assign(found->second,
@@ -14742,7 +14783,7 @@ private:
     scopes = incomingScopes;
     temporaryDrops = incomingTemporaryDrops;
     bindingLoans = incomingBindingLoans;
-    endSemanticLoans(statement.thenEntryEndedLoans, statement.id);
+    endSemanticLoans(thenEntryEnded(statement), statement.id);
     lowerScopedStatement(statement.body);
     const bool thenFallsThrough = !terminated();
     OpenBranch thenOpen{.end = current,
@@ -14757,7 +14798,7 @@ private:
     temporaryDrops = incomingTemporaryDrops;
     bindingLoans = incomingBindingLoans;
     callTransferredLoanEndpoints = incomingTransferEndpoints;
-    endSemanticLoans(statement.elseEntryEndedLoans, statement.id);
+    endSemanticLoans(elseEntryEnded(statement), statement.id);
     lowerScopedStatement(statement.elseBranch);
     const bool elseFallsThrough = !terminated();
     OpenBranch elseOpen{.end = current,
@@ -14826,7 +14867,7 @@ private:
     const MirBlockId bodyBlock = appendBlock();
     const MirBlockId exitBlock = appendBlock();
     const MirBlockId naturalExitBlock =
-        statement.endedLoans.empty() ? exitBlock : appendBlock();
+        endedAfter(statement).empty() ? exitBlock : appendBlock();
     terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
 
     current = conditionBlock;
@@ -14852,20 +14893,20 @@ private:
     std::vector<Scope> exitScopes = loopScopes;
     std::unordered_map<HirBindingId, MirLoanId> exitBindingLoans =
         loopBindingLoans;
-    normalizeSemanticLoanState(statement.endedLoans, exitScopes,
+    normalizeSemanticLoanState(endedAfter(statement), exitScopes,
                                exitBindingLoans);
     if (naturalExitBlock != exitBlock) {
       current = naturalExitBlock;
       scopes = loopScopes;
       temporaryDrops = loopTemporaryDrops;
       bindingLoans = loopBindingLoans;
-      endSemanticLoans(statement.endedLoans, statement.id);
+      endSemanticLoans(endedAfter(statement), statement.id);
       terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
     }
 
     breakContexts.push_back({.target = exitBlock,
                              .keepScopes = loopScopes.size(),
-                             .exitLoans = statement.endedLoans});
+                             .exitLoans = endedAfter(statement)});
     continueContexts.push_back(
         {.target = conditionBlock, .keepScopes = loopScopes.size()});
     current = bodyBlock;
@@ -14895,7 +14936,7 @@ private:
     const MirBlockId conditionBlock = appendBlock();
     const MirBlockId exitBlock = appendBlock();
     const MirBlockId naturalExitBlock =
-        statement.endedLoans.empty() ? exitBlock : appendBlock();
+        endedAfter(statement).empty() ? exitBlock : appendBlock();
     terminate({.kind = MirTerminatorKind::Goto, .target = bodyBlock});
 
     const std::vector<Scope> loopScopes = scopes;
@@ -14906,11 +14947,11 @@ private:
     std::vector<Scope> exitScopes = loopScopes;
     std::unordered_map<HirBindingId, MirLoanId> exitBindingLoans =
         loopBindingLoans;
-    normalizeSemanticLoanState(statement.endedLoans, exitScopes,
+    normalizeSemanticLoanState(endedAfter(statement), exitScopes,
                                exitBindingLoans);
     breakContexts.push_back({.target = exitBlock,
                              .keepScopes = loopScopes.size(),
-                             .exitLoans = statement.endedLoans});
+                             .exitLoans = endedAfter(statement)});
     continueContexts.push_back(
         {.target = conditionBlock, .keepScopes = loopScopes.size()});
     current = bodyBlock;
@@ -14951,7 +14992,7 @@ private:
       scopes = loopScopes;
       temporaryDrops = loopTemporaryDrops;
       bindingLoans = loopBindingLoans;
-      endSemanticLoans(statement.endedLoans, statement.id);
+      endSemanticLoans(endedAfter(statement), statement.id);
       terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
     }
 
@@ -14971,7 +15012,7 @@ private:
     const MirBlockId cleanupBlock = appendBlock();
     const MirBlockId exitBlock = appendBlock();
     const MirBlockId naturalExitBlock =
-        statement.condition && !statement.endedLoans.empty() ? appendBlock()
+        statement.condition && !endedAfter(statement).empty() ? appendBlock()
                                                              : cleanupBlock;
     MirBlockId comparisonBlock = conditionBlock;
     MirBlockId advanceBlock = incrementBlock;
@@ -15003,20 +15044,20 @@ private:
     std::vector<Scope> cleanupScopes = loopScopes;
     std::unordered_map<HirBindingId, MirLoanId> cleanupBindingLoans =
         loopBindingLoans;
-    normalizeSemanticLoanState(statement.endedLoans, cleanupScopes,
+    normalizeSemanticLoanState(endedAfter(statement), cleanupScopes,
                                cleanupBindingLoans);
     if (naturalExitBlock != cleanupBlock) {
       current = naturalExitBlock;
       scopes = loopScopes;
       temporaryDrops = loopTemporaryDrops;
       bindingLoans = loopBindingLoans;
-      endSemanticLoans(statement.endedLoans, statement.id);
+      endSemanticLoans(endedAfter(statement), statement.id);
       terminate({.kind = MirTerminatorKind::Goto, .target = cleanupBlock});
     }
 
     breakContexts.push_back({.target = cleanupBlock,
                              .keepScopes = loopScopes.size(),
-                             .exitLoans = statement.endedLoans});
+                             .exitLoans = endedAfter(statement)});
     continueContexts.push_back(
         {.target = incrementBlock, .keepScopes = loopScopes.size()});
     current = bodyBlock;
@@ -15622,7 +15663,7 @@ private:
         statement.exhaustiveSwitch
             ? appendBlock()
             : (!hasDefault &&
-                       (!statement.endedLoans.empty() || !subjectLoans.empty())
+                       (!endedAfter(statement).empty() || !subjectLoans.empty())
                    ? appendBlock()
                    : exitBlock);
 
@@ -15657,22 +15698,24 @@ private:
         switchBindingLoans;
     for (const MirLoanId loan : subjectLoans)
       removeLoanFromState(loan, exitScopes, exitBindingLoans);
-    normalizeSemanticLoanState(statement.endedLoans, exitScopes,
+    normalizeSemanticLoanState(endedAfter(statement), exitScopes,
                                exitBindingLoans);
     if (coversEveryValue && !statement.switchArms.empty()) {
       std::vector<SemanticLoanId> endedOnEveryArm =
-          statement.switchArms.front().entryEndedLoans;
+          armEntryEnded(statement, 0);
       std::erase_if(endedOnEveryArm, [&](SemanticLoanId loan) {
         return std::any_of(
                    statement.switchArms.begin() + 1, statement.switchArms.end(),
                    [&](const HirSwitchArm &arm) {
-                     return std::find(arm.entryEndedLoans.begin(),
-                                      arm.entryEndedLoans.end(),
-                                      loan) == arm.entryEndedLoans.end();
+                     const auto &entry = armEntryEnded(
+                         statement, static_cast<std::size_t>(
+                                        &arm - statement.switchArms.data()));
+                     return std::find(entry.begin(), entry.end(), loan) ==
+                            entry.end();
                    }) ||
-               std::find(statement.endedLoans.begin(),
-                         statement.endedLoans.end(),
-                         loan) != statement.endedLoans.end();
+               std::find(endedAfter(statement).begin(),
+                         endedAfter(statement).end(),
+                         loan) != endedAfter(statement).end();
       });
       for (const MirLoanId loan :
            childFirstLoans(endedOnEveryArm, &exitScopes)) {
@@ -15699,13 +15742,13 @@ private:
       temporaryDrops = switchTemporaryDrops;
       bindingLoans = switchBindingLoans;
       endSwitchSubjectLoans(subjectLoans, statement.id);
-      endSemanticLoans(statement.endedLoans, statement.id);
+      endSemanticLoans(endedAfter(statement), statement.id);
       terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
     }
 
     breakContexts.push_back({.target = exitBlock,
                              .keepScopes = switchScopes.size(),
-                             .exitLoans = statement.endedLoans});
+                             .exitLoans = endedAfter(statement)});
     bool fallsThrough = !coversEveryValue;
     for (std::size_t armIndex = 0; armIndex < statement.switchArms.size();
          ++armIndex) {
@@ -15730,7 +15773,7 @@ private:
       }
       if (payloadBindings.empty())
         endSwitchSubjectLoans(subjectLoans, statement.id);
-      auto entryEnded = statement.switchArms[armIndex].entryEndedLoans;
+      auto entryEnded = armEntryEnded(statement, armIndex);
       if (consumed && consumed->dependency != 0) {
         if (std::find(entryEnded.begin(), entryEnded.end(),
                       consumed->dependency) == entryEnded.end())
@@ -15845,7 +15888,7 @@ private:
         if (temporaryDrops != switchTemporaryDrops) {
           valid = false;
         }
-        endSemanticLoansIfActive(statement.endedLoans, statement.id);
+        endSemanticLoansIfActive(endedAfter(statement), statement.id);
         emitScopeExit(scopes.size() - 1);
         terminate({.kind = MirTerminatorKind::Goto, .target = exitBlock});
       }
@@ -16647,6 +16690,8 @@ private:
   std::unordered_map<HirStatementId, const HirStatement *> statements;
   std::unordered_map<SemanticLoanId, HirStatementId>
       uniqueSemanticLoanEndpoints;
+  // Shadow phase: MIR-derived loan end points replace the transported ones.
+  std::optional<MirDerivedLoanEnds> derivedLoanEnds;
   std::unordered_map<HirBindingId, const HirBinding *> bindings;
   std::unordered_map<SymbolId, HirBindingId> localSymbols;
   std::unordered_map<SymbolId, std::size_t> lambdaCaptures;

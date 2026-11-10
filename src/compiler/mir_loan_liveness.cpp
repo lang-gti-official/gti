@@ -158,6 +158,7 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
   // children).
   std::unordered_map<SemanticLoanId, std::vector<HirStatementId>> uses;
   std::unordered_map<SemanticLoanId, std::optional<HirStatementId>> created;
+  std::unordered_set<SemanticLoanId> unconfined;
   for (const HirLoan &loan : body.loans) {
     auto &own = uses[loan.semanticLoan];
     std::optional<HirStatementId> creation;
@@ -173,6 +174,36 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
       }
     }
     created[loan.semanticLoan] = loan.entry ? std::nullopt : creation;
+    // A mutable borrow of global storage and a switch payload binding's
+    // retained selection keep a lexical extent: they end at the region exit.
+    for (const HirBindingId carrier : loan.carriers) {
+      const HirBinding *binding = nullptr;
+      for (const HirBinding &candidate : body.bindings)
+        if (candidate.id == carrier)
+          binding = &candidate;
+      if (binding != nullptr && binding->payloadPattern != nullptr)
+        unconfined.insert(loan.semanticLoan);
+      const auto declared = declaringStatement.find(carrier);
+      if (loan.access == AccessMode::Mutable &&
+          declared != declaringStatement.end())
+        if (const HirStatement *statement =
+                body.findStatement(declared->second);
+            statement != nullptr && statement->value)
+          if (const HirValue *initializer =
+                  body.findValue(*statement->value);
+              initializer != nullptr &&
+              initializer->borrowOrigin == BorrowOriginKind::Global)
+            unconfined.insert(loan.semanticLoan);
+    }
+    // A carrier attached from another region (or with no declaration of its
+    // own) makes the loan's extent region-wide: it ends at the region exit.
+    if (!loan.entry && creation && loan.carriers.size() > 1)
+      for (const HirBindingId carrier : loan.carriers) {
+        const auto declared = declaringStatement.find(carrier);
+        if (declared == declaringStatement.end() ||
+            !(tree.regionOf(declared->second) == tree.regionOf(*creation)))
+          unconfined.insert(loan.semanticLoan);
+      }
   }
   bool changed = true;
   while (changed) {
@@ -202,7 +233,7 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
     // A cleanup-bound carrier keeps its loan until the carrier's cleanup;
     // several exclusive aliases share state transitions a single last-use
     // end point cannot express. Both end at their region's exit.
-    if (loan.lifecycleBound ||
+    if (loan.lifecycleBound || unconfined.contains(loan.semanticLoan) ||
         (loan.carriers.size() > 1 && loan.access != AccessMode::ReadOnly))
       continue;
     const auto &own = uses[loan.semanticLoan];
@@ -275,6 +306,14 @@ MirLoanEndAgreement compareLoanEnds(const HirBody &body,
     }
     ++agreement.differ;
     if (report) {
+      if (loan.carriers.size() >= 5) {
+        std::cerr << "TMPC";
+        for (auto c : loan.carriers)
+          for (const HirBinding &b : body.bindings)
+            if (b.id == c)
+              std::cerr << ' ' << (b.variable ? b.variable->name().lexeme : std::string(b.parameter ? "param" : "?"));
+        std::cerr << '\n';
+      }
       std::cerr << "loan-end-differ semantic=" << id
                 << " kind=" << static_cast<int>(loan.kind)
                 << " entry=" << loan.entry
