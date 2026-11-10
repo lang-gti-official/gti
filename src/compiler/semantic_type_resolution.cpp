@@ -5217,6 +5217,10 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
 
 auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
     const ExprPtr &value, std::string_view destination) -> bool {
+  // Under MIR authority MIR proves every returned loan's ancestry from its
+  // own places and CFG; this body-local loan walk is the legacy checker.
+  if (mirBorrowAuthority())
+    return false;
   const std::optional<RetainedLoanSource> source = retainedLoanSource(value);
   const Symbol *symbol = !source || source->carrier == nullptr
                              ? nullptr
