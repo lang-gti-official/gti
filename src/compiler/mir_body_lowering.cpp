@@ -9779,7 +9779,10 @@ private:
           if (carrier && carrier->root == MirPlaceRootKind::Binding &&
               carrier->projections.empty() &&
               group.kind == MirLoanKind::Stored &&
-              (!group.entry || group.source == place) &&
+              // A local copy carrying a formal's entry group is its own
+              // physical supplier, exactly as the formal itself is.
+              (!group.entry || group.source == place ||
+               carrier->type.kind != SemanticType::Reference) &&
               group.source == published.source &&
               std::find(group.carriers.begin(), group.carriers.end(),
                         carrier->binding) != group.carriers.end()) {

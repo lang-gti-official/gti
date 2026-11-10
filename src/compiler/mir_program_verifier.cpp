@@ -7106,7 +7106,19 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
              receiverField) &&
             (entrySource->root == MirPlaceRootKind::This ||
              entrySource->type.kind == SemanticType::Reference);
-        const bool exactEntryLane = !candidate.entry ||
+        // A local value copy of a by-value formal carries the formal's entry
+        // group: the copied shell holds exactly the formal's stored contents.
+        const bool entryValueCopy =
+            candidate.entry && candidate.kind == MirLoanKind::Stored &&
+            entrySource && entrySource->root == MirPlaceRootKind::Binding &&
+            entrySource->projections.empty() &&
+            entrySource->type.kind != SemanticType::Reference &&
+            dependencySource->root == MirPlaceRootKind::Binding &&
+            dependencySource->projections.empty() &&
+            !dependencySource->initiallyAvailable &&
+            eraseTypeLifetimes(dependencySource->type) ==
+                eraseTypeLifetimes(entrySource->type);
+        const bool exactEntryLane = !candidate.entry || entryValueCopy ||
             (entrySource &&
              mir_detail::wholeEntryPlaceMatches(body, *entrySource, *dependencySource));
         const bool carried =
@@ -16678,9 +16690,14 @@ completeBorrowSourcePath(const MirProgram &program,
   // reference or alternative, the receiver's contents before the call are the
   // only external sources of those regions, so the immutable group still
   // describes them afterwards. Any extra lifetime-bearing input kills it.
+  // A free function's exclusive reference formal of the carrier's own type
+  // is the same sole input: a write through it stores a value of that exact
+  // type, whose regions are again only the carrier's class regions.
   const auto retainedReceiverGroup = [&](const State &state,
                                          const MirInstruction &call,
-                                         MirPlaceId id) -> Fact {
+                                         MirPlaceId id,
+                                         std::optional<std::size_t> argument =
+                                             std::nullopt) -> Fact {
     if (!id || id > identities.size() || !call.functionTarget ||
         call.dispatch != CallDispatch::Static)
       return std::nullopt;
@@ -16689,10 +16706,32 @@ completeBorrowSourcePath(const MirProgram &program,
         !key.projections.empty())
       return std::nullopt;
     const auto *target = program.findFunctionInstance(*call.functionTarget);
-    if (!target || target->staticMember ||
-        target->receiverMutability != ReceiverMutability::Mutable)
+    if (!target)
       return std::nullopt;
-    for (const auto &parameter : target->parameterTypes) {
+    if (argument) {
+      const auto *carrier = body.findPlace(id);
+      if ((target->owner && !target->staticMember) || !carrier ||
+          *argument >= target->parameterTypes.size() ||
+          *argument >= call.parameterTypes.size())
+        return std::nullopt;
+      const auto &formal = call.parameterTypes[*argument];
+      if (formal.kind != SemanticType::Reference ||
+          formal.referenceAccess != AccessMode::Mutable ||
+          formal.arguments.size() != 1 ||
+          target->parameterTypes[*argument].kind != SemanticType::Reference ||
+          // The region checker proves the exclusive formal's invariant
+          // instantiation; only the carrier's erased type must match here.
+          eraseTypeLifetimes(SemanticType(formal.arguments.front())) !=
+              eraseTypeLifetimes(carrier->type))
+        return std::nullopt;
+    } else if (target->staticMember ||
+               target->receiverMutability != ReceiverMutability::Mutable) {
+      return std::nullopt;
+    }
+    for (std::size_t index = 0; index < target->parameterTypes.size(); ++index) {
+      if (argument && index == *argument)
+        continue;
+      const auto &parameter = target->parameterTypes[index];
       if (parameter.kind == SemanticType::Reference)
         return std::nullopt;
       const auto inventory =
@@ -16723,8 +16762,9 @@ completeBorrowSourcePath(const MirProgram &program,
       return std::nullopt;
     // A formal's typed entry group is rooted at the formal itself; its exact
     // entry reconstruction already names the group (retainedCarrierInput).
+    // A local copy carrying that same group holds the same contents.
     if (group->entry)
-      return group->source == id ? fact : Fact{};
+      return fact;
     std::vector<MirLoanDependency> retained{
         {.source = group->source,
          .parent = group->parent,
@@ -17812,7 +17852,11 @@ completeBorrowSourcePath(const MirProgram &program,
           if (source->place && source->place <= identities.size()) {
             const auto retained = instruction.receiver && &operand == &*instruction.receiver
                 ? retainedReceiverGroup(state, instruction, source->place)
+                : mutableStage
+                ? retainedReceiverGroup(state, instruction, source->place,
+                                        definitions[operand.value - 1]->callInputIndex)
                 : Fact{};
+            if (std::getenv("GTI_TRACE_RRG")) std::fprintf(stderr, "[rrg] owner=%zu inst=%llu place=p%llu stage=%d retained=%d pre=%s\n", (std::size_t)owner, (unsigned long long)instruction.id, (unsigned long long)source->place, mutableStage, retained.has_value(), describeCompleteBorrowFact(state.places[source->place - 1]).c_str()); // TEMP-TRACE
             invalidate(state, source->place);
             if (retained)
               publish(state, source->place, retained);
