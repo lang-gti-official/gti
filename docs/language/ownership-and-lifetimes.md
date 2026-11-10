@@ -462,10 +462,37 @@ parameters whose types mention that region. `int&<a> pick<lifetime a>(int&<a>
 first, int& second)` states the same contract as the older attribute spelling
 `[[borrowed_from(first)]] int& pick(int& first, int& second)`, and both
 declarations produce the same verified MIR. A region shared by several
-parameters, as in `choose` above, names all of them. `[[borrowed_from]]` still
+parameters, as in `choose` above, names all of them. A body may return a
+borrow of any subset of them; callers keep every named supplier borrowed.
+
+A reference parameter pack follows the same rule lane by lane. In
+`int&<a> relay<lifetime a, Args...>(Args&<a>... values)` every lane of
+`values` supplies the result, while in
+`int&<a> fixed<lifetime a, Args...>(int&<a> first, Args&... rest)` only
+`first` does: the unnamed lanes are not retained by the caller, and the body
+cannot return a borrow of them. Each named lane keeps its own entry authority
+in MIR, so mutating any named argument while the result is live is rejected,
+and the ordinary call-site rules reject a pack formed from overlapping
+mutable lanes. A borrowed result whose regions are elided still cannot take a
+reference pack, since the elided form would not name its suppliers.
+
+A pack may also be forwarded to a fixed-arity overload set,
+`return choose(values...);`. The symbolic declaration has no arity, so each
+concrete instance selects its exact overload from the expanded lanes
+(defaults fill omitted trailing parameters), and a constructor may forward
+its class's pack to a base constructor the same way. In a class matched by a
+callable pattern `R(Args...)`, a method `R invoke(Args... values)` whose
+instance makes `R` a reference or borrowing carrier states that every
+borrowing lane of `values` may supply its result.
+
+A type alias may name a reference only when the reference's region is one of
+the alias's own lifetime parameters, as in
+`using borrow<lifetime a> = Slots&<a>;`: each use, such as
+`borrow<a> access<lifetime a>(Slots&<a> input)`, still spells the borrow and
+its region. Every other reference alias remains `GTI-S2030`. `[[borrowed_from]]` still
 works and is slated for deprecation. Until the lifetime syntax covers them, it
 remains the spelling for a receiver-owned result (`[[borrowed_from(this)]]`),
-for overloaded operators, for one lane of a parameter pack, for protocol
+for overloaded operators, for one lane of a value parameter pack, for protocol
 operations and their conformances, for requirement results, and for carrier
 types that do not declare lifetime parameters.
 
@@ -566,8 +593,10 @@ relationships, elided identity, a borrowed record and a projected reference-regi
 pattern with inferred callers, typed copy/move inference, and a lambda with a
 checked fixed environment.
 The complete target is [RFC 0004](https://github.com/lang-gti-official/rfcs/blob/codex/proposal-lifetime-parameters/rfcs/0004-lifetime-parameters-and-elision.md).
-Implementation of all compositions is still in progress: recursive forwarded
-packs and public generic callable wrappers need further integration. Named regions alone do not admit dynamically managed
+Implementation of all compositions is still in progress: public generic
+callable wrappers whose result region is a callable pattern's region,
+callable-pattern lanes that are references to borrowed carriers, and
+reference packs that construct borrowed carriers need further integration. Named regions alone do not admit dynamically managed
 reference storage; its typed-storage obligations remain the dependent RFC 0003
 work.
 
