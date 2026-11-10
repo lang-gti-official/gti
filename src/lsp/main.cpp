@@ -1350,6 +1350,7 @@ SemanticClassification classificationForSymbol(const lang::SymbolRecord &symbol,
     type = Parameter;
     break;
   case lang::SymbolKind::TypeParameter:
+  case lang::SymbolKind::LifetimeParameter:
     type = TypeParameter;
     break;
   }
@@ -1647,6 +1648,7 @@ int completionItemKind(lang::CompletionCandidateKind kind) {
   case lang::CompletionCandidateKind::Struct:
     return 22;
   case lang::CompletionCandidateKind::TypeParameter:
+  case lang::CompletionCandidateKind::LifetimeParameter:
     return 25;
   }
   return 6;
@@ -4984,6 +4986,18 @@ private:
          static_cast<std::int64_t>(metrics.semanticMicroseconds)},
         {"semanticRegistrationMicroseconds",
          static_cast<std::int64_t>(metrics.semanticRegistrationMicroseconds)},
+        {"semanticPrivateLifetimeCandidates",
+         static_cast<std::int64_t>(metrics.semanticPrivateLifetimeCandidates)},
+        {"semanticPrivateLifetimeProbes",
+         static_cast<std::int64_t>(metrics.semanticPrivateLifetimeProbes)},
+        {"semanticPrivateLifetimeUpdates",
+         static_cast<std::int64_t>(metrics.semanticPrivateLifetimeUpdates)},
+        {"semanticPrivateLifetimeDependencyEdges",
+         static_cast<std::int64_t>(metrics.semanticPrivateLifetimeDependencyEdges)},
+        {"semanticPrivateLifetimeOpaqueProbes",
+         static_cast<std::int64_t>(metrics.semanticPrivateLifetimeOpaqueProbes)},
+        {"semanticPrivateLifetimeMicroseconds",
+         static_cast<std::int64_t>(metrics.semanticPrivateLifetimeMicroseconds)},
         {"semanticBodyMicroseconds",
          static_cast<std::int64_t>(metrics.semanticBodyMicroseconds)},
         {"semanticTrustedBodyMicroseconds",

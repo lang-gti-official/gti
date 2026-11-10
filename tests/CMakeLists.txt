@@ -3499,6 +3499,22 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/reference_parameter_packs_test.py"
             "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(reference_parameter_packs PROPERTIES TIMEOUT 300)
+  # RFC 0004 erasure gate: every example the reference compiler (built from
+  # the main commit a lifetime change is based on) compiles must produce
+  # byte-identical MIR here. Opt in by configuring the reference compiler.
+  set(GTI_MIR_REFERENCE_COMPILER "" CACHE FILEPATH
+      "Reference gti for the lifetime-erasure MIR identity gate")
+  set(GTI_MIR_REFERENCE_STDLIB "" CACHE PATH
+      "Standard library of the reference gti")
+  if(GTI_MIR_REFERENCE_COMPILER AND GTI_MIR_REFERENCE_STDLIB)
+    add_test(NAME mir_lifetime_erasure_identity
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/mir_lifetime_erasure_identity_test.py"
+              "${GTI_MIR_REFERENCE_COMPILER}" "${GTI_MIR_REFERENCE_STDLIB}"
+              "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}/stdlib"
+              "${PROJECT_SOURCE_DIR}/examples" --jobs 8)
+    set_tests_properties(mir_lifetime_erasure_identity PROPERTIES TIMEOUT 3600)
+  endif()
   add_test(
     NAME enum_pack_runtime
     COMMAND "${Python3_EXECUTABLE}"
