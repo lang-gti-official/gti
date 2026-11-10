@@ -181,6 +181,9 @@ bool conflictsWithLoan(const HirBody &body, const StatementTree &tree,
     const HirValue *value = body.findValue(id);
     if (value == nullptr)
       continue;
+    // An assignment names its target variable by symbol.
+    if (value->kind == HirValueKind::Assignment && value->symbol == root)
+      return true;
     if (loanAccess == AccessMode::Mutable) {
       if (value->kind == HirValueKind::Variable && value->symbol == root)
         return true;
