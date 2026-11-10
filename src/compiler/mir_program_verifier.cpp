@@ -16915,6 +16915,31 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
                   loan.additionalDependencies.end());
     return result;
   };
+  // Two reads of one keyed storage location name the same source, even when
+  // each read materializes its own place.
+  const auto samePlace = [&](MirPlaceId left, MirPlaceId right) {
+    if (left == right)
+      return true;
+    const MirPlace *a = body.findPlace(left);
+    const MirPlace *b = body.findPlace(right);
+    return a != nullptr && b != nullptr && a->key && b->key &&
+           *a->key == *b->key && a->root == b->root &&
+           a->binding == b->binding && a->symbol == b->symbol &&
+           a->projections == b->projections;
+  };
+  const auto sameDependencies =
+      [&](const std::vector<MirLoanDependency> &left,
+          const std::vector<MirLoanDependency> &right) {
+        return left.size() == right.size() &&
+               std::equal(left.begin(), left.end(), right.begin(),
+                          [&](const auto &a, const auto &b) {
+                            return samePlace(a.source, b.source) &&
+                                   a.parent == b.parent &&
+                                   a.designatedFields == b.designatedFields &&
+                                   a.access == b.access &&
+                                   a.conditions == b.conditions;
+                          });
+      };
   std::unordered_set<MirLoanId> proving;
   std::unordered_set<MirLoanId> proved;
   std::unordered_map<MirLoanId, MirBorrowDependencySet> provenFacts;
@@ -16948,7 +16973,7 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
         const auto &fact = flow.values[*producer.result - 1];
         valid = loan.kind == MirLoanKind::Stored && !loan.escapes &&
                 loan.producedBy == producer.hirValue && fact &&
-                loanDependencies(loan) == fact->dependencies;
+                sameDependencies(loanDependencies(loan), fact->dependencies);
         if (valid)
           evidence = fact;
       } else if (producer.kind == MirInstructionKind::CallInput &&
