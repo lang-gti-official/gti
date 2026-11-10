@@ -214,6 +214,9 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
   std::function<bool(const HirStatement &, const HirLoan &,
                      const std::vector<HirStatementId> &, MirDerivedLoanEnds &)>
       switchPlan;
+  std::function<void(const HirStatement &, const HirLoan &,
+                     const std::vector<HirStatementId> &, MirDerivedLoanEnds &)>
+      breakPlans;
   const StatementTree tree(body);
 
   std::unordered_map<SymbolId, HirBindingId> bindingOfSymbol;
@@ -290,6 +293,16 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
                         });
         if (payload)
           continue;
+        // A carrier initialized by moving another carrier takes the loan over;
+        // a transfer does not widen the loan's extent.
+        if (declared != declaringStatement.end())
+          if (const HirStatement *statement =
+                  body.findStatement(declared->second);
+              statement != nullptr && statement->value)
+            if (const HirValue *initializer = body.findValue(*statement->value);
+                initializer != nullptr &&
+                initializer->kind == HirValueKind::Move)
+              continue;
         if (declared == declaringStatement.end() ||
             !(tree.regionOf(declared->second) == tree.regionOf(*creation)))
           unconfined.insert(loan.semanticLoan);
@@ -367,113 +380,219 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
       return false;
     }
   };
-  const auto armList = [&](HirStatementId arm) {
-    const HirStatement *statement = body.findStatement(arm);
-    if (statement != nullptr && statement->kind == HirStatementKind::Block)
-      return statement->statements;
-    return std::vector<HirStatementId>{arm};
-  };
-  // A literal condition makes one arm unreachable: it needs no end point.
-  const auto constantCondition =
-      [&](const HirStatement &conditional) -> std::optional<bool> {
-    if (!conditional.condition)
-      return std::nullopt;
-    const HirValue *value = body.findValue(*conditional.condition);
-    if (value == nullptr || value->kind != HirValueKind::Literal ||
-        !value->literal)
-      return std::nullopt;
-    if (const auto *flag = std::get_if<bool>(&*value->literal))
-      return *flag;
-    return std::nullopt;
-  };
   struct Point {
     int kind; // 0 after, 1 then entry, 2 else entry
     HirStatementId statement;
   };
-  // End points inside an if statement's arms: after the last use in an arm
-  // that uses the loan (recursing into a nested if), at the entry of one that
-  // does not, none for an arm that cannot fall through after its last use.
-  std::function<bool(const HirStatement &, const HirLoan &,
-                     const std::vector<HirStatementId> &, std::vector<Point> &,
-                     bool &, bool &)>
+  // Every statement in a subtree, the root included.
+  std::function<void(HirStatementId, std::vector<HirStatementId> &)> subtree =
+      [&](HirStatementId id, std::vector<HirStatementId> &out) {
+        const HirStatement *statement = body.findStatement(id);
+        if (statement == nullptr)
+          return;
+        out.push_back(id);
+        for (const auto nested :
+             {statement->initializer, statement->body, statement->elseBranch})
+          if (nested)
+            subtree(*nested, out);
+        for (const HirStatementId nested : statement->statements)
+          subtree(nested, out);
+        for (const HirSwitchArm &arm : statement->switchArms)
+          for (const HirStatementId nested : arm.statements)
+            subtree(nested, out);
+      };
+  const auto conflictsIn = [&](HirStatementId root, const HirLoan &loan) {
+    std::vector<HirStatementId> statements;
+    subtree(root, statements);
+    std::vector<HirStatementId> conflicts;
+    for (const HirStatementId statement : statements)
+      if (conflictsWithLoan(body, tree, statement, loan.place.root,
+                            loan.access))
+        conflicts.push_back(statement);
+    return conflicts;
+  };
+  // The if statements whose nearest enclosing if-arm is `arm`, in order.
+  const auto nestedConditionals = [&](HirStatementId arm) {
+    std::vector<HirStatementId> statements;
+    subtree(arm, statements);
+    std::vector<HirStatementId> nested;
+    for (const HirStatementId statement : statements) {
+      const HirStatement *candidate = body.findStatement(statement);
+      // An `else if` arm is itself the nested conditional.
+      if (statement == arm) {
+        if (candidate != nullptr && candidate->kind == HirStatementKind::If)
+          nested.push_back(statement);
+        continue;
+      }
+      if (candidate == nullptr || candidate->kind != HirStatementKind::If)
+        continue;
+      bool direct = true;
+      for (HirStatementId cursor = tree.parentOf(statement);
+           cursor != 0 && cursor != arm; cursor = tree.parentOf(cursor)) {
+        const HirStatement *ancestor = body.findStatement(cursor);
+        if (ancestor != nullptr && ancestor->kind == HirStatementKind::If)
+          direct = false;
+      }
+      if (direct)
+        nested.push_back(statement);
+    }
+    std::sort(nested.begin(), nested.end(),
+              [&](HirStatementId left, HirStatementId right) {
+                return tree.orderOf(left) < tree.orderOf(right);
+              });
+    return nested;
+  };
+  // Loops and switches inside an arm need a general CFG proof.
+  const auto unsupportedFlow = [&](HirStatementId arm) {
+    std::vector<HirStatementId> statements;
+    subtree(arm, statements);
+    for (const HirStatementId statement : statements) {
+      const HirStatement *candidate = body.findStatement(statement);
+      if (candidate == nullptr)
+        continue;
+      switch (candidate->kind) {
+      case HirStatementKind::While:
+      case HirStatementKind::For:
+      case HirStatementKind::DoWhile:
+      case HirStatementKind::RangeFor:
+      case HirStatementKind::Switch:
+        return true;
+      default:
+        break;
+      }
+    }
+    return false;
+  };
+  std::function<bool(const HirStatement &, bool, const HirLoan &,
+                     const std::vector<HirStatementId> &, std::vector<Point> &)>
       armEndpoints;
-  armEndpoints = [&](const HirStatement &conditional, const HirLoan &loan,
-                     const std::vector<HirStatementId> &own,
-                     std::vector<Point> &points, bool &conflict,
-                     bool &fallsThrough) -> bool {
-    const std::optional<bool> constant = constantCondition(conditional);
-    for (int branch = 0; branch < 2; ++branch) {
-      if (constant && *constant == (branch == 1))
-        continue; // unreachable arm
-      const std::optional<HirStatementId> arm =
-          branch == 0 ? conditional.body : conditional.elseBranch;
-      const int entryKind = branch == 0 ? 1 : 2;
-      std::vector<HirStatementId> armUses;
-      if (arm)
-        for (const HirStatementId use : own)
-          if (within(use, *arm))
-            armUses.push_back(use);
-      const std::vector<HirStatementId> list =
-          arm ? armList(*arm) : std::vector<HirStatementId>{};
-      if (list.empty() || !cannotFallThrough(list.back()))
-        fallsThrough = true;
-      if (armUses.empty()) {
-        points.push_back({entryKind, conditional.id});
-        for (const HirStatementId statement : list)
-          if (conflictsWithLoan(body, tree, statement, loan.place.root,
-                                loan.access))
-            conflict = true;
-        continue;
-      }
-      std::optional<std::size_t> lastIndex;
-      for (const HirStatementId use : armUses) {
-        HirStatementId cursor = use;
-        while (cursor != 0 &&
-               std::find(list.begin(), list.end(), cursor) == list.end())
-          cursor = tree.parentOf(cursor);
-        const auto at = std::find(list.begin(), list.end(), cursor);
-        if (at == list.end())
-          return false;
-        const auto index = static_cast<std::size_t>(at - list.begin());
-        if (!lastIndex || index > *lastIndex)
-          lastIndex = index;
-      }
-      for (std::size_t index = *lastIndex + 1; index < list.size(); ++index)
-        if (conflictsWithLoan(body, tree, list[index], loan.place.root,
-                              loan.access))
-          conflict = true;
-      const HirStatement *last = body.findStatement(list[*lastIndex]);
-      if (last == nullptr)
-        return false;
-      if (last->kind == HirStatementKind::Variable ||
-          last->kind == HirStatementKind::Expression) {
-        points.push_back({0, last->id});
-        continue;
-      }
-      if (cannotFallThrough(last->id))
-        continue; // the arm leaves with the loan; its exit retires it
-      if (last->kind == HirStatementKind::If) {
-        bool nestedFallsThrough = false;
-        if (!armEndpoints(*last, loan, own, points, conflict,
-                          nestedFallsThrough))
-          return false;
-        continue;
-      }
+  std::function<bool(const HirStatement &, bool, const HirLoan &,
+                     const std::vector<HirStatementId> &, std::vector<Point> &)>
+      terminatingEndpoints = [&](const HirStatement &conditional,
+                                 bool thenBranch, const HirLoan &loan,
+                                 const std::vector<HirStatementId> &own,
+                                 std::vector<Point> &points) -> bool {
+    const std::optional<HirStatementId> arm =
+        thenBranch ? conditional.body : conditional.elseBranch;
+    if (!arm)
+      return true;
+    if (unsupportedFlow(*arm))
       return false;
+    if (cannotFallThrough(*arm)) {
+      if (conflictsIn(*arm, loan).empty())
+        return true;
+      return armEndpoints(conditional, thenBranch, loan, own, points);
+    }
+    for (const HirStatementId nested : nestedConditionals(*arm)) {
+      const HirStatement *inner = body.findStatement(nested);
+      if (inner == nullptr ||
+          !terminatingEndpoints(*inner, true, loan, own, points) ||
+          !terminatingEndpoints(*inner, false, loan, own, points))
+        return false;
     }
     return true;
   };
-  // The plan applies when a later access conflicts with the loan, or when the
-  // if cannot fall through.
+  armEndpoints = [&](const HirStatement &conditional, bool thenBranch,
+                     const HirLoan &loan,
+                     const std::vector<HirStatementId> &own,
+                     std::vector<Point> &points) -> bool {
+    const std::optional<HirStatementId> arm =
+        thenBranch ? conditional.body : conditional.elseBranch;
+    if (arm && unsupportedFlow(*arm))
+      return false;
+    if (arm && cannotFallThrough(*arm) && conflictsIn(*arm, loan).empty())
+      return true;
+    std::optional<HirStatementId> lastUse;
+    if (arm)
+      for (const HirStatementId use : own)
+        if (within(use, *arm) &&
+            (!lastUse || tree.orderOf(use) > tree.orderOf(*lastUse)))
+          lastUse = use;
+    if (!lastUse) {
+      points.push_back({thenBranch ? 1 : 2, conditional.id});
+      return true;
+    }
+    const auto nested = nestedConditionals(*arm);
+    std::optional<HirStatementId> lastUseConditional;
+    for (const HirStatementId candidate : nested)
+      if (within(*lastUse, candidate)) {
+        lastUseConditional = candidate;
+        break;
+      }
+    for (const HirStatementId candidate : nested) {
+      if (lastUseConditional
+              ? candidate == *lastUseConditional
+              : tree.orderOf(candidate) >= tree.orderOf(*lastUse))
+        break;
+      const HirStatement *inner = body.findStatement(candidate);
+      if (inner == nullptr ||
+          !terminatingEndpoints(*inner, true, loan, own, points) ||
+          !terminatingEndpoints(*inner, false, loan, own, points))
+        return false;
+    }
+    if (!lastUseConditional) {
+      const HirStatement *last = body.findStatement(*lastUse);
+      if (last == nullptr || (last->kind != HirStatementKind::Variable &&
+                              last->kind != HirStatementKind::Expression))
+        return false;
+      points.push_back({0, *lastUse});
+      return true;
+    }
+    if (conflictsIn(*lastUseConditional, loan).empty()) {
+      points.push_back({0, *lastUseConditional});
+      return true;
+    }
+    const HirStatement *inner = body.findStatement(*lastUseConditional);
+    return inner != nullptr && armEndpoints(*inner, true, loan, own, points) &&
+           armEndpoints(*inner, false, loan, own, points);
+  };
+  // The innermost if-arm statement containing `statement`, if any, below
+  // `top` (inclusive).
+  const auto innermostArm = [&](HirStatementId statement) -> HirStatementId {
+    for (HirStatementId cursor = statement; cursor != 0;) {
+      const HirStatementId parent = tree.parentOf(cursor);
+      const HirStatement *owner = body.findStatement(parent);
+      if (owner != nullptr && owner->kind == HirStatementKind::If &&
+          ((owner->body && *owner->body == cursor) ||
+           (owner->elseBranch && *owner->elseBranch == cursor)))
+        return cursor;
+      cursor = parent;
+    }
+    return 0;
+  };
+  // The plan applies when one of its end points precedes a conflict on the
+  // same path, or when the if cannot fall through.
   conditionalPlan = [&](const HirStatement &conditional, const HirLoan &loan,
                         const std::vector<HirStatementId> &own,
                         MirDerivedLoanEnds &ends) -> bool {
     std::vector<Point> points;
-    bool conflict = false;
-    bool fallsThrough = false;
-    if (!armEndpoints(conditional, loan, own, points, conflict, fallsThrough))
+    if (!armEndpoints(conditional, true, loan, own, points) ||
+        !armEndpoints(conditional, false, loan, own, points))
       return false;
-    if (!conflict && fallsThrough)
+    bool resolved = false;
+    for (const HirStatementId conflict : conflictsIn(conditional.id, loan)) {
+      for (const Point &point : points) {
+        if (point.kind != 0) {
+          const auto arm =
+              point.kind == 1 ? conditional.body : conditional.elseBranch;
+          const HirStatement *owner = body.findStatement(point.statement);
+          const auto entryArm =
+              owner == nullptr
+                  ? std::nullopt
+                  : (point.kind == 1 ? owner->body : owner->elseBranch);
+          (void)arm;
+          if (entryArm && within(conflict, *entryArm))
+            resolved = true;
+          continue;
+        }
+        const HirStatementId scope = innermostArm(point.statement);
+        if (point.statement != conflict &&
+            tree.orderOf(point.statement) < tree.orderOf(conflict) &&
+            (scope == 0 || within(conflict, scope)))
+          resolved = true;
+      }
+    }
+    if (!resolved && !cannotFallThrough(conditional.id))
       return false;
     for (const Point &point : points) {
       auto &target = point.kind == 0   ? ends.after[point.statement]
@@ -501,6 +620,149 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
     if (!hasDefault)
       ends.after[selection.id].push_back(loan.semanticLoan);
     return true;
+  };
+
+  struct ArmStep {
+    HirStatementId statement; // the if or switch
+    std::size_t arm;          // 0/1 for then/else, or the switch arm
+    bool operator==(const ArmStep &other) const {
+      return statement == other.statement && arm == other.arm;
+    }
+  };
+  // The structured arms between `top` (exclusive) and `statement`, outermost
+  // first.
+  const auto armPath = [&](HirStatementId statement, HirStatementId top) {
+    std::vector<ArmStep> path;
+    for (HirStatementId cursor = statement; cursor != 0 && cursor != top;) {
+      const HirStatementId parent = tree.parentOf(cursor);
+      if (const HirStatement *owner = body.findStatement(parent)) {
+        if (owner->kind == HirStatementKind::If) {
+          if (owner->body && *owner->body == cursor)
+            path.push_back({parent, 0});
+          else if (owner->elseBranch && *owner->elseBranch == cursor)
+            path.push_back({parent, 1});
+        } else if (owner->kind == HirStatementKind::Switch) {
+          for (std::size_t arm = 0; arm < owner->switchArms.size(); ++arm) {
+            const auto &list = owner->switchArms[arm].statements;
+            if (std::find(list.begin(), list.end(), cursor) != list.end())
+              path.push_back({parent, arm});
+          }
+        }
+      }
+      cursor = parent;
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
+  };
+  const auto isPrefix = [](const std::vector<ArmStep> &prefix,
+                           const std::vector<ArmStep> &path) {
+    return prefix.size() <= path.size() &&
+           std::equal(prefix.begin(), prefix.end(), path.begin());
+  };
+  // The statement list that directly holds `statement`.
+  const auto siblingsOf = [&](HirStatementId statement) {
+    const HirStatementId parent = tree.parentOf(statement);
+    if (parent == 0)
+      return body.roots;
+    const HirStatement *owner = body.findStatement(parent);
+    if (owner == nullptr)
+      return std::vector<HirStatementId>{};
+    for (const HirSwitchArm &arm : owner->switchArms)
+      if (std::find(arm.statements.begin(), arm.statements.end(), statement) !=
+          arm.statements.end())
+        return arm.statements;
+    return owner->statements;
+  };
+  // The loop or switch a break leaves.
+  const auto breakTarget = [&](HirStatementId statement) -> HirStatementId {
+    for (HirStatementId cursor = tree.parentOf(statement); cursor != 0;
+         cursor = tree.parentOf(cursor))
+      if (const HirStatement *owner = body.findStatement(cursor))
+        switch (owner->kind) {
+        case HirStatementKind::While:
+        case HirStatementKind::For:
+        case HirStatementKind::DoWhile:
+        case HirStatementKind::RangeFor:
+        case HirStatementKind::Switch:
+          return cursor;
+        default:
+          break;
+        }
+    return 0;
+  };
+  breakPlans = [&](const HirStatement &target, const HirLoan &loan,
+                   const std::vector<HirStatementId> &own,
+                   MirDerivedLoanEnds &ends) {
+    std::vector<HirStatementId> statements;
+    subtree(target.id, statements);
+    for (const HirStatementId conflict : statements) {
+      if (conflict == target.id ||
+          !conflictsWithLoan(body, tree, conflict, loan.place.root,
+                             loan.access))
+        continue;
+      const auto list = siblingsOf(conflict);
+      const auto at = std::find(list.begin(), list.end(), conflict);
+      if (at == list.end() || std::next(at) == list.end())
+        continue;
+      const HirStatement *next = body.findStatement(*std::next(at));
+      if (next == nullptr || next->kind != HirStatementKind::Break ||
+          breakTarget(next->id) != target.id)
+        continue;
+      const auto conflictPath = armPath(conflict, target.id);
+      std::optional<HirStatementId> lastUse;
+      bool valid = true;
+      for (const HirStatementId use : own) {
+        if (!within(use, target.id) && use != target.id)
+          continue;
+        if (tree.orderOf(use) >= tree.orderOf(next->id))
+          continue;
+        const auto usePath = armPath(use, target.id);
+        if (!isPrefix(usePath, conflictPath) &&
+            !isPrefix(conflictPath, usePath))
+          continue; // sibling paths never meet
+        if (usePath != conflictPath ||
+            tree.orderOf(use) >= tree.orderOf(conflict)) {
+          valid = false;
+          break;
+        }
+        if (!lastUse || tree.orderOf(use) > tree.orderOf(*lastUse))
+          lastUse = use;
+      }
+      if (!valid)
+        continue;
+      if (lastUse) {
+        const HirStatement *last = body.findStatement(*lastUse);
+        if (last == nullptr ||
+            std::find(list.begin(), list.end(), *lastUse) == list.end() ||
+            (last->kind != HirStatementKind::Variable &&
+             last->kind != HirStatementKind::Expression))
+          continue;
+        ends.after[*lastUse].push_back(loan.semanticLoan);
+        continue;
+      }
+      if (conflictPath.empty())
+        continue;
+      // The innermost conditional arm, else the innermost switch arm.
+      std::optional<ArmStep> entry;
+      for (auto step = conflictPath.rbegin(); step != conflictPath.rend();
+           ++step)
+        if (const HirStatement *owner = body.findStatement(step->statement);
+            owner != nullptr && owner->kind == HirStatementKind::If) {
+          entry = *step;
+          break;
+        }
+      if (!entry)
+        entry = conflictPath.back();
+      const HirStatement *owner = body.findStatement(entry->statement);
+      if (owner == nullptr)
+        continue;
+      if (owner->kind == HirStatementKind::If)
+        (entry->arm == 0 ? ends.thenEntry : ends.elseEntry)[owner->id]
+            .push_back(loan.semanticLoan);
+      else
+        ends.switchArmEntry[{owner->id, entry->arm}].push_back(
+            loan.semanticLoan);
+    }
   };
 
   for (const HirLoan &loan : body.loans) {
@@ -547,46 +809,15 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
     }
     result.after[end].push_back(loan.semanticLoan);
 
-    // A loop body that ends `...; conflict; break;` never reaches its
-    // backedge after the conflict, so the loan also ends after its last use
-    // before that conflict on this path.
-    const bool loop = ending->kind == HirStatementKind::While ||
-                      ending->kind == HirStatementKind::For ||
-                      ending->kind == HirStatementKind::DoWhile;
-    const HirStatement *loopBody =
-        loop && ending->body ? body.findStatement(*ending->body) : nullptr;
-    if (loopBody == nullptr || loopBody->kind != HirStatementKind::Block)
+    // A path that reaches `conflict; break;` out of this loop or switch never
+    // returns to a later use, so the loan also ends on that path: after its
+    // last use before the conflict, or at the entry of the arm that holds it.
+    if (ending->kind != HirStatementKind::While &&
+        ending->kind != HirStatementKind::For &&
+        ending->kind != HirStatementKind::DoWhile &&
+        ending->kind != HirStatementKind::Switch)
       continue;
-    const auto &list = loopBody->statements;
-    for (std::size_t index = 0; index + 1 < list.size(); ++index) {
-      const HirStatement *next = body.findStatement(list[index + 1]);
-      if (next == nullptr || next->kind != HirStatementKind::Break ||
-          !conflictsWithLoan(body, tree, list[index], loan.place.root,
-                             loan.access))
-        continue;
-      std::optional<std::size_t> lastBefore;
-      bool usedAtOrAfterConflict = false;
-      for (const HirStatementId use : own) {
-        HirStatementId cursor = use;
-        while (cursor != 0 && tree.parentOf(cursor) != loopBody->id)
-          cursor = tree.parentOf(cursor);
-        const auto position = std::find(list.begin(), list.end(), cursor);
-        if (position == list.end())
-          continue;
-        const auto at = static_cast<std::size_t>(position - list.begin());
-        if (at >= index)
-          usedAtOrAfterConflict = true;
-        else if (!lastBefore || at > *lastBefore)
-          lastBefore = at;
-      }
-      if (usedAtOrAfterConflict || !lastBefore)
-        break;
-      const HirStatement *last = body.findStatement(list[*lastBefore]);
-      if (last != nullptr && (last->kind == HirStatementKind::Variable ||
-                              last->kind == HirStatementKind::Expression))
-        result.after[list[*lastBefore]].push_back(loan.semanticLoan);
-      break;
-    }
+    breakPlans(*ending, loan, own, result);
   }
   // A consumed switch subject hands its borrowed dependency to the arm's
   // transferred payload references: that dependency ends at the arm's entry.
@@ -639,6 +870,15 @@ MirLoanEndAgreement compareLoanEnds(const HirBody &body,
                                     const MirDerivedLoanEnds &derived,
                                     bool report) {
   MirLoanEndAgreement agreement;
+  if (report && std::getenv("GTI_TMP_LOAN_TREE"))
+    for (const HirStatement &st : body.statements) {
+      std::cerr << "stmt " << st.id << " kind=" << static_cast<int>(st.kind)
+                << " body=" << st.body.value_or(0)
+                << " else=" << st.elseBranch.value_or(0) << " list=";
+      for (auto c : st.statements)
+        std::cerr << c << ',';
+      std::cerr << "\n";
+    }
   const auto contains = [](const std::vector<SemanticLoanId> &loans,
                            SemanticLoanId loan) {
     return std::find(loans.begin(), loans.end(), loan) != loans.end();
