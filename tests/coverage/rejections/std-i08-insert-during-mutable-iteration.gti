@@ -5,8 +5,8 @@ int main() {
   mut std::map<int, int> table{};
   [[discard]] table.insert(1, 10);
   for (mut auto& entry : table) {
-    entry.second += 1;
-    [[discard]] table.insert(entry.first + 100, 0);
+    entry.mapped() += 1;
+    [[discard]] table.insert(entry.key() + 100, 0);
   }
   return 0;
 }
