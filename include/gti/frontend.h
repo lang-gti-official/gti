@@ -164,6 +164,10 @@ struct FrontendResult {
   bool hirValid = false;
   bool failureMetadataValid = false;
   bool mirValid = false;
+  // The MIR borrow checker rejected the program. Its diagnostics are
+  // source-language (Semantics-phase) errors, so semanticValid is false too;
+  // this records that the rejection came from MIR rather than semantics.
+  bool mirBorrowRejected = false;
   // Files consulted while discovering fixes, including negative candidates.
   // Editors must invalidate suggestions when any of these inputs changes.
   std::vector<std::filesystem::path> includeSuggestionInputs;

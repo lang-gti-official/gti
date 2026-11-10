@@ -1381,6 +1381,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       if (!complete.valid()) {
         MirBorrowCheck check =
             mirBorrowDiagnostics(complete, complete.program, checked);
+        const bool borrowRejection = !check.diagnostics.empty();
         // A body only this check lowers must not hide an internal failure.
         if (check.internal && check.diagnostics.empty())
           check.diagnostics.push_back(makeDiagnostic(
@@ -1394,6 +1395,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                            : complete.errors.front().message) +
                   "."));
         if (!check.diagnostics.empty()) {
+          if (borrowRejection) {
+            result.semanticValid = false;
+            result.mirBorrowRejected = true;
+          }
           for (Diagnostic &diagnostic : check.diagnostics)
             result.diagnostics.push_back(std::move(diagnostic));
           // A borrow rejection is a semantic error of the program, as it is
@@ -1458,6 +1463,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     if (MirBorrowCheck check =
             mirBorrowDiagnostics(mir, result.mir, result.hir);
         !check.diagnostics.empty() && !check.internal) {
+      result.semanticValid = false;
+      result.mirBorrowRejected = true;
       for (Diagnostic &diagnostic : check.diagnostics)
         result.diagnostics.push_back(std::move(diagnostic));
       result.semanticValid = false;

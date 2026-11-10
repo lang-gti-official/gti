@@ -3562,7 +3562,8 @@ private:
     // are exactly those of complete lowering. See "Current Limits" in
     // docs/architecture/lsp.md.
     if (!frontend.cancelled && frontend.sourceValid && frontend.syntaxValid &&
-        frontend.semanticValid && frontend.hirValid &&
+        (frontend.semanticValid || frontend.mirBorrowRejected) &&
+        frontend.hirValid &&
         frontend.failureMetadataValid && !frontend.mirValid &&
         result.workMetrics.hirOmittedInstanceBodies != 0 &&
         (request.cancellation == nullptr ||
