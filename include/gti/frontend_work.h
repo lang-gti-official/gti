@@ -77,6 +77,10 @@ struct FrontendWorkMetrics {
   // Instance bodies HIR omitted as library-only; see
   // FrontendOptions::lowerLibraryOnlyInstanceBodies.
   std::size_t hirOmittedInstanceBodies = 0;
+  // The MIR stage: failure metadata, MIR lowering and verification, and
+  // whatever body-local checking MIR performs. Zero when analysis stopped
+  // before MIR.
+  std::size_t mirMicroseconds = 0;
   std::size_t semanticBorrowSummaryCandidateInspections = 0;
   std::size_t semanticBorrowSummaryFunctions = 0;
   std::size_t constexprMirExecutions = 0;
@@ -133,6 +137,7 @@ struct FrontendWorkMetrics {
     semanticEffectQueryReuses = 0;
     semanticEffectQueryRecords = 0;
     hirOmittedInstanceBodies = 0;
+    mirMicroseconds = 0;
     semanticBorrowSummaryCandidateInspections = 0;
     semanticBorrowSummaryFunctions = 0;
     constexprMirExecutions = 0;

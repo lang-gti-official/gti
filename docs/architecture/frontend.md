@@ -537,10 +537,13 @@ leaves it on.
 
 `FrontendOptions::stopAfter` selects the last phase the pipeline runs:
 `Semantics`, `Hir`, or the default `Mir`. Completion returns after semantic
-context capture. Ordinary editor snapshots request `Hir` so concrete generic
-instance reanalysis publishes the same source-level diagnostics as `gti
-check`, but the LSP does not query HIR directly and never builds MIR. Skipped
-phases keep their validity flags false, so code generation stays disabled. The
+context capture. Ordinary editor snapshots request `Mir`, scoped to the open
+file by `lowerEntryUnitOnly`, so concrete generic instance reanalysis and
+MIR's body-local borrow and lifetime checking publish the same source-level
+diagnostics as `gti check`; the LSP reads none of HIR, failure metadata or MIR
+and releases them after taking their diagnostics (see
+[lsp.md](lsp.md)). Skipped phases keep their validity flags false, so code
+generation stays disabled. The
 semantic model is moved out of the analyzer once its last reader (HIR instance
 reanalysis) has finished rather than deep-copied.
 

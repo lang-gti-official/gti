@@ -6603,6 +6603,13 @@ if(Python3_Interpreter_FOUND AND TARGET gti_lsp)
   set_tests_properties(scalar_temporary_borrow_lsp PROPERTIES TIMEOUT 90)
 endif()
 
+if(Python3_Interpreter_FOUND AND TARGET gti_lsp)
+  add_test(NAME editor_mir_diagnostics_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/editor_mir_diagnostics_lsp_test.py"
+            "$<TARGET_FILE:gti_lsp>" "$<TARGET_FILE:gti>")
+  set_tests_properties(editor_mir_diagnostics_lsp PROPERTIES TIMEOUT 120)
+endif()
+
 add_executable(gti_reference_parameter_pack_mir_tests reference_parameter_pack_mir_tests.cpp)
 target_link_libraries(gti_reference_parameter_pack_mir_tests PRIVATE gti_compiler)
 add_test(NAME reference_parameter_pack_mir COMMAND gti_reference_parameter_pack_mir_tests)

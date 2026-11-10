@@ -27,6 +27,27 @@
 namespace lang {
 namespace {
 
+// Adds the MIR stage's elapsed time to the caller's work metrics when the
+// stage returns, whichever of its exits it takes.
+class MirStageTimer {
+public:
+  explicit MirStageTimer(FrontendWorkMetrics *metrics)
+      : metrics(metrics), start(std::chrono::steady_clock::now()) {}
+  MirStageTimer(const MirStageTimer &) = delete;
+  MirStageTimer &operator=(const MirStageTimer &) = delete;
+  ~MirStageTimer() {
+    if (metrics != nullptr)
+      metrics->mirMicroseconds += static_cast<std::size_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - start)
+              .count());
+  }
+
+private:
+  FrontendWorkMetrics *metrics;
+  std::chrono::steady_clock::time_point start;
+};
+
 bool isRawAuditDiagnostic(const Diagnostic &diagnostic) {
   return diagnostic.code == "GTI-S2101" || diagnostic.code == "GTI-S2102" ||
          diagnostic.code == "GTI-S2103";
@@ -834,7 +855,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
         if (result.sourceGraph.isCompilerTrusted(unit.id))
           scope.trustedSources.push_back(unit.path.string());
-      if (!options.lowerLibraryOnlyInstanceBodies) {
+      // MIR has no signature-only instance form yet: every function,
+      // constructor and destructor instance HIR hands it must carry its
+      // lowered body. Omission therefore applies only to analysis that stops
+      // at HIR; see FrontendOptions::lowerLibraryOnlyInstanceBodies.
+      if (!options.lowerLibraryOnlyInstanceBodies &&
+          options.stopAfter == FrontendPhase::Hir) {
         scope.omitLibraryOnlyBodies = true;
         for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
           if (result.sourceGraph.isCompilerTrusted(unit.id))
@@ -931,12 +957,21 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     applyAuditPolicy();
     return result;
   }
+  // A superseded editor snapshot stops before MIR instead of lowering bodies
+  // whose diagnostics would be discarded. HIR's completed instance analyses
+  // were published above and remain valid for later snapshots.
+  if (options.cancellation != nullptr &&
+      options.cancellation->load(std::memory_order_relaxed)) {
+    result.cancelled = true;
+    return result;
+  }
   // Executable lowering needs only what the program roots reach. Lowering the
   // complete program above has already reported every diagnostic.
   if (hir.reachable && !options.retainApplicationBodies) {
     result.hir = std::move(*hir.reachable);
   }
 
+  const MirStageTimer mirStageTimer(options.workMetrics);
   FailureMetadataBuildResult failureMetadata = [&] {
     const PhaseTimeScope timeScope("gti-failure-metadata");
     return FailureMetadataBuilder().build(result.sourceGraph, result.sources,
