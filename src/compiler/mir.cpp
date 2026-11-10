@@ -1581,6 +1581,7 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
   };
   const std::size_t common =
       std::min(protectedPrefix(left), protectedPrefix(right));
+
   for (std::size_t index = 0; index < common; ++index) {
     const MirPlaceProjection &lhs = left.projections[index];
     const MirPlaceProjection &rhs = right.projections[index];
@@ -1598,6 +1599,16 @@ canonicalPlace(const MirBody &body, MirPlaceId placeId,
     if (lhs.kind != rhs.kind) {
       return true;
     }
+  }
+  // Two payload fields of one selected alternative are disjoint storage,
+  // like two fields of a struct. Different alternatives stay conservative.
+  if (!left.payloadSelections.empty() && !right.payloadSelections.empty()) {
+    const MirCanonicalPayloadSelection &lhs = left.payloadSelections.front();
+    const MirCanonicalPayloadSelection &rhs = right.payloadSelections.front();
+    if (lhs.projectionOffset == rhs.projectionOffset &&
+        lhs.projectionOffset == common && lhs.type == rhs.type &&
+        lhs.variant == rhs.variant && lhs.field != rhs.field)
+      return false;
   }
   return true;
 }
@@ -3660,6 +3671,9 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       }
       return requireStoredDependency(loan, context, instruction);
     };
+    // Loans a payload extraction's sibling fields selected (see the operand
+    // check below); disjoint from the field this extraction reads.
+    std::unordered_set<MirLoanId> siblingPayloadLoans;
     const auto checkCanonicalPlace =
         [&](MirPlaceId placeId, const MirCanonicalPlace &place, bool write,
             const char *context, MirInstructionId instruction = 0,
@@ -3948,6 +3962,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         const MirLoanFlowState loanState = active[loan.id - 1];
         if (loanState == MirLoanFlowState::Inactive ||
             isParkedLoan(loanState) || loan.id == exemptLoan ||
+            siblingPayloadLoans.contains(loan.id) ||
             loan.id == place.throughLoan ||
             (place.throughLoan != 0 &&
              isLoanAncestor(body, loan.id, place.throughLoan)) ||
@@ -5166,6 +5181,33 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         const bool selectedOrigin =
             instruction.borrowOrigin == BorrowOriginKind::Argument &&
             instruction.borrowArgument == operandIndex;
+        // A payload extraction reads only its selected field: a loan that
+        // another payload field of the same alternative selected is disjoint.
+        siblingPayloadLoans.clear();
+        if (instruction.kind == MirInstructionKind::Compute &&
+            instruction.operation == MirOperation::PayloadExtract &&
+            instruction.enumVariant && instruction.payloadIndex &&
+            operand.place != 0) {
+          for (const MirLoan &loan : body.loans) {
+            if (!loan.referenceSelection)
+              continue;
+            const MirValue *selected =
+                body.findValue(loan.referenceSelection->value);
+            const MirBlock *defining =
+                selected ? body.findBlock(selected->definitionBlock) : nullptr;
+            if (defining == nullptr)
+              continue;
+            for (const MirInstruction &producer : defining->instructions)
+              if (producer.id == selected->definition &&
+                  producer.kind == MirInstructionKind::Compute &&
+                  producer.operation == MirOperation::PayloadExtract &&
+                  producer.enumVariant == instruction.enumVariant &&
+                  producer.payloadIndex && producer.operands.size() == 1 &&
+                  producer.operands.front().place == operand.place &&
+                  *producer.payloadIndex != *instruction.payloadIndex)
+                siblingPayloadLoans.insert(loan.id);
+          }
+        }
         if (!permitsSuspendedSharedOrigin(operand, selectedOrigin) &&
             !permitsSuspendedReferenceAddress(operand)) {
           if (auto invalid = checkOperand(operand, "an instruction operand",
@@ -5173,6 +5215,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
             return *invalid;
           }
         }
+        siblingPayloadLoans.clear();
       }
       std::vector<std::pair<MirCanonicalPlace, AccessMode>> parallelAccesses;
       for (const auto &task : instruction.scopedThreadTasks) {
