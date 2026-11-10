@@ -89,9 +89,10 @@ def main() -> None:
         environments[name] = env
         executable = directory / 'workload'
         binaries[name] = executable
-        base = [str(compiler), str(fixture), '-O2', '--std', 'c++23', '--cxx', args.cxx]
-        commands[name + '-full'] = base + ['--keep-cpp', '-o', str(executable)]
-        commands[name + '-emit'] = base + ['--emit-cpp', '-o', str(directory / 'emitted.cpp')]
+        # The shipped LLVM backend builds; `emit` stops at verified MIR.
+        base = [str(compiler), str(fixture), '-O2', '--cxx', args.cxx]
+        commands[name + '-full'] = base + ['-o', str(executable)]
+        commands[name + '-emit'] = base + ['--emit-mir', '-o', str(directory / 'emitted.mir')]
         report['variants'][name] = {
             'compiler': benchmark.file_evidence(compiler), 'compiler_build': identity,
             'runtime': benchmark.file_evidence(runtime),
@@ -124,8 +125,9 @@ def main() -> None:
                name + '-prepare', name)
         report['variants'][name]['provenance'] = json.loads(
             (output / name / 'build.json').read_text())
-        report['variants'][name]['emitted_cpp'] = benchmark.file_evidence(
-            binaries[name].with_suffix('.gti.cpp'))
+        invoke(commands[name + '-emit'], name + '-prepare-mir', name)
+        report['variants'][name]['emitted_mir'] = benchmark.file_evidence(
+            output / name / 'emitted.mir')
         report['variants'][name]['executable'] = benchmark.file_evidence(binaries[name])
         save()
         print(name + ' prepared', flush=True)

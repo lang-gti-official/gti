@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Measure clean GTI/C++ compilation, not runtime or cache-hit latency.
 
+GTI builds use the shipped LLVM backend: `full` is a complete build and
+`emit` stops at the verified-MIR serialization, so their difference is the
+LLVM code generation and link cost. The C++ variants are the hand-written
+reference programs compiled directly by the native compiler.
+
 Reuses the runtime harness's source, tool, and native-provenance validation.
 Timing bands are descriptive only: never use wall time as a shared CI gate.
 """
@@ -54,7 +59,7 @@ def main() -> int:
     if args.baseline_gti:
         compilers['baseline-gti'] = benchmark.resolved_tool(args.baseline_gti, ('--version',))
     cxx = benchmark.resolved_tool(args.cxx, ('--version',))
-    report = {'schema': 1, 'scope': 'clean builds; warm filesystem; no compiler cache',
+    report = {'schema': 2, 'backend': 'llvm', 'scope': 'clean builds; warm filesystem; no compiler cache',
               'seed': 1001, 'runs': args.runs, 'warmup': args.warmup,
               'comparison_band': {'cpp_multiplier': 2, 'fixed_allowance_ms': 250,
                                   'status': 'provisional; not a CI timing gate'},
@@ -76,23 +81,21 @@ def main() -> int:
             for name, compiler in compilers.items():
                 executable = directory / name
                 base = [str(compiler.resolved), str(gti_source), '-O' + level,
-                        '--std', 'c++23', '--cxx', str(cxx.command_path)]
+                        '--cxx', str(cxx.command_path)]
                 profile = variants['gti'].execution_profile
                 if profile:
                     base += ['--execution-profile', profile]
                 sidecar = directory / (name + '.build.json')
-                invoke(base + ['--keep-cpp', '--build-report', str(sidecar), '-o', str(executable)],
+                invoke(base + ['--build-report', str(sidecar), '-o', str(executable)],
                        directory, name + '-prepare')
                 provenance[name] = benchmark.load_build_provenance(
                     sidecar, compiler, cxx, gti_source, benchmark.REPOSITORY_ROOT)
-                generated = executable.with_suffix('.gti.cpp')
-                artifacts[name] = benchmark.file_evidence(generated)
-                commands[name + '-full'] = base + ['--keep-cpp', '-o', str(executable)]
-                commands[name + '-emit'] = base + ['--emit-cpp', '-o', str(directory / (name + '-emit.cpp'))]
-                commands[name + '-native'] = benchmark.fixed_native_rebuild_command(
-                    provenance[name]['build']['native']['argv'], generated, executable,
-                    directory / (name + '-native'), directory / (name + '.d'),
-                    'c++23', level, level, benchmark.REPOSITORY_ROOT)
+                emitted = directory / (name + '.mir')
+                invoke(base + ['--emit-mir', '-o', str(emitted)], directory, name + '-prepare-mir')
+                artifacts[name] = benchmark.file_evidence(emitted)
+                commands[name + '-full'] = base + ['-o', str(executable)]
+                commands[name + '-emit'] = base + ['--emit-mir', '-o',
+                                                   str(directory / (name + '-emit.mir'))]
             for name in ('cpp-idiomatic', 'cpp-semantic'):
                 if name in variants:
                     commands[name] = [str(cxx.command_path), '-O' + level, '-std=c++23',
@@ -108,7 +111,7 @@ def main() -> int:
                 for name in batch:
                     measurement = invoke(commands[name], directory, f'{iteration}-{name}')
                     (warmups if iteration < args.warmup else samples)[name].append(measurement)
-            # Compare complete generated code when measuring an internal-only change.
+            # Compare the complete verified MIR when measuring an internal-only change.
             emitted_equal = (None if 'baseline-gti' not in compilers else
                              artifacts['gti']['sha256'] == artifacts['baseline-gti']['sha256'])
             # Large runtime loops at O0 are deliberately not part of this compile-time run.
@@ -121,7 +124,7 @@ def main() -> int:
             medians = {k: statistics.median(x['duration_ns'] for x in v) / 1e6 for k, v in samples.items()}
             row = {'workload': workload.name, 'optimization': level, 'samples': samples,
                    'warmups': warmups, 'order': order, 'median_ms': medians,
-                   'provenance': provenance, 'emitted_cpp': artifacts,
+                   'provenance': provenance, 'emitted_mir': artifacts,
                    'baseline_emission_identical': emitted_equal, 'runtime_outputs': outputs,
                    'sources': {k: {**benchmark.file_evidence(v.source),
                                    'lines': len(v.source.read_text().splitlines())}
