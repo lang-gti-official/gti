@@ -7,6 +7,12 @@ analysis reaches the MIR stage (frontend trace), that a valid program using
 standard-library instances of a user type publishes nothing (no internal MIR
 error), and that a body-local borrow rejection is published with the same
 code, primary location and related locations as a direct compilation.
+
+Library-only instance bodies are omitted and MIR checks their callers against
+signature-only declarations. A MIR rejection of that analysis is confirmed by
+analysing again with those bodies, so the published diagnostics stay those of
+complete lowering: a program MIR verifies only with the bodies publishes
+nothing, and a borrow rejection through library calls matches the compiler.
 """
 
 import json
@@ -37,6 +43,29 @@ int main() {
   items.push_back(Item(1, std::string("one")));
   items.push_back(Item(2, std::string("two")));
   return total(items) == 3 ? 0 : 1;
+}
+"""
+
+# MIR verifies this temporary argument against its lowered callee only, so
+# the signature-only analysis is rejected and the editor analyses again.
+FALLBACK = """import std.format;
+import std.string;
+int main() {
+  auto message = std::runtime_format("a={}", uint64_t(1));
+  std::println(message);
+  return 0;
+}
+"""
+
+# A borrow conflict through standard-library calls.
+LIBRARY_CONFLICT = """import std.vector;
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(1);
+  mut int& first = values[0];
+  values.push_back(2);
+  first = 3;
+  return 0;
 }
 """
 
@@ -136,6 +165,23 @@ def main():
             record = analysis_record(1)
             assert record["mirMicroseconds"] > 0, record
             assert record["hirFunctionInstances"] > 0, record
+            # Library-only bodies are omitted and the signature-only analysis
+            # is published as is.
+            assert record["hirOmittedInstanceBodies"] > 0, record
+            assert record["mirSignatureOnlyFallback"] is False, record
+
+            # MIR rejects the signature-only analysis; analysing again with
+            # library-only bodies publishes the complete result: nothing.
+            assert publish(FALLBACK) == []
+            assert analysis_record(2)["mirSignatureOnlyFallback"] is True
+
+            # A borrow rejection through library calls is published exactly
+            # as the compiler reports it.
+            path.write_text(LIBRARY_CONFLICT)
+            expected = compiler_diagnostics(compiler, path, root)
+            assert expected, "the compiler must reject the library conflict"
+            published = publish(LIBRARY_CONFLICT)
+            assert editor_diagnostics(published) == expected, (published, expected)
 
             # A body-local borrow rejection: the editor publishes exactly the
             # compiler's code, primary position and related positions.
@@ -155,7 +201,7 @@ def main():
             repaired = CONFLICT.replace("keep(parent); keep(child);",
                                         "keep(child); keep(parent);")
             assert publish(repaired) == []
-            assert analysis_record(3)["mirMicroseconds"] > 0
+            assert analysis_record(5)["mirMicroseconds"] > 0
         finally:
             session.close()
 

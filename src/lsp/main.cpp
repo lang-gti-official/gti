@@ -1876,6 +1876,9 @@ struct DocumentAnalysis {
   lang::FrontendWorkMetrics workMetrics;
   std::optional<lang::FrontendOptions> includeSuggestionOptions;
   std::uint64_t frontendElapsedMicroseconds = 0;
+  // The signature-only analysis was rejected by MIR and the published result
+  // comes from analysing again with library-only bodies.
+  bool mirSignatureOnlyFallback = false;
   std::unordered_map<std::string, lang::lsp::FrontendSourceIdentity>
       sourceIdentities;
 };
@@ -3500,10 +3503,10 @@ private:
     // The editor does not need the bodies of library-only instances (trusted
     // declarations with only trusted arguments): their callers depend only
     // on signature contracts, and their own bodies are the library's
-    // `gti check` concern. The frontend honours this only once MIR can take
-    // such an instance as a signature-only declaration; until then, analysis
-    // through MIR lowers and checks them. See
-    // FrontendOptions::lowerLibraryOnlyInstanceBodies.
+    // `gti check` concern. HIR omits those bodies and MIR lowers each such
+    // instance as a signature-only declaration. See
+    // FrontendOptions::lowerLibraryOnlyInstanceBodies and the MIR rejection
+    // fallback below.
     frontendOptions.lowerLibraryOnlyInstanceBodies = false;
     // Likewise, standard-library bodies nothing in the open file reaches are
     // not analysed; their diagnostics are that library's `gti check` concern.
@@ -3540,11 +3543,32 @@ private:
       return result;
     }
     const SteadyClock::time_point frontendStart = SteadyClock::now();
-    lang::FrontendResult frontend =
-        lang::Frontend(frontendOptions)
-            .analyze(*filePath, source, {standardLibrary.prelude},
-                     request.sourceOverrides, {standardLibrary.root},
-                     project.packageSourceRoots);
+    const auto analyze = [&] {
+      return lang::Frontend(frontendOptions)
+          .analyze(*filePath, source, {standardLibrary.prelude},
+                   request.sourceOverrides, {standardLibrary.root},
+                   project.packageSourceRoots);
+    };
+    lang::FrontendResult frontend = analyze();
+    // MIR still verifies some calls and its interprocedural summaries
+    // (defined-failure effects, persistent-storage access, text relays) only
+    // against lowered callee bodies, so a signature-only declaration can be
+    // rejected where its body would verify; it is never accepted where its
+    // body would be rejected. A valid program is therefore published from
+    // the signature-only analysis, and a MIR rejection is confirmed by
+    // analysing again with library-only bodies: the published diagnostics
+    // are exactly those of complete lowering. See "Current Limits" in
+    // docs/architecture/lsp.md.
+    if (!frontend.cancelled && frontend.sourceValid && frontend.syntaxValid &&
+        frontend.semanticValid && frontend.hirValid &&
+        frontend.failureMetadataValid && !frontend.mirValid &&
+        result.workMetrics.hirOmittedInstanceBodies != 0 &&
+        (request.cancellation == nullptr ||
+         !request.cancellation->load(std::memory_order_relaxed))) {
+      result.mirSignatureOnlyFallback = true;
+      frontendOptions.lowerLibraryOnlyInstanceBodies = true;
+      frontend = analyze();
+    }
     result.frontendElapsedMicroseconds = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             SteadyClock::now() - frontendStart)
@@ -4193,7 +4217,8 @@ private:
               guarded.analysis->frontendElapsedMicroseconds,
               guarded.analysis->workMetrics, retained,
               guarded.analysis->frontend != nullptr &&
-                  guarded.analysis->frontend->includeSuggestionsRequested);
+                  guarded.analysis->frontend->includeSuggestionsRequested,
+              {}, guarded.analysis->mirSignatureOnlyFallback);
         }
         try {
           // Retain only the shared immutable frontend and small publication
@@ -4962,8 +4987,8 @@ private:
       std::uint64_t elapsedMicroseconds,
       const lang::FrontendWorkMetrics &metrics,
       std::optional<std::size_t> retainedFrontends = std::nullopt,
-      bool includeSuggestionsRequested = false,
-      std::string_view requestId = {}) const {
+      bool includeSuggestionsRequested = false, std::string_view requestId = {},
+      bool mirSignatureOnlyFallback = false) const {
     if (!frontendTracePath) {
       return;
     }
@@ -5013,6 +5038,7 @@ private:
          static_cast<std::int64_t>(metrics.semanticLateDemandBodies)},
         {"hirOmittedInstanceBodies",
          static_cast<std::int64_t>(metrics.hirOmittedInstanceBodies)},
+        {"mirSignatureOnlyFallback", mirSignatureOnlyFallback},
         {"semanticLateDemandMicroseconds",
          static_cast<std::int64_t>(metrics.semanticLateDemandMicroseconds)},
         {"hirMicroseconds", static_cast<std::int64_t>(metrics.hirMicroseconds)},

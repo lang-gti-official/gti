@@ -979,12 +979,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
         if (result.sourceGraph.isCompilerTrusted(unit.id))
           scope.trustedSources.push_back(unit.path.string());
-      // MIR has no signature-only instance form yet: every function,
-      // constructor and destructor instance HIR hands it must carry its
-      // lowered body. Omission therefore applies only to analysis that stops
-      // at HIR; see FrontendOptions::lowerLibraryOnlyInstanceBodies.
-      if (!options.lowerLibraryOnlyInstanceBodies &&
-          options.stopAfter == FrontendPhase::Hir) {
+      // MIR lowers an omitted instance as a signature-only declaration, so
+      // omission applies to analysis through HIR and through MIR alike; see
+      // FrontendOptions::lowerLibraryOnlyInstanceBodies.
+      if (!options.lowerLibraryOnlyInstanceBodies) {
         scope.omitLibraryOnlyBodies = true;
         for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
           if (result.sourceGraph.isCompilerTrusted(unit.id))
