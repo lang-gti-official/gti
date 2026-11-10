@@ -1,6 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
 #include <cstdlib>
+#include <iostream>
 
 #include <stdexcept>
 
@@ -4726,10 +4727,27 @@ auto SemanticVisitor::Impl::collectStoredReferencePaths(
     const GenericSubstitution substitution = classSubstitution(current);
     std::vector<StoredReferencePath> paths;
     bool invalid = false;
+    // A base subobject's stored references are the derived object's own:
+    // its field declarations name the declaring base, and every inherited
+    // field is a member of the derived class under that declaration's
+    // symbol. Base paths precede the derived class's own fields, matching
+    // construction order.
     for (const ClassBaseTypeInfo &base : owner->bases) {
-      invalid = invalid || (!base.interface &&
-                            typeTraits(substituteType(base.type, substitution))
-                                .containsBorrowedState);
+      if (base.interface)
+        continue;
+      const SemanticType baseType = substituteType(
+          substituteType(base.type, substitution),
+          GenericSubstitution{.types = instanceTypeSubstitution,
+                              .values = instanceValueSubstitution});
+      if (!typeTraits(baseType).containsBorrowedState)
+        continue;
+      auto inventory = self(self, baseType);
+      if (!inventory) {
+        invalid = true;
+        continue;
+      }
+      for (auto &path : *inventory)
+        paths.push_back(std::move(path));
     }
     for (const FieldInfo &field : owner->fields) {
       if (field.declaration == nullptr) {
@@ -4857,6 +4875,17 @@ auto SemanticVisitor::Impl::storedBorrowAlternativeInventory(
           }
       } else if (const auto *owner = classInfo(current)) {
         const auto substitution = classSubstitution(current);
+        // Base subobject alternatives are the derived object's own.
+        for (const ClassBaseTypeInfo &base : owner->bases) {
+          const SemanticType baseType = substituteType(base.type, substitution);
+          if (base.interface || !typeTraits(baseType).containsBorrowedState)
+            continue;
+          auto inherited = self(self, baseType);
+          complete &= inherited.has_value();
+          if (inherited)
+            for (auto &path : *inherited)
+              result.push_back(std::move(path));
+        }
         for (const auto &field : owner->fields) {
           if (field.declaration == nullptr)
             continue;
@@ -6392,6 +6421,59 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
       bool valid = false;
       std::vector<StoredReferenceBinding> bindings;
     };
+    const auto constructionBindings =
+        [&](const auto &argumentSelf, const ClassInfo &nested,
+            const SemanticType &expected,
+            std::span<const ExprPtr> callArguments,
+            std::size_t depth) -> ArgumentBindings {
+      ArgumentBindings result;
+      bool matched = false;
+      for (const auto &candidate : nested.constructors) {
+        if (candidate.declaration == nullptr || candidate.parameterPack ||
+            !candidate.genericParameters.empty() ||
+            candidate.parameterTypes.size() != callArguments.size())
+          continue;
+        auto nestedTypes = candidate.parameterTypes;
+        std::vector<ArgumentBindings> arguments;
+        for (auto &parameter : nestedTypes) {
+          parameter = substituteType(parameter, classSubstitution(expected));
+          auto argument =
+              argumentSelf(argumentSelf, callArguments[arguments.size()],
+                           parameter, depth + 1);
+          if (!argument.valid)
+            break;
+          arguments.push_back(std::move(argument));
+        }
+        if (arguments.size() != nestedTypes.size())
+          continue;
+        if (matched)
+          return {}; // Do not select an ambiguous dependency producer.
+        matched = true;
+        const auto childBindings =
+            self(self, expected, candidate.declaration, nestedTypes);
+        if (childBindings.empty())
+          return {};
+        for (const auto &child : childBindings) {
+          if (child.parameter >= arguments.size())
+            return {};
+          const auto &argument = arguments[child.parameter];
+          const auto origin = std::find_if(
+              argument.bindings.begin(), argument.bindings.end(),
+              [&](const auto &binding) {
+                return binding.destination.fields == child.sourceFields &&
+                       binding.destination.reference ==
+                           child.destination.reference;
+              });
+          if (origin == argument.bindings.end())
+            return {};
+          result.bindings.push_back({.destination = child.destination,
+                                     .parameter = origin->parameter,
+                                     .sourceFields = origin->sourceFields});
+        }
+        result.valid = true;
+      }
+      return result;
+    };
     const auto argumentBindings = [&](const auto &argumentSelf,
                                       const ExprPtr &expression,
                                       const SemanticType &expected,
@@ -6438,53 +6520,8 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
       // when queried from a caller in a different source unit.
       if (!target || *target != nested->id)
         return {};
-      ArgumentBindings result;
-      bool matched = false;
-      for (const auto &candidate : nested->constructors) {
-        if (candidate.declaration == nullptr || candidate.parameterPack ||
-            !candidate.genericParameters.empty() ||
-            candidate.parameterTypes.size() != call->arguments().size())
-          continue;
-        auto nestedTypes = candidate.parameterTypes;
-        std::vector<ArgumentBindings> arguments;
-        for (auto &parameter : nestedTypes) {
-          parameter = substituteType(parameter, classSubstitution(expected));
-          auto argument =
-              argumentSelf(argumentSelf, call->arguments()[arguments.size()],
-                           parameter, depth + 1);
-          if (!argument.valid)
-            break;
-          arguments.push_back(std::move(argument));
-        }
-        if (arguments.size() != nestedTypes.size())
-          continue;
-        if (matched)
-          return {}; // Do not select an ambiguous dependency producer.
-        matched = true;
-        const auto childBindings =
-            self(self, expected, candidate.declaration, nestedTypes);
-        if (childBindings.empty())
-          return {};
-        for (const auto &child : childBindings) {
-          if (child.parameter >= arguments.size())
-            return {};
-          const auto &argument = arguments[child.parameter];
-          const auto origin = std::find_if(
-              argument.bindings.begin(), argument.bindings.end(),
-              [&](const auto &binding) {
-                return binding.destination.fields == child.sourceFields &&
-                       binding.destination.reference ==
-                           child.destination.reference;
-              });
-          if (origin == argument.bindings.end())
-            return {};
-          result.bindings.push_back({.destination = child.destination,
-                                     .parameter = origin->parameter,
-                                     .sourceFields = origin->sourceFields});
-        }
-        result.valid = true;
-      }
-      return result;
+      return constructionBindings(argumentSelf, *nested, expected,
+                                  call->arguments(), depth);
     };
     std::vector<StoredReferenceBinding> result;
     for (const StoredReferencePath &path : paths) {
@@ -6494,6 +6531,53 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
       const VariableDecl *field = path.fields.front().declaration;
       if (field == nullptr)
         return {};
+      if (std::none_of(
+              owner->fields.begin(), owner->fields.end(),
+              [&](const FieldInfo &own) { return own.declaration == field; })) {
+        // An inherited path is stored by the base initializer: the base
+        // constructor's own summary binds the same flattened path.
+        std::optional<std::size_t> selected;
+        for (const ClassBaseTypeInfo &base : owner->bases) {
+          const SemanticType baseType =
+              substituteType(base.type, classSubstitution(type));
+          const ClassInfo *baseClass = classInfo(baseType);
+          if (base.interface || baseClass == nullptr)
+            continue;
+          const auto basePaths = storedReferencePaths(baseType);
+          if (std::none_of(basePaths.begin(), basePaths.end(),
+                           [&](const auto &candidate) {
+                             return candidate.fields == path.fields;
+                           }))
+            continue;
+          for (const ConstructorInitializer &initializer :
+               constructor->initializers()) {
+            if (owner->members.contains(
+                    initializer.target.name.last().lexeme) ||
+                baseClass->name.lexeme != initializer.target.name.last().lexeme)
+              continue;
+            const auto bindings =
+                constructionBindings(argumentBindings, *baseClass, baseType,
+                                     initializer.arguments, 0);
+            if (!bindings.valid)
+              return {};
+            const auto origin = std::find_if(
+                bindings.bindings.begin(), bindings.bindings.end(),
+                [&](const auto &binding) {
+                  return binding.destination.fields == path.fields &&
+                         binding.destination.reference == path.reference;
+                });
+            if (origin == bindings.bindings.end())
+              return {};
+            selected = origin->parameter;
+            result.push_back({.destination = path,
+                              .parameter = origin->parameter,
+                              .sourceFields = origin->sourceFields});
+          }
+        }
+        if (!selected)
+          return {};
+        continue;
+      }
       const auto member = owner->members.find(field->name().lexeme);
       if (member == owner->members.end()) {
         return {};

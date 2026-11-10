@@ -1439,6 +1439,11 @@ struct ResolvedConstructorInitializerInfo {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;
   std::optional<std::size_t> ownedParameter;
+  // A base initializer whose base stores references: the selected base
+  // constructor's own dependency summary, as for an ordinary construction.
+  BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
+  std::size_t borrowArgument = 0;
+  std::vector<std::size_t> borrowArguments;
 };
 
 struct ResolvedClassArguments {

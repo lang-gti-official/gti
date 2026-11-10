@@ -6542,6 +6542,23 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
          "Constructor declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
   }
+  // A base that stores references is constructed in place: its selected
+  // constructor's suppliers are the base initializer's own dependencies.
+  BorrowOriginKind baseBorrowOrigin = BorrowOriginKind::None;
+  std::vector<std::size_t> baseBorrowArguments;
+  if (const auto paths = storedReferencePaths(baseType);
+      selected.constructor != nullptr && !paths.empty() &&
+      std::none_of(paths.begin(), paths.end(),
+                   [](const auto &path) { return !path.conditions.empty(); })) {
+    baseBorrowArguments = storedCarrierConstructorParameters(
+        baseType, *selected.constructor, selected.parameterTypes);
+    if (!baseBorrowArguments.empty())
+      baseBorrowOrigin = BorrowOriginKind::Argument;
+  }
+  const std::size_t baseBorrowArgument =
+      baseBorrowArguments.empty() ? 0 : baseBorrowArguments.front();
+  if (storedReferencePaths(baseType).size() <= 1)
+    baseBorrowArguments.clear();
   semanticModel.record(
       initializer,
       ResolvedConstructorInitializerInfo{
@@ -6560,7 +6577,13 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
                   : omittedDefaultArguments(
                         selected.constructor->declaration->parameters(),
                         initializer.arguments.size()),
-          .generatedDefault = selected.generatedDefault});
+          .borrowAccess = baseBorrowOrigin == BorrowOriginKind::None
+                              ? AccessMode::ReadOnly
+                              : borrowAccess(baseType),
+          .generatedDefault = selected.generatedDefault,
+          .borrowOrigin = baseBorrowOrigin,
+          .borrowArgument = baseBorrowArgument,
+          .borrowArguments = std::move(baseBorrowArguments)});
   recordProgramArgumentBoundaryEffects(selected.parameterTypes,
                                        initializer.arguments);
   const SourceSpan span = tokenSpan(location);
@@ -7764,15 +7787,6 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
         }
       }
       continue;
-    }
-    for (const ClassBaseTypeInfo &base : owner.bases) {
-      if (!base.interface && typeTraits(base.type).containsBorrowedState) {
-        report(base.syntax == nullptr ? owner.name
-                                      : base.syntax->type.name.last(),
-               "Borrowed state cannot be inherited in the current lifetime "
-               "model; store one direct reference instead.",
-               "GTI-S2045");
-      }
     }
     for (const FieldInfo &field : owner.fields) {
       if (field.declaration == nullptr || field.declaration->type().reference) {

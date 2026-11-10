@@ -2763,6 +2763,10 @@ private:
                     .constructedType = resolved->targetType,
                     .parameterTypes = resolved->parameterTypes,
                     .defaultArguments = resolved->defaultArguments,
+                    .borrowOrigin = resolved->borrowOrigin,
+                    .borrowArgument = resolved->borrowArgument,
+                    .borrowAccess = resolved->borrowAccess,
+                    .borrowArguments = resolved->borrowArguments,
                     .generatedDefault = resolved->generatedDefault});
             if (target != 0) {
               lowered.constructorTarget = target;
