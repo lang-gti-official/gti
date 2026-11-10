@@ -349,8 +349,22 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
       return std::nullopt;
     const AccessMode access = path.reference.referenceAccess;
     bool supplied = false;
+    // Rust elision: a borrowed receiver supplies the result whole; what it
+    // stores is reached through it. Its stored regions supply a path only
+    // when the receiver itself cannot (a mutable path from a read-only one).
+    const bool wholeReceiver =
+        std::any_of(sources.begin(), sources.end(), [&](const Source &source) {
+          return source.origin == BorrowOriginKind::Receiver &&
+                 source.fields.empty() && source.conditions.empty() &&
+                 source.reference.kind != SemanticType::Reference &&
+                 (access != AccessMode::Mutable ||
+                  source.access == AccessMode::Mutable);
+        });
     for (const Source &source : sources) {
       if (access == AccessMode::Mutable && source.access != AccessMode::Mutable)
+        continue;
+      if (wholeReceiver && source.origin == BorrowOriginKind::Receiver &&
+          source.reference.kind == SemanticType::Reference)
         continue;
       // A stored reference supplies only a referent of its own type.
       if (source.reference.kind == SemanticType::Reference &&
