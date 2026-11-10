@@ -3036,6 +3036,9 @@ private:
     std::string region;
     // The region is a binder of the enclosing class: a stored region.
     bool classBinder = false;
+    // A class binder that some field (or a base) of the class may store.
+    // When none does, only the parameters written in it supply the result.
+    bool classStoresRegion = false;
     // Expanded parameter positions whose written regions supply the result.
     std::vector<std::size_t> parameters;
   };

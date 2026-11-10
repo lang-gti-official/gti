@@ -7037,7 +7037,10 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
         contract.missing = true;
       return contract;
     case ExplicitLifetimeResult::Kind::Region:
-      if (lifetime.classBinder) {
+      // A class region nothing in the class stores is supplied only by the
+      // parameters written in it, exactly as a method's own binder is.
+      if (lifetime.classBinder &&
+          (lifetime.classStoresRegion || lifetime.parameters.empty())) {
         if (ownerClass != 0 && !staticMember)
           contract.origin = BorrowOriginKind::Receiver;
         return contract;

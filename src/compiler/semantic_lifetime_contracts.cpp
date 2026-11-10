@@ -191,6 +191,16 @@ auto SemanticVisitor::Impl::explicitLifetimeResult(
         collectRegionNames(pattern, patternRegions);
       if (contains(patternRegions, name))
         result.classBinder = true;
+      if (result.classBinder) {
+        result.classStoresRegion = !declaration->bases().empty();
+        for (const auto &member : declaration->members())
+          if (const auto *field = stmtAs<VariableDecl>(member.get())) {
+            std::vector<std::string> names;
+            collectRegionNames(field->type(), names);
+            if (contains(names, name))
+              result.classStoresRegion = true;
+          }
+      }
     }
   }
 
@@ -1282,9 +1292,21 @@ auto SemanticVisitor::Impl::hasExplicitBorrowContract(
   if (region->kind == TokenKind::THIS || region->lexeme == "this")
     return true;
   const auto parameters = syntax.lifetimeParameters();
-  return std::any_of(parameters.begin(), parameters.end(),
-                     [&](const GenericParameter &parameter) {
-                       return parameter.name.lexeme == region->lexeme;
+  if (std::any_of(parameters.begin(), parameters.end(),
+                  [&](const GenericParameter &parameter) {
+                    return parameter.name.lexeme == region->lexeme;
+                  }))
+    return true;
+  // A class-bound region that a parameter is also written in names that
+  // parameter as a supplier: the signature states the relationship.
+  if (region->kind == TokenKind::STATIC || region->lexeme == "static" ||
+      region->lexeme == "_")
+    return false;
+  return std::any_of(syntax.parameters().begin(), syntax.parameters().end(),
+                     [&](const Parameter &parameter) {
+                       std::vector<std::string> names;
+                       collectRegionNames(parameter.type, names);
+                       return contains(names, region->lexeme);
                      });
 }
 

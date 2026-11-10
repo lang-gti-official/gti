@@ -465,6 +465,14 @@ declarations produce the same verified MIR. A region shared by several
 parameters, as in `choose` above, names all of them. A body may return a
 borrow of any subset of them; callers keep every named supplier borrowed.
 
+A method result written in a region its class binds names the receiver's
+stored fields in that region. When nothing in the class stores the region,
+as in a callable pattern `class Local<R&<result>(R&<result>)>` with
+`R&<result> invoke(R&<result> value)`, the parameters written in it are its
+suppliers, exactly as for a method's own binder. A class that also stores
+the region does not yet combine its receiver fields with such parameters;
+returning the parameter there remains rejected.
+
 A reference parameter pack follows the same rule lane by lane. In
 `int&<a> relay<lifetime a, Args...>(Args&<a>... values)` every lane of
 `values` supplies the result, while in
