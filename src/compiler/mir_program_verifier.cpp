@@ -15781,6 +15781,17 @@ completeBorrowSourcePath(const MirProgram &program,
                                          .variant = alternative});
           }
       }
+    } else if (type.kind == SemanticType::Lambda) {
+      // A closure's captures are its fields, named by capture symbol.
+      const auto instance = std::find_if(
+          program.lambdaInstances().begin(), program.lambdaInstances().end(),
+          [&](const auto &candidate) { return candidate.type == type; });
+      if (instance != program.lambdaInstances().end() &&
+          instance->captureSymbols.size() == instance->captureTypes.size())
+        for (std::size_t index = 0; index < instance->captureSymbols.size();
+             ++index)
+          if (instance->captureSymbols[index] == symbol)
+            field = instance->captureTypes[index];
     } else if (const auto *owner =
                    uniqueMirClassInstanceForType(program, type)) {
       if (const auto declared =
