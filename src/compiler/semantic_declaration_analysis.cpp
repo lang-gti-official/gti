@@ -10254,6 +10254,13 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     updated.returnBorrowFields = summary.fields;
     updated.returnBorrowPlace = summary.place;
     narrowToTypeParameterSuppliers(updated);
+    if (updated.returnBorrowOrigin == BorrowOriginKind::None &&
+        implicitStaticCarrierResult(updated.returnType, updated.parameterTypes,
+                                    updated.ownerClass, updated.staticMember,
+                                    updated.intrinsic)) {
+      updated.returnBorrowOrigin = BorrowOriginKind::Global;
+      updated.returnBorrowAccess = AccessMode::ReadOnly;
+    }
     // RFC 0004: the signature alone states an unannotated result's complete
     // contract, published before any body is analyzed so every call sees it.
     if (signatureContractDefaults() && updated.declaration != nullptr)

@@ -1403,6 +1403,41 @@ auto SemanticVisitor::Impl::narrowToTypeParameterSuppliers(
     function.returnBorrowParameters = std::move(kept);
 }
 
+// RFC 0004: a free or static function whose carrier result no input can
+// supply (no reference parameter and no parameter holding a borrow) has an
+// implicitly `static` result. It names no exact place; MIR proves that every
+// stored dependency of every returned value is rooted in immutable static
+// storage. A mutable stored path is never static.
+auto SemanticVisitor::Impl::implicitStaticCarrierResult(
+    const SemanticType &returnType,
+    const std::vector<SemanticType> &parameterTypes, ClassId ownerClass,
+    bool staticMember, IntrinsicKind intrinsic) const -> bool {
+  if (!signatureContractDefaults() || intrinsic != IntrinsicKind::None ||
+      (ownerClass != 0 && !staticMember) ||
+      (returnType.kind != SemanticType::Class &&
+       returnType.kind != SemanticType::Enum) ||
+      containsOpenTypeParameter(returnType) ||
+      !typeTraits(returnType).containsBorrowedState)
+    return false;
+  std::vector<SemanticType> expanded;
+  for (const SemanticType &type : parameterTypes)
+    SemanticType::appendExpandedArgument(expanded, type);
+  for (const SemanticType &parameter : expanded)
+    if (parameter.kind == SemanticType::Reference ||
+        parameter.kind == SemanticType::Unknown ||
+        containsOpenTypeParameter(parameter) ||
+        typeTraits(parameter).containsBorrowedState)
+      return false;
+  const auto inventory = storedReferenceInventory(returnType);
+  return inventory && !inventory->empty() &&
+         std::all_of(inventory->begin(), inventory->end(),
+                     [](const StoredReferencePath &path) {
+                       return path.reference.kind == SemanticType::Reference &&
+                              path.reference.referenceAccess ==
+                                  AccessMode::ReadOnly;
+                     });
+}
+
 // RFC 0004 elision as a complete declaration contract, from types alone. Every
 // reference-bearing result path may be supplied by every eligible input: a
 // free function's reference and borrowed-state parameters, or a method's

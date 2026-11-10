@@ -7672,8 +7672,11 @@ private:
     // A signature `static` result (RFC 0004) names no exact storage place.
     // Its referent is the returned reference itself: static storage that no
     // body-local owner protects, read through the published result address.
+    // A static carrier result is the same: its stored references reach only
+    // static storage, so the result value itself roots their loan.
     if (value.borrowOrigin == BorrowOriginKind::Global && call.result &&
-        value.info.category == ValueCategory::Place)
+        (value.info.category == ValueCategory::Place ||
+         value.info.traits.containsBorrowedState))
       return appendPlace({.root = MirPlaceRootKind::Value,
                           .value = *call.result,
                           .type = value.info.type,

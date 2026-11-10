@@ -187,6 +187,17 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
               source->body.findStatement(block->terminator.hirStatement);
           statement != nullptr && statement->value)
         returned = source->body.findValue(*statement->value);
+    // A returned carrier names its value through the MIR value it returns.
+    if (returned == nullptr && block && source && block->terminator.value &&
+        block->terminator.value->kind == MirOperandKind::Value)
+      if (const MirValue *value =
+              function->body.findValue(block->terminator.value->value))
+        returned = source->body.findValue(value->sourceValue);
+    // An implicit carrier construction has no expression of its own; it
+    // names the converted value.
+    while (returned != nullptr && returned->source == nullptr &&
+           returned->operands.size() == 1 && source)
+      returned = source->body.findValue(returned->operands.front());
     if (returned != nullptr && returned->source != nullptr)
       if (const Token token = expressionAnchorToken(*returned->source);
           !token.lexeme.empty())
@@ -206,12 +217,28 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       }
     return false;
   };
+  // RFC 0004: a carrier result no input supplies is implicitly `static`.
+  const auto implicitStaticResult = [&](MirBodyKind kind, std::size_t owner) {
+    if (kind != MirBodyKind::Function)
+      return false;
+    const auto *function = program.findFunctionInstance(owner);
+    return function != nullptr &&
+           function->returnBorrowOrigin == BorrowOriginKind::Global &&
+           !function->returnBorrowPlace &&
+           function->returnType.kind != SemanticType::Reference;
+  };
   const auto addEscape = [&](SourceSpan span, MirBodyKind kind,
                              std::size_t owner) {
     if (staticResult(kind, owner))
       add(span,
           "The result is declared 'static', but a return borrows storage "
           "that does not live for 'static'.",
+          "GTI-S2127");
+    else if (implicitStaticResult(kind, owner))
+      add(span,
+          "No input supplies this borrowed result, so it is implicitly "
+          "'static', but a return borrows storage that does not live for "
+          "'static'.",
           "GTI-S2127");
     else
       add(span, escapeMessage);

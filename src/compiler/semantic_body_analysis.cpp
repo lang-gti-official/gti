@@ -737,6 +737,16 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
   }
   if (signatureContracts)
     narrowToTypeParameterSuppliers(concreteFunction);
+  if (signatureContracts && !concreteFunction.explicitReturnBorrowOrigin &&
+      concreteFunction.returnBorrowOrigin == BorrowOriginKind::None &&
+      implicitStaticCarrierResult(
+          concreteFunction.returnType, concreteFunction.parameterTypes,
+          concreteFunction.ownerClass, concreteFunction.staticMember,
+          concreteFunction.intrinsic)) {
+    concreteFunction.returnBorrowOrigin = BorrowOriginKind::Global;
+    concreteFunction.returnBorrowAccess = AccessMode::ReadOnly;
+    concreteFunction.returnBorrowPlace.reset();
+  }
   if (signatureContracts)
     if (const FunctionDecl *syntax = concreteFunction.bodyDeclaration())
       if (auto complete = signatureCompleteReturnBorrow(

@@ -3144,6 +3144,13 @@ private:
   typeParameterResultSuppliers(const FunctionInfo &function);
   // Narrows an unannotated base result origin to those suppliers.
   static void narrowToTypeParameterSuppliers(FunctionInfo &function);
+  // RFC 0004: whether an unannotated free or static function's carrier result
+  // that no input can supply is implicitly `static`.
+  [[nodiscard]] bool
+  implicitStaticCarrierResult(const SemanticType &returnType,
+                              const std::vector<SemanticType> &parameterTypes,
+                              ClassId ownerClass, bool staticMember,
+                              IntrinsicKind intrinsic) const;
   // RFC 0004 elision: the complete contract a signature alone implies.
   [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
   signatureCompleteReturnBorrow(

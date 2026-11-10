@@ -5149,6 +5149,14 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
              "GTI-S2045");
     return;
   }
+  // A static carrier result (RFC 0004) names no owner: the callee's MIR
+  // proves each stored reference reaches only immutable static storage.
+  if (const auto *call = exprAs<Call>(initializer.get()))
+    if (const ResolvedCallInfo *resolved = semanticModel.findCall(*call);
+        resolved != nullptr &&
+        resolved->borrowOrigin == BorrowOriginKind::Global &&
+        !resolved->borrowPlace)
+      return;
   // A complete producer fact can prove that this value has no external
   // owners even when other alternatives of its type store several borrows.
   // Absence of evidence is not an empty set: check the concrete alternative

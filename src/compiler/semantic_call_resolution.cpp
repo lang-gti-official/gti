@@ -8288,10 +8288,20 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     returnBorrowParameter = narrowed.returnBorrowParameter;
     returnBorrowParameters = std::move(narrowed.returnBorrowParameters);
   }
-  const AccessMode returnBorrowAccess =
+  AccessMode returnBorrowAccess =
       declarationOwnsBorrow ? declarationInfo->returnBorrowAccess
                             : (candidateOwnsBorrow ? function.returnBorrowAccess
                                                    : concreteBorrow.access);
+  // RFC 0004: a carrier result no input of this instance supplies is static.
+  if (!genericContract && returnBorrowOrigin == BorrowOriginKind::None &&
+      (declarationInfo == nullptr ||
+       !declarationInfo->explicitReturnBorrowOrigin) &&
+      implicitStaticCarrierResult(function.returnType, function.parameterTypes,
+                                  function.ownerClass, function.staticMember,
+                                  function.record().intrinsic)) {
+    returnBorrowOrigin = BorrowOriginKind::Global;
+    returnBorrowAccess = AccessMode::ReadOnly;
+  }
   const std::optional<BorrowOriginPlace> returnBorrowPlace =
       declarationOwnsBorrow ? declarationInfo->returnBorrowPlace
                             : (candidateOwnsBorrow ? function.returnBorrowPlace

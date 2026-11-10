@@ -4533,6 +4533,12 @@ additional dependency is rooted in immutable, non-thread-local namespace or
 static-field storage; any other root is an escape. At the call, the result loan
 is a root whose source is the call's own returned reference value, so reads
 load through the returned address and no caller place is conflict-tracked.
+A free or static function's carrier result that no input can supply (no
+reference parameter and no parameter holding a borrow) is implicitly `static`
+in the same way when every stored reference path is read-only: its stored
+call loan is rooted at the returned carrier value, a return that holds no
+reference proves its empty alternative through the reconstructed complete
+flow, and any other root is an escape reported as GTI-S2127.
 Unretained loans must still reach their selected
 full-expression `EndBorrow`; retained mutable loans follow the semantic lexical
 endpoint. The MIR profile remains metadata: mutable process-wide storage is

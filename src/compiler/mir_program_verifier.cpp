@@ -4916,16 +4916,22 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
           !instruction.borrowPlace) {
         // A signature `static` result (RFC 0004): the callee proved static
         // storage, so the loan is a root whose referent is exactly this
-        // call's returned reference, and no caller place owns it.
+        // call's returned reference, and no caller place owns it. A static
+        // carrier result roots its stored loan at the returned value alike.
         const auto *callee =
             instruction.functionTarget
                 ? program.findFunctionInstance(*instruction.functionTarget)
                 : nullptr;
         const MirPlace *referent = body.findPlace(loan->source);
+        const MirLoanKind expectedKind =
+            callee != nullptr &&
+                    callee->returnType.kind != SemanticType::Reference
+                ? MirLoanKind::Stored
+                : MirLoanKind::CallResult;
         if (callee == nullptr ||
             callee->returnBorrowOrigin != BorrowOriginKind::Global ||
             callee->returnBorrowPlace || !instruction.result ||
-            loan->kind != MirLoanKind::CallResult || loan->entry ||
+            loan->kind != expectedKind || loan->entry ||
             loan->parent != 0 || loan->storedDependency != 0 ||
             !loan->additionalDependencies.empty() || referent == nullptr ||
             referent->root != MirPlaceRootKind::Value ||
@@ -7380,7 +7386,9 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
         instance.returnBorrowParameter != 0 ||
         (instance.returnBorrowPlace
              ? !instance.returnBorrowPlace->valid()
-             : instance.returnType.kind != SemanticType::Reference)) {
+             : instance.returnType.kind != SemanticType::Reference &&
+                   instance.returnType.kind != SemanticType::Class &&
+                   instance.returnType.kind != SemanticType::Enum)) {
       return invalidSummary(
           "global return dependency requires a free or static function and "
           "one exact static storage place");
@@ -16299,22 +16307,27 @@ public:
     return &*flows[owner - 1];
   }
 
+  // The body's reconstructed complete flow, whether or not its owner claims
+  // a complete contract.
+  const CompleteBorrowFlow &flowFor(const MirBody &body, std::size_t owner) {
+    if (const auto *observed = observations(body, owner))
+      return *observed;
+    auto found = terminalFlows.find(&body);
+    if (found == terminalFlows.end()) {
+      auto flow = reconstructCompleteBorrowFlow(
+          program, body, owner, [&](std::size_t target, bool constructing) {
+            return constructing ? queryConstructor(target) : query(target);
+          });
+      found = terminalFlows.emplace(&body, std::move(flow)).first;
+    }
+    return found->second;
+  }
+
   bool excludesNormalResult(const MirBody &body, std::size_t owner,
                             MirInstructionId instruction) {
-    const auto *observed = observations(body, owner);
-    if (!observed) {
-      auto found = terminalFlows.find(&body);
-      if (found == terminalFlows.end()) {
-        auto flow = reconstructCompleteBorrowFlow(
-            program, body, owner, [&](std::size_t target, bool constructing) {
-              return constructing ? queryConstructor(target) : query(target);
-            });
-        found = terminalFlows.emplace(&body, std::move(flow)).first;
-      }
-      observed = &found->second;
-    }
-    return observed->verification.valid() &&
-           observed->noNormalBorrowResults.contains(instruction);
+    const CompleteBorrowFlow &observed = flowFor(body, owner);
+    return observed.verification.valid() &&
+           observed.noNormalBorrowResults.contains(instruction);
   }
 
 private:
@@ -22525,11 +22538,20 @@ verifyMirProgramContracts(const MirProgram &program) {
                                                                 instruction);
           },
           [&](const MirFunctionInstance &function, MirBlockId block) {
-            return completeBorrowSummaries.query(function.id) &&
+            if (completeBorrowSummaries.query(function.id))
+              return independentlyEmptyConditionalReturn(
+                  program, function, block,
+                  completeBorrowSummaries.observations(function.body,
+                                                       function.id));
+            // A static carrier result (RFC 0004) names no complete contract;
+            // a return holding no reference still proves its empty set.
+            return function.returnBorrowOrigin == BorrowOriginKind::Global &&
+                   !function.returnBorrowPlace &&
+                   function.returnType.kind != SemanticType::Reference &&
                    independentlyEmptyConditionalReturn(
                        program, function, block,
-                       completeBorrowSummaries.observations(function.body,
-                                                            function.id));
+                       &completeBorrowSummaries.flowFor(function.body,
+                                                        function.id));
           }));
   appendVerification(result, verifyMirDropTargets(program, program.module(), 0,
                                                   exactActiveCleanup));
