@@ -1928,6 +1928,17 @@ direct and concrete generic invocation; unsupported erased conversions are
 diagnosed before code generation. Named functions retain their existing
 inference and explicit result-region rules.
 
+A generic callable invoked where its body requires a copyable value without
+borrowed state, as in `int observe<F>(F& callback) { return callback(0); }`,
+also accepts a callable whose result is a checked reference to exactly that
+type, such as `int&<static> fixed(int)` or
+`int&<a> identity<lifetime a>(int&<a>)`. The selected signature's result
+region (fresh per invocation, an elided input region, or `static`) governs
+the reference, and the caller reads one value through it within the
+invocation's full-expression; no borrow outlives the call. Binding that
+result to a reference inside the generic body still requires a declared
+result relationship.
+
 A generic relay names the parameter its result borrows with a result region
 (or the older `[[borrowed_from(value)]]` spelling); each concrete instance
 verifies that the selected callable's own origin reaches exactly that

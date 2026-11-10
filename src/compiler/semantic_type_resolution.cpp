@@ -679,12 +679,15 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         } else {
           for (const CallableSignatureRequirement &signature :
                contextualRequirements(target.id, index, substitution)) {
+            const SemanticType requiredResult =
+                substituteType(signature.returnType, substitution);
             if (!callableCapabilitySatisfies(CallableInvocationCapability::Read,
                                              signature.capability) ||
                 (!signature.inferResultFromInstantiation &&
-                 !exactMatch(exactMatch,
-                             substituteType(signature.returnType, substitution),
-                             candidate.returnType, substitution))) {
+                 !exactMatch(exactMatch, requiredResult, candidate.returnType,
+                             substitution) &&
+                 !callableReferenceResultReadsValue(requiredResult,
+                                                    candidate.returnType))) {
               matchesContract = false;
               break;
             }

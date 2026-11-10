@@ -3683,6 +3683,13 @@ private:
   [[nodiscard]] bool validateCallableReturn(const Call &call,
                                             const SemanticType &returnType);
 
+  // A selected callable whose result is a checked reference to exactly the
+  // required copyable value type satisfies a by-value invocation context:
+  // the caller reads through the reference immediately (RFC 0004).
+  [[nodiscard]] bool
+  callableReferenceResultReadsValue(const SemanticType &required,
+                                    const SemanticType &selected);
+
   [[nodiscard]] bool
   validateCallableCapability(const Call &call,
                              CallableInvocationCapability provided);

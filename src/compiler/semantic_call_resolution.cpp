@@ -660,6 +660,25 @@ auto SemanticVisitor::Impl::analyzeDeferredCallableCall(
   currentType = callExpressionType(returnType);
 }
 
+auto SemanticVisitor::Impl::callableReferenceResultReadsValue(
+    const SemanticType &required, const SemanticType &selected) -> bool {
+  // The selected signature's result region (a fresh per-invocation binder,
+  // an elided input region or `static`) governs the reference. The
+  // requiring context only reads one copyable value through it during the
+  // full-expression, which every such region covers; no borrow outlives the
+  // invocation and no region is inferred from either body.
+  if (selected.kind != SemanticType::Reference ||
+      selected.arguments.size() != 1 ||
+      required.kind == SemanticType::Reference ||
+      required.kind == SemanticType::Unknown ||
+      required.kind == SemanticType::Void ||
+      containsOpenTypeParameter(required) || containsLambdaType(required) ||
+      selected.arguments.front() != required)
+    return false;
+  const SemanticTypeTraits traits = typeTraits(required);
+  return traits.copyable && !traits.containsBorrowedState;
+}
+
 auto SemanticVisitor::Impl::validateCallableReturn(
     const Call &call, const SemanticType &returnType) -> bool {
   const std::optional<CallableSignatureRequirement> requirement =
@@ -690,7 +709,8 @@ auto SemanticVisitor::Impl::validateCallableReturn(
     return false;
   }
   if (!requirement || requirement->returnType == returnType ||
-      returnType == SemanticType::Unknown) {
+      returnType == SemanticType::Unknown ||
+      callableReferenceResultReadsValue(requirement->returnType, returnType)) {
     return true;
   }
   const Variable *variable = directCallableParameterVariable(call.callee());
