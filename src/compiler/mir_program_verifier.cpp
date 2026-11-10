@@ -8324,8 +8324,8 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           transfer != nullptr && transfer->kind == MirInstructionKind::Borrow &&
           transfer->operands.size() == 1 &&
           transfer->operands.front().kind == MirOperandKind::Loan &&
-          transfer->operands.front().type == expectedPayload &&
-          transfer->info.type == expectedPayload;
+          eraseTypeLifetimes(transfer->operands.front().type) == eraseTypeLifetimes(expectedPayload) &&
+          eraseTypeLifetimes(transfer->info.type) == eraseTypeLifetimes(expectedPayload);
       // A dynamic text relay may instead return another relay's result,
       // including its own recursive call's: that call's Stored loan, whose
       // source verifyMirBorrowProducers proves is the call's selected input,
@@ -8358,7 +8358,7 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
             producer->borrowOrigin == BorrowOriginKind::Argument &&
             producer->borrowAccess == instance.returnBorrowAccess &&
             producer->borrowFields.empty() &&
-            producer->info.type == expectedPayload;
+            eraseTypeLifetimes(producer->info.type) == eraseTypeLifetimes(expectedPayload);
         return relay ? producer : nullptr;
       };
       const MirInstruction *relay =
@@ -8378,7 +8378,8 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
             block.id);
       }
       if (!block.terminator.value ||
-          block.terminator.value->type != expectedPayload) {
+          eraseTypeLifetimes(block.terminator.value->type) !=
+              eraseTypeLifetimes(expectedPayload)) {
         return verificationFailure(
             body, instance.id,
             "stored-carrier return value does not match its exact "
