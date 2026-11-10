@@ -829,6 +829,16 @@ Source prefix-capacity checks are ordinary control flow. Their selected calls,
 ordered inputs and object-lifetime operations remain visible to deterministic
 inspection and replay; the retired private construction-preflight identity is
 not serialized.
+A class's stored-reference inventory includes each non-interface base's paths,
+named by the declaring base's field symbols: an inherited field is a `Field`
+projection of the derived place, so no separate base path kind exists. A base
+initializer whose selected constructor stores reference arguments stages like
+any other base and publishes each stored argument as an escaping `Stored` loan
+with no storage field; the constructor summary and field-origin replay follow
+the base constructor's own origins for the same flattened paths. A reference
+read out of a stored field through a reference formal transfers that formal's
+abstract `Stored` entry (after its shell ends), and one read out of a local
+composed carrier publishes only the dependency its field path designates.
 The loan contract separates a physical carrier reference from its inherited
 external-owner authority. Ordinarily `storedDependency` names one exact `Stored`
 loan; unlike `parent`, it does not denote containment or suspend that loan. Dependency

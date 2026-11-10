@@ -1243,6 +1243,38 @@ int&<a> external<lifetime a>(int&<a> input) {
 }
 int main() { int value = 7; return external(value) - 7; }
 """,
+    "inherited_reference_parameter_read": """
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+};
+int&<a> through<lifetime a>(Derived<a>& view) { return view.value; }
+int&<a> direct<lifetime a>(Base<a>& view) { return view.value; }
+int main() {
+  int value = 7;
+  Derived view{value};
+  return through(view) + direct(view) - 14;
+}
+""",
+    "inherited_swapped_suppliers": """
+struct Root<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Root(int&<a> first, int&<b> second) : first(first), second(second) {}
+};
+struct Swapped<lifetime a, lifetime b> : public Root<b, a> {
+  Swapped(int&<a> first, int&<b> second) : Root<b, a>(second, first) {}
+};
+int&<a> pick<lifetime a>(int&<a> input) {
+  int local = 9;
+  Swapped view{local, input};
+  return view.first;
+}
+int main() { int value = 7; return pick(value) - 7; }
+""",
     "selected_base_input_lanes": """
 struct SumBase {
   int value;

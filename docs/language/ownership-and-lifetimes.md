@@ -566,9 +566,8 @@ relationships, elided identity, a borrowed record and a projected reference-regi
 pattern with inferred callers, typed copy/move inference, and a lambda with a
 checked fixed environment.
 The complete target is [RFC 0004](https://github.com/lang-gti-official/rfcs/blob/codex/proposal-lifetime-parameters/rfcs/0004-lifetime-parameters-and-elision.md).
-Implementation of all compositions is still in progress: inherited borrowed
-storage, recursive forwarded packs and public generic callable wrappers need
-further integration. Named regions alone do not admit dynamically managed
+Implementation of all compositions is still in progress: recursive forwarded
+packs and public generic callable wrappers need further integration. Named regions alone do not admit dynamically managed
 reference storage; its typed-storage obligations remain the dependent RFC 0003
 work.
 
@@ -1287,7 +1286,16 @@ cannot be retained in a local or returned from the function. An exact
 stored-field result instead retains the external referent and does not borrow
 the temporary carrier's inline storage.
 
-Inherited borrowed state, arrays of borrowed carriers,
+A class may inherit a base that stores references. The base subobject's
+stored references are the derived object's own: the base initializer's
+constructor supplies them, each keeps the region its base declares (so
+`Derived<a> : Base<a>` and `Leaf<a, b> : Root<b, a>` keep each field's own
+origin), methods and callers read them as ordinary fields, and the base's
+destructor runs while they are still borrowed. A reference read out of one
+stored field of a composed local carrier depends only on that field's own
+supplier.
+
+Arrays of borrowed carriers,
 global/static or captured borrowed storage, dependency-changing returns, and
 assignment that would replace a carrier's dependency remain rejected. Mutable
 dependencies are limited to an exact

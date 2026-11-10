@@ -1076,6 +1076,84 @@ int&<a> external<lifetime a>(int&<a> input) {
 int main() { int value = 7; return external(value) - 7; }
 )gti",
         true);
+  check("inherited-field-read-through-reference-parameter", R"gti(
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+};
+int&<a> through<lifetime a>(Derived<a>& view) { return view.value; }
+int&<a> direct<lifetime a>(Base<a>& view) { return view.value; }
+int main() {
+  int value = 7;
+  Derived view{value};
+  return through(view) + direct(view) - 14;
+}
+)gti",
+        true);
+  check("swapped-base-suppliers-keep-each-field-origin", R"gti(
+struct Root<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Root(int&<a> first, int&<b> second) : first(first), second(second) {}
+};
+struct Swapped<lifetime a, lifetime b> : public Root<b, a> {
+  Swapped(int&<a> first, int&<b> second) : Root<b, a>(second, first) {}
+};
+int&<a> pick<lifetime a>(int&<a> input) {
+  int local = 9;
+  Swapped view{local, input};
+  return view.first;
+}
+int main() { int value = 7; return pick(value) - 7; }
+)gti",
+        true);
+  check("inherited-local-supplier-cannot-escape", R"gti(
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+};
+int&<a> leak<lifetime a>(int&<a> input) {
+  int local = 3;
+  Derived view{local};
+  return view.value;
+}
+int main() { int value = 7; return leak(value); }
+)gti",
+        false, "GTI-S2017");
+  check("inherited-referent-stays-borrowed", R"gti(
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+};
+int main() { mut int value = 7; Derived view{value}; value = 8; return view.value; }
+)gti",
+        false, "GTI-S2017");
+  check("inherited-and-direct-borrows-keep-the-local-field-local", R"gti(
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Pair<lifetime a, lifetime b> : public Base<a> {
+  int&<b> other;
+  Pair(int&<a> first, int&<b> second) : Base<a>(first), other(second) {}
+};
+int&<a> external<lifetime a>(int&<a> input) {
+  int local = 9;
+  Pair pair{local, input};
+  return pair.value;
+}
+int main() { int value = 7; return external(value) - 9; }
+)gti",
+        false, "GTI-S2017");
   check("inherited-and-direct-fields-cannot-duplicate-exclusive-input", R"gti(
 struct Base<lifetime a> {
   mut int&<a> value;

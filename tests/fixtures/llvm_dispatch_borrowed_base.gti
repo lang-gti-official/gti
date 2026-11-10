@@ -1,4 +1,5 @@
-// Source rejection control: inherited borrowed state remains GTI-S2045.
+// Inherited borrowed state with elided regions keeps its base publication
+// and ordinary dispatch.
 class BorrowBase {
   int& held;
 public:
