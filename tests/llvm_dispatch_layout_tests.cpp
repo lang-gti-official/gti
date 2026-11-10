@@ -4,7 +4,7 @@
 #include "../src/compiler/llvm/payloads.h"
 #include "../src/compiler/llvm/placement.h"
 #include "../src/compiler/llvm/places.h"
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/llvm_backend.h"

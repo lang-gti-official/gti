@@ -1,6 +1,6 @@
 #include "../src/compiler/llvm/lifetimes.h"
 #include "../src/compiler/llvm/memory.h"
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/llvm_admission.h"

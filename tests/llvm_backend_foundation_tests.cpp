@@ -1,7 +1,7 @@
 #include "gti/frontend.h"
 #include "gti/llvm_backend.h"
 
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 
 #include <iostream>
 #include <string>

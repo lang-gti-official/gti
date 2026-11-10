@@ -1,6 +1,6 @@
 #include "../src/compiler/llvm/abi.h"
 #include "../src/compiler/llvm/body.h"
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 #include "gti/lowered_program_printer.h"
 #include "gti/mir_printer.h"
 #include "gti/runtime_failure.h"

@@ -3,7 +3,7 @@
 #include "../src/compiler/llvm/memory_types.h"
 #include "../src/compiler/llvm/places.h"
 #include "../src/compiler/llvm/runtime_abi.h"
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/llvm_backend.h"

@@ -1,4 +1,4 @@
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 #include "gti/lowered_program_printer.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"

@@ -3,7 +3,7 @@
 #include "../src/compiler/llvm/lifetimes.h"
 #include "../src/compiler/llvm/mutexes.h"
 #include "../src/compiler/llvm/placement.h"
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 #include "gti/mir_effects.h"
 
 #include <iostream>

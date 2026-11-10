@@ -84,7 +84,7 @@ target_link_libraries(gti_foreign_variable_borrow_tests PRIVATE gti_compiler)
 add_test(NAME foreign_variable_borrow COMMAND gti_foreign_variable_borrow_tests)
 
 add_executable(gti_foreign_variable_tests foreign_variable_tests.cpp)
-target_link_libraries(gti_foreign_variable_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_foreign_variable_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME foreign_variable_pipeline COMMAND gti_foreign_variable_tests)
 add_test(NAME native_variable_bindgen
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_bindgen_runtime_test.py"
@@ -274,10 +274,10 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 add_executable(gti_local_reference_inference_tests local_reference_inference_tests.cpp)
-target_link_libraries(gti_local_reference_inference_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_local_reference_inference_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME local_reference_inference COMMAND gti_local_reference_inference_tests)
 add_executable(gti_bounded_array_borrows_tests bounded_array_borrows_tests.cpp)
-target_link_libraries(gti_bounded_array_borrows_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_bounded_array_borrows_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME bounded_array_borrows COMMAND gti_bounded_array_borrows_tests)
 add_test(NAME bounded_array_borrows_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/bounded_array_borrows_runtime_test.py" $<TARGET_FILE:gti>)
@@ -293,7 +293,7 @@ endif()
 
 add_executable(gti_prvalue_direct_initialization_tests
                prvalue_direct_initialization_tests.cpp)
-target_link_libraries(gti_prvalue_direct_initialization_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_prvalue_direct_initialization_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME prvalue_direct_initialization
          COMMAND gti_prvalue_direct_initialization_tests)
 add_test(NAME prvalue_direct_initialization_runtime
@@ -314,11 +314,11 @@ target_link_libraries(gti_generic_enum_declaration_tests PRIVATE gti_compiler)
 add_test(NAME generic_enum_declaration COMMAND gti_generic_enum_declaration_tests)
 
 add_executable(gti_generic_payload_enum_backend_tests generic_payload_enum_backend_tests.cpp)
-target_link_libraries(gti_generic_payload_enum_backend_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_generic_payload_enum_backend_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME generic_payload_enum_backend COMMAND gti_generic_payload_enum_backend_tests)
 
 add_executable(gti_operator_relay_tests operator_relay_tests.cpp)
-target_link_libraries(gti_operator_relay_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_operator_relay_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME operator_relay_pipeline COMMAND gti_operator_relay_tests)
 add_test(NAME operator_relay_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/operator_relay_runtime_test.py" $<TARGET_FILE:gti>)
@@ -335,7 +335,7 @@ add_executable(gti_native_c_scalar_target_tests native_c_scalar_target_tests.cpp
 target_link_libraries(gti_native_c_scalar_target_tests PRIVATE gti_compiler)
 add_test(NAME native_c_scalar_target COMMAND gti_native_c_scalar_target_tests)
 add_executable(gti_native_c_scalar_tests native_c_scalar_tests.cpp)
-target_link_libraries(gti_native_c_scalar_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_native_c_scalar_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME native_c_scalar_pipeline COMMAND gti_native_c_scalar_tests)
 
 add_executable("gti_c_abi_smoke" "${PROJECT_SOURCE_DIR}/tests/c_abi_smoke.c")
@@ -386,7 +386,7 @@ add_test(NAME loop_break_reinitialization_runtime
                  "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
 set_tests_properties(loop_break_reinitialization_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_constructor_pack_field_tests constructor_pack_field_tests.cpp)
-target_link_libraries(gti_constructor_pack_field_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_constructor_pack_field_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME constructor_pack_field COMMAND gti_constructor_pack_field_tests)
 add_test(NAME constructor_pack_field_runtime
          COMMAND "${Python3_EXECUTABLE}"
@@ -394,10 +394,10 @@ add_test(NAME constructor_pack_field_runtime
                  "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
 set_tests_properties(constructor_pack_field_runtime PROPERTIES TIMEOUT 600)
 add_executable(gti_base_constructor_stage_tests base_constructor_stage_tests.cpp)
-target_link_libraries(gti_base_constructor_stage_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_base_constructor_stage_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME base_constructor_stage COMMAND gti_base_constructor_stage_tests)
 add_executable(gti_expected_constructor_field_tests expected_constructor_field_tests.cpp)
-target_link_libraries(gti_expected_constructor_field_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_expected_constructor_field_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME expected_constructor_field COMMAND gti_expected_constructor_field_tests)
 add_test(NAME generated_constructor_order_runtime
          COMMAND "${Python3_EXECUTABLE}"
@@ -410,7 +410,7 @@ add_test(NAME base_constructor_stage_runtime
                  "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
 set_tests_properties(base_constructor_stage_runtime PROPERTIES TIMEOUT 600)
 add_executable(gti_operator_place_composition_tests operator_place_composition_tests.cpp)
-target_link_libraries(gti_operator_place_composition_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_operator_place_composition_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME operator_place_composition_pipeline COMMAND gti_operator_place_composition_tests)
 add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
 add_executable(gti_fresh_callable_borrow_tests fresh_callable_borrow_tests.cpp)
@@ -437,26 +437,26 @@ add_executable(gti_resource_memory_runtime_tests resource_memory_runtime_tests.c
 target_link_libraries(gti_resource_memory_runtime_tests PRIVATE gti_runtime)
 add_test(NAME resource_memory_runtime COMMAND gti_resource_memory_runtime_tests)
 add_executable(gti_process_provider_target_tests process_provider_target_tests.cpp)
-target_link_libraries(gti_process_provider_target_tests PRIVATE gti_compiler gti_cpp_backend)
+target_link_libraries(gti_process_provider_target_tests PRIVATE gti_compiler gti_cpp_backend gti_llvm_backend)
 add_test(NAME process_provider_target_contract COMMAND gti_process_provider_target_tests)
 add_executable(gti_storage_adoption_tests storage_adoption_tests.cpp)
-target_link_libraries(gti_storage_adoption_tests PRIVATE gti_compiler gti_cpp_backend)
+target_link_libraries(gti_storage_adoption_tests PRIVATE gti_compiler gti_cpp_backend gti_llvm_backend)
 add_test(NAME storage_adoption_contract COMMAND gti_storage_adoption_tests)
 
 add_executable(gti_object_lifetime_tests object_lifetime_tests.cpp)
-target_link_libraries(gti_object_lifetime_tests PRIVATE gti_compiler gti_cpp_backend)
+target_link_libraries(gti_object_lifetime_tests PRIVATE gti_compiler gti_cpp_backend gti_llvm_backend)
 add_test(NAME object_lifetime_contract COMMAND gti_object_lifetime_tests)
 add_executable(gti_text_address_bridge_tests text_address_bridge_tests.cpp)
-target_link_libraries(gti_text_address_bridge_tests PRIVATE gti_compiler gti_cpp_backend)
+target_link_libraries(gti_text_address_bridge_tests PRIVATE gti_compiler gti_cpp_backend gti_llvm_backend)
 add_test(NAME text_address_bridge_contract COMMAND gti_text_address_bridge_tests)
 add_executable(gti_source_prefix_owner_tests source_prefix_owner_tests.cpp)
-target_link_libraries(gti_source_prefix_owner_tests PRIVATE gti_compiler gti_cpp_backend)
+target_link_libraries(gti_source_prefix_owner_tests PRIVATE gti_compiler gti_cpp_backend gti_llvm_backend)
 add_test(NAME source_prefix_owner_contract COMMAND gti_source_prefix_owner_tests)
 add_executable(gti_uninitialized_carrier_tests uninitialized_carrier_tests.cpp)
-target_link_libraries(gti_uninitialized_carrier_tests PRIVATE gti_compiler gti_cpp_backend)
+target_link_libraries(gti_uninitialized_carrier_tests PRIVATE gti_compiler gti_cpp_backend gti_llvm_backend)
 add_test(NAME uninitialized_carrier_contract COMMAND gti_uninitialized_carrier_tests)
 add_executable(gti_source_sparse_storage_tests source_sparse_storage_tests.cpp)
-target_link_libraries(gti_source_sparse_storage_tests PRIVATE gti_compiler gti_cpp_backend)
+target_link_libraries(gti_source_sparse_storage_tests PRIVATE gti_compiler gti_cpp_backend gti_llvm_backend)
 add_test(NAME source_sparse_storage_contract COMMAND gti_source_sparse_storage_tests)
 add_executable(gti_conditional_capability_tests conditional_capability_tests.cpp)
 target_link_libraries(gti_conditional_capability_tests PRIVATE gti_compiler)
@@ -477,7 +477,7 @@ add_test(NAME cpp_mir_source_sparse_storage
     "$<TARGET_FILE:gti_runtime>")
 set_tests_properties(cpp_mir_source_sparse_storage PROPERTIES TIMEOUT 300)
 add_executable(gti_resource_protocol_tests resource_protocol_tests.cpp)
-target_link_libraries(gti_resource_protocol_tests PRIVATE gti_compiler gti_cpp_backend)
+target_link_libraries(gti_resource_protocol_tests PRIVATE gti_compiler gti_cpp_backend gti_llvm_backend)
 add_test(NAME resource_protocol_contract COMMAND gti_resource_protocol_tests)
 target_link_libraries(gti_ephemeral_carrier_mir_tests PRIVATE gti_compiler)
 add_test(NAME ephemeral_carrier_mir COMMAND gti_ephemeral_carrier_mir_tests)
@@ -837,7 +837,7 @@ add_test(NAME package_registry_auth_cli
 set_tests_properties(package_registry_auth_cli PROPERTIES TIMEOUT 90)
 
 add_executable(gti_designated_construction_tests designated_construction_tests.cpp)
-target_link_libraries(gti_designated_construction_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_designated_construction_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME designated_construction_pipeline COMMAND gti_designated_construction_tests)
 add_test(NAME designated_construction_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/designated_construction_runtime_test.py" $<TARGET_FILE:gti>)
@@ -847,7 +847,7 @@ if(TARGET gti_lsp)
 endif()
 
 add_executable(gti_collection_initialization_tests collection_initialization_tests.cpp)
-target_link_libraries(gti_collection_initialization_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_collection_initialization_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME collection_initialization_pipeline COMMAND gti_collection_initialization_tests)
 add_test(NAME collection_initialization_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/collection_initialization_runtime_test.py" $<TARGET_FILE:gti>)
@@ -895,7 +895,7 @@ add_test(NAME out_of_class_performance
           "${PROJECT_BINARY_DIR}/Testing/out-of-class-performance")
 set_tests_properties(out_of_class_performance PROPERTIES TIMEOUT 180)
 add_executable(gti_borrowing_composition_tests borrowing_composition_tests.cpp)
-target_link_libraries(gti_borrowing_composition_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_borrowing_composition_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME borrowing_composition_pipeline COMMAND gti_borrowing_composition_tests)
 add_test(NAME shared_getter_worker_loans_runtime
   COMMAND "${Python3_EXECUTABLE}"
@@ -912,7 +912,7 @@ add_test(NAME cleanup_bound_borrow_mutations
          COMMAND gti_cleanup_bound_borrow_mutation_tests)
 add_executable(gti_cleanup_bound_backend_mutation_tests
                cleanup_bound_backend_mutation_tests.cpp)
-target_link_libraries(gti_cleanup_bound_backend_mutation_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_cleanup_bound_backend_mutation_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME cleanup_bound_backend_mutations
          COMMAND gti_cleanup_bound_backend_mutation_tests)
 if(Python3_Interpreter_FOUND)
@@ -1040,13 +1040,13 @@ add_executable(gti_lambda_formatting_tests lambda_formatting_tests.cpp)
 target_link_libraries(gti_lambda_formatting_tests PRIVATE gti_compiler)
 add_test(NAME lambda_formatting COMMAND gti_lambda_formatting_tests)
 add_executable(gti_integral_enum_tests integral_enum_tests.cpp)
-target_link_libraries(gti_integral_enum_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_integral_enum_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME integral_enum COMMAND gti_integral_enum_tests)
 add_library(
   gti_compiler_test_pch OBJECT
   "${PROJECT_SOURCE_DIR}/tests/compiler_test_pch.cpp"
 )
-target_link_libraries(gti_compiler_test_pch PRIVATE gti_cpp_backend)
+target_link_libraries(gti_compiler_test_pch PRIVATE gti_cpp_backend gti_llvm_backend)
 target_precompile_headers(
   gti_compiler_test_pch
   PRIVATE "${PROJECT_SOURCE_DIR}/tests/compiler_test_fixture.h"
@@ -1056,7 +1056,7 @@ set(GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS)
 foreach(suite IN LISTS GTI_COMPILER_TEST_SUITES)
   set(target "gti_compiler_${suite}_tests")
   add_executable("${target}" "${PROJECT_SOURCE_DIR}/tests/compiler_${suite}_tests.cpp")
-  target_link_libraries("${target}" PRIVATE gti_cpp_backend)
+  target_link_libraries("${target}" PRIVATE gti_cpp_backend gti_llvm_backend)
   target_precompile_headers("${target}" REUSE_FROM gti_compiler_test_pch)
   list(APPEND GTI_COMPILER_TEST_TARGETS "${target}")
   list(APPEND GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS
@@ -1126,21 +1126,21 @@ add_test(NAME source_unit_services COMMAND gti_source_unit_services_tests)
 
 add_executable("gti_optional_compiler_tests"
                "${PROJECT_SOURCE_DIR}/tests/optional_compiler_tests.cpp")
-target_link_libraries("gti_optional_compiler_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_optional_compiler_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 target_precompile_headers("gti_optional_compiler_tests"
                           REUSE_FROM gti_compiler_test_pch)
 add_test(NAME optional_compiler_contract COMMAND gti_optional_compiler_tests)
 
 add_executable("gti_polymorphic_storage_compiler_tests"
                "${PROJECT_SOURCE_DIR}/tests/polymorphic_storage_compiler_tests.cpp")
-target_link_libraries("gti_polymorphic_storage_compiler_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_polymorphic_storage_compiler_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 target_precompile_headers("gti_polymorphic_storage_compiler_tests"
                           REUSE_FROM gti_compiler_test_pch)
 add_test(NAME polymorphic_storage_compiler_contract
          COMMAND gti_polymorphic_storage_compiler_tests)
 
 add_executable(gti_prefix_constructor_tests prefix_constructor_tests.cpp)
-target_link_libraries(gti_prefix_constructor_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_prefix_constructor_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME prefix_constructor_contract COMMAND gti_prefix_constructor_tests)
 add_test(NAME vector_empty_constructor_runtime
   COMMAND "${Python3_EXECUTABLE}"
@@ -1156,12 +1156,12 @@ add_test(NAME prefix_generated_transport_runtime
 set_tests_properties(prefix_generated_transport_runtime PROPERTIES TIMEOUT 240)
 
 add_executable(gti_carrier_shell_reference_tests carrier_shell_reference_tests.cpp)
-target_link_libraries(gti_carrier_shell_reference_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_carrier_shell_reference_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 target_precompile_headers(gti_carrier_shell_reference_tests
                           REUSE_FROM gti_compiler_test_pch)
 add_test(NAME carrier_shell_references COMMAND gti_carrier_shell_reference_tests)
 add_executable(gti_borrow_origin_publication_tests borrow_origin_publication_tests.cpp)
-target_link_libraries(gti_borrow_origin_publication_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_borrow_origin_publication_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 target_precompile_headers(gti_borrow_origin_publication_tests
                           REUSE_FROM gti_compiler_test_pch)
 add_test(NAME borrow_origin_publication COMMAND gti_borrow_origin_publication_tests)
@@ -1387,10 +1387,10 @@ target_link_libraries("gti_mir_hosted_startup_tests" PRIVATE gti_compiler)
 add_test(NAME mir_hosted_startup COMMAND gti_mir_hosted_startup_tests)
 
 add_executable("gti_raw_pointer_tests" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_tests.cpp")
-target_link_libraries("gti_raw_pointer_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_raw_pointer_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME raw_pointer_pipeline COMMAND gti_raw_pointer_tests)
 add_executable(gti_raw_borrow_tests "${PROJECT_SOURCE_DIR}/tests/raw_borrow_tests.cpp")
-target_link_libraries(gti_raw_borrow_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_raw_borrow_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME raw_borrow_contract COMMAND gti_raw_borrow_tests)
 add_executable(gti_body_analysis_order_tests "${PROJECT_SOURCE_DIR}/tests/body_analysis_order_tests.cpp")
 target_link_libraries(gti_body_analysis_order_tests PRIVATE gti_compiler)
@@ -1502,10 +1502,10 @@ add_test(NAME general_requires_runtime
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/173-general-requires.gti" --include-o1)
 set_tests_properties(general_requires_runtime PROPERTIES TIMEOUT 180)
 add_executable(gti_callable_return_type_tests "${PROJECT_SOURCE_DIR}/tests/callable_return_type_tests.cpp")
-target_link_libraries(gti_callable_return_type_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_callable_return_type_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME callable_return_type COMMAND gti_callable_return_type_tests)
 add_executable(gti_class_argument_profile_tests "${PROJECT_SOURCE_DIR}/tests/class_argument_profile_tests.cpp")
-target_link_libraries(gti_class_argument_profile_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_class_argument_profile_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME class_argument_profiles COMMAND gti_class_argument_profile_tests)
 add_test(NAME class_argument_profiles_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
@@ -1565,7 +1565,7 @@ target_link_libraries(gti_raw_query_budget_tests PRIVATE gti_compiler)
 add_test(NAME raw_query_budget_contract COMMAND gti_raw_query_budget_tests)
 set_tests_properties(raw_query_budget_contract PROPERTIES TIMEOUT 240)
 add_executable(gti_raw_pointer_conversion_tests "${PROJECT_SOURCE_DIR}/tests/raw_pointer_conversion_tests.cpp")
-target_link_libraries(gti_raw_pointer_conversion_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_raw_pointer_conversion_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME raw_pointer_conversion_contract COMMAND gti_raw_pointer_conversion_tests)
 add_executable(gti_borrow_origin_syntax_tests "${PROJECT_SOURCE_DIR}/tests/borrow_origin_syntax_tests.cpp")
 target_link_libraries(gti_borrow_origin_syntax_tests PRIVATE gti_compiler)
@@ -1604,7 +1604,7 @@ if(TARGET gti_lsp)
 endif()
 
 add_executable("gti_layout_query_tests" "${PROJECT_SOURCE_DIR}/tests/layout_query_tests.cpp")
-target_link_libraries("gti_layout_query_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_layout_query_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME layout_query_pipeline COMMAND gti_layout_query_tests)
 
 add_executable("gti_bindgen_tests" "${PROJECT_SOURCE_DIR}/tests/bindgen_tests.cpp")
@@ -1624,10 +1624,10 @@ add_test(NAME native_array_index_runtime
 set_tests_properties(native_array_index_runtime PROPERTIES TIMEOUT 300)
 
 add_executable("gti_native_record_tests" "${PROJECT_SOURCE_DIR}/tests/native_record_tests.cpp")
-target_link_libraries("gti_native_record_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_native_record_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME native_record_pipeline COMMAND gti_native_record_tests)
 add_executable(gti_call_result_publication_tests call_result_publication_tests.cpp)
-target_link_libraries(gti_call_result_publication_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_call_result_publication_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME call_result_publication COMMAND gti_call_result_publication_tests)
 add_test(NAME call_result_publication_runtime
          COMMAND "${Python3_EXECUTABLE}"
@@ -1946,7 +1946,7 @@ set_tests_properties(consuming_call_assignment_runtime PROPERTIES TIMEOUT 240)
 
 add_executable(gti_initialization_and_native_identity_tests
   "${PROJECT_SOURCE_DIR}/tests/initialization_and_native_identity_tests.cpp")
-target_link_libraries(gti_initialization_and_native_identity_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_initialization_and_native_identity_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME initialization_and_native_identity COMMAND gti_initialization_and_native_identity_tests)
 if(TARGET gti_lsp)
   add_test(NAME implicit_return_construction_lsp
@@ -1956,11 +1956,11 @@ if(TARGET gti_lsp)
 endif()
 add_executable(gti_conversion_operator_tests
   "${PROJECT_SOURCE_DIR}/tests/conversion_operator_tests.cpp")
-target_link_libraries(gti_conversion_operator_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_conversion_operator_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME conversion_operators COMMAND gti_conversion_operator_tests)
 add_executable(gti_protocol_concept_tests
   "${PROJECT_SOURCE_DIR}/tests/protocol_concept_tests.cpp")
-target_link_libraries(gti_protocol_concept_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_protocol_concept_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME protocol_concepts COMMAND gti_protocol_concept_tests)
 if(TARGET gti_lsp)
   add_test(NAME conformance_header_lsp
@@ -1971,7 +1971,7 @@ if(TARGET gti_lsp)
 endif()
 add_executable(gti_tryable_propagation_tests
   "${PROJECT_SOURCE_DIR}/tests/tryable_propagation_tests.cpp")
-target_link_libraries(gti_tryable_propagation_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_tryable_propagation_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME tryable_propagation COMMAND gti_tryable_propagation_tests)
 add_executable(gti_complete_borrow_summary_tests complete_borrow_summary_tests.cpp)
 target_link_libraries(gti_complete_borrow_summary_tests PRIVATE gti_compiler)
@@ -1993,12 +1993,12 @@ add_test(NAME payload_fresh_class_operands_runtime
 set_tests_properties(constructor_null_native_runtime PROPERTIES TIMEOUT 300)
 
 add_executable("gti_native_header_tests" "${PROJECT_SOURCE_DIR}/tests/native_header_tests.cpp")
-target_link_libraries("gti_native_header_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_native_header_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME native_header_pipeline COMMAND gti_native_header_tests)
 
 add_executable("gti_native_callback_tests"
                "${PROJECT_SOURCE_DIR}/tests/native_callback_tests.cpp")
-target_link_libraries("gti_native_callback_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_native_callback_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME native_callback_pipeline COMMAND gti_native_callback_tests)
 if(Python3_Interpreter_FOUND)
   add_test(NAME native_indirect_runtime
@@ -2009,16 +2009,16 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 add_executable(gti_cthread_tests "${PROJECT_SOURCE_DIR}/tests/cthread_tests.cpp")
-target_link_libraries(gti_cthread_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_cthread_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME cthread_semantic_ir COMMAND gti_cthread_tests)
 
 add_executable(gti_unsafe_function_tests
                "${PROJECT_SOURCE_DIR}/tests/unsafe_function_tests.cpp")
-target_link_libraries(gti_unsafe_function_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_unsafe_function_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME unsafe_function_contract COMMAND gti_unsafe_function_tests)
 
 add_executable(gti_unsafe_expression_tests unsafe_expression_tests.cpp)
-target_link_libraries(gti_unsafe_expression_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_unsafe_expression_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME unsafe_expression_contract COMMAND gti_unsafe_expression_tests)
 if(Python3_Interpreter_FOUND)
   add_test(NAME unsafe_expression_runtime
@@ -2027,58 +2027,58 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 add_executable(gti_runtime_object_layout_tests runtime_object_layout_tests.cpp)
-target_link_libraries(gti_runtime_object_layout_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_runtime_object_layout_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME runtime_object_layout_contract COMMAND gti_runtime_object_layout_tests)
 
 add_executable("gti_managed_thread_tests"
                "${PROJECT_SOURCE_DIR}/tests/managed_thread_tests.cpp")
-target_link_libraries("gti_managed_thread_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_managed_thread_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME managed_thread_semantic_ir COMMAND gti_managed_thread_tests)
 
 add_executable(gti_scoped_thread_semantic_tests scoped_thread_semantic_tests.cpp)
-target_link_libraries(gti_scoped_thread_semantic_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_scoped_thread_semantic_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME scoped_thread_semantic_shapes COMMAND gti_scoped_thread_semantic_tests)
 
 add_executable("gti_function_item_tests"
                "${PROJECT_SOURCE_DIR}/tests/function_item_tests.cpp")
-target_link_libraries("gti_function_item_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_function_item_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME function_item_semantic_ir COMMAND gti_function_item_tests)
 
 add_executable(gti_function_signature_tests
                "${PROJECT_SOURCE_DIR}/tests/function_signature_tests.cpp")
-target_link_libraries(gti_function_signature_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_function_signature_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME function_signature_types COMMAND gti_function_signature_tests)
 add_executable(gti_stored_callable_tests stored_callable_tests.cpp)
-target_link_libraries(gti_stored_callable_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_stored_callable_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME stored_callable_types COMMAND gti_stored_callable_tests)
 add_executable(gti_borrowing_capture_tests borrowing_capture_tests.cpp)
-target_link_libraries(gti_borrowing_capture_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_borrowing_capture_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME borrowing_capture_semantics COMMAND gti_borrowing_capture_tests)
 add_executable(gti_owning_function_tests owning_function_tests.cpp)
-target_link_libraries(gti_owning_function_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_owning_function_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME owning_function_types COMMAND gti_owning_function_tests)
 
 add_executable(gti_consuming_receiver_tests consuming_receiver_tests.cpp)
-target_link_libraries(gti_consuming_receiver_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_consuming_receiver_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME consuming_receiver_types COMMAND gti_consuming_receiver_tests)
 
 add_executable("gti_atomic_tests"
                "${PROJECT_SOURCE_DIR}/tests/atomic_tests.cpp")
-target_link_libraries("gti_atomic_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_atomic_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME atomic_semantic_ir COMMAND gti_atomic_tests)
 
 add_executable("gti_mutex_tests"
                "${PROJECT_SOURCE_DIR}/tests/mutex_tests.cpp")
-target_link_libraries("gti_mutex_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_mutex_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME mutex_semantic_ir COMMAND gti_mutex_tests)
 add_test(NAME mutex_shell_recipes COMMAND gti_mutex_tests --shell-recipes)
 
 add_executable(gti_source_location_tests source_location_tests.cpp)
-target_link_libraries(gti_source_location_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_source_location_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME source_location_semantic_ir COMMAND gti_source_location_tests)
 
 add_executable(gti_simd_tests simd_tests.cpp)
-target_link_libraries(gti_simd_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_simd_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME simd_semantic_ir COMMAND gti_simd_tests)
 add_test(NAME simd_runtime
          COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/simd_runtime_test.py"
@@ -2087,15 +2087,15 @@ set_tests_properties(simd_runtime PROPERTIES TIMEOUT 600 PROCESSORS 2)
 
 add_executable("gti_defined_integer_tests"
                "${PROJECT_SOURCE_DIR}/tests/defined_integer_tests.cpp")
-target_link_libraries("gti_defined_integer_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_defined_integer_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME defined_integer_arithmetic COMMAND gti_defined_integer_tests)
 
 add_executable("gti_binary64_tests" "${PROJECT_SOURCE_DIR}/tests/binary64_tests.cpp")
-target_link_libraries("gti_binary64_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_binary64_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME binary64_pipeline COMMAND gti_binary64_tests)
 
 add_executable("gti_sum_type_tests" "${PROJECT_SOURCE_DIR}/tests/sum_type_tests.cpp")
-target_link_libraries("gti_sum_type_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_sum_type_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME sum_type_pipeline COMMAND gti_sum_type_tests)
 add_test(NAME payload_borrow_chains_runtime
          COMMAND "${Python3_EXECUTABLE}"
@@ -2105,7 +2105,7 @@ add_test(NAME payload_borrow_chains_runtime
 set_tests_properties(payload_borrow_chains_runtime PROPERTIES TIMEOUT 120)
 
 add_executable("gti_mir_backend_tests" "${PROJECT_SOURCE_DIR}/tests/mir_backend_tests.cpp")
-target_link_libraries("gti_mir_backend_tests" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_mir_backend_tests" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME mir_backend_first_family COMMAND gti_mir_backend_tests)
 
 add_executable("gti_lowered_program_tests"
@@ -2826,22 +2826,22 @@ add_test(NAME constructor_passive_field_rollback_runtime
           $<TARGET_FILE:gti>)
 set_tests_properties(constructor_passive_field_rollback_runtime PROPERTIES TIMEOUT 600)
 add_executable(gti_expected_payload_pair_emitter_tests expected_payload_pair_emitter_tests.cpp)
-target_link_libraries(gti_expected_payload_pair_emitter_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_expected_payload_pair_emitter_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME expected_payload_pair_emitter COMMAND gti_expected_payload_pair_emitter_tests)
 add_executable(gti_expected_passive_publication_tests expected_passive_publication_tests.cpp)
-target_link_libraries(gti_expected_passive_publication_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_expected_passive_publication_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME expected_passive_publication COMMAND gti_expected_passive_publication_tests)
 add_executable(gti_abstract_generic_failure_contract_tests abstract_generic_failure_contract_tests.cpp)
-target_link_libraries(gti_abstract_generic_failure_contract_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_abstract_generic_failure_contract_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME abstract_generic_failure_contract COMMAND gti_abstract_generic_failure_contract_tests)
 add_executable(gti_retained_generic_lifecycle_tests retained_generic_lifecycle_tests.cpp)
-target_link_libraries(gti_retained_generic_lifecycle_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_retained_generic_lifecycle_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME retained_generic_lifecycle COMMAND gti_retained_generic_lifecycle_tests)
 add_executable(gti_user_dual_range_backend_tests user_dual_range_backend_tests.cpp)
-target_link_libraries(gti_user_dual_range_backend_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_user_dual_range_backend_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME user_dual_range_backend COMMAND gti_user_dual_range_backend_tests)
 add_executable(gti_text_view_iterator_compiler_tests text_view_iterator_compiler_tests.cpp)
-target_link_libraries(gti_text_view_iterator_compiler_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_text_view_iterator_compiler_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME text_view_iterator_compiler COMMAND gti_text_view_iterator_compiler_tests)
 add_executable(gti_generic_discovery_tests generic_discovery_tests.cpp)
 target_link_libraries(gti_generic_discovery_tests PRIVATE gti_compiler)
@@ -2854,43 +2854,43 @@ add_test(NAME generic_discovery_runtime
 set_tests_properties(generic_discovery_runtime PROPERTIES TIMEOUT 240)
 
 add_executable(gti_owned_pointee_projection_tests owned_pointee_projection_tests.cpp)
-target_link_libraries(gti_owned_pointee_projection_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_owned_pointee_projection_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME owned_pointee_projection COMMAND gti_owned_pointee_projection_tests)
 
 add_executable(gti_consuming_owned_pointee_tests consuming_owned_pointee_tests.cpp)
-target_link_libraries(gti_consuming_owned_pointee_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_consuming_owned_pointee_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME consuming_owned_pointee COMMAND gti_consuming_owned_pointee_tests)
 add_executable(gti_optional_empty_prefix_tests optional_empty_prefix_tests.cpp)
-target_link_libraries(gti_optional_empty_prefix_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_optional_empty_prefix_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME optional_empty_prefix COMMAND gti_optional_empty_prefix_tests)
 add_executable(gti_enum_replacement_tests enum_replacement_tests.cpp)
-target_link_libraries(gti_enum_replacement_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_enum_replacement_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME enum_replacement COMMAND gti_enum_replacement_tests)
 add_test(NAME enum_replacement_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/enum_replacement_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(enum_replacement_runtime PROPERTIES TIMEOUT 600)
 
 add_executable(gti_borrowed_payload_copy_tests borrowed_payload_copy_tests.cpp)
-target_link_libraries(gti_borrowed_payload_copy_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_borrowed_payload_copy_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME borrowed_payload_copy COMMAND gti_borrowed_payload_copy_tests)
 
 add_executable(gti_enum_selector_tests enum_selector_tests.cpp)
-target_link_libraries(gti_enum_selector_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_enum_selector_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME enum_selector COMMAND gti_enum_selector_tests)
 add_test(NAME enum_selector_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/enum_selector_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(enum_selector_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_field_array_empty_state_tests field_array_empty_state_tests.cpp)
-target_link_libraries(gti_field_array_empty_state_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_field_array_empty_state_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME field_array_empty_state COMMAND gti_field_array_empty_state_tests)
 add_executable(gti_passive_fixed_array_tests passive_fixed_array_tests.cpp)
-target_link_libraries(gti_passive_fixed_array_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_passive_fixed_array_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME passive_fixed_array_values COMMAND gti_passive_fixed_array_tests)
 add_executable(gti_class_field_value_tests class_field_value_tests.cpp)
-target_link_libraries(gti_class_field_value_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_class_field_value_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME class_field_values COMMAND gti_class_field_value_tests)
 add_executable(gti_conditional_class_publication_tests conditional_class_publication_tests.cpp)
-target_link_libraries(gti_conditional_class_publication_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_conditional_class_publication_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME conditional_class_publication COMMAND gti_conditional_class_publication_tests)
 if(Python3_Interpreter_FOUND)
   add_test(NAME class_expression_publication_runtime
@@ -2911,7 +2911,7 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(class_field_value_runtime PROPERTIES TIMEOUT 300)
 endif()
 add_executable(gti_aggregate_projection_tests aggregate_projection_tests.cpp)
-target_link_libraries(gti_aggregate_projection_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_aggregate_projection_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME aggregate_projection COMMAND gti_aggregate_projection_tests)
 if(Python3_Interpreter_FOUND)
   add_test(NAME aggregate_projection_runtime
@@ -2935,55 +2935,55 @@ if(Python3_Interpreter_FOUND)
 endif()
 add_executable(gti_expected_payload_pending_cleanup_tests
                expected_payload_pending_cleanup_tests.cpp)
-target_link_libraries(gti_expected_payload_pending_cleanup_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_expected_payload_pending_cleanup_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME expected_payload_pending_cleanup
          COMMAND gti_expected_payload_pending_cleanup_tests)
 add_executable(gti_temporary_owner_borrow_tests temporary_owner_borrow_tests.cpp)
-target_link_libraries(gti_temporary_owner_borrow_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_temporary_owner_borrow_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME temporary_owner_borrow COMMAND gti_temporary_owner_borrow_tests)
 add_executable(gti_owned_expected_error_tests owned_expected_error_tests.cpp)
-target_link_libraries(gti_owned_expected_error_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_owned_expected_error_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME owned_expected_error COMMAND gti_owned_expected_error_tests)
 add_executable(gti_expected_transform_error_tests expected_transform_error_tests.cpp)
-target_link_libraries(gti_expected_transform_error_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_expected_transform_error_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME expected_transform_error COMMAND gti_expected_transform_error_tests)
 add_executable(gti_expected_ergonomics_tests expected_ergonomics_tests.cpp)
-target_link_libraries(gti_expected_ergonomics_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_expected_ergonomics_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME expected_ergonomics COMMAND gti_expected_ergonomics_tests)
 add_executable(gti_borrowed_expected_extraction_tests borrowed_expected_extraction_tests.cpp)
-target_link_libraries(gti_borrowed_expected_extraction_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_borrowed_expected_extraction_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME borrowed_expected_extraction COMMAND gti_borrowed_expected_extraction_tests)
 add_executable(gti_borrow_origin_tests borrow_origin_tests.cpp)
-target_link_libraries(gti_borrow_origin_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_borrow_origin_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME borrow_origin COMMAND gti_borrow_origin_tests)
 add_executable(gti_panic_contract_tests panic_contract_tests.cpp)
-target_link_libraries(gti_panic_contract_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_panic_contract_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME panic_contracts COMMAND gti_panic_contract_tests)
 add_executable(gti_deferred_assertion_tests deferred_assertion_tests.cpp)
-target_link_libraries(gti_deferred_assertion_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_deferred_assertion_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME deferred_assertions COMMAND gti_deferred_assertion_tests)
 add_executable(gti_owned_unexpected_pending_cleanup_tests owned_unexpected_pending_cleanup_tests.cpp)
-target_link_libraries(gti_owned_unexpected_pending_cleanup_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_owned_unexpected_pending_cleanup_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME owned_unexpected_pending_cleanup COMMAND gti_owned_unexpected_pending_cleanup_tests)
 add_executable(gti_private_constructor_placement_tests private_constructor_placement_tests.cpp)
-target_link_libraries(gti_private_constructor_placement_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_private_constructor_placement_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME private_constructor_placement COMMAND gti_private_constructor_placement_tests)
 add_executable(gti_nested_guarded_expected_tests nested_guarded_expected_tests.cpp)
-target_link_libraries(gti_nested_guarded_expected_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_nested_guarded_expected_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME nested_guarded_expected COMMAND gti_nested_guarded_expected_tests)
 add_executable(gti_structural_relocation_tests structural_relocation_tests.cpp)
-target_link_libraries(gti_structural_relocation_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_structural_relocation_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME structural_relocation COMMAND gti_structural_relocation_tests)
 
 add_executable(gti_consuming_range_tests consuming_range_tests.cpp)
-target_link_libraries(gti_consuming_range_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_consuming_range_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME consuming_range COMMAND gti_consuming_range_tests)
 
 add_executable(gti_compact_owner_layout_tests compact_owner_layout_tests.cpp)
-target_link_libraries(gti_compact_owner_layout_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_compact_owner_layout_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME compact_owner_layout COMMAND gti_compact_owner_layout_tests)
 add_executable(gti_restoring_exchange_tests restoring_exchange_tests.cpp)
-target_link_libraries(gti_restoring_exchange_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_restoring_exchange_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME restoring_exchange COMMAND gti_restoring_exchange_tests)
 add_test(NAME restoring_exchange_runtime
   COMMAND "${Python3_EXECUTABLE}"
@@ -3036,7 +3036,7 @@ add_test(NAME nested_receiver_array_runtime
 set_tests_properties(nested_receiver_array_runtime PROPERTIES TIMEOUT 300)
 
 add_executable(gti_issues_30_33_tests issues_30_33_tests.cpp)
-target_link_libraries(gti_issues_30_33_tests PRIVATE gti_cpp_backend)
+target_link_libraries(gti_issues_30_33_tests PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME issues_30_33 COMMAND gti_issues_30_33_tests)
 add_test(NAME issues_30_33_runtime
          COMMAND "${Python3_EXECUTABLE}"
@@ -3059,7 +3059,7 @@ set_tests_properties(passive_record_runtime PROPERTIES TIMEOUT 300)
 add_executable("gti_failure_descriptor_backend_tests"
                "${PROJECT_SOURCE_DIR}/tests/failure_descriptor_backend_tests.cpp")
 target_link_libraries("gti_failure_descriptor_backend_tests"
-                      PRIVATE gti_cpp_backend)
+                      PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(
   NAME failure_descriptor_backend
   COMMAND gti_failure_descriptor_backend_tests
@@ -3069,7 +3069,7 @@ add_test(
 add_executable("gti_mir_backend_scalar_cfg_tests"
                "${PROJECT_SOURCE_DIR}/tests/mir_backend_scalar_cfg_tests.cpp")
 target_link_libraries("gti_mir_backend_scalar_cfg_tests"
-                      PRIVATE gti_cpp_backend)
+                      PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(
   NAME mir_backend_scalar_cfg
   COMMAND gti_mir_backend_scalar_cfg_tests
@@ -3079,7 +3079,7 @@ add_test(
 add_executable("gti_mir_backend_scalar_direct_call_tests"
                "${PROJECT_SOURCE_DIR}/tests/mir_backend_scalar_direct_call_tests.cpp")
 target_link_libraries("gti_mir_backend_scalar_direct_call_tests"
-                      PRIVATE gti_cpp_backend)
+                      PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(
   NAME mir_backend_scalar_direct_call
   COMMAND gti_mir_backend_scalar_direct_call_tests
@@ -3089,7 +3089,7 @@ add_test(
 add_executable("gti_mir_backend_class_default_cleanup_tests"
                "${PROJECT_SOURCE_DIR}/tests/mir_backend_class_default_cleanup_tests.cpp")
 target_link_libraries("gti_mir_backend_class_default_cleanup_tests"
-                      PRIVATE gti_cpp_backend)
+                      PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(
   NAME mir_backend_class_default_cleanup
   COMMAND gti_mir_backend_class_default_cleanup_tests
@@ -3099,7 +3099,7 @@ add_test(
 add_executable("gti_mir_backend_owned_lifecycle_tests"
                "${PROJECT_SOURCE_DIR}/tests/mir_backend_owned_lifecycle_tests.cpp")
 target_link_libraries("gti_mir_backend_owned_lifecycle_tests"
-                      PRIVATE gti_cpp_backend)
+                      PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(
   NAME mir_backend_owned_lifecycle
   COMMAND gti_mir_backend_owned_lifecycle_tests
@@ -3109,7 +3109,7 @@ add_test(
 add_executable("gti_mir_backend_scalar_failure_callgraph_tests"
                "${PROJECT_SOURCE_DIR}/tests/mir_backend_scalar_failure_callgraph_tests.cpp")
 target_link_libraries("gti_mir_backend_scalar_failure_callgraph_tests"
-                      PRIVATE gti_cpp_backend)
+                      PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(
   NAME mir_backend_scalar_failure_callgraph
   COMMAND gti_mir_backend_scalar_failure_callgraph_tests
@@ -3140,7 +3140,7 @@ add_test(NAME layout_query_native_boundary
 
 add_executable("gti_prefix_storage_evidence"
                "${PROJECT_SOURCE_DIR}/tests/prefix_storage_native_evidence.cpp")
-target_link_libraries("gti_prefix_storage_evidence" PRIVATE gti_cpp_backend)
+target_link_libraries("gti_prefix_storage_evidence" PRIVATE gti_cpp_backend gti_llvm_backend)
 add_test(NAME prefix_storage_native_evidence
          COMMAND gti_prefix_storage_evidence "${CMAKE_CXX_COMPILER}")
 set_tests_properties(
@@ -6610,3 +6610,14 @@ if(GTI_RELEASE_BUILD)
     "GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
   )
 endif()
+
+# cpp-independence registrations: lane 1
+# cpp-independence registrations: lane 2
+# cpp-independence registrations: lane 3
+# cpp-independence registrations: lane 4
+# cpp-independence registrations: lane 5
+# cpp-independence registrations: lane 6
+# cpp-independence registrations: lane 7
+# cpp-independence registrations: lane 8
+# cpp-independence registrations: lane 9
+# cpp-independence registrations: lane 10

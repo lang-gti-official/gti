@@ -1,4 +1,5 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "mir_test_fixture.h"
+#include "lowered_program_test_support.h"
 #include "gti/mir_printer.h"
 
 int main() {
