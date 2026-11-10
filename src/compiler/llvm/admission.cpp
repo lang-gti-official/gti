@@ -2991,6 +2991,53 @@ public:
       }
     return returned && relay != nullptr;
   }
+  // A reference read out of a stored reference field of a hierarchy carrier
+  // and returned: the address is the field's external referent, never
+  // hierarchy storage. The carrier's Stored entry loan transfers into this
+  // Return loan as metadata only.
+  bool storedReferenceReturnLoan(const MirBody &mir,
+                                 const MirLoan &loan) const {
+    if (loan.kind != MirLoanKind::Return || !loan.escapes ||
+        loan.referenceSelection || !loan.additionalDependencies.empty() ||
+        !loan.conditions.empty() || loan.twoPhase || loan.lifecycleBound ||
+        loan.entry || loan.storedDependency)
+      return false;
+    bool returned = false;
+    for (const auto &block : mir.blocks) {
+      const auto &term = block.terminator;
+      if (!term.returnLoan || *term.returnLoan != loan.id)
+        continue;
+      if (term.kind != MirTerminatorKind::Return || !term.value ||
+          term.value->kind != MirOperandKind::Loan ||
+          term.value->loan != loan.id ||
+          dispatchProofs.related(term.value->type))
+        return false;
+      returned = true;
+    }
+    const MirInstruction *relay = nullptr;
+    for (const auto &block : mir.blocks)
+      for (const auto &stage : block.instructions) {
+        if (stage.tombstone || stage.loan != loan.id)
+          continue;
+        if (relay || stage.kind != MirInstructionKind::Borrow ||
+            stage.operands.size() != 1 ||
+            stage.operands.front().kind != MirOperandKind::Loan ||
+            dispatchProofs.related(stage.info.type) ||
+            dispatchProofs.related(stage.operands.front().type))
+          return false;
+        relay = &stage;
+      }
+    if (relay == nullptr)
+      return false;
+    const auto *entry = mir.findLoan(relay->operands.front().loan);
+    const auto *runtime = mir.findPlace(relay->operands.front().place);
+    return returned && entry && entry->kind == MirLoanKind::Stored &&
+           entry->entry && !entry->designatedFields.empty() &&
+           entry->source == loan.source && runtime &&
+           !dispatchProofs.related(runtime->type) &&
+           !runtime->projections.empty() &&
+           runtime->projections.back().kind == MirProjectionKind::Dereference;
+  }
   // A native value or hierarchy storage with exact dispatch metadata. Only a
   // representation fact: every operation keeps its own transfer proof.
   bool representedValue(const SemanticType &type) const {
@@ -5231,7 +5278,8 @@ public:
       // A returned view of hierarchy storage depends on its owner without
       // an address in it: borrow metadata, as for a static call's view.
       const bool viewReturn =
-          hierarchy && viewReturnLoan(mir, loan) &&
+          hierarchy &&
+          (viewReturnLoan(mir, loan) || storedReferenceReturnLoan(mir, loan)) &&
           dispatchProofs
               .metadata(origin->type.kind == SemanticType::Reference &&
                                 origin->type.arguments.size() == 1
