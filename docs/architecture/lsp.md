@@ -669,6 +669,21 @@ lock tokens, and operations. It does not derive task transfer, callable entry
 selection, result ownership, atomic order legality, protected-value provenance,
 lock lifetime, or concurrency from public spelling.
 
+Lifetimes are erased before semantic types (RFC 0004), so their names are
+resolved where their scopes live: the parser records, per source unit, each
+binder (`lifetime a` in function, class, alias, concept and conformance lists,
+`for<lifetime a>` quantified signatures, and regions bound by class argument
+patterns or requirement parameters) and the binder each written region name
+denotes (`gti/lifetime_names.h`). A binder is visible throughout its
+declaration, including a result type written before the binder list. Semantics
+reports an unresolved name as `GTI-S2126` and, with tooling occurrences, records
+each binder as a `LifetimeParameter` symbol whose uses are its occurrences, so
+semantic tokens, hover (`lifetime a`), definition, references, rename and
+completion after `&<` follow the parser's resolution rather than spelling.
+Signature hovers print written binders and region arguments from the
+declaration syntax (`identity<lifetime a>(int32_t&<a> value)`); a region
+contract does not also print as `[[borrowed_from]]`.
+
 ## Document State
 
 `LanguageServer` still owns protocol handling, open overlays, client versions,
@@ -1430,10 +1445,6 @@ function-local names: identities visible outside the entry document's
   test fixtures. Reporting them needs the closure of an omitted instance to
   be discovered, or remembered as diagnostic-free from an earlier complete
   lowering.
-- Lifetime binders (`lifetime a` and region names bound by class argument
-  patterns) have no semantic symbols, so the LSP gives them no semantic token,
-  hover, definition, references or completion; Tree-sitter highlights them.
-  Binder scoping is decided only by the parser.
 - Project analysis follows the package containing the opened document and the
   driver's default or explicitly selected profile on the host platform. Unique entry roots and
   single-target packages infer their target defines; shared/ambiguous sources

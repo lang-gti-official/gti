@@ -120,7 +120,10 @@ def main():
                 and "lifetime" in error["message"].lower() for error in errors), errors
             assert change(SOURCE, 6) == []
             contracts = SOURCE + (
-                "struct Borrowed<T, lifetime owner> { T&<owner> value; };\n"
+                "struct Borrowed<T, lifetime owner> {\n"
+                "  T&<owner> value;\n"
+                "  Borrowed(T&<owner> input) : value(input) {}\n"
+                "};\n"
                 "using Forever = Borrowed<int, static>;\n"
                 "using Read = for<lifetime fresh> int&<fresh>(int&<fresh>);\n"
                 "concept Related<T, lifetime region> = outlives<T, region>;\n"

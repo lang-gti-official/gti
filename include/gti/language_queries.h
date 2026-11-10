@@ -56,6 +56,13 @@ private:
   void appendGenericParameters(
       std::string &result,
       const std::vector<GenericParameterInfo> &parameters) const;
+  // Lifetimes are erased before semantic types (RFC 0004): a declaration's
+  // written binders and region arguments supply their presentation.
+  void appendSourceGenericParameters(
+      std::string &result, const std::vector<GenericParameterInfo> &parameters,
+      const std::vector<GenericParameter> &source) const;
+  [[nodiscard]] std::string regionType(const SemanticType &type,
+                                       const TypeRef *syntax) const;
   void appendParameters(std::string &result,
                         const std::vector<SemanticType> &parameterTypes,
                         const std::vector<Parameter> *parameters,
@@ -170,6 +177,7 @@ enum class CompletionCandidateKind {
   Variable,
   Parameter,
   TypeParameter,
+  LifetimeParameter,
 };
 
 // One presentable signature for the innermost call containing the query
