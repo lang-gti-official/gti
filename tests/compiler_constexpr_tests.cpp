@@ -6953,8 +6953,10 @@ int main() {
   lang::SemanticVisitor allowedSemantic(allowed);
   expect(allowedSemantic.check(errorProgram),
          "inactive #error directives should not affect semantics");
+  // Emission is checked on the host, which is never the "blocked" OS, so the
+  // LLVM step compiles for the target the fixture was analyzed for.
   const lang::FrontendResult allowedLowered =
-      analyzeEmissionFixture(errorSource, allowed);
+      analyzeEmissionFixture(errorSource);
   expect(!mirContainsText(allowedLowered.mir, "is not supported") &&
              !mirContainsText(allowedLowered.mir, "is unavailable") &&
              !mirContainsText(allowedLowered.mir, "No entry point") &&
