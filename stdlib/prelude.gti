@@ -627,7 +627,7 @@ public:
   }
 };
 
-class expected<T&, E> {
+class expected<T&<data>, E> {
   static_assert(gti_internal::meta_type_kind<E>() != uint64_t(17), "An 'expected' error type cannot be 'void'.");
   mut std::detail::expected_state<T&, E> state;
 public:
@@ -644,13 +644,13 @@ public:
   }
   operator bool() { return this.has_value(); }
 
-  [[track_caller]] T& value() {
+  [[track_caller]] T&<data> value() {
     switch (this.state) {
     case std::detail::expected_state<T&, E>::value(auto& value): return value;
     case std::detail::expected_state<T&, E>::error: gti_internal::fail_inactive_value();
     }
   }
-  [[track_caller]] T& value() && {
+  [[track_caller]] T&<data> value() && {
     switch (this.state) {
     case std::detail::expected_state<T&, E>::value(auto& value): return value;
     case std::detail::expected_state<T&, E>::error: gti_internal::fail_inactive_value();
@@ -676,7 +676,7 @@ public:
     }
   }
 
-  [[track_caller]] T& expect(std::string_view message) && {
+  [[track_caller]] T&<data> expect(std::string_view message) && {
     switch (this.state) {
     case std::detail::expected_state<T&, E>::value(auto& value): return value;
     case std::detail::expected_state<T&, E>::error: gti_internal::panic(message);

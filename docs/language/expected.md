@@ -151,8 +151,11 @@ expected<int&, lookup_errc> result = value;
 int& observed = result.value();
 ```
 
-`value()` produces a read-only loan tied to both the expected carrier and its
-original owner; it does not copy `T`. The owner cannot be mutated, moved, or
+`value()` produces a read-only loan of the original owner; it does not copy
+`T`. The prelude declares it in the carrier's stored region
+(`T&<data> value()` in `class expected<T&<data>, E>`), as Rust's
+`Option<&'a T>` yields `&'a T`, so an extracted reference may be returned or
+kept after the carrier itself ends. The owner cannot be mutated, moved, or
 replaced while either the carrier or an extracted reference remains live. The
 ordinary path-aware last-use rules release that dependency. Retaining a result
 from a temporary owner is rejected.
