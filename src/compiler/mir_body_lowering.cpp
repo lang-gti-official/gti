@@ -14749,6 +14749,17 @@ private:
             // or another such alias's), as a range cursor keeps its call's
             // loan; the semantic identity stays on the entry loan.
             physicalRangeLoan = true;
+          } else if (existing != nullptr && candidate != nullptr &&
+                     initializer != nullptr && initializer->functionTarget &&
+                     !loanIsActive(scopes, existing->id) &&
+                     loanIsActive(scopes, candidate->id) &&
+                     existing->access == candidate->access &&
+                     sameBorrowSource(candidate->source, existing->source)) {
+            // A call consumed the carrier and retired its loan; its result
+            // borrows the same external owner under a signature contract and
+            // now carries that identity.
+            output.loans[existing->id - 1].semanticLoan = 0;
+            semanticLoans.insert_or_assign(semanticLoan, retainedLoan);
           } else if (consumesExistingCarrier) {
             // The semantic identity protects the same external owner, but a
             // consuming call publishes a new physical cleanup obligation.
