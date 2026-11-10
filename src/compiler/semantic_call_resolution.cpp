@@ -5508,6 +5508,15 @@ auto SemanticVisitor::Impl::consumingResultCarriesBorrow(
     if (lifetime.classBinder ||
         lifetime.kind == ExplicitLifetimeResult::Kind::Static)
       return false;
+    // RFC 0004: a consumed receiver can only lend what it holds. When it
+    // holds no borrowed state, a borrowing by-value result borrows from the
+    // other inputs (a mapper's result, as Rust's `Result::map(self, f)`).
+    if (signatureContractDefaults() &&
+        function.returnType.kind != SemanticType::Reference &&
+        function.returnBorrowOrigin != BorrowOriginKind::Receiver &&
+        function.dispatchOwner.kind == SemanticType::Class &&
+        !typeTraits(function.dispatchOwner).containsBorrowedState)
+      return false;
   }
   return function.receiverMutability == ReceiverMutability::Consuming &&
          !receiverTextFieldResult(function.returnType,
@@ -7073,10 +7082,9 @@ auto SemanticVisitor::Impl::resolveOperator(
   }
   requireFunctionDefinition(selected, token);
   const CallReceiverMode selectedReceiverMode = viable.front().receiverMode;
-  if (selected.receiverMutability == ReceiverMutability::Consuming &&
-      (selected.returnType.kind == SemanticType::Reference ||
-       selected.returnBorrowOrigin != BorrowOriginKind::None ||
-       typeTraits(selected.returnType).containsBorrowedState)) {
+  // The same rule as consuming methods: a result written in the class's
+  // region (or `static`) names the consumed value's external referent.
+  if (consumingResultCarriesBorrow(selected)) {
     report(token,
            "A consuming operator cannot return a reference or tracked borrowed "
            "state.",

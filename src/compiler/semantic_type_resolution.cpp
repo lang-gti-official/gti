@@ -5207,7 +5207,8 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
       return;
     }
   }
-  if (!hasStableBorrowStorage(initializer)) {
+  // Under MIR authority MIR proves the binding's loans outlive their uses.
+  if (!mirBorrowAuthority() && !hasStableBorrowStorage(initializer)) {
     report(expressionToken(initializer),
            "Stored-reference value is derived from temporary storage that "
            "does not outlive the binding.",
@@ -8734,8 +8735,17 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
       fail("A consuming receiver is supported only by value-producing "
            "operators, conversion operators and operator().");
     }
-    if (returnType.kind == SemanticType::Reference ||
-        typeTraits(returnType).containsBorrowedState) {
+    // A result written in the class's region, `static`, or a region its
+    // parameters supply names an external referent, not the consumed shell.
+    const auto lifetime = explicitLifetimeResult(
+        function, {}, currentClass ? *currentClass : ClassId{0});
+    const bool externalResult =
+        lifetime.classBinder ||
+        lifetime.kind == ExplicitLifetimeResult::Kind::Static ||
+        (lifetime.kind == ExplicitLifetimeResult::Kind::Region &&
+         !lifetime.parameters.empty());
+    if (!externalResult && (returnType.kind == SemanticType::Reference ||
+                            typeTraits(returnType).containsBorrowedState)) {
       fail(
           "A consuming operator cannot return borrowed state from its consumed "
           "receiver.");
