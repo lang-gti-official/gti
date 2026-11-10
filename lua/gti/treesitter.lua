@@ -21,12 +21,32 @@ function M.setup(toolchain, opts)
   if toolchain.managed() and not opts then
     if not managed_registered then
       managed_registered = true
+      local group = vim.api.nvim_create_augroup("gti_treesitter_managed", { clear = true })
+      local function select_grammar(buffer)
+        local name = vim.api.nvim_buf_get_name(buffer)
+        return M.setup(toolchain, { cwd = name ~= "" and vim.fs.dirname(name) or nil })
+      end
+      -- Register the project's grammar before FileType. Other Tree-sitter
+      -- consumers (rainbow delimiters, text objects, context) attach from
+      -- their own FileType handlers, which can run before ours; a grammar
+      -- registered only there leaves them without a parser for the buffer.
+      vim.api.nvim_create_autocmd("BufReadPre", {
+        group = group,
+        pattern = "*.gti",
+        callback = function(args)
+          vim.b[args.buf].gti_treesitter_selected = select_grammar(args.buf)
+        end,
+      })
       vim.api.nvim_create_autocmd("FileType", {
-        group = vim.api.nvim_create_augroup("gti_treesitter_managed", { clear = true }),
+        group = group,
         pattern = "gti",
         callback = function(args)
-          local name = vim.api.nvim_buf_get_name(args.buf)
-          if M.setup(toolchain, { cwd = name ~= "" and vim.fs.dirname(name) or nil }) then
+          local selected = vim.b[args.buf].gti_treesitter_selected
+          if selected == nil then
+            -- No read preceded this FileType: a new file or `:set ft=gti`.
+            selected = select_grammar(args.buf)
+          end
+          if selected then
             start_buffer(args.buf)
           else
             pcall(vim.treesitter.stop, args.buf, "gti")
