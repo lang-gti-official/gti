@@ -151,6 +151,10 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
                   "the borrow. Choose an order that preserves the intended "
                   "effects.");
       }
+      else if (explained->loanOrigin && !explained->temporaryDestroyed)
+        diagnostic.hints.emplace_back(
+            "Place the borrowed value in a narrower block when an explicit "
+            "lexical end is required across control flow.");
     }
     if (std::none_of(check.diagnostics.begin(), check.diagnostics.end(),
                      [&](const Diagnostic &existing) {
