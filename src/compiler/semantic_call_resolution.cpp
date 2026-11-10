@@ -8055,15 +8055,14 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       function.staticMember, function.record().intrinsic,
       declarationInfo == nullptr ? std::nullopt
                                  : exactMovedReturnParameter(*declarationInfo));
-  // A generic-result declaration with an explicit borrowed_from contract
-  // decides its origin per substitution; the selected instance's contract
-  // binds this call exactly as its own reanalysis records it.
+  // A generic-result declaration with an explicit contract (attribute or
+  // result region) decides its origin per substitution; the selected instance's
+  // contract binds this call exactly as its own reanalysis records it.
   bool genericContract = false;
   if (declarationInfo != nullptr && declarationInfo->declaration != nullptr &&
       declarationInfo->bodyDeclaration() != nullptr &&
       containsOpenTypeParameter(declarationInfo->returnType) &&
-      declarationInfo->bodyDeclaration()->hasFunctionAttribute(
-          "borrowed_from")) {
+      hasExplicitBorrowContract(*declarationInfo->bodyDeclaration())) {
     const GenericReturnBorrowContract contract = genericReturnBorrowContract(
         *declarationInfo->bodyDeclaration(), function.returnType,
         function.parameterTypes, function.ownerClass, function.staticMember);

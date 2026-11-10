@@ -6921,6 +6921,40 @@ private:
     return true;
   }
 
+  // Whether a class stores a by-value borrow carrier of `carrier`'s exact
+  // type, directly or through its owned class fields.
+  [[nodiscard]] bool embedsCarrier(const SemanticType &type,
+                                   const SemanticType &carrier) const {
+    if (carrier.kind == SemanticType::Reference)
+      return false;
+    std::vector<SemanticType> visiting;
+    const auto visit = [&](const auto &self,
+                           const SemanticType &current) -> bool {
+      if (std::find(visiting.begin(), visiting.end(), current) !=
+          visiting.end())
+        return false;
+      const auto instance = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const HirClassInstance &candidate) {
+            return candidate.type == current;
+          });
+      if (instance == program.classInstances().end())
+        return false;
+      visiting.push_back(current);
+      for (const auto &field : instance->fields) {
+        if (!field.info.traits.containsBorrowedState)
+          continue;
+        if (field.info.type == carrier ||
+            (field.info.type.kind == SemanticType::Class &&
+             self(self, field.info.type)))
+          return true;
+      }
+      visiting.pop_back();
+      return false;
+    };
+    return visit(visit, type);
+  }
+
   // The one stored reference field path of a class without bases, through
   // its owned class fields, with that reference's referent type.
   [[nodiscard]] std::optional<std::pair<std::vector<SymbolId>, SemanticType>>
@@ -8455,13 +8489,17 @@ private:
       if (argument && argument->storedReferenceAccess)
         originLoan = storedDependencyForPlace(origin);
     }
+    // The result relays a consumed by-value carrier when it is that carrier,
+    // or stores it as a field: either way it carries exactly its loans.
     const bool exactCarrierRelay =
         value.info.type.kind == SemanticType::Class &&
         value.info.traits.containsBorrowedState &&
         !value.info.traits.copyable &&
         value.borrowOrigin == BorrowOriginKind::Argument &&
         value.borrowArgument < value.parameterTypes.size() &&
-        value.parameterTypes[value.borrowArgument] == value.info.type;
+        (value.parameterTypes[value.borrowArgument] == value.info.type ||
+         embedsCarrier(value.info.type,
+                       value.parameterTypes[value.borrowArgument]));
     std::vector<MirLoanId> movedArgumentLoans;
     // A copied borrow carrier shares its stored group with its source. Moving
     // one copy transfers only that carrier: the group remains active while

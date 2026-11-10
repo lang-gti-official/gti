@@ -6788,7 +6788,7 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
         *function.declaration, function.returnType, function.parameterTypes,
         function.ownerClass, function.staticMember);
     if (contract.origin != BorrowOriginKind::None ||
-        function.declaration->hasFunctionAttribute("borrowed_from"))
+        hasExplicitBorrowContract(*function.declaration))
       summary = {.origin = contract.origin,
                  .parameter = contract.parameter,
                  .access = contract.access,
