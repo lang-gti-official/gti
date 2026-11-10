@@ -1597,7 +1597,10 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         }
       }
     }
-    if (declaration.requirements().empty()) {
+    // An `outlives` relationship is a capability too; it is erased signature
+    // metadata, so it leaves no type-level application (RFC 0004).
+    if (declaration.requirements().empty() &&
+        declaration.constraintExpression().lifetimeRequirements.empty()) {
       report(declaration.name(),
              "A source-defined concept requires at least one capability.",
              "GTI-S2049");
