@@ -1064,8 +1064,14 @@ def load_build_provenance(
     if (Path(argv[0]).resolve(strict=True) != cxx.resolved or
             Path(argv[0]).absolute() != cxx.command_path):
         raise BenchmarkError("GTI native argv does not use the selected native compiler")
-    if "-MD" not in argv or "-MF" not in argv:
-        raise BenchmarkError("GTI native argv did not capture compiler-owned dependencies")
+    # The LLVM backend (the default) links one native object; the frozen C++
+    # backend compiles generated C++ and records the compiler's dependencies.
+    compiles_generated_cpp = any(item.endswith(".cpp") for item in argv[1:])
+    if compiles_generated_cpp:
+        if "-MD" not in argv or "-MF" not in argv:
+            raise BenchmarkError("GTI native argv did not capture compiler-owned dependencies")
+    elif len([item for item in argv[1:] if item.endswith(".o")]) != 1:
+        raise BenchmarkError("GTI native argv must link exactly one LLVM object")
 
     runtime = native["runtime"]
     if not isinstance(runtime, dict):
@@ -1075,7 +1081,7 @@ def load_build_provenance(
     if not isinstance(runtime_sha256, str) or SHA256_PATTERN.fullmatch(runtime_sha256) is None:
         raise BenchmarkError("GTI runtime materials_sha256 is invalid")
     headers = runtime["headers"]
-    if not isinstance(headers, list) or not headers:
+    if not isinstance(headers, list) or (compiles_generated_cpp and not headers):
         raise BenchmarkError("GTI runtime provenance requires used headers")
     saw_runtime = False
     for index, header in enumerate(headers):
@@ -1091,7 +1097,7 @@ def load_build_provenance(
         if not isinstance(header["logical_identity"], str) or not header["logical_identity"]:
             raise BenchmarkError(f"{context}.logical_identity must be nonempty")
         validate_build_file(header["material"], f"{context}.material")
-    if not saw_runtime:
+    if compiles_generated_cpp and not saw_runtime:
         raise BenchmarkError("GTI runtime provenance contains no runtime header")
     validate_build_file(report["artifact"], "GTI built artifact")
     archive = validate_build_file(runtime["archive"], "GTI runtime archive")
@@ -1118,6 +1124,7 @@ def build_variant(
     native_flags: list[str],
     timeout: float,
     native_optimization: str | None = None,
+    gti_backend: str = "llvm",
 ) -> dict[str, Any]:
     variant_directory = directory / variant.name
     variant_directory.mkdir(parents=True, exist_ok=False)
@@ -1128,7 +1135,7 @@ def build_variant(
         else executable
     )
     build_report = variant_directory / "gti-build-report.json"
-    if variant.kind == "gti":
+    if variant.kind == "gti" and gti_backend == "cpp":
         command = [
             str(gti.resolved),
             str(variant.source),
@@ -1139,6 +1146,15 @@ def build_variant(
             str(cxx.command_path),
             "--keep-cpp",
         ]
+    elif variant.kind == "gti":
+        command = [
+            str(gti.resolved),
+            str(variant.source),
+            f"-O{optimization}",
+            "--cxx",
+            str(cxx.command_path),
+        ]
+    if variant.kind == "gti":
         if variant.execution_profile is not None:
             command.extend(("--execution-profile", variant.execution_profile))
         if workload.descriptor["schema"] == 2 or native_optimization is not None:
@@ -1179,11 +1195,12 @@ def build_variant(
     provenance: dict[str, Any] | None = None
     if variant.kind == "gti":
         generated = Path(str(driver_executable) + ".gti.cpp")
-        if not generated.is_file():
-            raise BenchmarkError(
-                f"GTI benchmark build did not retain emitted C++ at '{generated}'"
-            )
-        artifacts["emitted_cpp"] = file_evidence(generated)
+        if gti_backend == "cpp":
+            if not generated.is_file():
+                raise BenchmarkError(
+                    f"GTI benchmark build did not retain emitted C++ at '{generated}'"
+                )
+            artifacts["emitted_cpp"] = file_evidence(generated)
         if workload.descriptor["schema"] == 2 or native_optimization is not None:
             if not build_report.is_file():
                 raise BenchmarkError(
@@ -1479,6 +1496,7 @@ def measure_workload(
     smoke: bool,
     native_optimization: str | None = None,
     arithmetic_success_proxy_variants: tuple[str, ...] = (),
+    gti_backend: str = "llvm",
 ) -> dict[str, Any]:
     directory.mkdir(parents=True, exist_ok=False)
     builds = [
@@ -1493,6 +1511,7 @@ def measure_workload(
             native_flags,
             timeout,
             native_optimization,
+            gti_backend,
         )
         for variant in workload.variants
     ]
@@ -1758,6 +1777,8 @@ def markdown_report(report: dict[str, Any]) -> str:
         "",
         f"Native compiler: `{report['tools']['cxx']['resolved']}`",
         "",
+        f"GTI backend: `{report.get('gti_backend', 'cpp')}`",
+        "",
         f"Configuration: `{optimization_summary} "
         f"-std={configuration['cpp_standard']}`",
         "",
@@ -1845,7 +1866,19 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--cpp-standard", choices=("c++20", "c++23"), default="c++23"
+        "--cpp-standard",
+        choices=("c++20", "c++23"),
+        default="c++23",
+        help="C++ standard for the C++ reference variants (and --gti-backend cpp)",
+    )
+    parser.add_argument(
+        "--gti-backend",
+        choices=("llvm", "cpp"),
+        default="llvm",
+        help=(
+            "GTI backend to measure; cpp needs a toolchain built with the "
+            "frozen C++ backend"
+        ),
     )
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--runs", type=int, default=20)
@@ -1885,6 +1918,16 @@ def main() -> int:
         if not math.isfinite(arguments.timeout) or arguments.timeout <= 0:
             raise BenchmarkError("--timeout must be positive")
         validate_native_flags(arguments.native_flag)
+        if arguments.gti_backend != "cpp" and (
+            arguments.native_optimization is not None
+            or arguments.arithmetic_success_proxy
+        ):
+            # Both replay the generated C++ source; the LLVM backend's native
+            # step only links, so neither has an LLVM meaning.
+            raise BenchmarkError(
+                "--native-optimization and --arithmetic-success-proxy replay "
+                "generated C++ and require --gti-backend cpp"
+            )
         workloads = [load_workload(selection) for selection in arguments.workload]
         workload_names = [workload.name for workload in workloads]
         if len(workload_names) != len(set(workload_names)):
@@ -1935,11 +1978,14 @@ def main() -> int:
                     arguments.smoke,
                     arguments.native_optimization,
                     proxy_targets.get(workload.name, ()),
+                    arguments.gti_backend,
                 )
             )
 
         repository_after = repository_facts()
-        report_schema = (
+        # Schema 5 is the LLVM report format: it records the measured backend
+        # and has no emitted C++. Schemas 1-4 describe the C++ backend.
+        report_schema = 5 if arguments.gti_backend == "llvm" else (
             4
             if proxy_targets
             else (
@@ -1994,6 +2040,8 @@ def main() -> int:
             "run_directory": str(run_directory),
             "workloads": reports,
         }
+        if arguments.gti_backend == "llvm":
+            report["gti_backend"] = "llvm"
         if arguments.native_optimization is not None:
             report["configuration"]["native_optimization"] = (
                 arguments.native_optimization

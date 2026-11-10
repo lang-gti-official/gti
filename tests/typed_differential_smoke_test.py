@@ -86,7 +86,7 @@ def main() -> int:
     expected_fragments = {
         "evaluator": "disagreed with the evaluator",
         "reference": "independent C++",
-        "gti": "gti-original-O0-c++23 disagreed",
+        "gti": "gti-original-O0-llvm disagreed",
     }
     with tempfile.TemporaryDirectory(prefix="gti-typed-differential-smoke-") as raw:
         root = Path(raw)

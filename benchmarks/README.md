@@ -51,16 +51,16 @@ libraries/runtime. The output directory must be new. Defaults measure O0 and
 O2; repeat `--optimization` to select levels. Do not run builds, tests, or other
 benchmarks concurrently. The runner randomizes/interleaves sequential samples
 with a fixed seed and records commands, raw times, compiler/source hashes,
-build provenance, retained C++, and stdout/stderr. It measures full direct
-builds, GTI through C++ emission, native rebuilding of that generated C++, and
-both C++ twins separately. These independent samples do not add up exactly:
-native-only attribution retains the provenance command's dependency-file
-generation, while timed GTI full builds omit build-report generation.
+build provenance, the emitted verified MIR, and stdout/stderr. GTI builds use
+the shipped LLVM backend. It measures full direct builds, GTI through
+verified-MIR emission (so full minus emit approximates LLVM code generation
+and linking), and both C++ twins separately. Report schema 2 records
+`backend: llvm`; timed GTI full builds omit build-report generation.
 
 The filesystem is warm; this is not a cold-disk experiment. Direct builds do
 not use the project cache. O2/O3 executables must produce identical complete
 stdout; large O0 runtime loops are not executed by this compile-time runner.
-Before/after generated-C++ equality is reported, not required for arbitrary
+Before/after verified-MIR equality is reported, not required for arbitrary
 compiler changes. `compile_time_harness` is a threshold-free correctness gate
 for the measurement path, output preservation, and argument validation.
 
@@ -312,9 +312,11 @@ workloads rather than one aggregate score:
   under [`probes/runtime-facilities`](probes/runtime-facilities/README.md).
 
 Run `optimizer-level-control` once for each GTI optimization level from `0`
-through `3` while holding `--native-optimization 3`. This keeps the native
+through `3` while holding `--native-optimization 3` (with `--gti-backend cpp`,
+in a toolchain that includes the frozen C++ backend). This keeps the native
 compiler policy fixed and attributes any executable difference to GTI's MIR
-policy.
+policy. On the default LLVM backend, `--optimization` selects GTI's MIR
+policy and LLVM code generation together.
 
 ## Reproduction
 
@@ -363,6 +365,15 @@ python3 scripts/benchmark_compare.py \
   --markdown build/benchmarks/threading.md
 ```
 
+GTI variants build with the shipped LLVM backend by default
+(`--gti-backend llvm`). Such reports use schema 5, record `gti_backend`, and
+carry no emitted C++; their provenance records the link argument vector (one
+LLVM object plus the runtime archive) rather than a depfile. Schemas 1-4 are
+the frozen C++-backend formats, produced only with `--gti-backend cpp` in a
+toolchain built with `-DGTI_ENABLE_CPP_BACKEND=ON`.
+
+The fixed-native and arithmetic-proxy measurements below replay generated C++,
+so they require `--gti-backend cpp`; the LLVM backend's native step only links.
 To attribute GTI optimizer changes independently of the native compiler, keep
 the native level fixed explicitly. Repeat the command with GTI optimization
 levels `0` through `3`, using a distinct output/report path for each run:
@@ -373,6 +384,7 @@ python3 scripts/benchmark_compare.py \
   --cxx /usr/bin/clang++ \
   --optimization 0 \
   --native-optimization 3 \
+  --gti-backend cpp \
   --cpp-standard c++23 \
   --warmup 5 \
   --runs 20 \
@@ -393,6 +405,7 @@ python3 scripts/benchmark_compare.py \
   --optimization 0 \
   --native-optimization 3 \
   --arithmetic-success-proxy checked-scalar-chain/gti \
+  --gti-backend cpp \
   --cpp-standard c++23 \
   --warmup 5 \
   --runs 20 \
@@ -431,7 +444,7 @@ For a manual correctness check from the repository root:
 mkdir -p build/benchmarks/manual
 GTI_STDLIB_PATH="$PWD/stdlib" build/gti \
   benchmarks/workloads/vector-checked-loop/main.gti \
-  -O3 --std c++23 --cxx /usr/bin/clang++ \
+  -O3 --cxx /usr/bin/clang++ \
   -o build/benchmarks/manual/gti
 /usr/bin/clang++ \
   benchmarks/workloads/vector-checked-loop/semantic.cpp \
@@ -448,14 +461,14 @@ build/benchmarks/manual/cpp-semantic
 build/benchmarks/manual/cpp-idiomatic
 ```
 
-To retain emitted C++ for code-generation and native vectorization evidence,
-emit it beneath the output root and compile it with the same native flags:
+To retain the verified MIR the backend compiled, emit it beneath the output
+root:
 
 ```sh
 GTI_STDLIB_PATH="$PWD/stdlib" build/gti \
   benchmarks/workloads/vector-checked-loop/main.gti \
-  --emit-cpp -O3 --std c++23 \
-  -o build/benchmarks/vector-checked-loop/main.cpp
+  --emit-mir -O3 \
+  -o build/benchmarks/vector-checked-loop/main.mir
 ```
 
 After the canonical runner has built and validated the executables, Hyperfine
