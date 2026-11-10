@@ -1,4 +1,5 @@
 #include "semantic_analyzer_impl.h"
+#include "gti/borrow_checker_mode.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -5942,8 +5943,8 @@ auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
 
 auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     const FunctionInfo &function) -> void {
-  if (std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr)
-    return; // shadow experiment: no body-inferred complete contract
+  if (!legacyBorrowChecker())
+    return; // RFC 0004: contracts come from signatures, never bodies
   // Reanalysis must not retain a primary/earlier body's complete fact when
   // this body now has unknown, recursive or nonreturning result evidence.
   const FunctionId id = function.id;
@@ -13153,15 +13154,12 @@ auto SemanticVisitor::Impl::conflictIsInConditionalArm(
 }
 
 auto SemanticVisitor::Impl::signatureContractDefaults() -> bool {
-  static const bool enabled = std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+  static const bool enabled = !legacyBorrowChecker();
   return enabled;
 }
 
 auto SemanticVisitor::Impl::mirBorrowAuthority() -> bool {
-  static const bool enabled = [] {
-    const char *mode = std::getenv("GTI_BORROW_AUTHORITY");
-    return mode != nullptr && std::string_view(mode) == "mir";
-  }();
+  static const bool enabled = !legacyBorrowChecker();
   return enabled;
 }
 

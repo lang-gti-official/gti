@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/borrow_checker_mode.h"
 #include "diagnostic_registry.h"
 #include "gti/diagnostic.h"
 #include "gti/hir.h"
@@ -434,10 +435,7 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
 }
 
 bool mirBorrowAuthority() {
-  static const bool enabled = [] {
-    const char *mode = std::getenv("GTI_BORROW_AUTHORITY");
-    return mode != nullptr && std::string_view(mode) == "mir";
-  }();
+  static const bool enabled = !legacyBorrowChecker();
   return enabled;
 }
 

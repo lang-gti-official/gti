@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include "mir_verification_queries.h"
+#include "gti/borrow_checker_mode.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_effects.h"
 #include "mir_verification_support.h"
@@ -2059,7 +2060,7 @@ std::vector<std::size_t>
 functionPointerSignatureOrigins(const MirProgram &program,
                                 const SemanticType &signature) {
   static const bool signatureContracts =
-      std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+      !legacyBorrowChecker();
   if (!signatureContracts || signature.kind != SemanticType::FunctionSignature ||
       signature.arguments.empty() ||
       signature.arguments.front().kind != SemanticType::Reference ||

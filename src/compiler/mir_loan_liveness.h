@@ -30,17 +30,4 @@ struct MirDerivedLoanEnds {
 
 [[nodiscard]] MirDerivedLoanEnds deriveLoanEnds(const HirBody &body);
 
-// Development comparison against the transported semantic end points. Returns
-// the number of loans whose derived end differs and, when `report` is set,
-// writes one line per disagreement to stderr.
-struct MirLoanEndAgreement {
-  std::size_t loans = 0;
-  std::size_t agree = 0;
-  std::size_t semanticEarlyPlan = 0;
-  std::size_t differ = 0;
-};
-[[nodiscard]] MirLoanEndAgreement
-compareLoanEnds(const HirBody &body, const MirDerivedLoanEnds &derived,
-                bool report);
-
 } // namespace lang

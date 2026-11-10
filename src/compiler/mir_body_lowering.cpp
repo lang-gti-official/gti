@@ -1,4 +1,5 @@
 #include "gti/mir_editor.h"
+#include "gti/borrow_checker_mode.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
@@ -238,18 +239,8 @@ public:
         }
       }
     }
-    if (const char *mode = std::getenv("GTI_MIR_LOAN_ENDS");
-        mode != nullptr && std::string_view(mode) == "derived")
+    if (!legacyBorrowChecker())
       derivedLoanEnds = deriveLoanEnds(source);
-    if (std::getenv("GTI_TMP_LOAN_ENDS")) { // TMP agreement instrument
-      const auto agreement =
-          compareLoanEnds(source, deriveLoanEnds(source),
-                          std::getenv("GTI_TMP_LOAN_ENDS")[0] == '2');
-      std::cerr << "loan-ends loans=" << agreement.loans
-                << " agree=" << agreement.agree
-                << " early-plan=" << agreement.semanticEarlyPlan
-                << " differ=" << agreement.differ << "\n";
-    }
     for (const HirStatement &statement : source.statements) {
       statements.emplace(statement.id, &statement);
       for (const SemanticLoanId loan : endedAfter(statement)) {
@@ -10802,8 +10793,8 @@ private:
                      parameter) != candidate.carriers.end();
   }
 
-  // Loan end points: during the RFC 0004 shadow phase either the semantic
-  // points HIR transports or the ones MIR derives itself (GTI_MIR_LOAN_ENDS).
+  // Loan end points: the ones MIR derives itself, or under the legacy borrow
+  // checker the semantic points HIR transports.
   [[nodiscard]] const std::vector<SemanticLoanId> &
   endedAfter(const HirStatement &statement) const {
     if (!derivedLoanEnds)

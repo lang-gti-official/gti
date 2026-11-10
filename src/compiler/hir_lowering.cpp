@@ -1,4 +1,5 @@
 #include "gti/hir.h"
+#include "gti/borrow_checker_mode.h"
 #include <cstdlib>
 
 #include "diagnostic_registry.h"
@@ -15,10 +16,7 @@ namespace {
 // consumed borrow carrier's loans from its own places, so HIR no longer needs
 // the semantic complete dependency set to transfer it.
 bool mirOwnsConsumedCarriers() {
-  static const bool enabled = [] {
-    const char *mode = std::getenv("GTI_BORROW_AUTHORITY");
-    return mode != nullptr && std::string_view(mode) == "mir";
-  }();
+  static const bool enabled = !legacyBorrowChecker();
   return enabled;
 }
 } // namespace

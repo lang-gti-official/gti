@@ -1,4 +1,5 @@
 #include "compiler_test_fixture.h"
+#include "gti/borrow_checker_mode.h"
 
 #include <cstdlib>
 
@@ -549,7 +550,7 @@ int main() {
   // eligible reference parameters borrows all of them (and a lambda body is
   // checked by MIR); without them two eligible parameters are ambiguous.
   const bool signatureContracts =
-      std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+      !lang::legacyBorrowChecker();
   const auto unionOrNegative = [&](const std::string &name,
                                    const std::string &source,
                                    const std::string &code) {

@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/borrow_checker_mode.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 
@@ -95,7 +96,7 @@ void negative(const std::string &name, const std::string &source,
         return d.severity == lang::DiagnosticSeverity::Error &&
                (d.code == expectedCode ||
                 (!staticResultCode.empty() && d.code == staticResultCode &&
-                 std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr));
+                 !lang::legacyBorrowChecker()));
       });
   if (result.canGenerateCode() || !semanticError)
     show(result);

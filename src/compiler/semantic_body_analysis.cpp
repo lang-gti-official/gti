@@ -1,4 +1,5 @@
 #include "semantic_analyzer_impl.h"
+#include "gti/borrow_checker_mode.h"
 
 #include <cstdlib>
 
@@ -686,7 +687,7 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
   concreteFunction.returnedTextReference =
       textReferenceReturnSummary(concreteFunction, concreteOwner);
   static const bool signatureContracts =
-      std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr; // shadow experiment
+      !legacyBorrowChecker();
   // Text-view relays (L-OWN-02) keep their own derivation until text views
   // get a signature rule; stored-field refinement is body inference.
   if (!concreteFunction.explicitReturnBorrowOrigin) {

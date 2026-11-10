@@ -1,4 +1,5 @@
 #include "gti/frontend.h"
+#include "gti/borrow_checker_mode.h"
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
@@ -290,7 +291,7 @@ int main() {
       });
   // Under RFC 0004 signature contracts the shared result borrows both
   // eligible inputs; without them the two inputs are ambiguous.
-  if (std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr)
+  if (!lang::legacyBorrowChecker())
     expect(result.canGenerateCode(),
            "a shared result borrows both shared and exclusive inputs");
   else

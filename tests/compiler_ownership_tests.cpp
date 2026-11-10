@@ -1,4 +1,5 @@
 #include "compiler_test_fixture.h"
+#include "gti/borrow_checker_mode.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
@@ -10,13 +11,12 @@
 
 namespace {
 
-// RFC 0004 shadow phase: under GTI_BORROW_AUTHORITY=mir the MIR borrow checker
+// RFC 0004: the MIR borrow checker
 // is the single body-local borrow authority. It states conflicts and escapes
 // in its own words, and like Rust it accepts a program whose carrier is
 // never used again after a conditional transfer.
 bool mirBorrowAuthority() {
-  const char *mode = std::getenv("GTI_BORROW_AUTHORITY");
-  return mode != nullptr && std::string_view(mode) == "mir";
+  return !lang::legacyBorrowChecker();
 }
 
 // Under MIR authority a body-local conflict is proved by MIR, which runs only
@@ -10434,7 +10434,7 @@ int main() {
     // Under RFC 0004 signature contracts the operator's elided result
     // borrows its whole receiver, so moving the wrapper is the conflict.
     const bool receiverElision =
-        std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+        !lang::legacyBorrowChecker();
     expect(!invalidOwner.canGenerateCode() &&
                hasDiagnosticCode(invalidOwner.diagnostics, "GTI-S2017") &&
                (receiverElision
@@ -20266,7 +20266,7 @@ int main() { return 0; }
 )");
   // Under RFC 0004 signature contracts the result borrows every eligible
   // reference parameter instead of rejecting the ambiguity.
-  expect(std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr
+  expect(!lang::legacyBorrowChecker()
              ? ambiguousOwner.canGenerateCode()
              : !ambiguousOwner.canGenerateCode() &&
                    hasDiagnostic(ambiguousOwner.diagnostics,

@@ -8,6 +8,7 @@
 // lifetime validity is not decided here (see docs/architecture/mir.md).
 
 #include "semantic_analyzer_impl.h"
+#include "gti/borrow_checker_mode.h"
 
 #include <algorithm>
 
@@ -351,7 +352,7 @@ auto SemanticVisitor::Impl::validateSignatureRegions(
   // a declared relationship (Rust E0106). The legacy body inference reports
   // the same programs from their bodies.
   static const bool signatureContracts =
-      std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+      !legacyBorrowChecker();
   if (signatureContracts &&
       (function.ownerClass == 0 || function.staticMember) &&
       syntax.returnType().reference && !syntax.returnType().referenceLifetime &&

@@ -1,4 +1,5 @@
 #include "gti/mir.h"
+#include "gti/borrow_checker_mode.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
@@ -3971,7 +3972,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         // RFC 0004 shadow phase: a call that publishes no field mapping for a
         // signature contract borrows the whole origin, a coarser bound.
         static const bool signatureCalls =
-            std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+            !legacyBorrowChecker();
         const bool coarserSignatureFields = signatureCalls &&
                                             instruction.borrowFields.empty() &&
                                             !target->returnBorrowFields.empty();
@@ -7647,7 +7648,7 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
       // Under signature contracts a formal the signature does not name as a
       // supplier is equally outside the returned borrow's contract.
       static const bool signatureSuppliers =
-          std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+          !legacyBorrowChecker();
       const bool bodyLocal =
           source->root == MirPlaceRootKind::Binding &&
           (signatureSuppliers ||
@@ -8014,7 +8015,7 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
     // alternative supplier per result path; its complete-claim coverage, not
     // this positional exact-field check, verifies each return.
     static const bool signatureReturns =
-        std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+        !legacyBorrowChecker();
     if (!instance.returnBorrowFields.empty() && !completeReferenceResult &&
         !(signatureReturns && instance.completeReturnBorrow &&
           !instance.explicitReturnBorrowOrigin)) {
@@ -16032,7 +16033,7 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
   // RFC 0004 shadow phase: a signature contract may conservatively name
   // whole caller storage; borrowing it keeps everything it reaches borrowed.
   static const bool signatureClaims =
-      std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+      !legacyBorrowChecker();
   return source &&
          (source->referent == result->reference.arguments.front() ||
           (contained && contained->empty()) ||
@@ -16233,7 +16234,7 @@ public:
       // When MIR cannot reconstruct the body's complete flow, the body's own
       // return and escape checks bound it instead.
       static const bool signatureClaims =
-          std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+          !legacyBorrowChecker();
       if (std::getenv("GTI_SHADOW_CLAIM_TRACE")) { // shadow-phase debugging
         const auto print = [](const char *label, const auto &deps) {
           std::cerr << "  " << label << " " << deps.size() << ":";
