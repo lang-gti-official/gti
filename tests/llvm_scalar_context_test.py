@@ -13,7 +13,7 @@ import subprocess
 import sys
 from unittest.mock import patch
 
-from backend_execution import Endpoint, ExecutionResult
+from backend_execution import Endpoint, ExecutionResult, selected_endpoints
 from llvm_evidence_manifest import manifest_digest, validate_context_sidecar
 import llvm_scalar_execution_test as scalar
 
@@ -42,7 +42,9 @@ FROZEN_CONTROLS = {
     'polymorphic-replacement': 'e943aa9ee2b6c8eacc95c0bdafeba03d0b967956f9e40ad37c6b40d7bb3ddec3',
     'polymorphic-array': 'bc1b4faa285d07dcce6077c80e400187bb0f909afebecc3eb98245b4fb0f7f6c',
 }
-FROZEN_ENDPOINTS = (Endpoint('cpp', 'O3', 'c++23'), Endpoint('llvm', 'O0'), Endpoint('llvm', 'O3'))
+# The C++ endpoint runs only when GTI_TEST_BACKENDS selects the frozen backend.
+FROZEN_ENDPOINTS = selected_endpoints(
+    (Endpoint('cpp', 'O3', 'c++23'), Endpoint('llvm', 'O0'), Endpoint('llvm', 'O3')))
 
 
 def expectation(name: str) -> dict:
