@@ -27,6 +27,7 @@ import tempfile
 from pathlib import Path
 
 CODE = re.compile(r"error\[(GTI-[A-Z][0-9]{4})\]")
+POSITION = re.compile(r":([0-9]+):([0-9]+): error\[(GTI-[A-Z][0-9]{4})\]")
 
 
 def verdict(compiler, stdlib, source, extra_env, scratch):
@@ -39,9 +40,10 @@ def verdict(compiler, stdlib, source, extra_env, scratch):
             [compiler, str(source), "--emit-mir", "-o", str(output)],
             env=environment, capture_output=True, text=True, timeout=600)
     except subprocess.TimeoutExpired:
-        return ("timeout", ())
+        return ("timeout", (), ())
     codes = tuple(sorted(set(CODE.findall(completed.stderr))))
-    return ("accept" if completed.returncode == 0 else "reject", codes)
+    positions = tuple(sorted(set(POSITION.findall(completed.stderr))))
+    return ("accept" if completed.returncode == 0 else "reject", codes, positions)
 
 
 def main():
@@ -52,6 +54,8 @@ def main():
     parser.add_argument("--new-env", action="append", default=[])
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     parser.add_argument("--reviewed")
+    parser.add_argument("--compare-positions", action="store_true",
+                        help="also report rejections whose primary positions differ")
     arguments = parser.parse_args()
 
     new_env = dict(item.split("=", 1) for item in arguments.new_env)
@@ -65,6 +69,7 @@ def main():
     programs = sorted({path for directory in arguments.dirs
                        for path in Path(directory).glob("*.gti")})
     failures = {"new-accepts": [], "new-rejects": [], "codes-differ": []}
+    positions_differ = []
     counts = {"programs": 0, "both-accept": 0, "both-reject": 0, "reviewed": 0}
     with tempfile.TemporaryDirectory() as scratch:
         def check(source):
@@ -90,10 +95,17 @@ def main():
                         f"{label}: old {list(old[1])} new {list(new[1])}")
                 else:
                     counts["both-reject"] += 1
+                    if arguments.compare_positions and old[2] != new[2]:
+                        positions_differ.append(
+                            f"{label}: old {list(old[2])} new {list(new[2])}")
 
     for category, items in failures.items():
         print(f"[{category}] {len(items)}")
         for item in items:
+            print(f"  {item}")
+    if arguments.compare_positions:
+        print(f"[positions-differ] {len(positions_differ)} (informational)")
+        for item in positions_differ:
             print(f"  {item}")
     print("summary " + " ".join(f"{key}={value}" for key, value in counts.items()))
     return 1 if any(failures.values()) else 0
