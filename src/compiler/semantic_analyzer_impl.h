@@ -3046,6 +3046,19 @@ private:
   // A `[[borrowed_from]]` attribute or a result written with a region.
   [[nodiscard]] static bool
   hasExplicitBorrowContract(const FunctionDecl &syntax);
+  // Whether a callable pattern method's result, as this instance types it,
+  // borrows from its invocation lanes (see callablePatternResultPack).
+  [[nodiscard]] bool
+  patternResultContract(const FunctionDecl &syntax,
+                        const SemanticType &returnType) const;
+  // A method of a class matched by a callable pattern `R(Args...)` whose
+  // result is that pattern's result and whose final pack is its `Args`:
+  // the invocation lanes supply the result. Returns the pack's position.
+  [[nodiscard]] std::optional<std::size_t>
+  callablePatternResultPack(const FunctionDecl &syntax) const;
+  [[nodiscard]] std::optional<std::size_t>
+  callablePatternResultPack(const FunctionDecl &syntax,
+                            ClassId ownerClass) const;
   // RFC 0004 declaration rules: every region a signature names is bound
   // (GTI-S2128), and a result region a function binds has a supplying
   // parameter (GTI-S2127).
@@ -3650,6 +3663,12 @@ private:
                             const std::vector<SemanticType> &argumentTypes);
   void analyzeFunctionItemCall(const Call &call, const SemanticType &calleeType,
                                const std::vector<SemanticType> &argumentTypes);
+  // A pack expansion forwarded to an overload set with no variadic member.
+  // A symbolic pack has no arity, so concrete reanalysis owns the selection.
+  void
+  analyzeFixedPackForwardingCall(const Call &call, const Symbol &overloadSet,
+                                 const std::vector<SemanticType> &argumentTypes,
+                                 bool explicitArguments);
 
   [[nodiscard]] static const GenericParameterInfo *
   findGenericParameter(const std::vector<GenericParameterInfo> &parameters,
@@ -4191,7 +4210,8 @@ private:
                      std::vector<std::size_t> ephemeralBorrowArguments,
                      std::vector<CallableArgumentBoundary> callableArguments,
                      CallReceiverMode receiverMode,
-                     const ExprPtr *argumentReceiver = nullptr);
+                     const ExprPtr *argumentReceiver = nullptr,
+                     std::optional<std::size_t> suppliedArguments = {});
 
   void requireFunctionDefinition(const CallableCandidate &function,
                                  const Token &location);
@@ -4782,7 +4802,7 @@ private:
   void validateParameterPacks(
       std::span<const Parameter> parameters,
       const std::vector<GenericParameterInfo> &genericParameters,
-      const TypeRef *returnType = nullptr);
+      const TypeRef *returnType = nullptr, bool explicitResultContract = false);
 
   void validateOperatorDeclaration(const FunctionDecl &function,
                                    bool methodDeclaration);
@@ -4969,7 +4989,8 @@ private:
   void refreshTypeAliasProjections();
 
   bool validateTypeAliasReference(const TypeRef &target,
-                                  const SemanticType &resolved);
+                                  const SemanticType &resolved,
+                                  const TypeAliasDecl *alias = nullptr);
 
   void registerConcepts(const StmtList &statements,
                         std::vector<std::string> scope);
@@ -7428,6 +7449,9 @@ private:
     std::shared_ptr<StagedConstantResults> stagedConstants;
     std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
         deferredFlowOwners;
+    // The declared result every fixed candidate shares, for a call that
+    // forwards a symbolic pack; concrete reanalysis selects its target.
+    std::unordered_map<const Call *, SemanticType> deferredPackCallResults;
     std::unordered_map<std::string, std::vector<GenericDefaultConstant>>
         genericDefaultConstants;
     std::vector<GenericDefaultConstantUse> genericDefaultConstantUses;

@@ -1741,9 +1741,21 @@ auto SemanticVisitor::Impl::validateTypeAliasTarget(
 }
 
 auto SemanticVisitor::Impl::validateTypeAliasReference(
-    const TypeRef &target, const SemanticType &resolved) -> bool {
+    const TypeRef &target, const SemanticType &resolved,
+    const TypeAliasDecl *alias) -> bool {
   if (!target.reference && resolved.kind != SemanticType::Reference)
     return true;
+  // A reference alias over one of its own lifetime parameters keeps the
+  // borrow explicit at each use: `borrow<a>` names its region there.
+  if (alias != nullptr && target.reference && target.referenceLifetime) {
+    const auto parameters = alias->lifetimeParameters();
+    if (std::any_of(parameters.begin(), parameters.end(),
+                    [&](const GenericParameter &parameter) {
+                      return parameter.name.lexeme ==
+                             target.referenceLifetime->name.lexeme;
+                    }))
+      return true;
+  }
   report(target.reference ? *target.reference : target.name.last(),
          "Reference aliases are not supported; keep '&' explicit at each "
          "borrow site.",
@@ -1796,7 +1808,8 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
            "GTI-S2030");
     targetFormValid = false;
   }
-  if (!validateTypeAliasReference(target, SemanticType::Unknown)) {
+  if (!validateTypeAliasReference(target, SemanticType::Unknown,
+                                  alias.declaration)) {
     targetFormValid = false;
   }
   if (alias.ownerClass != 0 && target.isNativeFunction()) {
@@ -6396,6 +6409,24 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
   }
   analyzingConstructorInitializer = enclosingConstructorInitializer;
 
+  // A forwarded pack supplies one base parameter per lane. A symbolic pack
+  // has no arity: each concrete constructor instance selects its target.
+  std::optional<std::vector<AnalyzedCallArgument>> lanes;
+  if (!argumentTypes.empty() &&
+      argumentTypes.back().kind == SemanticType::TypePack) {
+    lanes = concreteCallArguments(argumentTypes, initializer.arguments);
+    if (!lanes)
+      return;
+  }
+  const std::size_t argumentCount =
+      lanes ? lanes->size() : argumentTypes.size();
+  std::vector<SemanticType> laneTypes = argumentTypes;
+  if (lanes) {
+    laneTypes.clear();
+    for (const auto &lane : *lanes)
+      laneTypes.push_back(lane.type);
+  }
+
   const GenericSubstitution substitution = classSubstitution(baseType);
   struct ViableConstructor {
     const ConstructorInfo *constructor = nullptr;
@@ -6409,8 +6440,8 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
     if (!isCompilerTrustedRequester(location) && constructor.compilerPrivate) {
       continue;
     }
-    if (argumentTypes.size() < constructor.requiredParameterCount ||
-        argumentTypes.size() > constructor.parameterTypes.size()) {
+    if (argumentCount < constructor.requiredParameterCount ||
+        argumentCount > constructor.parameterTypes.size()) {
       continue;
     }
     std::vector<SemanticType> parameterTypes;
@@ -6422,7 +6453,18 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
       const SemanticType parameter =
           substituteType(constructor.parameterTypes[index], substitution);
       parameterTypes.emplace_back(parameter);
-      if (index >= argumentTypes.size()) {
+      if (index >= argumentCount) {
+        continue;
+      }
+      if (lanes) {
+        const auto &lane = (*lanes)[index];
+        if (!(lane.forwardedPackElement
+                  ? forwardedPackArgumentMatches(parameter, lane.type)
+                  : callArgumentMatches(parameter, lane.type,
+                                        *lane.expression))) {
+          exact = false;
+          break;
+        }
         continue;
       }
       if (!callArgumentMatches(parameter, argumentTypes[index],
@@ -6460,7 +6502,7 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
   }
   // A literal fallback position is a viability decision, never a ranking
   // conversion.
-  std::vector<SemanticType> rankingArgumentTypes = argumentTypes;
+  std::vector<SemanticType> rankingArgumentTypes = laneTypes;
   for (const ViableConstructor &candidate : viable) {
     for (const std::size_t index :
          candidate.contextualIntegerLiteralArguments) {
@@ -6576,7 +6618,7 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
                   ? std::vector<const Expr *>{}
                   : omittedDefaultArguments(
                         selected.constructor->declaration->parameters(),
-                        initializer.arguments.size()),
+                        argumentCount),
           .borrowAccess = baseBorrowOrigin == BorrowOriginKind::None
                               ? AccessMode::ReadOnly
                               : borrowAccess(baseType),
@@ -6587,8 +6629,8 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
   recordProgramArgumentBoundaryEffects(selected.parameterTypes,
                                        initializer.arguments);
   const SourceSpan span = tokenSpan(location);
-  recordProgramConstructorDefaultArgumentEffects(
-      selected.constructor, initializer.arguments.size(), span);
+  recordProgramConstructorDefaultArgumentEffects(selected.constructor,
+                                                 argumentCount, span);
   if (selected.generatedDefault) {
     recordProgramDefaultConstructionEffects(baseType, span);
   } else {

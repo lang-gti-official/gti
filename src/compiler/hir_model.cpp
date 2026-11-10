@@ -891,6 +891,28 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             "HIR fold lost its exact ordered call, named input or concrete "
             "pack-element projection");
     }
+    // A base initializer forwards a concrete pack lane by lane: each lane is
+    // an exact element place of the expansion it names, in lane order.
+    for (const HirValueId id : initializerValues) {
+      const HirValue *value = body.findValue(id);
+      if (value == nullptr || value->kind != HirValueKind::PackElement ||
+          !value->packElement || value->operands.size() != 1)
+        continue;
+      const HirValue *pack = body.findValue(value->operands.front());
+      if (pack != nullptr && pack->kind == HirValueKind::Variable &&
+          pack->symbol == value->symbol &&
+          pack->info.type.kind == SemanticType::TypePack &&
+          pack->info.type.concretePack &&
+          *value->packElement < pack->info.type.arguments.size() &&
+          pack->info.type.arguments[*value->packElement] == value->info.type &&
+          value->source == nullptr &&
+          value->info.category == ValueCategory::Place &&
+          value->info.access == AccessMode::ReadOnly &&
+          value->definedFailure.empty() && !value->functionTarget &&
+          !value->constructorTarget && !value->callPlan && !value->place &&
+          !value->ownership && value->sequencedInputs.empty())
+        expandedElements.insert(value->id);
+    }
     for (const auto &value : body.values)
       if ((value.kind == HirValueKind::PackElement) !=
               value.packElement.has_value() ||

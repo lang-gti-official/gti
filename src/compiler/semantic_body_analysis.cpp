@@ -660,8 +660,20 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       argument = substituteType(argument, substitution);
     }
   }
+  // A callable pattern's result this instance makes borrowed states its
+  // invocation lanes as its contract.
+  if (const FunctionDecl *syntax = function->bodyDeclaration();
+      syntax != nullptr &&
+      patternResultContract(*syntax, concreteFunction.returnType))
+    concreteFunction.explicitReturnBorrowOrigin = true;
+  // A contract over a pack names expanded lanes, which exist only here.
   if (concreteFunction.explicitReturnBorrowOrigin &&
-      containsOpenTypeParameter(function->returnType)) {
+      (containsOpenTypeParameter(function->returnType) ||
+       std::any_of(
+           concreteFunction.parameterTypes.begin(),
+           concreteFunction.parameterTypes.end(), [](const SemanticType &type) {
+             return type.kind == SemanticType::TypePack && type.concretePack;
+           }))) {
     resolveGenericReturnBorrowContract(*function, concreteFunction);
   }
   // A generic class method relays its receiver's fields as this instance's
@@ -952,7 +964,7 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
                 semanticModel.findTypeAlias(*alias)) {
           TypeAliasInfo concrete = *primary;
           concrete.type = typeOf(alias->target());
-          validateTypeAliasReference(alias->target(), concrete.type);
+          validateTypeAliasReference(alias->target(), concrete.type, alias);
           semanticModel.record(*alias, std::move(concrete));
         }
       } else if (const auto *function = stmtAs<FunctionDecl>(member.get());
@@ -3892,7 +3904,10 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       methodDeclaration || intrinsicDeclaration || hasReturnBorrowSummary ||
           isBorrowReturningType(declaredReturnType),
       methodDeclaration ? "method return type" : "function return type", false,
-      false, hasReturnBorrowSummary && hasExplicitBorrowContract(stmt));
+      false,
+      hasReturnBorrowSummary &&
+          (hasExplicitBorrowContract(stmt) ||
+           patternResultContract(stmt, declaredReturnType)));
   if (nestsBorrowedState(declaredReturnType) &&
       !isBorrowedCarrierReference(declaredReturnType)) {
     report(stmt.name(),
@@ -3902,6 +3917,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   } else if (isBorrowReturningType(declaredReturnType) &&
              !intrinsicDeclaration && !hasReturnBorrowSummary &&
              functionInfo != nullptr && !hasExplicitBorrowContract(stmt) &&
+             !patternResultContract(stmt, declaredReturnType) &&
              // A complete conditional contract comes from the body, but it
              // cannot choose between several eligible owners: that signature
              // is ambiguous for a carrier just as for a plain reference.
@@ -8554,11 +8570,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                    [](const CallableCandidate &candidate) {
                      return candidate.record().parameterPack;
                    })) {
-    report(expressionToken(expr.arguments().back()),
-           "A parameter pack can only be forwarded to another variadic "
-           "function or method.",
-           "GTI-S2023");
-    currentType = SemanticType::Unknown;
+    analyzeFixedPackForwardingCall(expr, *callee, argumentTypes,
+                                   hasExplicitGenericArguments);
     return;
   }
 

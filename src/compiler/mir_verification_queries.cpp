@@ -1538,6 +1538,15 @@ std::optional<MirPlaceId> borrowSourceForPlace(const MirBody &body,
     return source ? source : std::optional<MirPlaceId>{placeId};
   }
   if (place->root == MirPlaceRootKind::Binding) {
+    // Each lane of a formal pack is its own source, even when other lanes
+    // of the same grouped binding carry entry loans too.
+    if (place->projections.size() == 1 &&
+        place->projections.front().kind == MirProjectionKind::PackElement &&
+        std::any_of(body.loans.begin(), body.loans.end(),
+                    [&](const MirLoan &loan) {
+                      return loan.entry && loan.source == placeId;
+                    }))
+      return placeId;
     const MirLoan *carrier = nullptr;
     for (const MirLoan &loan : body.loans) {
       if (std::find(loan.carriers.begin(), loan.carriers.end(),
@@ -2020,8 +2029,16 @@ std::optional<MirReturnOriginFormal>
 returnOriginFormal(std::span<const SemanticType> parameterTypes,
                    std::span<const HirBindingId> parameterBindings,
                    std::size_t expandedIndex) {
-  if (expandedIndex >= parameterTypes.size() ||
-      expandedIndex >= parameterBindings.size()) {
+  if (expandedIndex >= parameterTypes.size() || parameterBindings.empty())
+    return std::nullopt;
+  // One binding per declared formal: the final one groups a concrete pack's
+  // lanes, so a later expanded position names its element.
+  if (parameterBindings.size() < parameterTypes.size() &&
+      expandedIndex + 1 >= parameterBindings.size())
+    return MirReturnOriginFormal{
+        .binding = parameterBindings.back(),
+        .elementWithinBinding = expandedIndex - (parameterBindings.size() - 1)};
+  if (expandedIndex >= parameterBindings.size()) {
     return std::nullopt;
   }
   const HirBindingId binding = parameterBindings[expandedIndex];

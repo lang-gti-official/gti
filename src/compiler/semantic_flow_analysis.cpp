@@ -3695,6 +3695,10 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       } else if (const DeferredCallableCallInfo *deferred =
                      semanticModel.findDeferredCallableCall(call)) {
         callableResult = &deferred->returnType;
+      } else if (const auto forwarded =
+                     requestSession.deferredPackCallResults.find(&call);
+                 forwarded != requestSession.deferredPackCallResults.end()) {
+        callableResult = &forwarded->second;
       }
       if (callableResult != nullptr &&
           callableResult->kind == SemanticType::Reference &&

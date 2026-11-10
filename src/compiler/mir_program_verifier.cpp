@@ -19,6 +19,7 @@
 #include <iterator>
 #include <limits>
 #include <queue>
+#include <set>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -2936,9 +2937,24 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
     }
     const std::optional<MirPlaceId> source =
         borrowSourceForOperand(body, operand);
-    if (source && operand.kind == MirOperandKind::Value) {
+    if (operand.kind == MirOperandKind::Value) {
       const MirInstruction *definition = definitionFor(body, operand.value);
-      if (definition != nullptr &&
+      // A staged reference lane of a formal pack names its exact element,
+      // whose reference place has no further borrow source of its own.
+      const bool packLaneLoan = [&] {
+        if (definition == nullptr ||
+            definition->kind != MirInstructionKind::CallInput ||
+            definition->operands.size() != 1)
+          return false;
+        const MirPlace *lane =
+            body.findPlace(definition->operands.front().place);
+        return lane != nullptr && lane->root == MirPlaceRootKind::Binding &&
+               lane->projections.size() == 1 &&
+               lane->projections.front().kind ==
+                   MirProjectionKind::PackElement &&
+               lane->type.kind == SemanticType::Reference;
+      }();
+      if ((source || packLaneLoan) && definition != nullptr &&
           definition->kind == MirInstructionKind::CallInput &&
           definition->operands.size() == 1) {
         const MirOperand &prepared = definition->operands.front();
@@ -7428,15 +7444,18 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
       return rejected;
     }
     if (!instance.returnBorrowParameters.empty()) {
-      std::unordered_set<HirBindingId> expected;
+      // Each supplier is one formal, or one lane of a formal pack.
+      using Supplier = std::pair<HirBindingId, std::size_t>;
+      std::set<Supplier> expected;
       for (const auto parameter : instance.returnBorrowParameters) {
-        if (parameter >= instance.parameterBindings.size()) {
+        const auto formal = mir_detail::returnOriginFormal(
+            instance.parameterTypes, instance.parameterBindings, parameter);
+        if (!formal) {
           return invalidSummary(
               "composed return origin exceeds the formal parameters");
         }
-        expected.insert(instance.parameterBindings[parameter]);
+        expected.insert({formal->binding, formal->elementWithinBinding});
       }
-      std::unordered_set<HirBindingId> actual;
       auto sources = loan->additionalSources();
       sources.insert(sources.begin(), loan->source);
       for (const auto id : sources) {
@@ -7446,11 +7465,20 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
           return invalidSummary(
               "composed return contains an unproved owner origin");
         }
-        actual.insert(place->binding);
-      }
-      if (actual != expected) {
-        return invalidSummary(
-            "composed return does not preserve its full formal dependency set");
+        const std::size_t element =
+            place->projections.size() == 1 &&
+                    place->projections.front().kind ==
+                        MirProjectionKind::PackElement &&
+                    place->projections.front().constantIndex
+                ? static_cast<std::size_t>(
+                      *place->projections.front().constantIndex)
+                : 0;
+        // The signature names every supplier a result may borrow from; one
+        // return may borrow from fewer of them, never from another.
+        if (!expected.contains({place->binding, element}))
+          return invalidSummary(
+              "composed return does not preserve its full formal dependency "
+              "set");
       }
     }
     // A reference may relay the exact stored entry through checked calls.
@@ -18459,17 +18487,25 @@ verifyMirProgramContracts(const MirProgram &program) {
         // The element a return-origin contract names seeds its own Parameter
         // entry loan, exactly as a whole read-only reference formal does.
         std::optional<std::size_t> summarizedElement;
+        // Every further lane a multi-supplier contract names also seeds one.
+        std::unordered_set<std::size_t> suppliedElements;
         {
           std::optional<mir_detail::MirReturnOriginFormal> formal;
           if (const auto *function = program.findFunctionInstance(owner);
               body.kind == MirBodyKind::Function && function != nullptr &&
-              function->returnBorrowOrigin == BorrowOriginKind::Argument)
+              function->returnBorrowOrigin == BorrowOriginKind::Argument) {
             formal = mir_detail::returnOriginFormal(
                 function->parameterTypes, function->parameterBindings,
                 function->returnBorrowParameter);
-          else if (const auto *lambda = program.findLambda(owner);
-                   body.kind == MirBodyKind::Lambda && lambda != nullptr &&
-                   lambda->returnBorrowOrigin == BorrowOriginKind::Argument)
+            for (const std::size_t position : function->returnBorrowParameters)
+              if (const auto lane = mir_detail::returnOriginFormal(
+                      function->parameterTypes, function->parameterBindings,
+                      position);
+                  lane && lane->binding == binding)
+                suppliedElements.insert(lane->elementWithinBinding);
+          } else if (const auto *lambda = program.findLambda(owner);
+                     body.kind == MirBodyKind::Lambda && lambda != nullptr &&
+                     lambda->returnBorrowOrigin == BorrowOriginKind::Argument)
             formal = mir_detail::returnOriginFormal(
                 lambda->parameterTypes, lambda->parameterBindings,
                 lambda->returnBorrowParameter);
@@ -18481,7 +18517,8 @@ verifyMirProgramContracts(const MirProgram &program) {
              ++element) {
           const SemanticType &type = pack->type.arguments[element];
           const bool summarizedOrigin =
-              summarizedElement == element &&
+              (summarizedElement == element ||
+               suppliedElements.contains(element)) &&
               type.kind == SemanticType::Reference &&
               type.referenceAccess == AccessMode::ReadOnly;
           const bool mutableReference =

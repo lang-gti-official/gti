@@ -2997,6 +2997,15 @@ loanPermitsPlace(const MirBody &body, const MirLoan &loan,
     // Canonical source places can erase a reference formal's spelling.
     for (const auto &candidate : body.loans) {
       const auto *origin = body.findPlace(candidate.source);
+      // A reference lane of a formal pack has its own exact entry loan.
+      if (candidate.entry && candidate.kind == MirLoanKind::Parameter &&
+          candidate.source == sourceId && origin != nullptr &&
+          origin->projections.size() == 1 &&
+          origin->projections.front().kind == MirProjectionKind::PackElement &&
+          origin->type.kind == SemanticType::Reference) {
+        authority = candidate.id;
+        break;
+      }
       if (candidate.entry && candidate.kind == MirLoanKind::Parameter &&
           origin != nullptr && origin->root == MirPlaceRootKind::Binding &&
           origin->binding == source->binding && origin->projections.empty() &&
@@ -3327,6 +3336,12 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   !loan.escapes && child != loan.source &&
                   ((authority != 0 && authority != loan.parent) ||
                    independentOwnedInput))
+                return false;
+              // A call result several inputs may own retains each further
+              // input under that input's own authority, as a stored loan does.
+              if (loan.kind == MirLoanKind::CallResult && !loan.entry &&
+                  !loan.escapes && child != loan.source && authority != 0 &&
+                  authority != loan.parent)
                 return false;
               return std::none_of(
                   parentSources.begin(), parentSources.end(),

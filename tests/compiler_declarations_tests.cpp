@@ -9949,10 +9949,9 @@ void missing_parameter<Args...>() {}
 void wrong_type<Args...>(int... values) {}
 void mutable_pack<Args...>(mut Args... values) {}
 void forwarding_pack<Args...>(Args&&... values) {}
-int&<a> borrowed_result<lifetime a, Args...>(int&<a> first, Args&... values) { return first; }
+int& borrowed_result<Args...>(int& first, Args&... values) { return first; }
 void direct_use<Args...>(Args... values) { values; }
 void local_pack<Args...>(Args... values) { Args local; }
-void bad_forward<Args...>(Args... values) { fixed(values...); }
 void not_a_pack(int value) { consume(value...); }
 )");
   expect(!invalid.canGenerateCode(),
@@ -9974,8 +9973,6 @@ void not_a_pack(int value) { consume(value...); }
           hasDiagnostic(
               invalid.diagnostics,
               "can only appear in its matching final parameter-pack") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "only be forwarded to another variadic") &&
           hasDiagnostic(invalid.diagnostics, "is not a parameter pack"),
       "variadic diagnostics should explain invalid pack placement, mutable "
       "value packs, forwarding references, borrowed results, and invalid "

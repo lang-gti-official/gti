@@ -6429,22 +6429,25 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
       ArgumentBindings result;
       bool matched = false;
       for (const auto &candidate : nested.constructors) {
+        // Omitted trailing parameters take their defaults, which supply no
+        // dependency of the enclosing constructor.
         if (candidate.declaration == nullptr || candidate.parameterPack ||
             !candidate.genericParameters.empty() ||
-            candidate.parameterTypes.size() != callArguments.size())
+            callArguments.size() < candidate.requiredParameterCount ||
+            callArguments.size() > candidate.parameterTypes.size())
           continue;
         auto nestedTypes = candidate.parameterTypes;
-        std::vector<ArgumentBindings> arguments;
-        for (auto &parameter : nestedTypes) {
+        for (auto &parameter : nestedTypes)
           parameter = substituteType(parameter, classSubstitution(expected));
-          auto argument =
-              argumentSelf(argumentSelf, callArguments[arguments.size()],
-                           parameter, depth + 1);
+        std::vector<ArgumentBindings> arguments;
+        for (std::size_t index = 0; index < callArguments.size(); ++index) {
+          auto argument = argumentSelf(argumentSelf, callArguments[index],
+                                       nestedTypes[index], depth + 1);
           if (!argument.valid)
             break;
           arguments.push_back(std::move(argument));
         }
-        if (arguments.size() != nestedTypes.size())
+        if (arguments.size() != callArguments.size())
           continue;
         if (matched)
           return {}; // Do not select an ambiguous dependency producer.
@@ -6863,8 +6866,11 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
   FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
       function.returnType, function.parameterTypes, function.ownerClass,
       function.staticMember, function.record().intrinsic);
+  const bool patternContract =
+      function.declaration != nullptr &&
+      patternResultContract(*function.declaration, function.returnType);
   if (function.declaration != nullptr &&
-      hasExplicitBorrowContract(*function.declaration)) {
+      (hasExplicitBorrowContract(*function.declaration) || patternContract)) {
     // Resolve source spelling to the existing declaration-relative origin.
     // Malformed contracts are diagnosed at the declaration, never inferred
     // afresh by HIR/MIR or the backend.
@@ -6872,7 +6878,7 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
         *function.declaration, function.returnType, function.parameterTypes,
         function.ownerClass, function.staticMember);
     if (contract.origin != BorrowOriginKind::None ||
-        hasExplicitBorrowContract(*function.declaration))
+        hasExplicitBorrowContract(*function.declaration) || patternContract)
       summary = {.origin = contract.origin,
                  .parameter = contract.parameter,
                  .access = contract.access,
@@ -6893,12 +6899,116 @@ auto SemanticVisitor::Impl::isConditionalBorrowResult(
                      [](const auto &path) { return !path.conditions.empty(); });
 }
 
+auto SemanticVisitor::Impl::patternResultContract(
+    const FunctionDecl &syntax, const SemanticType &returnType) const -> bool {
+  return (returnType.kind == SemanticType::Reference ||
+          isBorrowReturningType(returnType)) &&
+         !syntax.hasFunctionAttribute("borrowed_from") &&
+         callablePatternResultPack(syntax).has_value();
+}
+
+auto SemanticVisitor::Impl::callablePatternResultPack(
+    const FunctionDecl &syntax) const -> std::optional<std::size_t> {
+  if (syntax.parameters().empty() || !syntax.parameters().back().pack)
+    return std::nullopt;
+  const FunctionInfo *info = semanticModel.findFunction(syntax);
+  if (info == nullptr && instanceBaseModel != nullptr)
+    info = instanceBaseModel->findFunction(syntax);
+  if (info == nullptr || info->staticMember)
+    return std::nullopt;
+  return callablePatternResultPack(syntax, info->ownerClass);
+}
+
+auto SemanticVisitor::Impl::callablePatternResultPack(
+    const FunctionDecl &syntax, ClassId ownerClass) const
+    -> std::optional<std::size_t> {
+  const auto &parameters = syntax.parameters();
+  if (parameters.empty() || !parameters.back().pack ||
+      parameters.back().type.reference || ownerClass == 0 ||
+      ownerClass > classes.size())
+    return std::nullopt;
+  const ClassDecl *owner = classInfo(ownerClass).declaration;
+  if (owner == nullptr)
+    return std::nullopt;
+  const TypeRef &result = syntax.returnType();
+  if (!result.arguments.empty() || result.name.segments.size() != 1)
+    return std::nullopt;
+  for (const auto &generic : syntax.genericParameters())
+    if (generic.name.lexeme == result.name.last().lexeme)
+      return std::nullopt;
+  for (const TypeRef &pattern : owner->genericArgumentPatterns()) {
+    if (!pattern.isFunctionSignature() ||
+        *pattern.functionSignatureParameterCount == 0 ||
+        pattern.arguments.size() !=
+            *pattern.functionSignatureParameterCount + 1)
+      continue;
+    const TypeRef &patternResult = pattern.arguments.back();
+    const TypeRef &patternPack =
+        pattern.arguments[*pattern.functionSignatureParameterCount - 1];
+    const bool sameRegion = patternResult.referenceLifetime.has_value() ==
+                                result.referenceLifetime.has_value() &&
+                            (!result.referenceLifetime ||
+                             patternResult.referenceLifetime->name.lexeme ==
+                                 result.referenceLifetime->name.lexeme);
+    if (patternPack.packExpansion &&
+        patternResult.name.last().lexeme == result.name.last().lexeme &&
+        patternResult.reference.has_value() == result.reference.has_value() &&
+        sameRegion &&
+        patternPack.name.last().lexeme ==
+            parameters.back().type.name.last().lexeme)
+      return parameters.size() - 1;
+  }
+  return std::nullopt;
+}
+
 auto SemanticVisitor::Impl::genericReturnBorrowContract(
     const FunctionDecl &syntax, const SemanticType &returnType,
     std::span<const SemanticType> parameterTypes, ClassId ownerClass,
     bool staticMember) const -> GenericReturnBorrowContract {
   GenericReturnBorrowContract contract;
   const auto *attribute = syntax.findFunctionAttribute("borrowed_from");
+  // A callable pattern's result is supplied by its invocation lanes: every
+  // lane this instance makes a reference or borrowing carrier with
+  // sufficient access. A result this instance makes owned is inert.
+  if (const auto pack = attribute == nullptr ? callablePatternResultPack(syntax)
+                                             : std::nullopt) {
+    const bool reference = returnType.kind == SemanticType::Reference &&
+                           returnType.arguments.size() == 1;
+    contract.access =
+        reference ? returnType.referenceAccess : AccessMode::ReadOnly;
+    if (!reference && !isBorrowReturningType(returnType))
+      return contract;
+    std::vector<SemanticType> expanded;
+    for (const SemanticType &type : parameterTypes)
+      SemanticType::appendExpandedArgument(expanded, type);
+    std::vector<std::size_t> suppliers;
+    for (std::size_t position = *pack; position < expanded.size(); ++position) {
+      const SemanticType &type = expanded[position];
+      const auto inventory = storedReferenceInventory(type);
+      const bool mutableExternal =
+          inventory &&
+          std::any_of(
+              inventory->begin(), inventory->end(), [](const auto &path) {
+                return path.reference.kind == SemanticType::Reference &&
+                       path.reference.referenceAccess == AccessMode::Mutable;
+              });
+      const bool borrows = type.kind == SemanticType::Reference ||
+                           (inventory && !inventory->empty());
+      if (borrows &&
+          (contract.access == AccessMode::ReadOnly || mutableExternal ||
+           borrowAccess(type) == AccessMode::Mutable))
+        suppliers.push_back(position);
+    }
+    if (suppliers.empty()) {
+      contract.missing = true;
+      return contract;
+    }
+    contract.origin = BorrowOriginKind::Argument;
+    contract.parameter = suppliers.front();
+    if (suppliers.size() > 1)
+      contract.parameters = std::move(suppliers);
+    return contract;
+  }
   if (attribute == nullptr) {
     // RFC 0004: a result written with a region states its suppliers in the
     // signature. It translates into the same core contract.
@@ -7003,9 +7113,10 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
   std::size_t position = 0;
   for (std::size_t index = 0;
        index < parameters.size() && index < parameterTypes.size(); ++index) {
+    // A pack's lanes are what the fixed formals leave, whether the types
+    // arrive grouped or already expanded.
     const std::size_t width =
-        parameters[index].pack ? expanded.size() - (parameterTypes.size() - 1)
-                               : 1;
+        parameters[index].pack ? expanded.size() - (parameters.size() - 1) : 1;
     if (parameters[index].name.lexeme == attribute->argument->lexeme) {
       std::optional<std::size_t> selected;
       for (std::size_t element = position;
@@ -7071,6 +7182,7 @@ auto SemanticVisitor::Impl::resolveGenericReturnBorrowContract(
   instance.returnBorrowAccess = contract.access;
   instance.returnBorrowOrigin = contract.origin;
   instance.returnBorrowParameter = contract.parameter;
+  instance.returnBorrowParameters = contract.parameters;
   if (contract.ambiguous || contract.missing) {
     const auto *attribute = syntax->findFunctionAttribute("borrowed_from");
     report(attribute && attribute->argument ? *attribute->argument

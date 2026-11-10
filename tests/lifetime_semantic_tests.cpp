@@ -1287,5 +1287,54 @@ int&<missing> bad(int& input) { return input; }
 int bad<lifetime a>() { return a; }
 )gti",
         false, "GTI-S2128");
+  // Reference parameter packs: a result region names the supplying lanes.
+  check("reference-pack-lanes-supply-result-region", R"gti(
+int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
+int&<a> relay<lifetime a, Args...>(Args&<a>... values) { return second(values...); }
+int main() { int first = 3; int selected = 8; return relay(first, selected) - 8; }
+)gti",
+        true);
+  check("reference-pack-unnamed-lane-is-not-retained", R"gti(
+int&<a> fixed<lifetime a, Args...>(int&<a> first, Args&... ignored) { return first; }
+int main() { int first = 3; mut int other = 4; int& kept = fixed(first, other); other = 5; return kept - 3; }
+)gti",
+        true);
+  check("reference-pack-retains-every-named-lane", R"gti(
+int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
+int&<a> relay<lifetime a, Args...>(Args&<a>... values) { return second(values...); }
+int main() { mut int first = 3; int selected = 8; int& result = relay(first, selected); first = 4; return result - 8; }
+)gti",
+        false, "GTI-S2017");
+  check("mutable-pack-lanes-cannot-alias", R"gti(
+void increment(mut int& value) { value++; }
+void update<Args...>(mut Args&... values) { (increment(values), ...); }
+int main() { mut int first = 3; update(first, first); return first - 5; }
+)gti",
+        false, "GTI-S2017");
+  check("multi-supplier-result-relays-a-subset", R"gti(
+int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
+int&<a> relay<lifetime a>(int&<a> x, int&<a> y) { return second(x, y); }
+int main() { int first = 3; int selected = 8; return relay(first, selected) - 8; }
+)gti",
+        true);
+  check("pack-forwarded-to-fixed-overload-with-defaults", R"gti(
+int choose(int first, int second = 5) { return first + second; }
+int choose(bool first, int second) { return second; }
+int relay<Args...>(Args... values) { return choose(values...); }
+int main() { return relay(3) + relay(true, 4) - 12; }
+)gti",
+        true);
+  check("region-parameterized-reference-alias", R"gti(
+struct Slots { int count; Slots(int input) : count(input) {} };
+using borrow<lifetime a> = Slots&<a>;
+borrow<a> access<lifetime a>(Slots&<a> input) { return input; }
+int main() { Slots slots{4}; return access(slots).count - 4; }
+)gti",
+        true);
+  check("plain-reference-alias-stays-rejected", R"gti(
+using bad = int&;
+int main() { return 0; }
+)gti",
+        false, "GTI-S2030");
   return failures == 0 ? 0 : 1;
 }

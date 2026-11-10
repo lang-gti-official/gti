@@ -820,7 +820,8 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
   // A declaration-wide pack has no arity yet. Concrete reanalysis must select
   // the complete invocation; do not publish an executable provisional target.
   if (!arguments) {
-    currentType = valid ? lambda->returnType : SemanticType::Unknown;
+    currentType =
+        valid ? callExpressionType(lambda->returnType) : SemanticType::Unknown;
     return;
   }
   if (arguments->size() != lambda->parameterTypes.size()) {
@@ -1079,6 +1080,104 @@ auto SemanticVisitor::Impl::analyzeFunctionItemCall(
   semanticModel.clearBorrowDependencySet(call);
   recordSelectedCallOccurrence(call, std::move(resolved));
   currentType = callExpressionType(target->returnType);
+}
+
+auto SemanticVisitor::Impl::analyzeFixedPackForwardingCall(
+    const Call &call, const Symbol &overloadSet,
+    const std::vector<SemanticType> &argumentTypes, bool explicitArguments)
+    -> void {
+  const auto arguments = concreteCallArguments(argumentTypes, call.arguments());
+  if (!arguments) {
+    // A declaration-wide pack has no arity yet: each concrete instance selects
+    // its fixed target from its exact lanes. Publish no provisional target.
+    loanFlow.deferredGenericFlow = true;
+    requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
+    std::optional<SemanticType> common;
+    for (const CallableCandidate &candidate : overloadSet.overloads) {
+      if (common && *common != candidate.returnType) {
+        common.reset();
+        break;
+      }
+      common = candidate.returnType;
+    }
+    if (common && !containsOpenTypeParameter(*common)) {
+      requestSession.deferredPackCallResults[&call] = *common;
+      currentType = callExpressionType(*common);
+    } else {
+      currentType = SemanticType::Unknown;
+    }
+    return;
+  }
+  std::vector<SemanticType> flatTypes;
+  for (const auto &argument : *arguments)
+    flatTypes.push_back(argument.type);
+  // The pack is the final written argument, so written ordinary arguments
+  // keep their positions in the flattened list.
+  const std::size_t written = call.arguments().size() - 1;
+  struct Viable {
+    const CallableCandidate *source = nullptr;
+    CallReceiverMode receiverMode = CallReceiverMode::None;
+  };
+  std::vector<Viable> viable;
+  bool rejectedMutableReceiver = false;
+  for (const CallableCandidate &candidate : overloadSet.overloads) {
+    // Only an exact, non-deduced signature is selected from flattened lanes.
+    if (explicitArguments || !candidate.record().genericParameters.empty() ||
+        candidate.parameterPack ||
+        flatTypes.size() < candidate.requiredParameterCount ||
+        flatTypes.size() > candidate.parameterTypes.size() ||
+        firstRequirementFailure(candidate.requirements))
+      continue;
+    bool exact = true;
+    for (std::size_t index = 0; index < flatTypes.size() && exact; ++index) {
+      const auto &argument = (*arguments)[index];
+      const SemanticType &parameter = candidate.parameterTypes[index];
+      exact = argument.forwardedPackElement
+                  ? forwardedPackArgumentMatches(parameter, argument.type)
+                  : callArgumentMatches(parameter, argument.type,
+                                        *argument.expression);
+    }
+    if (!exact)
+      continue;
+    const CallReceiverMode receiverMode =
+        callReceiverMode(call.callee(), candidate);
+    if (candidate.ownerClass != 0 && !candidate.staticMember &&
+        candidate.receiverMutability == ReceiverMutability::Mutable &&
+        !receiverModeAllowsMutation(receiverMode)) {
+      rejectedMutableReceiver = true;
+      continue;
+    }
+    if (!isCompilerTrustedRequester(call.paren()) && candidate.compilerPrivate)
+      continue;
+    viable.push_back({&candidate, receiverMode});
+  }
+  if (viable.size() != 1) {
+    if (viable.empty() && rejectedMutableReceiver) {
+      report(call.paren(), "Mutable method requires a mutable receiver.");
+    } else {
+      std::vector<const CallableCandidate *> exactMatches;
+      for (const Viable &match : viable)
+        exactMatches.push_back(match.source);
+      reportOverloadResolutionFailure(call, overloadSet, flatTypes,
+                                      exactMatches);
+    }
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  const CallableCandidate &selected = *viable.front().source;
+  // Forwarded lanes were checked distinct where the pack was formed; written
+  // arguments keep the ordinary checks against their own parameters.
+  CallableCandidate ordinary = selected;
+  ordinary.parameterTypes.resize(written);
+  if (!validateSelectedFunction(ordinary, call.callee(), call.paren(),
+                                std::span(call.arguments()).first(written),
+                                viable.front().receiverMode)) {
+    currentType = SemanticType::Unknown;
+    return;
+  }
+  recordResolvedCall(call, selected, {}, {}, {}, {},
+                     viable.front().receiverMode, nullptr, flatTypes.size());
+  currentType = callExpressionType(selected.returnType);
 }
 
 auto SemanticVisitor::Impl::findGenericParameter(
@@ -7096,7 +7195,8 @@ auto SemanticVisitor::Impl::resolveOperator(
   if (selected.declaration != nullptr &&
       selected.returnBorrowOrigin == BorrowOriginKind::None &&
       selected.returnType.kind == SemanticType::Reference &&
-      hasExplicitBorrowContract(*selected.declaration)) {
+      (hasExplicitBorrowContract(*selected.declaration) ||
+       patternResultContract(*selected.declaration, selected.returnType))) {
     const GenericReturnBorrowContract contract = genericReturnBorrowContract(
         *selected.declaration, selected.returnType, selected.parameterTypes,
         selected.ownerClass, selected.staticMember);
@@ -7933,7 +8033,8 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     std::vector<CompileTimeValue> valueArguments,
     std::vector<std::size_t> ephemeralBorrowArguments,
     std::vector<CallableArgumentBoundary> callableArguments,
-    CallReceiverMode receiverMode, const ExprPtr *argumentReceiver) -> void {
+    CallReceiverMode receiverMode, const ExprPtr *argumentReceiver,
+    std::optional<std::size_t> suppliedArguments) -> void {
   requireFunctionDefinition(function, expressionToken(call.callee()));
   recordSelectedCallSafety(call, function);
   recordCallableForwardings(call, function);
@@ -7972,6 +8073,10 @@ auto SemanticVisitor::Impl::recordResolvedCall(
     concreteDeclaration = *declarationInfo;
     concreteDeclaration->returnType = function.returnType;
     concreteDeclaration->parameterTypes = function.parameterTypes;
+    if (const FunctionDecl *syntax = concreteDeclaration->bodyDeclaration();
+        syntax != nullptr &&
+        patternResultContract(*syntax, concreteDeclaration->returnType))
+      concreteDeclaration->explicitReturnBorrowOrigin = true;
     // RFC 0004 shadow phase: a call sees the same signature contract its
     // concrete callee instance publishes; nothing is refined per call.
     if (signatureContractDefaults()) {
@@ -7999,6 +8104,21 @@ auto SemanticVisitor::Impl::recordResolvedCall(
           concreteDeclaration->completeReturnBorrow = std::move(*complete);
           declarationInfo = &*concreteDeclaration;
         }
+    }
+    // A contract over a pack names the expanded lanes of this instance, as
+    // that instance's own reanalysis resolves it.
+    if (const FunctionDecl *syntax = concreteDeclaration->bodyDeclaration();
+        syntax && concreteDeclaration->explicitReturnBorrowOrigin &&
+        !syntax->parameters().empty() && syntax->parameters().back().pack) {
+      const auto contract = genericReturnBorrowContract(
+          *syntax, concreteDeclaration->returnType,
+          concreteDeclaration->parameterTypes, concreteDeclaration->ownerClass,
+          concreteDeclaration->staticMember);
+      concreteDeclaration->returnBorrowOrigin = contract.origin;
+      concreteDeclaration->returnBorrowParameter = contract.parameter;
+      concreteDeclaration->returnBorrowAccess = contract.access;
+      concreteDeclaration->returnBorrowParameters = contract.parameters;
+      declarationInfo = &*concreteDeclaration;
     }
     // Signature contracts skip only stored-field refinement (body
     // inference); text relays still follow the instance (L-OWN-02).
@@ -8076,7 +8196,9 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   if (declarationInfo != nullptr && declarationInfo->declaration != nullptr &&
       declarationInfo->bodyDeclaration() != nullptr &&
       containsOpenTypeParameter(declarationInfo->returnType) &&
-      hasExplicitBorrowContract(*declarationInfo->bodyDeclaration())) {
+      (hasExplicitBorrowContract(*declarationInfo->bodyDeclaration()) ||
+       patternResultContract(*declarationInfo->bodyDeclaration(),
+                             function.returnType))) {
     const GenericReturnBorrowContract contract = genericReturnBorrowContract(
         *declarationInfo->bodyDeclaration(), function.returnType,
         function.parameterTypes, function.ownerClass, function.staticMember);
@@ -8111,9 +8233,10 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   std::vector<const Expr *> defaultArguments =
       function.declaration == nullptr
           ? std::vector<const Expr *>{}
-          : omittedDefaultArguments(function.declaration->parameters(),
-                                    call.arguments().size() +
-                                        (argumentReceiver != nullptr));
+          : omittedDefaultArguments(
+                function.declaration->parameters(),
+                suppliedArguments.value_or(call.arguments().size() +
+                                           (argumentReceiver != nullptr)));
   recordDefaultArgumentDependencies(defaultArguments);
   if (declarationInfo != nullptr) {
     // A concrete lambda may have received a provisional confined-callable

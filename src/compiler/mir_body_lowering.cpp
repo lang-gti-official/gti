@@ -13387,6 +13387,59 @@ private:
     output.loans[loan - 1].entry = true;
     bindingLoans.insert_or_assign(binding, loan);
     scopes.front().loans.push_back(loan);
+    // Among several supplying lanes, each lane forwards its own entry loan.
+    if (root != nullptr && root->type.kind == SemanticType::TypePack &&
+        function != nullptr && !function->returnBorrowParameters.empty())
+      packEntryLoans.emplace(sourcePlace, loan);
+    seedAdditionalPackReturnBorrows(*summarized);
+  }
+
+  // A result several lanes of one concrete pack may supply needs each
+  // further lane's entry authority, as each fixed reference formal has.
+  void seedAdditionalPackReturnBorrows(
+      const mir_detail::MirReturnOriginFormal &summarized) {
+    if (function == nullptr || function->returnBorrowParameters.empty())
+      return;
+    for (const std::size_t position : function->returnBorrowParameters) {
+      const auto formal = mir_detail::returnOriginFormal(
+          function->parameterTypes, function->parameterBindings, position);
+      if (!formal ||
+          (formal->binding == summarized.binding &&
+           formal->elementWithinBinding == summarized.elementWithinBinding))
+        continue;
+      const MirPlaceId rootPlace = placeForBinding(formal->binding);
+      const MirPlace *root =
+          rootPlace != 0 ? output.findPlace(rootPlace) : nullptr;
+      if (root == nullptr || root->type.kind != SemanticType::TypePack ||
+          !root->type.concretePack || !root->key ||
+          formal->elementWithinBinding >= root->type.arguments.size())
+        continue;
+      const SemanticType &element =
+          root->type.arguments[formal->elementWithinBinding];
+      // A mutable lane already holds its semantic entry loan.
+      if (element.kind != SemanticType::Reference ||
+          element.referenceAccess != AccessMode::ReadOnly)
+        continue;
+      MirPlace projected = *root;
+      projected.id = 0;
+      projected.projections.push_back(
+          {.kind = MirProjectionKind::PackElement,
+           .constantIndex = formal->elementWithinBinding});
+      projected.key->projections.push_back(
+          {.kind = PlaceProjectionKind::ConstantIndex,
+           .index = formal->elementWithinBinding});
+      projected.type = element;
+      projected.traits = resolvedTraits(projected.type);
+      const MirPlaceId place = appendPackElementPlace(std::move(projected));
+      if (place == 0 || packEntryLoans.contains(place))
+        continue;
+      const MirLoanId loan =
+          createLoan(MirLoanKind::Parameter, place, element.referenceAccess, 0,
+                     formal->binding);
+      output.loans[loan - 1].entry = true;
+      packEntryLoans.emplace(place, loan);
+      scopes.front().loans.push_back(loan);
+    }
   }
 
   // Scope exit.
@@ -16490,8 +16543,11 @@ private:
             if (const auto *relay = output.findLoan(transient);
                 relay != nullptr && !transientChain.empty() &&
                 relay->kind == MirLoanKind::Stored && !relay->entry &&
-                !relay->escapes && relay->parent != 0 &&
-                relay->parent == mappedEntry &&
+                !relay->escapes && mappedEntry != 0 &&
+                (relay->parent == mappedEntry ||
+                 (relay->parent == 0 && relay->storedDependency == 0 &&
+                  output.findLoan(mappedEntry) != nullptr &&
+                  relay->source == output.findLoan(mappedEntry)->source)) &&
                 loanIsActive(scopes, relay->id)) {
               transient = relay->parent;
               relayedEntry = true;
@@ -16510,8 +16566,7 @@ private:
                             output.findPlace(sourcePlace)->root ==
                                 MirPlaceRootKind::Binding &&
                             output.findPlace(sourcePlace)->binding ==
-                                function->parameterBindings
-                                    [function->returnBorrowParameter]));
+                                returnBorrowParameterBinding()));
             if (!validTail || transientChain.empty()) {
               valid = false;
             } else {
@@ -16527,6 +16582,9 @@ private:
                                function->returnBorrowAccess, producer);
                 output.loans[normalized - 1].storedDependency =
                     output.loans[borrow.loan - 1].storedDependency;
+                // A result several suppliers may own publishes every owner.
+                output.loans[normalized - 1].additionalDependencies =
+                    output.loans[borrow.loan - 1].additionalDependencies;
                 // A nested reference-returning call carries the exact referent
                 // in its CallResult loan while sourcePlace names the owner used
                 // for semantic conflict checks. Publish the former into the

@@ -195,9 +195,10 @@ auto SemanticVisitor::Impl::explicitLifetimeResult(
   std::size_t position = 0;
   for (std::size_t index = 0;
        index < parameters.size() && index < parameterTypes.size(); ++index) {
+    // A pack's lanes are what the fixed formals leave, whether the types
+    // arrive grouped or already expanded.
     const std::size_t width =
-        parameters[index].pack ? expanded.size() - (parameterTypes.size() - 1)
-                               : 1;
+        parameters[index].pack ? expanded.size() - (parameters.size() - 1) : 1;
     std::vector<std::string> names;
     collectRegionNames(parameters[index].type, names);
     const bool supplies = std::any_of(names.begin(), names.end(),
@@ -503,6 +504,19 @@ auto SemanticVisitor::Impl::validateConstructorFieldRegions(
                                : std::string();
       if (written == region || written == "static")
         break;
+      // A constructor region declared to outlive the field's region supplies
+      // it too (`requires outlives<input, a>`).
+      bool declaredLonger = false;
+      if (const auto &clause = constructor.requiresClause())
+        for (const auto &requirement : clause->expression.lifetimeRequirements)
+          if (requirement.arguments.size() == 2) {
+            const auto longer = argumentRegion(requirement.arguments[0]);
+            const auto shorter = argumentRegion(requirement.arguments[1]);
+            declaredLonger |=
+                longer && shorter && *longer == written && *shorter == region;
+          }
+      if (declaredLonger)
+        break;
       report(variable->name(),
              "Field '" + field->name().lexeme + "' stores region '" + region +
                  "', but parameter '" + parameter.name.lexeme + "' " +
@@ -526,6 +540,18 @@ auto SemanticVisitor::Impl::callerRegionOf(const FunctionDecl &caller,
   const Expr *expression = argument.get();
   while (const auto *group = exprAs<Grouping>(expression))
     expression = group->expression().get();
+  // Every lane of a forwarded pack carries its parameter's written region.
+  if (const auto *pack = exprAs<PackExpansion>(expression)) {
+    for (const auto &parameter : caller.parameters())
+      if (parameter.pack && parameter.name.lexeme == pack->name().lexeme) {
+        if (const auto region = argumentRegion(parameter.type);
+            region && *region != "_" &&
+            parameter.type.name.last().lexeme != *region)
+          return *region;
+        return "<param " + parameter.name.lexeme + ">";
+      }
+    return "<local>";
+  }
   const auto *variable = exprAs<Variable>(expression);
   if (variable == nullptr)
     return "<local>";
@@ -589,15 +615,21 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
   };
   const auto &parameters = callee.parameters();
   const auto &arguments = call->arguments();
+  // A final forwarded pack supplies every remaining fixed parameter.
+  const bool forwardedPack =
+      !arguments.empty() &&
+      exprAs<PackExpansion>(arguments.back().get()) != nullptr;
   for (std::size_t index = 0;
-       index < parameters.size() && index < arguments.size(); ++index) {
+       index < parameters.size() && (index < arguments.size() || forwardedPack);
+       ++index) {
     if (parameters[index].pack)
       return;
     std::vector<std::string> names;
     collectRegionNames(parameters[index].type, names);
     if (!contains(names, calleeRegion->lexeme))
       continue;
-    const std::string supplier = callerRegionOf(syntax, arguments[index]);
+    const std::string supplier = callerRegionOf(
+        syntax, arguments[std::min(index, arguments.size() - 1)]);
     if (outlives(supplier))
       continue;
     report(call->paren(),
@@ -889,11 +921,14 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
       return std::nullopt;
   }
   if (parametersSupply) {
-    for (std::size_t index = 0; index < function.parameterTypes.size();
-         ++index) {
+    // Named positions are expanded: a concrete pack supplies per lane.
+    std::vector<SemanticType> expanded;
+    for (const SemanticType &type : function.parameterTypes)
+      SemanticType::appendExpandedArgument(expanded, type);
+    for (std::size_t index = 0; index < expanded.size(); ++index) {
       if (!named(index))
         continue;
-      const SemanticType &parameter = function.parameterTypes[index];
+      const SemanticType &parameter = expanded[index];
       if (parameter.kind == SemanticType::Reference &&
           parameter.arguments.size() == 1) {
         sources.push_back({BorrowOriginKind::Argument,

@@ -2777,6 +2777,47 @@ private:
           if (const std::optional<HirValueId> value =
                   lowerExpression(argument, analysis->model, classArguments,
                                   classValueArguments, body)) {
+            // A forwarded pack supplies one base parameter per lane: each
+            // lane is an exact element place of the grouped formal.
+            const HirValue *expansion = body.findValue(*value);
+            if (expansion != nullptr &&
+                expansion->kind == HirValueKind::PackExpansion &&
+                resolved != nullptr &&
+                resolved->kind == ConstructorInitializerTargetKind::Base) {
+              const SemanticType packType = expansion->info.type;
+              const SymbolId packSymbol = expansion->symbol;
+              // The lanes project the grouped formal itself, as a fold's
+              // element places do; the expansion is not evaluated.
+              HirValue pack = *expansion;
+              pack.id = nextValueId++;
+              pack.kind = HirValueKind::Variable;
+              pack.source = nullptr;
+              pack.operands.clear();
+              pack.packExpansionElements.clear();
+              pack.info.category = ValueCategory::Place;
+              const HirValueId packValue = pack.id;
+              body.values.push_back(std::move(pack));
+              for (std::size_t index = 0; index < packType.arguments.size();
+                   ++index) {
+                const SemanticType &element = packType.arguments[index];
+                const HirValueId projected = nextValueId++;
+                body.values.push_back(
+                    {.id = projected,
+                     .kind = HirValueKind::PackElement,
+                     .info = {.type = element,
+                              .category = ValueCategory::Place,
+                              .access = AccessMode::ReadOnly,
+                              .traits = instanceProvider->traitsFor(element)},
+                     .symbol = packSymbol,
+                     .operands = {packValue},
+                     .packElement = index});
+                lowered.arguments.push_back(projected);
+                initializerValues.push_back(projected);
+              }
+              lowered.explicitArgumentCount += packType.arguments.size();
+              lowered.explicitArgumentCount -= 1;
+              continue;
+            }
             lowered.arguments.push_back(*value);
             initializerValues.push_back(*value);
           }

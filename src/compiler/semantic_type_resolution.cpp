@@ -5514,6 +5514,19 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
   }
   const ExpressionInfo *info =
       value ? semanticModel.findExpression(*value) : nullptr;
+  // A symbolic pack forwarded to a callable has no result category until a
+  // concrete instance selects the call; that reanalysis checks the return.
+  if (valueType == SemanticType::Unknown && value) {
+    const Expr *candidate = value.get();
+    while (const auto *group = exprAs<Grouping>(candidate))
+      candidate = group->expression().get();
+    if (const auto *call = exprAs<Call>(candidate);
+        call != nullptr && semanticModel.findCall(*call) == nullptr &&
+        !call->arguments().empty() &&
+        exprAs<PackExpansion>(call->arguments().back().get()) != nullptr &&
+        semanticModel.findDeferredCallableCall(*call) != nullptr)
+      return;
+  }
   if (info == nullptr || info->category != ValueCategory::Place) {
     report(expressionToken(value),
            "Reference return requires an addressable value, not a "
@@ -5659,7 +5672,8 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
     if (const auto *call = exprAs<Call>(candidate);
         call != nullptr && semanticModel.findCall(*call) == nullptr &&
         semanticModel.findLambdaCall(*call) == nullptr &&
-        semanticModel.findDeferredCallableCall(*call) != nullptr)
+        (semanticModel.findDeferredCallableCall(*call) != nullptr ||
+         requestSession.deferredPackCallResults.contains(call)))
       return;
   }
   const ExprPtr *physicalOrigin = &value;
@@ -8407,13 +8421,14 @@ auto SemanticVisitor::Impl::validateFunctionPacks(
     const FunctionDecl &function,
     const std::vector<GenericParameterInfo> &genericParameters) -> void {
   validateParameterPacks(function.parameters(), genericParameters,
-                         &function.returnType());
+                         &function.returnType(),
+                         hasExplicitBorrowContract(function));
 }
 
 auto SemanticVisitor::Impl::validateParameterPacks(
     std::span<const Parameter> parameters,
     const std::vector<GenericParameterInfo> &genericParameters,
-    const TypeRef *returnType) -> void {
+    const TypeRef *returnType, bool explicitResultContract) -> void {
   const GenericParameterInfo *pack = nullptr;
   const bool hasValueParameter = std::any_of(
       genericParameters.begin(), genericParameters.end(),
@@ -8441,8 +8456,9 @@ auto SemanticVisitor::Impl::validateParameterPacks(
   }
 
   const bool functionOwnsPack = pack != nullptr;
-  if (pack == nullptr && returnType != nullptr && currentClass &&
-      !parameters.empty() && parameters.back().pack) {
+  // A method or constructor may expand its enclosing class's type pack.
+  if (pack == nullptr && currentClass && !parameters.empty() &&
+      parameters.back().pack) {
     const auto parameterIdentity =
         activeTypePackIdentity(parameters.back().type);
     for (const GenericParameterInfo &ownerParameter :
@@ -8526,7 +8542,10 @@ auto SemanticVisitor::Impl::validateParameterPacks(
              "supported.",
              "GTI-S2023");
     }
-    if (parameter.type.reference) {
+    // A result whose signature names its suppliers (a result region or
+    // `borrowed_from`) binds exactly those lanes in each instance; only an
+    // elided borrowed result would leave its pack suppliers unstated.
+    if (parameter.type.reference && !explicitResultContract) {
       const SemanticType result = returnType ? typeOf(*returnType)
                                   : currentClass
                                       ? SemanticType::classType(*currentClass)

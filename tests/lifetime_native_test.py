@@ -1592,6 +1592,36 @@ public:
 };
 int main() { mut Accumulator<int> a = Accumulator<int>(1); return a.add(4) - 5; }
 """,
+    # Reference parameter packs (RFC 0004): a result region names the
+    # supplying lanes; MIR binds each lane's entry authority.
+    'multi_supplier_result_subset': r"""
+int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
+int&<a> relay<lifetime a>(int&<a> x, int&<a> y) { return second(x, y); }
+int main() { int first = 3; int selected = 8; return relay(first, selected) - 8; }
+""",
+    'unnamed_pack_lane_not_retained': r"""
+int&<a> fixed<lifetime a, Args...>(int&<a> first, Args&... ignored) { return first; }
+int main() { int first = 3; mut int other = 4; int& kept = fixed(first, other); other = 5; return kept - 3; }
+""",
+    'local_carrier_relays_parameter_region': r"""
+struct Scoped<lifetime environment> {
+  int&<environment> value;
+  Scoped(int&<environment> input) : value(input) {}
+  int&<environment> get() { return this.value; }
+};
+int&<a> read<lifetime a>(int&<a> input) { Scoped<a> owner{input}; return owner.get(); }
+int main() { int value = 7; return read(value) - 7; }
+""",
+    'callable_pattern_scalar_lanes': r"""
+int&<b> select<lifetime a, lifetime b>(int&<a> ignored, int&<b> selected) { return selected; }
+class Relay<R(Args...)> {
+public:
+  Relay() = default;
+  R invoke(Args... values) { return select(values...); }
+};
+using ScalarChoice = for<lifetime a, lifetime b> int&<b>(int&<a>, int&<b>);
+int main() { Relay<ScalarChoice> scalar{}; int first = 3; int second = 8; return scalar.invoke(first, second) - 8; }
+""",
     'pack_forwarding_class_result': r"""
 import std.string;
 std::string make<Args...>(Args&... a) { return std::string("x"); }
@@ -1601,6 +1631,27 @@ int main() { int x = 1; auto s = relay(x); return int(s.size()) - 1; }
 }
 
 REJECTIONS = {
+    "unnamed_pack_lane_return": r"""
+int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
+int&<a> wrong<lifetime a, Args...>(int&<a> first, Args&... others) { return second(others...); }
+int main() { int a = 1; int b = 2; int c = 3; return wrong(a, b, c) - 3; }
+""",
+    "retained_pack_lane_supplier": r"""
+int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
+int&<a> relay<lifetime a, Args...>(Args&<a>... values) { return second(values...); }
+int main() { mut int first = 3; int selected = 8; int& result = relay(first, selected); first = 4; return result - 8; }
+""",
+    # Each concrete instance selects its fixed overload from exact lanes.
+    "fixed_pack_target_per_instance": r"""
+int choose(int first, int second) { return first + second; }
+int relay<Args...>(Args... values) { return choose(values...); }
+int main() { return relay(3); }
+""",
+    "aliased_mutable_pack_lanes": r"""
+void increment(mut int& value) { value++; }
+void update<Args...>(mut Args&... values) { (increment(values), ...); }
+int main() { mut int first = 3; update(first, first); return first - 5; }
+""",
     "range_element_escape": r"""
 import std.vector;
 int32_t& escape() {
@@ -1807,6 +1858,10 @@ def main():
             print(f"lifetime native {label}: LLVM O0/O3 passed", flush=True)
 
     rejection_codes = {
+        "unnamed_pack_lane_return": {"GTI-S2017", "GTI-S2127"},
+        "retained_pack_lane_supplier": {"GTI-S2017"},
+        "aliased_mutable_pack_lanes": {"GTI-S2017"},
+        "fixed_pack_target_per_instance": {"GTI-S2012"},
         "mutation_before_destructor": {"GTI-S2017"},
         "mutation_before_moved_destructor": {"GTI-S2017"},
         "unrelated_return": {"GTI-S2127"},
