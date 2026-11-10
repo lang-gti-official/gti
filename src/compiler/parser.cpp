@@ -1508,8 +1508,8 @@ private:
                         return !parameter.lifetimeKeyword;
                       })) {
         (void)error(name, "A conformance block operation takes the block's "
-                          "type parameters and can declare only additional "
-                          "lifetime parameters of its own.");
+                          "generic parameters and cannot declare its own; "
+                          "it may add only lifetime parameters.");
       }
       auto parameters = std::move(*blockParameters);
       parameters.insert(parameters.end(),
@@ -1705,6 +1705,16 @@ private:
       requiresClause =
           RequiresClause{std::move(keyword), constraintExpression()};
     }
+    // A conformance block operation takes the block's concept application.
+    // It may add lifetime requirements of its own (`outlives`), never a
+    // type-level requirement.
+    if (blockRequirement && requiresClause &&
+        requiresClause->expression.root !=
+            ConstraintExpressionNode::invalidIndex)
+      (void)error(requiresClause->keyword,
+                  "A conformance block operation cannot declare a "
+                  "requires clause; the block's concept application "
+                  "applies to it.");
     if (blockRequirement) {
       if (!requiresClause) {
         requiresClause = std::move(blockRequirement);
