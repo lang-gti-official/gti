@@ -4657,25 +4657,36 @@ private:
           valid = false;
       }
     }
-    // A carrier storing a reference that its parent call result selected
-    // from several owners stores whichever one was selected. MIR derived
-    // each alternative from that parent loan; a semantic record naming the
-    // carrier's own field path does not replace those owners.
-    if (const MirLoan *parent = output.findLoan(lowered.parent);
-        parent != nullptr && parent->kind == MirLoanKind::CallResult &&
-        lowered.kind == MirLoanKind::Stored && !loan.entry)
-      for (const auto &previous : previousDependencies) {
-        const auto sameOwner = [&](const MirLoanDependency &candidate) {
-          return candidate.source == previous.source &&
-                 candidate.access == previous.access;
-        };
-        if (previous.source != 0 && previous.source != lowered.source &&
-            std::any_of(parent->additionalDependencies.begin(),
-                        parent->additionalDependencies.end(), sameOwner) &&
-            std::none_of(lowered.additionalDependencies.begin(),
-                         lowered.additionalDependencies.end(), sameOwner))
-          lowered.additionalDependencies.push_back(previous);
-      }
+    // A carrier path storing a reference that a call result selected from
+    // several owners stores whichever one was selected. MIR derives every
+    // alternative from that call result's loan, wherever the path's parent
+    // names it; a semantic record of the carrier's own field paths does not
+    // replace those owners.
+    if (lowered.kind == MirLoanKind::Stored && !loan.entry) {
+      std::vector<MirLoanDependency> alternatives;
+      const auto selectedFrom = [&](MirLoanId parentId, MirPlaceId source,
+                                    const std::vector<SymbolId> &fields) {
+        const MirLoan *parent = output.findLoan(parentId);
+        if (parent == nullptr || parent->kind != MirLoanKind::CallResult ||
+            parent->source != source)
+          return;
+        for (const auto &owner : parent->additionalDependencies)
+          if (owner.source != 0 && owner.source != source)
+            alternatives.push_back({.source = owner.source,
+                                    .parent = owner.parent,
+                                    .designatedFields = fields,
+                                    .access = owner.access});
+      };
+      selectedFrom(lowered.parent, lowered.source, lowered.designatedFields);
+      for (const auto &dependency : lowered.additionalDependencies)
+        selectedFrom(dependency.parent, dependency.source,
+                     dependency.designatedFields);
+      for (auto &alternative : alternatives)
+        if (std::find(lowered.additionalDependencies.begin(),
+                      lowered.additionalDependencies.end(),
+                      alternative) == lowered.additionalDependencies.end())
+          lowered.additionalDependencies.push_back(std::move(alternative));
+    }
     if (lowered.access == AccessMode::ReadOnly &&
         loan.access == AccessMode::Mutable) {
       valid = false;
@@ -9054,11 +9065,38 @@ private:
           if (primarySource == 0)
             valid = false;
         }
+        // A field that stores a reference input whole stores whichever
+        // referent that reference selected. When the input's own loan
+        // already names alternative owners (a reference returned from
+        // several suppliers), the stored field retains every one of them.
+        const auto selectedAlternatives =
+            [&](const BorrowedFieldOrigin &mapping) {
+              std::vector<MirLoanDependency> alternatives;
+              if (mapping.origin != BorrowOriginKind::Argument ||
+                  !mapping.sourceFields.empty() ||
+                  mapping.parameter >= originCall.operands.size() ||
+                  mapping.parameter >= value.parameterTypes.size() ||
+                  value.parameterTypes[mapping.parameter].kind !=
+                      SemanticType::Reference)
+                return alternatives;
+              const auto *input = output.findLoan(
+                  operandLoan(originCall.operands[mapping.parameter]));
+              if (input == nullptr || input->kind != MirLoanKind::CallResult)
+                return alternatives;
+              for (auto dependency : input->additionalDependencies)
+                if (dependency.source != 0) {
+                  dependency.designatedFields = mapping.resultFields;
+                  dependency.access = mapping.access;
+                  alternatives.push_back(std::move(dependency));
+                }
+              return alternatives;
+            };
         auto &published = output.loans[loan - 1];
         if (primarySource != 0)
           published.source = primarySource;
         published.designatedFields = value.borrowFields.front().resultFields;
-        published.additionalDependencies.clear();
+        published.additionalDependencies =
+            selectedAlternatives(value.borrowFields.front());
         for (std::size_t index = 1; index < value.borrowFields.size();
              ++index) {
           const auto &mapping = value.borrowFields[index];
@@ -9088,6 +9126,8 @@ private:
                .parent = inputParent,
                .designatedFields = mapping.resultFields,
                .access = mapping.access});
+          for (auto &alternative : selectedAlternatives(mapping))
+            published.additionalDependencies.push_back(std::move(alternative));
         }
       }
       if (value.borrowDependencies) {
@@ -13180,6 +13220,11 @@ private:
       // Capture the identity before createLoan can reallocate output.loans.
       const MirLoanId storedDependency = source.storedDependency;
       const bool transformedReference = source.kind == MirLoanKind::CallResult;
+      // A call result selected from several owners publishes every one of
+      // them into the field; the field stores whichever was selected.
+      const auto alternatives = transformedReference
+                                    ? source.additionalDependencies
+                                    : std::vector<MirLoanDependency>{};
       const MirLoanId stored = createLoan(MirLoanKind::Stored, sourcePlace,
                                           access, valueId, 0, field);
       // This publishes a reference field, not ownership of the referent.
@@ -13187,6 +13232,7 @@ private:
       // must not be inferred from the referenced value's class.
       output.loans[stored - 1].lifecycleBound = false;
       output.loans[stored - 1].storedDependency = storedDependency;
+      output.loans[stored - 1].additionalDependencies = alternatives;
       (void)appendInstruction(
           {.kind = MirInstructionKind::Borrow,
            .hirValue = valueId,
@@ -14770,6 +14816,27 @@ private:
               retained.parent == loanForValue(*accessorReceiver) &&
               retainableCallResultChain(retained.parent, accessorAncestor,
                                         *accessorReceiver, desired->access);
+          // A construction storing the same selected reference in several
+          // fields derives its parent from that argument's own loan. The
+          // semantic record names it as the parent of a field dependency
+          // rather than of the whole carrier; both describe one ancestry.
+          const bool selectedArgumentParent =
+              expectedParent == 0 && retained.parent != 0 &&
+              retained.kind == MirLoanKind::Stored && initializer != nullptr &&
+              initializer->constructorTarget &&
+              initializer->borrowOrigin == BorrowOriginKind::Argument &&
+              initializer->borrowArgument < arguments.size() &&
+              retained.parent ==
+                  loanForValue(arguments[initializer->borrowArgument]) &&
+              std::any_of(
+                  desired->additionalDependencies.begin(),
+                  desired->additionalDependencies.end(),
+                  [&](const auto &dependency) {
+                    const auto parent = semanticLoans.find(dependency.parent);
+                    return dependency.parent != 0 &&
+                           parent != semanticLoans.end() &&
+                           parent->second == retained.parent;
+                  });
           // A stored reference may retain the exact accessor result passed
           // to its constructor or used as its producing receiver. Semantics
           // records the stable owner; MIR also keeps the transient
@@ -14777,7 +14844,7 @@ private:
           // carrier retains it.
           if (retained.parent != expectedParent &&
               !exactRuntimeTransferParent && !exactAccessorParent &&
-              !exactAccessorReceiverParent) {
+              !exactAccessorReceiverParent && !selectedArgumentParent) {
             valid = false;
           }
           recordLoanIdentity(retainedLoan, *desired, *statement.binding);

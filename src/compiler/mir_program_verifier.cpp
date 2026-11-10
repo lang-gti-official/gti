@@ -4573,6 +4573,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
       }
 
       std::vector<MirLoanDependency> mappedCallSources;
+      std::vector<MirLoanDependency> mappedAlternatives;
       for (const auto &mapping : instruction.borrowFields) {
         // Static storage is no call input. The global-origin check below and
         // the complete-set flow verify its exact storage place.
@@ -4680,6 +4681,30 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
           selected = sources.begin();
           prefixLength = inputPaths.front().fields.size();
         }
+        // A whole direct reference input may name several alternative
+        // owners (a reference selected from several suppliers). The field
+        // stores whichever one it selected, so it retains every one.
+        std::vector<MirLoanDependency> alternatives;
+        if (selected == sources.end() && sources.size() > 1 &&
+            mapping.sourceFields.empty() &&
+            mapping.origin == BorrowOriginKind::Argument &&
+            mapping.parameter < instruction.parameterTypes.size() &&
+            instruction.parameterTypes[mapping.parameter].kind ==
+                SemanticType::Reference &&
+            inputPaths.empty() &&
+            std::all_of(
+                sources.begin(), sources.end(),
+                [](const auto &source) {
+                  return source.source != 0 && source.designatedFields.empty();
+                })) {
+          selected = sources.begin();
+          prefixLength = 0;
+          for (auto other = std::next(sources.begin()); other != sources.end();
+               ++other)
+            alternatives.push_back({.source = other->source,
+                                    .designatedFields = mapping.resultFields,
+                                    .access = mapping.access});
+        }
         if (selected == sources.end() || selected->source == 0)
           return verificationFailure(
               body, owner, "returned field loses its selected input field",
@@ -4712,6 +4737,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         mappedCallSources.push_back({.source = projected,
                                      .designatedFields = mapping.resultFields,
                                      .access = mapping.access});
+        mappedAlternatives.insert(mappedAlternatives.end(),
+                                  alternatives.begin(), alternatives.end());
       }
       std::optional<MirPlaceId> expectedSource;
       if (instruction.borrowOrigin == BorrowOriginKind::Receiver) {
@@ -5128,8 +5155,12 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
           }
         }
         const auto actualSources = concreteDependencies(*loan);
-        if (!mappedCallSources.empty())
+        if (!mappedCallSources.empty()) {
           expectedSources = mappedCallSources;
+          expectedSources.insert(expectedSources.end(),
+                                 mappedAlternatives.begin(),
+                                 mappedAlternatives.end());
+        }
         if (expectedSources.size() <= 1 && actualSources.size() <= 1 &&
             instruction.borrowArguments.empty()) {
           // A compact sole-origin loan may omit its destination path, but an
@@ -5201,12 +5232,15 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                               .designatedFields = path.fields,
                               .access = path.reference.referenceAccess});
           }
-          if (mapped.size() != actualSources.size())
+          if (mapped.size() + mappedAlternatives.size() != actualSources.size())
             return verificationFailure(
                 body, owner,
                 "stored field mapping must preserve every field identity",
                 block.id, instruction.id);
           expectedSources = std::move(mapped);
+          expectedSources.insert(expectedSources.end(),
+                                 mappedAlternatives.begin(),
+                                 mappedAlternatives.end());
         }
         const auto includes = [&](const std::vector<MirLoanDependency> &sources,
                                   const MirLoanDependency &source) {
