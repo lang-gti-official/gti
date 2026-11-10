@@ -131,7 +131,7 @@ struct UserRawOwner { mut UserMutableField field{};  public: UserRawOwner() = de
                                    "unsafe { address->field.write(); }",
         }
         expected = {
-            "owner-mutation": "while a reference",
+            "owner-mutation": "may still be live",
             "owner-movement": "overlapping borrow",
             "mutable-owner-read": "borrow",
             "mutable-cursor-copy": "copy",
