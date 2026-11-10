@@ -196,8 +196,7 @@ int main() {
 )"},
       {"generic and public borrowed-from witnesses", R"(
 import std.memory;
-[[borrowed_from(owner)]]
-unsafe T& observe<T>(const T* address, T& owner) {
+unsafe T&<a> observe<T, lifetime a>(const T* address, T&<a> owner) {
   unsafe { return *address; }
 }
 int main() {
@@ -290,7 +289,7 @@ struct Holder {
 void assertionReset() {
   lang::Lexer lexer;
   lang::Parser parser(lexer.scan(R"(
-[[borrowed_from(owner)]] unsafe int& observe(const int* address, int& owner) {
+unsafe int&<a> observe<lifetime a>(const int* address, int&<a> owner) {
   unsafe { return *address; }
 }
 int main() { return 0; }
@@ -583,7 +582,7 @@ const int* source() { return &global; }
 void repeatedSemanticRequest() {
   lang::Lexer firstLexer;
   lang::Parser firstParser(firstLexer.scan(R"(
-[[borrowed_from(witness)]] unsafe int& observe(const int* pointer, int& witness) {
+unsafe int&<a> observe<lifetime a>(const int* pointer, int&<a> witness) {
   unsafe { return *pointer; }
 }
 int main() { int value = 7;
@@ -1150,12 +1149,10 @@ int main() {
   producedResults();
   const auto publicBridge = analyze(R"(
 struct Witness { mut int value = 42;  public: Witness() = default; };
-[[borrowed_from(witness)]]
-unsafe int& observe(const int* address, Witness& witness) {
+unsafe int&<a> observe<lifetime a>(const int* address, Witness&<a> witness) {
   unsafe { return *address; }
 }
-[[borrowed_from(witness)]]
-unsafe mut int& edit(int* address, mut Witness& witness) {
+unsafe mut int&<a> edit<lifetime a>(int* address, mut Witness&<a> witness) {
   unsafe { return *address; }
 }
 int main() {
@@ -1227,8 +1224,7 @@ int main() {
   auditNegative("raw assertion wrapper preserves aggregate field provenance",
                 R"(
 struct Address { const int* value = nullptr;  public: Address() = default; };
-[[borrowed_from(owner)]]
-int& read(Address address, int& owner) { unsafe { return *address.value; } }
+int&<a> read<lifetime a>(Address address, int&<a> owner) { unsafe { return *address.value; } }
 int main() {
   int owner = 42;
   int other = 7;
@@ -1241,8 +1237,7 @@ int main() {
       "raw assertion obligations cannot disappear through virtual dispatch", R"(
 class Provider {
 public:
-  [[borrowed_from(owner)]]
-  virtual int& read(const int* address, int& owner) {
+  virtual int&<a> read<lifetime a>(const int* address, int&<a> owner) {
     unsafe { return *address; }
   }
 public:
@@ -1252,8 +1247,7 @@ int main() { return 0; }
 )",
       "audit is incomplete across virtual or interface dispatch");
   const auto selectedOrigin = analyze(R"(
-[[borrowed_from(left)]]
-int& select(int& left, int& right) { return left; }
+int&<a> select<lifetime a>(int&<a> left, int& right) { return left; }
 int main() {
   int first = 42;
   int second = 7;
@@ -1265,8 +1259,7 @@ int main() {
   expect(selectedOrigin.canGenerateCode(),
          "explicit source contract selects one of multiple reference inputs");
   negative("safe origin annotation cannot relabel another parameter", R"(
-[[borrowed_from(left)]]
-int& select(int& left, int& right) { return right; }
+int&<a> select<lifetime a>(int&<a> left, int& right) { return right; }
 int main() { int first = 42; int second = 7; return select(first, second); }
 )",
            "reference");

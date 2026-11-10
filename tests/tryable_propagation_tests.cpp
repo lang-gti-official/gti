@@ -589,7 +589,7 @@ int main() { change(Token::item(7)); return 0; }
 )gti",
            "GTI-S2017", "mutable reference to a temporary");
   rejected(passiveEnum + R"gti(
-[[borrowed_from(token)]] Token& escape(Token& token) { return token; }
+Token&<a> escape<lifetime a>(Token&<a> token) { return token; }
 int main() { Token& value = escape(Token::item(7)); return inspect(value); }
 )gti",
            "GTI-S2017", "may retain this argument");

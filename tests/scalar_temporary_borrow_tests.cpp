@@ -98,7 +98,7 @@ void boundaries() {
   rejected(scalar + "int main() { int value = 42; int answer = "
                     "read(std::move(value)); return value; }",
            "move consumes scalar local", "GTI-S2018");
-  accepted("[[borrowed_from(source)]] int& select(int& source, int& ignored) { "
+  accepted("int&<a> select<lifetime a>(int&<a> source, int& ignored) { "
            "return source; } "
            "int main() { int source = 42; return select(source, 0) - 42; }",
            "result may retain a different argument");

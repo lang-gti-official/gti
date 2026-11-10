@@ -124,9 +124,9 @@ struct Cell {
 public:
   Cell() = default;
 };
-[[borrowed_from(owner)]] T& peek_cell<C, T>(C& owner)
+T&<a> peek_cell<C, T, lifetime a>(C&<a> owner)
     requires readable_cell<C, T> { return *owner; }
-[[borrowed_from(owner)]] mut T& edit_cell<C, T>(mut C& owner)
+mut T&<a> edit_cell<C, T, lifetime a>(mut C&<a> owner)
     requires editable_cell<C, T> { return owner.edit(); }
 void put_cell<C>(mut C& owner, int value) requires std::writes_to<C, int> {
   *owner = value;

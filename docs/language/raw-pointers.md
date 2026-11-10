@@ -545,15 +545,17 @@ object owns the pointee. The mutable operation cannot remove pointee constness.
 These helpers are ordinary GTI definitions using a public function contract:
 
 ```gti
-[[borrowed_from(owner)]]
-unsafe T& assume_ref<T, Owner>(const T* address, Owner& owner) {
+unsafe T&<a> assume_ref<T, Owner, lifetime a>(const T* address,
+                                             Owner&<a> owner) {
   unsafe { return *address; }
 }
 ```
 
 An application can define the same pattern without access to compiler-private
-declarations. `[[borrowed_from(parameter)]]` resolves one checked-reference
-parameter; `[[borrowed_from(this)]]` selects the non-static receiver. The
+declarations. The result region names the checked-reference parameter that
+owns the result. The older spelling `[[borrowed_from(owner)]]` states the same
+contract, still works and is slated for deprecation;
+`[[borrowed_from(this)]]` selects the non-static receiver. The
 parameter must grant sufficient access for the returned reference. Unambiguous
 existing return-origin inference remains available without an annotation.
 Safe returns must prove the selected origin; the annotation alone cannot

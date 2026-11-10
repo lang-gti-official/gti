@@ -455,7 +455,21 @@ Local `T&` and `mut T&` infer their regions from checked places and uses. `_`
 requests an inferred lifetime explicitly, as in `Reading<_>`. In declaration
 signatures, omitted input regions receive separate parameters; an omitted result
 region uses the sole eligible input or the method receiver. Ambiguous published
-results require a declared relationship. Eligible private helpers may infer
+results require a declared relationship.
+
+A result region bound by the function itself names its suppliers: exactly the
+parameters whose types mention that region. `int&<a> pick<lifetime a>(int&<a>
+first, int& second)` states the same contract as the older attribute spelling
+`[[borrowed_from(first)]] int& pick(int& first, int& second)`, and both
+declarations produce the same verified MIR. A region shared by several
+parameters, as in `choose` above, names all of them. `[[borrowed_from]]` still
+works and is slated for deprecation. Until the lifetime syntax covers them, it
+remains the spelling for a receiver-owned result (`[[borrowed_from(this)]]`),
+for overloaded operators, for one lane of a parameter pack, for protocol
+operations and their conformances, for requirement results, and for carrier
+types that do not declare lifetime parameters.
+
+Eligible private helpers may infer
 relationships from their bodies, including mutually recursive helpers; exported
 contracts do not depend on inspecting the implementation. Inference does not
 upgrade read-only access or manufacture an owner for a raw pointer.
@@ -1842,8 +1856,9 @@ Direct invocation and generic `F`/`F&` relays preserve that origin and access:
 auto same = [](int& value) -> int& { return value; };
 int& view = same(cell);              // borrows `cell`
 
-[[borrowed_from(value)]]
-int& relay<F>(F& callback, int& value) { return callback(value); }
+int&<a> relay<F, lifetime a>(F& callback, int&<a> value) {
+  return callback(value);
+}
 
 auto increment = [](mut int& value) -> mut int& {
   value += 1;
@@ -1869,12 +1884,13 @@ existing read-only result contract derived from a read-only signature
 parameter. The new mutable-result and read-only-from-mutable forms apply to
 direct and concrete generic invocation; unsupported erased conversions are
 diagnosed before code generation. Named functions retain their existing
-inference and explicit `borrowed_from` rules.
+inference and explicit result-region rules.
 
-A generic relay names the parameter its result borrows with `borrowed_from`;
-each concrete instance verifies that the selected callable's own origin
-reaches exactly that parameter. On a declaration whose result type is a
-generic parameter, `borrowed_from` binds only the instances whose result is a
+A generic relay names the parameter its result borrows with a result region
+(or the older `[[borrowed_from(value)]]` spelling); each concrete instance
+verifies that the selected callable's own origin reaches exactly that
+parameter. On a declaration whose result type is a generic parameter,
+`borrowed_from` binds only the instances whose result is a
 checked reference and may name a final parameter pack, in which case the one
 reference element of the expanded pack in that instance owns the result.
 `std::function_ref` and `std::function_ptr` declare their call operators this

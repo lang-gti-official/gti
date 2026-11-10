@@ -506,8 +506,7 @@ int main() {
 }
 )");
   positive("generic-relay-reference-result", R"(
-[[borrowed_from(value)]]
-int& relay<F>(F& callback, int& value) { return callback(value); }
+int&<a> relay<F, lifetime a>(F& callback, int&<a> value) { return callback(value); }
 int main() {
   int cell = 4;
   auto same = [](int& value) -> int& { return value; };
@@ -573,8 +572,7 @@ int main() {
 )");
   negative("invocation-pointer-ambiguous-origin", R"(
 import std.functional;
-[[borrowed_from(a)]]
-int& first(int& a, int& b) { return a; }
+int&<r> first<lifetime r>(int&<r> a, int& b) { return a; }
 int main() {
   std::function_ptr<int&(int&, int&)> pointer{first};
   return 0;
@@ -584,8 +582,7 @@ int main() {
   negative("invocation-pointer-origin-mismatch", R"(
 import std.functional;
 import std.memory;
-[[borrowed_from(object)]]
-int& pick(std::erased_object& object, int& value) {
+int&<a> pick<lifetime a>(std::erased_object&<a> object, int& value) {
   unsafe { return std::restore_ref<int>(object); }
 }
 int main() {

@@ -324,7 +324,7 @@ int main() {
   accepted(borrowedRelay,
            "generic protocol calls preserve the declared result origin");
   rejected(borrowed + R"gti(
-[[borrowed_from(owner)]] int& escape(int& owner) {
+int&<a> escape<lifetime a>(int&<a> owner) {
   int local = 3;
   Reading view{local};
   return observed<Reading>::get(view);

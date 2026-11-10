@@ -76,8 +76,7 @@ int main() {
 )",
            "GTI-S2017", "must derive from read-only parameter 'value'");
   rejected(R"(
-[[borrowed_from(value)]]
-int& borrow<F>(F& fn, int& value, int& other) { return fn(other); }
+int&<a> borrow<F, lifetime a>(F& fn, int&<a> value, int& other) { return fn(other); }
 int main() {
   int owner = 42;
   int other = 7;

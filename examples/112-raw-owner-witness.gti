@@ -8,8 +8,7 @@ public:
 // The public language contract also lets an application define this bridge.
 // Unknown address validity is the unsafe caller's obligation; known invalid
 // origins and incompatible access are still rejected by the compiler.
-[[borrowed_from(owner)]]
-unsafe int& read_address(const int* address, Reading& owner) {
+unsafe int&<a> read_address<lifetime a>(const int* address, Reading&<a> owner) {
   unsafe { return *address; }
 }
 
