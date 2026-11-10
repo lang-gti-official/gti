@@ -3298,6 +3298,24 @@ reported violation is unchanged. The lifecycle dataflow still carries one
 state per drop obligation into every block; a sparse representation remains
 future work for very long bodies.
 
+### Body-local lifetime validity
+
+MIR is the authority for lifetimes inside a body (RFC 0004). As part of the
+ownership and loan fixed-point it assigns a region to every loan and infers
+the outlives relationships between them from its own CFG, places, loans and
+calls. It then checks the body against two kinds of contract only: its own
+signature contract (what results and stored fields may borrow from) and the
+contracts of the callees it invokes. It never reproduces a semantic supplier
+inventory. Semantics and MIR are compared at signature-contract level, and a
+disagreement there remains an internal compiler error.
+
+A lifetime error that MIR finds in source code is a user diagnostic. It
+carries the source span of the HIR value or statement involved and uses the
+same diagnostic codes as the corresponding ownership errors. MIR types and
+both backends see only erased types; lifetimes never change MIR shape, layout
+or emitted code, so a lifetime-free program produces the same MIR as before
+RFC 0004.
+
 ### Shared failure cleanup
 
 Function and lambda bodies share failure cleanup across failure edges. An

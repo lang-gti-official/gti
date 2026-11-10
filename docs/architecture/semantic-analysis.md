@@ -3306,6 +3306,26 @@ This does not introduce program-wide move-state inference: consuming global or
 static storage with `std::move` remains rejected because its initialization
 state is not locally provable.
 
+## Lifetime Contracts
+
+Semantics owns lifetime syntax and signature contracts (RFC 0004). It resolves
+`lifetime` binders and their scopes, and rejects shadowing and kind mismatches.
+For each declaration it normalizes one lifetime contract: the named and elided
+regions of its parameters, receiver and result, the well-formedness bounds a
+written type implies (`T&<a>` requires `T: a`), and explicit `outlives`
+requirements. A signature without lifetime syntax keeps the borrow contract
+that semantics already infers for it, so lifetime-free programs analyze
+exactly as before. A contract written in lifetime syntax translates into the
+same core facts as `[[borrowed_from]]`: return suppliers, stored-reference
+carriers and receiver suppliers. Loan flow and its source diagnostics below
+consume those facts unchanged.
+
+Inside a function body, semantics erases lifetimes. It publishes no
+per-expression supplier, origin or region inventory for HIR or MIR to
+reproduce. Type relations compare erased shapes and record any lifetime
+relationship as a constraint on the declaration's contract. Body-local
+lifetime validity belongs to MIR ([MIR](mir.md#body-local-lifetime-validity)).
+
 ## Loan Flow
 
 Global and local loan-flow places use the same analysis-local domain. HIR

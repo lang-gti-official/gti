@@ -1288,6 +1288,16 @@ the owner inventory, roots, concrete binding/types and source membership. Missin
 regions, sibling-instance facts and foreign roots are rejected. Accepted facts
 remain private owned witnesses until a later phase strips the syntax anchors.
 
+## Lifetime Erasure
+
+Every HIR type is lifetime-erased by the one canonical erasure function. That
+covers instance keys, value and binding types, and class, callable and
+constructor instances. HIR carries each callable's signature lifetime contract
+as declaration metadata for MIR. It carries no per-value lifetime application,
+origin or region fact. Two instantiations that differ only in lifetime
+arguments are one instance. `GTI_COMPILER_VALIDATION` asserts erasure when HIR
+publishes an instance.
+
 ## Boundary
 
 HIR owns concrete identity and typed executable structure. It does not decide
