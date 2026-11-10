@@ -5060,11 +5060,26 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
   const bool concrete = !typeArguments.empty() || !valueArguments.empty() ||
                         !function.dispatchOwner.arguments.empty() ||
                         !function.dispatchOwner.valueArguments.empty();
+  // RFC 0004: the signature states the complete contract. A declaration
+  // whose registered record carries none (a conformance operation) still has
+  // the one its concrete signature elides to.
+  const auto signatureContract =
+      [&]() -> std::optional<FunctionBorrowDependencySummary> {
+    if (!signatureContractDefaults())
+      return std::nullopt;
+    FunctionInfo signature = *declaration;
+    signature.returnType = function.returnType;
+    signature.parameterTypes = function.parameterTypes;
+    return signatureCompleteReturnBorrow(
+        signature, declaration->bodyDeclaration()->receiverMutability(),
+        function.dispatchOwner);
+  };
   if (!concrete && declaration &&
       declaration->returnType == function.returnType &&
       declaration->parameterTypes == function.parameterTypes &&
       (!instanceAnalysisActive || declaration->completeReturnBorrow))
-    return declaration->completeReturnBorrow;
+    return declaration->completeReturnBorrow ? declaration->completeReturnBorrow
+                                             : signatureContract();
 
   const InstanceAnalysisKey key{.kind = InstanceAnalysisKind::Function,
                                 .declaration = function.id,
@@ -5073,8 +5088,10 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
                                     function.dispatchOwner.valueArguments,
                                 .types = typeArguments,
                                 .values = valueArguments};
-  return completeBorrowQuery(key, function.returnType, function.parameterTypes,
-                             function.declaration->name(), site);
+  auto complete =
+      completeBorrowQuery(key, function.returnType, function.parameterTypes,
+                          function.declaration->name(), site);
+  return complete ? complete : signatureContract();
 }
 
 auto SemanticVisitor::Impl::completeConstructorBorrow(

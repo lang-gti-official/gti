@@ -1424,8 +1424,9 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
   if (!inventory || inventory->empty())
     return std::nullopt;
   // Complete contracts cannot describe an escaping mutable dependency graph:
-  // a carrier result with a mutable stored path keeps its base origin.
-  if (!directReference &&
+  // a class carrier result with a mutable stored path keeps its base origin.
+  // A payload enum's alternatives each guard their own stored paths.
+  if (!directReference && result.kind != SemanticType::Enum &&
       std::any_of(inventory->begin(), inventory->end(), [](const auto &path) {
         return path.reference.referenceAccess == AccessMode::Mutable;
       }))
