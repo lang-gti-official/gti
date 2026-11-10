@@ -755,8 +755,8 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
   if (actual.kind == SemanticType::Reference ||
       worker->typeTraits(actual).containsBorrowedState)
     return reject("An unannotated result must be owned and non-borrowed; name "
-                  "a borrow-carrying result's origin with "
-                  "[[borrowed_from(parameter)]].");
+                  "a borrow-carrying result's origin with a region, as in "
+                  "'-> int&<parameter>'.");
   if (cacheable && primitiveRequirementProofCount < 1024) {
     primitiveRequirementProofs[&query].emplace_back(arguments.begin(),
                                                     arguments.end());
@@ -792,7 +792,7 @@ auto SemanticVisitor::Impl::borrowedCarrierResultSatisfied(
                   "borrow-carrying result type.");
   if (!worker.typeTraits(required).containsBorrowedState)
     return reject("The required result carries no borrowed state; an owned "
-                  "result is named without borrowed_from.");
+                  "result is named without a region.");
   // These are the dependencies a binding of the value would retain, so the
   // query accepts exactly what concrete initialization would protect. An
   // empty set is unproven, not ownerless, and is rejected.

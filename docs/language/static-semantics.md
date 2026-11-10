@@ -1491,7 +1491,7 @@ spells, including return and parameter types. Sharing the owner's module
 does not make that declaration's imports transitively visible; an invisible
 signature type reports `GTI-S2024` with its direct-import guidance.
 
-A `borrowed_from` parameter name is resolved on that original declaration and
+A result region's supplier parameter is resolved on that original declaration and
 retained by parameter position. Renaming parameters in the definition does not
 change the origin; declaration indexing order cannot change contract acceptance.
 An invalid declared origin remains an error rather than falling back to inference
@@ -1836,7 +1836,7 @@ dependency authority without moving the referent.
 Pattern selection proves the active alternative before exposing its reference
 fields. A direct reference selected from a consumed enum may retain its exact
 external owner after the enum shell ends. A function returning that reference
-must establish its declared `borrowed_from` contract from the checked selection;
+must establish its declared result region from the checked selection;
 a boolean predicate does not establish a tag proof. Nested enum construction
 and complete dependency transport do not yet authorize consuming an outer
 alternative into a new *borrowed-value* pattern binding and then consuming that
@@ -2002,7 +2002,7 @@ temporary
 or `std::move(place)` operand needs a movable `X`. A named place needs a
 copyable `X` and remains available. A borrowed `X` must currently have one
 exact stored-dependency path. A reference `value_type` is permitted when
-`take_value`'s `[[borrowed_from(value)]]` contract relays that path's external
+`take_value`'s declared result region relays that path's external
 owner. The expression is then a place with the declared reference access;
 consuming the operand does not terminate the returned external borrow. Other
 value types and the residual contain no stored borrows; the residual is not a

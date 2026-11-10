@@ -337,7 +337,8 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
                       "' needs an owned value or a reference transferred "
                       "from its operand's exact external dependency, and a "
                       "non-void owned residual without stored borrows.",
-                  "Declare a checked borrowed_from contract on take_value "
+                  "Declare take_value's result region from its operand, as in "
+                  "'T&<a> take_value<lifetime a>(... &<a> self)', "
                   "when returning a reference, and keep the residual owned.");
   }
   const SemanticType returnType = currentReturnType;

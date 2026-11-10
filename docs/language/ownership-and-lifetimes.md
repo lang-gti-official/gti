@@ -490,11 +490,16 @@ the alias's own lifetime parameters, as in
 `using borrow<lifetime a> = Slots&<a>;`: each use, such as
 `borrow<a> access<lifetime a>(Slots&<a> input)`, still spells the borrow and
 its region. Every other reference alias remains `GTI-S2030`. `[[borrowed_from]]` still
-works and is slated for deprecation. Until the lifetime syntax covers them, it
-remains the spelling for a receiver-owned result (`[[borrowed_from(this)]]`),
-for overloaded operators, for one lane of a value parameter pack, for protocol
-operations and their conformances, for requirement results, and for carrier
-types that do not declare lifetime parameters.
+works and is slated for deprecation; every contract it states has a lifetime
+spelling. A receiver-owned result, including an overloaded operator's, is
+`int&<this> get()`; a parameter supplier is a region the function binds, also
+for a by-value carrier before a value pack
+(`int&<a> lane<lifetime a, Args...>(View<a> first, Args... rest)`); protocol
+operations and conformances bind regions in their signatures
+(`int&<a> get<lifetime a>(T&<a> source)`); requirement results name the
+parameter's region (`-> T&<owner>`, `-> Window<source>`, `-> auto<input>`). A
+carrier type that declares no lifetime parameter must declare one before its
+region can be named.
 
 Eligible private helpers may infer
 relationships from their bodies, including mutually recursive helpers; exported
@@ -1927,14 +1932,14 @@ A generic relay names the parameter its result borrows with a result region
 (or the older `[[borrowed_from(value)]]` spelling); each concrete instance
 verifies that the selected callable's own origin reaches exactly that
 parameter. On a declaration whose result type is a generic parameter,
-`borrowed_from` binds only the instances whose result is a
+the result region binds only the instances whose result is a
 checked reference and may name a final parameter pack, in which case the one
 reference element of the expanded pack in that instance owns the result.
 `std::function_ref` and `std::function_ptr` declare their call operators this
 way.
 
 A return type obtained from an associated type may itself be a reference.
-With an explicit, verified `borrowed_from` contract, that exact reference type
+With an explicit, verified result-region contract, that exact reference type
 does not require appending a second `&` to the projection spelling. The same
 instance checks prove its origin and access; generic locals and parameters
 retain their existing explicit reference-declarator rules.
@@ -2412,7 +2417,7 @@ carried across iterations (`GTI-S2067`), so a `mut auto&` selection, which
 needs mutable enum storage like any mutable payload borrow, is made before
 the loop. A free function
 whose carrier result could borrow from more than one eligible parameter is
-ambiguous unless `[[borrowed_from(name)]]` names the owner, as for a plain
+ambiguous unless a result region names the owner, as for a plain
 reference return. Empty-body constructors
 establish the result from their exact field initializers, including a proved
 reference-free alternative. The initializer may construct the enum in place or

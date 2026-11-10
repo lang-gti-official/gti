@@ -1302,7 +1302,7 @@ int main() { mut int32_t value = 1; return use(value); }
                         constrainedCall("(H& h) { { h.view() } -> Slice; }",
                                         "return use(holder);")),
                   "a borrow-carrying result without borrowed_from",
-                  "[[borrowed_from(parameter)]]");
+                  "'-> int&<parameter>'");
   rejectedBecause(
       check(root, directory, "carrier_mutable_from_read_only",
             constrainedCall("(H&<h> h) { { h.edit_view() } -> MutSlice<h>; }",

@@ -7321,10 +7321,12 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
     }
     diagnostic.hints.emplace_back(
         summary.access == AccessMode::Mutable
-            ? "Name the owning parameter with [[borrowed_from(name)]], return "
+            ? "Name the owning parameter with a lifetime, as in "
+              "'T&<a> f<lifetime a>(T&<a> owner)', return "
               "the borrowed value from a mutable instance method, or reduce "
               "the function to one mutable dependency source."
-            : "Name the owning parameter with [[borrowed_from(name)]], return "
+            : "Name the owning parameter with a lifetime, as in "
+              "'T&<a> f<lifetime a>(T&<a> owner)', return "
               "the borrowed value from an instance method, or reduce the "
               "function to one read-only dependency source.");
   } else if (summary.hasMutableCandidate) {
