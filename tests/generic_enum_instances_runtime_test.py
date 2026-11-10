@@ -719,8 +719,8 @@ def check_rejections(compiler, root):
     for name, (source, code, message) in rejected_cases.items():
         path = root / f"reject-{name}.gti"
         path.write_text(source)
-        result = subprocess.run([str(compiler), str(path), "--emit-cpp", "-o",
-                                 str(root / f"reject-{name}.cpp")],
+        result = subprocess.run([str(compiler), str(path), "--emit-mir", "-o",
+                                 str(root / f"reject-{name}.mir")],
                                 text=True, capture_output=True, timeout=120)
         if (result.returncode == 0 or code not in result.stderr or
                 message not in result.stderr.lower() or "GTI-B000" in result.stderr):

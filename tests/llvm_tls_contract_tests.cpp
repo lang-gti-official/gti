@@ -1,5 +1,5 @@
 #include "../src/compiler/llvm/body.h"
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 
 #include <iostream>
 #include <llvm/IR/Constants.h>

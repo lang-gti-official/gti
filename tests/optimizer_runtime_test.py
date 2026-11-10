@@ -5,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_standard, cpp_text_modes
+
 
 def run(arguments: list[str], expected: int = 0) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
@@ -51,38 +53,48 @@ def main() -> int:
             )
             mir_by_level[level] = mir.read_text(encoding="utf-8")
 
-            emitted_cpp = root / f"optimizer-{level}.cpp"
-            run(
-                [
-                    str(compiler),
-                    str(source),
-                    f"-{level}",
-                    "--emit-cpp",
-                    "-o",
-                    str(emitted_cpp),
-                ]
-            )
-            cpp_by_level[level] = emitted_cpp.read_text(encoding="utf-8")
+            # Every level executes on the shipped backend.
             executable = root / f"optimizer-{level}"
-            native_command = [
-                str(native_compiler),
-                "-std=c++23",
-                "-O0",
-                "-fno-fast-math",
-                "-ffp-contract=off",
-                "-D__gti_strict_ieee754=1",
-                f"-I{source_root / 'runtime' / 'include'}",
-                str(emitted_cpp),
-                str(runtime_library),
-                "-o",
-                str(executable),
-            ]
-            if sys.platform != "win32":
-                native_command.append("-pthread")
-            run(
-                native_command
-            )
+            run([str(compiler), str(source), "--backend", "llvm", f"-{level}",
+                 "-o", str(executable)])
             run([str(executable)])
+
+            # The C++ profile also executes its own text and keeps it for the
+            # representation checks below.
+            for _label, cpp_flags, _native in cpp_text_modes():
+                emitted_cpp = root / f"optimizer-{level}.cpp"
+                run(
+                    [
+                        str(compiler),
+                        str(source),
+                        f"-{level}",
+                        *cpp_flags,
+                        "--emit-cpp",
+                        "-o",
+                        str(emitted_cpp),
+                    ]
+                )
+                cpp_by_level[level] = emitted_cpp.read_text(encoding="utf-8")
+                cpp_executable = root / f"optimizer-{level}-cpp"
+                native_command = [
+                    str(native_compiler),
+                    f"-std={cpp_standard(cpp_flags)}",
+                    "-O0",
+                    "-fno-fast-math",
+                    "-ffp-contract=off",
+                    "-D__gti_strict_ieee754=1",
+                    f"-I{source_root / 'runtime' / 'include'}",
+                    str(emitted_cpp),
+                    str(runtime_library),
+                    "-o",
+                    str(cpp_executable),
+                ]
+                if sys.platform != "win32":
+                    native_command.append("-pthread")
+                run(
+                    native_command
+                )
+                run([str(cpp_executable)])
 
         assert mir_by_level["O0"] != mir_by_level["O1"]
         assert mir_by_level["O1"] != mir_by_level["O2"]
@@ -95,8 +107,9 @@ def main() -> int:
         assert "parameters=[{%" in mir_by_level["O1"]
         assert "target-arguments=[operand(" in mir_by_level["O1"]
         assert "tombstone=1" in mir_by_level["O1"]
-        assert "__gti_mir_edge_" in cpp_by_level["O1"]
-        assert "__gti_mir_v_" in cpp_by_level["O1"]
+        if cpp_by_level:
+            assert "__gti_mir_edge_" in cpp_by_level["O1"]
+            assert "__gti_mir_v_" in cpp_by_level["O1"]
 
     return 0
 

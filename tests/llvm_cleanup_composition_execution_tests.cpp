@@ -1,7 +1,7 @@
 #include "../src/compiler/llvm/dispatch.h"
 #include "../src/compiler/llvm/failure.h"
 #include "../src/compiler/llvm/lifetimes.h"
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 #include "gti/driver/artifact.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/driver/process.h"

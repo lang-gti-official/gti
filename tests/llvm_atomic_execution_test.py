@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from backend_execution import Endpoint, execute
+from backend_modes import cpp_modes
 from llvm_evidence_manifest import build_manifest
 
 
@@ -94,9 +95,11 @@ def main() -> None:
     }
     if selection and selection not in cases() and selection not in rejects and selection not in profiles():
         raise ValueError(f"unknown atomic case: {selection}")
-    endpoints = (Endpoint("cpp", "O3", "c++20"),
-                 Endpoint("cpp", "O3", "c++23"),
-                 *(Endpoint("llvm", mode) for mode in ("O0", "O1", "O2", "O3")))
+    # LLVM executes every case at every level; the C++ comparator joins only
+    # when GTI_TEST_BACKENDS selects the C++ profile.
+    cpp_selected = bool(cpp_modes())
+    endpoints = ((Endpoint("cpp", "O3", "c++20"), Endpoint("cpp", "O3", "c++23")) if cpp_selected else ()) + \
+        tuple(Endpoint("llvm", mode) for mode in ("O0", "O1", "O2", "O3"))
     with tempfile.TemporaryDirectory(prefix="gti-llvm-atomic-") as directory:
         work = Path(directory)
         for name, fixture in cases().items():
@@ -124,7 +127,12 @@ def main() -> None:
                 results.append(result.observable)
             if any(result != results[0] for result in results):
                 raise AssertionError(f"{name}: backend observable drift: {results}")
-            scope = "LLVM O0-O3 passed; C++ limitation recorded" if name.startswith("wrapping") else "C++20/23 O3 and LLVM O0-O3 passed"
+            if not cpp_selected:
+                scope = "LLVM O0-O3 passed"
+            elif name.startswith("wrapping"):
+                scope = "LLVM O0-O3 passed; C++ limitation recorded"
+            else:
+                scope = "C++20/23 O3 and LLVM O0-O3 passed"
             print(f"atomic.{name}: {scope}", flush=True)
         for name, body in rejects.items():
             if selected is not None and name not in selected:
@@ -133,7 +141,7 @@ def main() -> None:
             declaration = "enum class E { first };\n" if name == "enum-domain" else ""
             source.write_text("import std.atomic;\n" + declaration +
                               "int main() { " + body + " return 0; }\n")
-            for backend in ("cpp", "llvm"):
+            for backend in (("cpp", "llvm") if cpp_selected else ("llvm",)):
                 output = work / f"rejected-{name}-{backend}"
                 output.write_bytes(b"preserved")
                 result = subprocess.run(

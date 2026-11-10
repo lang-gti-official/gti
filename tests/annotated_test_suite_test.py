@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import native_modes
+
 
 def main():
     compiler = Path(sys.argv[1]).resolve()
@@ -26,8 +28,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix="gti-annotated-tests-") as temporary:
         project = Path(temporary)
         shutil.copytree(root / "examples/annotated-tests", project, dirs_exist_ok=True)
-        for standard, level in (("c++20", "-O0"), ("c++23", "-O3")):
-            output = run(project, "test", "--std", standard, level, "--no-cache")
+        # `gti test` builds and runs the suite in every mode the backend policy
+        # selects: LLVM at -O0 and -O3, and the C++ profile only when
+        # GTI_TEST_BACKENDS selects it.
+        for _label, flags, _native in native_modes():
+            output = run(project, "test", *flags, "--no-cache")
             assert "Test result: 3 passed" in output, output
             for name in ("another_fresh_scene_state", "event_value_is_preserved", "fresh_scene_state"):
                 assert f"engine::tests::{name} ... passed" in output, output

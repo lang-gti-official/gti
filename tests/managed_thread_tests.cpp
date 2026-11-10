@@ -1,10 +1,10 @@
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
+#include "gti/llvm_backend.h"
 #include "gti/lowered_program_printer.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -187,6 +187,45 @@ std::size_t synchronizationCount(const lang::MirProgram &program,
   return count;
 }
 
+bool nativeEmits(const lang::LoweredProgram &lowered,
+                 std::string *error = nullptr) {
+  try {
+    return !lang::LlvmBackend().generate(lowered).contents.empty();
+  } catch (const std::exception &failure) {
+    if (error != nullptr)
+      *error = failure.what();
+    return false;
+  }
+}
+
+// The shipped backend consumes the verified lowered program natively.
+void expectNativeEmission(const lang::LoweredProgram &lowered,
+                          std::string_view message) {
+  std::string error;
+  const bool emitted = nativeEmits(lowered, &error);
+  expect(emitted, error.empty() ? std::string(message)
+                                : std::string(message) + ": " + error);
+}
+
+std::size_t
+intrinsicCount(const lang::MirProgram &program, lang::IntrinsicKind intrinsic,
+               std::optional<lang::SemanticType> type = std::nullopt) {
+  std::size_t count = 0;
+  for (const lang::MirBodyAddress address :
+       lang::enumerateMirBodyAddresses(program)) {
+    const lang::MirBody *body = lang::findMirBody(program, address);
+    if (body == nullptr)
+      continue;
+    for (const lang::MirBlock &block : body->blocks)
+      for (const lang::MirInstruction &instruction : block.instructions)
+        count += instruction.intrinsic == intrinsic &&
+                         (!type || instruction.info.type == *type)
+                     ? 1
+                     : 0;
+  }
+  return count;
+}
+
 void testDormantImportInSingleThreadedProfile() {
   lang::TargetInfo single = concurrentTarget();
   single.executionProfile = lang::ExecutionProfile::SingleThreaded;
@@ -240,10 +279,7 @@ void testDormantImportInSingleThreadedProfile() {
   }
   const lang::LoweredProgram lowered =
       gti_test::lowerProgram(frontend, frontend.mir, frontend.mir, single);
-  expect(lang::verifyLoweredProgram(lowered).empty() &&
-             !lang::CppBackend(lang::CppStandard::Cpp23)
-                  .generate(lowered)
-                  .contents.empty(),
+  expect(lang::verifyLoweredProgram(lowered).empty() && nativeEmits(lowered),
          "the dormant thread surface should cross the complete backend "
          "frontier without enabling concurrent execution");
 }
@@ -395,16 +431,9 @@ void testPublicPipelineAndInventory() {
               frontend.mir.threadTaskAdapters(),
       "O3 must not remove, duplicate, retarget, or reorder task adapters");
 
-  const std::string cpp20 =
-      lang::CppBackend(lang::CppStandard::Cpp20).generate(lowered).contents;
-  const std::string cpp23 =
-      lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
-  expect(
-      cpp20.find("managed_thread_spawn<") != std::string::npos &&
-          cpp20.find("managed_thread_join(") != std::string::npos &&
-          cpp23.find("managed_thread_task_adapter<") != std::string::npos &&
-          cpp23.find("gti_rt_failure_terminate_v2") != std::string::npos,
-      "both C++ standards should consume lowered task and failure authority");
+  expectNativeEmission(lowered,
+                       "the shipped backend should consume lowered task and "
+                       "failure authority");
 }
 
 void testTypedResultPipeline() {
@@ -464,22 +493,23 @@ int main() {
       frontend, frontend.mir, frontend.mir, concurrentTarget());
   expect(lang::verifyLoweredProgram(lowered).empty(),
          "typed task results should retain exact lowered-program authority");
-  const std::string cpp20 =
-      lang::CppBackend(lang::CppStandard::Cpp20).generate(lowered).contents;
-  const std::string cpp23 =
-      lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
-  expect(cpp20.find("managed_thread_spawn_value<") != std::string::npos &&
-             cpp20.find("managed_thread_spawn_value<"
-                        "__gti_thread_task_adapter, std::int32_t>") !=
-                 std::string::npos &&
-             cpp20.find(".stash_result(") != std::string::npos &&
-             cpp20.find(".template take_result<std::int32_t>()") !=
-                 std::string::npos &&
-             cpp23.find("gti_rt_thread_join_value_v2") != std::string::npos &&
-             cpp23.find("managed_thread_abandon_join_result(") !=
-                 std::string::npos,
-         "both C++ standards should emit typed spawn, join, and abandon "
-         "ownership transitions");
+  // Each concrete task type instantiates its own spawn; the int32 result take
+  // and the abandoned handle's automatic join stay explicit MIR operations.
+  expect(
+      synchronizationCount(
+          frontend.mir, lang::SynchronizationOperationKind::ThreadSpawn) == 2 &&
+          synchronizationCount(
+              frontend.mir, lang::SynchronizationOperationKind::ThreadJoin) >=
+              2 &&
+          intrinsicCount(frontend.mir, lang::IntrinsicKind::ThreadResultTake,
+                         lang::SemanticType::Int32) == 1 &&
+          intrinsicCount(frontend.mir, lang::IntrinsicKind::ThreadAutoJoin) >=
+              1,
+      "typed tasks should carry exact spawn, join, int32 take, and "
+      "abandon-join ownership transitions in MIR");
+  expectNativeEmission(lowered,
+                       "the shipped backend should emit typed spawn, join, "
+                       "and abandon ownership transitions");
 }
 
 void testClassTypedResultPipeline() {
@@ -559,10 +589,6 @@ int main() {
       frontend, frontend.mir, frontend.mir, concurrentTarget());
   expect(lang::verifyLoweredProgram(lowered).empty(),
          "class-valued task results should retain lowered-program authority");
-  const std::string cpp20 =
-      lang::CppBackend(lang::CppStandard::Cpp20).generate(lowered).contents;
-  const std::string cpp23 =
-      lang::CppBackend(lang::CppStandard::Cpp23).generate(lowered).contents;
   bool foundClassTake = false;
   for (const lang::MirBodyAddress address :
        lang::enumerateMirBodyAddresses(frontend.mir)) {
@@ -585,11 +611,9 @@ int main() {
   expect(foundClassTake,
          "the class result should move out of the joined handle through one "
          "failure-free take");
-  expect(cpp20.find("managed_thread_spawn_value<") != std::string::npos &&
-             cpp20.find(".stash_result(") != std::string::npos &&
-             cpp23.find(".template take_result<") != std::string::npos,
-         "both C++ standards should place, join, and take a class result "
-         "without default construction");
+  expectNativeEmission(lowered,
+                       "the shipped backend should place, join, and take a "
+                       "class result without default construction");
 }
 
 void expectThreadRejection(std::string_view name, std::string source,

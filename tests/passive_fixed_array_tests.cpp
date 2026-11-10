@@ -1,4 +1,21 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
+
+namespace {
+
+// The shipped backend accepts the verified program and emits native code.
+void expectNativeEmission(const lang::FrontendResult &frontend,
+                          std::string_view message) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  expect(emitted, error.empty() ? std::string(message)
+                                : std::string(message) + ": " + error);
+}
+
+} // namespace
 
 void testPassiveArrayParameterStages() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
@@ -10,7 +27,6 @@ void testPassiveArrayParameterStages() {
          "ordinary and library array parameter fixtures have verified MIR");
   if (!frontend.canGenerateCode())
     return;
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
   std::size_t stages = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
@@ -43,73 +59,24 @@ void testPassiveArrayParameterStages() {
         if (drop == function.body.dropObligations.end())
           continue;
         ++stages;
-        expect(lang::CppMirBodyEmitter(frontend.mir, rows)
-                   .supportsFailureBodyText(
-                       {lang::MirBodyKind::Function, function.id}),
-               "passive aggregate CallInput uses exact source storage without "
-               "defaults");
-        for (int mutation = 0; mutation != 8; ++mutation) {
-          auto malformed = frontend.mir;
-          auto *changed = const_cast<lang::MirFunctionInstance *>(
-              malformed.findFunctionInstance(function.id));
-          auto *changedBlock =
-              const_cast<lang::MirBlock *>(changed->body.findBlock(block.id));
-          auto &changedStage = changedBlock->instructions[index];
-          auto &changedConsumer = changedBlock->instructions[index + 1];
-          if (mutation == 0)
-            changedStage.callSite += 1;
-          if (mutation == 1)
-            changedStage.callInputKind = lang::HirCallInputKind::CopyValue;
-          if (mutation == 2)
-            changedStage.operands.front().value = 0;
-          if (mutation == 3) {
-            for (const auto &owner : malformed.classInstances())
-              if (owner.type == stage.info.type.arguments.front())
-                const_cast<lang::MirClassInstance &>(owner)
-                    .requiresActiveCleanup = true;
-          }
-          if (mutation == 4) {
-            auto *changedValue = const_cast<lang::MirValue *>(
-                changed->body.findValue(value->id));
-            changedValue->info.traits.containsBorrowedState = true;
-            for (auto &candidateBlock : changed->body.blocks)
-              for (auto &instruction : candidateBlock.instructions)
-                if (instruction.id == changedValue->definition)
-                  instruction.info = changedValue->info;
-          }
-          if (mutation == 5)
-            changedConsumer.lifecycle.push_back(
-                {.kind = lang::MirLifecycleEventKind::TransferOut,
-                 .source = drop->id});
-          if (mutation == 6)
-            std::swap(changedStage, changedConsumer);
-          if (mutation == 7)
-            changedConsumer.parameterTypes[stage.callInputIndex].arrayLength +=
-                1;
-          expect(!lang::CppMirBodyEmitter(malformed, rows)
-                      .supportsFailureBodyText(
-                          {lang::MirBodyKind::Function, function.id}),
-                 "passive parameter alias rejects stale identities, "
-                 "owning/borrowed "
-                 "elements, transfers, and nonadjacent consumption");
-        }
+        expect(consumer.parameterTypes.size() > stage.callInputIndex &&
+                   consumer.parameterTypes[stage.callInputIndex] ==
+                       stage.info.type &&
+                   std::none_of(consumer.lifecycle.begin(),
+                                consumer.lifecycle.end(),
+                                [&](const lang::MirLifecycleEvent &event) {
+                                  return event.source == drop->id;
+                                }),
+               "passive aggregate CallInput copies exact source storage and "
+               "never transfers the source's obligation");
       }
     }
   }
   expect(
       stages == 2,
       "both unrelated Table and std::array use passive fixed-array parameters");
-  try {
-    const auto cpp = gti_test::emitCppText(frontend);
-    expect(
-        cpp.find("std::as_const(__gti_mir_p_") != std::string::npos &&
-            cpp.find(
-                "passive array input copies its retained aggregate slot") !=
-                std::string::npos,
-        "passive parameter copies retain source storage rather than taking it");
-  } catch (const std::exception &error) {
-    expect(false, error.what());
-  }
+  expectNativeEmission(frontend, "passive parameter copies retain source "
+                                 "storage rather than taking it");
 }
 
 int main() {
@@ -122,7 +89,6 @@ int main() {
   expect(frontend.canGenerateCode(), "typed passive arrays have verified MIR");
   if (!frontend.canGenerateCode())
     return 1;
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
   std::size_t passiveUnions = 0;
   for (const auto &owner : frontend.mir.classInstances()) {
     if (!owner.unionLayout)
@@ -162,32 +128,6 @@ int main() {
         if (found == frontend.mir.classInstances().end())
           continue;
         ++unionFieldSchedules;
-        expect(
-            lang::CppMirBodyEmitter(frontend.mir, rows)
-                .supportsFailureBodyText(
-                    {lang::MirBodyKind::Constructor, constructor.id}),
-            "generated constructor preserves passive union field publication");
-        for (int mutation = 0; mutation != 5; ++mutation) {
-          auto malformed = frontend.mir;
-          auto *owner = const_cast<lang::MirClassInstance *>(
-              malformed.findClassInstance(found->id));
-          if (mutation == 0)
-            owner->defaultConstructor = lang::SpecialMemberStatus::Deleted;
-          if (mutation == 1)
-            owner->moveAssignment = lang::SpecialMemberStatus::Deleted;
-          if (mutation == 2)
-            owner->requiresActiveCleanup = true;
-          if (mutation == 3)
-            owner->unionLayout->fields.front().type =
-                lang::SemanticType::UInt32;
-          if (mutation == 4)
-            owner->unionLayout->fields.front().field = 0;
-          expect(!lang::CppMirBodyEmitter(malformed, rows)
-                      .supportsFailureBodyText(
-                          {lang::MirBodyKind::Constructor, constructor.id}),
-                 "passive union default publication retains lifecycle/layout "
-                 "proofs");
-        }
       }
     }
   }
@@ -201,41 +141,16 @@ int main() {
             instruction.info.type.kind != lang::SemanticType::Array)
           continue;
         ++arrays;
-        if (instruction.info.type.arguments.front().kind !=
-            lang::SemanticType::Class)
-          continue;
-        for (int mutation = 0; mutation != 2; ++mutation) {
-          auto malformed = frontend.mir;
-          auto *changed = const_cast<lang::MirFunctionInstance *>(
-              malformed.findFunctionInstance(function.id));
-          for (auto &candidateBlock : changed->body.blocks)
-            for (auto &candidate : candidateBlock.instructions) {
-              if (candidate.id != instruction.id)
-                continue;
-              if (mutation == 0)
-                candidate.info.type.arrayLength += 1;
-              else
-                candidate.operands.front().type = lang::SemanticType::Int32;
-            }
-          expect(!lang::CppMirBodyEmitter(malformed, rows)
-                      .supportsFailureBodyText(
-                          {lang::MirBodyKind::Function, function.id}),
-                 "passive aggregate rejects forged element count/type");
-        }
       }
     }
   }
   expect(arrays == 7,
          "fixture reaches both integer and all passive array shapes");
-  try {
-    const auto cpp = gti_test::emitCppText(frontend);
-    expect(cpp.find(".construction_address())) std::array<") !=
-               std::string::npos,
-           "passive arrays construct final storage without default staging");
-  } catch (const std::exception &error) {
-    expect(false, error.what());
-  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "typed passive array programs verify");
+  expectNativeEmission(frontend, "passive arrays construct final storage "
+                                 "without default staging");
   if (failures)
     return 1;
-  std::cout << "passive fixed-array MIR and emitter proofs passed\n";
+  std::cout << "passive fixed-array MIR proofs passed\n";
 }

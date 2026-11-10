@@ -1,6 +1,6 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -18,6 +18,16 @@ void expect(bool condition, std::string_view message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
+}
+
+// The shipped backend accepts the verified program and emits native code.
+void expectNativeEmission(const lang::FrontendResult &frontend,
+                          std::string_view message) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  expect(emitted, error.empty() ? std::string(message)
+                                : std::string(message) + ": " + error);
 }
 
 lang::FrontendResult analyze(const std::string &source) {
@@ -456,15 +466,8 @@ int main() {
     }
   }
   expect(calls == 3, "all three mappers use exact lambda calls");
-  for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    try {
-      expect(!gti_test::emitCppText(result, standard).empty(),
-             "lambda mapping emits through the production MIR backend");
-    } catch (const std::exception &error) {
-      std::cerr << error.what() << '\n';
-      expect(false, "lambda mapper production emission");
-    }
-  }
+  expectNativeEmission(
+      result, "lambda mapping emits through the production MIR backend");
 }
 
 void testOwnedLambdaEnvironment() {
@@ -530,25 +533,19 @@ int main() {
                  "receiver stage");
           bool rejected = false;
           try {
-            (void)gti_test::emitCpp(result, result.mir, malformed);
+            (void)gti_test::lowerProgram(result, result.mir, malformed);
           } catch (const std::exception &) {
             rejected = true;
           }
           expect(rejected,
-                 "invalid owned closure cannot reach C++ publication");
+                 "invalid owned closure cannot reach backend publication");
         }
       }
     }
   }
   expect(closures == 1 && stages == 1,
          "one eager closure and one prepared receiver");
-  try {
-    expect(!gti_test::emitCppText(result).empty(),
-           "owned closure slot emits from MIR");
-  } catch (const std::exception &error) {
-    std::cerr << error.what() << '\n';
-    expect(false, "owned closure slot production emission");
-  }
+  expectNativeEmission(result, "owned closure slot emits from MIR");
 }
 
 void testMovedLambdaEnvironment() {
@@ -596,15 +593,8 @@ int main() {
     }
   }
   expect(movedReceivers == 1, "the mapper has one explicit moved receiver");
-  for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    try {
-      expect(!gti_test::emitCppText(result, standard).empty(),
-             "moved owning mapper emits through the production MIR backend");
-    } catch (const std::exception &error) {
-      std::cerr << error.what() << '\n';
-      expect(false, "moved owning mapper production emission");
-    }
-  }
+  expectNativeEmission(
+      result, "moved owning mapper emits through the production MIR backend");
   std::string invalid = source;
   invalid.insert(invalid.find("  return result.error()"),
                  "  [[discard]] mapper(1);\n");
@@ -663,15 +653,8 @@ int main() {
          "owning transform returns, propagation, and chained cleanup verify");
   if (!result.canGenerateCode())
     return;
-  for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-    try {
-      const auto text = gti_test::emitCppText(result, standard);
-      expect(!text.empty(), "owning and void transforms emit production C++");
-    } catch (const std::exception &error) {
-      std::cerr << "Owning production emission: " << error.what() << '\n';
-      expect(false, "owning transforms retain complete native representation");
-    }
-  }
+  expectNativeEmission(result, "owning and void transforms retain complete "
+                               "native representation");
   // The result is an ordinary class value: each returning path retains its
   // owning result until publication, including the residual of `?`.
   const auto resultClass = [&](const lang::SemanticType &type) {
@@ -715,12 +698,12 @@ int main() {
                "return transport rejects wrong place, type, or identity");
         bool rejected = false;
         try {
-          (void)gti_test::emitCpp(result, result.mir, malformed);
+          (void)gti_test::lowerProgram(result, result.mir, malformed);
         } catch (const std::exception &) {
           rejected = true;
         }
         expect(rejected,
-               "malformed return transport cannot reach C++ publication");
+               "malformed return transport cannot reach backend publication");
       }
     }
   }
@@ -778,11 +761,12 @@ int main() {
                "substituted alternative constructor");
         bool rejected = false;
         try {
-          (void)gti_test::emitCpp(result, result.mir, malformed);
+          (void)gti_test::lowerProgram(result, result.mir, malformed);
         } catch (const std::exception &) {
           rejected = true;
         }
-        expect(rejected, "malformed conditional publication cannot emit C++");
+        expect(rejected,
+               "malformed conditional publication cannot reach a backend");
       }
   }
   expect(publications == 2,

@@ -66,8 +66,8 @@ def main():
                                              "std::midpoint<bool>(true, false)")):
             invalid = root / f"invalid-{index}.gti"
             invalid.write_text(f"import std.numeric;\nint main() {{ {expression}; return 0; }}\n")
-            artifact = root / f"invalid-{index}.cpp"
-            result = run([compiler, invalid, "--emit-cpp", "-o", artifact])
+            artifact = root / f"invalid-{index}.mir"
+            result = run([compiler, invalid, "--emit-mir", "-o", artifact])
             assert result.returncode == 65 and "error[GTI-S" in result.stderr, result
             assert "GTI-B0001" not in result.stderr and not artifact.exists(), result
 

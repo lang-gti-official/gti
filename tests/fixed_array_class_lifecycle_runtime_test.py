@@ -91,9 +91,9 @@ def main() -> int:
             [
                 str(compiler),
                 str(negative_source),
-                "--emit-cpp",
+                "--emit-mir",
                 "-o",
-                str(root / "negative.cpp"),
+                str(root / "negative.mir"),
             ]
         )
         if (

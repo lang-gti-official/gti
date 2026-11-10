@@ -1,10 +1,9 @@
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
 #include "gti/native_header.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -26,6 +25,28 @@ void expect(bool condition, const std::string &message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
+}
+
+// The shipped native backend lowers and compiles the verified program.
+bool emitsNatively(const lang::FrontendResult &frontend) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  if (!emitted)
+    std::cerr << "LLVM emission: " << error << '\n';
+  return emitted;
+}
+
+const lang::MirInstruction *definition(const lang::MirBody &body,
+                                       const lang::MirOperand &operand) {
+  const auto *value = operand.kind == lang::MirOperandKind::Value
+                          ? body.findValue(operand.value)
+                          : nullptr;
+  for (const auto &block : body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (value != nullptr && instruction.id == value->definition)
+        return &instruction;
+  return nullptr;
 }
 
 bool hasCode(const lang::FrontendResult &result, std::string_view code) {
@@ -131,27 +152,8 @@ int main() { return 0; }
          "namespaced records, strict empty parameter lists, and layout "
          "assertions");
 
-  const lang::BackendArtifact cpp = lang::CppBackend().generate(lowered);
-  const std::size_t record = cpp.contents.find("struct RootRecord {");
-  const std::size_t recordEnd = cpp.contents.find("};", record);
-  const std::string recordBody =
-      record == std::string::npos || recordEnd == std::string::npos
-          ? std::string{}
-          : cpp.contents.substr(record, recordEnd - record);
-  expect(recordBody.find("std::int32_t value;") != std::string::npos &&
-             recordBody.find("std::uint8_t bytes[4];") != std::string::npos &&
-             recordBody.find("std::array<std::uint8_t, 4>") ==
-                 std::string::npos &&
-             recordBody.find("RootRecord()") == std::string::npos &&
-             recordBody.find("NativeInt") == std::string::npos,
-         "emitted native records should use the same canonical, policy-free "
-         "C++ definition as the generated header");
-  expect(cpp.contents.find("struct RootHandle;") != std::string::npos &&
-             cpp.contents.find("struct RootHandle {") == std::string::npos &&
-             cpp.contents.find("struct Context;") != std::string::npos &&
-             cpp.contents.find("struct Context {") == std::string::npos,
-         "opaque native handles should remain forward declarations in the "
-         "generated GTI C++ translation unit");
+  expect(emitsNatively(frontend),
+         "the native backend compiles the exported C surface");
 }
 
 void testCStringBoundarySurface() {
@@ -190,7 +192,6 @@ int main() {
       frontend, frontend.mir, frontend.mir, lang::TargetInfo::host());
   const std::string header =
       lang::NativeHeaderBackend().generate(lowered).contents;
-  const std::string cpp = lang::CppBackend().generate(lowered).contents;
   expect(header.find("const char* native_name(void)") != std::string::npos &&
              header.find("native_name_length(const char* value)") !=
                  std::string::npos &&
@@ -198,9 +199,31 @@ int main() {
                  std::string::npos,
          "native headers should spell c_string as const char* in both value "
          "and out-pointer positions");
-  expect(cpp.find(".data();") != std::string::npos,
+  // native_name_length("gti") stages the static string-view literal as the
+  // c_string call input; the literal's static storage is NUL-terminated.
+  std::size_t literalInputs = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::CallInput ||
+            instruction.info.type != lang::SemanticType::CString ||
+            instruction.operands.size() != 1 ||
+            instruction.operands.front().type != lang::SemanticType::StringView)
+          continue;
+        const auto *source =
+            definition(function.body, instruction.operands.front());
+        literalInputs +=
+            source != nullptr &&
+                    source->kind == lang::MirInstructionKind::Compute &&
+                    source->operation == lang::MirOperation::Literal
+                ? 1
+                : 0;
+      }
+  expect(lang::verifyMirProgram(frontend.mir).valid() && literalInputs == 1,
          "verified MIR should materialize a string-view literal as a "
          "NUL-terminated c_string call input");
+  expect(emitsNatively(frontend),
+         "the native backend compiles c_string boundary calls");
 }
 
 void testCStringBoundaryRejectsUnprovedUses() {
@@ -280,17 +303,61 @@ int main() {
         frontend, frontend.mir, frontend.mir, lang::TargetInfo::host());
     const std::string header =
         lang::NativeHeaderBackend().generate(lowered).contents;
-    const std::string cpp = lang::CppBackend().generate(lowered).contents;
-    expect(header.find("NativeDatabase** out_database") != std::string::npos &&
-               cpp.find("NativeDatabase** out_database") != std::string::npos,
-           "native header and C++ representation should preserve the exact "
-           "opaque-handle out-parameter ABI");
-    expect(cpp.find("native_pointer_value(") != std::string::npos &&
-               cpp.find("raw_pointer_slot_copy(") != std::string::npos &&
-               cpp.find("native_slot_address()") != std::string::npos &&
-               cpp.find("__gti_native_out_") == std::string::npos,
+    expect(header.find("NativeDatabase** out_database") != std::string::npos,
+           "the native header should preserve the exact opaque-handle "
+           "out-parameter ABI");
+    // database_open(":memory:", &database) addresses the real pointer slot
+    // of the `database` binding: the out argument is the AddressOf that
+    // exact place, with no staged temporary, and later reads observe the
+    // same place the callee wrote.
+    std::size_t outArguments = 0;
+    for (const auto &function : frontend.mir.functionInstances()) {
+      if (function.entryKind == lang::ProgramEntryKind::None)
+        continue;
+      const auto &body = function.body;
+      for (const auto &block : body.blocks)
+        for (const auto &call : block.instructions) {
+          if (call.kind != lang::MirInstructionKind::Call ||
+              call.operands.size() != 2)
+            continue;
+          const auto *input = definition(body, call.operands[1]);
+          const auto *address =
+              input != nullptr &&
+                      input->kind == lang::MirInstructionKind::CallInput &&
+                      input->operands.size() == 1
+                  ? definition(body, input->operands.front())
+                  : nullptr;
+          if (address == nullptr ||
+              address->kind != lang::MirInstructionKind::Compute ||
+              address->operation != lang::MirOperation::AddressOf ||
+              address->operands.size() != 1 ||
+              address->operands.front().kind != lang::MirOperandKind::Address)
+            continue;
+          const auto *slot = body.findPlace(address->operands.front().place);
+          const bool exactSlot =
+              slot != nullptr &&
+              slot->root == lang::MirPlaceRootKind::Binding &&
+              slot->projections.empty() &&
+              slot->type.kind == lang::SemanticType::RawPointer &&
+              address->info.type.kind == lang::SemanticType::RawPointer;
+          const bool reread = std::any_of(
+              body.blocks.begin(), body.blocks.end(), [&](const auto &other) {
+                return std::any_of(
+                    other.instructions.begin(), other.instructions.end(),
+                    [&](const lang::MirInstruction &load) {
+                      return load.kind == lang::MirInstructionKind::Load &&
+                             load.operands.size() == 1 && slot != nullptr &&
+                             load.operands.front().place == slot->id;
+                    });
+              });
+          outArguments += exactSlot && reread ? 1 : 0;
+        }
+    }
+    expect(lang::verifyMirProgram(frontend.mir).valid() && outArguments == 1,
            "opaque out arguments address real pointer slots without "
            "contextual staging or carrier reinterpretation");
+    expect(emitsNatively(frontend),
+           "the native backend compiles opaque-handle out arguments");
   } else {
     for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';

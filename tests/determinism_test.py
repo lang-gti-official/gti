@@ -2,7 +2,8 @@
 """Cross-process output determinism gate.
 
 Runs the same compilation in separate processes and requires
-byte-identical emitted C++ and MIR. Separate processes randomize heap addresses, so
+byte-identical emitted MIR (and emitted C++ when the backend policy selects
+the C++ backend, tests/backend_modes.py). Separate processes randomize heap addresses, so
 any observable output drawn from address-keyed container iteration fails
 here even when a single-process comparison would pass. This is the standing
 guard for ADR 006's determinism rule.
@@ -10,8 +11,12 @@ guard for ADR 006's determinism rule.
 
 import argparse
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from backend_modes import cpp_text_modes  # noqa: E402
 
 
 def emit(gti: str, source: Path, output: Path, mode: str) -> None:
@@ -40,8 +45,8 @@ def main() -> None:
         raise SystemExit(f"missing example source: {source}")
 
     with tempfile.TemporaryDirectory(prefix="gti-determinism-") as scratch:
-        for mode, suffix, runs in (("--emit-cpp", "cpp", 2),
-                                   ("--emit-mir", "mir", args.mir_runs)):
+        cpp = [("--emit-cpp", "cpp", 2)] if cpp_text_modes() else []
+        for mode, suffix, runs in (*cpp, ("--emit-mir", "mir", args.mir_runs)):
             first = Path(scratch) / f"first.{suffix}"
             emit(gti, source, first, mode)
             expected = first.read_bytes()
@@ -53,7 +58,8 @@ def main() -> None:
                         f"emitted {suffix} differs between identical compilations; "
                         "an address-keyed container is leaking iteration order into output"
                     )
-    print(f"output determinism: identical C++ and {args.mir_runs} MIR emissions across processes")
+    cpp_note = "identical C++ and " if cpp_text_modes() else ""
+    print(f"output determinism: {cpp_note}{args.mir_runs} identical MIR emissions across processes")
 
 
 if __name__ == "__main__":

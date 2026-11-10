@@ -1,4 +1,4 @@
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 #include "gti/ast_clone.h"
 #include "gti/lexer.h"
 #include "gti/mir_editor.h"

@@ -3,7 +3,7 @@
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -65,8 +65,15 @@ int main() {
          "generic calls, constructors, arguments and returns");
   if (!result.canGenerateCode())
     return;
-  const auto cpp = gti_test::emitCppText(result);
-  expect(cpp.find("// GTI verified-MIR body:") != std::string::npos,
+  const auto entry = std::find_if(
+      result.mir.functionInstances().begin(),
+      result.mir.functionInstances().end(), [](const auto &function) {
+        return function.entryKind != lang::ProgramEntryKind::None;
+      });
+  expect(lang::verifyMirProgram(result.mir).valid() &&
+             entry != result.mir.functionInstances().end() &&
+             entry->definitionKind == lang::MirDefinitionKind::Source &&
+             !entry->body.blocks.empty() && gti_test::llvmEmits(result),
          "execution uses the production verified MIR emitter");
   auto forged = result.mir;
   bool changed = false;
@@ -161,7 +168,7 @@ int main() {
   expect(contexts.canGenerateCode(),
          "global/default/field contexts and fresh immovable initialization");
   if (contexts.canGenerateCode())
-    expect(!gti_test::emitCppText(contexts).empty(),
+    expect(gti_test::llvmEmits(contexts),
            "every admitted context has a production backend representation");
 }
 

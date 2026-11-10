@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 COMPILER = pathlib.Path(sys.argv[1]).resolve()
 
@@ -30,7 +32,8 @@ with tempfile.TemporaryDirectory(prefix="gti-protocol-format-hash-") as temporar
             if actual != output:
                 raise AssertionError(f"unexpected output: {actual!r}")
     legacy_fixture = ROOT / "tests/fixtures/legacy_hash_policy_state.gti"
-    for backend in ("llvm", "cpp"):
+    # The C++ backend joins only when GTI_TEST_BACKENDS selects it.
+    for backend in (("llvm", "cpp") if cpp_modes() else ("llvm",)):
         for optimization in ("-O0", "-O3"):
             executable = directory / ("legacy-hash-state-" + backend + optimization)
             invoke([str(COMPILER), str(legacy_fixture), "--backend", backend, optimization,

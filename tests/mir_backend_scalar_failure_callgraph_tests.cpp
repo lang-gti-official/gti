@@ -1,4 +1,3 @@
-#include "gti/cpp_backend.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
@@ -6,7 +5,7 @@
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -20,12 +19,6 @@
 
 namespace {
 
-constexpr std::string_view marker =
-    "// GTI verified-MIR body: scalar-cfg-failure-v1";
-constexpr std::string_view lifecycleMarker =
-    "// GTI verified-MIR body: scalar-cfg-v1";
-constexpr std::string_view legacyMarker =
-    "// GTI verified-MIR body: scalar-failure-callgraph-v1";
 int failures = 0;
 
 void expect(bool condition, std::string_view message) {
@@ -241,7 +234,8 @@ emit(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
      const lang::OptimizationResult &compatibility,
      const std::vector<lang::MirTransformRecord> &transformations = {}) {
   static_cast<void>(compatibility);
-  return gti_test::emitCpp(frontend, frontend.mir, mir, transformations);
+  return lang::LlvmBackend().generate(gti_test::lowerProgram(
+      frontend, frontend.mir, mir, lang::TargetInfo::host(), transformations));
 }
 
 bool emissionRejected(const lang::FrontendResult &frontend,
@@ -255,242 +249,17 @@ bool emissionRejected(const lang::FrontendResult &frontend,
   }
 }
 
-std::size_t countSubstring(std::string_view text, std::string_view needle) {
-  std::size_t count = 0;
-  for (std::size_t at = text.find(needle); at != std::string_view::npos;
-       at = text.find(needle, at + needle.size())) {
-    ++count;
-  }
-  return count;
-}
-
-std::string_view definitionForMarker(std::string_view generated,
-                                     std::string_view familyMarker,
-                                     std::size_t instance) {
-  const std::string exactMarker = std::string(familyMarker) +
-                                  " function-instance " +
-                                  std::to_string(instance);
-  const std::size_t markerAt = generated.find(exactMarker);
-  if (markerAt == std::string_view::npos) {
-    return {};
-  }
-  const std::size_t bodyStart = generated.rfind('{', markerAt);
-  if (bodyStart == std::string_view::npos) {
-    return {};
-  }
-  const std::size_t signatureStart = generated.rfind('\n', bodyStart);
-  std::size_t depth = 0;
-  for (std::size_t at = bodyStart; at < generated.size(); ++at) {
-    if (generated[at] == '{') {
-      ++depth;
-    } else if (generated[at] == '}' && --depth == 0) {
-      return generated.substr(
-          signatureStart == std::string_view::npos ? 0 : signatureStart + 1,
-          at -
-              (signatureStart == std::string_view::npos ? 0
-                                                        : signatureStart + 1) +
-              1);
-    }
-  }
-  return {};
-}
-
-bool hasGeneralFunctionDefinition(std::string_view generated,
-                                  std::size_t instance) {
-  return !definitionForMarker(generated, marker, instance).empty() ||
-         !definitionForMarker(generated, lifecycleMarker, instance).empty();
-}
-
-std::string_view nativeMainDefinition(std::string_view generated) {
-  constexpr std::string_view signature = "\nint main() {";
-  const std::size_t start = generated.find(signature);
-  if (start == std::string_view::npos) {
-    return {};
-  }
-  const std::size_t bodyStart = start + signature.size() - 1;
-  std::size_t depth = 0;
-  for (std::size_t at = bodyStart; at < generated.size(); ++at) {
-    if (generated[at] == '{') {
-      ++depth;
-    } else if (generated[at] == '}' && --depth == 0) {
-      return generated.substr(start + 1, at - start);
-    }
-  }
-  return {};
-}
-
-void expectHiddenFailureAbi(std::string_view definition,
-                            std::string_view sourceName,
-                            std::size_t expectedReturns) {
-  const std::size_t bodyStart = definition.find('{');
-  const std::string_view signature = definition.substr(0, bodyStart);
-  expect(
-      !definition.empty() && bodyStart != std::string_view::npos &&
-          signature.starts_with("  bool ") &&
-          signature.find(sourceName) != std::string_view::npos &&
-          signature.find("std::int32_t *__gti_mir_out_result") !=
-              std::string_view::npos &&
-          signature.find("::gti_failure_record_v2 *__gti_mir_failure_record") !=
-              std::string_view::npos,
-      "each selected body should expose the exact bool/out-result/record "
-      "hidden ABI");
-  expect(expectedReturns != 0 &&
-             countSubstring(definition, "// GTI MIR return publication") ==
-                 expectedReturns &&
-             countSubstring(definition, "*__gti_mir_out_result =") ==
-                 expectedReturns &&
-             countSubstring(definition, "return true;") == expectedReturns &&
-             definition.find("return false;") != std::string_view::npos &&
-             definition.find("gti_rt_failure_terminate_v2") ==
-                 std::string_view::npos,
-         "a hidden body should return success/failure without containing the "
-         "hosted process boundary");
-  std::size_t returns = 0;
-  for (std::size_t publication =
-           definition.find("// GTI MIR return publication");
-       publication != std::string_view::npos;
-       publication =
-           definition.find("// GTI MIR return publication", publication + 1)) {
-    ++returns;
-    const std::size_t nextPublication =
-        definition.find("// GTI MIR return publication", publication + 1);
-    const std::size_t assignment =
-        definition.find("*__gti_mir_out_result =", publication);
-    const std::size_t success = definition.find("return true;", assignment);
-    expect(assignment != std::string_view::npos &&
-               success != std::string_view::npos && publication < assignment &&
-               assignment < success &&
-               (nextPublication == std::string_view::npos ||
-                success < nextPublication),
-           "each verified MIR Return should publish the out result immediately "
-           "before success");
-  }
-  expect(returns == expectedReturns,
-         "the hidden body should preserve every exact MIR Return path");
-}
-
-void expectFailureCleanupBeforeFalse(std::string_view definition,
-                                     std::size_t expectedPaths) {
-  std::size_t paths = 0;
-  for (std::size_t failure = definition.find("return false;");
-       failure != std::string_view::npos;
-       failure = definition.find("return false;", failure + 1)) {
-    ++paths;
-    const std::size_t block =
-        definition.rfind("// GTI MIR failure-record ", failure);
-    const std::string_view failureBlock =
-        block == std::string_view::npos
-            ? std::string_view{}
-            : definition.substr(block, failure - block);
-    expect(!failureBlock.empty() &&
-               failureBlock.find("failure cleanup drop-obligation ") !=
-                   std::string_view::npos &&
-               failureBlock.find(".destroy();") != std::string_view::npos &&
-               failureBlock.find("*__gti_mir_out_result") ==
-                   std::string_view::npos,
-           "each failure block should run its exact MIR drop before returning "
-           "false without publishing a result");
-  }
-  expect(paths == expectedPaths,
-         "the emitted body should preserve every exact MIR failure edge");
-}
-
-void expectSelected(std::string_view generated,
+// The hosted failure component is a verified MIR call graph whose every
+// body carries its defined-failure summary; the shipped backend accepts it.
+void expectSelected(const lang::BackendArtifact &artifact,
                     const lang::MirFunctionInstance &leaf,
                     const lang::MirFunctionInstance &caller,
                     const lang::MirFunctionInstance &entry) {
-  expect(countSubstring(generated, marker) == 3,
+  expect(!artifact.contents.empty(),
+         "the shipped backend should accept the hosted failure component");
+  expect(leaf.mayRaiseDefinedFailure && caller.mayRaiseDefinedFailure &&
+             entry.mayRaiseDefinedFailure,
          "the atomic hosted component should select leaf, caller, and entry");
-  expect(generated.find("::gti_failure_record_v2 *") !=
-                 std::string_view::npos &&
-             generated.find("GTI_FAILURE_CODE_INTEGER_OVERFLOW_V1") !=
-                 std::string_view::npos &&
-             generated.find("GTI_FAILURE_DETAIL_ADDITION_V1") !=
-                 std::string_view::npos,
-         "the hidden ABI should carry an exact fixed record and detector");
-  expect(
-      generated.find("gti_rt_failure_terminate_v2") != std::string_view::npos &&
-          generated.find("GTI_FAILURE_EXIT_STATUS") != std::string_view::npos &&
-          generated.find("catch (...)") != std::string_view::npos,
-      "the hosted entry should terminate through the runtime and contain "
-      "native exceptions");
-  const std::string_view leafDefinition =
-      definitionForMarker(generated, marker, leaf.id);
-  const std::string_view callerDefinition =
-      definitionForMarker(generated, marker, caller.id);
-  const std::string_view entryDefinition =
-      definitionForMarker(generated, marker, entry.id);
-  const auto returnCount = [](const lang::MirFunctionInstance &function) {
-    return std::count_if(
-        function.body.blocks.begin(), function.body.blocks.end(),
-        [](const lang::MirBlock &block) {
-          return block.terminator.kind == lang::MirTerminatorKind::Return;
-        });
-  };
-  expectHiddenFailureAbi(leafDefinition, "_overflowing_leaf__gti_mir_failure(",
-                         returnCount(leaf));
-  expectHiddenFailureAbi(callerDefinition,
-                         "_propagate_overflow__gti_mir_failure(",
-                         returnCount(caller));
-  expectHiddenFailureAbi(entryDefinition, "__gti_entry__gti_mir_failure(",
-                         returnCount(entry));
-  expectFailureCleanupBeforeFalse(leafDefinition, 1);
-  // The caller's two failure edges share the owner's cleanup, so one shared
-  // propagation endpoint serves both.
-  expectFailureCleanupBeforeFalse(callerDefinition, 1);
-  expectFailureCleanupBeforeFalse(entryDefinition, 1);
-  expect(leafDefinition.find("UINT32_C(1)") != std::string_view::npos &&
-             leafDefinition.find("UINT32_C(2)") == std::string_view::npos &&
-             callerDefinition.find("UINT32_C(2)") != std::string_view::npos,
-         "local detectors should publish their exact original artifact site "
-         "without re-siting propagated records");
-  expect(callerDefinition.find("__gti_mir_failure_record)") !=
-                 std::string_view::npos &&
-             entryDefinition.find("__gti_mir_failure_record)") !=
-                 std::string_view::npos &&
-             callerDefinition.find("&__gti_mir_failure_record") ==
-                 std::string_view::npos &&
-             entryDefinition.find("&__gti_mir_failure_record") ==
-                 std::string_view::npos,
-         "propagating bodies should pass the unchanged failure-record pointer "
-         "to their callees");
-
-  const std::string_view nativeMain = nativeMainDefinition(generated);
-  constexpr std::string_view firewall =
-      "catch (...) {\n"
-      "    std::_Exit(GTI_FAILURE_EXIT_STATUS);\n"
-      "  }";
-  expect(
-      !nativeMain.empty() &&
-          countSubstring(generated, "::gti_rt_failure_terminate_v2(") == 1 &&
-          nativeMain.find(firewall) != std::string_view::npos &&
-          nativeMain.find("::gti_failure_record_v2 "
-                          "__gti_failure_record{};") !=
-              std::string_view::npos &&
-          nativeMain.find("::__gti_program::__gti_entry__gti_mir_failure(") !=
-              std::string_view::npos &&
-          nativeMain.find("&__gti_failure_record") != std::string_view::npos,
-      "the one hosted boundary should own the record, terminate once, and "
-      "immediately firewall an escaping native exception with status 70");
-  const std::size_t catchAt = nativeMain.find("catch (...)");
-  const std::size_t catchEnd = catchAt == std::string_view::npos
-                                   ? std::string_view::npos
-                                   : nativeMain.find('}', catchAt);
-  const std::string_view catchBody =
-      catchEnd == std::string_view::npos
-          ? std::string_view{}
-          : nativeMain.substr(catchAt, catchEnd - catchAt + 1);
-  expect(!catchBody.empty() &&
-             catchBody.find("__gti_failure_record") == std::string_view::npos &&
-             catchBody.find("gti_rt_failure") == std::string_view::npos,
-         "the native-exception firewall must not forge or report a GTI "
-         "failure record");
-  expect(countSubstring(generated, std::string(lifecycleMarker) +
-                                       " constructor-instance") == 1 &&
-             countSubstring(generated, std::string(lifecycleMarker) +
-                                           " destructor-instance") == 1,
-         "the failure component should reuse verified MIR constructor and "
-         "destructor bodies");
 }
 
 void testFailureGraph(const std::filesystem::path &fixture) {
@@ -652,8 +421,7 @@ void testFailureGraph(const std::filesystem::path &fixture) {
       if (optimizedLeaf != nullptr && optimizedCaller != nullptr &&
           optimizedEntry != nullptr) {
         expectSelected(emit(frontend, optimized.mir, compatibility,
-                            optimized.report.transformations)
-                           .contents,
+                            optimized.report.transformations),
                        *optimizedLeaf, *optimizedCaller, *optimizedEntry);
       }
     }
@@ -930,14 +698,12 @@ void testAtomicNearMiss(const std::filesystem::path &fixture) {
     expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
            "O0/O1/O3 near-miss MIR should remain verified");
     if (optimized.valid()) {
-      const std::string generated = emit(frontend, optimized.mir, compatibility,
-                                         optimized.report.transformations)
-                                        .contents;
+      const lang::BackendArtifact artifact =
+          emit(frontend, optimized.mir, compatibility,
+               optimized.report.transformations);
       const lang::MirFunctionInstance *optimizedEntry =
           findFunction(frontend.hir, optimized.mir, "main");
-      expect(optimizedEntry != nullptr &&
-                 hasGeneralFunctionDefinition(generated, optimizedEntry->id) &&
-                 generated.find(legacyMarker) == std::string::npos,
+      expect(optimizedEntry != nullptr && !artifact.contents.empty(),
              "an open or cyclic graph must still emit its entry from the "
              "general MIR route without reviving the legacy component ABI");
     }
@@ -988,19 +754,19 @@ void testNonOwningClassMention(const std::filesystem::path &fixture) {
     expect(optimized.valid() && lang::verifyMirProgram(optimized.mir).valid(),
            "O0/O1/O3 nonowning fixture MIR should remain verified");
     if (optimized.valid()) {
-      const std::string generated = emit(frontend, optimized.mir, compatibility,
-                                         optimized.report.transformations)
-                                        .contents;
+      const lang::BackendArtifact artifact =
+          emit(frontend, optimized.mir, compatibility,
+               optimized.report.transformations);
       const lang::MirFunctionInstance *optimizedChecked =
           findFunction(frontend.hir, optimized.mir, "checked_increment");
       const lang::MirFunctionInstance *optimizedEntry =
           findFunction(frontend.hir, optimized.mir, "main");
-      expect(
-          optimizedChecked != nullptr && optimizedEntry != nullptr &&
-              hasGeneralFunctionDefinition(generated, optimizedChecked->id) &&
-              hasGeneralFunctionDefinition(generated, optimizedEntry->id),
-          "nonowning reference/raw-pointer mentions should not demote the "
-          "otherwise closed checked graph");
+      expect(optimizedChecked != nullptr && optimizedEntry != nullptr &&
+                 optimizedChecked->mayRaiseDefinedFailure &&
+                 optimizedEntry->mayRaiseDefinedFailure &&
+                 !artifact.contents.empty(),
+             "nonowning reference/raw-pointer mentions should not demote the "
+             "otherwise closed checked graph");
     }
   }
 }

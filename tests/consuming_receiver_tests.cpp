@@ -1,10 +1,19 @@
-#include "../src/compiler/cpp_mir_body_emitter.h"
 #include "compiler_test_fixture.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
+#include "llvm_backend_test_support.h"
 
 #include <unordered_map>
 #include <unordered_set>
+
+// The shipped backend accepts the verified program and emits native code.
+static void expectNativeEmission(const lang::FrontendResult &frontend,
+                                 const std::string &message) {
+  std::string error;
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &error),
+         error.empty() ? message : message + ": " + error);
+}
 
 void checkConsumingLambda(const std::string &name, bool pack) {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
@@ -82,12 +91,8 @@ void checkConsumingLambda(const std::string &name, bool pack) {
     }
   }
   expect(checked, "lambda fixture exercises a retained receiver");
-  try {
-    expect(!gti_test::emitCppText(frontend).empty(),
-           "owned lambda receiver has a complete MIR representation");
-  } catch (const std::exception &error) {
-    expect(false, error.what());
-  }
+  expectNativeEmission(
+      frontend, "owned lambda receiver has a complete MIR representation");
   if (pack)
     return;
   auto reused = source;
@@ -416,12 +421,8 @@ void checkVirtualConsumingReceiver() {
     }
   }
   expect(checked, "fixture actually invokes a virtual consuming operator");
-  try {
-    expect(!gti_test::emitCppText(frontend).empty(),
-           "virtual consuming dispatch has a complete MIR representation");
-  } catch (const std::exception &error) {
-    expect(false, error.what());
-  }
+  expectNativeEmission(
+      frontend, "virtual consuming dispatch has a complete MIR representation");
 
   for (const auto &qualifier : {std::string{}, std::string{"mut"}}) {
     auto mismatch = source;
@@ -499,12 +500,8 @@ Owner<T> own<T>(T callback) { return Owner<T>(std::move(callback)); }
     expect(result.canGenerateCode(),
            std::string("selected parameter contextualizes callback: ") + body);
     if (result.canGenerateCode()) {
-      try {
-        expect(!gti_test::emitCppText(result).empty(),
-               "contextual callback arguments reach MIR-backed emission");
-      } catch (const std::exception &error) {
-        expect(false, std::string(body) + ": " + error.what());
-      }
+      expectNativeEmission(
+          result, "contextual callback arguments reach MIR-backed emission");
       for (const auto &function : result.mir.functionInstances()) {
         if (function.typeArguments.empty())
           continue;
@@ -657,12 +654,9 @@ void checkConstructorArgumentStaging() {
     }
   }
   expect(checkedStages == 2, "both fresh owning arguments must be staged");
-  try {
-    expect(!gti_test::emitCppText(frontend).empty(),
-           "prepared constructor arguments must use production MIR emission");
-  } catch (const std::exception &error) {
-    expect(false, error.what());
-  }
+  expectNativeEmission(
+      frontend,
+      "prepared constructor arguments must use production MIR emission");
 }
 
 void checkScalarPrefixBeforeOwnedFieldMove() {
@@ -688,106 +682,11 @@ int main() {
          "scalar parameter followed by an owning field is valid source");
   if (!frontend.canGenerateCode())
     return;
-  const lang::MirConstructorInstance *constructor = nullptr;
-  for (const auto &candidate : frontend.mir.constructorInstances())
-    if (candidate.parameterTypes.size() == 2 &&
-        candidate.parameterTypes.front() == lang::SemanticType::Int32 &&
-        candidate.parameterTypes.back().kind == lang::SemanticType::Class)
-      constructor = &candidate;
-  expect(constructor != nullptr,
-         "scalar-prefix fixture selects one mixed constructor");
-  if (!constructor)
-    return;
-  const auto canonical =
-      lang::cppMirOwnedParameterFieldBindings(frontend.mir, *constructor);
-  expect(canonical && canonical->size() == 1 &&
-             canonical->front().initializer == 1,
-         "the exact scalar prefix admits the following owned field move");
-  if (!canonical || canonical->size() != 1)
-    return;
-  lang::SymbolId foreignField = 0;
-  for (const auto &owner : frontend.mir.classInstances())
-    if (owner.id != constructor->owner)
-      for (const auto &field : owner.declaredFields)
-        if (field.type == lang::SemanticType::Int32)
-          foreignField = field.symbol;
-  expect(foreignField != 0, "fixture has an unrelated scalar field identity");
-  if (!foreignField)
-    return;
-
-  for (int mutation = 0; mutation != 9; ++mutation) {
-    auto forged = frontend.mir;
-    auto *changed = const_cast<lang::MirConstructorInstance *>(
-        forged.findConstructorInstance(constructor->id));
-    auto entry = std::find_if(
-        changed->body.blocks.begin(), changed->body.blocks.end(),
-        [&](const auto &block) { return block.id == changed->body.entry; });
-    expect(
-        entry != changed->body.blocks.end() && entry->instructions.size() >= 4,
-        "prefix mutations require Load, Initialize, boundary, and owned Move");
-    if (entry == changed->body.blocks.end() || entry->instructions.size() < 4)
-      continue;
-    auto &load = entry->instructions[0];
-    auto &store = entry->instructions[1];
-    auto &boundary = entry->instructions[2];
-    expect(load.kind == lang::MirInstructionKind::Load &&
-               store.kind == lang::MirInstructionKind::Initialize &&
-               boundary.kind == lang::MirInstructionKind::Lifecycle &&
-               entry->instructions[3].id == canonical->front().moveInstruction,
-           "each direct-helper mutation starts from the newly admitted prefix");
-    switch (mutation) {
-    case 0:
-      load.definedFailure.propagation =
-          lang::FailurePropagationKind::DirectCall;
-      break;
-    case 1:
-      load.kind = lang::MirInstructionKind::Compute;
-      load.operation = lang::MirOperation::Add;
-      break;
-    case 2:
-      load.info.type = lang::SemanticType::RawPointer;
-      load.info.type.arguments = {lang::SemanticType::Int32};
-      break;
-    case 3:
-      load.info.traits.containsBorrowedState = true;
-      break;
-    case 4:
-      load.operands.front().kind = lang::MirOperandKind::BorrowRead;
-      break;
-    case 5: {
-      auto field = std::find_if(
-          changed->body.places.begin(), changed->body.places.end(),
-          [&](const auto &place) { return store.destination == place.id; });
-      expect(field != changed->body.places.end() && !field->projections.empty(),
-             "scalar store retains one destination field projection");
-      if (field != changed->body.places.end() && !field->projections.empty())
-        field->projections.front().field = foreignField;
-      break;
-    }
-    case 6:
-      boundary.fullExpressionEnd = 0;
-      for (const auto &expression : changed->body.fullExpressions)
-        if (expression.constructorInitializer == 2)
-          boundary.fullExpressionEnd = expression.id;
-      expect(
-          boundary.fullExpressionEnd != 0,
-          "mutation retargets the boundary to an existing other initializer");
-      break;
-    case 7:
-      changed->initializers.front().arguments =
-          changed->initializers.back().arguments;
-      break;
-    case 8:
-      store.definedFailure.propagation =
-          lang::FailurePropagationKind::DirectCall;
-      break;
-    }
-    // Deliberately call the local proof directly: rejection must not be an
-    // incidental effect of whole-program verifier failure elsewhere.
-    expect(!lang::cppMirOwnedParameterFieldBindings(forged, *changed),
-           "owned-field scalar-prefix proof rejects mutation " +
-               std::to_string(mutation));
-  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "scalar-prefix owned-field construction verifies");
+  expectNativeEmission(frontend,
+                       "scalar-prefix owned-field construction reaches native "
+                       "emission");
 }
 
 void checkRetainedConsumingFieldReceiver() {
@@ -1245,8 +1144,8 @@ void checkConditionalCarrierConsumption() {
          "conditionally consumed carriers reach verified MIR");
   if (!frontend.canGenerateCode())
     return;
-  expect(!gti_test::emitCppText(frontend).empty(),
-         "conditionally consumed carriers emit C++");
+  expectNativeEmission(frontend,
+                       "conditionally consumed carriers reach native emission");
   std::size_t retirements = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     std::unordered_map<lang::MirLoanId, std::unordered_set<lang::MirBlockId>>
@@ -1368,9 +1267,9 @@ int main() {
   }
   expect(checkedReceiver, "fixture exercises a retained consuming receiver");
   try {
-    expect(!gti_test::emitCppText(frontend).empty(),
-           "caller-owned consuming receiver storage has a complete MIR "
-           "representation");
+    expectNativeEmission(
+        frontend, "caller-owned consuming receiver storage has a complete MIR "
+                  "representation");
     for (const auto &qualifier : {std::string{}, std::string{"mut"}}) {
       auto fallbackSource = source;
       const auto qualifierOffset = fallbackSource.find(") && {");
@@ -1384,8 +1283,9 @@ int main() {
       expect(fallback.canGenerateCode(),
              "explicit move may select a reusable fallback on owned storage");
       if (fallback.canGenerateCode())
-        expect(!gti_test::emitCppText(fallback).empty(),
-               "read and mutable fallbacks use the same receiver lifetime");
+        expectNativeEmission(
+            fallback,
+            "read and mutable fallbacks use the same receiver lifetime");
     }
   } catch (const std::exception &error) {
     expect(false, error.what());

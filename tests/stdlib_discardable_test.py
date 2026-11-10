@@ -47,7 +47,7 @@ def main():
         # Native conversion algorithms are unchanged; this guards the selected
         # optional/map declarations and their discard policies through MIR.
         source = repository / "tests/fixtures/stdlib_discardable_json.gti"
-        result = execute([compiler, source, "--emit-cpp", "-o", temporary / "json.cpp"], environment)
+        result = execute([compiler, source, "--emit-mir", "-o", temporary / "json.mir"], environment)
         assert result.returncode == 0, f"JSON discard policy\n{result.stdout}\n{result.stderr}"
         print("JSON optional/map decode: verified emission passed", flush=True)
 
@@ -70,7 +70,7 @@ def main():
             if name == "resource_failure":
                 imports += "import std.resource;\n"
             source.write_text(f"{imports}int main() {{ {body} return 0; }}\n")
-            command = [compiler, source, "--emit-cpp", "-o", temporary / f"{name}.cpp"]
+            command = [compiler, source, "--emit-mir", "-o", temporary / f"{name}.mir"]
             if name == "conditional_update":
                 command += ["--execution-profile", "concurrent"]
             result = execute(command, environment)

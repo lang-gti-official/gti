@@ -5,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_modes
+
 
 def main():
     compiler = Path(sys.argv[1]).resolve()
@@ -199,8 +201,9 @@ def main():
                 cases.append((mode, count, 0, output + f"{total}\n1\n", ""))
     modes = [("llvm-O0", ["--backend", "llvm", "-O0"]),
              ("llvm-O2", ["--backend", "llvm", "-O2"]),
-             ("llvm-O3", ["--backend", "llvm", "-O3"]),
-             ("cpp-O3", ["--backend", "cpp", "--std", "c++23", "-O3"])]
+             ("llvm-O3", ["--backend", "llvm", "-O3"])]
+    if cpp_modes():  # the frozen C++ backend's differential oracle
+        modes.append(("cpp-O3", ["--backend", "cpp", "--std", "c++23", "-O3"]))
     with tempfile.TemporaryDirectory(prefix="gti-checked-reductions-") as directory:
         for name, flags in modes:
             binary = Path(directory) / name

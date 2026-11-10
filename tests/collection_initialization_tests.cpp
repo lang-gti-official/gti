@@ -1,11 +1,10 @@
-#include "../src/compiler/cpp_mir_body_emitter.h"
-#include "../src/compiler/cpp_mir_representation_snapshot.h"
-#include "cpp_backend_test_support.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 
 namespace {
@@ -22,6 +21,14 @@ void expect(bool condition, const std::string &message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
+}
+// The shipped backend accepts the verified program and emits native code.
+void expectNativeEmission(const lang::FrontendResult &frontend,
+                          const std::string &message) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  expect(emitted, error.empty() ? message : message + ": " + error);
 }
 const std::string collection = R"(
 class Numbers {
@@ -86,11 +93,10 @@ int main() { Bag values = {Item(1), Item(2)}; return 0; }
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     return;
   }
-  const auto lowered = gti_test::lowerProgram(result, result.mir, result.mir);
-  const lang::CppMirBodyEmissionMap map(
-      lang::buildCppMirBodyEmissionMapRows(lowered, lang::CppStandard::Cpp23));
-  expect(lang::CppMirBodyEmitter(result.mir, map).analyzeProgram().ready(),
-         "moved-from return cleanup tail has a representation");
+  expect(lang::verifyMirProgram(result.mir).valid(),
+         "moved-from return cleanup tail verifies");
+  expectNativeEmission(result,
+                       "moved-from return cleanup tail has a representation");
   bool mutated = false;
   for (const auto &function : result.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
@@ -119,9 +125,7 @@ int main() { Bag values = {Item(1), Item(2)}; return 0; }
                 instruction.kind = lang::MirInstructionKind::Initialize;
             }
           }
-          expect(!lang::CppMirBodyEmitter(forged, map)
-                      .supportsFailureBodyText(
-                          {lang::MirBodyKind::Function, function.id}),
+          expect(!lang::verifyMirProgram(forged).valid(),
                  "return tail must reject a source reinitialization");
           mutated = true;
         }
@@ -166,9 +170,10 @@ int main() {
       valid.canGenerateCode(),
       "constrained hooks compose with generic calls and explicit construction");
   if (valid.canGenerateCode()) {
-    expect(lang::verifyMirProgram(valid.mir).valid() &&
-               !gti_test::emitCppText(valid).empty(),
-           "constrained collection calls execute through verified MIR");
+    expect(lang::verifyMirProgram(valid.mir).valid(),
+           "constrained collection calls verify");
+    expectNativeEmission(
+        valid, "constrained collection calls execute through verified MIR");
   } else {
     for (const auto &diagnostic : valid.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -223,8 +228,7 @@ int main() {
   for (const auto &diagnostic : generic.diagnostics)
     std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   if (generic.canGenerateCode())
-    expect(!gti_test::emitCppText(generic).empty(),
-           "generic collection plan emits through MIR");
+    expectNativeEmission(generic, "generic collection plan emits through MIR");
   const std::string source = collection + R"(
 struct Config { Numbers numbers{};  public: Config() = default; };
 int main() {
@@ -247,8 +251,7 @@ int main() {
   if (result.canGenerateCode()) {
     expect(lang::verifyMirProgram(result.mir).valid(),
            "collection MIR verifies");
-    expect(!gti_test::emitCppText(result).empty(),
-           "production MIR backend emits collections");
+    expectNativeEmission(result, "production MIR backend emits collections");
     auto forged = result.mir;
     bool mutated = false;
     for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(

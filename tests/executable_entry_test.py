@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import cpp_text_modes
 from lsp_smoke_test import LspSession
 from lsp_project_facts_test import diagnostics_for, initialize, open_document
 
@@ -59,7 +60,8 @@ def main():
         output = run(entry, "--cxx", root / "no-native-compiler", error=True)
         assert CODE in output and "global 'main'" in output, output
         assert "tea::main" in output and "native C++ compiler" not in output, output
-        run(standalone, "--emit-cpp", "-o", root / "library.cpp")
+        if cpp_text_modes():
+            run(standalone, "--emit-cpp", "-o", root / "library.cpp")
         run(standalone, "--emit-mir", "-o", root / "library.mir")
         assert CODE in run("check", cwd=project, error=True)
         assert CODE in run("check", "checks", cwd=project, error=True)

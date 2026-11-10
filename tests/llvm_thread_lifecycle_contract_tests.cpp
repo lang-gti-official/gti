@@ -4,7 +4,7 @@
 #include "../src/compiler/llvm/runtime_abi.h"
 #include "../src/compiler/llvm/thread_lifecycle.h"
 #include "../src/compiler/llvm/threads.h"
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 #include "gti/runtime_thread.h"
 
 #include <cstddef>

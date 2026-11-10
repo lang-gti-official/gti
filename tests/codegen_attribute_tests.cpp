@@ -1,7 +1,7 @@
 #include "../src/compiler/llvm/abi.h"
 #include "../src/compiler/llvm/body.h"
 #include "../src/compiler/llvm/session.h"
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 #include "gti/formatter.h"
 #include "gti/hir.h"
 #include "gti/language_queries.h"

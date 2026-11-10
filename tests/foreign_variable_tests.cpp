@@ -1,7 +1,8 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
+#include "lowered_program_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -199,9 +200,15 @@ int main() {
   for (auto level : {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
                      lang::OptimizationLevel::O3}) {
     try {
-      auto cpp = gti_test::emitCppText(result, lang::CppStandard::Cpp23,
-                                       lang::TargetInfo::host(), level);
-      expect(cpp.find("actual_epoch") != std::string::npos,
+      const auto optimized = gti_test::optimizeProgram(result, level);
+      const auto &declarations = optimized.mir.foreignStorageDeclarations();
+      expect(std::any_of(declarations.begin(), declarations.end(),
+                         [](const lang::ForeignStorageInfo &storage) {
+                           return storage.externalSymbol == "actual_epoch";
+                         }),
+             "optimized MIR preserves actual external symbol");
+      const auto object = gti_test::emitLlvm(result, level);
+      expect(object.contents.find("actual_epoch") != std::string::npos,
              "backend preserves actual external symbol");
     } catch (const std::exception &error) {
       expect(false, error.what());
@@ -223,8 +230,8 @@ int main() { return int(initial); }
   expect(result.mir.programInitializationPlan().steps.size() == 1,
          "only the owned GTI object receives a startup step");
   try {
-    const auto cpp = gti_test::emitCppText(result);
-    expect(!cpp.empty(), "foreign initialization read emits native reference");
+    expect(!gti_test::emitLlvm(result).contents.empty(),
+           "foreign initialization read emits native reference");
   } catch (const std::exception &error) {
     expect(false, error.what());
   }

@@ -1,7 +1,7 @@
-#include "cpp_backend_test_support.h"
 #include "gti/lowered_program_printer.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <chrono>
@@ -364,14 +364,11 @@ int main() { checked(true); return 0; }
   for (const auto level :
        {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
         lang::OptimizationLevel::O3}) {
-    for (const auto standard :
-         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      const auto artifact =
-          gti_test::emitCpp(result, standard, lang::TargetInfo::host(), level);
-      check(
-          !artifact.contents.empty(),
-          "verified panic contracts survive optimization and backend lowering");
-    }
+    std::string error;
+    check(gti_test::llvmEmits(result, level, lang::TargetInfo::host(), &error),
+          "verified panic contracts survive optimization and backend "
+          "lowering: " +
+              error);
   }
 }
 void testAbandonedCallInputs() {
@@ -503,19 +500,11 @@ int main() {
   for (const auto level :
        {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
         lang::OptimizationLevel::O3}) {
-    for (const auto standard :
-         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      try {
-        const auto artifact = gti_test::emitCpp(
-            result, standard, lang::TargetInfo::host(), level);
-        check(
-            !artifact.contents.empty(),
-            "abandoned prepared arguments have a verified C++ representation");
-      } catch (const std::exception &error) {
-        std::cerr << error.what() << '\n';
-        check(false, "abandoned prepared arguments have a C++ representation");
-      }
-    }
+    std::string error;
+    check(gti_test::llvmEmits(result, level, lang::TargetInfo::host(), &error),
+          "abandoned prepared arguments have a verified native "
+          "representation: " +
+              error);
   }
 }
 void testTerminalConstructorPublication() {
@@ -574,18 +563,10 @@ int main() { Partial value{}; return 0; }
   for (const auto level :
        {lang::OptimizationLevel::O0, lang::OptimizationLevel::O2,
         lang::OptimizationLevel::O3}) {
-    for (const auto standard :
-         {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      try {
-        const auto artifact = gti_test::emitCpp(
-            result, standard, lang::TargetInfo::host(), level);
-        check(!artifact.contents.empty(),
-              "a terminal constructor needs no invented field publication");
-      } catch (const std::exception &error) {
-        std::cerr << error.what() << '\n';
-        check(false, "terminal constructor has a verified C++ representation");
-      }
-    }
+    std::string error;
+    check(gti_test::llvmEmits(result, level, lang::TargetInfo::host(), &error),
+          "a terminal constructor needs no invented field publication: " +
+              error);
   }
 }
 } // namespace

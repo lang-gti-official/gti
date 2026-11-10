@@ -5,7 +5,7 @@ Every generated program verifies its own results against values derived from
 GTI semantics (the literal inputs it was generated from), never from the C++
 backend, and counts destructions of tracked objects. A program returns
 non-zero on any mismatch. Each cell is built on LLVM at O0 and O2 and on C++
-at O0, then run under a watchdog. A cell whose LLVM build succeeds but whose
+at O0 (only when GTI_TEST_BACKENDS selects cpp), then run under a watchdog. A cell whose LLVM build succeeds but whose
 run fails, crashes, hangs or prints something other than `ok` is wrong code;
 the C++ column is a second check where that backend compiles the shape.
 
@@ -53,6 +53,8 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from backend_modes import cpp_modes  # noqa: E402
 from llvm_wrongcode import (algorithms, arrays, bases, callables,  # noqa: E402
                             containers, error_chains, formatting,
                             dispatch, enums, flow, hierarchy, library,
@@ -72,7 +74,9 @@ MATRICES = {"transfer": transfer, "containers": containers, "flow": flow,
             "nested_generics": nested_generics, "formatting": formatting,
             "arrays": arrays, "trees": trees, "error_chains": error_chains,
             "static_state": static_state}
-ENDPOINTS = (("cpp", "O0"), ("llvm", "O0"), ("llvm", "O2"))
+# The C++ column runs only when GTI_TEST_BACKENDS selects the C++ backend.
+CPP_SELECTED = bool(cpp_modes())
+ENDPOINTS = ((("cpp", "O0"),) if CPP_SELECTED else ()) + (("llvm", "O0"), ("llvm", "O2"))
 
 
 def run(command, env, timeout):
@@ -130,6 +134,8 @@ def main():
                         help="also report every cell C++ runs ok but LLVM "
                              "refuses or runs differently")
     args = parser.parse_args()
+    if args.parity and not CPP_SELECTED:
+        parser.error("--parity needs the C++ column: set GTI_TEST_BACKENDS=both")
     env = dict(os.environ, GTI_STDLIB_PATH=str(args.stdlib.resolve()),
                NO_COLOR="1")
     work = args.out or Path(tempfile.mkdtemp(prefix="gti-llvm-wrongcode-"))
@@ -148,8 +154,9 @@ def main():
             sources.append(path)
 
     def classify(source):
-        return source, [endpoint(args.gti.resolve(), env, source, backend, level)
-                        for backend, level in ENDPOINTS]
+        results = [endpoint(args.gti.resolve(), env, source, backend, level)
+                   for backend, level in ENDPOINTS]
+        return source, results if CPP_SELECTED else ["not-selected", *results]
 
     wrong = 0
     gaps = []

@@ -11,6 +11,12 @@ import sys
 import tempfile
 
 from backend_execution import host_default_backend
+from backend_modes import cpp_modes
+
+# The C++ backend's project contract (keep-cpp retention, --backend cpp,
+# its native command shape and schema-v4 cache) runs only when
+# GTI_TEST_BACKENDS selects that backend; everything else runs on LLVM.
+CPP = bool(cpp_modes())
 
 
 DEPENDENCY_INJECTING_NATIVE_ENVIRONMENT = (
@@ -476,33 +482,34 @@ def main():
         )
         assert "unknown format init option" in unknown_format_option.stderr
 
-        intermediate_project = root / "intermediate-target"
-        intermediate_source = intermediate_project / "src/main.gti"
-        intermediate_source.parent.mkdir(parents=True)
-        intermediate_source.write_text(
-            "int main() { return 0; }\n", encoding="utf-8"
-        )
-        (intermediate_project / "gti.toml").write_text(
-            "manifest-version = 1\n\n"
-            "[package]\n"
-            'name = "intermediate_target"\n'
-            'version = "0.1.0"\n\n'
-            "[targets.intermediate]\n"
-            'kind = "executable"\n'
-            'root = "src/main.gti"\n\n'
-            "[profiles.dev]\n"
-            "keep-cpp = true\n",
-            encoding="utf-8",
-        )
-        run([gti, "build"], cwd=intermediate_project)
-        intermediate_executable = executable_named(
-            intermediate_project / "build/gti/dev", "intermediate"
-        )
-        run([str(intermediate_executable)])
-        assert (
-            intermediate_executable.parent
-            / ".gti-intermediate/intermediate.gti.cpp"
-        ).is_file()
+        if CPP:  # keep-cpp retains the C++ backend representation
+            intermediate_project = root / "intermediate-target"
+            intermediate_source = intermediate_project / "src/main.gti"
+            intermediate_source.parent.mkdir(parents=True)
+            intermediate_source.write_text(
+                "int main() { return 0; }\n", encoding="utf-8"
+            )
+            (intermediate_project / "gti.toml").write_text(
+                "manifest-version = 1\n\n"
+                "[package]\n"
+                'name = "intermediate_target"\n'
+                'version = "0.1.0"\n\n'
+                "[targets.intermediate]\n"
+                'kind = "executable"\n'
+                'root = "src/main.gti"\n\n'
+                "[profiles.dev]\n"
+                "keep-cpp = true\n",
+                encoding="utf-8",
+            )
+            run([gti, "build"], cwd=intermediate_project)
+            intermediate_executable = executable_named(
+                intermediate_project / "build/gti/dev", "intermediate"
+            )
+            run([str(intermediate_executable)])
+            assert (
+                intermediate_executable.parent
+                / ".gti-intermediate/intermediate.gti.cpp"
+            ).is_file()
 
         warning_project = root / "warning-project"
         warning_source = warning_project / "src/main.gti"
@@ -577,7 +584,7 @@ def main():
             [
                 gti,
                 str(protected_emit_source),
-                "--emit-cpp",
+                "--emit-mir",
                 "-o",
                 str(protected_emit_source),
             ],
@@ -678,8 +685,8 @@ def main():
         )
         profiles = (
             "\n[profiles.dev]\n"
-            "keep-cpp = true\n"
-            "\n[profiles.release]\n"
+            + ("keep-cpp = true\n" if CPP else "")
+            + "\n[profiles.release]\n"
             "optimization = 3\n"
             'cpp-standard = "c++20"\n'
             'execution-profile = "concurrent"\n'
@@ -735,25 +742,27 @@ def main():
         assert len(mir_artifacts) == 1
         mir_head = mir_artifacts[0].read_text(encoding="utf-8").splitlines()[0]
         assert mir_head.startswith("mir-v") and "valid=1" in mir_head
-        conflicted = run(
-            [gti, "build", "--emit-mir", "--keep-cpp"],
-            expected=64,
-            cwd=nested,
-        )
-        assert (
-            "--emit-mir and --keep-cpp cannot be used together"
-            in conflicted.stderr
-        )
+        if CPP:
+            conflicted = run(
+                [gti, "build", "--emit-mir", "--keep-cpp"],
+                expected=64,
+                cwd=nested,
+            )
+            assert (
+                "--emit-mir and --keep-cpp cannot be used together"
+                in conflicted.stderr
+            )
         unsupported = run(
             [gti, "run", "--emit-mir"], expected=64, cwd=nested
         )
         assert "--emit-mir is not supported by gti run" in unsupported.stderr
 
-        generated = executable.parent / ".gti-intermediate/sample.gti.cpp"
-        assert generated.is_file()
-        direct_cpp = root / "direct.cpp"
-        run([gti, str(source), "--emit-cpp", "-o", str(direct_cpp)])
-        assert generated.read_bytes() == direct_cpp.read_bytes()
+        if CPP:  # keep-cpp retains the C++ backend representation
+            generated = executable.parent / ".gti-intermediate/sample.gti.cpp"
+            assert generated.is_file()
+            direct_cpp = root / "direct.cpp"
+            run([gti, str(source), "--emit-cpp", "-o", str(direct_cpp)])
+            assert generated.read_bytes() == direct_cpp.read_bytes()
 
         cached_build = run([gti, "build", "--verbose"], cwd=project)
         assert "gti: cache hit " in cached_build.stderr, cached_build.stderr
@@ -774,7 +783,9 @@ def main():
             line.startswith("+ ") for line in uncached_build.stderr.splitlines()
         )
 
-        cache_executables = list((project / "build/gti/cache/v4").glob(
+        # The dev profile's keep-cpp selects the C++ backend's schema-v4
+        # cache; LLVM builds use the schema-v5 object cache.
+        cache_executables = list((project / "build/gti/cache" / ("v4" if CPP else "v5")).glob(
             "*/executable"
         ))
         assert len(cache_executables) == 1
@@ -786,8 +797,9 @@ def main():
             line.startswith("+ ") for line in recovered_cache.stderr.splitlines()
         )
 
-        run([gti, "build", "--no-keep-cpp"], cwd=project)
-        assert not generated.exists()
+        if CPP:
+            run([gti, "build", "--no-keep-cpp"], cwd=project)
+            assert not generated.exists()
 
         release = run(
             [gti, "build", "sample", "--release", "--verbose"], cwd=project
@@ -796,28 +808,29 @@ def main():
         assert "execution-profile=concurrent" in release.stderr
         assert "target sample [release," in release.stderr
         assert "Built sample [release," in release.stdout
-        # The profile's optimization and C++ language level reach the C++
-        # backend's native compile when C++ builds the target.
-        release_cpp = run(
-            [gti, "build", "sample", "--release", "--verbose", "--backend", "cpp"],
-            cwd=project,
-        )
-        assert "gti: configuration -O3, backend=cpp," in release_cpp.stderr
-        assert " -O3 " in release_cpp.stderr
-        assert " -std=c++20 " in release_cpp.stderr
-        release_executable = executable_named(project / "build/gti/release", "sample")
-        run([str(release_executable)])
-        release_generated = (
-            release_executable.parent / ".gti-intermediate/sample.gti.cpp"
-        )
-        assert not release_generated.exists()
+        if CPP:
+            # The profile's optimization and C++ language level reach the C++
+            # backend's native compile when C++ builds the target.
+            release_cpp = run(
+                [gti, "build", "sample", "--release", "--verbose", "--backend", "cpp"],
+                cwd=project,
+            )
+            assert "gti: configuration -O3, backend=cpp," in release_cpp.stderr
+            assert " -O3 " in release_cpp.stderr
+            assert " -std=c++20 " in release_cpp.stderr
+            release_executable = executable_named(project / "build/gti/release", "sample")
+            run([str(release_executable)])
+            release_generated = (
+                release_executable.parent / ".gti-intermediate/sample.gti.cpp"
+            )
+            assert not release_generated.exists()
 
-        overridden = run(
-            [gti, "build", "--profile", "release", "-O1", "--keep-cpp", "--verbose"],
-            cwd=project,
-        )
-        assert " -O1 " in overridden.stderr
-        assert release_generated.is_file()
+            overridden = run(
+                [gti, "build", "--profile", "release", "-O1", "--keep-cpp", "--verbose"],
+                cwd=project,
+            )
+            assert " -O1 " in overridden.stderr
+            assert release_generated.is_file()
 
         conflict = run(
             [gti, "build", "--release", "--profile", "release"],
@@ -1176,14 +1189,14 @@ def main():
         assert not (native_project / "build").exists()
 
         # Compile arguments precede the generated C++ source in the C++
-        # backend's native command.
+        # backend's native command; the LLVM link command takes the native
+        # objects in declaration order.
         native_build = run(
             [
                 gti,
                 "build",
                 "--verbose",
-                "--backend",
-                "cpp",
+                *(["--backend", "cpp"] if CPP else []),
                 "--cc",
                 native_c_compiler,
                 "--cxx",
@@ -1216,11 +1229,14 @@ def main():
         assert cpp_base_argument < cpp_platform_argument < cpp_source_argument
         assert "GTI_PROJECT_C_BASE" not in cpp_command
         assert f'"{native_cpp_implementation.resolve()}"' in cpp_command
-        base_argument = native_command.index("-DGTI_PROJECT_NATIVE_BASE=1")
-        platform_argument = native_command.index("-DGTI_PROJECT_NATIVE_PLATFORM=1")
-        generated_source = native_command.index(".gti.cpp")
         output_option = native_command.rindex(" -o ")
-        assert base_argument < platform_argument < generated_source
+        if CPP:
+            base_argument = native_command.index("-DGTI_PROJECT_NATIVE_BASE=1")
+            platform_argument = native_command.index("-DGTI_PROJECT_NATIVE_PLATFORM=1")
+            generated_source = native_command.index(".gti.cpp")
+            assert base_argument < platform_argument < generated_source
+        else:
+            generated_source = -1
         assert "GTI_PROJECT_C_BASE" not in native_command
         assert "--gti-unselected-native-platform" not in native_command
         native_objects = list(
@@ -1516,7 +1532,7 @@ def main():
             "dependency"
         )
         direct_package_include = run(
-            [gti, str(app_package / "src/main.gti"), "--emit-cpp"],
+            [gti, str(app_package / "src/main.gti"), "--emit-mir"],
             expected=65,
             cwd=app_package,
         )
@@ -2008,79 +2024,80 @@ def main():
         cache_cxx = shutil.which("c++")
         if cache_cc is None or cache_cxx is None:
             raise AssertionError("native cache tests require cc and c++ on PATH")
-        cache_native = root / "cache-native"
-        (cache_native / "src").mkdir(parents=True)
-        (cache_native / "native/include").mkdir(parents=True)
-        (cache_native / "native/lib").mkdir(parents=True)
+        if CPP:  # the C++ backend's schema-v4 native cache
+            cache_native = root / "cache-native"
+            (cache_native / "src").mkdir(parents=True)
+            (cache_native / "native/include").mkdir(parents=True)
+            (cache_native / "native/lib").mkdir(parents=True)
 
-        def cache_native_manifest(native_lines):
-            (cache_native / "gti.toml").write_text(
-                "manifest-version = 1\n\n"
-                "[package]\n"
-                'name = "cache-native"\n'
-                'version = "0.1.0"\n\n'
-                "[package.native]\n"
-                + "".join(line + "\n" for line in native_lines)
-                + "\n[targets.cache-native]\n"
-                'kind = "executable"\n'
-                'root = "src/main.gti"\n',
+            def cache_native_manifest(native_lines):
+                (cache_native / "gti.toml").write_text(
+                    "manifest-version = 1\n\n"
+                    "[package]\n"
+                    'name = "cache-native"\n'
+                    'version = "0.1.0"\n\n'
+                    "[package.native]\n"
+                    + "".join(line + "\n" for line in native_lines)
+                    + "\n[targets.cache-native]\n"
+                    'kind = "executable"\n'
+                    'root = "src/main.gti"\n',
+                    encoding="utf-8",
+                )
+
+            (cache_native / "native/include/support.h").write_text(
+                "#define NATIVE_BIAS 0\n"
+                "int native_add(int left, int right);\n",
                 encoding="utf-8",
             )
-
-        (cache_native / "native/include/support.h").write_text(
-            "#define NATIVE_BIAS 0\n"
-            "int native_add(int left, int right);\n",
-            encoding="utf-8",
-        )
-        (cache_native / "native/support.c").write_text(
-            '#include "support.h"\n'
-            "int native_add(int left, int right) {\n"
-            "  return left + right + NATIVE_BIAS;\n"
-            "}\n",
-            encoding="utf-8",
-        )
-        (cache_native / "src/main.gti").write_text(
-            'extern "C" {\n'
-            "int native_add(int left, int right);\n"
-            "}\n\n"
-            "int main() {\n"
-            "  return native_add(2, 3) == 5 ? 0 : 1;\n"
-            "}\n",
-            encoding="utf-8",
-        )
-        link_object = cache_native / "native/lib/extra.o"
-        run(
-            [
-                cache_cc,
-                "-c",
-                str(cache_native / "native/support.c"),
-                "-I",
-                str(cache_native / "native/include"),
-                "-o",
-                str(link_object),
-            ]
-        )
-
-        # These checks exercise the C++ backend's schema-v4 cache entries;
-        # LLVM's schema-v5 object cache has its own round-trip tests.
-        def cache_native_build(expected=0, extra=(), env=None):
-            return run(
-                [
-                    gti,
-                    "build",
-                    "--verbose",
-                    "--backend",
-                    "cpp",
-                    "--cc",
-                    cache_cc,
-                    "--cxx",
-                    cache_cxx,
-                    *extra,
-                ],
-                expected=expected,
-                cwd=cache_native,
-                env=env,
+            (cache_native / "native/support.c").write_text(
+                '#include "support.h"\n'
+                "int native_add(int left, int right) {\n"
+                "  return left + right + NATIVE_BIAS;\n"
+                "}\n",
+                encoding="utf-8",
             )
+            (cache_native / "src/main.gti").write_text(
+                'extern "C" {\n'
+                "int native_add(int left, int right);\n"
+                "}\n\n"
+                "int main() {\n"
+                "  return native_add(2, 3) == 5 ? 0 : 1;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            link_object = cache_native / "native/lib/extra.o"
+            run(
+                [
+                    cache_cc,
+                    "-c",
+                    str(cache_native / "native/support.c"),
+                    "-I",
+                    str(cache_native / "native/include"),
+                    "-o",
+                    str(link_object),
+                ]
+            )
+
+            # These checks exercise the C++ backend's schema-v4 cache entries;
+            # LLVM's schema-v5 object cache has its own round-trip tests.
+            def cache_native_build(expected=0, extra=(), env=None):
+                return run(
+                    [
+                        gti,
+                        "build",
+                        "--verbose",
+                        "--backend",
+                        "cpp",
+                        "--cc",
+                        cache_cc,
+                        "--cxx",
+                        cache_cxx,
+                        *extra,
+                    ],
+                    expected=expected,
+                    cwd=cache_native,
+                    env=env,
+                )
 
         def cache_key(report):
             for line in report.stderr.splitlines():
@@ -2089,364 +2106,365 @@ def main():
                         return line[len(status):].split(" ", 1)[0]
             raise AssertionError(f"no cache key in stderr: {report.stderr}")
 
-        cache_native_manifest(
-            [
-                'include-dirs = ["native/include"]',
-                'c-sources = ["native/support.c"]',
-            ]
-        )
-        native_cache_first = cache_native_build()
-        assert "gti: cache miss " in native_cache_first.stderr
-        first_native_key = cache_key(native_cache_first)
-        native_cache_second = cache_native_build()
-        assert "gti: cache hit " in native_cache_second.stderr
-        assert cache_key(native_cache_second) == first_native_key
-        assert not any(
-            line.startswith("+ ")
-            for line in native_cache_second.stderr.splitlines()
-        )
-        run([gti, "run"], cwd=cache_native)
+        if CPP:  # the C++ backend's schema-v4 native cache
+            cache_native_manifest(
+                [
+                    'include-dirs = ["native/include"]',
+                    'c-sources = ["native/support.c"]',
+                ]
+            )
+            native_cache_first = cache_native_build()
+            assert "gti: cache miss " in native_cache_first.stderr
+            first_native_key = cache_key(native_cache_first)
+            native_cache_second = cache_native_build()
+            assert "gti: cache hit " in native_cache_second.stderr
+            assert cache_key(native_cache_second) == first_native_key
+            assert not any(
+                line.startswith("+ ")
+                for line in native_cache_second.stderr.splitlines()
+            )
+            run([gti, "run"], cwd=cache_native)
 
-        # A header added beside the C source shadows the declared include
-        # directory through quote-include search order. The cache must miss
-        # and rebuild with the shadowing header rather than restore the
-        # previous executable.
-        shadow_header = cache_native / "native/support.h"
-        shadow_header.write_text(
-            "#define NATIVE_BIAS 1\n"
-            "int native_add(int left, int right);\n",
-            encoding="utf-8",
-        )
-        shadowed_build = cache_native_build()
-        assert "gti: cache miss " in shadowed_build.stderr
-        assert cache_key(shadowed_build) != first_native_key
-        run([gti, "run"], expected=1, cwd=cache_native)
-        shadow_header.unlink()
-        unshadowed_build = cache_native_build()
-        assert "gti: cache hit " in unshadowed_build.stderr
-        assert cache_key(unshadowed_build) == first_native_key
-        run([gti, "run"], cwd=cache_native)
-
-        # Changing a depfile-discovered header invalidates the identity.
-        (cache_native / "native/include/support.h").write_text(
-            "#define NATIVE_BIAS 0\n"
-            "int native_add(int left, int right);\n"
-            "/* revised */\n",
-            encoding="utf-8",
-        )
-        revised_header_build = cache_native_build()
-        assert "gti: cache miss " in revised_header_build.stderr
-        assert cache_key(revised_header_build) != first_native_key
-
-        # A content-complete relocatable object as an exact link file joins
-        # the identity instead of bypassing.
-        cache_native_manifest(
-            [
-                'include-dirs = ["native/include"]',
-                'link-files = ["native/lib/extra.o"]',
-            ]
-        )
-        link_file_first = cache_native_build()
-        assert "gti: cache miss " in link_file_first.stderr
-        link_file_second = cache_native_build()
-        assert "gti: cache hit " in link_file_second.stderr
-
-        # --- Name-resolved libraries and library search directories ---
-        # A declared -L directory precedes every implicit toolchain directory
-        # on the link line, so the first declared directory holding exactly
-        # one modeled candidate is the file the linker selects. That file's
-        # content, and the full tree identity of every declared search
-        # directory, join the key.
-        cache_ar = shutil.which("ar")
-        if cache_ar is None:
-            raise AssertionError("native cache tests require ar on PATH")
-        resolved_archive = cache_native / "native/lib/libextra.a"
-        # Archives are staged outside the declared search directory so
-        # installing one is a byte-exact copy: `ar` records member timestamps,
-        # so rebuilding would change content that the key correctly tracks.
-        archive_stage = cache_native / "native/archives"
-        archive_stage.mkdir(parents=True, exist_ok=True)
-
-        def stage_resolved_archive(bias):
-            variant = archive_stage / f"bias{bias}.c"
-            variant.write_text(
-                "int native_add(int left, int right) {\n"
-                f"  return left + right + {bias};\n"
-                "}\n",
+            # A header added beside the C source shadows the declared include
+            # directory through quote-include search order. The cache must miss
+            # and rebuild with the shadowing header rather than restore the
+            # previous executable.
+            shadow_header = cache_native / "native/support.h"
+            shadow_header.write_text(
+                "#define NATIVE_BIAS 1\n"
+                "int native_add(int left, int right);\n",
                 encoding="utf-8",
             )
-            variant_object = archive_stage / f"bias{bias}.o"
-            run([cache_cc, "-c", str(variant), "-o", str(variant_object)])
-            archive = archive_stage / f"libextra{bias}.a"
-            if archive.exists():
-                archive.unlink()
-            run([cache_ar, "rcs", str(archive), str(variant_object)])
-            return archive
+            shadowed_build = cache_native_build()
+            assert "gti: cache miss " in shadowed_build.stderr
+            assert cache_key(shadowed_build) != first_native_key
+            run([gti, "run"], expected=1, cwd=cache_native)
+            shadow_header.unlink()
+            unshadowed_build = cache_native_build()
+            assert "gti: cache hit " in unshadowed_build.stderr
+            assert cache_key(unshadowed_build) == first_native_key
+            run([gti, "run"], cwd=cache_native)
 
-        unbiased_archive = stage_resolved_archive(0)
-        biased_archive = stage_resolved_archive(1)
+            # Changing a depfile-discovered header invalidates the identity.
+            (cache_native / "native/include/support.h").write_text(
+                "#define NATIVE_BIAS 0\n"
+                "int native_add(int left, int right);\n"
+                "/* revised */\n",
+                encoding="utf-8",
+            )
+            revised_header_build = cache_native_build()
+            assert "gti: cache miss " in revised_header_build.stderr
+            assert cache_key(revised_header_build) != first_native_key
 
-        def install_resolved_archive(archive):
-            shutil.copyfile(archive, resolved_archive)
+            # A content-complete relocatable object as an exact link file joins
+            # the identity instead of bypassing.
+            cache_native_manifest(
+                [
+                    'include-dirs = ["native/include"]',
+                    'link-files = ["native/lib/extra.o"]',
+                ]
+            )
+            link_file_first = cache_native_build()
+            assert "gti: cache miss " in link_file_first.stderr
+            link_file_second = cache_native_build()
+            assert "gti: cache hit " in link_file_second.stderr
 
-        install_resolved_archive(unbiased_archive)
-        cache_native_manifest(
-            [
-                'include-dirs = ["native/include"]',
-                'library-dirs = ["native/lib"]',
-                'libraries = ["extra"]',
-            ]
-        )
-        resolved_first = cache_native_build()
-        assert "gti: cache miss " in resolved_first.stderr
-        resolved_key = cache_key(resolved_first)
-        resolved_second = cache_native_build()
-        assert "gti: cache hit " in resolved_second.stderr
-        assert cache_key(resolved_second) == resolved_key
-        run([gti, "run"], cwd=cache_native)
+            # --- Name-resolved libraries and library search directories ---
+            # A declared -L directory precedes every implicit toolchain directory
+            # on the link line, so the first declared directory holding exactly
+            # one modeled candidate is the file the linker selects. That file's
+            # content, and the full tree identity of every declared search
+            # directory, join the key.
+            cache_ar = shutil.which("ar")
+            if cache_ar is None:
+                raise AssertionError("native cache tests require ar on PATH")
+            resolved_archive = cache_native / "native/lib/libextra.a"
+            # Archives are staged outside the declared search directory so
+            # installing one is a byte-exact copy: `ar` records member timestamps,
+            # so rebuilding would change content that the key correctly tracks.
+            archive_stage = cache_native / "native/archives"
+            archive_stage.mkdir(parents=True, exist_ok=True)
 
-        # Staleness safety: the resolved archive's content is part of the key,
-        # so replacing it forces a rebuild that observes the new behavior.
-        install_resolved_archive(biased_archive)
-        restaled = cache_native_build()
-        assert "gti: cache miss " in restaled.stderr
-        assert cache_key(restaled) != resolved_key
-        run([gti, "run"], expected=1, cwd=cache_native)
-        install_resolved_archive(unbiased_archive)
-        rerestored = cache_native_build()
-        assert "gti: cache hit " in rerestored.stderr
-        assert cache_key(rerestored) == resolved_key
-        run([gti, "run"], cwd=cache_native)
+            def stage_resolved_archive(bias):
+                variant = archive_stage / f"bias{bias}.c"
+                variant.write_text(
+                    "int native_add(int left, int right) {\n"
+                    f"  return left + right + {bias};\n"
+                    "}\n",
+                    encoding="utf-8",
+                )
+                variant_object = archive_stage / f"bias{bias}.o"
+                run([cache_cc, "-c", str(variant), "-o", str(variant_object)])
+                archive = archive_stage / f"libextra{bias}.a"
+                if archive.exists():
+                    archive.unlink()
+                run([cache_ar, "rcs", str(archive), str(variant_object)])
+                return archive
 
-        # A name with no candidate in any declared directory would resolve
-        # through the linker's implicit system directories, which the driver
-        # does not model.
-        cache_native_manifest(
-            [
-                'include-dirs = ["native/include"]',
-                'library-dirs = ["native/lib"]',
-                'libraries = ["extra", "m"]',
-            ]
-        )
-        unresolved_bypass = cache_native_build()
-        assert "gti: cache bypassed" in unresolved_bypass.stderr
-        assert (
-            "native library '-lm' does not resolve inside the declared "
-            "native library search directories"
-        ) in unresolved_bypass.stderr
+            unbiased_archive = stage_resolved_archive(0)
+            biased_archive = stage_resolved_archive(1)
 
-        # Two modeled candidates in one directory: which file the linker
-        # prefers is a guess, so resolution refuses rather than guessing.
-        resolved_dynamic = cache_native / (
-            "native/lib/libextra."
-            + ("dylib" if sys.platform == "darwin" else "so")
-        )
-        run(
-            [
-                cache_cc,
-                "-shared",
-                "-fPIC",
-                str(cache_native / "native/support.c"),
-                "-I",
-                str(cache_native / "native/include"),
-                "-o",
-                str(resolved_dynamic),
-            ]
-        )
-        cache_native_manifest(
-            [
-                'include-dirs = ["native/include"]',
-                'library-dirs = ["native/lib"]',
-                'libraries = ["extra"]',
-            ]
-        )
-        ambiguous_bypass = cache_native_build()
-        assert "gti: cache bypassed" in ambiguous_bypass.stderr
-        assert "resolves ambiguously" in ambiguous_bypass.stderr
+            def install_resolved_archive(archive):
+                shutil.copyfile(archive, resolved_archive)
 
-        # An unambiguous resolution to a file whose bytes do not determine its
-        # contribution to the link still bypasses.
-        resolved_archive.unlink()
-        resolved_dynamic_bypass = cache_native_build()
-        assert "gti: cache bypassed" in resolved_dynamic_bypass.stderr
-        assert (
-            "not a content-complete archive or object"
-            in resolved_dynamic_bypass.stderr
-        )
-
-        # A spelling the driver does not model must make resolution ambiguous
-        # rather than invisible.
-        resolved_dynamic.unlink()
-        install_resolved_archive(unbiased_archive)
-        unmodelled = cache_native / "native/lib/libextra.la"
-        unmodelled.write_text("# libtool archive\n", encoding="utf-8")
-        unmodelled_bypass = cache_native_build()
-        assert "gti: cache bypassed" in unmodelled_bypass.stderr
-        assert "resolves ambiguously" in unmodelled_bypass.stderr
-        unmodelled.unlink()
-
-        if sys.platform == "darwin":
+            install_resolved_archive(unbiased_archive)
             cache_native_manifest(
                 [
                     'include-dirs = ["native/include"]',
                     'library-dirs = ["native/lib"]',
                     'libraries = ["extra"]',
-                    'frameworks = ["CoreFoundation"]',
                 ]
             )
-            framework_miss = cache_native_build()
-            assert "gti: cache miss " in framework_miss.stderr
-            assert "gti: cache bypassed" not in framework_miss.stderr
-            framework_hit = cache_native_build()
-            assert "gti: cache hit " in framework_hit.stderr
-            assert not any(
-                line.startswith("+ ")
-                for line in framework_hit.stderr.splitlines()
+            resolved_first = cache_native_build()
+            assert "gti: cache miss " in resolved_first.stderr
+            resolved_key = cache_key(resolved_first)
+            resolved_second = cache_native_build()
+            assert "gti: cache hit " in resolved_second.stderr
+            assert cache_key(resolved_second) == resolved_key
+            run([gti, "run"], cwd=cache_native)
+
+            # Staleness safety: the resolved archive's content is part of the key,
+            # so replacing it forces a rebuild that observes the new behavior.
+            install_resolved_archive(biased_archive)
+            restaled = cache_native_build()
+            assert "gti: cache miss " in restaled.stderr
+            assert cache_key(restaled) != resolved_key
+            run([gti, "run"], expected=1, cwd=cache_native)
+            install_resolved_archive(unbiased_archive)
+            rerestored = cache_native_build()
+            assert "gti: cache hit " in rerestored.stderr
+            assert cache_key(rerestored) == resolved_key
+            run([gti, "run"], cwd=cache_native)
+
+            # A name with no candidate in any declared directory would resolve
+            # through the linker's implicit system directories, which the driver
+            # does not model.
+            cache_native_manifest(
+                [
+                    'include-dirs = ["native/include"]',
+                    'library-dirs = ["native/lib"]',
+                    'libraries = ["extra", "m"]',
+                ]
+            )
+            unresolved_bypass = cache_native_build()
+            assert "gti: cache bypassed" in unresolved_bypass.stderr
+            assert (
+                "native library '-lm' does not resolve inside the declared "
+                "native library search directories"
+            ) in unresolved_bypass.stderr
+
+            # Two modeled candidates in one directory: which file the linker
+            # prefers is a guess, so resolution refuses rather than guessing.
+            resolved_dynamic = cache_native / (
+                "native/lib/libextra."
+                + ("dylib" if sys.platform == "darwin" else "so")
+            )
+            run(
+                [
+                    cache_cc,
+                    "-shared",
+                    "-fPIC",
+                    str(cache_native / "native/support.c"),
+                    "-I",
+                    str(cache_native / "native/include"),
+                    "-o",
+                    str(resolved_dynamic),
+                ]
+            )
+            cache_native_manifest(
+                [
+                    'include-dirs = ["native/include"]',
+                    'library-dirs = ["native/lib"]',
+                    'libraries = ["extra"]',
+                ]
+            )
+            ambiguous_bypass = cache_native_build()
+            assert "gti: cache bypassed" in ambiguous_bypass.stderr
+            assert "resolves ambiguously" in ambiguous_bypass.stderr
+
+            # An unambiguous resolution to a file whose bytes do not determine its
+            # contribution to the link still bypasses.
+            resolved_archive.unlink()
+            resolved_dynamic_bypass = cache_native_build()
+            assert "gti: cache bypassed" in resolved_dynamic_bypass.stderr
+            assert (
+                "not a content-complete archive or object"
+                in resolved_dynamic_bypass.stderr
             )
 
-        resolved_archive.unlink()
+            # A spelling the driver does not model must make resolution ambiguous
+            # rather than invisible.
+            resolved_dynamic.unlink()
+            install_resolved_archive(unbiased_archive)
+            unmodelled = cache_native / "native/lib/libextra.la"
+            unmodelled.write_text("# libtool archive\n", encoding="utf-8")
+            unmodelled_bypass = cache_native_build()
+            assert "gti: cache bypassed" in unmodelled_bypass.stderr
+            assert "resolves ambiguously" in unmodelled_bypass.stderr
+            unmodelled.unlink()
 
-        # Every remaining bypass reason is reported explicitly.
-        shared_library = cache_native / (
-            "native/lib/libextra_shared."
-            + ("dylib" if sys.platform == "darwin" else "so")
-        )
-        run(
-            [
-                cache_cc,
-                "-shared",
-                "-fPIC",
-                str(cache_native / "native/support.c"),
-                "-I",
-                str(cache_native / "native/include"),
-                "-o",
-                str(shared_library),
-            ]
-        )
-        cache_native_manifest(
-            [
-                'include-dirs = ["native/include"]',
-                f'link-files = ["native/lib/{shared_library.name}"]',
-            ]
-        )
-        shared_bypass = cache_native_build()
-        assert "gti: cache bypassed" in shared_bypass.stderr
-        assert (
-            "not a content-complete archive or object" in shared_bypass.stderr
-        )
+            if sys.platform == "darwin":
+                cache_native_manifest(
+                    [
+                        'include-dirs = ["native/include"]',
+                        'library-dirs = ["native/lib"]',
+                        'libraries = ["extra"]',
+                        'frameworks = ["CoreFoundation"]',
+                    ]
+                )
+                framework_miss = cache_native_build()
+                assert "gti: cache miss " in framework_miss.stderr
+                assert "gti: cache bypassed" not in framework_miss.stderr
+                framework_hit = cache_native_build()
+                assert "gti: cache hit " in framework_hit.stderr
+                assert not any(
+                    line.startswith("+ ")
+                    for line in framework_hit.stderr.splitlines()
+                )
 
-        cache_native_manifest(
-            [
-                'include-dirs = ["native/include"]',
-                'c-sources = ["native/support.c"]',
-                'c-compile-args = ["-DNATIVE_EXTRA=1"]',
-            ]
-        )
-        opaque_bypass = cache_native_build()
-        assert "gti: cache bypassed" in opaque_bypass.stderr
-        assert "opaque native argument vectors" in opaque_bypass.stderr
+            resolved_archive.unlink()
 
-        # Without any declared search directory a named library can only come
-        # from the linker's implicit directories.
-        cache_native_manifest(
-            [
-                'include-dirs = ["native/include"]',
-                'c-sources = ["native/support.c"]',
-                'libraries = ["m"]',
-            ]
-        )
-        named_bypass = cache_native_build()
-        assert "gti: cache bypassed" in named_bypass.stderr
-        assert (
-            "native library '-lm' does not resolve inside the declared "
-            "native library search directories"
-        ) in named_bypass.stderr
+            # Every remaining bypass reason is reported explicitly.
+            shared_library = cache_native / (
+                "native/lib/libextra_shared."
+                + ("dylib" if sys.platform == "darwin" else "so")
+            )
+            run(
+                [
+                    cache_cc,
+                    "-shared",
+                    "-fPIC",
+                    str(cache_native / "native/support.c"),
+                    "-I",
+                    str(cache_native / "native/include"),
+                    "-o",
+                    str(shared_library),
+                ]
+            )
+            cache_native_manifest(
+                [
+                    'include-dirs = ["native/include"]',
+                    f'link-files = ["native/lib/{shared_library.name}"]',
+                ]
+            )
+            shared_bypass = cache_native_build()
+            assert "gti: cache bypassed" in shared_bypass.stderr
+            assert (
+                "not a content-complete archive or object" in shared_bypass.stderr
+            )
 
-        # A declared library search directory joins as a full tree identity,
-        # so it participates instead of bypassing, and any file added below it
-        # changes the key.
-        cache_native_manifest(
-            [
-                'include-dirs = ["native/include"]',
-                'c-sources = ["native/support.c"]',
-                'library-dirs = ["native/lib"]',
-            ]
-        )
-        library_dir_first = cache_native_build()
-        assert "gti: cache miss " in library_dir_first.stderr
-        library_dir_key = cache_key(library_dir_first)
-        library_dir_second = cache_native_build()
-        assert "gti: cache hit " in library_dir_second.stderr
-        assert cache_key(library_dir_second) == library_dir_key
-        # Any file appearing below a declared search directory changes the
-        # key, which is what makes the directory exact: a file dropped there
-        # could otherwise shadow a library the toolchain resolves implicitly.
-        added_library_file = cache_native / "native/lib/added.txt"
-        added_library_file.write_text("added", encoding="utf-8")
-        library_dir_shadowed = cache_native_build()
-        assert cache_key(library_dir_shadowed) != library_dir_key
-        added_library_file.unlink()
-        library_dir_restored = cache_native_build()
-        assert "gti: cache hit " in library_dir_restored.stderr
-        assert cache_key(library_dir_restored) == library_dir_key
+            cache_native_manifest(
+                [
+                    'include-dirs = ["native/include"]',
+                    'c-sources = ["native/support.c"]',
+                    'c-compile-args = ["-DNATIVE_EXTRA=1"]',
+                ]
+            )
+            opaque_bypass = cache_native_build()
+            assert "gti: cache bypassed" in opaque_bypass.stderr
+            assert "opaque native argument vectors" in opaque_bypass.stderr
 
-        cache_native_manifest(
-            [
-                'include-dirs = ["native/include"]',
-                'c-sources = ["native/support.c"]',
-            ]
-        )
-        injected_environment = os.environ.copy()
-        injected_environment["CPATH"] = str(cache_native / "native/include")
-        environment_bypass = cache_native_build(env=injected_environment)
-        assert "gti: cache bypassed" in environment_bypass.stderr
-        assert "environment search paths" in environment_bypass.stderr
+            # Without any declared search directory a named library can only come
+            # from the linker's implicit directories.
+            cache_native_manifest(
+                [
+                    'include-dirs = ["native/include"]',
+                    'c-sources = ["native/support.c"]',
+                    'libraries = ["m"]',
+                ]
+            )
+            named_bypass = cache_native_build()
+            assert "gti: cache bypassed" in named_bypass.stderr
+            assert (
+                "native library '-lm' does not resolve inside the declared "
+                "native library search directories"
+            ) in named_bypass.stderr
 
-        time_macro_source = cache_native / "native/support.c"
-        time_macro_source.write_text(
-            '#include "support.h"\n'
-            "int native_add(int left, int right) {\n"
-            "  return left + right + NATIVE_BIAS + (__DATE__[0] == 0);\n"
-            "}\n",
-            encoding="utf-8",
-        )
-        time_macro_bypass = cache_native_build()
-        assert "gti: cache bypassed" in time_macro_bypass.stderr
-        assert "time-and-date preprocessor macros" in time_macro_bypass.stderr
-        time_macro_source.write_text(
-            '#include "support.h"\n'
-            "int native_add(int left, int right) {\n"
-            "  return left + right + NATIVE_BIAS;\n"
-            "}\n",
-            encoding="utf-8",
-        )
+            # A declared library search directory joins as a full tree identity,
+            # so it participates instead of bypassing, and any file added below it
+            # changes the key.
+            cache_native_manifest(
+                [
+                    'include-dirs = ["native/include"]',
+                    'c-sources = ["native/support.c"]',
+                    'library-dirs = ["native/lib"]',
+                ]
+            )
+            library_dir_first = cache_native_build()
+            assert "gti: cache miss " in library_dir_first.stderr
+            library_dir_key = cache_key(library_dir_first)
+            library_dir_second = cache_native_build()
+            assert "gti: cache hit " in library_dir_second.stderr
+            assert cache_key(library_dir_second) == library_dir_key
+            # Any file appearing below a declared search directory changes the
+            # key, which is what makes the directory exact: a file dropped there
+            # could otherwise shadow a library the toolchain resolves implicitly.
+            added_library_file = cache_native / "native/lib/added.txt"
+            added_library_file.write_text("added", encoding="utf-8")
+            library_dir_shadowed = cache_native_build()
+            assert cache_key(library_dir_shadowed) != library_dir_key
+            added_library_file.unlink()
+            library_dir_restored = cache_native_build()
+            assert "gti: cache hit " in library_dir_restored.stderr
+            assert cache_key(library_dir_restored) == library_dir_key
 
-        # Malformed and partial cache entries are diagnosed, never executed,
-        # and are replaced only after a successful rebuild.
-        rebuilt = cache_native_build()
-        assert "gti: cache " in rebuilt.stderr
-        entry_directory = (
-            cache_native / "build/gti/cache/v4" / cache_key(rebuilt)
-        )
-        if "gti: cache miss " in rebuilt.stderr:
+            cache_native_manifest(
+                [
+                    'include-dirs = ["native/include"]',
+                    'c-sources = ["native/support.c"]',
+                ]
+            )
+            injected_environment = os.environ.copy()
+            injected_environment["CPATH"] = str(cache_native / "native/include")
+            environment_bypass = cache_native_build(env=injected_environment)
+            assert "gti: cache bypassed" in environment_bypass.stderr
+            assert "environment search paths" in environment_bypass.stderr
+
+            time_macro_source = cache_native / "native/support.c"
+            time_macro_source.write_text(
+                '#include "support.h"\n'
+                "int native_add(int left, int right) {\n"
+                "  return left + right + NATIVE_BIAS + (__DATE__[0] == 0);\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            time_macro_bypass = cache_native_build()
+            assert "gti: cache bypassed" in time_macro_bypass.stderr
+            assert "time-and-date preprocessor macros" in time_macro_bypass.stderr
+            time_macro_source.write_text(
+                '#include "support.h"\n'
+                "int native_add(int left, int right) {\n"
+                "  return left + right + NATIVE_BIAS;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            # Malformed and partial cache entries are diagnosed, never executed,
+            # and are replaced only after a successful rebuild.
+            rebuilt = cache_native_build()
+            assert "gti: cache " in rebuilt.stderr
+            entry_directory = (
+                cache_native / "build/gti/cache/v4" / cache_key(rebuilt)
+            )
+            if "gti: cache miss " in rebuilt.stderr:
+                assert "gti: cache hit " in cache_native_build().stderr
+            assert entry_directory.is_dir()
+            (entry_directory / "executable").write_bytes(b"corrupt")
+            corrupt_payload = cache_native_build()
+            assert "ignored corrupt build cache entry" in corrupt_payload.stderr
+            assert "gti: cache recovered " in corrupt_payload.stderr
+            run([gti, "run"], cwd=cache_native)
+            (entry_directory / "generated.cpp").unlink()
+            partial_entry = cache_native_build()
+            assert "ignored corrupt build cache entry" in partial_entry.stderr
+            assert "gti: cache recovered " in partial_entry.stderr
+            (entry_directory / "metadata").write_text(
+                "not a cache metadata document\n", encoding="utf-8"
+            )
+            malformed_metadata = cache_native_build()
+            assert "ignored corrupt build cache entry" in malformed_metadata.stderr
+            assert "gti: cache recovered " in malformed_metadata.stderr
             assert "gti: cache hit " in cache_native_build().stderr
-        assert entry_directory.is_dir()
-        (entry_directory / "executable").write_bytes(b"corrupt")
-        corrupt_payload = cache_native_build()
-        assert "ignored corrupt build cache entry" in corrupt_payload.stderr
-        assert "gti: cache recovered " in corrupt_payload.stderr
-        run([gti, "run"], cwd=cache_native)
-        (entry_directory / "generated.cpp").unlink()
-        partial_entry = cache_native_build()
-        assert "ignored corrupt build cache entry" in partial_entry.stderr
-        assert "gti: cache recovered " in partial_entry.stderr
-        (entry_directory / "metadata").write_text(
-            "not a cache metadata document\n", encoding="utf-8"
-        )
-        malformed_metadata = cache_native_build()
-        assert "ignored corrupt build cache entry" in malformed_metadata.stderr
-        assert "gti: cache recovered " in malformed_metadata.stderr
-        assert "gti: cache hit " in cache_native_build().stderr
 
         # --- Dependency native groups in the whole-program cache ---
         # A dependency composes only its own include directories, validated
@@ -2843,7 +2861,7 @@ def main():
         # Each backend's host program reruns once, then its output is reused:
         # an LLVM host program's output only together with the exact cached
         # executable that produced it.
-        for backend in ("cpp", "llvm"):
+        for backend in (*(("cpp",) if CPP else ()), "llvm"):
             built_scripted = run(
                 [gti, "test", "--jobs", "2", "--backend", backend],
                 cwd=scripted_app,
@@ -3509,7 +3527,7 @@ def main():
         )
         assert "gti build --target" in refused.stderr, refused.stderr
 
-        if sys.platform != "win32":
+        if sys.platform != "win32" and CPP:
             # A declared toolchain reaches the native invocation. The stub
             # compiler records its exact argument vector, so the assertions
             # below are about the command GTI built, not about having a real
@@ -3607,6 +3625,8 @@ def main():
                 overridden_commands
             ), overridden_commands
 
+        if sys.platform != "win32":
+            stub = cross_project / "stub-c++"
             # An unknown toolchain field is rejected by the shared manifest
             # field validator.
             (cross_project / "gti.toml").write_text(

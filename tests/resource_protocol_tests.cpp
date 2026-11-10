@@ -1,7 +1,7 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 #include "private_stdlib_fixture.h"
 
 #include <algorithm>
@@ -68,13 +68,12 @@ void positive(const std::string &source, std::string_view message,
   expect(result.canGenerateCode() && lang::verifyMirProgram(result.mir).valid(),
          message);
   if (result.canGenerateCode()) {
-    try {
-      expect(!gti_test::emitCppText(result).empty(),
-             "resource client emits through verified MIR");
-    } catch (const std::exception &error) {
-      std::cerr << error.what() << '\n';
-      expect(false, "resource client emits through verified MIR");
-    }
+    std::string error;
+    expect(gti_test::llvmEmits(result, lang::OptimizationLevel::O0,
+                               lang::TargetInfo::host(), &error),
+           "resource client emits through verified MIR");
+    if (!error.empty())
+      std::cerr << error << '\n';
   }
 }
 void negative(const std::string &source, std::string_view code,

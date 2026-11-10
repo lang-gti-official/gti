@@ -1,4 +1,7 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
 
 int main() {
   const auto path = std::filesystem::path(__FILE__).parent_path() /
@@ -40,24 +43,18 @@ int main() {
                                                          owner->type),
          "relocation proves guarded transfer without pretending cleanup is "
          "passive");
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
-  const lang::MirBodyAddress factoryAddress{lang::MirBodyKind::Function,
-                                            factory->id};
+  // The factory returns the guarded owner as an ordinary source class result
+  // placed in the caller's output; the shipped backend lowers its generated
+  // moves (which transfer, then retire, the leaf's active-drop state).
+  std::string error;
   expect(factory->returnType.kind == lang::SemanticType::Class &&
-             lang::CppMirBodyEmitter(frontend.mir, rows)
-                 .supportsFailureBodyText(factoryAddress),
-         "ordinary source result placement admits exact nested guarded owner");
-  const auto artifact = gti_test::emitCpp(frontend);
-  const std::string active =
-      "__gti_lifecycle_active_" + std::to_string(leaf->declaration);
-  expect(artifact.contents.find(active + "(other." + active + ")") !=
-                 std::string::npos &&
-             artifact.contents.find(active + " = other." + active + ";") !=
-                 std::string::npos &&
-             artifact.contents.find("other." + active + " = false;") !=
-                 std::string::npos,
-         "generated moves must transfer then retire the source lifecycle bit, "
-         "preserving both live owners and disarmed private empty shells");
+             factory->returnType.arguments.size() == 2 &&
+             factory->returnType.arguments.front() == owner->type &&
+             gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                                 lang::TargetInfo::host(), &error),
+         "ordinary source result placement admits exact nested guarded "
+         "owner: " +
+             error);
   for (int mutation = 0; mutation != 7; ++mutation) {
     auto malformed = frontend.mir;
     auto *changedLeaf = const_cast<lang::MirClassInstance *>(

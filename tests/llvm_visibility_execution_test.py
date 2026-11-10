@@ -16,6 +16,8 @@ import re
 import shutil
 import subprocess
 
+from backend_modes import cpp_modes
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -65,7 +67,8 @@ def main():
         manifest["gti_version"] = run([args.gti, "--version"]).stdout.strip()
         run([args.clang, "-std=c17", "-O2", "-c", fixtures / "visibility_provider.c",
              "-o", output / "provider.o"])
-        endpoints = [("cpp", 3), *(("llvm", level) for level in range(4))]
+        # The C++ endpoint runs only when GTI_TEST_BACKENDS selects the C++ backend.
+        endpoints = [*(("cpp", 3) for _ in cpp_modes()), *(("llvm", level) for level in range(4))]
         for backend, level in endpoints:
             binary = output / f"{backend}-O{level}"
             command = [args.gti, source, "--backend", backend, f"-O{level}",
@@ -85,7 +88,7 @@ def main():
                                                  "failure": fail, "exit": result.returncode,
                                                  "stderr": result.stderr})
         manifest["status"] = "passed-selected-production-correctness"
-        print(f"PASS: {args.case}, C++23/O3 and LLVM/O0-O3 exact success/failure cleanup")
+        print(f"PASS: {args.case}, {'C++23/O3 and ' if cpp_modes() else ''}LLVM/O0-O3 exact success/failure cleanup")
     except BaseException as error:
         manifest["status"], manifest["error"] = "failed", str(error)
         raise

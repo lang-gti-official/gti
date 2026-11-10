@@ -157,8 +157,8 @@ def main():
         ):
             path = scratch / f"bad-{name}.gti"
             path.write_text(source)
-            rejected = run([str(compiler), str(path), "--progress", "never", "--emit-cpp",
-                            "-o", str(scratch / "bad.cpp")], expected=65)
+            rejected = run([str(compiler), str(path), "--progress", "never", "--emit-mir",
+                            "-o", str(scratch / "bad.mir")], expected=65)
             assert "error[GTI-S" in rejected.stderr and "GTI-B0001" not in rejected.stderr, rejected
     print(f"aggregate projections: {len(sources) * 6} native successes, "
           f"{len(bounds_cases) * 6} checked bounds failures, "

@@ -8,7 +8,11 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import sys
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from backend_modes import cpp_modes  # noqa: E402
 
 
 def main():
@@ -65,8 +69,10 @@ def main():
         obj = output / f"host-O{host_level}.o"
         run([cxx, "-std=c++20", f"-O{host_level}", "-Wall", "-Wextra", "-Werror",
              "-I", output, "-I", root / "runtime/include", "-c", helper, "-o", obj], obj.stem)
+        # The C++ differential entries run only when the policy selects them.
+        cpp_entries = [('cpp', 'c++20', 3), ('cpp', 'c++23', 3)] if cpp_modes() else []
         for backend, standard, level in [*(('llvm', 'c++20', n) for n in range(4)),
-                                         ('cpp', 'c++20', 3), ('cpp', 'c++23', 3)]:
+                                         *cpp_entries]:
             tag = f"{backend}-{standard}-O{level}-host{host_level}"
             binary = output / tag
             standard_args = ["--std", standard] if backend == "cpp" else []

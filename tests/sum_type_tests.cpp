@@ -1,4 +1,3 @@
-#include "gti/cpp_backend.h"
 #include "gti/formatter.h"
 #include "gti/frontend.h"
 #include "gti/lexer.h"
@@ -8,7 +7,7 @@
 #include "gti/optimizer.h"
 #include "gti/parser.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -44,6 +43,17 @@ void expect(bool condition, std::string_view message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
+}
+
+// The shipped backend accepts the verified MIR program.
+void expectBackendAccepts(
+    const lang::FrontendResult &frontend, std::string_view message,
+    lang::OptimizationLevel level = lang::OptimizationLevel::O0) {
+  std::string error;
+  expect(lang::verifyMirProgram(frontend.mir).valid() &&
+             gti_test::llvmEmits(frontend, level, lang::TargetInfo::host(),
+                                 &error),
+         std::string(message) + (error.empty() ? "" : ": " + error));
 }
 
 void printDiagnostics(const lang::FrontendResult &result) {
@@ -254,23 +264,12 @@ void testSemanticAndIrModel() {
   expect(mirConstruction && mirExtraction,
          "MIR should preserve payload construction and extraction effects");
 
-  const lang::OptimizationResult optimizations =
-      lang::OptimizationPipeline().run(result.hir, lang::OptimizationLevel::O1);
-  const lang::BackendArtifact artifact =
-      gti_test::emitCpp(result, result.mir, result.mir, optimizations);
-  expect(
-      artifact.contents.find("union Bits {") != std::string::npos &&
-          // Native alternatives carry the source ordinals unshifted; the
-          // backend-private empty shell is the final alternative.
-          artifact.contents.find(
-              "::gti_internal::backend::payload_variant<__gti_variant_0, "
-              "__gti_variant_1, __gti_variant_2, std::monostate> "
-              "__gti_value;") != std::string::npos &&
-          artifact.contents.find(".__gti_value.index()") != std::string::npos &&
-          artifact.contents.find("::gti_internal::backend::payload_get<1>(") !=
-              std::string::npos &&
-          artifact.contents.find("std::is_union_v<Bits>") != std::string::npos,
-      "the C++ backend should use native unions and tagged variant storage");
+  // Native union and tagged variant spelling is covered by
+  // cpp_mir_sum_type_tests.cpp.
+  expectBackendAccepts(result,
+                       "the shipped backend compiles native unions and "
+                       "payload enums",
+                       lang::OptimizationLevel::O1);
 }
 
 void testUnionSafetyBoundary() {
@@ -865,19 +864,10 @@ int main() {
          "ordinary class and struct fields should retain one exact active "
          "payload-enum cleanup row through verified MIR");
 
-  const lang::BackendArtifact containmentArtifact =
-      gti_test::emitCpp(aggregateContainment);
-  const std::size_t enumDefinition =
-      containmentArtifact.contents.find("struct holder {");
-  const std::size_t wrapperDefinition =
-      containmentArtifact.contents.find("class wrapper {");
-  expect(enumDefinition != std::string::npos &&
-             wrapperDefinition != std::string::npos &&
-             enumDefinition < wrapperDefinition &&
-             containmentArtifact.contents.find(
-                 ", std::monostate> __gti_value;") != std::string::npos,
-         "the C++ type schedule should define an embedded payload enum before "
-         "its owning class and retain the private disengaged shell");
+  // The C++ type schedule is covered by cpp_mir_sum_type_tests.cpp.
+  expectBackendAccepts(aggregateContainment,
+                       "an embedded payload enum and its owning classes "
+                       "compile");
 
   lang::MirProgram forgedContainment = aggregateContainment.mir;
   auto &forgedClasses =
@@ -1199,8 +1189,9 @@ int main() {
              lang::verifyMirProgram(nestedOwning.mir).valid(),
          "finite nested owning payload enums use structural cleanup recipes");
   if (nestedOwning.canGenerateCode())
-    expect(!gti_test::emitCppText(nestedOwning).empty(),
-           "non-generic nested owning payloads reach native representation");
+    expectBackendAccepts(
+        nestedOwning,
+        "non-generic nested owning payloads reach native representation");
 
   const lang::FrontendResult genericPayload =
       analyze("generic-class-payload-enum.gti", R"(
@@ -2345,21 +2336,10 @@ int main() {
          }),
          "a switch terminator cannot copy the move-only enum it observes");
 
-  const std::string text = gti_test::emitCpp(program).contents;
-  const std::size_t observer =
-      text.find("_tag(::__gti_program::choice __gti_mir_arg_0) {");
-  const std::size_t observerEnd =
-      observer == std::string::npos ? observer : text.find("\n  }\n", observer);
-  const std::string observerBody =
-      observerEnd == std::string::npos
-          ? std::string{}
-          : text.substr(observer, observerEnd - observer);
-  expect(text.find("_pick(std::move(__gti_mir_v_") != std::string::npos &&
-             text.find("_tag(std::move(__gti_mir_v_") != std::string::npos &&
-             observerBody.find("switch (__gti_mir_p_") != std::string::npos &&
-             observerBody.find("switch (__gti_mir_v_") == std::string::npos,
-         "by-value arguments move their staged move-only locals, and an "
-         "observing switch reads its parameter in place");
+  // The C++ staging text is covered by cpp_mir_sum_type_tests.cpp; MIR
+  // above proves no copy and an in-place borrowed switch subject.
+  expectBackendAccepts(program, "move-only payload arguments and observing "
+                                "switches compile");
 }
 
 // The blocks of a body whose switch read-borrows a fixed-array element.
@@ -2629,18 +2609,11 @@ int main() {
          "a nested element switch with an unchecked outer index must fail "
          "verification");
 
-  std::string emitted;
-  try {
-    emitted = gti_test::emitCpp(program).contents;
-  } catch (const std::exception &error) {
-    std::cerr << "element subject emission: " << error.what() << '\n';
-  }
-  expect(emitted.find("mir_checked_array_bound_v1(") != std::string::npos &&
-             emitted.find("].__gti_value.index()") != std::string::npos &&
-             emitted.find("].__gti_value).__gti_field_") != std::string::npos &&
-             emitted.find("].state.__gti_value.index()") != std::string::npos,
-         "the C++ backend checks the bound, then switches on and reads "
-         "payloads from the element itself");
+  // The C++ bound-check and element-access text is covered by
+  // cpp_mir_sum_type_tests.cpp; MIR above proves the dominating checked
+  // selection.
+  expectBackendAccepts(program, "element switch subjects compile after their "
+                                "checked selection");
 }
 
 } // namespace

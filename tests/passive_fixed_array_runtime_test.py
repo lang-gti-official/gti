@@ -55,7 +55,7 @@ def main():
         ):
             path = scratch / f"{name}.gti"
             path.write_text(source)
-            rejected = run([str(compiler), str(path), "--emit-cpp", "-o", str(scratch / "bad.cpp")], expected=65)
+            rejected = run([str(compiler), str(path), "--emit-mir", "-o", str(scratch / "bad.mir")], expected=65)
             assert code in rejected.stderr and "GTI-B0001" not in rejected.stderr, rejected
     print("passive fixed arrays: 48 native cases, two sanitizer cases, and four safety negatives passed")
 

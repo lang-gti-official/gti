@@ -629,7 +629,7 @@ owners = [
   "backend_lowered_program_boundary",
   "failure_metadata",
   "failure_descriptor_backend",
-  "failure_descriptor_backend_compile",
+  "cpp_mir_failure_descriptor_backend_compile",
   "native_header_pipeline",
   "native_header_c_cpp_oracle",
   "source_debug_info",
@@ -639,7 +639,7 @@ consumers = [
   "cli_workflow",
   "project_cli_workflow",
   "llvm_backend_foundation",
-  "cpp_backend_library_boundary",
+  "cpp_mir_backend_library_boundary",
   "language_coverage_corpus",
 ]
 
@@ -955,7 +955,7 @@ owners = [
   "panic_adoption_runtime",
   "panic_contracts",
   "failure_descriptor_backend",
-  "failure_descriptor_backend_compile",
+  "cpp_mir_failure_descriptor_backend_compile",
 ]
 consumers = [
   "checked_integer_overflow_runtime",
@@ -1656,7 +1656,7 @@ owners = [
   "lsp_sdk",
   "optimized_test_compiler_policy",
   "compiler_library_boundary",
-  "cpp_backend_library_boundary",
+  "cpp_mir_backend_library_boundary",
   "driver_library_boundary",
   "llvm_backend_library_boundary",
   "llvm_backend_dependency_controls",

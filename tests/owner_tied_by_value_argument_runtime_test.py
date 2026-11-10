@@ -15,7 +15,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 EXPECTED_OUTPUT = (
     "distance-read ok\ndistance-mut ok\nrelay ok\nprvalue ok\nrelay-after ok\n"
@@ -73,11 +73,16 @@ def main() -> int:
 
         # Copy at CallInput, not at the consumer. Across Invoke blocks the
         # prepared argument lives in an outer slot and retires after use.
+        # This copy/consume/retire order is a C++-profile text probe.
+        if not cpp_text_modes():
+            return 0
+        _label, cpp_flags, _native = cpp_text_modes()[0]
         generated = root / "generated.cpp"
         emitted = run(
             [
                 str(compiler),
                 str(source),
+                *cpp_flags,
                 "--emit-cpp",
                 "-o",
                 str(generated),

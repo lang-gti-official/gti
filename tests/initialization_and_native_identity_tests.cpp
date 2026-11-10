@@ -1,5 +1,6 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
+#include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -14,6 +15,17 @@ int main() {
       std::cerr << message << '\n';
       ++failures;
     }
+  };
+  // The shipped backend accepts the verified MIR program.
+  const auto backendAccepts = [](const lang::FrontendResult &frontend) {
+    std::string error;
+    const bool accepted =
+        lang::verifyMirProgram(frontend.mir).valid() &&
+        gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                            lang::TargetInfo::host(), &error);
+    if (!error.empty())
+      std::cerr << error << '\n';
+    return accepted;
   };
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   const auto analyze = [&](const std::string &source,
@@ -61,7 +73,7 @@ int main() { Parent parent{}; return parent.read() - 14; }
   expect(nullable.canGenerateCode(),
          "unrelated nominal nullptr constructor must initialize a field");
   if (nullable.canGenerateCode())
-    expect(!gti_test::emitCpp(nullable).contents.empty(),
+    expect(backendAccepts(nullable),
            "nullable field construction must retain executable authority");
   rejected(R"gti(
 class Empty { public: Empty(nullptr_t value) {}  public: Empty() = default; };
@@ -123,7 +135,7 @@ int main() {
     for (const auto &d : declared.diagnostics)
       std::cerr << d.code << ": " << d.message << '\n';
   if (declared.canGenerateCode())
-    expect(!gti_test::emitCpp(declared).contents.empty(),
+    expect(backendAccepts(declared),
            "declaration construction must retain executable authority");
   const std::string celsius = R"gti(
 class Celsius {
@@ -187,7 +199,7 @@ int main() {
     for (const auto &d : returned.diagnostics)
       std::cerr << d.code << ": " << d.message << '\n';
   if (returned.canGenerateCode())
-    expect(!gti_test::emitCpp(returned).contents.empty(),
+    expect(backendAccepts(returned),
            "implicit return construction must use executable MIR");
   if (returned.canGenerateCode()) {
     for (int mutation = 0; mutation != 3; ++mutation) {
@@ -459,33 +471,22 @@ int main() { return 0; }
         std::cerr << d.code << ": " << d.message << '\n';
       continue;
     }
-    const auto artifact =
-        gti_test::emitCpp(native, lang::CppStandard::Cpp23, options.target);
-    const std::size_t programStart =
-        artifact.contents.find("namespace __gti_program {");
-    expect(programStart != std::string::npos &&
-               artifact.contents.find("#if", programStart) == std::string::npos,
-           "native link labels must follow the selected target, not host "
-           "preprocessor branches");
+    // The C++ link-label spelling for each target is covered by
+    // cpp_mir_native_identity_tests.cpp; here the target-independent MIR
+    // keeps each declaration's exact selected external symbol.
     int checked = 0;
+    std::set<std::string> symbols;
     for (const auto &function : native.mir.functionInstances()) {
       if (function.linkage != lang::LanguageLinkage::C)
         continue;
       ++checked;
       expect(function.returnType == lang::SemanticType::UInt64,
              "private declaration isolation must not remap uint64_t");
-      const auto name = "__gti_c_fn_" + std::to_string(function.declaration);
-      expect(artifact.contents.find(name + "(") != std::string::npos,
-             "native declaration and call must share private identity");
-      const std::string &os = options.target.os;
-      const std::string label =
-          os == "windows"
-              ? "/alternatename:" + name + "=" + function.externalSymbol + "\""
-              : "__asm__(\"" + std::string(os == "macos" ? "_" : "") +
-                    function.externalSymbol + "\")";
-      expect(artifact.contents.find(label) != std::string::npos,
-             "the target's link label must retain the exact selected symbol");
+      symbols.insert(function.externalSymbol);
     }
+    expect(symbols ==
+               std::set<std::string>{"strlen", "unrelated_native_length"},
+           "the target's link label must retain the exact selected symbol");
     expect(checked == 2, "both native declarations must retain identity");
   }
   rejected("extern \"C\" { [[link_name(\"bad\\\"label\")]] int32_t call(); } "
@@ -518,7 +519,7 @@ int main() { return discard(1, uint32_t(2)); }
       expect(cell.canGenerateCode(),
              "each bodyless unnamed formal shape must retain canonical MIR");
       if (cell.canGenerateCode())
-        expect(!gti_test::emitCpp(cell).contents.empty(),
+        expect(backendAccepts(cell),
                "each bodyless unnamed shape must reach production emission");
     }
     if (shape == "int32_t" || shape == "int32_t*") {
@@ -527,7 +528,7 @@ int main() { return discard(1, uint32_t(2)); }
       expect(cell.canGenerateCode(),
              "unnamed valid C ABI shape must retain canonical MIR");
       if (cell.canGenerateCode())
-        expect(!gti_test::emitCpp(cell).contents.empty(),
+        expect(backendAccepts(cell),
                "unnamed C ABI shape must reach production emission");
     }
   }
@@ -566,7 +567,7 @@ int main() { return discard(1, uint32_t(2)); }
       }
     }
     expect(emptyNames == 4, "both unnamed signatures must reach publication");
-    expect(!gti_test::emitCpp(unnamed).contents.empty(),
+    expect(backendAccepts(unnamed),
            "unnamed formals must reach verified executable emission");
   }
   auto constexprUnnamed =

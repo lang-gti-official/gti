@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from backend_modes import native_modes
+from backend_modes import cpp_text_modes, native_modes
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -18,6 +18,91 @@ def fail(label: str, process: subprocess.CompletedProcess[str]) -> int:
         f"stderr={process.stderr!r}\n"
     )
     return 1
+
+
+def check_cpp_text(compiler, fixture, root, cpp_flags) -> int:
+    """The C++ profile's representation of the value-rooted field reads."""
+    generated_path = root / "issue-127.cpp"
+    emitted = run(
+        [
+            str(compiler),
+            str(fixture),
+            "-O0",
+            *cpp_flags,
+            "--emit-cpp",
+            "-o",
+            str(generated_path),
+        ]
+    )
+    if emitted.returncode != 0:
+        return fail("emit C++23/O0", emitted)
+
+    generated = generated_path.read_text(encoding="utf8")
+    direct_field_reads = re.findall(
+        r"__gti_mir_v_\d+\.get\(\)\.value", generated
+    )
+    def slot_constructions(types: str) -> list[str]:
+        return re.findall(
+            r"::new \(static_cast<void \*>\(__gti_mir_v_\d+\.construction_address\(\)\)\) "
+            rf"[\w:]*\b(?:{types})\("
+            r"::gti_internal::backend::mir_failure_constructor_tag_v1<",
+            generated,
+        )
+
+    direct_slot_constructions = slot_constructions("plain_t|Fixed|Stamp")
+    if len(direct_field_reads) != 11 or len(direct_slot_constructions) != 9:
+        sys.stderr.write(
+            "generated C++ lost the exact constructor/call value-rooted "
+            "field-read slots\n"
+        )
+        return 1
+    # A nested read spells its whole field chain through the temporary's
+    # value slot; the shorter chains MIR records on the way spell nothing.
+    nested_field_reads = re.findall(
+        r"__gti_mir_v_\d+\.get\(\)\.(?:word|phrase|level|low)\.", generated
+    )
+    owned_nested_reads = re.findall(
+        r"__gti_mir_p_\d+\.get\(\)\.(?:word|phrase|level)\.", generated
+    )
+    nested_slot_constructions = slot_constructions(
+        "phrase_t|sentence_t|anchored_t"
+    )
+    # Twelve nested reads of fresh temporaries, and two of joins whose
+    # arms pass a class by value.
+    if (
+        len(nested_field_reads) != 14
+        or owned_nested_reads
+        or len(nested_slot_constructions) != 7
+    ):
+        sys.stderr.write(
+            "generated C++ lost the value slots of nested field reads\n"
+        )
+        return 1
+    # Each viewed cleanup-free join moves its object into the read's slot
+    # and ends the emptied join storage: the tier join, both by-value
+    # argument joins and the three text joins. A method call on a join
+    # borrows the join storage instead.
+    if generated.count("// end moved join representation") != 6:
+        sys.stderr.write(
+            "generated C++ lost the representation-only join storage\n"
+        )
+        return 1
+    # A temporary whose class has a destructor is read through MIR's own
+    # result slot, never through a cleanup-free value slot.
+    owned_field_reads = re.findall(
+        r"__gti_mir_p_\d+\.get\(\)\.(?:count|tag)\b", generated
+    )
+    cleanup_free_owned_reads = re.findall(
+        r"__gti_mir_v_\d+\.get\(\)\.(?:count|tag)\b", generated
+    )
+    if len(owned_field_reads) != 18 or cleanup_free_owned_reads:
+        sys.stderr.write(
+            "generated C++ lost the owned result slots of destructor-"
+            "bearing constructor temporaries\n"
+        )
+        return 1
+
+    return 0
 
 
 def main() -> int:
@@ -48,86 +133,10 @@ def main() -> int:
             ):
                 return fail(f"run {mode}", executed)
 
-        generated_path = root / "issue-127.cpp"
-        emitted = run(
-            [
-                str(compiler),
-                str(fixture),
-                "-O0",
-                "--std",
-                "c++23",
-                "--emit-cpp",
-                "-o",
-                str(generated_path),
-            ]
-        )
-        if emitted.returncode != 0:
-            return fail("emit C++23/O0", emitted)
-
-        generated = generated_path.read_text(encoding="utf8")
-        direct_field_reads = re.findall(
-            r"__gti_mir_v_\d+\.get\(\)\.value", generated
-        )
-        def slot_constructions(types: str) -> list[str]:
-            return re.findall(
-                r"::new \(static_cast<void \*>\(__gti_mir_v_\d+\.construction_address\(\)\)\) "
-                rf"[\w:]*\b(?:{types})\("
-                r"::gti_internal::backend::mir_failure_constructor_tag_v1<",
-                generated,
-            )
-
-        direct_slot_constructions = slot_constructions("plain_t|Fixed|Stamp")
-        if len(direct_field_reads) != 11 or len(direct_slot_constructions) != 9:
-            sys.stderr.write(
-                "generated C++ lost the exact constructor/call value-rooted "
-                "field-read slots\n"
-            )
-            return 1
-        # A nested read spells its whole field chain through the temporary's
-        # value slot; the shorter chains MIR records on the way spell nothing.
-        nested_field_reads = re.findall(
-            r"__gti_mir_v_\d+\.get\(\)\.(?:word|phrase|level|low)\.", generated
-        )
-        owned_nested_reads = re.findall(
-            r"__gti_mir_p_\d+\.get\(\)\.(?:word|phrase|level)\.", generated
-        )
-        nested_slot_constructions = slot_constructions(
-            "phrase_t|sentence_t|anchored_t"
-        )
-        # Twelve nested reads of fresh temporaries, and two of joins whose
-        # arms pass a class by value.
-        if (
-            len(nested_field_reads) != 14
-            or owned_nested_reads
-            or len(nested_slot_constructions) != 7
-        ):
-            sys.stderr.write(
-                "generated C++ lost the value slots of nested field reads\n"
-            )
-            return 1
-        # Each viewed cleanup-free join moves its object into the read's slot
-        # and ends the emptied join storage: the tier join, both by-value
-        # argument joins and the three text joins. A method call on a join
-        # borrows the join storage instead.
-        if generated.count("// end moved join representation") != 6:
-            sys.stderr.write(
-                "generated C++ lost the representation-only join storage\n"
-            )
-            return 1
-        # A temporary whose class has a destructor is read through MIR's own
-        # result slot, never through a cleanup-free value slot.
-        owned_field_reads = re.findall(
-            r"__gti_mir_p_\d+\.get\(\)\.(?:count|tag)\b", generated
-        )
-        cleanup_free_owned_reads = re.findall(
-            r"__gti_mir_v_\d+\.get\(\)\.(?:count|tag)\b", generated
-        )
-        if len(owned_field_reads) != 18 or cleanup_free_owned_reads:
-            sys.stderr.write(
-                "generated C++ lost the owned result slots of destructor-"
-                "bearing constructor temporaries\n"
-            )
-            return 1
+        # Assertions on the emitted C++ text run only under the C++ profile.
+        for _label, cpp_flags, _native in cpp_text_modes():
+            if check_cpp_text(compiler, fixture, root, cpp_flags):
+                return 1
 
     return 0
 

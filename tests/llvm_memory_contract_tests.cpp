@@ -1,5 +1,5 @@
 #include "../src/compiler/llvm/memory.h"
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 #include "private_stdlib_fixture.h"
 
 #include "gti/process_memory_runtime.h"

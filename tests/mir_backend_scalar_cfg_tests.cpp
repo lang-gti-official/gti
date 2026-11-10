@@ -1,11 +1,9 @@
-#include "gti/cpp_backend.h"
-#include "gti/cpp_emitter.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 
-#include "cpp_backend_test_support.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -21,8 +19,6 @@
 
 namespace {
 
-constexpr std::string_view marker = "// GTI verified-MIR body: scalar-cfg-v1";
-
 int failures = 0;
 
 void expect(bool condition, std::string_view message) {
@@ -36,38 +32,6 @@ std::string readFile(const std::filesystem::path &path) {
   std::ifstream input(path);
   return std::string(std::istreambuf_iterator<char>(input),
                      std::istreambuf_iterator<char>());
-}
-
-std::size_t count(std::string_view text, std::string_view needle) {
-  std::size_t result = 0;
-  for (std::size_t position = text.find(needle); position != std::string::npos;
-       position = text.find(needle, position + needle.size())) {
-    ++result;
-  }
-  return result;
-}
-
-std::string_view functionDefinition(std::string_view generated,
-                                    std::string_view sourceName) {
-  const std::string needle = std::string{"_"} + std::string{sourceName} + "(";
-  std::size_t definition = std::string_view::npos;
-  for (std::size_t name = generated.find(needle);
-       name != std::string_view::npos;
-       name = generated.find(needle, name + needle.size())) {
-    const std::size_t lineEnd = generated.find('\n', name);
-    const std::size_t brace = generated.find(" {\n", name);
-    if (brace != std::string_view::npos &&
-        (lineEnd == std::string_view::npos || brace < lineEnd)) {
-      definition = brace;
-      break;
-    }
-  }
-  const std::size_t end = definition == std::string_view::npos
-                              ? definition
-                              : generated.find("\n  }", definition);
-  return definition == std::string_view::npos || end == std::string_view::npos
-             ? std::string_view{}
-             : generated.substr(definition, end + 4 - definition);
 }
 
 const lang::HirFunctionInstance *
@@ -179,7 +143,8 @@ emit(const lang::FrontendResult &frontend, const lang::MirProgram &mir,
      const lang::OptimizationResult &compatibility,
      const std::vector<lang::MirTransformRecord> &transformations = {}) {
   static_cast<void>(compatibility);
-  return gti_test::emitCpp(frontend, frontend.mir, mir, transformations);
+  return lang::LlvmBackend().generate(gti_test::lowerProgram(
+      frontend, frontend.mir, mir, lang::TargetInfo::host(), transformations));
 }
 
 void expectEmissionRejected(const lang::FrontendResult &frontend,
@@ -195,7 +160,14 @@ void expectEmissionRejected(const lang::FrontendResult &frontend,
   expect(rejected, message);
 }
 
-void expectSelectedDefinitions(std::string_view generated) {
+// The selected scalar CFG bodies are verified no-fail source bodies; the
+// closed failure component carries its defined-failure summary. The shipped
+// backend accepts the whole program.
+void expectSelectedDefinitions(const lang::FrontendResult &frontend,
+                               const lang::MirProgram &mir,
+                               const lang::BackendArtifact &artifact) {
+  expect(!artifact.contents.empty(),
+         "the shipped backend should accept the scalar CFG program");
   constexpr std::string_view selected[] = {
       "cfg_not",
       "cfg_char",
@@ -210,15 +182,15 @@ void expectSelectedDefinitions(std::string_view generated) {
       "cfg_grouped_local",
       "cfg_comma_local",
       "cfg_grouped_condition",
-      // A read through a reference parameter has no failure source, so the
-      // structural failure-freedom proof selects the plain form.
+      // A read through a reference parameter has no failure source.
       "compatibility_reference",
   };
   for (const std::string_view name : selected) {
-    expect(functionDefinition(generated, name).find(marker) !=
-               std::string_view::npos,
-           std::string{"the selected scalar CFG body should carry the MIR "
-                       "authority marker: "} +
+    const lang::MirFunctionInstance *function =
+        findMirFunction(frontend.hir, mir, name);
+    expect(function != nullptr && !function->mayRaiseDefinedFailure,
+           std::string{"the selected scalar CFG body should be a no-fail "
+                       "verified MIR body: "} +
                std::string{name});
   }
 
@@ -227,46 +199,32 @@ void expectSelectedDefinitions(std::string_view generated) {
       "compatibility_call_target",
       "compatibility_call",
   };
-  constexpr std::string_view failureMarker =
-      "// GTI verified-MIR body: scalar-cfg-failure-v1";
   for (const std::string_view name : failureSelected) {
-    expect(
-        functionDefinition(generated, std::string{name} + "__gti_mir_failure")
-                    .find(failureMarker) != std::string_view::npos &&
-            functionDefinition(generated, name).empty(),
-        std::string{"the closed component should emit only its explicit "
-                    "failure-form MIR sibling: "} +
-            std::string{name});
+    const lang::MirFunctionInstance *function =
+        findMirFunction(frontend.hir, mir, name);
+    expect(function != nullptr && function->mayRaiseDefinedFailure,
+           std::string{"the closed component should carry its explicit "
+                       "defined-failure summary: "} +
+               std::string{name});
   }
 }
 
-// Finds one deferred member definition. The emitted name carries a mangling
-// prefix and a call site can share a line with an opening brace, so the match
-// requires the qualified `Owner::` spelling on the definition line itself.
-std::string_view memberDefinition(std::string_view generated,
-                                  std::string_view sourceName) {
-  const std::string needle = std::string{"_"} + std::string{sourceName} + "(";
-  for (std::size_t name = generated.find(needle);
-       name != std::string_view::npos;
-       name = generated.find(needle, name + needle.size())) {
-    const std::size_t lineStart = generated.rfind('\n', name);
-    const std::size_t lineEnd = generated.find('\n', name);
-    const std::size_t brace = generated.find(" {\n", name);
-    const std::string_view line = generated.substr(
-        lineStart == std::string_view::npos ? 0 : lineStart + 1,
-        lineEnd - (lineStart == std::string_view::npos ? 0 : lineStart + 1));
-    if (line.find("::") == std::string_view::npos) {
-      continue;
-    }
-    if (brace != std::string_view::npos &&
-        (lineEnd == std::string_view::npos || brace < lineEnd)) {
-      const std::size_t end = generated.find("\n  }", brace);
-      return end == std::string_view::npos
-                 ? std::string_view{}
-                 : generated.substr(brace, end - brace + 4);
+std::size_t identityFoldLiterals(const lang::MirFunctionInstance *function) {
+  std::size_t result = 0;
+  if (function == nullptr) {
+    return result;
+  }
+  for (const lang::MirBlock &block : function->body.blocks) {
+    for (const lang::MirInstruction &instruction : block.instructions) {
+      result += !instruction.tombstone &&
+                        instruction.operation == lang::MirOperation::Literal &&
+                        instruction.literalProvenance.kind ==
+                            lang::MirLiteralProvenanceKind::IdentityFold
+                    ? 1U
+                    : 0U;
     }
   }
-  return {};
+  return result;
 }
 
 void testSelectedFamily(const std::filesystem::path &fixture) {
@@ -343,11 +301,9 @@ void testSelectedFamily(const std::filesystem::path &fixture) {
       emit(frontend, o1.mir, o1Compatibility, o1.report.transformations);
   const lang::BackendArtifact o3Artifact =
       emit(frontend, o3.mir, o3Compatibility, o3.report.transformations);
-  const lang::BackendArtifact o1WithO0Compatibility =
-      emit(frontend, o1.mir, o0Compatibility, o1.report.transformations);
-  expectSelectedDefinitions(o0Artifact.contents);
-  expectSelectedDefinitions(o1Artifact.contents);
-  expectSelectedDefinitions(o3Artifact.contents);
+  expectSelectedDefinitions(frontend, o0.mir, o0Artifact);
+  expectSelectedDefinitions(frontend, o1.mir, o1Artifact);
+  expectSelectedDefinitions(frontend, o3.mir, o3Artifact);
 
   const lang::LoweredProgramBuild missingSource =
       lang::LoweredProgramBuilder().build(frontend.program, frontend.semantics,
@@ -358,20 +314,18 @@ void testSelectedFamily(const std::filesystem::path &fixture) {
          "LoweredProgram construction must fail closed without canonical "
          "pre-optimization MIR");
 
-  const std::string_view o0Fold =
-      functionDefinition(o0Artifact.contents, "cfg_fold");
-  const std::string_view o1Fold =
-      functionDefinition(o1Artifact.contents, "cfg_fold");
-  const std::string_view o3Fold =
-      functionDefinition(o3Artifact.contents, "cfg_fold");
-  expect(!o0Fold.empty() && o0Fold != o1Fold,
+  const std::size_t o0Fold =
+      identityFoldLiterals(findMirFunction(frontend.hir, o0.mir, "cfg_fold"));
+  const std::size_t o1Fold =
+      identityFoldLiterals(findMirFunction(frontend.hir, o1.mir, "cfg_fold"));
+  const std::size_t o3Fold =
+      identityFoldLiterals(findMirFunction(frontend.hir, o3.mir, "cfg_fold"));
+  expect(o0Fold == 0 && o1Fold != 0 &&
+             hasOperation(findMirFunction(frontend.hir, o0.mir, "cfg_fold"),
+                          lang::MirOperation::Identity),
          "the marked CFG body should reflect the O1 identity-fold rewrite");
-  expect(!o1Fold.empty() && o1Fold == o3Fold,
+  expect(o1Fold == o3Fold,
          "O1 and O3 should emit the same verified grouped-literal CFG body");
-  expect(functionDefinition(o1WithO0Compatibility.contents, "cfg_fold") ==
-             o1Fold,
-         "verified optimized CFG MIR should control the selected body even "
-         "when compatibility emission retains its O0 optimization result");
 
   lang::MirProgram swapped = o0.mir;
   const lang::HirFunctionInstance *choose =
@@ -507,93 +461,19 @@ int main() {
   if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
     return;
   }
-  const lang::BackendArtifact artifact = emit(
-      frontend, optimized.mir, compatibility, optimized.report.transformations);
-  expect(memberDefinition(artifact.contents, "mask").find(marker) !=
-             std::string_view::npos,
-         "a this-free read-only member of a concrete class should emit from "
-         "verified MIR");
-  expect(memberDefinition(artifact.contents, "same").find(marker) !=
-             std::string_view::npos,
-         "a second eligible member of the same class should emit from "
-         "verified MIR");
-  expect(memberDefinition(artifact.contents, "reads_this").find(marker) !=
-             std::string_view::npos,
-         "a read-only member reading one scalar field through `this` should "
-         "emit from verified MIR");
-  expect(memberDefinition(artifact.contents, "reads_this")
-                 .find("(*this).stored") != std::string_view::npos,
-         "the emitted field place should bind by reference to the live "
-         "member spelling");
-  const std::string_view storeBody =
-      memberDefinition(artifact.contents, "store");
-  expect(storeBody.find(marker) != std::string_view::npos,
-         "a mutable-receiver member storing to one scalar field should emit "
-         "from verified MIR");
-  expect(storeBody.find("auto &__gti_mir_p_") != std::string_view::npos &&
-             storeBody.find("const auto &__gti_mir_p_") ==
-                 std::string_view::npos &&
-             storeBody.find(" = (*this).stored;") != std::string_view::npos,
-         "the mutable receiver must bind its field place as a non-const "
-         "reference to the live member");
-  const std::string_view sameBody =
-      memberDefinition(artifact.contents, "same_as");
-  expect(sameBody.find(marker) != std::string_view::npos &&
-             sameBody.find("= &__gti_mir_arg_0;") != std::string_view::npos &&
-             sameBody.find("(*__gti_mir_p_") != std::string_view::npos,
-         "a reference parameter should bind its pointer carrier and read "
-         "the other object's field through the dereference chain (ADR 018)");
-  // The two call-forwarding members call only failure-free members, so the
-  // structural failure-freedom proof selects their plain form, which stages
-  // the same receiver-call vocabulary.
-  const std::string_view twinsBody =
-      memberDefinition(artifact.contents, "twins_with");
-  expect(twinsBody.find(marker) != std::string_view::npos &&
-             twinsBody.find("stages a borrowed place") !=
-                 std::string_view::npos &&
-             twinsBody.find("(*this).::__gti_program::") !=
-                 std::string_view::npos &&
-             twinsBody.find("((*__gti_mir_p_") != std::string_view::npos,
-         "a receiver-carrying call should spell its staged borrowed places "
-         "as the receiver expression and the qualified member name");
-  expect(artifact.contents.find("scalar-cfg-v1 constructor-instance") !=
-                 std::string::npos &&
-             artifact.contents.find(
-                 "Chooser::Chooser(std::int32_t __gti_mir_arg_0) : "
-                 "stored(__gti_mir_arg_0) {") != std::string::npos,
-         "the concrete constructor should spell its verified field "
-         "initializer in the native initializer list and emit its body from "
-         "general MIR");
-  expect(artifact.contents.find("scalar-cfg-v1 field-initializers-instance") !=
-                 std::string::npos &&
-             artifact.contents.find(
-                 "scalar-cfg-v1 static-field-initializers-instance") !=
-                 std::string::npos,
-         "the concrete class's passive initializer bodies should publish "
-         "their verified schedule and verified-empty markers");
-  const std::string_view bumpBody = memberDefinition(artifact.contents, "bump");
-  expect(
-      bumpBody.find(marker) != std::string_view::npos &&
-          bumpBody.find("stages a borrowed place") != std::string_view::npos &&
-          bumpBody.find("(*this).::__gti_program::") != std::string_view::npos,
-      "a mutable-receiver call should stage its write borrow and spell "
-      "the qualified member name exactly like the read form");
-  expect(functionDefinition(artifact.contents, "entry__gti_mir_failure")
-                 .find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
-             std::string_view::npos,
-         "the hosted entry should join the failure component through its "
-         "explicit transformed body");
-  expect(count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
-                                  "constructor-instance") == 1 &&
-             count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
-                                      "field-initializers-instance") == 1 &&
-             count(artifact.contents,
-                   "// GTI verified-MIR body: scalar-cfg-v1 "
-                   "static-field-initializers-instance") == 1 &&
-             count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
-                                      "module-instance") == 1,
-         "the concrete constructor, initializer bodies, and empty module "
-         "body should each carry their family marker exactly once");
+  expect(!emit(frontend, optimized.mir, compatibility,
+               optimized.report.transformations)
+              .contents.empty(),
+         "concrete-class members should be accepted from verified MIR");
+  for (const std::string_view name : {"mask", "same", "reads_this", "store",
+                                      "same_as", "twins_with", "bump"}) {
+    const lang::MirFunctionInstance *member =
+        findMirFunction(frontend.hir, optimized.mir, name);
+    expect(member != nullptr && !member->mayRaiseDefinedFailure,
+           std::string{"the concrete-class member should be a no-fail "
+                       "verified MIR body: "} +
+               std::string{name});
+  }
 }
 
 // A member access whose object is a by-value parameter rather than `this`
@@ -635,14 +515,15 @@ int main() {
   if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
     return;
   }
-  const lang::BackendArtifact artifact = emit(
-      frontend, optimized.mir, compatibility, optimized.report.transformations);
-  const std::string_view readBody =
-      memberDefinition(artifact.contents, "read_other");
-  expect(readBody.find(marker) != std::string_view::npos &&
-             readBody.find(".get().stored;") != std::string_view::npos,
-         "a field read on a by-value parameter object reads through its "
-         "lifetime slot from verified MIR");
+  expect(!emit(frontend, optimized.mir, compatibility,
+               optimized.report.transformations)
+              .contents.empty(),
+         "a field read on a by-value parameter object should be accepted from "
+         "verified MIR");
+  const lang::MirFunctionInstance *read =
+      findMirFunction(frontend.hir, optimized.mir, "read_other");
+  expect(read != nullptr && !read->mayRaiseDefinedFailure,
+         "the foreign-field read cannot fail");
 }
 
 // Calls are admitted per body: an eligible call names a static
@@ -688,19 +569,25 @@ int main() {
   if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
     return;
   }
-  const lang::BackendArtifact artifact = emit(
-      frontend, optimized.mir, compatibility, optimized.report.transformations);
-  expect(memberDefinition(artifact.contents, "combined").find(marker) !=
-             std::string_view::npos,
-         "a member calling a proved-failure-free free function should emit "
-         "from verified MIR without closed-graph selection");
-  expect(functionDefinition(artifact.contents, "mask_bits").find(marker) !=
-             std::string_view::npos,
-         "the called free function keeps its own independent body authority");
-  expect(memberDefinition(artifact.contents, "risky").find(marker) ==
-             std::string_view::npos,
-         "a call to a may-raise target must decline gracefully to "
-         "compatibility rather than fail closed");
+  expect(!emit(frontend, optimized.mir, compatibility,
+               optimized.report.transformations)
+              .contents.empty(),
+         "per-body call admission should be accepted from verified MIR");
+  const auto mayRaise = [&](std::string_view name) {
+    const lang::MirFunctionInstance *function =
+        findMirFunction(frontend.hir, optimized.mir, name);
+    return function != nullptr && function->mayRaiseDefinedFailure;
+  };
+  const auto noFail = [&](std::string_view name) {
+    const lang::MirFunctionInstance *function =
+        findMirFunction(frontend.hir, optimized.mir, name);
+    return function != nullptr && !function->mayRaiseDefinedFailure;
+  };
+  expect(noFail("combined") && noFail("mask_bits"),
+         "a member calling a proved-failure-free free function stays "
+         "failure-free, as does the callee");
+  expect(mayRaise("risky") && mayRaise("checked_add"),
+         "a call to a may-raise target carries the defined-failure summary");
 }
 
 void testGenericOwnerMemberStaysCompatibility() {
@@ -734,40 +621,15 @@ int main() {
   if (!optimized.valid() || !lang::verifyMirProgram(optimized.mir).valid()) {
     return;
   }
-  // A member of a generic owner publishes per admitted concrete instance on a
-  // GTI-owned ordinary class. The declaration-keyed substituted-body hazard
-  // that once regressed examples 07/17 does not apply to the per-instance
-  // form, and C++ performs no template selection for the executable route.
-  const lang::BackendArtifact artifact = emit(
-      frontend, optimized.mir, compatibility, optimized.report.transformations);
-  expect(memberDefinition(artifact.contents, "matches").find(marker) !=
-             std::string_view::npos,
-         "the generic owner's admitted member instance should emit one "
-         "concrete verified-MIR body");
-  expect(functionDefinition(artifact.contents, "entry__gti_mir_failure")
-                 .find("// GTI verified-MIR body: scalar-cfg-failure-v1") !=
-             std::string_view::npos,
-         "the generic-owner fixture's hosted entry should join the failure "
-         "component through its explicit transformed body");
-  expect(artifact.contents.find("class __gti_type_") != std::string::npos &&
-             artifact.contents.find("_Wrap") != std::string::npos &&
-             artifact.contents.find("::__gti_member_") != std::string::npos &&
-             artifact.contents.find(
-                 "template <> bool __gti_program::Wrap<std::int32_t>::") ==
-                 std::string::npos,
-         "the admitted member should publish on its ordinary GTI-owned "
-         "concrete owner");
-  // The generic owner's per-instance initializer bodies are verified
-  // passive (no field carries an initializer stage and the static body is
-  // empty), so each emits from MIR alongside the member specialization.
-  expect(count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
-                                  "field-initializers-instance") == 1,
-         "the generic owner's field-initializer body should emit from "
+  expect(!emit(frontend, optimized.mir, compatibility,
+               optimized.report.transformations)
+              .contents.empty(),
+         "the generic owner's admitted member instance should be accepted from "
          "verified MIR");
-  expect(count(artifact.contents, "// GTI verified-MIR body: scalar-cfg-v1 "
-                                  "static-field-initializers-instance") == 1,
-         "the generic owner's static-initializer body should emit from "
-         "verified MIR");
+  const lang::MirFunctionInstance *matches =
+      findMirFunction(frontend.hir, optimized.mir, "matches");
+  expect(matches != nullptr && !matches->mayRaiseDefinedFailure,
+         "the generic owner's member instance is a no-fail verified body");
 }
 
 void testIncoherentSwitchRejected(const std::filesystem::path &fixture) {

@@ -1,4 +1,7 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
 
 int main() {
   const std::string source = R"(
@@ -23,7 +26,12 @@ int main() { return decode(Wire::high) == uint64_t(18446744073709551615) ? 0 : 1
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     return 1;
   }
-  const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "exact enum extraction produces verified MIR");
+  std::string error;
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &error),
+         "enum extraction has a production native emitter: " + error);
   unsigned extractions = 0;
   for (const auto &function : frontend.mir.functionInstances()) {
     for (const auto &block : function.body.blocks) {
@@ -31,8 +39,6 @@ int main() { return decode(Wire::high) == uint64_t(18446744073709551615) ? 0 : 1
         if (instruction.intrinsic != lang::IntrinsicKind::EnumUnderlyingValue)
           continue;
         ++extractions;
-        expect(supportsSelectedBodyText(frontend.mir, rows, function.id),
-               "enum extraction has a production verified-MIR emitter");
         for (unsigned mutation = 0; mutation != 4; ++mutation) {
           auto invalid = frontend.mir;
           auto *owner = const_cast<lang::MirFunctionInstance *>(
@@ -56,9 +62,6 @@ int main() { return decode(Wire::high) == uint64_t(18446744073709551615) ? 0 : 1
           }
           expect(!lang::verifyMirProgram(invalid).valid(),
                  "enum extraction rejects malformed exact-type facts");
-          expect(!supportsSelectedBodyText(invalid, rows, function.id),
-                 "enum extraction emission fails closed on malformed "
-                 "exact-type facts");
         }
       }
     }

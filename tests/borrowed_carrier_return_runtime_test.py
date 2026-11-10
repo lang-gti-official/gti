@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import native_modes
+
 
 def run(*args):
     return subprocess.run([str(arg) for arg in args], capture_output=True,
@@ -28,22 +30,19 @@ def main():
         invalid = root / "borrowed-resource-mutation.gti"
         invalid.write_text(general.replace("  return owner.read() - 2;",
                                            "  resource.reset();\n  return owner.read() - 2;"))
-        for backend in ("llvm", "cpp"):
-            for level in ("O0", "O3"):
-                for source in (fixtures / "borrowed_carrier_return.gti",
-                               fixtures / "resource_vector_return.gti", direct):
-                    executable = root / f"{source.stem}-{backend}-{level}"
-                    built = run(compiler, source, "--backend", backend,
-                                f"-{level}", "--progress", "never", "-o", executable)
-                    assert built.returncode == 0, (source, backend, level, built.stderr)
-                    result = run(executable)
-                    assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), (
-                        source, backend, level, result)
-            rejected = run(compiler, invalid, "--backend", backend,
+        for mode, flags, _native in native_modes():
+            for source in (fixtures / "borrowed_carrier_return.gti",
+                           fixtures / "resource_vector_return.gti", direct):
+                executable = root / f"{source.stem}-{mode}"
+                built = run(compiler, source, *flags, "--progress", "never", "-o", executable)
+                assert built.returncode == 0, (source, mode, built.stderr)
+                result = run(executable)
+                assert (result.returncode, result.stdout, result.stderr) == (0, "", ""), (
+                    source, mode, result)
+            rejected = run(compiler, invalid, *flags,
                            "--progress", "never", "-o", root / "rejected")
             assert rejected.returncode == 65 and "GTI-S2017" in rejected.stderr, (
-                backend, rejected.stderr)
-
+                mode, rejected.stderr)
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,31 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+#include "gti/hir.h"
 #include "gti/mir_editor.h"
+
+namespace {
+
+// The shipped backend accepts the verified MIR program.
+void expectBackendAccepts(const lang::FrontendResult &frontend,
+                          const std::string &message) {
+  std::string error;
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         message + " (MIR verifies)");
+  expect(gti_test::llvmEmits(frontend, lang::OptimizationLevel::O0,
+                             lang::TargetInfo::host(), &error),
+         message + (error.empty() ? "" : ": " + error));
+}
+
+lang::FrontendResult analyzeFixture(const std::string &fixture) {
+  const auto path = std::filesystem::path(__FILE__).parent_path() / "fixtures" /
+                    (fixture + ".gti");
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  return analyzeWithStandardLibrary(path.string(), source);
+}
+
+} // namespace
 
 int main() {
   {
@@ -21,12 +47,9 @@ int main() {
     expect(frontend.canGenerateCode(),
            "conditional native inputs have valid MIR");
     if (frontend.canGenerateCode()) {
-      try {
-        expect(!gti_test::emitCppText(frontend).empty(),
-               "prepared constructor inputs preserve conditional publication");
-      } catch (const std::exception &error) {
-        expect(false, error.what());
-      }
+      expectBackendAccepts(
+          frontend,
+          "prepared constructor inputs preserve conditional publication");
       std::size_t checked = 0;
       for (const auto &function : frontend.mir.functionInstances()) {
         for (const auto &block : function.body.blocks) {
@@ -72,22 +95,13 @@ int main() {
   for (const std::string fixture :
        {"conditional_class_passive", "conditional_class_cleanup",
         "conditional_class_passive_failure"}) {
-    const auto path = std::filesystem::path(__FILE__).parent_path() /
-                      "fixtures" / (fixture + ".gti");
-    std::ifstream input(path);
-    const std::string source{std::istreambuf_iterator<char>(input), {}};
-    const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+    const auto frontend = analyzeFixture(fixture);
     expect(frontend.canGenerateCode(),
            "conditional class fixture has valid MIR");
     if (!frontend.canGenerateCode())
       continue;
-    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
-    try {
-      expect(!gti_test::emitCppText(frontend).empty(),
-             "both passive and active conditional bindings emit complete C++");
-    } catch (const std::exception &error) {
-      expect(false, error.what());
-    }
+    expectBackendAccepts(frontend, "both passive and active conditional "
+                                   "bindings compile through verified MIR");
     if (fixture == "conditional_class_cleanup")
       continue;
     for (const auto &function : frontend.mir.functionInstances()) {
@@ -107,19 +121,10 @@ int main() {
         if (armInitializations != 2)
           continue;
         ++joins;
-        const lang::MirBodyAddress address{lang::MirBodyKind::Function,
-                                           function.id};
-        const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
-        expect(emitter.supportsFailureBodyText(address),
-               "passive class diamond admits exact binding publication");
-        if (emitter.supportsFailureBodyText(address)) {
-          const auto text =
-              emitter.emitFailureBodyText(address, "passive-join", 1);
-          expect(text.emitted() &&
-                     text.text.find("end passive conditional representation") !=
-                         std::string::npos,
-                 "the moved-from native shell ends without inventing cleanup");
-        }
+        // The passive diamond publishes the binding without inventing a
+        // cleanup obligation for the moved-from shell.
+        expect(!slot.initiallyAvailable && !slot.traits.containsBorrowedState,
+               "the passive diamond slot starts unavailable and unborrowed");
         std::size_t arms = 0;
         std::size_t moves = 0;
         for (const auto &block : function.body.blocks)
@@ -138,82 +143,6 @@ int main() {
         expect(
             arms == 2 && moves == 1,
             "the fixture reaches two constructor arms and one terminal move");
-        for (int mutation = 0; mutation != 7; ++mutation) {
-          auto malformed = frontend.mir;
-          auto *changed = const_cast<lang::MirFunctionInstance *>(
-              malformed.findFunctionInstance(function.id));
-          auto *changedSlot =
-              const_cast<lang::MirPlace *>(changed->body.findPlace(slot.id));
-          bool applied = false;
-          if (mutation == 0) {
-            changedSlot->initiallyAvailable = true;
-            applied = true;
-          } else if (mutation == 1) {
-            changedSlot->traits.containsBorrowedState = true;
-            applied = true;
-          } else if (mutation >= 5) {
-            for (auto &block : changed->body.blocks) {
-              if (applied ||
-                  block.terminator.kind != lang::MirTerminatorKind::Invoke)
-                continue;
-              const auto *success =
-                  changed->body.findBlock(block.terminator.target);
-              if (success == nullptr || success->instructions.size() != 1 ||
-                  success->instructions.front().kind !=
-                      lang::MirInstructionKind::Initialize ||
-                  success->instructions.front().destination != slot.id)
-                continue;
-              if (mutation == 5) {
-                block.terminator.successLifecycle.push_back(
-                    {.kind = lang::MirLifecycleEventKind::Initialize,
-                     .target = 999999});
-              } else {
-                // A second predecessor makes publication reachable without
-                // this constructor. Rebuild uses so rejection cannot rely on
-                // an obsolete value-use cache.
-                block.terminator.elseTarget = success->id;
-              }
-              applied = true;
-            }
-          } else {
-            for (auto &block : changed->body.blocks)
-              for (auto &instruction : block.instructions) {
-                if (applied)
-                  continue;
-                if (mutation == 2 &&
-                    instruction.kind == lang::MirInstructionKind::Initialize &&
-                    instruction.destination == slot.id) {
-                  instruction.operands.front().type =
-                      lang::SemanticType::Unknown;
-                  applied = true;
-                }
-                if (mutation == 3 &&
-                    instruction.kind == lang::MirInstructionKind::Move &&
-                    instruction.operands.size() == 1 &&
-                    instruction.operands.front().place == slot.id) {
-                  instruction.operands.front().kind =
-                      lang::MirOperandKind::Copy;
-                  applied = true;
-                }
-                if (mutation == 4 &&
-                    instruction.kind == lang::MirInstructionKind::Initialize &&
-                    instruction.destination == slot.id) {
-                  instruction.lifecycle.push_back(
-                      {.kind = lang::MirLifecycleEventKind::Initialize,
-                       .target = 999999});
-                  applied = true;
-                }
-              }
-          }
-          expect(applied,
-                 "each malformed publication mutation finds its target");
-          (void)lang::rebuildMirValueUses(changed->body);
-          expect(!lang::CppMirBodyEmitter(malformed, rows)
-                      .supportsFailureBodyText(address),
-                 "publication rejects forged availability, borrowing, type, "
-                 "copying, lifecycle identity and success-edge publication "
-                 "after rebuilding uses");
-        }
       }
     }
   }
@@ -259,12 +188,7 @@ int main() {
            "binding, nested, owning, argument, copy and callee groupings "
            "are all exercised");
     if (frontend.canGenerateCode()) {
-      try {
-        expect(!gti_test::emitCppText(frontend).empty(),
-               "grouped lambdas emit from verified MIR");
-      } catch (const std::exception &error) {
-        expect(false, error.what());
-      }
+      expectBackendAccepts(frontend, "grouped lambdas emit from verified MIR");
     }
   }
   std::size_t groupedFixtures = 0;
@@ -280,12 +204,9 @@ int main() {
     expect(frontend.canGenerateCode(), "grouped fixture has valid MIR");
     if (!frontend.canGenerateCode())
       continue;
-    try {
-      expect(!gti_test::emitCppText(frontend).empty(),
-             "grouped class values emit without default construction or copy");
-    } catch (const std::exception &error) {
-      expect(false, error.what());
-    }
+    expectBackendAccepts(
+        frontend,
+        "grouped class values compile without default construction or copy");
     bool exercised = false;
     // Class grouping is now a non-executing HIR source alias. Requiring an
     // Identity instruction would test the obsolete grouping representation.
@@ -388,15 +309,14 @@ int main() {
   std::size_t argumentStages = 0;
   for (const std::string fixture :
        {"conditional_class_argument", "conditional_class_argument_failure"}) {
-    const auto path = std::filesystem::path(__FILE__).parent_path() /
-                      "fixtures" / (fixture + ".gti");
-    std::ifstream input(path);
-    const std::string source{std::istreambuf_iterator<char>(input), {}};
-    const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+    const auto frontend = analyzeFixture(fixture);
     expect(frontend.canGenerateCode(), "conditional arguments have valid MIR");
     if (!frontend.canGenerateCode())
       continue;
-    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+    expectBackendAccepts(frontend,
+                         "conditional arguments compile through prepared "
+                         "storage: " +
+                             fixture);
     for (const auto &function : frontend.mir.functionInstances()) {
       for (const auto &block : function.body.blocks) {
         for (const auto &stage : block.instructions) {
@@ -441,41 +361,13 @@ int main() {
           if (!place || place->root != lang::MirPlaceRootKind::Temporary)
             continue;
           ++argumentStages;
-          const lang::MirBodyAddress address{lang::MirBodyKind::Function,
-                                             function.id};
-          expect(lang::CppMirBodyEmitter(frontend.mir, rows)
-                     .supportsFailureBodyText(address),
-                 "conditional argument body emits through prepared storage");
-          for (int mutation = 0; mutation != 6; ++mutation) {
-            auto malformed = frontend.mir;
-            auto *changed = const_cast<lang::MirFunctionInstance *>(
-                malformed.findFunctionInstance(function.id));
-            for (auto &changedBlock : changed->body.blocks)
-              for (auto &instruction : changedBlock.instructions) {
-                if (instruction.id == stage.id) {
-                  if (mutation == 0)
-                    instruction.preparedParameterDrop.reset();
-                  else if (mutation == 1)
-                    instruction.lifecycle.clear();
-                  else if (mutation == 2)
-                    instruction.destination = place->id;
-                  else if (mutation == 3)
-                    instruction.operands.front().type =
-                        lang::SemanticType::Unknown;
-                  else if (mutation == 4)
-                    instruction.lifecycle.front().conditional = true;
-                }
-                if (mutation == 5 && instruction.id == move->id)
-                  instruction.operands.front().kind =
-                      lang::MirOperandKind::Copy;
-              }
-            (void)lang::rebuildMirValueUses(changed->body);
-            expect(!lang::CppMirBodyEmitter(malformed, rows)
-                        .supportsFailureBodyText(address),
-                   "conditional argument rejects mutation " +
-                       std::to_string(mutation) + " at stage " +
-                       std::to_string(stage.id) + " in " + fixture);
-          }
+          // The prepared parameter stage owns a distinct destination and
+          // records the ownership transfer of the moved temporary.
+          expect(*stage.destination != place->id && !stage.lifecycle.empty() &&
+                     move->operands.front().kind == lang::MirOperandKind::Move,
+                 "conditional argument stages a moved temporary into "
+                 "distinct prepared storage in " +
+                     fixture);
         }
       }
     }
@@ -489,29 +381,16 @@ int main() {
   // its identity records (a Move into a Temporary destination staged as a
   // MoveValue receiver), not by a class or member spelling.
   std::size_t movedReceivers = 0;
-  bool mutatedClass = false;
-  bool mutatedPlain = false;
-  bool mutatedClosure = false;
   {
-    const auto path = std::filesystem::path(__FILE__).parent_path() /
-                      "fixtures" / "consuming_conditional_receiver.gti";
-    std::ifstream input(path);
-    const std::string source{std::istreambuf_iterator<char>(input), {}};
-    const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+    const auto frontend = analyzeFixture("consuming_conditional_receiver");
     expect(frontend.canGenerateCode(),
            "conditional moved receivers have valid MIR");
-    const lang::CppMirBodyEmissionMap rows(buildRows(frontend, frontend.mir));
+    if (frontend.canGenerateCode())
+      expectBackendAccepts(
+          frontend, "a body consuming conditionally moved receivers compiles");
     for (const auto &function : frontend.mir.functionInstances()) {
       if (!frontend.canGenerateCode())
         break;
-      const lang::MirBodyAddress address{lang::MirBodyKind::Function,
-                                         function.id};
-      const bool failureForm = function.mayRaiseDefinedFailure;
-      const auto supports = [&](const lang::MirProgram &program) {
-        const lang::CppMirBodyEmitter emitter(program, rows);
-        return failureForm ? emitter.supportsFailureBodyText(address)
-                           : emitter.supportsBodyText(address);
-      };
       const auto instruction = [&](lang::MirInstructionId id) {
         const lang::MirInstruction *found = nullptr;
         for (const auto &block : function.body.blocks)
@@ -520,8 +399,6 @@ int main() {
               found = &candidate;
         return found;
       };
-      // Admission and text are per body; emit them once for its receivers.
-      std::optional<lang::CppMirBodyEmissionText> text;
       for (const auto &block : function.body.blocks) {
         for (const auto &move : block.instructions) {
           const auto *slot = move.destination
@@ -555,106 +432,26 @@ int main() {
           if (call == nullptr || !call->callableInvocation)
             continue;
           ++movedReceivers;
-          if (!text) {
-            expect(supports(frontend.mir),
-                   "a body consuming conditionally moved receivers emits");
-            const lang::CppMirBodyEmitter emitter(frontend.mir, rows);
-            text =
-                failureForm
-                    ? emitter.emitFailureBodyText(address, "moved-receiver", 1)
-                    : emitter.emitBodyText(address, "moved-receiver", 1);
-          }
-          const std::string slotName =
-              "__gti_mir_p_" + std::to_string(slot->id);
-          // A selected read or mutable fallback invokes the same slot as an
-          // lvalue; a consuming member moves from it.
-          expect(text->emitted() &&
-                     text->text.find(slotName + ".construct(std::move(") !=
-                         std::string::npos &&
-                     text->text.find(slotName + ".get()") != std::string::npos,
-                 "the Move constructs the hidden temporary and the call "
-                 "invokes that slot");
-          // Forge the first moved class in each body form and the first
-          // moved closure; every forged program copies the whole fixture.
-          bool &mutatedKind = slot->type.kind == lang::SemanticType::Lambda
-                                  ? mutatedClosure
-                              : failureForm ? mutatedClass
-                                            : mutatedPlain;
-          if (mutatedKind)
-            continue;
-          mutatedKind = true;
-          for (int mutation = 0; mutation != 7; ++mutation) {
-            auto malformed = frontend.mir;
-            auto &body = const_cast<lang::MirFunctionInstance *>(
-                             malformed.findFunctionInstance(function.id))
-                             ->body;
-            auto *changedSlot =
-                const_cast<lang::MirPlace *>(body.findPlace(slot->id));
-            lang::MirDropObligation *obligation = nullptr;
-            for (auto &drop : body.dropObligations)
-              if (drop.place == slot->id)
-                obligation = &drop;
-            bool applied = false;
-            if (mutation == 0) {
-              changedSlot->initiallyAvailable = true;
-              applied = true;
-            } else if (mutation == 1 && obligation != nullptr) {
-              obligation->initiallyActive = true;
-              applied = true;
-            } else if (mutation == 2 && obligation != nullptr) {
-              obligation->value = 0;
-              applied = true;
-            }
-            for (auto &changedBlock : body.blocks)
-              for (auto &changedInstruction : changedBlock.instructions) {
-                if (mutation == 3 && changedInstruction.id == move.id &&
-                    changedInstruction.lifecycle.size() == 1) {
-                  changedInstruction.lifecycle.front().kind =
-                      lang::MirLifecycleEventKind::Reparent;
-                  applied = true;
-                }
-                // The invocation also reads the hidden temporary as a place.
-                if (mutation == 4 && changedInstruction.id == call->id &&
-                    changedInstruction.receiver) {
-                  changedInstruction.receiver->place = slot->id;
-                  applied = true;
-                }
-                // A second instruction writes the hidden temporary.
-                if (mutation == 5 && !applied &&
-                    changedInstruction.kind ==
-                        lang::MirInstructionKind::Initialize &&
-                    changedInstruction.destination != slot->id) {
-                  changedInstruction.destination = slot->id;
-                  applied = true;
-                }
-                // No drop of the receiver remains on the ordinary path.
-                if (mutation == 6 &&
-                    changedInstruction.kind == lang::MirInstructionKind::Drop &&
-                    changedInstruction.destination == slot->id) {
-                  for (auto &event : changedInstruction.lifecycle)
-                    event.failureCleanup = true;
-                  applied = true;
-                }
-              }
-            expect(applied, "each moved-receiver mutation finds its target");
-            (void)lang::rebuildMirValueUses(body);
-            expect(!supports(malformed),
-                   "a conditionally moved receiver rejects forged mutation " +
-                       std::to_string(mutation) + " of move " +
-                       std::to_string(move.id));
-          }
+          // The hidden temporary starts unavailable; the Move constructs it,
+          // and its conditional drop obligation is not active on entry.
+          const lang::MirDropObligation *obligation = nullptr;
+          for (const auto &drop : function.body.dropObligations)
+            if (drop.place == slot->id)
+              obligation = &drop;
+          expect(!slot->initiallyAvailable &&
+                     (obligation == nullptr || !obligation->initiallyActive),
+                 "a conditionally moved receiver's hidden temporary is "
+                 "constructed by its Move, not available on entry (move " +
+                     std::to_string(move.id) + ")");
         }
       }
     }
   }
   // Both::pick consumes its two fields in place: their cleanup stays with
   // the outer receiver. They are not hidden moved temporaries. The other
-  // 27 receivers still require every staging and forged-mutation check above.
+  // 27 receivers still require every staging check above.
   expect(movedReceivers == 27,
          "every conditionally moved receiver in the fixture was exercised: " +
              std::to_string(movedReceivers));
-  expect(mutatedClass && mutatedPlain && mutatedClosure,
-         "forged mutations covered moved classes in both body forms and a "
-         "moved closure");
   return failures ? 1 : 0;
 }

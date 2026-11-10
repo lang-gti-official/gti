@@ -502,17 +502,12 @@ void runChecks(const std::filesystem::path &self) {
     static_cast<void>(ordinaryRequest.withLlvmInstrumentation(
         static_cast<LlvmInstrumentationMode>(999)));
   });
-  invalidRequest([&] { static_cast<void>(compileToCpp(addressRequest)); });
-  invalidRequest([&] {
-    static_cast<void>(compileToCpp(addressRequest, CompilationInputs{}));
-  });
+  // compileToCpp's rejection of LLVM instrumentation is covered by
+  // cpp_mir_driver (tests/cpp_mir_driver_tests.cpp).
   const auto build = [&](const Policy &policy = Policy{}) {
     return buildExecutable(ExecutableBuildRequest(
-        compilation(policy), toolchain,
-        policy.backend == BackendKind::Cpp ? managedRoot / "app.cpp"
-                                           : representation,
-        output, policy.compiler, policy.native, policy.keep, true, false,
-        managed, std::nullopt,
+        compilation(policy), toolchain, representation, output, policy.compiler,
+        policy.native, policy.keep, true, false, managed, std::nullopt,
         policy.cache ? std::optional<BuildCachePolicy>(BuildCachePolicy{
                            .root = managedRoot / "cache",
                            .sourceRoot = project,
@@ -844,33 +839,8 @@ void runChecks(const std::filesystem::path &self) {
               read(outside) == "preserve",
           "symlink cache leaf must not be trusted or overwrite its referent");
 
-  changed = {};
-  changed.backend = BackendKind::Cpp;
-  changed.keep = true;
-  const auto cpp = build(changed);
-  checkBuild(cpp);
-  require(
-      cpp.cache.status == BuildCacheStatus::Miss &&
-          cpp.cache.key != first.cache.key &&
-          cpp.cache.entry.parent_path().filename() == "v4" &&
-          read(cpp.cache.entry / "metadata")
-              .starts_with("gti-build-cache-v4\n") &&
-          std::filesystem::is_regular_file(cpp.cache.entry / "generated.cpp"),
-      "C++ artifacts must remain isolated in unchanged schema v4");
-  const auto cppHit = build(changed);
-  checkBuild(cppHit);
-  require(
-      cppHit.cache.status == BuildCacheStatus::Hit && !cppHit.nativeProcess &&
-          cppHit.compilation.artifact->kind == BackendArtifactKind::Source &&
-          cppHit.compilation.artifact->extension == ".cpp",
-      "C++ v4 cache must still restore generated source");
-  execute(17);
-  const auto nativeAgain = build();
-  checkBuild(nativeAgain);
-  require(nativeAgain.cache.status == BuildCacheStatus::Hit &&
-              nativeAgain.cache.key == first.cache.key &&
-              read(output) == executable,
-          "C++ build must not replace a native-object cache entry");
+  // LLVM/C++ cache-schema isolation (v5 objects beside C++ v4 sources) is
+  // covered by cpp_mir_driver (tests/cpp_mir_driver_tests.cpp).
   const auto validSource = read(project / "main.gti");
   const auto validMetadata = read(first.cache.entry / "metadata");
   // A still-refused native shape; it moves as LLVM coverage grows.

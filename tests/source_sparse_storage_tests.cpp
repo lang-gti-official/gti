@@ -1,7 +1,7 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 #include "private_stdlib_fixture.h"
 
 #include <algorithm>
@@ -25,7 +25,7 @@ lang::FrontendResult analyze(const std::string &source) {
 }
 } // namespace
 
-int main(int argc, char **argv) {
+int main() {
   const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
   std::ifstream input(root / "tests/fixtures/source_sparse_slots.gti");
   const std::string source{std::istreambuf_iterator<char>(input), {}};
@@ -36,19 +36,13 @@ int main(int argc, char **argv) {
   expect(frontend.canGenerateCode(), "source sparse policy forms verified MIR");
   if (!frontend.canGenerateCode())
     return 1;
-  if (argc == 4) {
-    const auto standard = std::string(argv[2]) == "c++20"
-                              ? lang::CppStandard::Cpp20
-                              : lang::CppStandard::Cpp23;
-    const auto level =
-        std::string(argv[3]) == "O0"   ? lang::OptimizationLevel::O0
-        : std::string(argv[3]) == "O1" ? lang::OptimizationLevel::O1
-                                       : lang::OptimizationLevel::O3;
-    std::ofstream output(argv[1]);
-    output << gti_test::emitCppText(frontend, standard,
-                                    lang::TargetInfo::host(), level);
-    return output ? 0 : 1;
-  }
+  // The C++ emission driver for the runtime test lives in
+  // cpp_mir_source_sparse_storage_emitter.cpp.
+  for (const auto level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O1,
+        lang::OptimizationLevel::O3})
+    expect(gti_test::llvmEmits(frontend, level),
+           "source sparse policy reaches native emission at every level");
   for (const auto intrinsic :
        {lang::IntrinsicKind::RequireVacantStorage,
         lang::IntrinsicKind::RequireLiveStorage,

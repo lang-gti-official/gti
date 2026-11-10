@@ -215,21 +215,16 @@ int main() {
   expect(nominal.canGenerateCode(),
          "a stored owning target may return a class value");
   if (nominal.canGenerateCode()) {
-    const auto text = gti_test::emitCppText(nominal);
-    const auto declaration =
-        text.find("friend ::__gti_program::Packet __gti_invoke(const Target &");
-    const auto definition =
-        text.find("inline ::__gti_program::Packet __gti_invoke(const Target &");
-    const auto layout = text.find("struct Packet {");
-    expect(declaration != std::string::npos &&
-               definition != std::string::npos && layout != std::string::npos &&
-               layout < definition && declaration < definition,
-           "the ADL adapter is declared in its owner and defined after the "
-           "result layout");
-    if (declaration != std::string::npos)
-      expect(text.find(';', declaration) < text.find('{', declaration),
-             "the in-class friend must not instantiate an incomplete class "
-             "result");
+    // The C++ adapter declaration/definition order lives in
+    // cpp_mir_owning_function_tests.cpp.
+    std::string error;
+    expect(lang::verifyMirProgram(nominal.mir).valid() &&
+               gti_test::llvmEmits(nominal, lang::OptimizationLevel::O0,
+                                   lang::TargetInfo::host(), &error),
+           "a stored owning target returning a class value reaches native "
+           "emission");
+    if (!error.empty())
+      std::cerr << error << '\n';
   }
   const auto orderPath =
       nominalPath.parent_path() / "callable_adapter_declaration_order.gti";
@@ -241,16 +236,13 @@ int main() {
   expect(ordered.canGenerateCode(),
          "a callable may return a class containing that callable by value");
   if (ordered.canGenerateCode()) {
-    const auto text = gti_test::emitCppText(ordered);
-    const auto declaration =
-        text.find("friend ::__gti_program::api::Packet __gti_invoke(");
-    const auto layout = text.find("struct Packet {");
-    const auto definition =
-        text.find("inline ::__gti_program::api::Packet __gti_invoke(");
-    expect(declaration != std::string::npos && layout != std::string::npos &&
-               definition != std::string::npos && declaration < layout &&
-               layout < definition,
+    std::string error;
+    expect(lang::verifyMirProgram(ordered.mir).valid() &&
+               gti_test::llvmEmits(ordered, lang::OptimizationLevel::O0,
+                                   lang::TargetInfo::host(), &error),
            "adapter code must not create a false recursive layout dependency");
+    if (!error.empty())
+      std::cerr << error << '\n';
   }
   const auto mutablePath = std::filesystem::path(__FILE__).parent_path() /
                            "fixtures/owning_function_mutable.gti";

@@ -40,7 +40,8 @@ def main():
             for manual in (False, True):
                 key = f"{'manual' if manual else 'macro'}-NDEBUG={disabled}"
                 binary = pathlib.Path(directory) / key
-                command = [str(args.compiler.resolve()), str(source), "-O3"]
+                # The shipped backend; the driver links the provider before the runtime.
+                command = [str(args.compiler.resolve()), str(source), "--backend", "llvm", "-O3"]
                 for flag, active in (("NDEBUG", disabled), ("COST_MANUAL", manual)):
                     if active:
                         command += ["-D", flag]
@@ -52,7 +53,6 @@ def main():
                 report[key] = {
                     "build_seconds": round(time.perf_counter() - started, 6),
                     "native_bytes": binary.stat().st_size,
-                    "generated_cpp_bytes": binary.with_suffix(".gti.cpp").stat().st_size,
                 }
                 binaries[key] = binary
                 samples[key] = []

@@ -1,6 +1,6 @@
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -15,6 +15,19 @@ void check(bool condition, std::string_view message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
+}
+// The shipped backend boundary: verified lowering of `source`/`optimized`
+// followed by native emission. True when either step rejects the input.
+bool backendRejects(const lang::FrontendResult &frontend,
+                    const lang::MirProgram &source,
+                    const lang::MirProgram &optimized) {
+  try {
+    (void)lang::LlvmBackend().generate(
+        gti_test::lowerProgram(frontend, source, optimized));
+  } catch (const std::exception &) {
+    return true;
+  }
+  return false;
 }
 lang::FrontendResult analyze(std::string source) {
   const auto library =
@@ -76,8 +89,7 @@ int main() { auto first = moved(); auto second = relay(); auto third = copied();
   check(valid.canGenerateCode(),
         "fresh, moved and copyable error transport remains accepted");
   if (valid.canGenerateCode()) {
-    check(!gti_test::emitCppText(valid).empty(),
-          "owning errors reach verified backend");
+    check(gti_test::llvmEmits(valid), "owning errors reach verified backend");
     for (bool loseOwnership : {false, true}) {
       auto malformed = valid.mir;
       bool changed = false;
@@ -113,14 +125,9 @@ int main() { auto first = moved(); auto second = relay(); auto third = copied();
       }
       check(changed,
             "error transport corruption fixture reaches its exact MIR proof");
-      bool rejected = false;
-      try {
-        (void)gti_test::emitCpp(valid, malformed, malformed);
-      } catch (const std::exception &) {
-        rejected = true;
-      }
-      check(rejected, "error transport rejects lost payload identity or source "
-                      "move ownership");
+      check(backendRejects(valid, malformed, malformed),
+            "error transport rejects lost payload identity or source "
+            "move ownership");
     }
   }
   const auto used = analyze(errorType + R"(
@@ -196,13 +203,7 @@ int main() { mut uint8_t value = 1; uint8_t old = value++; --value;
         found->localFailureSites.clear();
         check(!lang::verifyMirProgram(malformed).valid(),
               "lost arithmetic/conversion contract is rejected");
-        bool rejected = false;
-        try {
-          (void)gti_test::emitCpp(result, malformed, malformed);
-        } catch (const std::exception &) {
-          rejected = true;
-        }
-        check(rejected,
+        check(backendRejects(result, malformed, malformed),
               "backend input cannot bypass malformed failure schedules");
       }
     }
@@ -211,10 +212,10 @@ int main() { mut uint8_t value = 1; uint8_t old = value++; --value;
         "every narrow update has arithmetic and narrowing stages (arithmetic=" +
             std::to_string(arithmetic) +
             ", conversion=" + std::to_string(conversion) + ")");
-  for (const auto standard :
-       {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
-    check(!gti_test::emitCppText(result, standard).empty(),
-          "qualified/unqualified updates emit both native standards");
+  for (const auto level :
+       {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3})
+    check(gti_test::llvmEmits(result, level),
+          "qualified/unqualified updates reach native emission");
 }
 
 void borrows() {
@@ -229,7 +230,7 @@ int main() { mut Frame frame{}; write(frame, uint64_t(1)); return read(frame, ui
   check(valid.canGenerateCode(),
         "borrowed nested arrays preserve reference projection");
   if (valid.canGenerateCode())
-    check(!gti_test::emitCppText(valid).empty(),
+    check(gti_test::llvmEmits(valid),
           "borrowed nested array reads/writes emit");
   for (const auto &body :
        {"void bad(Frame& frame) { frame.grid.cells[0] = 1; }",

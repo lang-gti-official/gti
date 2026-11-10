@@ -9,6 +9,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from backend_modes import cpp_modes  # noqa: E402
+
 
 def run(arguments, cwd, expected=0, env=None):
     result = subprocess.run(
@@ -140,8 +143,11 @@ def main():
         invoke("run", "app", "--no-build")
         invoke("test", "smoke", "--backend", "llvm", "--cxx", wrapper)
         invoke("run", "app", "--no-build", "--backend", "llvm", expected=64)
-        invoke("build", "app", "--backend", "llvm", "--std", "c++23", expected=65)
-        invoke("build", "app", "--backend", "llvm", "--keep-cpp", expected=65)
+        # The C++ options exist only in a CLI with the C++ backend; the LLVM
+        # backend's rejection of them is checked when the policy selects it.
+        if cpp_modes():
+            invoke("build", "app", "--backend", "llvm", "--std", "c++23", expected=65)
+            invoke("build", "app", "--backend", "llvm", "--keep-cpp", expected=65)
         invoke("build", "app", "--backend", "unknown", expected=64)
         invoke("run", "app", "--backend", "unknown", expected=64)
         invoke("run", "app", "--backend", expected=64)
@@ -180,10 +186,12 @@ def main():
                              for command in links), links
         assert all("-std=c++23" not in command and "-x" not in command
                    for command in links), links
-        cpp = invoke("build", "app", "--backend", "cpp", "--verbose")
-        assert "gti: cache miss " in cpp.stderr, cpp.stderr
-        cpp_hit = invoke("build", "app", "--backend", "cpp", "--verbose")
-        assert "gti: cache hit " in cpp_hit.stderr, cpp_hit.stderr
+        if cpp_modes():
+            # A C++ build keys its own cache entry beside the LLVM one.
+            cpp = invoke("build", "app", "--backend", "cpp", "--verbose")
+            assert "gti: cache miss " in cpp.stderr, cpp.stderr
+            cpp_hit = invoke("build", "app", "--backend", "cpp", "--verbose")
+            assert "gti: cache hit " in cpp_hit.stderr, cpp_hit.stderr
         explicit_run = invoke("run", "app", "--backend", "llvm", "--cxx", wrapper,
                               "--verbose")
         assert "gti: cache hit " in explicit_run.stderr, explicit_run.stderr

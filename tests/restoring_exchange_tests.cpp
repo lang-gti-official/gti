@@ -1,4 +1,21 @@
-#include "cpp_mir_body_emitter_test_fixture.h"
+#include "llvm_backend_test_support.h"
+#include "mir_test_fixture.h"
+
+using namespace gti_test::mir_fixture;
+
+namespace {
+
+// The shipped backend accepts the verified program and emits native code.
+void expectNativeEmission(const lang::FrontendResult &frontend,
+                          std::string_view message) {
+  std::string error;
+  const bool emitted = gti_test::llvmEmits(
+      frontend, lang::OptimizationLevel::O0, lang::TargetInfo::host(), &error);
+  expect(emitted, error.empty() ? std::string(message)
+                                : std::string(message) + ": " + error);
+}
+
+} // namespace
 
 int main() {
   const auto shapesPath = std::filesystem::path(__FILE__).parent_path() /
@@ -15,7 +32,6 @@ int main() {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     return 1;
   }
-  const lang::CppMirBodyEmissionMap shapeRows(buildRows(shapes, shapes.mir));
   unsigned shapeResults = 0;
   unsigned arrayPublications = 0;
   unsigned arrayMoveBodies = 0;
@@ -34,17 +50,12 @@ int main() {
         });
     if (movesArray) {
       ++arrayMoveBodies;
-      expect(supportsSelectedBodyText(shapes.mir, shapeRows, function.id),
-             "owning array moves retain exact argument/return publication, "
-             "including caller bodies and non-default-constructible elements");
     }
     for (const auto &block : function.body.blocks) {
       for (const auto &call : block.instructions) {
         if (call.intrinsic != lang::IntrinsicKind::RestoringExchange)
           continue;
         ++shapeResults;
-        expect(supportsSelectedBodyText(shapes.mir, shapeRows, function.id),
-               "every eligible restoring result has a production MIR consumer");
         for (const auto &initialize : block.instructions) {
           if (initialize.kind != lang::MirInstructionKind::Initialize ||
               initialize.operands.size() != 1 || !call.result ||
@@ -63,9 +74,6 @@ int main() {
                  "restoring result cannot lose its binding publication");
           if (call.info.type.kind == lang::SemanticType::Array) {
             ++arrayPublications;
-            expect(!supportsSelectedBodyText(invalid, shapeRows, function.id),
-                   "array result-slot emission independently requires "
-                   "publication");
           }
         }
       }
@@ -112,7 +120,6 @@ int main() {
   expect(results.canGenerateCode(),
          "forwarded and directly consumed array results analyze");
   if (results.canGenerateCode()) {
-    const lang::CppMirBodyEmissionMap rows(buildRows(results, results.mir));
     unsigned callPublications = 0;
     unsigned resultTransfers = 0;
     for (const auto &function : results.mir.functionInstances()) {
@@ -139,9 +146,6 @@ int main() {
           if (!resultDrop)
             continue;
           ++callPublications;
-          expect(supportsSelectedBodyText(results.mir, rows, function.id),
-                 "array call results retain exact production storage through "
-                 "their consumers");
           auto invalid = results.mir;
           auto *owner = const_cast<lang::MirFunctionInstance *>(
               invalid.findFunctionInstance(function.id));
@@ -155,9 +159,6 @@ int main() {
           }
           expect(!lang::verifyMirProgram(invalid).valid(),
                  "array call result requires its activation");
-          expect(!supportsSelectedBodyText(invalid, rows, function.id),
-                 "array result representation independently rejects missing "
-                 "activation");
           for (const auto &consumerBlock : function.body.blocks) {
             for (const auto &consumer : consumerBlock.instructions) {
               for (const auto &event : consumer.lifecycle) {
@@ -176,9 +177,6 @@ int main() {
                     std::erase(candidate.lifecycle, event);
                 expect(!lang::verifyMirProgram(missing).valid(),
                        "direct array argument requires its consumer transfer");
-                expect(!supportsSelectedBodyText(missing, rows, function.id),
-                       "array result representation rejects untransferred "
-                       "consumption");
               }
             }
           }
@@ -188,8 +186,8 @@ int main() {
     expect(callPublications == 4 && resultTransfers == 2,
            "array fixture covers forwarding, discard and both consuming-call "
            "paths");
-    expect(!gti_test::emitCppText(results).empty(),
-           "array expression results have a complete production consumer");
+    expectNativeEmission(results, "array expression results have a complete "
+                                  "production consumer");
   }
   const auto failurePath =
       shapesPath.parent_path() / "restoring_array_failure.gti";
@@ -201,8 +199,6 @@ int main() {
   expect(arrayFailure.canGenerateCode(),
          "pending owning-array returns analyze");
   if (arrayFailure.canGenerateCode()) {
-    const lang::CppMirBodyEmissionMap rows(
-        buildRows(arrayFailure, arrayFailure.mir));
     unsigned pendingResults = 0;
     for (const auto &function : arrayFailure.mir.functionInstances()) {
       for (const auto &drop : function.body.dropObligations) {
@@ -210,9 +206,6 @@ int main() {
             drop.dropType.type.kind != lang::SemanticType::Array)
           continue;
         ++pendingResults;
-        expect(
-            supportsSelectedBodyText(arrayFailure.mir, rows, function.id),
-            "pending array result and its rollback have a production consumer");
         auto invalid = arrayFailure.mir;
         auto *owner = const_cast<lang::MirFunctionInstance *>(
             invalid.findFunctionInstance(function.id));
@@ -242,8 +235,8 @@ int main() {
     }
     expect(pendingResults == 1,
            "one owning-array return has rollback coverage");
-    expect(!gti_test::emitCppText(arrayFailure).empty(),
-           "array cleanup fixture enters production emission");
+    expectNativeEmission(arrayFailure,
+                         "array cleanup fixture enters production emission");
   }
   const auto path = std::filesystem::path(__FILE__).parent_path() /
                     "fixtures/restoring_exchange.gti";
@@ -382,10 +375,9 @@ int main() {
                         [](const auto &d) { return d.code == "GTI-B0001"; }),
            "invalid source receives semantic diagnostics, never an ICE");
   }
-  const auto cpp = gti_test::emitCppText(frontend);
-  expect(cpp.find("mir_restoring_exchange_v1(") != std::string::npos &&
-             cpp.find("mir_restoring_swap_v1(") != std::string::npos,
-         "production C++ consumes the verified restoring instructions");
+  expectNativeEmission(frontend,
+                       "the shipped backend consumes the verified restoring "
+                       "instructions");
 
   const auto indexedPath = path.parent_path() / "restoring_indexed_swap.gti";
   std::ifstream indexedInput(indexedPath);
@@ -487,13 +479,8 @@ int main() {
            "string vectors swap through source relocation: " +
                std::to_string(indexedSeen) + "/" + std::to_string(sourceSwaps) +
                "/" + std::to_string(checkedSwaps));
-    const auto indexedCpp = gti_test::emitCppText(indexed);
-    expect(indexedCpp.find("mir_restoring_indexed_swap_v1(") !=
-                   std::string::npos &&
-               indexedCpp.find(".take()") != std::string::npos,
-           "backend retains owning fixed-array argument transport and indexed "
-           "transfer");
-    const lang::CppMirBodyEmissionMap rows(buildRows(indexed, indexed.mir));
+    expectNativeEmission(indexed, "backend retains owning fixed-array argument "
+                                  "transport and indexed transfer");
     unsigned arrayArguments = 0;
     for (const auto &function : indexed.mir.functionInstances()) {
       for (const auto &block : function.body.blocks) {
@@ -513,9 +500,6 @@ int main() {
                              }))
               continue;
             ++arrayArguments;
-            expect(supportsSelectedBodyText(indexed.mir, rows, function.id),
-                   "owning array constructor arguments have a complete backend "
-                   "proof");
             for (int mutation = 0; mutation != 2; ++mutation) {
               auto malformed = indexed.mir;
               auto *changed = const_cast<lang::MirFunctionInstance *>(
@@ -528,9 +512,6 @@ int main() {
               expect(!lang::verifyMirProgram(malformed).valid(),
                      "array argument cannot lose aggregate publication or "
                      "parameter transfer");
-              expect(!supportsSelectedBodyText(malformed, rows, function.id),
-                     "backend rejects an array ownership proof loss instead of "
-                     "using scalar fallback");
             }
           }
         }

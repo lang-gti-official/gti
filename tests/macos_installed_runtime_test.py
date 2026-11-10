@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 
+from backend_modes import native_modes
+
 
 def run(arguments, environment, cwd=None):
     result = subprocess.run([str(argument) for argument in arguments], env=environment,
@@ -88,9 +90,9 @@ def main():
         numeric = root / "installed-floating-input.gti"
         fixture = pathlib.Path(__file__).resolve().parent / "fixtures/charconv_float.gti"
         numeric.write_text(fixture.read_text())
-        for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
-            parsed = root / ("installed-floating-input-" + standard)
-            run([cli, numeric, "--std", standard, optimization, "-o", parsed],
+        for mode, flags, _native in native_modes():
+            parsed = root / ("installed-floating-input-" + mode)
+            run([cli, numeric, *flags, "-o", parsed],
                 environment, cwd=root)
             run_program(parsed, "", environment, root)
         # Resolve an installed interface and its republished legacy unit after
@@ -122,17 +124,17 @@ def main():
         examples = pathlib.Path(__file__).resolve().parent.parent / "examples"
         imported_c_string = root / "installed-c-string-import.gti"
         imported_c_string.write_text((examples / "151-c-string-import.gti").read_text())
-        for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
-            executable = root / ("installed-c-string-" + standard)
-            run([cli, imported_c_string, "--std", standard, optimization,
+        for mode, flags, _native in native_modes():
+            executable = root / ("installed-c-string-" + mode)
+            run([cli, imported_c_string, *flags,
                  "-o", executable], environment, cwd=root)
             run_program(executable, "foreign-style text\n", environment, root)
         waiting = root / "installed-atomic-wait.gti"
         waiting.write_text((examples / "076-scalar-atomics.gti").read_text())
-        for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
-            executable = root / ("installed-wait-" + standard)
-            run([cli, waiting, "--execution-profile", "concurrent", "--std",
-                 standard, optimization, "-o", executable], environment, cwd=root)
+        for mode, flags, _native in native_modes():
+            executable = root / ("installed-wait-" + mode)
+            run([cli, waiting, "--execution-profile", "concurrent",
+                 *flags, "-o", executable], environment, cwd=root)
             run_program(executable, "2\n", environment, root)
         local_state = root / "installed-thread-local-storage.gti"
         local_state.write_text((examples / "175-thread-local-storage.gti").read_text())
@@ -181,15 +183,15 @@ int main() {
   return 0;
 }
 ''')
-        for standard, optimization in (("c++20", "-O0"), ("c++23", "-O3")):
+        for mode, flags, _native in native_modes():
             for filename, expected_output in iterator_examples:
                 copied = root / filename
-                executable = root / f"{copied.stem}-{standard}"
-                run([cli, copied, optimization, "--std", standard,
+                executable = root / f"{copied.stem}-{mode}"
+                run([cli, copied, *flags,
                      "--progress=never", "-o", executable], environment, cwd=root)
                 run_program(executable, expected_output, environment, root)
-            executable = root / f"installed-string-view-module-{standard}"
-            run([cli, view_module, optimization, "--std", standard,
+            executable = root / f"installed-string-view-module-{mode}"
+            run([cli, view_module, *flags,
                  "--progress=never", "-o", executable], environment, cwd=root)
             run_program(executable, "", environment, root)
         header = root / "consumer.h"

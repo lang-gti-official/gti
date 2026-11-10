@@ -1,10 +1,8 @@
-#include "../src/compiler/cpp_mir_body_emitter.h"
-#include "../src/compiler/cpp_mir_representation_snapshot.h"
-#include "cpp_backend_test_support.h"
 #include "gti/frontend.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
+#include "llvm_backend_test_support.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -56,6 +54,19 @@ bool motivatingPointee(const lang::FrontendResult &frontend,
                           : nullptr;
   return owner != nullptr && owner->qualifiedName == className;
 }
+// The shipped backend boundary: verified lowering followed by native
+// emission. True when either step rejects the input.
+bool backendRejects(const lang::FrontendResult &frontend,
+                    const lang::MirProgram &source,
+                    const lang::MirProgram &optimized) {
+  try {
+    (void)lang::LlvmBackend().generate(
+        gti_test::lowerProgram(frontend, source, optimized));
+  } catch (const std::exception &) {
+    return true;
+  }
+  return false;
+}
 template <typename Mutation>
 void forged(
     const lang::FrontendResult &frontend, Mutation mutation,
@@ -75,13 +86,37 @@ void forged(
           changed = true;
         }
   expect(changed && !lang::verifyMirProgram(mir).valid(), label);
-  bool rejected = false;
-  try {
-    (void)gti_test::emitCpp(frontend, frontend.mir, mir);
-  } catch (const std::exception &) {
-    rejected = true;
-  }
-  expect(changed && rejected, "backend rejects forged lifetime operation");
+  expect(changed && backendRejects(frontend, frontend.mir, mir),
+         "backend rejects forged lifetime operation");
+}
+// Optimized MIR the backend consumes at `level` still contains the exact
+// lifetime operation with its original failure propagation.
+bool optimizedRetains(const lang::FrontendResult &frontend,
+                      lang::OptimizationLevel level,
+                      lang::IntrinsicKind intrinsic,
+                      lang::FailurePropagationKind propagation) {
+  const auto lowered = gti_test::lowerOptimizedProgram(frontend, level);
+  for (const auto &function : lowered.mir().functionInstances())
+    for (const auto &block : function.body.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.intrinsic == intrinsic &&
+            instruction.unsafeOperation ==
+                lang::UnsafeOperationKind::ObjectLifetime &&
+            instruction.definedFailure.propagation == propagation &&
+            (intrinsic == lang::IntrinsicKind::ObjectConstruct
+                 ? instruction.constructorTarget.has_value()
+                 : instruction.elementCleanup.has_value()))
+          return true;
+  return false;
+}
+bool emitsNative(const lang::FrontendResult &frontend,
+                 lang::OptimizationLevel level) {
+  std::string error;
+  const bool emitted =
+      gti_test::llvmEmits(frontend, level, lang::TargetInfo::host(), &error);
+  if (!emitted)
+    std::cerr << "native emission: " << error << '\n';
+  return emitted;
 }
 } // namespace
 
@@ -142,16 +177,12 @@ int main() {
         }
   expect(count == 2 && cleanups == 1,
          "scalar and unrelated immovable cleanup paths");
-  for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23})
-    for (auto level :
-         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
-      const auto cpp = gti_test::emitCppText(frontend, standard,
-                                             lang::TargetInfo::host(), level);
-      expect(cpp.find("= ::gti_internal::backend::mir_object_destroy_v1(") !=
-                 std::string::npos,
-             "verified cleanup survives optimization and uses failure-aware "
-             "lowering");
-    }
+  for (auto level : {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3})
+    expect(optimizedRetains(frontend, level, lang::IntrinsicKind::ObjectDestroy,
+                            lang::FailurePropagationKind::Destructor) &&
+               emitsNative(frontend, level),
+           "verified cleanup survives optimization and uses failure-aware "
+           "lowering");
   forged(
       frontend,
       [](auto &i) { i.unsafeOperation = lang::UnsafeOperationKind::None; },
@@ -264,19 +295,14 @@ int main() {
                    "raw construction does not invent storage occupancy proof");
           }
     expect(constructions == 2, "concrete raw construction census");
-    for (auto standard : {lang::CppStandard::Cpp20, lang::CppStandard::Cpp23}) {
-      for (auto level :
-           {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
-        try {
-          const auto cpp = gti_test::emitCppText(
-              construction, standard, lang::TargetInfo::host(), level);
-          expect(cpp.find("__gti_mir_construct_success_") != std::string::npos,
-                 "constructor failure uses verified status edge");
-        } catch (const std::exception &error) {
-          std::cerr << error.what() << '\n';
-          expect(false, "raw construction emits through verified MIR");
-        }
-      }
+    for (auto level :
+         {lang::OptimizationLevel::O0, lang::OptimizationLevel::O3}) {
+      expect(optimizedRetains(construction, level,
+                              lang::IntrinsicKind::ObjectConstruct,
+                              lang::FailurePropagationKind::Constructor),
+             "constructor failure uses verified status edge");
+      expect(emitsNative(construction, level),
+             "raw construction emits through verified MIR");
     }
     for (int mutation = 0; mutation != 5; ++mutation)
       forged(
@@ -303,14 +329,9 @@ int main() {
           "forged construction authority rejected",
           lang::IntrinsicKind::ObjectConstruct);
 
-    const auto lowered = gti_test::lowerProgram(construction, construction.mir,
-                                                construction.mir);
-    const lang::CppMirBodyEmissionMap map{lang::buildCppMirBodyEmissionMapRows(
-        lowered, lang::CppStandard::Cpp23)};
     for (int mutation = 0; mutation != 3; ++mutation) {
       auto mir = construction.mir;
       bool changed = false;
-      lang::MirBodyAddress address;
       for (auto &function :
            const_cast<std::vector<lang::MirFunctionInstance> &>(
                mir.functionInstances())) {
@@ -337,8 +358,6 @@ int main() {
                 else
                   input.callInputKind = lang::HirCallInputKind::Value;
                 changed = true;
-                address = {.kind = lang::MirBodyKind::Function,
-                           .owner = function.id};
               }
             }
           }
@@ -347,9 +366,7 @@ int main() {
       expect(changed && !lang::verifyMirProgram(mir).valid(),
              "raw constructor reference input retains exact staged call "
              "authority");
-      expect(changed &&
-                 !lang::CppMirBodyEmitter(mir, map).supportsFailureBodyText(
-                     address),
+      expect(changed && backendRejects(construction, construction.mir, mir),
              "detached backend rejects forged constructor reference staging");
     }
   }
@@ -376,13 +393,8 @@ int main() {
   expect(transfers.canGenerateCode(),
          "raw construction preserves generated copy and owning movement");
   if (transfers.canGenerateCode()) {
-    try {
-      (void)gti_test::emitCppText(transfers);
-    } catch (const std::exception &error) {
-      std::cerr << error.what() << '\n';
-      expect(false,
-             "generated transfer construction has complete MIR lowering");
-    }
+    expect(emitsNative(transfers, lang::OptimizationLevel::O0),
+           "generated transfer construction has complete MIR lowering");
   }
   return failures == 0 ? 0 : 1;
 }

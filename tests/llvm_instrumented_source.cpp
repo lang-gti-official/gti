@@ -1,7 +1,7 @@
 // Test-only access to existing driver and native-emitter instrumentation.
 // This adds no public CLI or source-language rule.
 #include "../src/compiler/llvm/body.h"
-#include "cpp_backend_test_support.h"
+#include "lowered_program_test_support.h"
 #include "gti/driver/build.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/llvm_backend.h"

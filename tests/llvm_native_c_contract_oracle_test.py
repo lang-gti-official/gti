@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 
+from backend_modes import cpp_modes
 from llvm_evidence_manifest import build_manifest
 
 
@@ -84,7 +85,9 @@ def native_enum_imports(repo, compiler, cc, cxx, output, run):
         'default: 0), "enum output signature");\n')
     run([cc, "-std=c17", "-Wall", "-Wextra", "-Werror", "-fsyntax-only", "-I",
          repo / "runtime/include", probe], "enum-c-header")
-    for standard in ("c++20", "c++23"):
+    # The C++ backend comparator runs only when GTI_TEST_BACKENDS selects it.
+    comparator_standards = ("c++20", "c++23") if cpp_modes() else ()
+    for standard in comparator_standards:
         comparator = work / f"cpp-aggregate-{standard}"
         run([compiler, aggregate, "--backend", "cpp", "--std", standard, "-O3", "-o",
              comparator, "--", work / "flags-O3.o"], "enum-build-" + comparator.name)
@@ -102,7 +105,7 @@ def native_enum_imports(repo, compiler, cc, cxx, output, run):
             executions += 1
     return {
         "public_executions": executions, "header_compiles": 5,
-        "supported_cpp_comparators": 2, "artifact_negatives": 0,
+        "supported_cpp_comparators": len(comparator_standards), "artifact_negatives": 0,
         "input_sha256": {str(path): sha256(path.read_bytes()).hexdigest()
                          for path in (source, aggregate, bindings, header,
                                       example / "flags.h", example / "flags.c")},
