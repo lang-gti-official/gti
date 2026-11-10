@@ -2,6 +2,7 @@
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -287,8 +288,14 @@ int main() {
         return d.message.find("borrowed return dependency is ambiguous") !=
                std::string::npos;
       });
-  expect(!result.semanticValid && found != result.diagnostics.end(),
-         "both shared and exclusive inputs compete for a shared result");
+  // Under RFC 0004 signature contracts the shared result borrows both
+  // eligible inputs; without them the two inputs are ambiguous.
+  if (std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr)
+    expect(result.canGenerateCode(),
+           "a shared result borrows both shared and exclusive inputs");
+  else
+    expect(!result.semanticValid && found != result.diagnostics.end(),
+           "both shared and exclusive inputs compete for a shared result");
   if (found != result.diagnostics.end()) {
     const auto start = ambiguous.find("int&", ambiguous.find("->"));
     const auto expectedSource =

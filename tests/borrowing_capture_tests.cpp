@@ -1,5 +1,7 @@
 #include "compiler_test_fixture.h"
 
+#include <cstdlib>
+
 int main() {
   const auto application = [](const std::string &name,
                               const std::string &source,
@@ -543,7 +545,20 @@ int main() {
 }
 )",
            "GTI-S2017");
-  negative("lambda-reference-result-ambiguous", R"(
+  // Under RFC 0004 signature contracts a reference result shared by several
+  // eligible reference parameters borrows all of them (and a lambda body is
+  // checked by MIR); without them two eligible parameters are ambiguous.
+  const bool signatureContracts =
+      std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+  const auto unionOrNegative = [&](const std::string &name,
+                                   const std::string &source,
+                                   const std::string &code) {
+    if (signatureContracts)
+      (void)positive(name, source);
+    else
+      negative(name, source, code);
+  };
+  unionOrNegative("lambda-reference-result-ambiguous", R"(
 int main() {
   int left = 1;
   int right = 2;
@@ -570,7 +585,7 @@ int main() {
   return view - 5;
 }
 )");
-  negative("invocation-pointer-ambiguous-origin", R"(
+  unionOrNegative("invocation-pointer-ambiguous-origin", R"(
 import std.functional;
 int&<r> first<lifetime r>(int&<r> a, int& b) { return a; }
 int main() {
