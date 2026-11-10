@@ -10454,7 +10454,8 @@ private:
     if (!derivedLoanEnds)
       return statement.switchArms[arm].entryEndedLoans;
     static const std::vector<SemanticLoanId> none;
-    const auto found = derivedLoanEnds->switchArmEntry.find({statement.id, arm});
+    const auto found =
+        derivedLoanEnds->switchArmEntry.find({statement.id, arm});
     return found == derivedLoanEnds->switchArmEntry.end() ? none
                                                           : found->second;
   }
@@ -15013,7 +15014,7 @@ private:
     const MirBlockId exitBlock = appendBlock();
     const MirBlockId naturalExitBlock =
         statement.condition && !endedAfter(statement).empty() ? appendBlock()
-                                                             : cleanupBlock;
+                                                              : cleanupBlock;
     MirBlockId comparisonBlock = conditionBlock;
     MirBlockId advanceBlock = incrementBlock;
     terminate({.kind = MirTerminatorKind::Goto, .target = conditionBlock});
@@ -15701,8 +15702,7 @@ private:
     normalizeSemanticLoanState(endedAfter(statement), exitScopes,
                                exitBindingLoans);
     if (coversEveryValue && !statement.switchArms.empty()) {
-      std::vector<SemanticLoanId> endedOnEveryArm =
-          armEntryEnded(statement, 0);
+      std::vector<SemanticLoanId> endedOnEveryArm = armEntryEnded(statement, 0);
       std::erase_if(endedOnEveryArm, [&](SemanticLoanId loan) {
         return std::any_of(
                    statement.switchArms.begin() + 1, statement.switchArms.end(),
