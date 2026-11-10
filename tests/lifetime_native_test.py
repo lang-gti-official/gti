@@ -980,17 +980,6 @@ int main() {
   return consume(make_view(number), later(0));
 }
 """,
-    "lambda_suppliers": """
-int main() {
-  auto choose = [](int& left, int& right, bool first) -> int& {
-    if (first) { return left; }
-    return right;
-  };
-  int left = 3; int right = 8;
-  if (choose(left, right, true) != 3) { return 1; }
-  return choose(left, right, false) - 8;
-}
-""",
     "projected_only_class": """
 struct Fixed<int&<source>> {
   int&<source> value;
@@ -1632,6 +1621,19 @@ int main() { int x = 1; auto s = relay(x); return int(s.size()) - 1; }
 }
 
 REJECTIONS = {
+    # An elided lambda result with two eligible reference inputs is ambiguous,
+    # as for a function; name the suppliers with a lifetime parameter.
+    "ambiguous_lambda_suppliers": """
+int main() {
+  auto choose = [](int& left, int& right, bool first) -> int& {
+    if (first) { return left; }
+    return right;
+  };
+  int left = 3; int right = 8;
+  if (choose(left, right, true) != 3) { return 1; }
+  return choose(left, right, false) - 8;
+}
+""",
     "unnamed_pack_lane_return": r"""
 int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
 int&<a> wrong<lifetime a, Args...>(int&<a> first, Args&... others) { return second(others...); }
@@ -1859,6 +1861,7 @@ def main():
             print(f"lifetime native {label}: LLVM O0/O3 passed", flush=True)
 
     rejection_codes = {
+        "ambiguous_lambda_suppliers": {"GTI-S2017"},
         "unnamed_pack_lane_return": {"GTI-S2017", "GTI-S2127"},
         "retained_pack_lane_supplier": {"GTI-S2017"},
         "aliased_mutable_pack_lanes": {"GTI-S2017"},
