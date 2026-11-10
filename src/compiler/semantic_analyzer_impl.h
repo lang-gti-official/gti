@@ -3093,7 +3093,20 @@ private:
   void validateCallLifetimeRequirements(
       std::vector<std::pair<std::string, std::string>> required,
       std::span<const Parameter> parameters,
-      const std::vector<const ExprPtr *> &arguments, const Token &site);
+      const std::vector<const ExprPtr *> &arguments, const Token &site,
+      const std::vector<std::pair<std::string, std::string>> *substitution =
+          nullptr);
+  // RFC 0004: a written use of a patterned primary must supply the regions
+  // its pattern fixes, and a written construction substitutes its class
+  // lifetime arguments into the constructor's parameter regions.
+  void validateWrittenPatternRegions(const TypeRef &use, const Token &site);
+  void validateWrittenConstructionRegions(const VariableDecl &declaration);
+  // A receiver written with class lifetime arguments substitutes them into
+  // the selected method's parameter regions.
+  void validateReceiverCallRegions(const Expr &receiver,
+                                   const FunctionDecl &callee,
+                                   std::span<const ExprPtr> arguments,
+                                   const Token &site);
   // RFC 0004 shadow phase: MIR reports body-local borrow conflicts.
   [[nodiscard]] static bool mirBorrowAuthority();
   // The single parameter an explicit result contract names, either spelling.

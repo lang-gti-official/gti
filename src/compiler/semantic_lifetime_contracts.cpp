@@ -245,6 +245,34 @@ auto SemanticVisitor::Impl::constructorLifetimeSuppliers(
 
 auto SemanticVisitor::Impl::validateSignatureRegions(
     const FunctionDecl &syntax, const FunctionInfo &function) -> void {
+  for (const auto &parameter : syntax.parameters())
+    validateWrittenPatternRegions(parameter.type, parameter.name);
+  validateWrittenPatternRegions(syntax.returnType(), syntax.name());
+  // RFC 0004 elision: an omitted result region uses the sole eligible input
+  // (or a method's receiver). With several, the result is ambiguous and needs
+  // a declared relationship (Rust E0106). The legacy body inference reports
+  // the same programs from their bodies.
+  static const bool signatureContracts =
+      std::getenv("GTI_SIGNATURE_CONTRACTS") != nullptr;
+  if (signatureContracts &&
+      (function.ownerClass == 0 || function.staticMember) &&
+      syntax.returnType().reference && !syntax.returnType().referenceLifetime &&
+      !syntax.hasFunctionAttribute("borrowed_from") &&
+      std::none_of(syntax.parameters().begin(), syntax.parameters().end(),
+                   [](const Parameter &parameter) { return parameter.pack; })) {
+    std::size_t eligible = 0;
+    for (const auto &type : function.parameterTypes)
+      if (type.kind == SemanticType::Reference ||
+          typeTraits(type).containsBorrowedState)
+        ++eligible;
+    if (eligible > 1)
+      report(syntax.name(),
+             "The returned reference's elided region is ambiguous among " +
+                 std::to_string(eligible) +
+                 " borrowed parameters; name the suppliers with a lifetime "
+                 "parameter.",
+             "GTI-S2017");
+  }
   std::vector<std::string> bound;
   for (const auto &parameter : syntax.lifetimeParameters())
     bound.push_back(parameter.name.lexeme);
@@ -388,13 +416,36 @@ auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
 auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
     std::vector<std::pair<std::string, std::string>> required,
     std::span<const Parameter> parameters,
-    const std::vector<const ExprPtr *> &arguments, const Token &site) -> void {
-  // A parameter written in `static` requires a static argument.
+    const std::vector<const ExprPtr *> &arguments, const Token &site,
+    const std::vector<std::pair<std::string, std::string>> *substitution)
+    -> void {
+  // A parameter written in `static` requires a static argument (checked by
+  // the unsubstituted call; a substituted check adds only its own regions).
   for (const auto &parameter : parameters)
-    if (parameter.type.referenceLifetime &&
+    if (substitution == nullptr && parameter.type.referenceLifetime &&
         parameter.type.referenceLifetime->name.lexeme == "static")
       required.emplace_back("<static parameter " + parameter.name.lexeme + ">",
                             "static");
+  // A region the use site writes for a callee binder: each argument naming
+  // that binder must outlive the written region.
+  const auto substituted =
+      [&](const std::string &region) -> std::optional<std::string> {
+    if (substitution != nullptr)
+      for (const auto &[from, to] : *substitution)
+        if (from == region && to != "_")
+          return to;
+    return std::nullopt;
+  };
+  if (substitution != nullptr)
+    for (std::size_t index = 0;
+         index < parameters.size() && index < arguments.size(); ++index) {
+      std::vector<std::string> names;
+      collectRegionNames(parameters[index].type, names);
+      for (const auto &name : names)
+        if (const auto written = substituted(name))
+          required.emplace_back("<argument " + std::to_string(index) + ">",
+                                "<written " + *written + ">");
+    }
   if (required.empty() || currentFunctionDeclaration == nullptr)
     return;
   const FunctionDecl &caller = *currentFunctionDeclaration;
@@ -425,11 +476,16 @@ auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
     mapping.emplace_back("<static parameter " + parameters[index].name.lexeme +
                              ">",
                          callerRegion(*arguments[index]));
+    mapping.emplace_back("<argument " + std::to_string(index) + ">",
+                         free ? std::string("<free>")
+                              : callerRegion(*arguments[index]));
   }
   const auto mapped =
       [&](const std::string &region) -> std::optional<std::string> {
     if (region == "static")
       return region;
+    if (region.starts_with("<written "))
+      return region.substr(9, region.size() - 10);
     for (const auto &[from, to] : mapping)
       if (from == region)
         return to;
@@ -469,6 +525,216 @@ auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
            "GTI-S2127");
     return;
   }
+}
+
+auto SemanticVisitor::Impl::validateWrittenPatternRegions(const TypeRef &use,
+                                                         const Token &site)
+    -> void {
+  for (const auto &argument : use.arguments)
+    validateWrittenPatternRegions(argument, site);
+  if (use.lifetimeArguments.empty() || use.arguments.empty())
+    return;
+  auto id = resolveClassPath(use.name, currentNamespace);
+  if (!id)
+    id = resolveClassPathGlobally(use.name, currentNamespace);
+  if (!id || *id > classes.size() || classes[*id - 1].declaration == nullptr)
+    return;
+  const ClassDecl &owner = *classes[*id - 1].declaration;
+  const auto &patterns = owner.genericArgumentPatterns();
+  if (patterns.size() != use.arguments.size())
+    return;
+  const auto binders = owner.lifetimeParameters();
+  std::vector<std::string> typeBinders;
+  for (const auto &parameter : owner.genericParameters())
+    if (!parameter.lifetimeKeyword)
+      typeBinders.push_back(parameter.name.lexeme);
+  // The region the use supplies for a pattern region: a class binder takes
+  // its written lifetime argument; `static` is itself.
+  const auto expected =
+      [&](const std::string &region) -> std::optional<std::string> {
+    if (region == "static")
+      return region;
+    for (std::size_t index = 0;
+         index < binders.size() && index < use.lifetimeArguments.size();
+         ++index)
+      if (binders[index].name.lexeme == region) {
+        const auto &written = use.lifetimeArguments[index];
+        if (written.name.segments.size() != 1 ||
+            written.name.last().lexeme == "_")
+          return std::nullopt;
+        return written.name.last().lexeme;
+      }
+    return std::nullopt;
+  };
+  bool reported = false;
+  const auto match = [&](const auto &self, const TypeRef &pattern,
+                         const TypeRef &actual, bool inSignature) -> void {
+    if (reported || pattern.packExpansion)
+      return;
+    if (pattern.referenceLifetime && actual.reference) {
+      const auto want = expected(pattern.referenceLifetime->name.lexeme);
+      // An elided reference inside a function type binds per invocation; it
+      // cannot be the fixed region the pattern requires.
+      const std::optional<std::string> have =
+          actual.referenceLifetime
+              ? std::optional<std::string>(
+                    actual.referenceLifetime->name.lexeme)
+              : (inSignature ? std::optional<std::string>("<invocation>")
+                             : std::nullopt);
+      if (want && have && *have != "_" && *have != *want) {
+        report(site,
+               "Type argument region " +
+                   (*have == "<invocation>"
+                        ? std::string("bound per invocation")
+                        : "'" + *have + "'") +
+                   " does not match the region '" + *want +
+                   "' fixed by the patterned primary '" +
+                   owner.name().lexeme + "'.",
+               "GTI-S2127");
+        reported = true;
+        return;
+      }
+    }
+    if (pattern.name.segments.size() == 1 && pattern.arguments.empty() &&
+        contains(typeBinders, pattern.name.last().lexeme))
+      return;
+    const bool signature = pattern.isFunctionSignature();
+    if (signature != actual.isFunctionSignature())
+      return;
+    const auto &left = pattern.arguments;
+    const auto &right = actual.arguments;
+    if (signature) {
+      if (!left.empty() && !right.empty())
+        self(self, left.back(), right.back(), true);
+      const bool pack = std::any_of(left.begin(), left.end(), [](const auto &p) {
+        return p.packExpansion.has_value();
+      });
+      if (pack || left.size() != right.size())
+        return;
+      for (std::size_t index = 0; index + 1 < left.size(); ++index)
+        self(self, left[index], right[index], true);
+      return;
+    }
+    if (left.size() != right.size())
+      return;
+    for (std::size_t index = 0; index < left.size(); ++index)
+      self(self, left[index], right[index], inSignature);
+  };
+  for (std::size_t index = 0; index < patterns.size(); ++index)
+    match(match, patterns[index], use.arguments[index], false);
+}
+
+auto SemanticVisitor::Impl::validateWrittenConstructionRegions(
+    const VariableDecl &declaration) -> void {
+  validateWrittenPatternRegions(declaration.type(), declaration.name());
+  // An alias keeps the regions its target writes; only `static` means the
+  // same thing at the use, so a bound named in the alias's scope is skipped.
+  const TypeRef *written = &declaration.type();
+  std::optional<TypeRef> aliased;
+  if (written->lifetimeArguments.empty())
+    if (const auto alias = resolveTypeAliasPath(*written, currentNamespace);
+        alias && alias->declaration != nullptr) {
+      aliased = alias->declaration->target();
+      for (auto &argument : aliased->lifetimeArguments)
+        if (argument.name.segments.size() != 1 ||
+            argument.name.last().lexeme != "static")
+          argument.name.segments.back().lexeme = "_";
+      written = &*aliased;
+    }
+  const TypeRef &type = *written;
+  const auto &initializer = declaration.initializer();
+  if (!initializer ||
+      (type.lifetimeArguments.empty() && type.arguments.empty()))
+    return;
+  const auto *direct = exprAs<DirectInitializer>(initializer.get());
+  if (direct == nullptr || !direct->designators().empty())
+    return;
+  const auto *construction = semanticModel.findConstruction(*initializer);
+  if (construction == nullptr || construction->declaration == nullptr)
+    return;
+  auto id = resolveClassPath(type.name, currentNamespace);
+  if (!id)
+    id = resolveClassPathGlobally(type.name, currentNamespace);
+  if (!id || *id > classes.size() || classes[*id - 1].declaration == nullptr)
+    return;
+  const ClassDecl &owner = *classes[*id - 1].declaration;
+  const auto binders = owner.lifetimeParameters();
+  std::vector<std::pair<std::string, std::string>> substitution;
+  for (std::size_t index = 0;
+       index < binders.size() && index < type.lifetimeArguments.size();
+       ++index)
+    if (type.lifetimeArguments[index].name.segments.size() == 1)
+      substitution.emplace_back(
+          binders[index].name.lexeme,
+          type.lifetimeArguments[index].name.last().lexeme);
+  // A patterned primary binds a region where its pattern writes one:
+  // `Default<int&<source>>` used as `Default<int&<static>>` fixes source.
+  const auto bind = [&](const auto &self, const TypeRef &pattern,
+                        const TypeRef &actual) -> void {
+    if (pattern.referenceLifetime && actual.referenceLifetime &&
+        pattern.referenceLifetime->name.lexeme != "static")
+      substitution.emplace_back(pattern.referenceLifetime->name.lexeme,
+                                actual.referenceLifetime->name.lexeme);
+    if (pattern.arguments.size() == actual.arguments.size() &&
+        pattern.isFunctionSignature() == actual.isFunctionSignature())
+      for (std::size_t index = 0; index < pattern.arguments.size(); ++index)
+        if (!pattern.arguments[index].packExpansion)
+          self(self, pattern.arguments[index], actual.arguments[index]);
+  };
+  const auto &patterns = owner.genericArgumentPatterns();
+  if (patterns.size() == type.arguments.size())
+    for (std::size_t index = 0; index < patterns.size(); ++index)
+      bind(bind, patterns[index], type.arguments[index]);
+  if (substitution.empty())
+    return;
+  std::vector<const ExprPtr *> inputs;
+  for (const auto &argument : direct->arguments())
+    inputs.push_back(&argument);
+  validateCallLifetimeRequirements({}, construction->declaration->parameters(),
+                                   inputs, direct->brace(), &substitution);
+}
+
+auto SemanticVisitor::Impl::validateReceiverCallRegions(
+    const Expr &receiver, const FunctionDecl &callee,
+    std::span<const ExprPtr> arguments, const Token &site) -> void {
+  if (currentFunctionDeclaration == nullptr)
+    return;
+  const Expr *expression = &receiver;
+  while (const auto *group = exprAs<Grouping>(expression))
+    expression = group->expression().get();
+  const auto *variable = exprAs<Variable>(expression);
+  const Symbol *symbol = variable ? resolve(variable->name()) : nullptr;
+  if (symbol == nullptr)
+    return;
+  const TypeRef *written = nullptr;
+  if (symbol->bindingKind == SemanticBindingKind::Parameter) {
+    for (const auto &parameter : currentFunctionDeclaration->parameters())
+      if (parameter.name.lexeme == variable->name().lexeme)
+        written = &parameter.type;
+  } else if (symbol->variableDeclaration != nullptr) {
+    written = &symbol->variableDeclaration->type();
+  }
+  if (written == nullptr || written->lifetimeArguments.empty())
+    return;
+  auto id = resolveClassPath(written->name, currentNamespace);
+  if (!id)
+    id = resolveClassPathGlobally(written->name, currentNamespace);
+  if (!id || *id > classes.size() || classes[*id - 1].declaration == nullptr)
+    return;
+  const auto binders = classes[*id - 1].declaration->lifetimeParameters();
+  std::vector<std::pair<std::string, std::string>> substitution;
+  for (std::size_t index = 0;
+       index < binders.size() && index < written->lifetimeArguments.size();
+       ++index)
+    if (written->lifetimeArguments[index].name.segments.size() == 1)
+      substitution.emplace_back(
+          binders[index].name.lexeme,
+          written->lifetimeArguments[index].name.last().lexeme);
+  std::vector<const ExprPtr *> inputs;
+  for (const auto &argument : arguments)
+    inputs.push_back(&argument);
+  validateCallLifetimeRequirements({}, callee.parameters(), inputs, site,
+                                   &substitution);
 }
 
 auto SemanticVisitor::Impl::validateConstructorFieldRegions(

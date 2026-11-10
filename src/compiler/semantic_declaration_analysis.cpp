@@ -2897,6 +2897,15 @@ auto SemanticVisitor::Impl::resolveClassArgumentPatterns(ClassId id) -> void {
     return;
   }
   owner.argumentPatternsResolving = true;
+  // A lifetime binder shares the class's binder namespace with the type
+  // binders its patterns introduce.
+  for (const auto &lifetime : owner.declaration->lifetimeParameters())
+    for (const auto &parameter : owner.genericParameters)
+      if (parameter.name.lexeme == lifetime.name.lexeme)
+        report(lifetime.name,
+               "Lifetime binder '" + lifetime.name.lexeme +
+                   "' collides with the type binder of the same name.",
+               "GTI-S2128");
   const auto savedNamespace = currentNamespace;
   const auto savedClass = currentClass;
   const auto savedSource = currentSourceUnit;

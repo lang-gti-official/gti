@@ -6575,6 +6575,12 @@ auto SemanticVisitor::Impl::visitConceptDecl(const ConceptDecl &stmt) -> void {
 auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     -> void {
   const DeclarationOrderScope declarationOrder{*this, stmt};
+  // Runs once the declaration (and its construction) has been analyzed.
+  struct WrittenRegions {
+    Impl &impl;
+    const VariableDecl &stmt;
+    ~WrittenRegions() { impl.validateWrittenConstructionRegions(stmt); }
+  } writtenRegions{*this, stmt};
   const SourceDebugRegionGuard sourceRegion{*this, stmt};
   const std::size_t declarationDiagnosticStart = diagnostics.size();
   if (stmt.isThreadLocal() && !validateThreadLocalDeclaration(stmt))
@@ -8236,6 +8242,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         selected && validateCallableReturn(expr, selected->returnType) &&
         validateCallableCapability(
             expr, callableInvocationCapability(selected->receiverMutability));
+    if (valid && selected->declaration != nullptr)
+      validateReceiverCallRegions(*expr.callee(), *selected->declaration,
+                                  expr.arguments(), expr.paren());
     currentType = valid ? callExpressionType(selected->returnType)
                         : SemanticType::Unknown;
     return;

@@ -5790,8 +5790,12 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
               "child reborrow that may still be live.",
         receiverLoan);
   }
-  if (function.declaration != nullptr)
+  if (function.declaration != nullptr) {
     validateCallLifetimeRequirements(*function.declaration, arguments, paren);
+    if (member != nullptr)
+      validateReceiverCallRegions(*member->object(), *function.declaration,
+                                  arguments, paren);
+  }
   return true;
 }
 
