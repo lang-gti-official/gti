@@ -217,6 +217,36 @@ int main() {
       "explicit generic-call lookahead must admit static lifetime arguments");
 }
 
+void testOperatorLifetimeBinders() {
+  const std::string source = R"(
+struct Pick {
+  int&<a> operator()<lifetime a>(int&<a> left, int& right) { return left; }
+};
+)";
+  lang::Lexer lexer;
+  lang::Parser parser(lexer.scan(source, "operator-lifetimes.gti"));
+  const auto program = parser.parse();
+  expect(!lexer.hadError() && !parser.hadError(),
+         "an operator overload may bind lifetime parameters");
+  const auto *owner =
+      lang::stmtAs<lang::ClassDecl>(program.declarations()[0].get());
+  const lang::FunctionDecl *call = nullptr;
+  if (owner)
+    for (const auto &member : owner->members())
+      if (const auto *function = lang::stmtAs<lang::FunctionDecl>(member.get()))
+        call = function;
+  expect(call && call->lifetimeParameters().size() == 1 &&
+             call->genericParameters().empty(),
+         "an operator's lifetime binders are lifetime parameters only");
+
+  lang::Lexer typedLexer;
+  lang::Parser typed(typedLexer.scan(
+      "struct Bad { int& operator()<lifetime a, T>(int& x) { return x; } };",
+      "operator-type-binder.gti"));
+  (void)typed.parse();
+  expect(typed.hadError(), "an operator overload cannot bind a type");
+}
+
 void testQuantifiedAndReceiverSyntax() {
   const std::string source = R"(
 using Callback = for<lifetime a, lifetime b>
@@ -634,6 +664,7 @@ struct Derived<Args...> : public Base {
 } // namespace
 
 int main() {
+  testOperatorLifetimeBinders();
   testDeclarationSyntax();
   testContextualKeywordAndLookahead();
   testCloneAndPrinter();

@@ -1487,8 +1487,20 @@ private:
                               std::move(ownerArguments));
     }
     std::vector<GenericParameter> genericParameters;
-    if (!operatorName && check(TokenKind::LESS)) {
+    // An operator may bind lifetimes (erased signature metadata), never types.
+    const bool operatorLifetimes = operatorName && check(TokenKind::LESS) &&
+                                   peekAt(1).kind == TokenKind::IDENTIFIER &&
+                                   peekAt(1).lexeme == "lifetime";
+    if ((!operatorName || operatorLifetimes) && check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
+      if (operatorLifetimes &&
+          std::any_of(genericParameters.begin(), genericParameters.end(),
+                      [](const GenericParameter &parameter) {
+                        return !parameter.lifetimeKeyword;
+                      }))
+        throw error(operatorName->symbol,
+                    "An operator overload can declare only lifetime "
+                    "parameters.");
     }
     if (blockParameters) {
       if (std::any_of(genericParameters.begin(), genericParameters.end(),
