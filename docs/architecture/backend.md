@@ -540,13 +540,8 @@ contains:
   exact type/value substitutions and source provenance; and
 - exhaustive generated-item identities, payloads, roots, and dependencies.
 
-Generic requirement leaves have explicit concept, lifetime, member, expression,
-iteration, inferred-expression, and predicate kinds. A concept retains its
-resolved type and lifetime arguments. A lifetime leaf retains either its exact
-region-outlives bound or a resolved type with its outlives region; declaration
-metadata rejects missing bounds and body-local regions. The normalized lifetime
-contract remains the executable proof authority, and the original Boolean
-requirement graph retains its leaf ordering. An exact member
+Generic requirement leaves have explicit `Concept`, `Member`, `Expression`,
+or `Predicate` kinds. A concept keeps its declaration identity; an exact member
 keeps its actual name and receiver-access facts. A general expression instead
 owns ordered synthetic-parameter types, its exact owned result type and any
 explicit expression type arguments, with a checked result index separating
@@ -586,27 +581,6 @@ first, so a direct or test caller cannot bypass rejection. `verifyLoweredProgram
 is also available for independent tooling and tests. The historical PR #176 audit
 therefore retains streamed hashing and shared evidence, but rejects its
 seal-only admission shortcut.
-
-LLVM lifetime representation queries require this verified snapshot. They keep
-semantic MIR and its contracts unchanged: nominal layout selection matches the
-actual type against its checked universal instance, while private representation
-keys erase only lifetime regions and quantified binder identities. An erased key
-cannot become a semantic type or establish an outlives relation. Reference and
-borrowed primitive layouts retain their ordinary pointer or pointer-and-length
-representation; no lifetime argument becomes a native operand or runtime state.
-Descriptor classification and stored-field projection use that same exact view
-for borrowed enums and generic records. Generated copy, relocation, cleanup and
-debug records instantiate stored child types in the actual region scope while
-layout caches retain the canonical descriptor. A missing or ambiguous enum view
-does not classify the type as an integral enum or a trivial object.
-
-Abstract `Stored` entry groups use the same metadata-only representation for
-ordinary records and hierarchy storage with an exact native layout. This applies
-to every independently retained origin, including inherited and direct fields
-of one receiver. Each supplied type and conditional enum domain must have an
-admitted representation. Executable address selection, dispatch and cleanup
-remain separately checked; admitting the dependency group neither chooses an
-address nor changes its origins, permissions or endpoints.
 
 Evidence owns a const snapshot, shared between consumer stages. Acquiring it
 copies an lvalue program or moves an rvalue program. `Backend::generate`
@@ -5999,18 +5973,6 @@ selected-owner identity, write-back and exact destruction; a panic relay checks
 original attribution and local/TLS cleanup. Load and argument staging continue
 to require their same-block producer.
 
-A shared erased-reference return may instead export its original entry shell and
-stored owners through MIR's independently verified address-preserving helper
-proof. LLVM forwards the evaluated restored pointer and admits its exact native
-or dispatch-layout representation; it neither copies the object nor derives its
-address from a lifetime owner. The original supplier replay, access, liveness,
-normal/failure cleanup and outgoing lifetime conversion remain MIR obligations.
-The transient erase and restore loans keep their own witnesses. Underlying
-reference erasure accepts the same exact native or dispatch-layout object;
-completeness resolves the checked lifetime-instantiated class definition rather
-than comparing declaration and call-site region identifiers. Abstract classes,
-interfaces, opaque handles and compiler capabilities retain their separate rules.
-
 A direct fundamental text return has a distinct bounded witness: its source call
 publishes a `Stored` dependency and an SSA text value, then the return
 publishes that exact value with the unchanged escaping `Return` dependency.
@@ -6176,7 +6138,7 @@ cleanup ownership is independent of whether the representation needs a byte.
 MIR independently follows the destructor with that field known null and requires
 a terminating path containing only the field observation, inert scalar operations
 and empty lifecycle boundaries. Effects, calls, failure, uncertain branches and
-cycles invalidate the witness. The witness is serialized in `mir-v128`.
+cycles invalidate the witness. The witness is serialized in `mir-v121`.
 
 LLVM omits the separate byte for this witness, uses the pointer for cleanup
 observation, and nulls it after transferring all fields to a move destination.

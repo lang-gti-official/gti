@@ -1,7 +1,5 @@
-#include "representation.h"
 #include "body.h"
 #include "../mir_verification_queries.h"
-#include "../mir_lifetimes.h"
 #include "atomics.h"
 #include "callables.h"
 #include "closure_environment.h"
@@ -1088,22 +1086,20 @@ private:
     if (!instruction.result || !instruction.lambdaTarget)
       throw std::logic_error("LLVM closure construction lost its identity");
     const auto &target = callables.lambda(*instruction.lambdaTarget);
-    const auto view = mirLambdaLifetimeView(target, instruction.info.type);
-    const auto captures = instruction.info.type.lambdaCaptureTypes();
-    if (!view || !std::equal(captures.begin(), captures.end(),
-                            instruction.closureCaptureTypes.begin(), instruction.closureCaptureTypes.end()) ||
+    if (target.type != instruction.info.type ||
+        target.captureTypes != instruction.closureCaptureTypes ||
         target.captureModes != instruction.closureCaptureModes ||
-        captures.size() != instruction.operands.size())
+        target.captureTypes.size() != instruction.operands.size())
       throw std::logic_error(
           "LLVM closure construction disagrees with sealed capture facts");
     auto *environment = destination(*instruction.result);
-    auto *storage = session.layouts().get(instruction.info.type).storage;
-    if (captures.empty()) {
+    auto *storage = session.layouts().get(target.type).storage;
+    if (target.captureTypes.empty()) {
       ir.CreateStore(ir.getInt8(0),
                      ir.CreateStructGEP(storage, environment, 0));
       return environment;
     }
-    for (std::size_t index = 0; index < captures.size(); ++index) {
+    for (std::size_t index = 0; index < target.captureTypes.size(); ++index) {
       // A moved hierarchy capture was relocated into its slot by its own
       // planned transfer; storing its value would copy dispatch state.
       const auto &source = instruction.operands[index];
@@ -1119,12 +1115,12 @@ private:
       if (source.kind == MirOperandKind::Copy && source.place &&
           target.captureModes[index] == LambdaCaptureMode::Copy &&
           containsHierarchyStorage(session.program().mir(),
-                                   captures[index])) {
+                                   target.captureTypes[index])) {
         copyHierarchy(slot, memory.address(source.place),
-                      captures[index]);
+                      target.captureTypes[index]);
         continue;
       }
-      store(operand(source), slot, captures[index]);
+      store(operand(source), slot, target.captureTypes[index]);
     }
     return environment;
   }
@@ -1809,7 +1805,7 @@ private:
       }
       if (instruction.operation == MirOperation::PayloadConstruct ||
           (instruction.operation == MirOperation::EnumConstant &&
-           native_llvm::exactPayloadEnum(session.program().mir(), instruction.info.type))) {
+           session.program().mir().findPayloadEnum(instruction.info.type))) {
         const auto &type = instruction.info.type;
         const auto &layout = session.layouts().payload(type);
         const auto variant = instruction.enumVariant.value();
@@ -1845,10 +1841,11 @@ private:
         const auto type = mirInstructionEnumType(instruction);
         const auto &layout = session.layouts().payload(type);
         const auto &source = instruction.operands.at(0);
-        const auto fieldType = exactPayloadElementType(session.program().mir(), type,
-            *instruction.enumVariant, *instruction.payloadIndex);
-        if (!fieldType)
-          throw std::logic_error("LLVM payload extraction lost its exact actual field type");
+        const auto &fieldType = session.program()
+                                    .mir()
+                                    .findPayloadEnum(type)
+                                    ->variants.at(*instruction.enumVariant)
+                                    .payloadTypes.at(*instruction.payloadIndex);
         auto *field = payloadFieldAddress(
             ir, layout,
             source.place ? memory.address(source.place) : operand(source),
@@ -1856,7 +1853,7 @@ private:
         const auto kind = instruction.payloadExtractionKind.value();
         result = kind == PayloadExtractionKind::BorrowValue
                      ? field
-                     : load(field, *fieldType);
+                     : load(field, fieldType);
         if (kind == PayloadExtractionKind::MoveValue &&
             addressValue(session.program().mir(), instruction.info.type)) {
           auto *target = destination(*instruction.result);
@@ -2077,8 +2074,8 @@ private:
         result = copy;
       }
       if (instruction.kind == MirInstructionKind::CallInput &&
-          instruction.info.type.kind == SemanticType::CString &&
-          instruction.operands[0].type.kind == SemanticType::StringView) {
+          instruction.info.type == SemanticType::CString &&
+          instruction.operands[0].type == SemanticType::StringView) {
         if (!wholeCStringLiteral(input, instruction.operands[0]))
           throw BackendUnsupportedError(
               "LLVM C-string call input requires exact complete source-literal "
@@ -2300,10 +2297,6 @@ private:
           publication.kind == StoredFieldPublicationKind::ProvenanceOnly)
         break;
       if (const auto &selection = loan.referenceSelection) {
-        if (selection->kind == ReferenceSelectionKind::PhysicalPayload &&
-            !mir_detail::physicalPayloadSelectionSource(
-                session.program().mir(), input, *selection))
-          throw std::logic_error("LLVM physical payload selection lost its verified storage");
         result = values.at(selection->value);
         if (!result)
           throw std::logic_error(
@@ -2460,10 +2453,7 @@ private:
       const auto &type = term.value->type.kind == SemanticType::Reference
                              ? term.value->type.arguments.at(0)
                              : term.value->type;
-      if (type.kind == SemanticType::Enum &&
-          !mirEnumLifetimeView(session.program().mir(), type))
-        throw std::logic_error("LLVM switch lost its exact enum view");
-      if (native_llvm::exactPayloadEnum(session.program().mir(), type)) {
+      if (session.program().mir().findPayloadEnum(type)) {
         const auto &layout = session.layouts().payload(type);
         value = ir.CreateLoad(ir.getInt32Ty(),
                               payloadTagAddress(ir, layout, value));
@@ -2879,7 +2869,7 @@ private:
     if (input.kind == MirBodyKind::Constructor && owner)
       for (const auto &loan : input.loans)
         if (loan.entry && loan.kind == MirLoanKind::Stored &&
-            !loan.storedPath.empty()) {
+            loan.storedField) {
           const auto publication = fieldPublication(loan);
           if (publication.kind == StoredFieldPublicationKind::ProvenanceOnly)
             continue;

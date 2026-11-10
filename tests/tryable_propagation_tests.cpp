@@ -652,7 +652,7 @@ int main() {
             if (corruption == 0)
               alternatives.pop_back();
             if (corruption == 1)
-              alternatives.front().conditions.front().subobject = {lang::fieldProjection(1)};
+              alternatives.front().conditions.front().subobject = {1};
             if (corruption == 2)
               alternatives.back() = alternatives.front();
             changed = true;
@@ -769,7 +769,7 @@ int main() { auto value = move_result(); return 0; }
           if (corruption == 4)
             set.dependencies.push_back({});
           if (corruption == 5)
-            set.possibleAlternatives.front().conditions.front().subobject = {lang::fieldProjection(1)};
+            set.possibleAlternatives.front().conditions.front().subobject = {1};
           changed = true;
         }
       expect(changed, "empty-set mutation must select a proven enum producer");

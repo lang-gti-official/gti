@@ -103,18 +103,6 @@ The current formatter has four deliberately separate responsibilities:
 4. the LSP translates editor options, loads project configuration, reports
    configuration issues, and returns one whole-document edit.
 
-Lifetime parameter declarations retain the contextual `lifetime` spelling in
-ordinary generic lists. Reference regions stay attached to their marker:
-`T&<a>`, `mut View<a>&<b>`, and `T&<this>` preserve the distinction between a
-stored view's region and the reference to that view. `_` and `static` arguments,
-`outlives` applications, nested closing brackets and incomplete declarations use
-the same token-preserving formatting path. Quantified callable types print
-`for<lifetime a> T&<a>(T&<a>)`; generic conformance declarations retain the
-existing `for <Parameters> concept` layout. A variable named `lifetime` remains
-an ordinary identifier. Tree-sitter gives lifetime declarations and explicit
-reference arguments their own structural nodes and `@type.lifetime` captures;
-resolved argument kinds remain compiler-owned.
-
 Reference markers are recognized from declaration structure rather than only
 from names declared in the formatted file. This keeps an included nominal
 return type such as `LayerStack& GetLayerStack()` aligned consistently while

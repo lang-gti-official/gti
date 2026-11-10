@@ -25,14 +25,6 @@ struct FrontendWorkMetrics {
   std::size_t parseMicroseconds = 0;
   std::size_t semanticMicroseconds = 0;
   std::size_t semanticRegistrationMicroseconds = 0;
-  // Private lifetime fixed-point work, including unsuccessful body probes.
-  // These are semantic operations, independent of host timing or cache reuse.
-  std::size_t semanticPrivateLifetimeCandidates = 0;
-  std::size_t semanticPrivateLifetimeProbes = 0;
-  std::size_t semanticPrivateLifetimeUpdates = 0;
-  std::size_t semanticPrivateLifetimeDependencyEdges = 0;
-  std::size_t semanticPrivateLifetimeOpaqueProbes = 0;
-  std::size_t semanticPrivateLifetimeMicroseconds = 0;
   std::size_t semanticBodyMicroseconds = 0;
   std::size_t semanticTrustedBodyMicroseconds = 0;
   // Trusted bodies the lexical pass deferred, and how many were analysed on

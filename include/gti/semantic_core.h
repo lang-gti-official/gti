@@ -7,10 +7,8 @@
 #include "gti/diagnostic.h"
 #include "gti/failure.h"
 #include "gti/generic_constraint.h"
-#include "gti/lifetime.h"
 #include "gti/source_graph.h"
 
-#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -27,18 +25,6 @@
 namespace lang {
 
 struct FrontendWorkMetrics;
-
-enum class TypeVariance { Bivariant, Covariant, Contravariant, Invariant };
-
-// Declaration descriptors use one compact slot per type/lifetime parameter.
-// A concrete semantic query expands the final type-pack descriptor as needed.
-struct NominalVariance {
-  std::vector<TypeVariance> types;
-  std::vector<TypeVariance> lifetimes;
-  bool complete = false;
-
-  friend bool operator==(const NominalVariance &, const NominalVariance &) = default;
-};
 
 // Optional diagnostics about programmer-owned unsafe obligations. This policy
 // never changes typing, checked loans, MIR verification, or runtime semantics.
@@ -95,14 +81,6 @@ using SemanticLoanId = std::size_t;
 using SymbolId = std::size_t;
 using TypeAliasId = std::size_t;
 
-// Both selections carry an evaluated address. Only a stored reference carries
-// authority over an external owner; a physical payload keeps borrowing its
-// enclosing enum storage and cannot survive replacement of that storage.
-enum class ReferenceSelectionKind {
-  StoredExternalReference,
-  PhysicalPayload,
-};
-
 struct PlaceDomain {
   std::size_t snapshot = 0;
   std::size_t body = 0;
@@ -118,7 +96,6 @@ enum class PlaceProjectionKind {
   ConstantIndex,
   DynamicIndex,
   Dereference,
-  Base,
 };
 
 struct PlaceProjection {
@@ -126,58 +103,10 @@ struct PlaceProjection {
   SymbolId field = 0;
   std::uint64_t index = 0;
   std::size_t selection = 0;
-  // Base names the current declaration and its full direct-base ordinal in
-  // index, including interface entries. A typed walk must prove that the
-  // selected base has storage; an interface cannot supply a borrowed field.
-  ClassId baseOwner = 0;
 
   friend bool operator==(const PlaceProjection &,
                          const PlaceProjection &) = default;
-  friend auto operator<=>(const PlaceProjection &,
-                          const PlaceProjection &) = default;
 };
-
-// Explicit structural constructors. These do not prove that a field, base,
-// or constant element belongs to any type; typed path consumers own that proof.
-[[nodiscard]] inline PlaceProjection fieldProjection(SymbolId field) {
-  return {.kind = PlaceProjectionKind::Field, .field = field};
-}
-[[nodiscard]] inline PlaceProjection baseProjection(ClassId owner, std::uint64_t ordinal) {
-  return {.kind = PlaceProjectionKind::Base, .index = ordinal, .baseOwner = owner};
-}
-[[nodiscard]] inline PlaceProjection constantIndexProjection(std::uint64_t index) {
-  return {.kind = PlaceProjectionKind::ConstantIndex, .index = index};
-}
-
-// Rootless structural paths share the place projection vocabulary. This
-// shape check grants no type, origin, active-variant or liveness authority;
-// each consumer must walk the exact instantiated root and declaration graph.
-using BorrowPath = std::vector<PlaceProjection>;
-
-[[nodiscard]] inline bool
-isWellFormedBorrowPath(std::span<const PlaceProjection> path) {
-  for (const auto &projection : path) {
-    switch (projection.kind) {
-    case PlaceProjectionKind::Field:
-      if (!projection.field || projection.index || projection.selection || projection.baseOwner)
-        return false;
-      break;
-    case PlaceProjectionKind::Base:
-      if (!projection.baseOwner || projection.field || projection.selection)
-        return false;
-      break;
-    case PlaceProjectionKind::ConstantIndex:
-      if (projection.field || projection.selection || projection.baseOwner)
-        return false;
-      break;
-    case PlaceProjectionKind::DynamicIndex:
-    case PlaceProjectionKind::Dereference:
-    default:
-      return false;
-    }
-  }
-  return true;
-}
 
 struct PlaceKey {
   PlaceDomain domain;
@@ -301,10 +230,6 @@ struct GenericParameterInfo {
   Token name;
   bool pack = false;
   bool value = false;
-  bool lifetime = false;
-  // Anonymous declaration regions are part of the normalized contract, but
-  // callers cannot supply them as positional source generic arguments.
-  bool implicit = false;
   GenericConstraintSet constraints = 0;
   std::optional<NamePath> constraintName;
   ConceptId conceptId = 0;
@@ -495,12 +420,10 @@ struct SemanticType {
 
   [[nodiscard]] static SemanticType
   classType(ClassId id, std::vector<SemanticType> arguments = {},
-            std::vector<CompileTimeValue> valueArguments = {},
-            std::vector<Lifetime> lifetimeArguments = {}) {
+            std::vector<CompileTimeValue> valueArguments = {}) {
     SemanticType type(Class, std::move(arguments));
     type.classId = id;
     type.valueArguments = std::move(valueArguments);
-    type.lifetimeArguments = std::move(lifetimeArguments);
     return type;
   }
 
@@ -521,12 +444,10 @@ struct SemanticType {
 
   [[nodiscard]] static SemanticType
   enumType(EnumId id, std::vector<SemanticType> arguments = {},
-           std::vector<CompileTimeValue> valueArguments = {},
-           std::vector<Lifetime> lifetimeArguments = {}) {
+           std::vector<CompileTimeValue> valueArguments = {}) {
     SemanticType type(Enum, std::move(arguments));
     type.enumId = id;
     type.valueArguments = std::move(valueArguments);
-    type.lifetimeArguments = std::move(lifetimeArguments);
     return type;
   }
 
@@ -740,11 +661,9 @@ struct SemanticType {
   }
 
   [[nodiscard]] static SemanticType
-  referenceTo(SemanticType referent, AccessMode access = AccessMode::ReadOnly,
-              Lifetime lifetime = {}) {
+  referenceTo(SemanticType referent, AccessMode access = AccessMode::ReadOnly) {
     SemanticType type(Reference, {std::move(referent)});
     type.referenceAccess = access;
-    type.referenceLifetime = lifetime;
     return type;
   }
 
@@ -764,32 +683,11 @@ struct SemanticType {
   }
 
   friend bool operator==(const SemanticType &, const SemanticType &) = default;
-  // Comparing with a bare kind asks "is this that type". Text views carry a
-  // region argument that is a lifetime constraint, not part of that identity,
-  // so a region-bearing std::string_view or c_string still is that text type.
-  // Every other kind keeps exact equality with its default-shaped type.
-  friend bool operator==(const SemanticType &left, Kind right) {
-    if ((right == StringView || right == CString) && left.kind == right &&
-        !left.lifetimeArguments.empty()) {
-      SemanticType plain = left;
-      plain.lifetimeArguments.clear();
-      return plain == SemanticType(right);
-    }
-    return left == SemanticType(right);
-  }
 
   Kind kind;
   NativeCScalarKind nativeCScalar = NativeCScalarKind::None;
   std::vector<SemanticType> arguments;
   std::vector<CompileTimeValue> valueArguments;
-  // Lifetime arguments are semantic constraints, never executable type/value
-  // substitutions. Keep the reference's own region separate from regions in
-  // its referent (for example View<a>&<b>).
-  Lifetime referenceLifetime;
-  std::vector<Lifetime> lifetimeArguments;
-  // Universally quantified regions of a callable signature, scoped over its
-  // result and arguments. These are semantic identities, never ABI arguments.
-  std::vector<GenericParameterId> quantifiedLifetimes;
   ClassId classId = 0;
   EnumId enumId = 0;
   GenericParameterId genericParameterId = 0;
@@ -817,146 +715,6 @@ struct SemanticType {
   [[nodiscard]] bool isAssociatedTypeProjection() const {
     return kind == TypeParameter && projectionConcept != 0;
   }
-};
-
-// A type-outlives obligation retains the exact type, including opaque
-// associated projections. Bounds on its spelling's type arguments alone do
-// not prove the validity of an independently selected associated type.
-struct LifetimeTypeBound {
-  SemanticType type = SemanticType::Unknown;
-  Lifetime region;
-  friend bool operator==(const LifetimeTypeBound &,
-                         const LifetimeTypeBound &) = default;
-};
-
-// Postorder declaration requirements. Only groups containing a region/type
-// outlives relation appear here. Ordinary predicates in a mixed group retain
-// a declaration-local ordinal; semantics resolves their truth for the exact
-// type/value instance. MIR checks the call against that target-instance fact,
-// never against a truth value supplied by the call application.
-struct LifetimeRequirementNode {
-  enum class Kind { Region, Type, SemanticPredicate, All, Any };
-  static constexpr std::size_t invalidIndex = static_cast<std::size_t>(-1);
-  Kind kind = Kind::Region;
-  LifetimeBound bound;
-  SemanticType type = SemanticType::Unknown;
-  std::size_t left = invalidIndex;
-  std::size_t right = invalidIndex;
-  std::size_t predicate = invalidIndex;
-  std::optional<bool> semanticTruth;
-  friend bool operator==(const LifetimeRequirementNode &,
-                         const LifetimeRequirementNode &) = default;
-};
-
-struct LifetimeRequirementFormula {
-  std::vector<LifetimeRequirementNode> nodes;
-  std::size_t root = LifetimeRequirementNode::invalidIndex;
-  [[nodiscard]] bool resolved() const {
-    return std::all_of(nodes.begin(), nodes.end(), [](const auto &node) {
-      return node.kind != LifetimeRequirementNode::Kind::SemanticPredicate ||
-             node.semanticTruth.has_value();
-    });
-  }
-  friend bool operator==(const LifetimeRequirementFormula &,
-                         const LifetimeRequirementFormula &) = default;
-};
-
-// The normalized, caller-visible region interface. Declaration parameters are
-// universal; no local/inferred region may be published here. Actual places,
-// access permissions and drop obligations remain in the borrow contract.
-struct LifetimeSignatureContract {
-  std::vector<Lifetime> parameters;
-  std::vector<LifetimeBound> bounds;
-  std::vector<LifetimeTypeBound> typeBounds;
-  LifetimeRequirementFormula requirements;
-  Lifetime receiver;
-  LifetimeContractOrigin origin = LifetimeContractOrigin::Elided;
-  bool complete = false;
-
-  [[nodiscard]] bool valid() const {
-    if (!complete)
-      return false;
-    if (origin != LifetimeContractOrigin::Declared &&
-        origin != LifetimeContractOrigin::Elided &&
-        origin != LifetimeContractOrigin::BodyInferred)
-      return false;
-    const auto declared = [&](Lifetime region) {
-      return region == Lifetime::staticLifetime() ||
-             std::find(parameters.begin(), parameters.end(), region) !=
-                 parameters.end();
-    };
-    for (std::size_t index = 0; index < parameters.size(); ++index) {
-      const Lifetime region = parameters[index];
-      if (region.kind != Lifetime::Kind::Parameter || !region.specified() ||
-          std::find(parameters.begin(), parameters.begin() + index, region) !=
-              parameters.begin() + index)
-        return false;
-    }
-    if (receiver != Lifetime{} &&
-        (receiver.kind != Lifetime::Kind::Parameter || !declared(receiver)))
-      return false;
-    if (!std::all_of(typeBounds.begin(), typeBounds.end(), [&](auto bound) {
-          return bound.type != SemanticType::Unknown &&
-                 bound.region.declarationRegion() &&
-                 declared(bound.region);
-        }))
-      return false;
-    if (requirements.nodes.empty()) {
-      if (requirements.root != LifetimeRequirementNode::invalidIndex)
-        return false;
-    } else {
-      if (requirements.root != requirements.nodes.size() - 1 ||
-          requirements.nodes.size() > 4096)
-        return false;
-      for (std::size_t index = 0; index < requirements.nodes.size(); ++index) {
-        const auto &node = requirements.nodes[index];
-        using Kind = LifetimeRequirementNode::Kind;
-        if (node.kind == Kind::All || node.kind == Kind::Any) {
-          if (node.left >= index || node.right >= index ||
-              node.type != SemanticType::Unknown || node.bound != LifetimeBound{} ||
-              node.predicate != LifetimeRequirementNode::invalidIndex || node.semanticTruth)
-            return false;
-        } else {
-          if (node.left != LifetimeRequirementNode::invalidIndex ||
-              node.right != LifetimeRequirementNode::invalidIndex)
-            return false;
-          if (node.kind == Kind::SemanticPredicate) {
-            if (node.predicate == LifetimeRequirementNode::invalidIndex ||
-                node.type != SemanticType::Unknown || node.bound != LifetimeBound{})
-              return false;
-          } else if (node.kind == Kind::Region || node.kind == Kind::Type) {
-            if (!declared(node.bound.shorter) || node.semanticTruth ||
-                node.predicate != LifetimeRequirementNode::invalidIndex ||
-                (node.kind == Kind::Region
-                     ? !declared(node.bound.longer) || node.type != SemanticType::Unknown
-                     : node.bound.longer != Lifetime{} || node.type == SemanticType::Unknown))
-              return false;
-          } else {
-            return false;
-          }
-        }
-      }
-    }
-    return std::all_of(bounds.begin(), bounds.end(), [&](LifetimeBound bound) {
-      return bound.longer.declarationRegion() &&
-             bound.shorter.declarationRegion() && declared(bound.longer) &&
-             declared(bound.shorter);
-    });
-  }
-
-  friend bool operator==(const LifetimeSignatureContract &,
-                         const LifetimeSignatureContract &) = default;
-};
-
-// A source-free callable retains a universal signature and the exact fixed
-// instantiation of its free carrier regions. Higher-ranked binders remain
-// scoped in signature and are instantiated separately for each invocation.
-struct CallableLifetimeSignature {
-  SemanticType signature = SemanticType::Unknown;
-  LifetimeSignatureContract contract;
-  std::vector<LifetimeBinding> signatureBindings;
-  friend bool operator==(const CallableLifetimeSignature &,
-                         const CallableLifetimeSignature &) = default;
 };
 
 // A declaration-bound monotone predicate over concurrency facts. Source concept
@@ -1013,7 +771,6 @@ struct AppliedConceptRequirement {
   ConceptId conceptId = 0;
   const ConceptApplication *syntax = nullptr;
   std::vector<SemanticType> arguments;
-  std::vector<Lifetime> lifetimeArguments;
   const ConstraintExpression *expression = nullptr;
   std::size_t expressionApplication = ConstraintExpressionNode::invalidIndex;
   // A direct member requirement written in compiler-trusted source may select
@@ -1021,10 +778,6 @@ struct AppliedConceptRequirement {
   // concept leaves never set it: concept satisfaction is a public predicate.
   bool trustedMemberAccess = false;
   std::optional<std::vector<std::string>> lookupScope;
-  // Compiler-owned validity relation. A type-outlives predicate stores its
-  // first operand separately; an absent region is never treated as static.
-  std::optional<LifetimeBound> lifetimeBound;
-  std::optional<SemanticType> outlivesType;
 };
 
 [[nodiscard]] std::optional<CheckedIntegerDomain>

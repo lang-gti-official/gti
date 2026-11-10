@@ -1530,7 +1530,7 @@ int main() {
   expect(nameField != 0 && recordMoves == 2 &&
              std::none_of(label->body.loans.begin(), label->body.loans.end(),
                           [](const lang::MirLoan &loan) {
-                            return !loan.storedPath.empty();
+                            return loan.storedField != 0;
                           }),
          "each text field publishes from its constructor record, with no "
          "Stored loan for either field");
@@ -1633,7 +1633,7 @@ int main() {
              const lang::MirPlace *source = body.findPlace(loan.source);
              if (loan.entry && source != nullptr &&
                  source->type.kind == lang::SemanticType::StringView) {
-               loan.storedPath = lang::BorrowPath{lang::fieldProjection(nameField)};
+               loan.storedField = nameField;
                return true;
              }
            }
@@ -1697,11 +1697,11 @@ int main() {
         constructor.body.loans.begin(), constructor.body.loans.end(),
         [](const lang::MirLoan &loan) {
           return loan.kind == lang::MirLoanKind::Stored &&
-                 !loan.storedPath.empty();
+                 loan.storedField != 0;
         });
     expect(stored != constructor.body.loans.end() &&
                lang::cppMirDeferredFieldStorage(carrier.mir, constructor.owner,
-                                                !stored->storedPath.empty()) &&
+                                                stored->storedField) &&
                !lang::cppMirOwnedParameterFieldBindings(carrier.mir,
                                                         constructor) &&
                lang::CppMirBodyEmitter(carrier.mir, carrierMap)
@@ -1906,9 +1906,8 @@ int main() {
   const auto carrierField =
       [](const lang::MirConstructorInstance &constructor) {
         for (const lang::MirLoan &loan : constructor.body.loans)
-          if (loan.kind == lang::MirLoanKind::Stored && loan.storedPath.size() == 1 &&
-              loan.storedPath.front().kind == lang::PlaceProjectionKind::Field)
-            return loan.storedPath.front().field;
+          if (loan.kind == lang::MirLoanKind::Stored && loan.storedField != 0)
+            return loan.storedField;
         return lang::SymbolId{0};
       };
   const auto *moved = constructorOf(frontend, "Moved");
@@ -2021,7 +2020,7 @@ int main() {
              auto &body = const_cast<lang::MirBody &>(constructor.body);
              for (lang::MirLoan &loan : body.loans)
                if (loan.kind == lang::MirLoanKind::Stored &&
-                   !loan.storedPath.empty()) {
+                   loan.storedField != 0) {
                  for (const lang::MirPlace &place : body.places)
                    if (place.id != loan.source &&
                        place.root == lang::MirPlaceRootKind::This) {
@@ -2193,7 +2192,7 @@ int main() {
   };
   expect(refusesForged([](lang::MirBody &body) {
            for (lang::MirLoan &loan : body.loans) {
-             if (loan.escapes && !loan.storedPath.empty()) {
+             if (loan.escapes && loan.storedField != 0) {
                loan.producedBy = loan.producedBy + 1;
                return true;
              }
@@ -4395,7 +4394,7 @@ int32_t main() {
             destination->type.kind == lang::SemanticType::Reference &&
             loan->kind == lang::MirLoanKind::Local && dependency != nullptr &&
             dependency->kind == lang::MirLoanKind::Stored &&
-            dependency->storedPath.empty()) {
+            dependency->storedField == 0) {
           const auto *runtimeSource =
               function.body.findPlace(instruction.operands.front().place);
           const bool previousAlias =

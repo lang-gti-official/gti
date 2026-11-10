@@ -48,49 +48,11 @@ using SemanticLoanPlaceProjectionKind = PlaceProjectionKind;
 using SemanticLoanPlaceProjection = PlaceProjection;
 using SemanticLoanPlace = PlaceKey;
 
-// Fixed local anchors retain their checked source identity. A temporary has
-// no named place and therefore requires its exact source expression.
-struct SemanticLifetimeOrigin {
-  Lifetime region;
-  SemanticLoanPlace place;
-  const Expr *source = nullptr;
-  friend bool operator==(const SemanticLifetimeOrigin &,
-                         const SemanticLifetimeOrigin &) = default;
-};
-
-// One selected application's obligations, never new declaration assumptions.
-// The complete bit alone grants no authority: later phases replay the exact
-// bindings, allocated existentials, type obligations and origin witnesses.
-struct SemanticLifetimeApplication {
-  std::vector<LifetimeBinding> bindings;
-  std::vector<Lifetime> variables;
-  std::vector<LifetimeBound> obligations;
-  std::vector<LifetimeTypeBound> typeObligations;
-  std::vector<SemanticLifetimeOrigin> origins;
-  std::optional<CallableLifetimeSignature> callableSignature;
-  bool complete = false;
-  friend bool operator==(const SemanticLifetimeApplication &,
-                         const SemanticLifetimeApplication &) = default;
-};
-
-// Body-wide existential inventory and required relationships. These facts
-// belong to this exact analysis instance; they are not declaration assumptions.
-struct SemanticLifetimeBody {
-  std::vector<Lifetime> variables;
-  std::vector<LifetimeBound> obligations;
-  std::vector<LifetimeTypeBound> typeObligations;
-  std::vector<SemanticLifetimeOrigin> origins;
-  bool complete = false;
-  friend bool operator==(const SemanticLifetimeBody &,
-                         const SemanticLifetimeBody &) = default;
-};
-
-
 // One exact tag proposition for a typed enum subobject. A path of these
 // propositions is a conjunction along nested active alternatives; it does not
 // refer to a runtime load of an inactive payload or an arbitrary Boolean fact.
 struct BorrowDependencyCondition {
-  BorrowPath subobject;
+  std::vector<SymbolId> subobject;
   SemanticType enumeration = SemanticType::Unknown;
   std::size_t variant = 0;
 
@@ -105,39 +67,12 @@ struct BorrowAlternativePath {
                          const BorrowAlternativePath &) = default;
 };
 
-// An external reference stored in the direct referent of a checked reference.
-// The opening loan owns the evaluated address/type witness. This is not a
-// projection of that reference's lifetime-supplier place, which may protect
-// storage unrelated to its address (for example an unsafe owner assertion).
-struct SemanticReferenceContentsSource {
-  SemanticLoanId openingLoan = 0;
-  BorrowPath fields;
-
-  friend bool operator==(const SemanticReferenceContentsSource &,
-                         const SemanticReferenceContentsSource &) = default;
-};
-
-// Formation reads the source reference under these active capabilities. A
-// copied shared field retains its own external authority; readLoans are not
-// reborrow parents and cannot extend an exclusive field's permission.
-struct SemanticReferenceContentsOpening {
-  const Expr *reference = nullptr;
-  SemanticType referenceType = SemanticType::Unknown;
-  std::vector<SemanticLoanId> readLoans;
-
-  friend bool operator==(const SemanticReferenceContentsOpening &,
-                         const SemanticReferenceContentsOpening &) = default;
-};
-
 // One field of a composed borrowed value protects its own independent owner.
 // The first dependency remains in the scalar loan fields for the ordinary
 // one-owner reference path; these records contain the additional dependencies.
 struct SemanticLoanDependency {
   SemanticLoanPlace place;
-  // Exactly one source alternative is present. Contents sources have no
-  // place; their opening and typed field selection must be proved separately.
-  std::optional<SemanticReferenceContentsSource> referenceContents;
-  BorrowPath designatedFields;
+  std::vector<SymbolId> designatedFields;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
   // The exact capability reborrowed to create this dependency, if any.
@@ -164,13 +99,12 @@ struct SemanticBorrowDependencySet {
 // set of external places that may own its referent. In particular a branch
 // join must not select the first dependency as though it were that address.
 struct SemanticReferenceSelection {
-  ReferenceSelectionKind kind = ReferenceSelectionKind::StoredExternalReference;
   const Expr *source = nullptr;
   const Expr *carrier = nullptr;
   // Exact consumed dependency group whose authority is handed off by the
   // closed arm-entry prefix. This is provenance, not a live reborrow parent.
   SemanticLoanId transferredFrom = 0;
-  BorrowPath fields;
+  std::vector<SymbolId> fields;
   std::vector<BorrowDependencyCondition> conditions;
   SemanticType reference = SemanticType::Unknown;
 };
@@ -194,7 +128,6 @@ struct SemanticLoanInfo {
   // the backend.
   const Stmt *entryDeclaration = nullptr;
   SemanticLoanPlace place;
-  std::optional<SemanticReferenceContentsSource> referenceContents;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
   // A lifecycle-bound owner dependency remains active until its one carrier
@@ -204,15 +137,12 @@ struct SemanticLoanInfo {
   bool lifecycleBound = false;
   // For a StoredValue parameter loan, this exact nominal field path ends at
   // the reference designating its external referent. Empty for other loans.
-  BorrowPath designatedFields;
+  std::vector<SymbolId> designatedFields;
   // The primary dependency has the same typed alternative qualification as
   // additionalDependencies. An empty list denotes an unconditional path.
   std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additionalDependencies;
   std::optional<SemanticReferenceSelection> referenceSelection;
-  // Only a completely checked StoredValue group may define an opening.
-  // Its identity is not evidence that two openings are disjoint.
-  std::optional<SemanticReferenceContentsOpening> contentsOpening;
   std::vector<SymbolId> carriers;
   std::vector<SemanticLoanEndpoint> endpoints;
 };
@@ -393,7 +323,7 @@ struct ResolvedThreadTaskEntry {
 // origin loans and prove joining before any normal/failure continuation. A
 // successful query never changes the type's ordinary transfer/share traits.
 struct ScopedThreadTaskDependency {
-  BorrowPath fields;
+  std::vector<SymbolId> fields;
   SemanticType reference = SemanticType::Unknown;
 
   friend bool operator==(const ScopedThreadTaskDependency &,
@@ -748,65 +678,6 @@ enum class CompilerCapabilityTypeKind {
   NativeCScalar,
 };
 
-// AST-free declaration recipes used to prove variance against concrete MIR
-// storage. These retain slot identity even when several actual arguments alias.
-struct GenericParameterIdentity {
-  GenericParameterId id = 0;
-  bool pack = false;
-  bool value = false;
-  bool lifetime = false;
-  bool implicit = false;
-  std::vector<std::size_t> typeArgumentPath;
-  friend bool operator==(const GenericParameterIdentity &,
-                         const GenericParameterIdentity &) = default;
-};
-
-using NominalVarianceParameter = GenericParameterIdentity;
-inline std::vector<GenericParameterIdentity>
-genericParameterIdentities(std::span<const GenericParameterInfo> parameters) {
-  std::vector<GenericParameterIdentity> result;
-  for (const auto &parameter : parameters)
-    result.push_back({.id = parameter.id, .pack = parameter.pack,
-                      .value = parameter.value, .lifetime = parameter.lifetime,
-                      .implicit = parameter.implicit,
-                      .typeArgumentPath = parameter.typeArgumentPath});
-  return result;
-}
-
-enum class NominalStoredTypeKind { Field, Base, Payload };
-struct NominalStoredTypeRecipe {
-  NominalStoredTypeKind kind = NominalStoredTypeKind::Field;
-  std::size_t index = 0;
-  SymbolId symbol = 0;
-  std::size_t variant = 0;
-  bool interface = false;
-  SemanticType type = SemanticType::Unknown;
-  friend bool operator==(const NominalStoredTypeRecipe &,
-                         const NominalStoredTypeRecipe &) = default;
-};
-
-struct NominalVarianceRecipe {
-  SemanticType::Kind kind = SemanticType::Class;
-  std::uint64_t declaration = 0;
-  std::uint64_t familyPrimary = 0;
-  std::uint64_t exactSpecializationPrimary = 0;
-  std::vector<SemanticType> exactTypeArguments;
-  std::vector<CompileTimeValue> exactValueArguments;
-  std::vector<SemanticType> argumentPatterns;
-  std::vector<GenericParameterIdentity> argumentPatternLifetimes;
-  std::vector<NominalVarianceParameter> parameters;
-  std::vector<NominalStoredTypeRecipe> stored;
-  CompilerCapabilityTypeKind compilerCapability = CompilerCapabilityTypeKind::None;
-  ClassKind classKind = ClassKind::Class;
-  bool cOpaqueHandle = false;
-  bool polymorphic = false;
-  bool forward = false;
-  bool invalidLifetime = false;
-  bool complete = false;
-  friend bool operator==(const NominalVarianceRecipe &,
-                         const NominalVarianceRecipe &) = default;
-};
-
 enum class ProgramEntryKind {
   None,
   NoArguments,
@@ -908,12 +779,12 @@ enum class BorrowOriginKind {
 // The semantic declaration owns this contract; HIR/MIR preserve it verbatim
 // and verification checks it against executable return and call publications.
 struct BorrowedFieldOrigin {
-  BorrowPath resultFields;
+  std::vector<SymbolId> resultFields;
   BorrowOriginKind origin = BorrowOriginKind::None;
   std::size_t parameter = 0;
   // A Global origin's static storage root; sourceFields select within it.
   SymbolId globalRoot = 0;
-  BorrowPath sourceFields;
+  std::vector<SymbolId> sourceFields;
   AccessMode access = AccessMode::ReadOnly;
   std::vector<BorrowDependencyCondition> resultConditions;
   std::vector<BorrowDependencyCondition> sourceConditions;
@@ -957,7 +828,7 @@ struct RestrictedBorrowResultDomain {
 // restoration contract certifies these fields belong to the original object;
 // every dependency remains bounded by the input opaque reference witness.
 struct RestoredBorrowField {
-  BorrowPath fields;
+  std::vector<SymbolId> fields;
   SemanticType referenceType = SemanticType::Unknown;
 
   friend bool operator==(const RestoredBorrowField &,
@@ -980,7 +851,7 @@ struct BorrowOriginPlace {
 // its checked borrow operation. This describes an accessor, not permission to
 // consume an arbitrary reference. MIR independently verifies the source body.
 struct OwnedPointeeProjection {
-  BorrowPath fields;
+  std::vector<SymbolId> fields;
   IntrinsicKind borrowIntrinsic = IntrinsicKind::None;
 
   friend bool operator==(const OwnedPointeeProjection &,
@@ -1058,7 +929,6 @@ struct FunctionInfo {
   std::vector<std::size_t> defaultArgumentEffectOwners;
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<AppliedConceptRequirement> requirements;
-  LifetimeSignatureContract lifetimeContract;
   bool parameterPack = false;
   ClassId ownerClass = 0;
   bool entryPoint = false;
@@ -1168,24 +1038,17 @@ struct LambdaCaptureInfo {
 struct LambdaInfo {
   LambdaId id = 0;
   const Lambda *declaration = nullptr;
-  // The body and layout use this universal environment. Expression types
-  // instantiate its fixed environment slots for the concrete closure value.
-  SemanticType type = SemanticType::Unknown;
-  std::vector<Lifetime> environmentLifetimes;
-  LifetimeSignatureContract environmentContract{.complete = true};
-  SemanticLifetimeApplication environmentApplication;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
-  LifetimeSignatureContract lifetimeContract;
   std::vector<LambdaCaptureInfo> captures;
   SemanticTypeTraits traits{};
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
-  // Compact one-source projection of the complete result supplier contract.
-  // Multiple suppliers remain in completeReturnBorrow.
+  // A reference result borrows from exactly one read-only reference
+  // parameter, inferred like a free function's summary; captures are never
+  // result origins.
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
-  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   // Exact concrete instance proven by ordinary body analysis to perform no
   // raw memory/address-arithmetic access. Unknown remains conservative.
   SemanticType rawAccessFreeType = SemanticType::Unknown;
@@ -1288,17 +1151,6 @@ struct ClassTypeInfo {
   std::vector<CompileTimeValue> exactValueArguments;
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<SemanticType> genericArgumentPatterns;
-  // Universals projected from the public type-argument recipe, not separate
-  // source arguments or top-level lifetime arguments of the nominal type.
-  std::vector<GenericParameterInfo> genericArgumentPatternLifetimes;
-  // Instantiation need is distinct from public generic argument arity.
-  [[nodiscard]] bool hasGenericBindings() const {
-    return !genericParameters.empty() || !genericArgumentPatternLifetimes.empty() ||
-           !genericArgumentPatterns.empty();
-  }
-
-  NominalVariance variance;
-  LifetimeSignatureContract lifetimeContract;
   std::vector<ClassFieldTypeInfo> fields;
   std::vector<ClassFieldTypeInfo> staticFields;
   // Active source declaration order; instance analysis resolves each alias in
@@ -1377,8 +1229,6 @@ struct EnumTypeInfo {
   std::string qualifiedName;
   std::vector<std::string> namespaceScope;
   std::vector<GenericParameterInfo> genericParameters;
-  NominalVariance variance;
-  LifetimeSignatureContract lifetimeContract;
   SemanticType underlyingType = SemanticType::Int32;
   std::vector<EnumeratorInfo> enumerators;
   bool payload = false;
@@ -1462,7 +1312,6 @@ struct TypeAliasInfo {
   const TypeAliasDecl *declaration = nullptr;
   std::string qualifiedName;
   SemanticType type = SemanticType::Unknown;
-  std::vector<GenericParameterInfo> genericParameters;
   bool compilerPrivate = false;
 };
 
@@ -1487,7 +1336,6 @@ struct ConstructorInfo {
   AccessModifier access = AccessModifier::Public;
   std::vector<GenericParameterInfo> genericParameters;
   std::vector<AppliedConceptRequirement> requirements;
-  LifetimeSignatureContract lifetimeContract;
   std::vector<SemanticType> parameterTypes;
   std::size_t requiredParameterCount = 0;
   std::vector<std::size_t> defaultArgumentEffectOwners;
@@ -1512,7 +1360,6 @@ struct DestructorInfo {
   ClassId owner = 0;
   const DestructorDecl *declaration = nullptr;
   AccessModifier access = AccessModifier::Public;
-  LifetimeSignatureContract lifetimeContract;
 };
 
 struct ClassLifecycleInfo {
@@ -1547,8 +1394,6 @@ struct ResolvedConstructionInfo {
   SemanticType constructedType = SemanticType::Unknown;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
-  std::vector<Lifetime> lifetimeArguments;
-  SemanticLifetimeApplication lifetimeApplication;
   std::vector<AppliedConceptRequirement> requirements;
   std::vector<SemanticType> parameterTypes;
   std::vector<std::size_t> ephemeralBorrowArguments;
@@ -1589,13 +1434,6 @@ struct ResolvedConstructorInitializerInfo {
   ConstructorId constructor = 0;
   const ConstructorDecl *declaration = nullptr;
   std::vector<SemanticType> parameterTypes;
-  std::vector<SemanticType> typeArguments;
-  std::vector<CompileTimeValue> valueArguments;
-  std::vector<Lifetime> lifetimeArguments;
-  SemanticLifetimeApplication lifetimeApplication;
-  // Complete borrowed-state producer evidence captured at initializer
-  // evaluation, before later argument or body flow can change its inputs.
-  std::optional<SemanticBorrowDependencySet> completeBorrow;
   std::vector<const Expr *> defaultArguments;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
@@ -1606,7 +1444,6 @@ struct ResolvedConstructorInitializerInfo {
 struct ResolvedClassArguments {
   std::vector<SemanticType> types;
   std::vector<CompileTimeValue> values;
-  std::vector<Lifetime> lifetimes;
   bool valid = true;
 };
 
@@ -1637,8 +1474,6 @@ struct ResolvedCallInfo {
   std::vector<const Expr *> defaultArguments;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
-  std::vector<Lifetime> lifetimeArguments;
-  SemanticLifetimeApplication lifetimeApplication;
   std::vector<AppliedConceptRequirement> requirements;
   IntrinsicKind intrinsic = IntrinsicKind::None;
   bool neverReturns = false;
@@ -1782,9 +1617,6 @@ struct ResolvedTryablePropagationInfo {
 struct ProtocolConceptSpelling {
   std::string qualifiedName;
   std::vector<std::string> associatedTypes;
-  // Kind/order and associated-family identities are semantic declaration data.
-  std::vector<GenericParameterInfo> genericParameters;
-  std::vector<std::vector<GenericParameterInfo>> associatedTypeParameters;
   std::size_t parameterCount = 0;
 };
 
@@ -1801,7 +1633,6 @@ struct NativeFunctionConversionInfo {
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
   SemanticType type = SemanticType::Unknown;
-  SemanticLifetimeApplication lifetimeApplication;
   CThreadCallbackKind cThreadCallback = CThreadCallbackKind::None;
 };
 
@@ -1839,18 +1670,12 @@ struct ResolvedLambdaCallInfo {
   LambdaId lambda = 0;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
-  std::vector<Lifetime> lifetimeArguments;
-  SemanticLifetimeApplication lifetimeApplication;
-  bool neverReturns = false;
-  bool noNormalBorrowResult = false;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
   std::optional<CallableBoundary> boundary;
   // The lambda's result-origin contract, so the call result borrows the
   // argument it names exactly like a function call result.
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
-  std::vector<std::size_t> borrowArguments;
-  std::vector<BorrowedFieldOrigin> borrowFields;
   AccessMode borrowAccess = AccessMode::ReadOnly;
 };
 
@@ -1879,8 +1704,6 @@ struct ResolvedOperatorInfo {
   CallReceiverMode receiverMode = CallReceiverMode::None;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
-  std::vector<Lifetime> lifetimeArguments;
-  SemanticLifetimeApplication lifetimeApplication;
   std::vector<std::size_t> ephemeralBorrowArguments;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowArgument = 0;
@@ -1949,7 +1772,6 @@ enum class SemanticCompletionCandidateKind {
   LocalVariable,
   Parameter,
   TypeParameter,
-  LifetimeParameter,
   ValueParameter,
 };
 
@@ -2018,7 +1840,6 @@ enum class SymbolKind {
   Parameter,
   TypeParameter,
   ValueParameter,
-  LifetimeParameter,
   LambdaCapture,
   // A source-only name inside an unevaluated member requirement. It never
   // denotes runtime storage and may have a concept-dependent type.
@@ -2068,8 +1889,6 @@ struct SymbolRecord {
   std::optional<SourceSpan> definitionSpan;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits{};
-  // Lifetime binders have declaration identity without a runtime type.
-  GenericParameterId genericParameter = 0;
   AccessModifier access = AccessModifier::Public;
   bool mutableBinding = false;
   bool defaultLibrary = false;
@@ -2241,35 +2060,10 @@ makeBindingInfo(SemanticType type, AccessMode access = AccessMode::ReadOnly);
 using TypeSubstitution = std::unordered_map<GenericParameterId, SemanticType>;
 using ValueSubstitution =
     std::unordered_map<GenericParameterId, CompileTimeValue>;
-using LifetimeSubstitution = std::unordered_map<GenericParameterId, Lifetime>;
-
-// A generic argument pattern may project part of an invocation signature.
-// Its bound regions belong to that signature, not to the containing nominal
-// object. Keep such projections out of the ordinary type map: losing this
-// scope must leave an unresolved parameter rather than expose a free region.
-// This is transient evidence derived from genericArgumentPatterns and the
-// actual arguments; the declaration recipe remains the persistent authority.
-struct GenericCallableScope {
-  std::vector<std::size_t> argumentPath;
-  SemanticType pattern = SemanticType::Unknown;
-  SemanticType signature = SemanticType::Unknown;
-  TypeSubstitution capturedTypes;
-  std::vector<LifetimeBinding> regionBindings;
-  // Only a member-signature adapter may open these invocation slots. Stored
-  // callable reconstruction continues to close the original captured scope.
-  LifetimeSubstitution imports;
-  friend bool operator==(const GenericCallableScope &,
-                         const GenericCallableScope &) = default;
-};
 
 struct GenericSubstitution {
   TypeSubstitution types;
   ValueSubstitution values;
-  LifetimeSubstitution lifetimes;
-  std::vector<GenericCallableScope> callableScopes;
-  bool valid = true;
-  friend bool operator==(const GenericSubstitution &,
-                         const GenericSubstitution &) = default;
 };
 
 // One element of an expanded `constexpr for`: the element type the binding
@@ -2374,12 +2168,7 @@ makeSemanticAnalysisSeal(const Program &program, const TargetInfo &target,
 class SemanticNoNormalBorrowResultProof {
 public:
   [[nodiscard]] const Call *source() const { return source_; }
-  [[nodiscard]] const ResolvedCallInfo *functionCall() const {
-    return std::get_if<ResolvedCallInfo>(&call_);
-  }
-  [[nodiscard]] const ResolvedLambdaCallInfo *lambdaCall() const {
-    return std::get_if<ResolvedLambdaCallInfo>(&call_);
-  }
+  [[nodiscard]] const ResolvedCallInfo &call() const { return call_; }
   [[nodiscard]] std::uint64_t snapshot() const { return snapshot_; }
 
 private:
@@ -2387,11 +2176,8 @@ private:
   SemanticNoNormalBorrowResultProof(const Call &source, ResolvedCallInfo call,
                                     std::uint64_t snapshot)
       : source_(&source), call_(std::move(call)), snapshot_(snapshot) {}
-  SemanticNoNormalBorrowResultProof(const Call &source, ResolvedLambdaCallInfo call,
-                                    std::uint64_t snapshot)
-      : source_(&source), call_(std::move(call)), snapshot_(snapshot) {}
   const Call *source_;
-  std::variant<ResolvedCallInfo, ResolvedLambdaCallInfo> call_;
+  ResolvedCallInfo call_;
   std::uint64_t snapshot_;
 };
 
@@ -2822,13 +2608,6 @@ public:
 
   [[nodiscard]] ExpressionInfo expressionInfo(const Expr &expression) const;
 
-  [[nodiscard]] const SemanticLifetimeBody *
-  findLifetimeBody(const BlockStmt &body) const;
-  [[nodiscard]] const SemanticLifetimeBody *
-  findLifetimeBody(const Expr &body) const;
-  void recordLifetimeBody(const BlockStmt &body, SemanticLifetimeBody facts);
-  void recordLifetimeBody(const Expr &body, SemanticLifetimeBody facts);
-
   [[nodiscard]] const SemanticType *findType(const Expr &expression) const;
 
   [[nodiscard]] std::optional<ConstantValue>
@@ -2883,10 +2662,6 @@ public:
   // is affirmative evidence of no dependencies and shadows an inherited set.
   [[nodiscard]] const SemanticBorrowDependencySet *
   findBorrowDependencySet(const Expr &expression) const;
-  // Index into ordinary checked StoredValue loans, separate from the
-  // expression's scalar reference-address or owned-value result fact.
-  [[nodiscard]] SemanticLoanId
-  findReferenceContentsLoan(const Expr &expression) const;
   [[nodiscard]] std::span<const SemanticLoanDependency>
   findBorrowDependencies(const Expr &expression) const;
   // Constructor inputs for the separately checked closure-loan producer.
@@ -3036,10 +2811,6 @@ public:
   findClassType(const ClassDecl &declaration) const;
 
   [[nodiscard]] const ClassTypeInfo *findClassType(ClassId id) const;
-
-  // A full specialization keeps its primary's public argument shape. Its
-  // source declaration and storage inventory still belong to findClassType.
-  [[nodiscard]] const ClassTypeInfo *findPublicClassType(ClassId id) const;
 
   // Selects a registered full class specialization after recursively
   // resolving concrete nested class arguments. Symbolic generic types retain
@@ -3369,8 +3140,6 @@ private:
   // Explicitly unknown in this analysis, including when a base snapshot had
   // a fact for the same syntax in a different concrete instance.
   void clearBorrowDependencySet(const Expr &expression);
-  void recordReferenceContentsLoan(const Expr &expression, SemanticLoanId loan);
-  void clearReferenceContentsLoan(const Expr &expression);
   void recordCaptureBorrowDependencies(
       const Expr &expression, std::vector<SemanticLoanDependency> dependencies);
 
@@ -3540,10 +3309,6 @@ private:
 
   SymbolId recordSymbol(SymbolRecord symbol);
 
-  // Includes implicit signature regions and higher-ranked binders, which are
-  // not positional source generic arguments but still need stable tooling IDs.
-  void recordGenericParameter(GenericParameterInfo parameter);
-
   void setSymbolDocumentation(SymbolId symbol,
                               std::string documentationMarkdown);
 
@@ -3630,8 +3395,6 @@ private:
   std::vector<SemanticLoanInfo> retainedLoans;
   std::unordered_map<const Expr *, std::optional<SemanticBorrowDependencySet>>
       expressionBorrowDependencies;
-  std::unordered_map<const Expr *, std::optional<SemanticLoanId>>
-      referenceContentsLoans;
   std::unordered_map<const Expr *, std::vector<SemanticLoanDependency>>
       captureBorrowDependencies;
   std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
@@ -3668,8 +3431,6 @@ private:
   std::unordered_map<const RangeForStmt *, ResolvedRangeIterationInfo>
       rangeIterations;
   std::unordered_map<const FunctionDecl *, FunctionInfo> functions;
-  std::unordered_map<GenericParameterId, GenericParameterInfo>
-      genericParameterMetadata;
   std::unordered_map<const FunctionDecl *, const FunctionDecl *>
       functionDeclarations;
   std::unordered_map<FunctionId, const FunctionDecl *> functionsById;
@@ -3697,8 +3458,6 @@ private:
       payloadConstructions;
   std::unordered_map<const Expr *, ResolvedPayloadPatternInfo> payloadPatterns;
   std::unordered_map<const Call *, ResolvedCallInfo> calls;
-  std::unordered_map<const BlockStmt *, SemanticLifetimeBody> blockLifetimeBodies;
-  std::unordered_map<const Expr *, SemanticLifetimeBody> expressionLifetimeBodies;
   std::unordered_map<const Expr *, RawReferenceAssertionInfo>
       rawReferenceAssertions;
   std::unordered_map<const Expr *, NativeFunctionConversionInfo>
@@ -3779,9 +3538,6 @@ public:
   explicit SemanticTypePrinter(const SemanticModel &semantics);
 
   [[nodiscard]] std::string print(const SemanticType &type) const;
-  [[nodiscard]] std::string printLifetime(Lifetime lifetime) const;
-  [[nodiscard]] std::string
-  printLifetime(Lifetime lifetime, const GenericParameterLookup &lookup) const;
   // Registration may supply declaration-owned parameters not yet published
   // in the completed model. The lookup only supplies spelling and is not kept.
   [[nodiscard]] std::string print(const SemanticType &type,
@@ -3789,24 +3545,6 @@ public:
 
 private:
   const SemanticModel &semantics;
-};
-
-// Executable identity is universal in every free region occurring inside a
-// generic type argument. A particular caller supplies those choices only in
-// lifetimeApplication; its local regions never become body identities.
-struct SemanticExecutableInstantiation {
-  std::vector<SemanticType> classTypes;
-  std::vector<SemanticType> types;
-  SemanticType ownerType = SemanticType::Unknown;
-  std::vector<GenericParameterInfo> liftedLifetimes;
-  std::vector<GenericCallableScope> callableScopes;
-  std::vector<std::vector<GenericParameterId>> classLifetimeParameters;
-  std::vector<std::vector<GenericParameterId>> functionLifetimeParameters;
-  SemanticType returnType = SemanticType::Void;
-  std::vector<SemanticType> parameterTypes;
-  std::vector<AppliedConceptRequirement> requirements;
-  LifetimeSignatureContract lifetimeContract;
-  SemanticLifetimeApplication lifetimeApplication;
 };
 
 struct SemanticInstanceAnalysis {

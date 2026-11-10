@@ -31,29 +31,7 @@ struct NamePath {
 enum class GenericArgumentSyntax {
   Type,
   Value,
-  // Only unambiguous lifetime spellings (`_`, `static`, and `this`). A named
-  // argument remains unresolved until its declaration's parameter kind is
-  // known.
-  Lifetime,
   UnresolvedIdentifier,
-};
-
-struct LifetimeArgument {
-  Token open;
-  Token name;
-  Token close;
-};
-
-struct LifetimeParameterSyntax {
-  Token keyword;
-  Token name;
-};
-
-struct LifetimeBinder {
-  Token keyword;
-  Token open;
-  std::vector<LifetimeParameterSyntax> parameters;
-  Token close;
 };
 
 struct ArrayExtentExpr;
@@ -135,10 +113,6 @@ struct TypeRef {
   std::vector<PointerLayer> pointers;
   std::vector<ArrayExtentExprPtr> arrayExtents;
   std::optional<Token> reference;
-  // Written reference validity, distinct from generic arguments of its
-  // referent. Absence preserves elision; `_` is retained as an explicit
-  // inference request.
-  std::optional<LifetimeArgument> referenceLifetime;
   // Explicit access on a function-signature reference parameter component.
   std::optional<Token> referenceMutability;
   // A native C function type stores its parameter types followed by its
@@ -148,8 +122,6 @@ struct TypeRef {
   // A GTI signature describes a call, not a stored function pointer. Like
   // native function syntax, arguments hold parameters followed by the result.
   std::optional<std::size_t> functionSignatureParameterCount;
-  // `for<lifetime a, ...>` quantifies the complete function-signature type.
-  std::optional<LifetimeBinder> lifetimeBinder;
   // Written receiver capability of signature metadata: absent, `mut`, or `&&`.
   std::optional<Token> functionSignatureQualifier;
   // A type-list expansion, distinct from a named value parameter pack.
@@ -419,8 +391,6 @@ struct GenericParameter {
   Token name;
   std::optional<Token> pack;
   std::optional<Token> valueType;
-  // `lifetime` is contextual syntax, not a globally reserved lexer keyword.
-  std::optional<Token> lifetimeKeyword;
   std::optional<NamePath> constraint;
   std::optional<Token> equal;
   std::optional<TypeRef> defaultType;
@@ -2871,30 +2841,12 @@ public:
       std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt,
       std::optional<ProtocolConceptBody> protocolBody = std::nullopt,
       std::optional<ConceptExplanation> explanation = std::nullopt)
-      : ConceptDecl(std::move(keyword), std::move(name),
-                    makeGenericParameters(std::move(typeParameters)),
-                    std::move(requirements), std::move(compilerBinding),
-                    std::move(protocolBody), std::move(explanation)) {}
-
-  ConceptDecl(
-      Token keyword, Token name,
-      std::vector<GenericParameter> genericParameters,
-      ConstraintExpression requirements,
-      std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt,
-      std::optional<ProtocolConceptBody> protocolBody = std::nullopt,
-      std::optional<ConceptExplanation> explanation = std::nullopt)
       : keyword_(std::move(keyword)), name_(std::move(name)),
-        genericParameters_(std::move(genericParameters)),
+        typeParameters_(std::move(typeParameters)),
         requirements_(std::move(requirements)),
         compilerBinding_(std::move(compilerBinding)),
         protocolBody_(std::move(protocolBody)),
-        explanation_(std::move(explanation)) {
-    for (const auto &parameter : genericParameters_) {
-      if (!parameter.lifetimeKeyword) {
-        typeParameters_.push_back(parameter.name);
-      }
-    }
-  }
+        explanation_(std::move(explanation)) {}
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitConceptDecl(*this);
@@ -2902,10 +2854,6 @@ public:
 
   [[nodiscard]] const Token &keyword() const { return keyword_; }
   [[nodiscard]] const Token &name() const { return name_; }
-  [[nodiscard]] const std::vector<GenericParameter> &genericParameters() const {
-    return genericParameters_;
-  }
-  // Compatibility projection for operations that apply only to type binders.
   [[nodiscard]] const std::vector<Token> &typeParameters() const {
     return typeParameters_;
   }
@@ -2928,19 +2876,8 @@ public:
   }
 
 private:
-  static std::vector<GenericParameter>
-  makeGenericParameters(std::vector<Token> names) {
-    std::vector<GenericParameter> parameters;
-    parameters.reserve(names.size());
-    for (auto &name : names) {
-      parameters.push_back({.name = std::move(name)});
-    }
-    return parameters;
-  }
-
   Token keyword_;
   Token name_;
-  std::vector<GenericParameter> genericParameters_;
   std::vector<Token> typeParameters_;
   ConstraintExpression requirements_;
   std::optional<CompilerConstraintBinding> compilerBinding_;

@@ -158,7 +158,7 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
                     })) {
       std::vector<MirPersistentStorageAccess> direct;
       auto proof = verifyMirPersistentStorageLoanFlow(
-          *node.body, node.address.owner, {}, &direct, nullptr, {}, &program);
+          *node.body, node.address.owner, {}, &direct);
       if (!proof.valid())
         return proof;
       for (const auto &access : direct)
@@ -354,7 +354,7 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
           return accesses;
         };
     auto proof = verifyMirPersistentStorageLoanFlow(
-        *node.body, node.address.owner, hidden, nullptr, &query, persistent, &program);
+        *node.body, node.address.owner, hidden, nullptr, &query, persistent);
     if (!proof.valid())
       return proof;
   }

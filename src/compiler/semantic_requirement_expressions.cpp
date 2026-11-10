@@ -154,7 +154,6 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
   auto worker = std::make_unique<Impl>(
       target, sourceGraph, false, nullptr, sources, RawPointerAuditMode::Off,
       false, trustedBodies, sourceDebugProfile, compileLimits);
-  worker->reuseConstantEvaluations = reuseConstantEvaluations;
   // The query is logically const, but its fork temporarily suspends and
   // restores request-local expression scratch before any probe work begins.
   const_cast<Impl *>(this)->copyRequestSessionForSpeculativeModel(*worker);
@@ -179,7 +178,6 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
             *requestSession.programConcreteEffects);
   if (const auto &queries = requestSession.completeReturnQueries) {
     auto copy = std::make_shared<CompleteReturnQueryState>();
-    copy->lifetimeContractRevision = queries->lifetimeContractRevision;
     copy->depth = queries->depth;
     copy->discovered = queries->discovered;
     copy->completed = queries->completed;
@@ -196,7 +194,6 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
   }
   if (const auto &queries = requestSession.rawResultQueries) {
     auto copy = std::make_shared<RawResultQueryState>();
-    copy->lifetimeContractRevision = queries->lifetimeContractRevision;
     copy->depth = queries->depth;
     copy->nextIdentity = queries->nextIdentity;
     copy->hasRawGlobals = queries->hasRawGlobals;
@@ -484,7 +481,8 @@ auto SemanticVisitor::Impl::requirementQueryIdentity(
   ActiveRequirementQuery identity{
       .syntax = syntax,
       .arguments = {arguments.begin(), arguments.end()},
-      .substitution = currentGenericSubstitution()};
+      .types = instanceTypeSubstitution,
+      .values = instanceValueSubstitution};
   return identity;
 }
 

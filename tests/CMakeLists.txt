@@ -26,9 +26,6 @@ add_test(NAME module_queries COMMAND gti_module_query_tests)
 add_executable(gti_persistent_declaration_tests persistent_declaration_tests.cpp)
 target_link_libraries(gti_persistent_declaration_tests PRIVATE gti_compiler)
 add_test(NAME persistent_declaration_identity COMMAND gti_persistent_declaration_tests)
-add_executable(gti_persistent_lifetime_tests persistent_lifetime_tests.cpp)
-target_link_libraries(gti_persistent_lifetime_tests PRIVATE gti_compiler)
-add_test(NAME persistent_lifetime_contracts COMMAND gti_persistent_lifetime_tests)
 add_test(NAME persistent_declaration_process COMMAND "${Python3_EXECUTABLE}"
   "${PROJECT_SOURCE_DIR}/tests/persistent_declaration_process_test.py"
   $<TARGET_FILE:gti_persistent_declaration_tests>)
@@ -189,16 +186,6 @@ if(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE)
       "${GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
       -l "${PROJECT_SOURCE_DIR}/tests/macro_syntax_test.lua")
   set_tests_properties(macro_neovim_syntax PROPERTIES TIMEOUT 30)
-  add_test(NAME lifetime_neovim_syntax
-    COMMAND "${CMAKE_COMMAND}" -E env
-      "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
-      "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test/state"
-      "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test/cache"
-      "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test/data"
-      "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-lifetime-syntax.log"
-      "${GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
-      -l "${PROJECT_SOURCE_DIR}/tests/lifetime_syntax_test.lua")
-  set_tests_properties(lifetime_neovim_syntax PROPERTIES TIMEOUT 30)
 endif()
 add_executable(gti_expression_text_tests expression_text_tests.cpp)
 add_executable(gti_macro_value_tests macro_value_tests.cpp)
@@ -879,9 +866,6 @@ if(TARGET gti_lsp)
   set_tests_properties(out_of_class_lsp PROPERTIES TIMEOUT 120)
   add_test(NAME nested_borrow_fields_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_borrow_fields_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-  add_test(NAME lifetime_parameters_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lifetime_parameters_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(lifetime_parameters_lsp PROPERTIES TIMEOUT 120)
   add_test(NAME borrowing_composition_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/borrowing_composition_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME cleanup_bound_borrow_lsp
@@ -1370,8 +1354,7 @@ endif()
 add_executable("gti_failure_metadata_tests"
                "${PROJECT_SOURCE_DIR}/tests/failure_metadata_tests.cpp")
 target_link_libraries("gti_failure_metadata_tests" PRIVATE gti_compiler)
-add_test(NAME failure_metadata COMMAND gti_failure_metadata_tests
-         --output-dir "${CMAKE_BINARY_DIR}/Testing/failure-metadata-evidence")
+add_test(NAME failure_metadata COMMAND gti_failure_metadata_tests)
 add_test(NAME cpp_identifier_relocation
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/cpp_identifier_relocation_test.py"
@@ -1587,53 +1570,6 @@ add_test(NAME raw_pointer_conversion_contract COMMAND gti_raw_pointer_conversion
 add_executable(gti_borrow_origin_syntax_tests "${PROJECT_SOURCE_DIR}/tests/borrow_origin_syntax_tests.cpp")
 target_link_libraries(gti_borrow_origin_syntax_tests PRIVATE gti_compiler)
 add_test(NAME borrow_origin_syntax COMMAND gti_borrow_origin_syntax_tests)
-
-add_executable(gti_lifetime_region_tests lifetime_region_tests.cpp)
-target_include_directories(gti_lifetime_region_tests PRIVATE "${PROJECT_SOURCE_DIR}/include")
-add_test(NAME lifetime_regions COMMAND gti_lifetime_region_tests)
-add_executable(gti_lifetime_type_tests lifetime_type_tests.cpp)
-target_include_directories(gti_lifetime_type_tests PRIVATE "${PROJECT_SOURCE_DIR}/include")
-add_test(NAME lifetime_types COMMAND gti_lifetime_type_tests)
-add_executable(gti_lifetime_requirement_tests lifetime_requirement_tests.cpp)
-target_include_directories(gti_lifetime_requirement_tests PRIVATE "${PROJECT_SOURCE_DIR}/include")
-add_test(NAME lifetime_requirements COMMAND gti_lifetime_requirement_tests)
-add_executable(gti_lifetime_semantic_tests lifetime_semantic_tests.cpp)
-target_link_libraries(gti_lifetime_semantic_tests PRIVATE gti_compiler)
-add_test(NAME lifetime_semantics COMMAND gti_lifetime_semantic_tests)
-add_test(NAME lifetime_pipeline COMMAND gti_lifetime_semantic_tests --mir
-  "${CMAKE_BINARY_DIR}/Testing/lifetime-pipeline-evidence")
-add_executable(gti_lifetime_ir_metadata_tests lifetime_ir_metadata_tests.cpp)
-target_link_libraries(gti_lifetime_ir_metadata_tests PRIVATE gti_compiler)
-add_test(NAME lifetime_ir_metadata COMMAND gti_lifetime_ir_metadata_tests)
-add_executable(gti_lifetime_borrow_path_tests lifetime_borrow_path_tests.cpp)
-target_link_libraries(gti_lifetime_borrow_path_tests PRIVATE gti_compiler)
-add_test(NAME lifetime_borrow_paths COMMAND gti_lifetime_borrow_path_tests)
-add_executable(gti_lifetime_hir_signatures_tests lifetime_hir_signatures_tests.cpp)
-target_link_libraries(gti_lifetime_hir_signatures_tests PRIVATE gti_compiler)
-add_test(NAME lifetime_hir_signatures COMMAND gti_lifetime_hir_signatures_tests)
-add_executable(gti_lifetime_mir_contracts_tests lifetime_mir_contracts_tests.cpp)
-target_link_libraries(gti_lifetime_mir_contracts_tests PRIVATE gti_compiler)
-add_test(NAME lifetime_mir_contracts COMMAND gti_lifetime_mir_contracts_tests)
-add_executable(gti_lifetime_payload_conversion_tests lifetime_payload_conversion_tests.cpp)
-target_link_libraries(gti_lifetime_payload_conversion_tests PRIVATE gti_compiler)
-add_test(NAME lifetime_payload_conversions COMMAND gti_lifetime_payload_conversion_tests
-  "${CMAKE_BINARY_DIR}/Testing/lifetime-payload-evidence")
-add_test(NAME lifetime_native
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lifetime_native_test.py"
-    "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
-    --census "$<TARGET_FILE:gti_lowered_program_census>"
-    --output-dir "${CMAKE_BINARY_DIR}/Testing/lifetime-native-evidence")
-set_tests_properties(lifetime_native PROPERTIES TIMEOUT 1200)
-
-add_executable(gti_lifetime_syntax_tests lifetime_syntax_tests.cpp)
-target_link_libraries(gti_lifetime_syntax_tests PRIVATE gti_compiler)
-add_test(NAME lifetime_syntax COMMAND gti_lifetime_syntax_tests)
-add_executable(gti_lifetime_resolution_tests lifetime_resolution_tests.cpp)
-target_link_libraries(gti_lifetime_resolution_tests PRIVATE gti_compiler)
-target_include_directories(gti_lifetime_resolution_tests PRIVATE
-  "${PROJECT_BINARY_DIR}/generated")
-add_dependencies(gti_lifetime_resolution_tests gti_diagnostic_registry)
-add_test(NAME lifetime_resolution COMMAND gti_lifetime_resolution_tests)
 
 add_executable(gti_lambda_reference_tests lambda_reference_tests.cpp)
 target_link_libraries(gti_lambda_reference_tests PRIVATE gti_compiler)
@@ -2048,8 +1984,7 @@ target_link_libraries(gti_view_field_tests PRIVATE gti_compiler)
 add_test(NAME view_fields COMMAND gti_view_field_tests)
 add_executable(gti_reference_payload_semantic_tests reference_payload_semantic_tests.cpp)
 target_link_libraries(gti_reference_payload_semantic_tests PRIVATE gti_compiler)
-add_test(NAME reference_payload_semantics COMMAND gti_reference_payload_semantic_tests
-  "${CMAKE_BINARY_DIR}/Testing/reference-payload-evidence")
+add_test(NAME reference_payload_semantics COMMAND gti_reference_payload_semantic_tests)
 add_test(NAME constructor_null_native_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constructor_null_native_runtime_test.py" $<TARGET_FILE:gti>)
 add_test(NAME payload_fresh_class_operands_runtime
@@ -6615,7 +6550,7 @@ add_test(NAME compiled_value_types
 set_tests_properties(compiled_value_types PROPERTIES TIMEOUT 600)
 add_test(NAME compiled_borrow_library
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_borrow_library_test.py"
-  "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/Testing/compiled-borrow-library")
+  "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/compiled-borrow-library")
 set_tests_properties(compiled_borrow_library PROPERTIES TIMEOUT 600)
 add_executable(gti_compiled_borrow_contract_tests compiled_borrow_contract_tests.cpp)
 target_link_libraries(gti_compiled_borrow_contract_tests PRIVATE gti_compiler)

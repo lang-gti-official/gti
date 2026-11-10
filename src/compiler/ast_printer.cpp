@@ -242,20 +242,7 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
     if (type.arguments.size() != count + 1) {
       return "?()";
     }
-    std::string text;
-    if (type.lifetimeBinder) {
-      text = "for<";
-      for (std::size_t index = 0;
-           index < type.lifetimeBinder->parameters.size(); ++index) {
-        if (index != 0) {
-          text += ",";
-        }
-        text +=
-            "lifetime " + type.lifetimeBinder->parameters[index].name.lexeme;
-      }
-      text += "> ";
-    }
-    text += typeToString(type.arguments.back()) + "(";
+    std::string text = typeToString(type.arguments.back()) + "(";
     for (std::size_t index = 0; index < count; ++index) {
       if (index != 0) {
         text += ",";
@@ -322,10 +309,7 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
         "[" + (extent ? arrayExtentSpelling(*extent) : std::string("?")) + "]";
   }
   if (type.reference) {
-    text += type.reference->lexeme;
-    if (type.referenceLifetime) {
-      text += "<" + type.referenceLifetime->name.lexeme + ">";
-    }
+    text += "&";
   }
   if (type.packExpansion) {
     text += "...";

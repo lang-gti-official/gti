@@ -302,7 +302,7 @@ int main() {
         const auto *loan =
             instruction.loan ? body.findLoan(*instruction.loan) : nullptr;
         if (instruction.kind != lang::MirInstructionKind::EndBorrow || !loan ||
-            !loan->entry || !loan->escapes || loan->storedPath.empty())
+            !loan->entry || !loan->escapes || !loan->storedField)
           continue;
         for (const auto &target : body.blocks) {
           if (!target.activeFailure ||
@@ -379,7 +379,7 @@ void checkConstructorRollbackMutations() {
     const auto &body = constructor.body;
     for (const auto &loan : body.loans) {
       if (loan.kind != lang::MirLoanKind::Stored || !loan.escapes ||
-          loan.storedPath.empty())
+          loan.storedField == 0)
         continue;
       for (const auto &block : body.blocks) {
         for (const auto &instruction : block.instructions) {

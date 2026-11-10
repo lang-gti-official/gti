@@ -28,39 +28,6 @@ using MirHostedStartupOperationId = std::size_t;
 using MirNativeCallbackAdapterId = std::size_t;
 using MirThreadTaskAdapterId = std::size_t;
 
-struct MirLifetimeOrigin {
-  Lifetime region;
-  MirPlaceId place = 0;
-  PlaceKey key;
-  // Stable body-local source value, also retained by MirPlace::sourceValue.
-  // This is provenance identity, never an AST pointer or a containment proof.
-  HirValueId source = 0;
-  friend bool operator==(const MirLifetimeOrigin &,
-                         const MirLifetimeOrigin &) = default;
-};
-
-struct MirLifetimeApplication {
-  std::vector<LifetimeBinding> bindings;
-  std::vector<Lifetime> variables;
-  std::vector<LifetimeBound> obligations;
-  std::vector<LifetimeTypeBound> typeObligations;
-  std::vector<MirLifetimeOrigin> origins;
-  std::optional<CallableLifetimeSignature> callableSignature;
-  bool complete = false;
-  friend bool operator==(const MirLifetimeApplication &,
-                         const MirLifetimeApplication &) = default;
-};
-
-struct MirLifetimeBody {
-  std::vector<Lifetime> variables;
-  std::vector<LifetimeBound> obligations;
-  std::vector<LifetimeTypeBound> typeObligations;
-  std::vector<MirLifetimeOrigin> origins;
-  bool complete = false;
-  friend bool operator==(const MirLifetimeBody &,
-                         const MirLifetimeBody &) = default;
-};
-
 struct MirFullExpression {
   HirFullExpressionId id = 0;
   HirFullExpressionId hirExpression = 0;
@@ -365,34 +332,10 @@ enum class MirLoanKind {
   CallArgument,
 };
 
-// An origin stored in the direct referent of one evaluated checked reference.
-// This is not a physical projection of that reference's lifetime-owner place.
-struct MirReferenceContentsSource {
-  MirLoanId openingLoan = 0;
-  BorrowPath fields;
-
-  friend bool operator==(const MirReferenceContentsSource &,
-                         const MirReferenceContentsSource &) = default;
-};
-
-// Formation reads this exact evaluated reference under active capabilities.
-// Those read loans do not become external reborrow parents of a copied shared
-// field. Each later runtime field read still needs its own address authority.
-struct MirReferenceContentsOpening {
-  MirOperand reference;
-  SemanticType referenceType = SemanticType::Unknown;
-  std::vector<MirLoanId> readLoans;
-
-  friend bool operator==(const MirReferenceContentsOpening &,
-                         const MirReferenceContentsOpening &) = default;
-};
-
 struct MirLoanDependency {
   MirPlaceId source = 0;
   MirLoanId parent = 0;
-  // Exactly one origin form: a physical place or a checked contents selector.
-  std::optional<MirReferenceContentsSource> referenceContents;
-  BorrowPath designatedFields;
+  std::vector<SymbolId> designatedFields;
   AccessMode access = AccessMode::ReadOnly;
   std::vector<BorrowDependencyCondition> conditions;
 
@@ -416,13 +359,12 @@ struct MirBorrowDependencySet {
 // This descriptor does not grant a loan: independent dependency/liveness
 // verification must establish every possible owner of the selected referent.
 struct MirReferenceSelection {
-  ReferenceSelectionKind kind = ReferenceSelectionKind::StoredExternalReference;
   MirValueId value = 0;
   MirPlaceId carrier = 0;
   // Independently matched to the consumed carrier's complete dependency
   // group. Ending that shell does not end transferred external authority.
   MirLoanId transferredFrom = 0;
-  BorrowPath fields;
+  std::vector<SymbolId> fields;
   std::vector<BorrowDependencyCondition> conditions;
   SemanticType reference = SemanticType::Unknown;
 
@@ -440,24 +382,20 @@ struct MirLoan {
   MirLoanId storedDependency = 0;
   MirLoanKind kind = MirLoanKind::Local;
   MirPlaceId source = 0;
-  std::optional<MirReferenceContentsSource> referenceContents;
   // Each extra stored dependency retains its own provenance and permission.
   // Abstract entry dependencies designate a field rather than a concrete
   // caller place; concrete dependencies name their body-local source place.
   std::vector<MirLoanDependency> additionalDependencies;
   std::optional<MirReferenceSelection> referenceSelection;
-  std::optional<MirReferenceContentsOpening> contentsOpening;
   AccessMode access = AccessMode::ReadOnly;
   HirValueId producedBy = 0;
   std::vector<HirBindingId> carriers;
-  // Exact direct Field or Base destination of constructor publication.
-  // Empty means this is not an initializer publication loan.
-  BorrowPath storedPath;
-  // Exact structural path ending at the reference this loan designates.
-  // Unlike storedPath (a constructor storage target), this is provenance
+  SymbolId storedField = 0;
+  // Exact nominal field path ending at the reference this loan designates.
+  // Unlike storedField (a constructor storage target), this is provenance
   // metadata for a by-value carrier dependency and has no backend
   // representation.
-  BorrowPath designatedFields;
+  std::vector<SymbolId> designatedFields;
   // Exact active-alternative requirements for the primary dependency. These
   // are structural provenance, not runtime reads of inactive payloads.
   std::vector<BorrowDependencyCondition> conditions;
@@ -492,9 +430,9 @@ struct MirLoan {
     return result;
   }
 
-  [[nodiscard]] std::vector<BorrowPath>
+  [[nodiscard]] std::vector<std::vector<SymbolId>>
   additionalDesignatedFields() const {
-    std::vector<BorrowPath> result;
+    std::vector<std::vector<SymbolId>> result;
     for (const auto &dependency : additionalDependencies)
       if (!dependency.designatedFields.empty())
         result.push_back(dependency.designatedFields);
@@ -805,10 +743,6 @@ struct MirInstruction {
   std::optional<MirOperand> receiver;
   std::vector<MirOperand> operands;
   std::vector<SemanticType> parameterTypes;
-  // Semantics-selected generic regions remain proof metadata, never operands.
-  std::vector<Lifetime> lifetimeArguments;
-  // Complete declaration-contract substitution, including elided/owner regions.
-  MirLifetimeApplication lifetimeApplication;
   std::vector<SemanticType> closureCaptureTypes;
   std::vector<LambdaCaptureMode> closureCaptureModes;
   std::optional<MirLoanId> loan;
@@ -1237,7 +1171,6 @@ struct MirBody {
   // authority.
   bool compilerTrustedSynchronization = false;
   PlaceDomain placeDomain;
-  MirLifetimeBody lifetimeBody;
   MirBlockId entry = 0;
   SemanticType returnType = SemanticType::Void;
   std::vector<MirBlock> blocks;
@@ -1436,9 +1369,6 @@ struct MirClassTypeAlias {
 };
 
 struct MirClassInstance {
-  std::vector<GenericParameterIdentity> liftedLifetimes;
-  NominalVariance variance;
-  LifetimeSignatureContract lifetimeContract;
   HirClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ClassId declaration = 0;
@@ -1490,10 +1420,6 @@ struct MirClassInstance {
 struct MirCallableSignature {
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
-  // Complete applied semantics. Explicit argument spelling belongs to HIR;
-  // every selected region is already bound in this independently replayed
-  // application, including fixed choices and inferred invocation slots.
-  MirLifetimeApplication lifetimeApplication;
   CallableInvocationCapability requiredCapability =
       CallableInvocationCapability::Read;
   std::optional<CallableInvocationCapability> selectedCapability;
@@ -1533,7 +1459,6 @@ enum class MirDefinitionKind {
 };
 
 struct MirFunctionInstance {
-  std::vector<GenericParameterIdentity> liftedLifetimes;
   HirFunctionInstanceId id = 0;
   FunctionId declaration = 0;
   // The instance's substituted generic arguments in declaration order;
@@ -1542,11 +1467,8 @@ struct MirFunctionInstance {
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::optional<HirClassInstanceId> owner;
-  // Universal owner type in this callable's region scope.
-  SemanticType ownerType = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
-  LifetimeSignatureContract lifetimeContract;
   std::vector<std::size_t> ownerlessTextParameters;
   std::vector<OwnerlessTextField> ownerlessTextFields;
   // Formals a returned fresh value holds in a direct text field (L-OWN-02).
@@ -1651,9 +1573,6 @@ struct MirConstructorInitializer {
   std::optional<HirClassInstanceId> base;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::vector<HirValueId> arguments;
-  std::vector<Lifetime> lifetimeArguments;
-  MirLifetimeApplication lifetimeApplication;
-  std::optional<MirBorrowDependencySet> completeBorrow;
   std::size_t explicitArgumentCount = 0;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
@@ -1675,12 +1594,9 @@ struct MirConstructorDispatchState {
 };
 
 struct MirConstructorInstance {
-  std::vector<GenericParameterIdentity> liftedLifetimes;
   FunctionCodegenAttributes codegenAttributes;
   HirConstructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
-  // Universal owner type in this callable's region scope.
-  SemanticType ownerType = SemanticType::Unknown;
   bool constexprConstructor = false;
   bool requiresUnsafe = false;
   bool generatedDefault = false;
@@ -1691,7 +1607,6 @@ struct MirConstructorInstance {
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<SemanticType> parameterTypes;
-  LifetimeSignatureContract lifetimeContract;
   std::vector<HirBindingId> parameterBindings;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowParameter = 0;
@@ -1725,13 +1640,9 @@ struct MirDestructorDispatchState {
 };
 
 struct MirDestructorInstance {
-  std::vector<GenericParameterIdentity> liftedLifetimes;
   FunctionCodegenAttributes codegenAttributes;
   HirDestructorInstanceId id = 0;
   HirClassInstanceId owner = 0;
-  // Universal owner type in this callable's region scope.
-  SemanticType ownerType = SemanticType::Unknown;
-  LifetimeSignatureContract lifetimeContract;
   MirDefinitionKind definitionKind = MirDefinitionKind::Declaration;
   bool mayRaiseDefinedFailure = true;
   MirEffectSummary effectSummary;
@@ -1746,12 +1657,9 @@ struct MirDestructorInstance {
 struct MirLambdaInstance {
   HirLambdaId id = 0;
   LambdaId declaration = 0;
-  std::vector<Lifetime> environmentLifetimes;
-  LifetimeSignatureContract environmentContract{.complete = true};
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
-  LifetimeSignatureContract lifetimeContract;
   std::vector<HirBindingId> parameterBindings;
   std::vector<SemanticType> captureTypes;
   std::vector<LambdaCaptureMode> captureModes;
@@ -1766,7 +1674,6 @@ struct MirLambdaInstance {
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
-  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   MirEffectSummary effectSummary;
   MirBody body;
 
@@ -1997,9 +1904,6 @@ struct MirHostedStartupPlan {
 
 // Exact numeric representation selected by semantics for a payload-free enum.
 struct MirIntegralEnum {
-  std::vector<GenericParameterIdentity> liftedLifetimes;
-  NominalVariance variance;
-  LifetimeSignatureContract lifetimeContract;
   EnumId declaration = 0;
   SemanticType type = SemanticType::Unknown;
   SourceUnitId sourceUnit = 0;
@@ -2023,9 +1927,6 @@ struct MirPayloadEnumVariant {
 };
 
 struct MirPayloadEnum {
-  std::vector<GenericParameterIdentity> liftedLifetimes;
-  NominalVariance variance;
-  LifetimeSignatureContract lifetimeContract;
   EnumId declaration = 0;
   SourceUnitId sourceUnit = 0;
   SemanticType type = SemanticType::Unknown;
@@ -2055,10 +1956,6 @@ struct MirThreadLocalStorage {
 
 class MirProgram {
 public:
-  [[nodiscard]] const std::vector<NominalVarianceRecipe> &nominalVarianceRecipes() const {
-    return nominalVarianceRecipes_;
-  }
-
   [[nodiscard]] std::uint64_t semanticSnapshot() const {
     return semanticSnapshot_;
   }
@@ -2259,8 +2156,6 @@ public:
   friend bool operator==(const MirProgram &, const MirProgram &) = default;
 
 private:
-  std::vector<NominalVarianceRecipe> nominalVarianceRecipes_;
-
   std::vector<ForeignStorageInfo> foreignStorage_;
   friend class MirLowerer;
   friend struct MirProgramTestAccess;

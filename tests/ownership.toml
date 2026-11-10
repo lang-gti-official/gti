@@ -62,7 +62,6 @@ tests = [
   "source_modules_lsp",
   "module_discovery_lsp",
   "source_text_lsp",
-  "lifetime_parameters_lsp",
 
   "compact_owner_layout_instrumented",
   "cpp_debug_artifacts",
@@ -72,7 +71,6 @@ tests = [
   "llvm_native_runtime_identity",
   "macos_installed_runtime",
   "macro_neovim_syntax",
-  "lifetime_neovim_syntax",
   "neovim_lsp_configuration",
   "neovim_toolchain",
   "neovim_gtiup",
@@ -120,7 +118,6 @@ owners = [
   "source_unit_services",
   "block_comment_pipeline",
   "borrow_origin_syntax",
-  "lifetime_syntax",
   "foreign_variable_syntax",
   "nested_type_syntax",
   "pack_fold_syntax",
@@ -353,42 +350,17 @@ consumers = [
 area = "semantics-shared"
 risk = "shared"
 paths = [
-  "include/gti/lifetime*.h",
-  "include/gti/callable_lifetimes.h",
-  "include/gti/generic_type_patterns.h",
-  "include/gti/borrow_conditions.h",
-  "include/gti/concrete_formals.h",
-  "include/gti/reference_contents.h",
-  "include/gti/nominal_variance.h",
   "include/gti/semantic*",
   "src/compiler/semantic_analyzer_impl.h",
   "src/compiler/semantic_model.cpp",
   "src/compiler/semantic_flow_analysis.cpp",
   "src/compiler/semantic_constexpr.cpp",
   "src/compiler/semantic_ownership*",
-  "src/compiler/semantic_lifetime*.cpp",
-  "src/compiler/semantic_nominal_lifetimes.cpp",
-  "src/compiler/semantic_executable_lifetimes.cpp",
-  "src/compiler/semantic_private_lifetimes.cpp",
-  "src/compiler/semantic_reference_contents.cpp",
   "src/compiler/semantic_type*",
 ]
 owners = [
   "semantic_header_boundary",
   "semantic_header_self_containment",
-  "lifetime_regions",
-  "lifetime_types",
-  "lifetime_requirements",
-  "lifetime_resolution",
-  "persistent_lifetime_contracts",
-  "lifetime_semantics",
-  "lifetime_pipeline",
-  "lifetime_ir_metadata",
-  "lifetime_borrow_paths",
-  "lifetime_hir_signatures",
-  "lifetime_mir_contracts",
-  "lifetime_payload_conversions",
-  "lifetime_native",
   "complete_borrow_summaries",
   "cleanup_bound_borrow",
   "temporary_owner_borrow",
@@ -482,8 +454,6 @@ area = "hir"
 risk = "shared"
 paths = [
   "src/compiler/hir_*",
-  "src/compiler/class_hierarchy_lifetimes.h",
-  "src/compiler/structural_constructor_policy.h",
   "src/compiler/hir.cpp",
   "include/gti/hir*",
 ]
@@ -499,7 +469,6 @@ owners = [
   "output_determinism",
 ]
 consumers = [
-  "llvm_dispatch_plans",
   "concept_conditions",
   "reference_parameter_pack_mir",
   "reference_parameter_packs",
@@ -526,7 +495,6 @@ paths = [
   "include/gti/mir*",
 ]
 owners = [
-  "lifetime_borrow_paths",
   "reference_parameter_pack_mir",
   "^mir_",
   "borrow_origin_publication",
@@ -624,7 +592,6 @@ consumers = [
   "llvm_coverage_evidence",
   "llvm_scalar_execution",
   "llvm_class_execution",
-  "llvm_dispatch_plans",
   "language_coverage_corpus",
 ]
 

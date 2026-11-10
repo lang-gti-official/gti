@@ -1,6 +1,5 @@
 #include "compiler_test_fixture.h"
 #include "gti/lowered_program_builder.h"
-#include "gti/lifetime_types.h"
 #include "gti/mir_constant_evaluator.h"
 #include "gti/mir_lowering.h"
 #include "temporary_directory.h"
@@ -10,23 +9,6 @@ namespace {
 // Exhaustion cases written against a 4096-step request budget keep that
 // budget explicitly; the default is far larger (see testCompileLimits).
 constexpr std::size_t smallStepBudget = 4096;
-
-void diagnoseRequiredConstantFixture(const lang::FrontendResult &result,
-                                     std::string_view name) {
-  if (result.canGenerateCode())
-    return;
-  std::cerr << "constexpr fixture " << name << ": semantic="
-            << result.semanticValid << ", HIR=" << result.hir.valid()
-            << ", diagnostics=" << result.diagnostics.size() << '\n';
-  const auto count = std::min<std::size_t>(6, result.diagnostics.size());
-  for (std::size_t index = 0; index < count; ++index) {
-    const auto &diagnostic = result.diagnostics[index];
-    std::cerr << "  " << diagnostic.code << " line " << diagnostic.primary.line
-              << ": " << diagnostic.message.substr(0, 400) << '\n';
-    if (!diagnostic.hints.empty())
-      std::cerr << "    " << diagnostic.hints.front().substr(0, 400) << '\n';
-  }
-}
 
 lang::FrontendOptions stepLimited(std::size_t steps = smallStepBudget) {
   lang::FrontendOptions options;
@@ -539,33 +521,6 @@ int main() {
 }
 
 void testCharactersAndStringViews() {
-  const lang::ConstantValue literalText{std::string("literal text")};
-  for (const auto region : {lang::Lifetime::staticLifetime(),
-                            lang::Lifetime::parameter(1),
-                            lang::Lifetime::inference(2),
-                            lang::Lifetime::local(3)}) {
-    lang::SemanticType textType = lang::SemanticType::StringView;
-    textType.lifetimeArguments = {region};
-    const auto converted = lang::convertConstantToType(literalText, textType);
-    expect(converted && converted.value &&
-               std::get<std::string>(*converted.value) == "literal text",
-           "constant text content accepts an exact region-bearing text target");
-    expect(!lang::convertConstantToType(lang::ConstantValue{true}, textType),
-           "a storage region cannot convert another scalar value into text");
-    for (int malformed = 0; malformed != 3; ++malformed) {
-      auto invalid = textType;
-      if (malformed == 0)
-        invalid.lifetimeArguments.push_back(region);
-      else if (malformed == 1)
-        invalid.lifetimeArguments.front() = {};
-      else
-        invalid.arguments.push_back(lang::SemanticType::Int32);
-      expect(!lang::convertConstantToType(literalText, invalid),
-             "constant text conversion rejects malformed storage slots and non-region shape");
-    }
-  }
-  expect(!lang::convertConstantToType(literalText, lang::SemanticType::CString),
-         "counted constant text does not silently become a C string");
   const lang::FrontendResult valid = lang::Frontend().analyze(
       "text-values.gti", R"(
 char letter = 'G';
@@ -589,7 +544,6 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  diagnoseRequiredConstantFixture(valid, "characters and string views");
   expect(valid.canGenerateCode() && valid.diagnostics.empty(),
          "character values and literal-backed string views should validate");
 
@@ -607,9 +561,7 @@ int main() {
           ? nullptr
           : valid.semantics.findBinding(*textDeclaration);
   expect(textBinding != nullptr &&
-             lang::eraseTypeLifetimes(textBinding->type) == lang::SemanticType::StringView &&
-             textBinding->type.lifetimeArguments.size() == 1 &&
-             textBinding->type.lifetimeArguments.front().specified() &&
+             textBinding->type == lang::SemanticType::StringView &&
              textBinding->traits.drop == lang::DropKind::Trivial &&
              textBinding->traits.copyable,
          "string views should remain trivial copyable values in semantics");
@@ -6726,7 +6678,6 @@ void testCompileLimits() {
   };
   const auto longPattern = withLibrary({});
   const auto longPatternOldBudget = withLibrary(stepLimited(4096));
-  diagnoseRequiredConstantFixture(longPattern, "long literal pattern");
   expect(longPattern.canGenerateCode() &&
              !longPatternOldBudget.canGenerateCode() &&
              hasDiagnosticHint(longPatternOldBudget.diagnostics,
@@ -7077,7 +7028,6 @@ int choose(Value& value) { return value.n; }
 int choose(Checked value) { return value.n; }
 int main() { return choose(Value(3)) - 3; }
 )");
-  diagnoseRequiredConstantFixture(temporaryTier, "temporary-borrow argument tier");
   expect(temporaryTier.canGenerateCode(),
          "temporary-borrow tier precedes checked construction");
   const auto nestedReference =
@@ -7449,57 +7399,9 @@ struct Validator {
 };
 int main() { Validator(5).check(5); return 0; }
 )");
-  diagnoseRequiredConstantFixture(method, "immediate receiver method");
   expect(method.canGenerateCode() && lang::verifyMirProgram(method.mir).valid(),
          "immediate void methods use their exact constant receiver in the "
          "statement completion profile");
-  if (method.canGenerateCode())
-    for (const auto &function : method.hir.functionInstances())
-      if (!function.body.immediateVoidCompletions.empty())
-        expect(function.body.lifetimeBody.origins.empty() &&
-                   function.body.lifetimeBody.obligations.empty(),
-               "a checked immediate statement withdraws only its erased runtime lifetime facts");
-
-  const std::string lifetimeValidator = R"(
-struct Validator {
-  int limit;
-  constexpr Validator(int value) : limit(value) {}
-  consteval void check(int value) {
-    int proof = 100 / (value == this.limit ? 1 : 0);
-  }
-};
-)";
-  const auto surrounding = lang::Frontend().analyze(
-      "consteval-statement-surrounding-borrow.gti", lifetimeValidator + R"(
-int main() {
-  int value = 7;
-  int& held = value;
-  Validator(5).check(5);
-  return held - 7;
-}
-)");
-  diagnoseRequiredConstantFixture(surrounding, "immediate statement preserves earlier borrow");
-  expect(surrounding.canGenerateCode() &&
-             lang::verifyMirProgram(surrounding.mir).valid(),
-         "checked immediate replacement preserves the enclosing runtime borrow proof");
-  if (surrounding.canGenerateCode())
-    for (const auto &function : surrounding.hir.functionInstances())
-      if (!function.body.immediateVoidCompletions.empty())
-        expect(!function.body.lifetimeBody.origins.empty() &&
-                   !function.body.lifetimeBody.obligations.empty(),
-               "pre-expression lifetime origins and relationships survive immediate replacement");
-  const auto escaping = lang::Frontend().analyze(
-      "consteval-statement-keeps-escape-check.gti", lifetimeValidator + R"(
-int&<static> invalid() {
-  int value = 7;
-  int& held = value;
-  Validator(5).check(5);
-  return held;
-}
-int main() { return 0; }
-)");
-  expect(!escaping.semanticValid,
-         "immediate replacement cannot remove an earlier local borrow escape obligation");
 
   for (const std::string source :
        {"consteval void check(int n){int x=100/n;} int main(){check(0);"

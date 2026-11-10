@@ -1,6 +1,4 @@
-#include "gti/lifetime_types.h"
 #include "dispatch.h"
-#include "../class_hierarchy_lifetimes.h"
 #include "reachability.h"
 
 #include <algorithm>
@@ -30,20 +28,10 @@ SemanticType receiverType(const MirInstruction &instruction) {
   return type;
 }
 
-// Each declaration in a virtual family owns its signature regions; the
-// representation contract is their region-erased shape.
-bool sameErasedTypes(const std::vector<SemanticType> &left,
-                     const std::vector<SemanticType> &right) {
-  return std::equal(left.begin(), left.end(), right.begin(), right.end(),
-                    [](const SemanticType &a, const SemanticType &b) {
-                      return eraseTypeLifetimes(a) == eraseTypeLifetimes(b);
-                    });
-}
-
 bool sameCallContract(const MirFunctionInstance &left,
                       const MirFunctionInstance &right) {
-  return eraseTypeLifetimes(left.returnType) == eraseTypeLifetimes(right.returnType) &&
-         sameErasedTypes(left.parameterTypes, right.parameterTypes) &&
+  return left.returnType == right.returnType &&
+         left.parameterTypes == right.parameterTypes &&
          left.receiverMutability == right.receiverMutability &&
          left.overloadedOperator == right.overloadedOperator &&
          left.requiresUnsafe == right.requiresUnsafe &&
@@ -65,14 +53,9 @@ llvm::Value *projectBase(Session &session, llvm::IRBuilder<> &ir,
                          llvm::Value *receiver, SemanticType source,
                          const BaseSubobjectLayout &path) {
   for (const auto index : path.indices) {
-    const auto &base = session.layouts().instance(source).bases.at(index);
-    const HirClassInstanceId identity[] = {base.instance};
-    const auto actual = session.layouts().basePath(source, identity);
-    if (actual.indices.size() != 1 || actual.indices.front() != index)
-      throw std::logic_error("LLVM receiver projection changed its exact base index");
     receiver = ir.CreateStructGEP(session.layouts().get(source).storage,
                                   receiver, index);
-    source = actual.type;
+    source = session.layouts().instance(source).bases.at(index).type;
   }
   if (source != path.type)
     throw std::logic_error("LLVM receiver projection lost its physical owner");
@@ -134,10 +117,8 @@ Dispatch::views(HirClassInstanceId activeClass) {
       throw std::logic_error("LLVM dispatch view path is missing or ambiguous");
     if (view->polymorphic) {
       const auto viewLayout = session.layouts().basePath(active->type, path);
-      const auto actualView = classHierarchyPathView(program, activeClass, active->type, path);
-      auto location = session.layouts().dispatchLocation(viewLayout.type);
-      if (!actualView || actualView->instance->id != id ||
-          viewLayout.type != actualView->type || !location)
+      auto location = session.layouts().dispatchLocation(view->type);
+      if (viewLayout.type != view->type || !location)
         throw std::logic_error("LLVM dispatch view lost its exact storage");
       location->owner = session.layouts().baseSubobject(
           active->type, location->owner.type, "dispatch.activeView");
@@ -166,10 +147,8 @@ Dispatch::views(HirClassInstanceId activeClass) {
           const auto *owner = program.findClassInstance(selected->targetOwner);
           const auto targetLayout =
               session.layouts().basePath(active->type, selected->targetPath);
-          const auto targetView = classHierarchyPathView(
-              program, activeClass, active->type, selected->targetPath);
-          if (!target || !owner || target->owner != owner->id || !targetView ||
-              targetView->instance->id != owner->id || targetLayout.type != targetView->type)
+          if (!target || !owner || target->owner != owner->id ||
+              targetLayout.type != owner->type)
             throw std::logic_error("LLVM dispatch lost its target owner path");
           constexpr auto maxAdjustment = static_cast<std::uint64_t>(
               std::numeric_limits<std::int64_t>::max());
@@ -352,10 +331,7 @@ void Dispatch::preflightState(HirClassInstanceId activeClass) {
     if (!llvm::isUIntN(indexBits - 1, physical.offset))
       throw BackendUnsupportedError(
           "LLVM dispatch owner offset exceeds its target address-index range");
-    const auto actual = classHierarchyPathView(session.program().mir(), activeClass,
-                                               active.type, view.path);
-    if (!owner || !actual || actual->instance != owner ||
-        view.activeClass != activeClass || path.type != actual->type ||
+    if (!owner || view.activeClass != activeClass || path.type != owner->type ||
         path.offset != view.offset || physical != view.location.owner)
       throw std::logic_error(
           "LLVM dispatch state lost its exact physical view path");
@@ -601,10 +577,18 @@ void Dispatch::install(llvm::IRBuilder<> &ir, llvm::Value *completeObject,
   for (const auto &[key, entry] : selected) {
     (void)key;
     const auto &[location, table] = entry;
-    auto *address = projectBase(session, ir, completeObject, active->type,
-                                location.owner);
-    address = ir.CreateStructGEP(session.layouts().get(location.owner.type).storage,
-                                 address, location.index);
+    auto type = active->type;
+    auto *address = completeObject;
+    for (const auto index : location.owner.indices) {
+      address = ir.CreateStructGEP(session.layouts().get(type).storage, address,
+                                   index);
+      type = session.layouts().instance(type).bases.at(index).type;
+    }
+    if (type != location.owner.type)
+      throw std::logic_error(
+          "LLVM dispatch installation lost its physical owner");
+    address = ir.CreateStructGEP(session.layouts().get(type).storage, address,
+                                 location.index);
     ir.CreateStore(table, address);
   }
 }
@@ -648,15 +632,8 @@ VirtualCallPlan Dispatch::planCall(const MirInstruction &instruction) {
       instruction.tracksCaller != selected->tracksCaller ||
       selected->requiresUnsafe != (instruction.unsafeOperation ==
                                    UnsafeOperationKind::DeclaredUnsafeCall) ||
-      // Representation is region-independent; the MIR lifetime verifier
-      // proves the applied signature's regions.
-      !std::equal(instruction.parameterTypes.begin(),
-                  instruction.parameterTypes.end(),
-                  selected->parameterTypes.begin(), selected->parameterTypes.end(),
-                  [](const SemanticType &left, const SemanticType &right) {
-                    return eraseTypeLifetimes(left) == eraseTypeLifetimes(right);
-                  }) ||
-      eraseTypeLifetimes(resultContract) != eraseTypeLifetimes(selected->returnType) ||
+      instruction.parameterTypes != selected->parameterTypes ||
+      resultContract != selected->returnType ||
       instruction.definedFailure.propagation !=
           FailurePropagationKind::VirtualCall)
     throw std::invalid_argument(
@@ -685,9 +662,8 @@ VirtualCallPlan Dispatch::planCall(const MirInstruction &instruction) {
       throw std::logic_error(
           "LLVM named member lost its concrete sealed root family");
     const auto abi = rootAbi(root->id);
-    if (eraseTypeLifetimes(root->returnType) !=
-            eraseTypeLifetimes(selected->returnType) ||
-        !sameErasedTypes(root->parameterTypes, selected->parameterTypes) ||
+    if (root->returnType != selected->returnType ||
+        root->parameterTypes != selected->parameterTypes ||
         root->receiverMutability != selected->receiverMutability ||
         root->overloadedOperator != selected->overloadedOperator ||
         (contract &&

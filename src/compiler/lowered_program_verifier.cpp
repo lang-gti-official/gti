@@ -1,9 +1,6 @@
 #include "gti/compiled_scalar_unit.h"
 #include "gti/lowered_program.h"
 #include "gti/mir_verifier.h"
-#include "gti/lifetime_types.h"
-#include "structural_constructor_policy.h"
-#include "class_hierarchy_lifetimes.h"
 
 #include "gti/failure_metadata.h"
 #include "gti/lowered_program_printer.h"
@@ -24,80 +21,6 @@
 
 namespace lang {
 namespace {
-
-std::optional<LifetimeRequirementFormula> loweredPolicyNominalRequirements(
-    const LoweredProgram &program, const SemanticType &type) {
-  using namespace structural_policy_detail;
-  if (type.kind == SemanticType::Class) {
-    const auto *declaration = program.findClassDeclaration(type.classId);
-    const auto owner = declaration ? openClassType(*declaration) : std::nullopt;
-    return owner ? nominalRequirements(*owner, type, declaration->lifetimeContract,
-                       identities(declaration->genericParameters),
-                       identities(declaration->genericArgumentPatternLifetimes))
-                 : std::nullopt;
-  }
-  std::optional<LifetimeRequirementFormula> result;
-  if (type.kind == SemanticType::Enum) {
-    for (const auto &row : program.declarations()) {
-      const auto *declaration = std::get_if<LoweredEnumDeclaration>(&row.payload);
-      if (!declaration || !declaration->lifetimeContract.valid())
-        continue;
-      const auto bindings = matchUniversalTypeLifetimes(
-          declaration->type, type, declaration->lifetimeContract.parameters);
-      if (!bindings)
-        continue;
-      const auto contract = substituteLifetimeContract(declaration->lifetimeContract, *bindings);
-      const auto actual = contract && contract->valid()
-          ? lifetimeContractRequirements(*contract) : std::nullopt;
-      if (!actual || (result && *result != *actual))
-        return std::nullopt;
-      result = *actual;
-    }
-  } else if (type.kind == SemanticType::Lambda) {
-    for (const auto &instance : program.mir().lambdaInstances()) {
-      const auto actual = lambdaEnvironmentLifetimeRequirements(
-          instance.type, type, instance.environmentContract);
-      if (!actual)
-        continue;
-      if (result && *result != *actual)
-        return std::nullopt;
-      result = *actual;
-    }
-  }
-  return result;
-}
-
-bool loweredStructuralPolicyMatches(const LoweredProgram &program,
-                                    const LoweredClassDeclaration &owner,
-                                    const LoweredConstructorDeclaration &policy) {
-  const auto type = structural_policy_detail::openClassType(owner);
-  if (!type || policy.owner != owner.id || policy.access != AccessModifier::Public ||
-      policy.requiresUnsafe || !policy.genericParameters.empty() ||
-      policy.parameters.size() != 1 || policy.requiredParameterCount != 1 ||
-      policy.parameters.front().pack || policy.parameters.front().hasDefault)
-    return false;
-  auto contract = policy.lifetimeContract;
-  const auto written = structural_policy_detail::writtenRequirements(
-      policy.requirementExpression, policy.requirementRoot, policy.requirements.size(),
-      [&](std::size_t index) -> std::optional<LifetimeRequirementNode> {
-        const auto &requirement = policy.requirements[index];
-        if (requirement.kind != LoweredRequirementKind::Lifetime ||
-            !requirement.lifetimeBound || requirement.conceptId)
-          return std::nullopt;
-        return LifetimeRequirementNode{
-            .kind = requirement.outlivesType ? LifetimeRequirementNode::Kind::Type
-                                            : LifetimeRequirementNode::Kind::Region,
-            .bound = *requirement.lifetimeBound,
-            .type = requirement.outlivesType.value_or(SemanticType::Unknown)};
-      });
-  if (!written || !appendLifetimeRequirementFormula(contract.requirements, *written))
-    return false;
-  const auto &parameter = policy.parameters.front().type;
-  return structuralConstructorPolicyMatches(*type, owner.lifetimeContract,
-      std::span(&parameter, 1), contract, [&](const SemanticType &node) {
-        return loweredPolicyNominalRequirements(program, node);
-      });
-}
 
 // A lowered dispatch selection names exactly the MIR selection's instances.
 template <typename Mir>
@@ -193,7 +116,6 @@ validGeneratedIdentity(const LoweredGeneratedItemIdentity &identity) {
   case SymbolKind::Method:
   case SymbolKind::Operator:
   case SymbolKind::TypeParameter:
-  case SymbolKind::LifetimeParameter:
   case SymbolKind::ValueParameter:
   case SymbolKind::RequirementParameter:
     return false;
@@ -208,12 +130,7 @@ validGenericParameters(const std::vector<LoweredGenericParameter> &parameters,
     const LoweredGenericParameter &parameter = parameters[index];
     if (parameter.id == 0 || parameter.name.empty() ||
         (!allowProjected && !parameter.typeArgumentPath.empty()) ||
-        ((parameter.value || parameter.lifetime) &&
-         !parameter.typeArgumentPath.empty()) ||
-        (parameter.lifetime &&
-         (parameter.value || parameter.pack || parameter.constraints != 0 ||
-          parameter.constraintConcept != 0 ||
-          !parameter.constraintName.empty())) ||
+        (parameter.value && !parameter.typeArgumentPath.empty()) ||
         std::find_if(parameters.begin(),
                      parameters.begin() + static_cast<std::ptrdiff_t>(index),
                      [&](const LoweredGenericParameter &prior) {
@@ -229,49 +146,21 @@ validGenericParameters(const std::vector<LoweredGenericParameter> &parameters,
 [[nodiscard]] bool
 validClassPatternBindings(const LoweredClassDeclaration &declaration) {
   if (declaration.genericArgumentPatterns.empty()) {
-    return declaration.genericArgumentPatternLifetimes.empty() &&
-           std::all_of(declaration.genericParameters.begin(),
+    return std::all_of(declaration.genericParameters.begin(),
                        declaration.genericParameters.end(),
                        [](const auto &parameter) {
                          return parameter.typeArgumentPath.empty();
                        });
   }
   if (!resolvedTypes(declaration.genericArgumentPatterns) ||
-      (declaration.genericParameters.empty() &&
-       declaration.genericArgumentPatternLifetimes.empty())) {
+      declaration.genericParameters.empty()) {
     return false;
   }
-  std::vector<Lifetime> scope;
-  for (const auto &parameter : declaration.genericParameters)
-    if (parameter.lifetime)
-      scope.push_back(Lifetime::parameter(parameter.id));
-  if (!validGenericParameters(declaration.genericArgumentPatternLifetimes))
-    return false;
-  for (const auto &parameter : declaration.genericArgumentPatternLifetimes) {
-    if (!parameter.lifetime ||
-        std::any_of(declaration.genericParameters.begin(), declaration.genericParameters.end(),
-                    [&](const auto &declared) { return declared.id == parameter.id; }))
-      return false;
-    scope.push_back(Lifetime::parameter(parameter.id));
-  }
-  std::vector<Lifetime> used;
-  for (const auto &pattern : declaration.genericArgumentPatterns)
-    for (const auto region : freeTypeLifetimes(pattern)) {
-      if (!region.specified() || (region.kind != Lifetime::Kind::Static &&
-          std::find(scope.begin(), scope.end(), region) == scope.end()))
-        return false;
-      used.push_back(region);
-    }
-  for (const auto &parameter : declaration.genericArgumentPatternLifetimes)
-    if (std::find(used.begin(), used.end(), Lifetime::parameter(parameter.id)) == used.end())
-      return false;
   for (const auto &parameter : declaration.genericParameters) {
-    if (parameter.lifetime)
-      continue;
     const auto projected = projectGenericTypeArgument(
         declaration.genericArgumentPatterns, parameter.typeArgumentPath,
         parameter.id, parameter.pack);
-    if (!projected || parameter.value || parameter.lifetime ||
+    if (!projected || parameter.value ||
         projected->genericParameterId != parameter.id ||
         projected->kind != (parameter.pack ? SemanticType::TypePack
                                            : SemanticType::TypeParameter)) {
@@ -289,26 +178,7 @@ validRequirement(const LoweredConceptRequirement &requirement) {
   if (requirement.kind != LoweredRequirementKind::InferredExpression &&
       requirement.inferredResultAccess)
     return false;
-  if ((requirement.kind != LoweredRequirementKind::Lifetime &&
-       (requirement.lifetimeBound || requirement.outlivesType)) ||
-      (requirement.kind != LoweredRequirementKind::Concept &&
-       !requirement.lifetimeArguments.empty()) ||
-      !std::all_of(requirement.lifetimeArguments.begin(), requirement.lifetimeArguments.end(),
-                   [](Lifetime region) { return region.declarationRegion(); }))
-    return false;
   switch (requirement.kind) {
-  case LoweredRequirementKind::Lifetime:
-    return requirement.conceptId == 0 && requirement.arguments.empty() &&
-           requirement.memberName.empty() && !requirement.mutableReceiver &&
-           !requirement.requiresUnsafe && requirement.expressionParameterCount == 0 &&
-           !requirement.resultArgument && !requirement.resultOriginParameter &&
-           requirement.lifetimeBound &&
-           requirement.lifetimeBound->shorter.declarationRegion() &&
-           (requirement.outlivesType
-                ? requirement.lifetimeBound->longer == Lifetime{} &&
-                  resolvedType(*requirement.outlivesType)
-                : requirement.lifetimeBound->longer.declarationRegion()) &&
-           !requirement.source.source.empty() && requirement.source.start < requirement.source.end;
   case LoweredRequirementKind::Concept:
     return requirement.conceptId != 0 && requirement.memberName.empty() &&
            !requirement.mutableReceiver && !requirement.requiresUnsafe &&
@@ -551,8 +421,6 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
         std::get_if<LoweredTypeAliasDeclaration>(&declaration.payload);
     if (payload == nullptr || declaration.semanticIdentity == 0 ||
         declaration.name.empty() || payload->qualifiedName.empty() ||
-        declaration.generic != !payload->genericParameters.empty() ||
-        !validGenericParameters(payload->genericParameters) ||
         !resolvedType(payload->type)) {
       return invalid("type alias lacks a resolved type identity");
     }
@@ -566,12 +434,11 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     if (payload == nullptr || payload->id == 0 ||
         declaration.semanticIdentity != payload->id ||
         declaration.name.empty() || payload->qualifiedName.empty() ||
-        declaration.generic != payload->hasGenericBindings() ||
+        declaration.generic != !payload->genericParameters.empty() ||
         !validGenericParameters(payload->genericParameters, true) ||
         !validClassPatternBindings(*payload) ||
         (exactSpecialization &&
-         (std::any_of(payload->genericParameters.begin(), payload->genericParameters.end(),
-                      [](const auto &parameter) { return !parameter.lifetime; }) ||
+         (!payload->genericParameters.empty() ||
           (payload->exactTypeArguments.empty() &&
            payload->exactValueArguments.empty()) ||
           payload->forwardDeclaration || payload->cAbiRecord ||
@@ -612,25 +479,21 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     const auto genericShape = [&] {
       if (!payload)
         return false;
-      std::size_t types = 0, values = 0, lifetimes = 0;
+      std::size_t types = 0, values = 0;
       bool pack = false;
       for (std::size_t index = 0; index < payload->genericParameters.size();
            ++index) {
         const auto &parameter = payload->genericParameters[index];
         if (parameter.pack) {
-          if (parameter.value || parameter.lifetime ||
-              index + 1 != payload->genericParameters.size())
+          if (parameter.value || index + 1 != payload->genericParameters.size())
             return false;
           pack = true;
         } else if (parameter.value)
           ++values;
-        else if (parameter.lifetime)
-          ++lifetimes;
         else
           ++types;
       }
       return payload->type.valueArguments.size() == values &&
-             payload->type.lifetimeArguments.size() == lifetimes &&
              (pack ? payload->type.arguments.size() >= types
                    : payload->type.arguments.size() == types);
     };
@@ -1095,7 +958,6 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
       case ComputedTypeProjectionKind::CallableReturn:
         if (payload->genericParameters.size() != 1 ||
             payload->genericParameters.front().value ||
-            payload->genericParameters.front().lifetime ||
             payload->genericParameters.front().pack ||
             payload->exactSpecializationPrimary != 0 ||
             !payload->bases.empty() || payload->cAbiRecord ||
@@ -1199,32 +1061,6 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
     }
   }
 
-  std::set<std::pair<ClassId, ConstructorKind>> structuralPolicies;
-  for (const auto &row : program.declarations_) {
-    const auto *policy = std::get_if<LoweredConstructorDeclaration>(&row.payload);
-    if (!policy || policy->specifier != SpecialMemberSpecifierKind::Defaulted)
-      continue;
-    if (policy->kind == ConstructorKind::Ordinary) {
-      if (!policy->parameters.empty())
-        addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
-                 "defaulted ordinary constructor cannot hide a structural policy",
-                 std::nullopt, row.id);
-      continue;
-    }
-    const auto *owner = program.findClassDeclaration(policy->owner);
-    const auto status = owner && policy->kind == ConstructorKind::Copy
-        ? owner->copyConstructor : owner ? owner->moveConstructor : SpecialMemberStatus::Deleted;
-    if ((policy->kind != ConstructorKind::Copy && policy->kind != ConstructorKind::Move) ||
-        !structuralPolicies.emplace(policy->owner, policy->kind).second || !owner ||
-        status != ((policy->kind == ConstructorKind::Copy ? owner->traits.copyable
-                                                         : owner->traits.movable)
-                       ? SpecialMemberStatus::Generated : SpecialMemberStatus::Deleted) ||
-        !loweredStructuralPolicyMatches(program, *owner, *policy))
-      addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
-               "defaulted constructor policy changes its structural lifetime contract",
-               std::nullopt, row.id);
-  }
-
   for (const LoweredDeclaration &declaration : program.declarations_) {
     const auto *specialization =
         std::get_if<LoweredClassDeclaration>(&declaration.payload);
@@ -1245,8 +1081,8 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
           primaryRow->parent != declaration.parent ||
           primaryRow->namespaceScope != declaration.namespaceScope ||
           primaryRow->name != declaration.name ||
-          !primary->hasGenericBindings() ||
-          !specialization->hasGenericBindings()) {
+          primary->genericParameters.empty() ||
+          specialization->genericParameters.empty()) {
         addIssue(issues, LoweredProgramIssueKind::InvalidDeclarationInventory,
                  "generic class definition does not retain its exact family "
                  "primary identity",
@@ -1269,12 +1105,12 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
         primary == nullptr ? 0
         : !primary->genericArgumentPatterns.empty()
             ? primary->genericArgumentPatterns.size()
-            : static_cast<std::size_t>(std::count_if(
-                  primary->genericParameters.begin(),
-                  primary->genericParameters.end(),
-                  [](const LoweredGenericParameter &parameter) {
-                    return !parameter.value && !parameter.lifetime;
-                  }));
+            : static_cast<std::size_t>(
+                  std::count_if(primary->genericParameters.begin(),
+                                primary->genericParameters.end(),
+                                [](const LoweredGenericParameter &parameter) {
+                                  return !parameter.value;
+                                }));
     const std::size_t primaryValueParameters =
         primary == nullptr ? 0
                            : static_cast<std::size_t>(std::count_if(
@@ -1309,17 +1145,13 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
     const auto *owner =
         std::get_if<LoweredClassDeclaration>(&ownerRow->payload);
     GenericSubstitution substitution;
-    std::size_t typeIndex = 0, valueIndex = 0, lifetimeIndex = 0;
+    std::size_t typeIndex = 0, valueIndex = 0;
     for (const auto &parameter : owner->genericParameters) {
       if (!parameter.typeArgumentPath.empty()) {
         if (auto type = projectGenericTypeArgument(
                 instance.type.arguments, parameter.typeArgumentPath,
                 parameter.id, parameter.pack))
           substitution.types.emplace(parameter.id, std::move(*type));
-      } else if (parameter.lifetime) {
-        if (lifetimeIndex < instance.type.lifetimeArguments.size())
-          substitution.lifetimes.emplace(
-              parameter.id, instance.type.lifetimeArguments[lifetimeIndex++]);
       } else if (parameter.value) {
         if (valueIndex < instance.type.valueArguments.size())
           substitution.values.emplace(
@@ -1354,44 +1186,11 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
           if (candidate != nullptr &&
               candidate->exactSpecializationPrimary == type.classId &&
               candidate->exactTypeArguments == type.arguments &&
-              candidate->exactValueArguments == type.valueArguments) {
-            // A selected specialization keeps its actual public arguments.
-            type.classId = candidate->id;
-            return type;
-          }
+              candidate->exactValueArguments == type.valueArguments)
+            return SemanticType::classType(candidate->id);
         }
       }
       return type;
-    };
-    // The sealed semantic selection is in the declaration's owner scope;
-    // the MIR path names an actual view through exact direct base edges.
-    // Re-derive the complete recipe rather than comparing either canonical
-    // layout's region names or a projected type leaf in isolation.
-    std::optional<GenericSubstitution> dispatchContext;
-    if (!owner->virtualDispatch.empty()) {
-      const auto declared = structural_policy_detail::openClassType(*owner);
-      if (declared) {
-        GenericSubstitution seed;
-        seed.values = substitution.values;
-        seed.lifetimes = substitution.lifetimes;
-        GenericSubstitution values;
-        values.values = seed.values;
-        const auto pattern = resolveExact(resolveExact, substituteSemanticType(*declared, values));
-        dispatchContext = deriveGenericArgumentPatternSubstitution(
-            std::span(&pattern, 1), std::span(&instance.type, 1),
-            structural_policy_detail::identities(owner->genericParameters),
-            structural_policy_detail::identities(owner->genericArgumentPatternLifetimes), seed);
-      }
-    }
-    const auto selectedOwnerType = [&](const SemanticType &type) -> std::optional<SemanticType> {
-      if (!dispatchContext) return std::nullopt;
-      std::vector<LifetimeBinding> bindings;
-      for (const auto &[id, region] : dispatchContext->lifetimes)
-        bindings.emplace_back(Lifetime::parameter(id), region);
-      const auto actual = substituteTypeLifetimes(
-          substituteSemanticType(type, *dispatchContext), bindings);
-      return actual && actual->kind != SemanticType::Unknown
-          ? std::optional(resolveExact(resolveExact, *actual)) : std::nullopt;
     };
     if (owner->virtualDispatch.size() != instance.virtualDispatch.size())
       addIssue(issues, LoweredProgramIssueKind::InvalidInstanceInventory,
@@ -1405,14 +1204,12 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
       const auto *selected = slot < owner->virtualDispatch.size()
                                  ? &owner->virtualDispatch[slot]
                                  : nullptr;
-      const auto view = classHierarchyPathView(program.mir_, instance.id,
-                                                instance.type, dispatch.targetPath);
-      const auto expected = selected ? selectedOwnerType(selected->targetOwner) : std::nullopt;
-      if (!selected || !root || !target || !targetOwner || !view ||
-          view->instance != targetOwner || !expected ||
+      if (!selected || !root || !target || !targetOwner ||
           selected->root != root->declaration ||
           selected->target != target->declaration ||
-          !equivalentLifetimeTypes(*expected, view->type))
+          resolveExact(resolveExact, substituteSemanticType(
+                                         selected->targetOwner,
+                                         substitution)) != targetOwner->type)
         addIssue(issues, LoweredProgramIssueKind::InvalidInstanceInventory,
                  "lowered dispatch differs from its exact semantic selection");
     }
@@ -1785,11 +1582,7 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
     }
     if (instance.id != index + 1 || instance.id != mir.id ||
         instance.declaration != mir.declaration || instance.type != mir.type ||
-        instance.environmentLifetimes != mir.environmentLifetimes ||
-        instance.environmentContract != mir.environmentContract ||
         instance.returnType != mir.returnType ||
-        instance.lifetimeContract != mir.lifetimeContract ||
-        instance.completeReturnBorrow != mir.completeReturnBorrow ||
         parameterTypes != mir.parameterTypes ||
         !validParameters(instance.parameters) || !parametersMatch ||
         !capturesMatch) {
@@ -1945,7 +1738,7 @@ lowered_detail::verifyLoweredProgramContents(const LoweredProgram &program) {
           owner != nullptr && lifecycleContainsClosure(owner->type)
               ? LoweredLifecycleCleanupForm::RetainedPrimary
           : classDeclaration != nullptr &&
-                  classDeclaration->hasGenericBindings()
+                  !classDeclaration->genericParameters.empty()
               ? LoweredLifecycleCleanupForm::ConcreteSpecialization
               : LoweredLifecycleCleanupForm::OrdinaryClass;
       if (payload == nullptr || destructorDeclaration == nullptr ||

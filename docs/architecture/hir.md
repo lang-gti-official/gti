@@ -27,32 +27,12 @@ keeps it in failure cleanup during local destruction and then exposes its
 transport value to the enclosing full expression. Void templates with no
 local returns retain the statement-only path and need no result join.
 
-Lifetime-bearing semantic types remain intact in HIR. Function instances retain
-their normalized declaration contracts; calls and constructions retain both
-explicit generic lifetime arguments and the full checked substitution for
-owner, declared and elided regions. These are proof records, not executable
-arguments. Type hashing includes regions, callable quantifiers and receiver
-mutability so semantic instances never rely on an erased type fingerprint.
-Native indirect calls keep the universal carrier signature on the callee and
-receiver plan. Their ordered argument and result types instead carry the exact
-invocation substitution, including fixed environment slots and fresh quantified
-regions. HIR checks that correspondence; MIR independently proves the contract
-and the invocation's lifetime obligations before native emission.
-
 Concrete function instances preserve the semantic owned-pointee accessor
 summary (exact receiver-field identity and private borrow operation), refreshed
 from concrete instance analysis. It is proof metadata, not a synthetic field
 access: the accessor call and its returned loan still describe execution. In
 particular, lowering must not replace a source accessor with a caller-side
 access to that accessor's private storage.
-Virtual dispatch paths retain each exact direct base instance. Their structural
-view composes the current owner's lifetime substitution at every edge; a base's
-canonical declaration regions do not replace its actual regions within the
-derived object. HIR independently checks those edges against the semantic base
-recipe and compares member signatures in the resulting owner views. Fixed owner
-regions remain exact; only independent invocation binders may alpha-rename.
-Missing, duplicate, cyclic or ambiguous paths fail verification.
-
 Synthesized receiver operands, including witnesses for unsafe raw-reference
 returns tied to `this`, retain the concrete body-domain receiver place key.
 Debug availability and ordinary ownership analysis therefore consume the same
@@ -86,16 +66,6 @@ on that application, because construction overload resolution never selects
 it. Its concrete status is `Deleted`, while the open primary keeps `Declared`.
 HIR does not ask a backend to evaluate generic arithmetic or synthesize missing
 field initialization.
-An explicit defaulted copy or move policy preserves the generated structural
-operation. HIR independently checks its normalized declaration contract against
-the exact open owner, with fixed owner regions and one independent source-shell
-binder. The lowered declaration catalog repeats that proof without source
-pointers and includes the retained Boolean lifetime requirements, so a stronger
-written condition cannot hide behind a weaker claimed contract. Only the shell
-binder and nested invocation binders may be alpha-renamed. The selection retains
-its policy declaration identity but creates no executable constructor target or
-lifetime application; actual copy/read and move/value operands keep their normal
-typed conversion, loan, transfer and cleanup checks.
 `HirProgram::instanceSymbols` retains the exact ordered semantic symbol records
 introduced only by those concrete analyses. Their request-wide IDs are disjoint
 from primary and other instance symbols. HIR checks concrete binding types and
@@ -334,10 +304,7 @@ Class instances retain an ordered type-alias catalog pairing the primary
 semantic `TypeAliasId` with the exact owner-substituted type. Semantic instance
 analysis resolves aliases, including checked value-generic expressions and
 exact nominal specializations; HIR verifies the declaration order and closed
-types against the primary semantic catalog. This check derives the same exact
-selected class context used by construction plans, including explicit lifetime
-arguments and closed callable-pattern scopes. It preserves receiver qualifiers,
-fixed regions, and correlations between invocation binders. MIR preserves these rows without
+types against the primary semantic catalog. MIR preserves these rows without
 source pointers. Detached lowering checks them independently against the
 resolved declaration inventory. Retaining this catalog does not itself enqueue
 class layouts; executable fields, calls and signatures discover the concrete
@@ -948,11 +915,7 @@ ordinary construction in HIR. The source literal owns the constructed value;
 lowering adds one source-less `nullptr_t` operand so MIR retains the selected
 constructor's real argument type. A selected member `operator=` is represented
 as an ordinary call with an explicit named-place receiver and exact right-hand
-argument. Its lifetime application uses that exact qualified receiver place.
-A temporary syntax-only receiver created during assignment resolution is not
-an evaluated expression and cannot become a retained lifetime-origin source;
-the actual assignment remains the call's source identity. Neither form is
-inferred from a public standard-library type name.
+argument. Neither form is inferred from a public standard-library type name.
 
 A declaration initializer or return operand with a contextual construction
 lowers as itself, and
@@ -1094,22 +1057,12 @@ side metadata.
 `HirValueKind::PackFold` is a separate bounded schedule, not a request for HIR
 to interpret a general fold expression. Semantics has already selected one
 non-overloaded free generic `void` target and proved that the source
-pack occurs once in the target's final reference position, with the selected
-read-only or mutable access. The concrete HIR
+pack occurs once in the target's read-only element position. The concrete HIR
 value retains that declaration identity, the source pack and argument
 position, its fixed named-place operands, and one exact resolved element-call
 record per substituted pack type in source order. Each element record carries
 its concrete type, selected function-instance identity, and a unique ordinary
-`Call` value with the usual invocation-input plan. Semantic finalization visits
-each concrete call and retains its selected callable-argument boundaries, just
-as it does for the symbolic pattern and ordinary calls. HIR checks the complete
-lifetime-binding inventory and applies it once to the target's universal
-parameter types before comparing the selected formal signature. The evaluated
-lane keeps its source regions: its generic type must match the target recipe
-using only inventoried lifted lifetimes. Fixed regions, repeated occurrences,
-access and callable boundaries remain exact. MIR independently proves the
-actual lane's conversion to the applied formal and its lifetime obligations.
-The fold's operand prefix
+`Call` value with the usual invocation-input plan. The fold's operand prefix
 retains its fixed source inputs and pack; its suffix lists these calls in
 execution order. Each call has fresh copies of the resolved named-input values,
 so a scalar load or TLS first-use check is evaluated again for the next element
@@ -1341,13 +1294,3 @@ Current gaps and future instance/backend work are tracked in the maintained
 [`docs/plans/implementation-sequence.md`](../plans/implementation-sequence.md),
 the [language restriction ledger](../plans/language-alignment.md), and the
 [optimization plan](../plans/optimization.md).
-
-Canonical method, constructor and destructor owners retain their own universal
-region identities independently of the class layout. Implicit receivers use
-that callable owner type. Nominal argument patterns are matched as one exact
-recipe, including projected lifetime slots and closed callable scopes; an
-unmatched or ambiguous recipe cannot fall back to a type-only substitution.
-Explicit field initializers keep their checked constructor-scope types, and
-MIR maps the layout field recipe into that exact owner view before comparing
-them. Declaration default expressions require checked facts in the consuming
-constructor scope; changing their type tags alone cannot supply those facts.

@@ -1,7 +1,5 @@
-#include "representation.h"
 #include "placement.h"
 #include "../mir_verification_queries.h"
-#include "../mir_lifetimes.h"
 #include "atomic_types.h"
 #include "closure_environment.h"
 #include "gti/backend.h"
@@ -79,7 +77,7 @@ bool isFreshHierarchyAggregate(const MirProgram &program,
   } else if (producer.operation == MirOperation::PayloadConstruct) {
     // One payload alternative aggregated from its exact fields.
     const auto *payload = type.kind == SemanticType::Enum
-                              ? native_llvm::exactPayloadEnum(program, type)
+                              ? program.findPayloadEnum(type)
                               : nullptr;
     if (!payload || !producer.enumVariant ||
         *producer.enumVariant >= payload->variants.size() ||
@@ -310,18 +308,19 @@ freshObjectStorage(const MirProgram &program, MirBodyAddress address,
     const bool alternative =
         outer && outer->operation == MirOperation::PayloadConstruct;
     const bool closure = outer && outer->operation == MirOperation::Closure;
-    std::optional<SemanticType> slot;
+    const SemanticType *slot = nullptr;
     if (outer && isFreshHierarchyAggregate(program, *outer)) {
       if (alternative && target->variant == outer->enumVariant)
-        slot = exactPayloadElementType(program, outer->info.type,
-                                       *outer->enumVariant, target->element);
+        slot = &program.findPayloadEnum(outer->info.type)
+                    ->variants[*outer->enumVariant]
+                    .payloadTypes[target->element];
       else if (closure && !target->variant &&
                target->element < outer->closureCaptureTypes.size() &&
                outer->closureCaptureModes[target->element] ==
                    LambdaCaptureMode::Move)
-        slot = outer->closureCaptureTypes[target->element];
+        slot = &outer->closureCaptureTypes[target->element];
       else if (!alternative && !closure && !target->variant)
-        slot = outer->info.type.arguments.front();
+        slot = &outer->info.type.arguments.front();
     }
     if (!slot || target->element >= outer->operands.size() ||
         outer->operands[target->element].kind != MirOperandKind::Value ||
@@ -369,23 +368,17 @@ freshObjectStorage(const MirProgram &program, MirBodyAddress address,
             : nullptr;
     if (!place || place->root != MirPlaceRootKind::Temporary ||
         !place->projections.empty() || place->capture ||
-        place->foreignStorage || !input ||
-        place->type != input->info.type ||
-        !sameLifetimeConversionShape(producer.info.type, input->info.type) ||
-        (input->callInputKind != HirCallInputKind::MoveValue &&
-         input->callInputKind != HirCallInputKind::MoveBorrowedTemporary) ||
+        place->foreignStorage || place->type != producer.info.type || !input ||
+        input->callInputKind != HirCallInputKind::MoveValue ||
         input->callInputRole != MirCallInputRole::Argument ||
         input->operands.size() != 1 ||
         input->operands.front().kind != MirOperandKind::Value ||
-        input->operands.front().value != value ||
-        input->operands.front().type != producer.info.type || !prepared ||
+        input->operands.front().value != value || !prepared ||
         prepared->kind != MirDropObligationKind::PreparedParameter ||
         prepared->place != place->id)
       return {};
-    // The source-free program verifier already proved the prepared stage's
-    // region conversion. Placement retains the original producer identity and
-    // accepts only its unchanged storage shape. The prepared obligation is
-    // armed fresh, or reparented from the exact success-result obligation.
+    // The prepared obligation is armed fresh, or reparented from the exact
+    // success-result obligation of the producer's own value place.
     const MirDropObligation *produced = nullptr;
     if (whole)
       for (const auto &obligation : body.dropObligations)
@@ -450,7 +443,7 @@ bool completeObjectPlace(const MirProgram &program, const MirPlace &place) {
     return false;
   // A payload enum has no derived type: every place of it is complete.
   if (place.type.kind == SemanticType::Enum)
-    return native_llvm::exactPayloadEnum(program, place.type) != nullptr;
+    return program.findPayloadEnum(place.type) != nullptr;
   if (place.type.kind != SemanticType::Class)
     return false;
   if (place.projections.empty() && (place.root == MirPlaceRootKind::Binding ||
@@ -575,8 +568,7 @@ namespace {
             "LLVM hierarchy exclusion requires an exact closure environment");
       const MirLambdaInstance *representation = nullptr;
       for (const auto &candidate : program.lambdaInstances()) {
-        const auto view = mirLambdaLifetimeView(candidate, selected);
-        if (!view)
+        if (candidate.type != selected)
           continue;
         if (!candidate.id || candidate.declaration != selected.lambdaId ||
             program.findLambda(candidate.id) != &candidate ||
@@ -622,9 +614,20 @@ namespace {
       });
     }
     if (selected.kind == SemanticType::Enum) {
-      const auto view = mirEnumLifetimeView(program, selected);
-      const MirIntegralEnum *integral = view ? view->integral : nullptr;
-      const MirPayloadEnum *payload = view ? view->payload : nullptr;
+      const MirIntegralEnum *integral = nullptr;
+      const MirPayloadEnum *payload = nullptr;
+      for (const auto &row : program.integralEnums())
+        if (row.type == selected) {
+          if (integral)
+            reject("LLVM hierarchy exclusion has an ambiguous integral enum");
+          integral = &row;
+        }
+      for (const auto &row : program.payloadEnums())
+        if (row.type == selected) {
+          if (payload)
+            reject("LLVM hierarchy exclusion has an ambiguous payload enum");
+          payload = &row;
+        }
       if (!selected.enumId || (integral != nullptr) == (payload != nullptr) ||
           (integral && integral->declaration != selected.enumId) ||
           (payload && payload->declaration != selected.enumId))
@@ -652,12 +655,8 @@ namespace {
                   variant.payloadRequiresActiveCleanup.size())
             reject("LLVM hierarchy exclusion lost exact payload field "
                    "inventories");
-          for (const auto &field : variant.payloadTypes) {
-            const auto actual = view->instantiate(field);
-            if (!actual)
-              reject("LLVM hierarchy exclusion lost its exact payload lifetime view");
-            result = self(self, *actual) || result;
-          }
+          for (const auto &field : variant.payloadTypes)
+            result = self(self, field) || result;
         }
         return result;
       });
@@ -689,8 +688,13 @@ namespace {
         reject("LLVM hierarchy exclusion has no concrete inline-storage proof");
       }
     }
-    const auto view = mirClassLifetimeView(program, selected);
-    const MirClassInstance *owner = view ? view->instance : nullptr;
+    const MirClassInstance *owner = nullptr;
+    for (const auto &row : program.classInstances())
+      if (row.type == selected) {
+        if (owner)
+          reject("LLVM hierarchy exclusion has an ambiguous class type");
+        owner = &row;
+      }
     if (!owner || !owner->id || program.findClassInstance(owner->id) != owner ||
         std::count_if(
             program.classInstances().begin(), program.classInstances().end(),
@@ -753,20 +757,14 @@ namespace {
                     !owner->bases.empty() || !owner->structuralBases.empty();
       // All union fields are potential inline storage. This neither selects
       // an active member nor changes its existing unsafe/lifetime contract.
-      for (const auto &field : owner->declaredFields) {
-        const auto actual = view->instantiate(field.type);
-        if (!actual)
-          reject("LLVM hierarchy exclusion lost its exact field lifetime view");
-        result = self(self, *actual) || result;
-      }
+      for (const auto &field : owner->declaredFields)
+        result = self(self, field.type) || result;
       const auto base = [&](const auto &row) {
-        const auto actual = view->instantiate(row.type);
-        const auto baseView = actual ? mirClassLifetimeView(program, *actual) : std::nullopt;
-        const auto *target = baseView ? baseView->instance : nullptr;
-        if (!target || target->id != row.instance ||
+        const auto *target = program.findClassInstance(row.instance);
+        if (!target || target->type != row.type ||
             row.interface != (target->kind == ClassKind::Interface))
           reject("LLVM hierarchy exclusion lost an exact base identity");
-        result = self(self, *actual) || result;
+        result = self(self, row.type) || result;
       };
       for (const auto &row : owner->bases)
         base(row);
@@ -941,7 +939,7 @@ const MirBody &ownedTransferBody(const MirProgram &program,
 // built from them by value without cleanup. Any other field keeps its own
 // class-level generated-member contract.
 bool bitwiseGeneratedCopy(const MirProgram &program, const SemanticType &type) {
-  if (isPassiveScalarValueType(type) || type.kind == SemanticType::CString)
+  if (isPassiveScalarValueType(type) || type == SemanticType::CString)
     return true;
   if (type.kind == SemanticType::FunctionItem)
     return type.hasFunctionItemShape();
@@ -952,7 +950,13 @@ bool bitwiseGeneratedCopy(const MirProgram &program, const SemanticType &type) {
            bitwiseGeneratedCopy(program, type.arguments.front());
   // A function-pointer handle is one code address with no state or cleanup.
   if (type.kind == SemanticType::Class) {
-    const auto *owner = exactClassInstance(program, type);
+    const MirClassInstance *owner = nullptr;
+    for (const auto &candidate : program.classInstances())
+      if (candidate.type == type) {
+        if (owner)
+          return false;
+        owner = &candidate;
+      }
     return owner &&
            owner->compilerCapability ==
                CompilerCapabilityTypeKind::FunctionPointer &&
@@ -1060,13 +1064,12 @@ public:
                                       producer.kind == MirInstructionKind::Move
                                           ? ConstructorKind::Move
                                           : ConstructorKind::Copy};
-    const auto &type = producer.info.type;
-    const auto &owner = instance(type);
+    const auto &owner = instance(producer.info.type);
     if (owner.kind == ClassKind::Interface || owner.abstract)
       unsupported(
           "LLVM transfer destination must be a concrete ordinary class");
     result.owner = owner.id;
-    result.type = type;
+    result.type = owner.type;
     std::set<HirClassInstanceId> path;
     // A generated move is the type's verified relocation: every inline
     // subobject's move is generated and cannot fail. Its typed emitter, not
@@ -1075,12 +1078,12 @@ public:
       relocationShape(owner);
     else
       shape(program, owner, result.kind, true, path);
-    if (!containsHierarchyStorage(program, type))
+    if (!containsHierarchyStorage(program, owner.type))
       unsupported("LLVM hierarchy transfer requires hierarchy storage");
     if (producer.kind == MirInstructionKind::Construct) {
       if (producer.parameterTypes !=
               std::vector<SemanticType>{
-                  SemanticType::referenceTo(type)} ||
+                  SemanticType::referenceTo(owner.type)} ||
           result.source.type != producer.parameterTypes.front() ||
           (result.source.kind == MirOperandKind::BorrowRead &&
            (!result.source.place || result.source.loan)) ||
@@ -1093,7 +1096,7 @@ public:
 
     const auto &source = result.source;
     if (source.value || source.literal || (!source.place && !source.loan) ||
-        unreference(source.type) != type)
+        unreference(source.type) != owner.type)
       unsupported("LLVM transfer requires an exact static source view");
     const auto *loan = source.loan ? body.findLoan(source.loan) : nullptr;
     if (source.loan && (!loan || loan->id != source.loan || !simpleLoan(*loan)))
@@ -1110,7 +1113,7 @@ public:
     // and never moves out of it.
     const bool programSource = place->root == MirPlaceRootKind::Symbol &&
                                result.kind == ConstructorKind::Copy;
-    if (unreference(place->type) != type || place->foreignStorage ||
+    if (unreference(place->type) != owner.type || place->foreignStorage ||
         place->capture ||
         (place->root != MirPlaceRootKind::Binding &&
          place->root != MirPlaceRootKind::This &&
@@ -1157,12 +1160,12 @@ public:
             continue;
           if (consumed || operand.kind != MirOperandKind::Value ||
               operand.place || operand.loan || operand.literal ||
-              operand.type != type)
+              operand.type != owner.type)
             unsupported("LLVM transfer requires one direct consumer");
           consumed = true;
           if (stage.kind == MirInstructionKind::Initialize &&
               stage.destination && stage.operands.size() == 1 &&
-              stage.info.type == type) {
+              stage.info.type == owner.type) {
             result.publication = &stage;
             result.destination = *stage.destination;
           } else if (result.kind == ConstructorKind::Move &&
@@ -1173,7 +1176,7 @@ public:
                        stage.result && consumingReceiver(*stage.result))) &&
                      stage.destination && stage.preparedParameterDrop &&
                      stage.operands.size() == 1 &&
-                     stage.info.type == type) {
+                     stage.info.type == owner.type) {
             // A by-value argument, or the receiver of a consuming call,
             // relocated into its exact prepared slot.
             result.publication = &stage;
@@ -1185,7 +1188,7 @@ public:
                          IntrinsicKind::PolymorphicStorageConstruct &&
                      index == 1 && stage.operands.size() == 2 &&
                      stage.parameterTypes.size() == 2 &&
-                     stage.parameterTypes[1] == type) {
+                     stage.parameterTypes[1] == owner.type) {
             result.publication = &stage;
             result.publishes = FreshHierarchyPublication::Slot;
           } else if (result.kind == ConstructorKind::Move &&
@@ -1195,7 +1198,7 @@ public:
                      !stage.destination && !stage.preparedParameterDrop &&
                      stage.result && stage.lifecycle.empty() &&
                      stage.operands.size() == 1 &&
-                     stage.info.type == type &&
+                     stage.info.type == owner.type &&
                      consumingReceiver(*stage.result)) {
             // The moved object is relocated into its own value storage and
             // stays there as one consuming call's receiver; the caller keeps
@@ -1218,8 +1221,8 @@ public:
                      stage.intrinsic == IntrinsicKind::RestoringExchange &&
                      index == 1 && stage.operands.size() == 2 &&
                      stage.parameterTypes.size() == 2 &&
-                     stage.parameterTypes[1] == type && stage.result &&
-                     stage.info.type == type && !stage.destination &&
+                     stage.parameterTypes[1] == owner.type && stage.result &&
+                     stage.info.type == owner.type && !stage.destination &&
                      !stage.receiver) {
             // The moved object waits in its own value storage until the
             // restoring exchange relocates it, with this type's generated
@@ -1232,7 +1235,7 @@ public:
                      stage.destination &&
                      stage.operation == MirOperation::Assign &&
                      stage.operands.size() == 1 &&
-                     stage.info.type == type) {
+                     stage.info.type == owner.type) {
             // The moved object waits in its own value storage while the
             // paired cleanup ends the destination's previous object; the
             // assignment then relocates it into the destination.
@@ -1240,7 +1243,7 @@ public:
             result.publishes = FreshHierarchyPublication::Replacement;
           } else if (result.kind == ConstructorKind::Move &&
                      isFreshHierarchyAggregate(program, stage) &&
-                     elementSlot(stage, index) == type) {
+                     elementSlot(stage, index) == owner.type) {
             // The moved object is relocated into its slot of a fresh array,
             // payload alternative or closure environment, which publishes
             // into its own storage.
@@ -1267,8 +1270,8 @@ public:
         // destination, and returning an inert copy writes its fields there;
         // the binding itself is never aliased to that storage.
         if (consumed || block.terminator.value->kind != MirOperandKind::Value ||
-            block.terminator.value->type != type ||
-            body.returnType != type ||
+            block.terminator.value->type != owner.type ||
+            body.returnType != owner.type ||
             (identity.kind != MirBodyKind::Function &&
              identity.kind != MirBodyKind::ThreadLocalInitializer))
           unsupported("LLVM transfer requires one direct consumer");
@@ -1294,7 +1297,7 @@ public:
           body.findDropObligation(*result.publication->preparedParameterDrop);
       if (destination->root != MirPlaceRootKind::Temporary ||
           !destination->projections.empty() || destination->capture ||
-          destination->foreignStorage || destination->type != type ||
+          destination->foreignStorage || destination->type != owner.type ||
           destination->initiallyAvailable || !prepared ||
           prepared->kind != MirDropObligationKind::PreparedParameter ||
           prepared->place != destination->id)
@@ -1303,9 +1306,9 @@ public:
     // A constructor publishes into its own field through the exact field
     // initializer that names it.
     const bool field =
-        local && constructorField(*result.publication, *destination, type);
+        local && constructorField(*result.publication, *destination, owner);
     if (local && !field &&
-        (!wholeLocal(*destination) || destination->type != type ||
+        (!wholeLocal(*destination) || destination->type != owner.type ||
          destination->initiallyAvailable ||
          destination->binding == place->binding))
       unsupported("LLVM transfer destination is not a fresh whole local");
@@ -1338,7 +1341,7 @@ public:
         }();
     if (result.kind == ConstructorKind::Move) {
       // A by-value parameter is an owned binding of this body too.
-      if (!wholeBinding(*place) || place->type != type || source.loan ||
+      if (!wholeBinding(*place) || place->type != owner.type || source.loan ||
           !place->key || !producer.ownership ||
           producer.ownership->kind != OwnershipEventKind::Move ||
           producer.ownership->place != *place->key ||
@@ -1516,7 +1519,7 @@ public:
           candidate.value == *producer.result &&
           (!result.valueDrop ||
            body.findDropObligation(result.valueDrop)->place != candidate.id ||
-           !candidate.projections.empty() || candidate.type != type))
+           !candidate.projections.empty() || candidate.type != owner.type))
         unsupported("LLVM transfer result has an intermediate place use");
       for (const auto &projection : candidate.projections)
         if (projection.index == *producer.result)
@@ -1548,7 +1551,7 @@ private:
     if (!containsHierarchyStorage(program, type) ||
         mirTypeMoveRelocationKind(program, type) ==
             RelocationKind::Unavailable ||
-        (type.kind == SemanticType::Enum && !native_llvm::exactPayloadEnum(program, type)))
+        (type.kind == SemanticType::Enum && !program.findPayloadEnum(type)))
       unsupported(
           "LLVM payload relocation requires relocatable hierarchy storage");
     FreshHierarchyTransfer result{.source = producer.operands.front(),
@@ -1595,7 +1598,7 @@ private:
              !place.capture && !place.foreignStorage &&
              place.projections.empty() &&
              place.type.kind == SemanticType::Enum &&
-             native_llvm::exactPayloadEnum(program, place.type);
+             program.findPayloadEnum(place.type);
     };
     // A whole closure binding, such as a by-value callable parameter.
     const auto wholeClosure = [&](const MirPlace &place) {
@@ -1611,11 +1614,12 @@ private:
       // One field of a one-field alternative leaves its enum binding, whose
       // obligation, if any, ends here.
       const auto *payload =
-          wholeEnum(*place) ? native_llvm::exactPayloadEnum(program, place->type) : nullptr;
+          wholeEnum(*place) ? program.findPayloadEnum(place->type) : nullptr;
       if (!payload || *producer.enumVariant >= payload->variants.size() ||
           payload->variants[*producer.enumVariant].payloadTypes.size() != 1 ||
           *producer.payloadIndex != 0 ||
-          exactPayloadElementType(program, place->type, *producer.enumVariant, 0) != type ||
+          payload->variants[*producer.enumVariant].payloadTypes.front() !=
+              type ||
           result.source.type != place->type || producer.ownership)
         unsupported("LLVM payload field move requires the field of a "
                     "one-field alternative in a whole enum binding");
@@ -1978,7 +1982,13 @@ private:
 public:
   static const MirClassInstance &instanceOf(const MirProgram &program,
                                             const SemanticType &type) {
-    const auto *result = exactClassInstance(program, type);
+    const MirClassInstance *result = nullptr;
+    for (const auto &owner : program.classInstances())
+      if (owner.type == type) {
+        if (result)
+          malformed("LLVM transfer has repeated class type identity");
+        result = &owner;
+      }
     if (!result || program.findClassInstance(result->id) != result)
       malformed("LLVM transfer lost its exact class instance");
     return *result;
@@ -1986,7 +1996,13 @@ public:
 
 private:
   const MirClassInstance &instance(const SemanticType &type) const {
-    const auto *result = exactClassInstance(program, type);
+    const MirClassInstance *result = nullptr;
+    for (const auto &owner : program.classInstances())
+      if (owner.type == type) {
+        if (result)
+          malformed("LLVM transfer has repeated class type identity");
+        result = &owner;
+      }
     if (!result || program.findClassInstance(result->id) != result)
       malformed("LLVM transfer lost its exact class instance");
     return *result;
@@ -1994,14 +2010,14 @@ private:
   // The field a constructor's own field initializer stage completes.
   bool constructorField(const MirInstruction &publication,
                         const MirPlace &destination,
-                        const SemanticType &type) const {
+                        const MirClassInstance &owner) const {
     if (identity.kind != MirBodyKind::Constructor ||
         publication.kind != MirInstructionKind::Initialize ||
         !publication.constructorInitializer ||
         destination.root != MirPlaceRootKind::This || destination.capture ||
         destination.foreignStorage || destination.projections.size() != 1 ||
         destination.projections.front().kind != MirProjectionKind::Field ||
-        destination.type != type)
+        destination.type != owner.type)
       return false;
     const auto *constructor = program.findConstructorInstance(identity.owner);
     if (!constructor ||
@@ -2173,10 +2189,13 @@ private:
                  ? aggregate.closureCaptureTypes[index]
                  : SemanticType::Unknown;
     if (aggregate.operation == MirOperation::PayloadConstruct) {
-      const auto type = aggregate.enumVariant
-          ? exactPayloadElementType(program, aggregate.info.type, *aggregate.enumVariant, index)
-          : std::nullopt;
-      return type.value_or(SemanticType::Unknown);
+      const auto *payload = program.findPayloadEnum(aggregate.info.type);
+      return payload && aggregate.enumVariant &&
+                     *aggregate.enumVariant < payload->variants.size() &&
+                     index < payload->variants[*aggregate.enumVariant]
+                                 .payloadTypes.size()
+                 ? payload->variants[*aggregate.enumVariant].payloadTypes[index]
+                 : SemanticType::Unknown;
     }
     return aggregate.info.type.arguments.size() == 1
                ? aggregate.info.type.arguments.front()
@@ -2314,8 +2333,8 @@ public:
           unsupported("LLVM transfer excludes a pure executable state");
       }
     const auto base = [&](const HirBaseInstance &row) {
-      const auto *selected = exactClassInstance(program, row.type);
-      if (!selected || selected->id != row.instance ||
+      const auto *selected = program.findClassInstance(row.instance);
+      if (!selected || selected->type != row.type ||
           row.interface != (selected->kind == ClassKind::Interface))
         malformed("LLVM transfer lost an exact base identity");
       shape(program, *selected, kind, special, path);
@@ -2357,10 +2376,8 @@ private:
     const auto *result = body.findDropObligation(id);
     if (!result || result->id != id || (result->initiallyActive && !entry))
       malformed("LLVM transfer lost its exact inactive drop obligation");
-    if (exactClassInstance(program, result->dropType.type) != &owner)
-      malformed("LLVM transfer drop recipe lost its exact actual class view");
-    const auto canonical = mirUniqueCleanupType(program, result->dropType.type);
-    const MirDropType inert{.type = result->dropType.type, .classInstance = owner.id};
+    const auto canonical = mirUniqueCleanupType(program, owner.type);
+    const MirDropType inert{.type = owner.type, .classInstance = owner.id};
     if ((owner.requiresActiveCleanup && !canonical) ||
         result->dropType != (canonical ? *canonical : inert))
       malformed("LLVM transfer drop recipe differs from its sealed schedule");

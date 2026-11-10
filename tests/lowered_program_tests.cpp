@@ -5,7 +5,6 @@
 #include "gti/mir_lowering.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
-#include "gti/lifetime_types.h"
 #include "gti/optimizer.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/source_debug.h"
@@ -1166,20 +1165,14 @@ struct Generic<T> {
   int32_t value = seed();
 public:
   Generic() = default;
-  Generic(int32_t input) {}
 };
 struct EmptyPack<Ts...> { int32_t value = seed();  public: EmptyPack() = default; };
-void nested<lifetime a>(int32_t&<a> input) {
-  Generic<int32_t&<a>> selected{7};
-}
 int main() {
   Defaulted first{};
   Selected second{};
   Selected third{3};
   Generic<int32_t> fourth{};
   Generic<int64_t> fifth{};
-  Generic<int32_t> selectedGeneric{7};
-  nested(global);
   EmptyPack<> sixth{};
   thread_local int32_t local = seed();
   return global + per_thread + first.value + second.value + third.value;
@@ -1223,10 +1216,6 @@ int main() {
       continue;
     generated |= constructor.generatedDefault;
     selected |= !constructor.generatedDefault;
-    if (!constructor.generatedDefault)
-      expect(record.tables->initializers.front().sourceFacts().instance ==
-                 record.tables->sourceFacts().instance,
-             "selected defaults retain the exact constructor analysis instance");
     auto &body = const_cast<lang::HirBody &>(constructor.body);
     const auto saved = body.sourceDebug;
     body.sourceDebug.tables->initializers.front().roots = {0};
@@ -1239,23 +1228,6 @@ int main() {
         !lang::verifyHirSourceDebug(collected.model(), lowered.program).valid(),
         "source defaults cannot be stripped from generated constructors");
     body.sourceDebug = saved;
-    if (!constructor.generatedDefault) {
-      const auto &classes = lowered.program.classInstances();
-      const auto owner = std::find_if(classes.begin(), classes.end(),
-          [&](const auto &candidate) { return candidate.id == constructor.owner; });
-      expect(owner != classes.end() && owner->fieldInitializers.sourceDebug.tables &&
-                 !owner->fieldInitializers.sourceDebug.tables->initializers.empty(),
-             "the selected-default fixture also retains its distinct layout region");
-      auto &region = body.sourceDebug.tables->initializers.front();
-      const auto id = region.id;
-      const auto roots = region.roots;
-      region = owner->fieldInitializers.sourceDebug.tables->initializers.front();
-      region.id = id;
-      region.roots = roots;
-      expect(!lang::verifyHirSourceDebug(collected.model(), lowered.program).valid(),
-             "layout initializer facts cannot replace selected constructor facts");
-      body.sourceDebug = saved;
-    }
   }
   expect(generated && selected,
          "generated and source constructors retain selected field defaults");
@@ -1443,7 +1415,7 @@ void testDetachedDeterministicProgram() {
   const std::string secondText = lang::LoweredProgramPrinter().print(*second);
   expect(firstText == secondText,
          "independent frontend snapshots should lower deterministically");
-  expect(firstText.find("lowered-program-v40") == 0 &&
+  expect(firstText.find("lowered-program-v35") == 0 &&
              firstText.find("\nmir\n") != std::string::npos,
          "the deterministic printer should serialize the complete contract");
   const gti_test::LoweredProgramInventory inventory =
@@ -3177,69 +3149,6 @@ int main() { Box<1> first{}; Box<2> second{}; Box<3> third{}; return 0; }
   }
 }
 
-void testLifetimeRequirementMetadata() {
-  const auto frontend = lang::Frontend().analyze("lowered-lifetime-requirements.gti", R"gti(
-void relation<lifetime a, lifetime b>(int&<a> first, int&<b> second)
-  requires outlives<a, b> {}
-void type_bound<T, lifetime a>() requires outlives<T, a> {}
-concept Borrow<T, lifetime a> { void inspect(T&<a> value); };
-for<lifetime a> concept Borrow<int, a> { void inspect(int&<a> value) {} };
-int main() { int value = 7; relation(value, value); return 0; }
-)gti");
-  expect(frontend.canGenerateCode(), "typed lifetime requirement fixture lowers to MIR");
-  if (!frontend.canGenerateCode())
-    return;
-  auto built = lang::LoweredProgramBuilder{}.build(
-      frontend.program, frontend.semantics, frontend.hir, frontend.mir,
-      frontend.mir, {}, lang::TargetInfo::host());
-  expect(built.valid(), "region, type and concept lifetime arguments retain distinct lowered metadata");
-  if (!built.valid()) {
-    for (const auto &issue : built.issues)
-      std::cerr << "  lifetime requirement boundary: " << issue.detail << '\n';
-    return;
-  }
-  std::size_t regionLeaves = 0, typeLeaves = 0, conceptArguments = 0;
-  const auto &program = *built.program;
-  for (std::size_t row = 0; row < program.declarations().size(); ++row) {
-    const auto *function = std::get_if<lang::LoweredFunctionDeclaration>(
-        &program.declarations()[row].payload);
-    if (!function)
-      continue;
-    for (std::size_t index = 0; index < function->requirements.size(); ++index) {
-      const auto &requirement = function->requirements[index];
-      conceptArguments += !requirement.lifetimeArguments.empty();
-      if (requirement.kind != lang::LoweredRequirementKind::Lifetime)
-        continue;
-      (requirement.outlivesType ? typeLeaves : regionLeaves)++;
-      for (unsigned mutation = 0; mutation < 5; ++mutation) {
-        auto forged = program;
-        auto &changed = std::get<lang::LoweredFunctionDeclaration>(
-            lang::LoweredProgramTestAccess::declarations(forged)[row].payload)
-                            .requirements[index];
-        if (mutation == 0)
-          changed.lifetimeBound.reset();
-        else if (mutation == 1)
-          changed.lifetimeBound->shorter = lang::Lifetime::local(1);
-        else if (mutation == 2)
-          changed.lifetimeArguments.push_back(lang::Lifetime::staticLifetime());
-        else if (mutation == 3)
-          changed.outlivesType = lang::SemanticType::Unknown;
-        else
-          changed.conceptId = 1;
-        expect(hasIssue(lang::verifyLoweredProgram(forged),
-                        lang::LoweredProgramIssueKind::InvalidDeclarationInventory),
-               "malformed lifetime requirement metadata is rejected independently");
-      }
-    }
-  }
-  expect(regionLeaves && typeLeaves && conceptArguments,
-         "fixture observes both outlives kinds and explicit concept lifetime arguments");
-  const auto text = lang::LoweredProgramPrinter{}.print(program);
-  expect(text.find("kind=lifetime;concept=0;outlives=") != std::string::npos &&
-             text.find(";lifetimes=[") != std::string::npos,
-         "lowered serialization exposes exact lifetime requirement relationships");
-}
-
 void testGeneralRequirementMetadata() {
   auto frontend = lang::Frontend().analyze("lowered-requirements.gti", R"(
 constexpr bool accepted<T>() { return true; }
@@ -3576,127 +3485,6 @@ int main() {
   }
 }
 
-void testStructuralConstructorPolicyContracts() {
-  using namespace lang;
-  const auto frontend = Frontend().analyze("lowered-structural-policies.gti", R"gti(
-struct Cell<lifetime a> {
-  int&<a> value;
-  Cell(int&<a> input) : value(input) {}
-  Cell(Cell<a>& source) = default;
-  Cell(Cell<a>&& source) = default;
-};
-struct Plain {
-  int value = 7;
-  Plain() = default;
-  Plain(Plain& source) = default;
-  Plain(Plain&& source) = default;
-};
-int main() {
-  int input = 7;
-  Cell cell{input};
-  Plain first{};
-  Plain second{first};
-  return second.value + cell.value - 14;
-}
-)gti");
-  for (const auto &diagnostic : frontend.diagnostics)
-    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
-  expect(frontend.canGenerateCode(), "structural policy fixture reaches independent MIR");
-  if (!frontend.canGenerateCode()) return;
-  const auto built = LoweredProgramBuilder().build(frontend.program, frontend.semantics,
-      frontend.hir, frontend.mir, frontend.mir, {}, TargetInfo::host());
-  if (!built.valid())
-    for (const auto &issue : built.issues) std::cerr << issue.detail << '\n';
-  expect(built.valid(), "defaulted policy declarations seal without a policy call target");
-  if (!built.valid()) return;
-  std::size_t copyIndex = built.program->declarations().size();
-  for (std::size_t index = 0; index < built.program->declarations().size(); ++index) {
-    const auto &row = built.program->declarations()[index];
-    const auto *policy = std::get_if<LoweredConstructorDeclaration>(&row.payload);
-    const auto *owner = policy ? built.program->findClassDeclaration(policy->owner) : nullptr;
-    if (policy && policy->kind == ConstructorKind::Copy && owner && owner->qualifiedName == "Cell")
-      copyIndex = index;
-  }
-  expect(copyIndex < built.program->declarations().size(),
-         "lowered policy fixture retains the generic borrowed owner's exact declaration");
-  if (copyIndex == built.program->declarations().size()) return;
-  const auto rejectsPolicy = [](const auto &program) {
-    const auto issues = verifyLoweredProgram(program);
-    return std::any_of(issues.begin(), issues.end(), [](const auto &issue) {
-      return issue.kind == LoweredProgramIssueKind::InvalidDeclarationInventory &&
-          (issue.detail == "defaulted constructor policy changes its structural lifetime contract" ||
-           issue.detail == "defaulted ordinary constructor cannot hide a structural policy");
-    });
-  };
-  for (int mutation = 0; mutation != 14; ++mutation) {
-    auto forged = *built.program;
-    auto &row = LoweredProgramTestAccess::declarations(forged)[copyIndex];
-    auto &policy = std::get<LoweredConstructorDeclaration>(row.payload);
-    auto &parameter = policy.parameters.front().type;
-    const auto shell = parameter.referenceLifetime;
-    const auto owner = parameter.arguments.front();
-    if (mutation == 0) parameter.referenceLifetime = Lifetime::staticLifetime();
-    if (mutation == 1) parameter.arguments.front().classId += 100000;
-    if (mutation == 2) parameter.referenceAccess = AccessMode::Mutable;
-    if (mutation == 3) {
-      policy.lifetimeContract.typeBounds.clear();
-      policy.lifetimeContract.requirements = {};
-    }
-    if (mutation == 4)
-      policy.lifetimeContract.typeBounds.push_back({owner, Lifetime::staticLifetime()});
-    if (mutation == 5)
-      policy.lifetimeContract.parameters.push_back(Lifetime::parameter(999991));
-    if (mutation == 6) parameter.referenceLifetime = owner.lifetimeArguments.front();
-    if (mutation == 7) policy.requiresUnsafe = true;
-    if (mutation == 8) {
-      policy.genericParameters.push_back({.id = 999992, .name = "extra", .lifetime = true});
-      row.generic = true;
-    }
-    if (mutation == 9) {
-      for (auto &candidate : LoweredProgramTestAccess::declarations(forged))
-        if (auto *changed = std::get_if<LoweredClassDeclaration>(&candidate.payload);
-            changed && changed->id == policy.owner)
-          changed->copyConstructor = SpecialMemberStatus::Deleted;
-    }
-    if (mutation == 10) policy.kind = ConstructorKind::Ordinary;
-    if (mutation == 11) {
-      // The retained written requirement is stronger even though the claimed
-      // normalized contract is untouched. A seal check alone is not the proof.
-      policy.requirements.push_back({.kind = LoweredRequirementKind::Lifetime,
-          .lifetimeBound = LifetimeBound{{}, Lifetime::staticLifetime()},
-          .outlivesType = owner, .source = row.source});
-      policy.requirementExpression = {{.kind = ConstraintExpressionKind::Application,
-                                       .application = 0}};
-      policy.requirementRoot = 0;
-      policy.hasRequiresClause = true;
-    }
-    if (mutation == 12) {
-      policy.lifetimeContract.typeBounds.clear();
-      policy.lifetimeContract.requirements = {
-          .nodes = {{.kind = LifetimeRequirementNode::Kind::Type,
-                     .bound = {{}, shell}, .type = owner},
-                    {.kind = LifetimeRequirementNode::Kind::Type,
-                     .bound = {{}, Lifetime::staticLifetime()}, .type = owner},
-                    {.kind = LifetimeRequirementNode::Kind::Any, .left = 0, .right = 1}},
-          .root = 2};
-    }
-    if (mutation == 13)
-      parameter.arguments.front().lifetimeArguments.front() = Lifetime::staticLifetime();
-    expect(rejectsPolicy(forged),
-           "source-free defaulted policies reject forged scope, owner, mode and whole requirements");
-  }
-  auto renamed = *built.program;
-  auto &policy = std::get<LoweredConstructorDeclaration>(
-      LoweredProgramTestAccess::declarations(renamed)[copyIndex].payload);
-  const LifetimeBinding rename{policy.parameters.front().type.referenceLifetime,
-                               Lifetime::parameter(999993)};
-  policy.parameters.front().type = *substituteTypeLifetimes(
-      policy.parameters.front().type, std::span(&rename, 1));
-  policy.lifetimeContract = *substituteLifetimeContract(policy.lifetimeContract, std::span(&rename, 1));
-  expect(!rejectsPolicy(renamed),
-         "independent shell alpha-renaming preserves the structural policy; owner names stay fixed");
-}
-
 } // namespace
 
 int main() {
@@ -3726,8 +3514,6 @@ int main() {
   testConcreteBranchSymbols();
   testConcreteLambdaPacks();
   testConcreteClassAliases();
-  testLifetimeRequirementMetadata();
-  testStructuralConstructorPolicyContracts();
   testGeneralRequirementMetadata();
   testClassDefinitionFamilyIdentity();
   if (failures != 0) {

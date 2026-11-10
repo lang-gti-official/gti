@@ -124,7 +124,7 @@ void testSelectedConstructorDefaultSchedule() {
         changed->initializers[0].arguments = changed->initializers[1].arguments;
       if (mutation == 11) {
         for (auto &loan : changed->body.loans)
-          if (loan.storedPath == lang::BorrowPath{lang::fieldProjection(changed->initializers[0].field)})
+          if (loan.storedField == changed->initializers[0].field)
             loan.source = 0;
       }
       expect(!lang::CppMirBodyEmitter(malformed, map)
@@ -12988,7 +12988,7 @@ void testPhysicalCarrierReferencePublication() {
   for (const auto &constructor : frontend.mir.constructorInstances()) {
     for (const auto &loan : constructor.body.loans) {
       if (loan.kind != lang::MirLoanKind::Stored || !loan.escapes ||
-          loan.storedPath.empty() || loan.storedDependency == 0)
+          loan.storedField == 0 || loan.storedDependency == 0)
         continue;
       ++fields;
       const auto bindings =

@@ -1,15 +1,7 @@
 #include "gti/hir.h"
-#include "class_hierarchy_lifetimes.h"
-#include "gti/concrete_formals.h"
-
-#include <array>
 
 #include "diagnostic_registry.h"
 #include "gti/generic_instantiation_limits.h"
-#include "gti/generic_type_patterns.h"
-#include "gti/instance_analysis_cache.h"
-#include "gti/lifetime_types.h"
-#include "gti/callable_lifetimes.h"
 #include "gti/semantic_analyzer.h"
 #include "gti/support.h"
 
@@ -33,10 +25,9 @@ public:
       const SemanticModel &semantics, SemanticInstanceProvider &provider,
       FunctionId root, const std::vector<FunctionId> &completedFunctions,
       const GenericSubstitution &substitution,
-      const std::vector<ConstructorId> &completedConstructors,
-      HirConstantSourceAuthority sourceAuthority) {
+      const std::vector<ConstructorId> &completedConstructors) {
     initializeConstant(semantics, provider, completedFunctions,
-                       completedConstructors, std::move(sourceAuthority));
+                       completedConstructors);
     const FunctionInfo *function = semantics.findFunction(root);
     // Only callees stage lazily: the requested root must itself be a
     // completed constexpr definition.
@@ -53,14 +44,12 @@ public:
     std::vector<SemanticType> ownerTypes;
     std::vector<CompileTimeValue> ownerValues;
     if (function->ownerClass != 0) {
-      const auto *owner = semantics.findPublicClassType(function->ownerClass);
+      const auto *owner = semantics.findClassType(function->ownerClass);
       if (owner == nullptr) {
         output.program.valid_ = false;
         return std::move(output);
       }
       for (const auto &parameter : owner->genericParameters) {
-        if (parameter.lifetime)
-          continue;
         if (parameter.value ? !substitution.values.contains(parameter.id)
                             : !substitution.types.contains(parameter.id)) {
           output.program.valid_ = false;
@@ -83,8 +72,6 @@ public:
       }
     }
     for (const auto &parameter : function->genericParameters) {
-      if (parameter.lifetime)
-        continue;
       if (parameter.value ? !substitution.values.contains(parameter.id)
                           : !substitution.types.contains(parameter.id)) {
         output.program.valid_ = false;
@@ -113,10 +100,9 @@ public:
       const SemanticModel &semantics, SemanticInstanceProvider &provider,
       const ResolvedConstructionInfo &root,
       const std::vector<FunctionId> &completedFunctions,
-      const std::vector<ConstructorId> &completedConstructors,
-      HirConstantSourceAuthority sourceAuthority) {
+      const std::vector<ConstructorId> &completedConstructors) {
     initializeConstant(semantics, provider, completedFunctions,
-                       completedConstructors, std::move(sourceAuthority));
+                       completedConstructors);
     if (enqueueConstructor(root) == 0) {
       output.program.valid_ = false;
       return std::move(output);
@@ -185,15 +171,10 @@ public:
       }
       processPendingInstances();
     }
-    output.program.nominalVarianceRecipes_ = provider.nominalVarianceRecipes();
     finishSourceDebugInventory();
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
                             !hasErrorDiagnostics(output.diagnostics) &&
                             lifecycleValid;
-    if (std::getenv("GTI_TRACE_HIR_VALID")) // TEMP-TRACE
-      std::fprintf(stderr, "[hir] required=%zu errors=%d lifecycle=%d\n", // TEMP-TRACE
-                   output.requiredSemanticBodies.size(), hasErrorDiagnostics(output.diagnostics) ? 1 : 0, // TEMP-TRACE
-                   lifecycleValid ? 1 : 0); // TEMP-TRACE
     const PhaseTimeScope verifyScope("hir-verify-plans");
     if (output.program.valid_ &&
         !verifyHirProgramPlans(*baseModel, output.program).valid()) {
@@ -213,12 +194,10 @@ private:
   initializeConstant(const SemanticModel &semantics,
                      SemanticInstanceProvider &provider,
                      const std::vector<FunctionId> &completedFunctions,
-                     const std::vector<ConstructorId> &completedConstructors,
-                     HirConstantSourceAuthority sourceAuthority) {
+                     const std::vector<ConstructorId> &completedConstructors) {
     initialize(semantics, provider);
     constantFunctions = completedFunctions;
     constantConstructors = completedConstructors;
-    constantSourceAuthority = std::move(sourceAuthority);
     constantClosure = true;
     // Preserve source and declaration-proof identity without claiming completed
     // whole-program semantic analysis. The absent active-statement inventory
@@ -232,7 +211,6 @@ private:
   HirLoweringResult finishConstant() {
     ensurePlaceDomain(output.program.moduleBody);
     processPendingInstances();
-    output.program.nominalVarianceRecipes_ = instanceProvider->nominalVarianceRecipes();
     finishSourceDebugInventory();
     output.program.valid_ = output.requiredSemanticBodies.empty() &&
                             !hasErrorDiagnostics(output.diagnostics) &&
@@ -254,8 +232,6 @@ private:
     constantFunctions.clear();
     constantConstructors.clear();
     constantUnavailableFunctions.clear();
-    constantSourceAuthority = {};
-    queriedConstantFunctions.clear();
     instanceIndex = HirInstanceIndex();
     nextValueId = 1;
     nextBindingId = 1;
@@ -360,21 +336,14 @@ private:
         "conditions do not limit instantiation.");
     output.diagnostics.push_back(std::move(diagnostic));
     discoveryLimitReached = true;
-    invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+    lifecycleValid = false;
     return false;
   }
 
   [[nodiscard]] SemanticType
   substitute(const SemanticType &type,
              const GenericSubstitution &substitution) const {
-    auto result = substituteSemanticType(type, substitution, baseModel);
-    if (substitution.lifetimes.empty())
-      return result;
-    std::vector<LifetimeBinding> regions;
-    for (const auto &[parameter, actual] : substitution.lifetimes)
-      regions.emplace_back(Lifetime::parameter(parameter), actual);
-    return substituteTypeLifetimes(std::move(result), regions)
-        .value_or(SemanticType::Unknown);
+    return substituteSemanticType(type, substitution, baseModel);
   }
 
   [[nodiscard]] static std::vector<const Expr *>
@@ -392,172 +361,15 @@ private:
     return result;
   }
 
-  // A contextual conversion shares its receiver's AST expression but is a
-  // distinct evaluated value. Reuse a prior exact origin witness only across
-  // that checked conversion chain; source order and equal types are not
-  // storage identities. Repeated evaluations or conflicting witnesses fail.
-  [[nodiscard]] const HirValue *lifetimeOriginSource(
-      const SemanticLifetimeOrigin &origin, const PlaceKey &place,
-      const HirBody &body) const {
-    if (!origin.source)
-      return nullptr;
-    const auto *current = body.valueForSource(*origin.source);
-    if (std::getenv("GTI_TRACE_HIR_VALID") && !current) // TEMP-TRACE
-      std::fprintf(stderr, "[origin-src] no value for source kind=%d\n", static_cast<int>(origin.source->exprKind())); // TEMP-TRACE
-    if (!current)
-      return nullptr;
-    // Only a prior witness evaluated from this same source expression can be
-    // reused (a conversion chain over one receiver). Other expressions that
-    // borrow the same place in the same region are their own evaluations.
-    const HirValue *witness = nullptr;
-    for (const auto &value : body.values)
-      for (const auto &prior : value.lifetimeApplication.origins) {
-        if (prior.region != origin.region || prior.place != place || !prior.source)
-          continue;
-        const auto *source = body.findValue(prior.source);
-        if (!source) {
-          if (std::getenv("GTI_TRACE_HIR_VALID")) std::fprintf(stderr, "[origin-src] prior source missing\n"); // TEMP-TRACE
-          return nullptr;
-        }
-        if (source->source != origin.source)
-          continue;
-        if (witness && witness->id != source->id) {
-          if (std::getenv("GTI_TRACE_HIR_VALID")) std::fprintf(stderr, "[origin-src] two same-source witnesses %llu %llu current=%llu kind=%d\n", (unsigned long long)witness->id, (unsigned long long)source->id, (unsigned long long)current->id, static_cast<int>(current->kind)); // TEMP-TRACE
-          return nullptr;
-        }
-        witness = source;
-      }
-    if (std::getenv("GTI_TRACE_HIR_VALID") && witness && witness->id != current->id) // TEMP-TRACE
-      std::fprintf(stderr, "[origin-src] witness %llu differs from current %llu kind=%d\n", (unsigned long long)witness->id, (unsigned long long)current->id, static_cast<int>(current->kind)); // TEMP-TRACE
-    if (!witness || witness->id == current->id)
-      return current;
-    const HirValue *const evaluated = current;
-    std::unordered_set<HirValueId> visited;
-    while (current && current->id != witness->id) {
-      const auto *target = current->functionTarget
-                               ? output.program.findFunctionInstance(*current->functionTarget)
-                               : nullptr;
-      if (!visited.insert(current->id).second || current->source != origin.source ||
-          current->kind != HirValueKind::Call || !target || !target->source ||
-          !target->source->operatorName() ||
-          (target->source->operatorName()->kind != OverloadedOperator::Conversion &&
-           target->source->operatorName()->kind != OverloadedOperator::ContextualBool) ||
-          !current->receiver || current->operands != std::vector<HirValueId>{*current->receiver} ||
-          !current->parameterTypes.empty() || !current->callPlan ||
-          !current->callPlan->arguments.empty() || !current->callPlan->receiver ||
-          current->callPlan->receiver->value != *current->receiver)
-      {
-        if (std::getenv("GTI_TRACE_HIR_VALID")) { // TEMP-TRACE
-          const auto *w = witness; // TEMP-TRACE
-          std::fprintf(stderr, "[origin-chain] cur=%llu kind=%d target=%d op=%d recv=%lld ops=%zu params=%zu plan=%d | witness=%llu kind=%d recv=%lld\n", (unsigned long long)current->id, static_cast<int>(current->kind), target != nullptr, target && target->source && target->source->operatorName() ? static_cast<int>(target->source->operatorName()->kind) : -1, current->receiver ? (long long)*current->receiver : -1ll, current->operands.size(), current->parameterTypes.size(), current->callPlan.has_value(), (unsigned long long)w->id, static_cast<int>(w->kind), w->receiver ? (long long)*w->receiver : -1ll); // TEMP-TRACE
-        } // TEMP-TRACE
-        // Not a conversion chain: desugaring (a range loop's owner, begin and
-        // end steps) evaluates this expression again over the same place.
-        return evaluated->kind == HirValueKind::Variable ? evaluated : nullptr;
-      }
-      current = body.findValue(*current->receiver);
-    }
-    return current && current->source == origin.source ? current : nullptr;
-  }
-
-  [[nodiscard]] HirLifetimeApplication
-  lowerLifetimeApplication(const SemanticLifetimeApplication &application,
-                           const HirBody &body) {
-    HirLifetimeApplication result{.bindings = application.bindings,
-                                  .variables = application.variables,
-                                  .obligations = application.obligations,
-                                  .typeObligations =
-                                      application.typeObligations,
-                                  .callableSignature = application.callableSignature,
-                                  .complete = application.complete};
-    for (const auto &origin : application.origins) {
-      HirValueId source = 0;
-      const auto place = qualifyPlace(origin.place, body.placeDomain);
-      if (origin.source != nullptr) {
-        const auto *value = lifetimeOriginSource(origin, place, body);
-        // A compile-time-only expression (a `constexpr for` sequence) has no
-        // evaluated HIR value; its origin is the exact checked place alone.
-        if (value == nullptr && !(origin.place.valid() && !body.valueForSource(*origin.source)))
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-        else if (value != nullptr)
-          source = value->id;
-      }
-      if (!origin.place.valid() && source == 0)
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-      result.origins.push_back(
-          {.region = origin.region,
-           .place = place,
-           .source = source});
-    }
-    return result;
-  }
-
-  // Initializer-only bodies (declaration-field initializers, and generated or
-  // defaulted constructors that run them) have no source body facts: each
-  // initializer was checked in the class initializer model. Their body
-  // inventory is exactly those checked call applications; MIR re-proves each.
-  void synthesizeInitializerLifetimeBody(HirBody &body) {
-    if (!(body.lifetimeBody == HirLifetimeBody{}))
-      return;
-    HirLifetimeBody facts{.complete = true};
-    const auto append = [](auto &values, const auto &value) {
-      if (std::find(values.begin(), values.end(), value) == values.end())
-        values.push_back(value);
-    };
-    for (const auto &value : body.values) {
-      const auto &application = value.lifetimeApplication;
-      if (application.bindings.empty() && application.variables.empty() &&
-          application.obligations.empty() && application.typeObligations.empty() &&
-          application.origins.empty())
-        continue;
-      facts.complete = facts.complete && application.complete;
-      for (const auto variable : application.variables)
-        append(facts.variables, variable);
-      for (const auto bound : application.obligations)
-        append(facts.obligations, bound);
-      for (const auto &bound : application.typeObligations)
-        append(facts.typeObligations, bound);
-      for (const auto &origin : application.origins)
-        append(facts.origins, origin);
-    }
-    if (facts.variables.empty() && facts.obligations.empty() &&
-        facts.typeObligations.empty() && facts.origins.empty())
-      return;
-    ensurePlaceDomain(body);
-    body.lifetimeBody = std::move(facts);
-  }
-
-  void lowerLifetimeBody(const SemanticLifetimeBody *facts, HirBody &body) {
-    if (!facts)
-      return;
-    ensurePlaceDomain(body);
-    auto lowered =
-        lowerLifetimeApplication({.variables = facts->variables,
-                                  .obligations = facts->obligations,
-                                  .typeObligations = facts->typeObligations,
-                                  .origins = facts->origins,
-                                  .complete = facts->complete},
-                                 body);
-    body.lifetimeBody = {.variables = std::move(lowered.variables),
-                         .obligations = std::move(lowered.obligations),
-                         .typeObligations = std::move(lowered.typeObligations),
-                         .origins = std::move(lowered.origins),
-                         .complete = lowered.complete};
-  }
-
-  [[nodiscard]] GenericSubstitution instanceSubstitution(
-      std::span<const GenericParameterInfo> parameters,
-      const std::vector<SemanticType> &typeArguments,
-      const std::vector<CompileTimeValue> &valueArguments) const {
+  [[nodiscard]] GenericSubstitution
+  classSubstitution(const ClassTypeInfo &declaration,
+                    const std::vector<SemanticType> &typeArguments,
+                    const std::vector<CompileTimeValue> &valueArguments) const {
     GenericSubstitution result;
     std::size_t typeIndex = 0;
     std::size_t valueIndex = 0;
-    for (const GenericParameterInfo &parameter : parameters) {
-      if (parameter.lifetime) {
-        // Universals belong to the executable declaration. Actual regions
-        // remain in the selected call's application proof, never this cache.
-        continue;
-      }
+    for (const GenericParameterInfo &parameter :
+         declaration.genericParameters) {
       if (!parameter.typeArgumentPath.empty()) {
         if (auto type = projectGenericTypeArgument(
                 typeArguments, parameter.typeArgumentPath, parameter.id,
@@ -583,75 +395,12 @@ private:
     return result;
   }
 
-  [[nodiscard]] GenericSubstitution
-  classSubstitution(const ClassTypeInfo &declaration,
-                    const std::vector<SemanticType> &typeArguments,
-                    const std::vector<CompileTimeValue> &valueArguments) const {
-    const auto *publicDeclaration = baseModel
-        ? baseModel->findPublicClassType(declaration.id) : nullptr;
-    const auto &parameters = publicDeclaration
-        ? publicDeclaration->genericParameters : declaration.genericParameters;
-    auto result = instanceSubstitution(parameters, typeArguments, valueArguments);
-    if (declaration.genericArgumentPatterns.empty())
-      return result;
-    GenericSubstitution valuesOnly;
-    valuesOnly.values = result.values;
-    std::vector<SemanticType> patterns;
-    for (const auto &pattern : declaration.genericArgumentPatterns)
-      patterns.push_back(substitute(pattern, valuesOnly));
-    const auto matched = deriveGenericArgumentPatternSubstitution(
-        patterns, typeArguments, genericParameterIdentities(parameters),
-        genericParameterIdentities(declaration.genericArgumentPatternLifetimes),
-        std::move(result));
-    return matched ? *matched : GenericSubstitution{.valid = false};
-  }
-
-  [[nodiscard]] static bool hasTypeLifetimes(const SemanticType &type) {
-    bool found = type.referenceLifetime.specified() ||
-        !type.lifetimeArguments.empty() || !type.quantifiedLifetimes.empty();
-    lifetime_detail::children(type, [&](const auto &child) {
-      found = hasTypeLifetimes(child) || found;
-    });
-    return found;
-  }
-
-  [[nodiscard]] LifetimeSignatureContract
-  instantiateLifetimeContract(const LifetimeSignatureContract &declaration,
-                              const GenericSubstitution &substitution) const {
-    auto result = declaration;
-    for (auto &bound : result.typeBounds)
-      bound.type = substitute(bound.type, substitution);
-    for (auto &node : result.requirements.nodes)
-      if (node.kind == LifetimeRequirementNode::Kind::Type)
-        node.type = substitute(node.type, substitution);
-    return result;
-  }
-
   [[nodiscard]] std::optional<HirClassInstanceId>
   enqueueClass(const SemanticType &type,
                std::optional<SourceSpan> site = std::nullopt) {
-    SemanticType resolvedType =
+    const SemanticType resolvedType =
         baseModel == nullptr ? type
                              : baseModel->resolveExactClassSpecialization(type);
-    std::optional<SemanticExecutableInstantiation> canonical;
-    if (resolvedType.kind == SemanticType::Class && resolvedType.classId) {
-      canonical = instanceProvider->canonicalizeExecutableInstance(
-          {.kind = InstanceAnalysisKind::ClassFieldInitializers,
-           .declaration = resolvedType.classId, .classTypes = resolvedType.arguments,
-           .classValues = resolvedType.valueArguments});
-      if (!canonical && hasTypeLifetimes(resolvedType)) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-        return std::nullopt;
-      }
-      if (canonical)
-        resolvedType.arguments = canonical->classTypes;
-      if (const auto *declaration = baseModel->findClassType(resolvedType.classId)) {
-        resolvedType.lifetimeArguments.clear();
-        for (const auto &parameter : declaration->genericParameters)
-          if (parameter.lifetime)
-            resolvedType.lifetimeArguments.push_back(Lifetime::parameter(parameter.id));
-      }
-    }
     // An existing instance discovered its arguments when it was created, and
     // admission is monotone, so revisiting them can only propagate a first
     // instantiation site. Re-walking them on every hit made each lookup of a
@@ -706,8 +455,7 @@ private:
         CompilerCapabilityTypeKind::NativeCScalar) {
       return std::nullopt;
     }
-    const bool generic = declaration->hasGenericBindings() ||
-                         declaration->exactSpecializationPrimary != 0;
+    const bool generic = !declaration->genericParameters.empty();
     if (!admitInstance(declaration->declaration->name(), site, generic)) {
       return std::nullopt;
     }
@@ -722,7 +470,7 @@ private:
         (declaration->kind == ClassKind::Union || declaration->polymorphic ||
          !declaration->bases.empty() || lifecycleBoundBorrowCarrier ||
          declaration->compilerCapability != CompilerCapabilityTypeKind::None)) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return std::nullopt;
     }
     const HirClassInstanceId id = output.program.classes.size() + 1;
@@ -755,14 +503,7 @@ private:
                  : status;
     };
     output.program.classes.push_back(
-        {.liftedLifetimes = canonical
-             ? genericParameterIdentities(canonical->liftedLifetimes)
-             : std::vector<GenericParameterIdentity>{},
-         .variance = instanceProvider->nominalVariance(resolvedType),
-         .lifetimeContract =
-             canonical ? canonical->lifetimeContract
-                       : instanceProvider->nominalLifetimeContract(resolvedType),
-         .id = id,
+        {.id = id,
          .sourceUnit = declaration->sourceUnit,
          .declaration = resolvedType.classId,
          .source = declaration->declaration,
@@ -833,34 +574,9 @@ private:
     return id;
   }
 
-  bool constantFunctionAvailable(const FunctionInfo &function) {
-    if (std::find(constantFunctions.begin(), constantFunctions.end(), function.id) !=
-        constantFunctions.end())
-      return true;
-    const auto *body = function.bodyDeclaration();
-    if (!body || !body->isConstexpr() || !constantSourceAuthority.function ||
-        !constantSourceAuthority.function(*body))
-      return false;
-    constantFunctions.push_back(function.id);
-    queriedConstantFunctions.insert(function.id);
-    return true;
-  }
-
-  bool constantConstructorAvailable(const ConstructorInfo &constructor) {
-    if (std::find(constantConstructors.begin(), constantConstructors.end(), constructor.id) !=
-        constantConstructors.end())
-      return true;
-    if (!constructor.declaration || !constructor.constexprConstructor ||
-        !constantSourceAuthority.constructor ||
-        !constantSourceAuthority.constructor(*constructor.declaration))
-      return false;
-    constantConstructors.push_back(constructor.id);
-    return true;
-  }
-
   [[nodiscard]] HirFunctionInstanceId
   enqueueFunction(const FunctionInfo &declaration,
-                  std::vector<SemanticType> classTypeArguments,
+                  const std::vector<SemanticType> &classTypeArguments,
                   const std::vector<CompileTimeValue> &classValueArguments,
                   std::vector<SemanticType> functionTypeArguments,
                   std::vector<CompileTimeValue> functionValueArguments,
@@ -892,51 +608,8 @@ private:
         (declaration.declaration == nullptr ||
          (!declaration.declaration->isConstexpr() &&
           !declaration.declaration->isProceduralMacro()) ||
-         !constantFunctionAvailable(declaration));
-    const ClassTypeInfo *genericOwner =
-        declaration.ownerClass == 0
-            ? nullptr
-            : baseModel->findClassType(declaration.ownerClass);
-    const auto canonical = instanceProvider->canonicalizeExecutableInstance(
-        {.kind = InstanceAnalysisKind::Function, .declaration = declaration.id,
-         .classTypes = classTypeArguments, .classValues = classValueArguments,
-         .types = functionTypeArguments, .values = functionValueArguments});
-    if (!canonical &&
-        (std::any_of(classTypeArguments.begin(), classTypeArguments.end(),
-                     hasTypeLifetimes) ||
-         std::any_of(functionTypeArguments.begin(), functionTypeArguments.end(),
-                     hasTypeLifetimes))) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-      return 0;
-    }
-    if (canonical) {
-      classTypeArguments = canonical->classTypes;
-      functionTypeArguments = canonical->types;
-    }
-    GenericSubstitution instance =
-        genericOwner == nullptr
-            ? GenericSubstitution{}
-            : classSubstitution(*genericOwner, classTypeArguments,
-                                classValueArguments);
-    auto functionSubstitution =
-        instanceSubstitution(declaration.genericParameters,
-                             functionTypeArguments, functionValueArguments);
-    instance.types.insert(functionSubstitution.types.begin(),
-                          functionSubstitution.types.end());
-    instance.values.insert(functionSubstitution.values.begin(),
-                           functionSubstitution.values.end());
-    returnType = substitute(declaration.returnType, instance);
-    parameterTypes.clear();
-    parameterTypes.reserve(declaration.parameterTypes.size());
-    for (const auto &parameter : declaration.parameterTypes)
-      parameterTypes.push_back(substitute(parameter, instance));
-    auto lifetimeContract =
-        instantiateLifetimeContract(declaration.lifetimeContract, instance);
-    if (canonical) {
-      returnType = canonical->returnType;
-      parameterTypes = canonical->parameterTypes;
-      lifetimeContract = canonical->lifetimeContract;
-    }
+         std::find(constantFunctions.begin(), constantFunctions.end(),
+                   declaration.id) == constantFunctions.end());
     // Calls can discover an instance through individual arguments or through
     // one forwarded pack. Virtual members are also seeded from declarations.
     // These paths must publish the same concrete signature; source pack
@@ -970,10 +643,13 @@ private:
              : (declarationToken.lexeme.empty()
                     ? std::optional<SourceSpan>{}
                     : std::optional<SourceSpan>{tokenSpan(declarationToken)});
+    const ClassTypeInfo *genericOwner =
+        declaration.ownerClass == 0
+            ? nullptr
+            : baseModel->findClassType(declaration.ownerClass);
     const bool generic =
         !declaration.genericParameters.empty() ||
-        (genericOwner != nullptr &&
-         (genericOwner->hasGenericBindings() || genericOwner->exactSpecializationPrimary));
+        (genericOwner != nullptr && !genericOwner->genericParameters.empty());
     if (!admitInstance(declarationToken, site, generic)) {
       return 0;
     }
@@ -1007,24 +683,16 @@ private:
     if (constantUnavailable)
       constantUnavailableFunctions.push_back(id);
     output.program.functions.push_back(
-        {.liftedLifetimes = canonical
-             ? genericParameterIdentities(canonical->liftedLifetimes)
-             : std::vector<GenericParameterIdentity>{},
-         .id = id,
+        {.id = id,
          .sourceUnit = declaration.sourceUnit,
          .declaration = declaration.id,
          .source =
              constantUnavailable ? nullptr : declaration.bodyDeclaration(),
          .owner = owner,
-         .ownerType = canonical ? canonical->ownerType
-             : declaration.ownerClass ? SemanticType::classType(
-                   declaration.ownerClass, classTypeArguments, classValueArguments)
-                                      : SemanticType::Unknown,
          .typeArguments = std::move(functionTypeArguments),
          .valueArguments = std::move(functionValueArguments),
          .returnType = std::move(returnType),
          .parameterTypes = std::move(parameterTypes),
-         .lifetimeContract = lifetimeContract,
          .ownerlessTextParameters = declaration.ownerlessTextParameters,
          .ownerlessTextFields = declaration.ownerlessTextFields,
          .publishedTextFields = declaration.publishedTextFields,
@@ -1087,27 +755,28 @@ private:
   [[nodiscard]] HirNativeCallbackAdapterId
   enqueueNativeCallback(const NativeFunctionConversionInfo &conversion) {
     if (!conversion.type.hasNativeFunctionShape()) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return 0;
     }
     const FunctionInfo *target = baseModel->findFunction(conversion.function);
     const SemanticType *returnType = conversion.type.nativeFunctionReturnType();
-    const auto &callable = conversion.lifetimeApplication.callableSignature;
+    const std::span<const SemanticType> parameters =
+        conversion.type.nativeFunctionParameterTypes();
     if (target == nullptr || target->declaration != conversion.declaration ||
         target->ownerClass != 0 || target->linkage != LanguageLinkage::Gti ||
-        std::any_of(target->genericParameters.begin(), target->genericParameters.end(),
-                    [](const auto &parameter) { return !parameter.lifetime; }) ||
-        target->parameterPack || returnType == nullptr || !callable ||
-        !conversion.lifetimeApplication.complete ||
-        !callableLifetimeTargetBindings(target->returnType, target->parameterTypes,
-                                         target->lifetimeContract, callable->signature)) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        !target->genericParameters.empty() || target->parameterPack ||
+        returnType == nullptr || target->returnType != *returnType ||
+        target->parameterTypes.size() != parameters.size() ||
+        !std::equal(target->parameterTypes.begin(),
+                    target->parameterTypes.end(), parameters.begin())) {
+      lifecycleValid = false;
       return 0;
     }
     const HirFunctionInstanceId function = enqueueFunction(
-        *target, {}, {}, {}, {}, target->returnType, target->parameterTypes);
+        *target, {}, {}, {}, {}, *returnType,
+        std::vector<SemanticType>(parameters.begin(), parameters.end()));
     if (function == 0) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return 0;
     }
     const auto existing = std::find_if(
@@ -1130,52 +799,19 @@ private:
   }
 
   [[nodiscard]] HirConstructorInstanceId
-  enqueueConstructor(const ResolvedConstructionInfo &requestedConstruction,
+  enqueueConstructor(const ResolvedConstructionInfo &construction,
                      std::optional<SourceSpan> site = std::nullopt) {
-    auto construction = requestedConstruction;
-    if (construction.kind == ConstructorKind::Copy ||
-        construction.kind == ConstructorKind::Move) {
-      // A checked defaulted policy retains its declaration identity, but the
-      // operation is still generated. Never canonicalize it as an executable
-      // constructor or drop an arbitrary invocation application.
-      if (!construction.lifetimeArguments.empty() ||
-          construction.lifetimeApplication != SemanticLifetimeApplication{} ||
-          (construction.constructedType.kind == SemanticType::Class &&
-           !enqueueClass(construction.constructedType, site)) ||
-          (construction.constructor != 0 &&
-           construction.constructedType.kind != SemanticType::Class))
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-      return 0;
-    }
     const auto *declaration =
         construction.declaration == nullptr
             ? nullptr
             : baseModel->findConstructor(*construction.declaration);
     const bool constant =
         declaration != nullptr && declaration->constexprConstructor;
-    const auto canonical = instanceProvider->canonicalizeExecutableInstance(
-        {.kind = construction.generatedDefault
-                     ? InstanceAnalysisKind::ClassFieldInitializers
-                     : InstanceAnalysisKind::Constructor,
-         .declaration = construction.generatedDefault
-                            ? construction.constructedType.classId
-                            : construction.constructor,
-         .classTypes = construction.constructedType.arguments,
-         .classValues = construction.constructedType.valueArguments,
-         .types = construction.typeArguments, .values = construction.valueArguments});
-    if (!canonical && (hasTypeLifetimes(construction.constructedType) ||
-        std::any_of(construction.typeArguments.begin(), construction.typeArguments.end(),
-                    hasTypeLifetimes))) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-      return 0;
-    }
-    if (canonical) {
-      construction.constructedType.arguments = canonical->classTypes;
-      construction.typeArguments = canonical->types;
-    }
     if (constantClosure && !construction.generatedDefault &&
-        (!constant || !constantConstructorAvailable(*declaration))) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        (!constant ||
+         std::find(constantConstructors.begin(), constantConstructors.end(),
+                   construction.constructor) == constantConstructors.end())) {
+      lifecycleValid = false;
       return 0;
     }
     const std::optional<HirClassInstanceId> owner =
@@ -1195,38 +831,6 @@ private:
                             construction.declaration == nullptr ||
                             construction.constructor == 0))) {
       return 0;
-    }
-    GenericSubstitution instance =
-        ownerType == nullptr
-            ? GenericSubstitution{}
-            : classSubstitution(*ownerType,
-                                construction.constructedType.arguments,
-                                construction.constructedType.valueArguments);
-    if (declaration != nullptr) {
-      auto constructorSubstitution = instanceSubstitution(
-          declaration->genericParameters, construction.typeArguments,
-          construction.valueArguments);
-      instance.types.insert(constructorSubstitution.types.begin(),
-                            constructorSubstitution.types.end());
-      instance.values.insert(constructorSubstitution.values.begin(),
-                             constructorSubstitution.values.end());
-    }
-    std::vector<SemanticType> universalParameters;
-    if (declaration != nullptr)
-      for (const auto &parameter : declaration->parameterTypes)
-        SemanticType::appendExpandedArgument(universalParameters,
-                                             substitute(parameter, instance));
-    else
-      universalParameters = construction.parameterTypes;
-    auto lifetimeContract =
-        declaration != nullptr ? instantiateLifetimeContract(
-                                     declaration->lifetimeContract, instance)
-                               : LifetimeSignatureContract{};
-    if (canonical) {
-      lifetimeContract = canonical->lifetimeContract;
-      universalParameters.clear();
-      for (const auto &parameter : canonical->parameterTypes)
-        SemanticType::appendExpandedArgument(universalParameters, parameter);
     }
     const ConstructorId identity = generatedBody ? 0 : construction.constructor;
     // A dependent text publication is a call-site fact; it never forms the
@@ -1251,7 +855,7 @@ private:
                                         ? ownerType->declaration->name()
                                         : construction.declaration->name();
     const bool generic =
-        ownerType->hasGenericBindings() || ownerType->exactSpecializationPrimary ||
+        !ownerType->genericParameters.empty() ||
         (declaration != nullptr && !declaration->genericParameters.empty());
     // A generated default is the already-admitted owner's field schedule,
     // not another source instantiation edge. Retain that owner's depth while
@@ -1272,10 +876,7 @@ private:
     constructorDiscoveryDepths.push_back(constructorDiscovery);
     discoveredGenericInstances += generic;
     output.program.constructors.push_back(
-        {.liftedLifetimes = canonical
-             ? genericParameterIdentities(canonical->liftedLifetimes)
-             : std::vector<GenericParameterIdentity>{},
-         .codegenAttributes = declaration ? declaration->codegenAttributes
+        {.codegenAttributes = declaration ? declaration->codegenAttributes
                                           : FunctionCodegenAttributes{},
          .id = id,
          .sourceUnit = output.program.classes[*owner - 1].sourceUnit,
@@ -1286,12 +887,9 @@ private:
          .requiresUnsafe =
              declaration != nullptr && declaration->requiresUnsafe,
          .owner = *owner,
-         .ownerType = canonical ? canonical->ownerType
-                                : construction.constructedType,
          .typeArguments = construction.typeArguments,
          .valueArguments = construction.valueArguments,
-         .parameterTypes = std::move(universalParameters),
-         .lifetimeContract = lifetimeContract,
+         .parameterTypes = construction.parameterTypes,
          .borrowOrigin =
              summary ? construction.borrowOrigin : BorrowOriginKind::None,
          .borrowParameter = summary ? construction.borrowArgument : 0,
@@ -1331,8 +929,7 @@ private:
       return *existing;
     }
     const HirDestructorInstanceId id = output.program.destructors.size() + 1;
-    const bool generic = classType->hasGenericBindings() ||
-                         classType->exactSpecializationPrimary != 0;
+    const bool generic = !classType->genericParameters.empty();
     if (!admitInstance(lifecycle->declaredDestructor->declaration->name(),
                        classInstance.instantiationSite, generic)) {
       return std::nullopt;
@@ -1340,23 +937,12 @@ private:
     destructorDiscoveryDepths.push_back(
         nextDiscovery(classInstance.instantiationSite));
     discoveredGenericInstances += generic;
-    const auto canonical = instanceProvider->canonicalizeExecutableInstance(
-        {.kind = InstanceAnalysisKind::Destructor, .declaration = classInstance.declaration,
-         .classTypes = classInstance.typeArguments, .classValues = classInstance.valueArguments});
     output.program.destructors.push_back(
-        {.liftedLifetimes = canonical
-             ? genericParameterIdentities(canonical->liftedLifetimes)
-             : std::vector<GenericParameterIdentity>{},
-         .codegenAttributes = lifecycle->declaredDestructor->codegenAttributes,
+        {.codegenAttributes = lifecycle->declaredDestructor->codegenAttributes,
          .id = id,
          .sourceUnit = classInstance.sourceUnit,
          .source = lifecycle->declaredDestructor->declaration,
-         .owner = owner,
-         .ownerType = canonical ? canonical->ownerType : classInstance.type,
-         .lifetimeContract = canonical ? canonical->lifetimeContract : instantiateLifetimeContract(
-             lifecycle->declaredDestructor->lifetimeContract,
-             classSubstitution(*classType, classInstance.typeArguments,
-                               classInstance.valueArguments))});
+         .owner = owner});
     instanceIndex.recordDestructor(owner, id);
     return id;
   }
@@ -1407,23 +993,7 @@ private:
     return concrete;
   }
 
-  void enqueueEnum(SemanticType type) {
-    const auto canonical = instanceProvider->canonicalizeExecutableInstance(
-        {.kind = InstanceAnalysisKind::EnumLayout, .declaration = type.enumId,
-         .classTypes = type.arguments, .classValues = type.valueArguments});
-    if (!canonical && hasTypeLifetimes(type)) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-      return;
-    }
-    if (canonical) {
-      type.arguments = canonical->classTypes;
-      if (const auto *declaration = baseModel->findEnumType(type.enumId)) {
-        type.lifetimeArguments.clear();
-        for (const auto &parameter : declaration->genericParameters)
-          if (parameter.lifetime)
-            type.lifetimeArguments.push_back(Lifetime::parameter(parameter.id));
-      }
-    }
+  void enqueueEnum(const SemanticType &type) {
     if (std::any_of(output.program.enums.begin(), output.program.enums.end(),
                     [&](const HirEnum &item) { return item.type == type; })) {
       return;
@@ -1440,13 +1010,7 @@ private:
     if (!info) {
       return;
     }
-    HirEnum lowered{.liftedLifetimes = canonical
-                        ? genericParameterIdentities(canonical->liftedLifetimes)
-                        : std::vector<GenericParameterIdentity>{},
-                    .variance = instanceProvider->nominalVariance(type),
-                    .lifetimeContract = canonical ? canonical->lifetimeContract
-                        : instanceProvider->nominalLifetimeContract(type),
-                    .declaration = info->id,
+    HirEnum lowered{.declaration = info->id,
                     .type = type,
                     .sourceUnit = info->sourceUnit,
                     .source = info->declaration,
@@ -1602,7 +1166,7 @@ private:
         const ClassTypeInfo *info = baseModel->findClassType(*classDeclaration);
         const bool emittedAsTemplate =
             templateContext ||
-            (info != nullptr && info->hasGenericBindings());
+            (info != nullptr && !info->genericParameters.empty());
         if (info != nullptr && !emittedAsTemplate &&
             (info->cAbiRecord || info->cOpaqueHandle)) {
           (void)enqueueClass(SemanticType::classType(info->id));
@@ -1695,8 +1259,7 @@ private:
           seedConcreteDeclarationType(field.type);
         }
       }
-      if (classInfo != nullptr && !classInfo->hasGenericBindings() &&
-          !classInfo->exactSpecializationPrimary) {
+      if (classInfo != nullptr && classInfo->genericParameters.empty()) {
         (void)enqueueClass(SemanticType::classType(classInfo->id));
       }
       seedDeclarations(classDeclaration->members(),
@@ -1727,8 +1290,7 @@ private:
       std::vector<SemanticType> classArguments;
       if (info->ownerClass != 0) {
         const ClassTypeInfo *owner = baseModel->findClassType(info->ownerClass);
-        if (owner == nullptr || owner->hasGenericBindings() ||
-            owner->exactSpecializationPrimary) {
+        if (owner == nullptr || !owner->genericParameters.empty()) {
           return;
         }
       }
@@ -1766,7 +1328,7 @@ private:
               ? std::nullopt
               : instanceIndex.findFunction(function->id, {}, {}, {}, {});
       if (function == nullptr || !existing) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         continue;
       }
       plan.exports.push_back({.semanticFunction = selected.function,
@@ -1778,7 +1340,7 @@ private:
                               .requestSource = selected.requestSource});
     }
     if (plan.exports.size() != semanticPlan->exports.size()) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
     }
     output.program.embeddingPlan_ = std::move(plan);
   }
@@ -1791,7 +1353,7 @@ private:
                                 ? nullptr
                                 : baseModel->findBinding(*declaration);
       if (declaration == nullptr || binding == nullptr || step.symbol == 0) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         continue;
       }
       HirThreadLocalStorage storage{.symbol = step.symbol,
@@ -1826,7 +1388,7 @@ private:
              .literal = std::move(zero)});
       }
       if (!initializer) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         continue;
       }
       if (step.role == ProgramInitializationStepRole::DataOnly) {
@@ -1840,7 +1402,7 @@ private:
             value->literal && !step.requiresActiveCleanup)
           storage.dataInitializer = value->literal;
         else
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
       }
       const auto result = appendStatement({.kind = HirStatementKind::Return,
                                            .source = declaration,
@@ -1876,7 +1438,7 @@ private:
       if (step.id == 0 || declaration == nullptr || info == nullptr ||
           step.symbol == 0 ||
           (step.kind == ProgramStorageKind::StaticField && ownerClass == 0)) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         continue;
       }
       const HirBindingId binding =
@@ -1919,7 +1481,7 @@ private:
     }
     if (output.program.programInitialization.steps.size() !=
         semanticPlan.steps.size()) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
     }
     finishInitializerSourceDebug(output.program.moduleBody);
   }
@@ -1997,7 +1559,7 @@ private:
           semanticPlan->stringConstructor != 0 ||
           !semanticPlan->validateCount.empty() ||
           !semanticPlan->convertCount.empty()) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
       }
       output.program.hostedProgramEntry = std::move(lowered);
       return;
@@ -2007,7 +1569,7 @@ private:
         entryInfo->parameterTypes[1].kind != SemanticType::Class ||
         entryInfo->parameterTypes[1].arguments.size() != 1 ||
         lowered.entry == 0) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       output.program.hostedProgramEntry = std::move(lowered);
       return;
     }
@@ -2033,7 +1595,7 @@ private:
         append->declaration != semanticPlan->appendFunction ||
         semanticPlan->validateCount.empty() ||
         semanticPlan->convertCount.empty()) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
     }
     output.program.hostedProgramEntry = std::move(lowered);
   }
@@ -2116,11 +1678,31 @@ private:
       owner.virtualDispatch.clear();
       const auto *declaration = baseModel->findClassType(owner.declaration);
       if (!declaration) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         continue;
       }
       const auto substitution = classSubstitution(
           *declaration, owner.typeArguments, owner.valueArguments);
+      const auto pathTo = [&](const auto &self, HirClassInstanceId current,
+                              const auto &matches,
+                              std::vector<HirClassInstanceId> &path,
+                              std::unordered_set<HirClassInstanceId> &seen)
+          -> const HirClassInstance * {
+        if (current == 0 || current > output.program.classes.size() ||
+            !seen.insert(current).second)
+          return nullptr;
+        const auto &candidate = output.program.classes[current - 1];
+        if (matches(candidate))
+          return &candidate;
+        for (const auto &base : candidate.bases) {
+          path.push_back(base.instance);
+          if (const auto *found =
+                  self(self, base.instance, matches, path, seen))
+            return found;
+          path.pop_back();
+        }
+        return nullptr;
+      };
       const auto concreteFunction = [&](FunctionId id,
                                         HirClassInstanceId selectedOwner) {
         const auto found = functions.find(selectedOwner);
@@ -2134,27 +1716,30 @@ private:
         const auto *root = baseModel->findFunction(selected.root);
         const auto targetType = substitute(selected.targetOwner, substitution);
         HirVirtualDispatch row;
-        const auto rootOwner = root
-            ? findUniqueClassHierarchyView(output.program, owner.id, owner.type,
-                [&](const auto &view) {
-                  return view.instance->declaration == root->ownerClass;
-                })
-            : std::nullopt;
-        const auto targetOwner = findUniqueClassHierarchyView(
-            output.program, owner.id, owner.type,
-            [&](const auto &view) { return view.type == targetType; });
+        std::unordered_set<HirClassInstanceId> seen;
+        const auto *rootOwner =
+            root ? pathTo(
+                       pathTo, owner.id,
+                       [&](const auto &candidate) {
+                         return candidate.declaration == root->ownerClass;
+                       },
+                       row.rootPath, seen)
+                 : nullptr;
+        seen.clear();
+        const auto *targetOwner = pathTo(
+            pathTo, owner.id,
+            [&](const auto &candidate) { return candidate.type == targetType; },
+            row.targetPath, seen);
         if (!rootOwner || !targetOwner) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           continue;
         }
-        row.rootOwner = rootOwner->instance->id;
-        row.targetOwner = targetOwner->instance->id;
-        row.rootPath = rootOwner->path;
-        row.targetPath = targetOwner->path;
+        row.rootOwner = rootOwner->id;
+        row.targetOwner = targetOwner->id;
         row.root = concreteFunction(selected.root, row.rootOwner);
         row.target = concreteFunction(selected.target, row.targetOwner);
         if (!row.root || !row.target) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           continue;
         }
         owner.virtualDispatch.push_back(std::move(row));
@@ -2235,8 +1820,7 @@ private:
 
   [[nodiscard]] static bool lambdaMatchesType(const HirLambda &lambda,
                                               const SemanticType &type) {
-    return type.kind == SemanticType::Lambda &&
-           matchUniversalTypeLifetimes(lambda.type, type, lambda.environmentLifetimes).has_value();
+    return type.kind == SemanticType::Lambda && lambda.type == type;
   }
 
   void seedLambdaTarget(const SemanticType &type) {
@@ -2322,18 +1906,9 @@ private:
                           snapshot.typeArguments, snapshot.valueArguments);
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
-    // An early checked-source constant closure may precede the lexical class
-    // body pass as well as the function pass. Its declaration recipe is known,
-    // but field binding identities/defaults must come from checked reanalysis.
-    const bool missingStagedFields = constantClosure &&
-        (constantSourceAuthority.function || constantSourceAuthority.constructor) &&
-        std::any_of(declaration->fields.begin(), declaration->fields.end(),
-                    [&](const auto &field) {
-          return field.declaration && !baseModel->findBinding(*field.declaration);
-        });
     // An empty concrete pack is still an instance. Its recorded field and
     // alias bindings must come from concrete reanalysis, not the open primary.
-    if (missingStagedFields || declaration->hasGenericBindings() ||
+    if (!declaration->genericParameters.empty() ||
         !snapshot.typeArguments.empty() || !snapshot.valueArguments.empty()) {
       analysis = instanceProvider->analyzeClassFieldInitializers(
           snapshot.declaration, snapshot.typeArguments,
@@ -2358,7 +1933,7 @@ private:
     for (const TypeAliasDecl *source : declaration->typeAliases) {
       const TypeAliasInfo *alias = model->findTypeAlias(*source);
       if (alias == nullptr) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         continue;
       }
       aliases.push_back(
@@ -2426,7 +2001,6 @@ private:
     output.program.classes[index].fields = std::move(fields);
     finalizeLifetimes(fieldInitializers, *model, fieldBindings);
     lowerLoans(*model, fieldInitializers);
-    synthesizeInitializerLifetimeBody(fieldInitializers);
     finishInitializerSourceDebug(fieldInitializers);
     output.program.classes[index].fieldInitializers =
         std::move(fieldInitializers);
@@ -2476,8 +2050,8 @@ private:
             appendInitializerSourceDebug(*model, *field.declaration,
                                          staticFieldInitializers,
                                          {*lowered.initializer});
-          if (!declaration->hasGenericBindings()) {
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          if (declaration->genericParameters.empty()) {
+            lifecycleValid = false;
           }
         } else {
           lowered = found->second;
@@ -2495,7 +2069,6 @@ private:
     output.program.classes[index].staticFields = std::move(staticFields);
     finalizeLifetimes(staticFieldInitializers, *model, staticFieldBindings);
     lowerLoans(*model, staticFieldInitializers);
-    synthesizeInitializerLifetimeBody(staticFieldInitializers);
     finishInitializerSourceDebug(staticFieldInitializers);
     output.program.classes[index].staticFieldInitializers =
         std::move(staticFieldInitializers);
@@ -2596,7 +2169,6 @@ private:
     if (declaration == nullptr || !requirePrimaryBody(*declaration)) {
       return nullptr;
     }
-    if (std::getenv("GTI_TRACE_SCOPED") && declaration->declaration) std::fprintf(stderr, "[hfn] id=%llu decl=%llu name=%s\n", (unsigned long long)id, (unsigned long long)declaration->id, std::string(declaration->declaration->name().lexeme).c_str()); // TEMP-TRACE
     std::vector<SemanticType> classArguments;
     std::vector<CompileTimeValue> classValueArguments;
     if (snapshot.owner && *snapshot.owner <= output.program.classes.size()) {
@@ -2610,9 +2182,8 @@ private:
             ? nullptr
             : baseModel->findClassType(declaration->ownerClass);
     const bool concreteInstance =
-        queriedConstantFunctions.contains(declaration->id) ||
         !declaration->genericParameters.empty() ||
-        (genericOwner != nullptr && genericOwner->hasGenericBindings()) ||
+        (genericOwner != nullptr && !genericOwner->genericParameters.empty()) ||
         !classArguments.empty() || !classValueArguments.empty() ||
         !snapshot.typeArguments.empty() || !snapshot.valueArguments.empty();
     if (!concreteInstance) {
@@ -2749,16 +2320,6 @@ private:
     if (body == nullptr || body->body() == nullptr ||
         baseModel->hasAnalyzedFunctionBody(*body))
       return true;
-    // Early constant queries have checked source authority without mutating
-    // the primary model. Every such body, even a nongeneric one, is lowered
-    // from a fresh exact instance model rather than absent primary facts.
-    if (constantClosure &&
-        (queriedConstantFunctions.contains(function.id) ||
-         (constantSourceAuthority.function &&
-          constantSourceAuthority.function(*body)))) {
-      queriedConstantFunctions.insert(function.id);
-      return true;
-    }
     if (instanceProvider->analyzeDemandedPrimaryBody(*body) &&
         baseModel->hasAnalyzedFunctionBody(*body))
       return true;
@@ -2794,7 +2355,7 @@ private:
       } else if (next < concrete.size()) {
         binding.type = concrete[next++];
       } else {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         return;
       }
       const HirBindingId id = nextBindingId++;
@@ -2803,7 +2364,7 @@ private:
       parameterBindings.push_back(id);
     }
     if (next != concrete.size()) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return;
     }
     output.program.functions[index].body = std::move(body);
@@ -2821,7 +2382,7 @@ private:
           declaration != nullptr && declaration->declaration != nullptr)
         lowerSignatureOnlyFunction(index, *declaration);
       else
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
       return;
     }
     const FunctionInfo *declaration =
@@ -2832,8 +2393,10 @@ private:
     std::vector<SemanticType> classArguments;
     std::vector<CompileTimeValue> classValueArguments;
     if (snapshot.owner) {
-      classArguments = snapshot.ownerType.arguments;
-      classValueArguments = snapshot.ownerType.valueArguments;
+      const HirClassInstance &owner =
+          output.program.classes[*snapshot.owner - 1];
+      classArguments = owner.typeArguments;
+      classValueArguments = owner.valueArguments;
     }
     // An omitted body needs no primary facts of its own; a concrete instance
     // analysis below still requires them before it runs.
@@ -2847,7 +2410,7 @@ private:
     const std::string enclosingSourceFunctionName = currentSourceFunctionName;
     currentSourceFunctionName = declaration->qualifiedName;
     if (snapshot.owner) {
-      currentReceiverType = snapshot.ownerType;
+      currentReceiverType = output.program.classes[*snapshot.owner - 1].type;
       currentReceiverAccess =
           receiverAllowsMutation(declaration->declaration->receiverMutability())
               ? AccessMode::Mutable
@@ -2863,16 +2426,15 @@ private:
             ? nullptr
             : baseModel->findClassType(declaration->ownerClass);
     const bool concreteInstance =
-        queriedConstantFunctions.contains(declaration->id) ||
         !declaration->genericParameters.empty() ||
-        (genericOwner != nullptr && genericOwner->hasGenericBindings()) ||
+        (genericOwner != nullptr && !genericOwner->genericParameters.empty()) ||
         !classArguments.empty() || !classValueArguments.empty() ||
         !snapshot.typeArguments.empty() || !snapshot.valueArguments.empty();
     const SemanticModel *model = baseModel;
     if (concreteInstance) {
       SemanticInstanceAnalysis *analysis = ensureFunctionAnalysis(snapshot.id);
       if (analysis == nullptr) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         currentReceiverType = enclosingReceiverType;
         currentReceiverAccess = enclosingReceiverAccess;
         currentSourceFunctionName = enclosingSourceFunctionName;
@@ -2906,13 +2468,6 @@ private:
           concrete->returnBorrowFields;
       output.program.functions[index].completeReturnBorrow =
           concrete->completeReturnBorrow;
-      if (std::getenv("GTI_TRACE_HIR_NAMES") && concrete->declaration) // TEMP-TRACE
-        std::fprintf(stderr, "[hir-fn] id=%zu name=%s line=%u\n", index + 1, concrete->declaration->name().lexeme.c_str(), static_cast<unsigned>(concrete->declaration->name().line)); // TEMP-TRACE
-      if (std::getenv("GTI_TRACE_LIFETIME_REQ") && concrete->completeReturnBorrow && concrete->completeReturnBorrow->dependencies.size() > 1) { // TEMP-TRACE
-        std::fprintf(stderr, "[inst-summary] fn=%zu line=%u deps=%zu returnBorrowFields=%zu\n", index + 1, concrete->declaration ? static_cast<unsigned>(concrete->declaration->name().line) : 0u, concrete->completeReturnBorrow->dependencies.size(), concrete->returnBorrowFields.size()); // TEMP-TRACE
-        for (const auto &d : concrete->completeReturnBorrow->dependencies) // TEMP-TRACE
-          std::fprintf(stderr, "[inst-summary]   origin=%d src=%zu res=%zu\n", static_cast<int>(d.origin), d.sourceFields.size(), d.resultFields.size()); // TEMP-TRACE
-      } // TEMP-TRACE
       output.program.functions[index].returnBorrowAccess =
           concrete->returnBorrowAccess;
       output.program.functions[index].returnBorrowPlace =
@@ -2949,9 +2504,6 @@ private:
     }
     finalizeLifetimes(body, *model);
     lowerLoans(*model, body, bodyDeclaration);
-    if (bodyDeclaration->body())
-      lowerLifetimeBody(model->findLifetimeBody(*bodyDeclaration->body()),
-                        body);
     std::vector<HirCallableParameter> callableParameters;
     callableParameters.reserve(declaration->callableParameters.size());
     for (const CallableParameterContract &parameter :
@@ -3000,17 +2552,11 @@ private:
                   model->findLambdaCall(*signature.source)) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
-            concrete.lifetimeArguments = resolved->lifetimeArguments;
-            concrete.lifetimeApplication =
-                lowerLifetimeApplication(resolved->lifetimeApplication, body);
             concrete.selectedCapability = resolved->capability;
           } else if (const ResolvedOperatorInfo *resolved =
                          model->findOperator(*signature.source)) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
-            concrete.lifetimeArguments = resolved->lifetimeArguments;
-            concrete.lifetimeApplication =
-                lowerLifetimeApplication(resolved->lifetimeApplication, body);
             concrete.selectedCapability = resolved->capability;
           } else if (const ResolvedCallInfo *resolved =
                          model->findCall(*signature.source);
@@ -3020,9 +2566,6 @@ private:
                           .hasFunctionItemShape())) {
             concrete.returnType = resolved->returnType;
             concrete.parameterTypes = resolved->parameterTypes;
-            concrete.lifetimeArguments = resolved->lifetimeArguments;
-            concrete.lifetimeApplication =
-                lowerLifetimeApplication(resolved->lifetimeApplication, body);
             concrete.selectedCapability = CallableInvocationCapability::Read;
           }
           const auto value =
@@ -3087,15 +2630,9 @@ private:
   void processConstructor(std::size_t index) {
     const HirConstructorInstance snapshot = output.program.constructors[index];
     const HirClassInstance owner = output.program.classes[snapshot.owner - 1];
-    const std::vector<SemanticType> &classArguments = snapshot.ownerType.arguments;
+    const std::vector<SemanticType> &classArguments = owner.typeArguments;
     const std::vector<CompileTimeValue> &classValueArguments =
-        snapshot.ownerType.valueArguments;
-    const auto ownerBindings = matchUniversalTypeLifetimes(
-        owner.type, snapshot.ownerType, owner.lifetimeContract.parameters);
-    if (!ownerBindings) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-      return;
-    }
+        owner.valueArguments;
     const SemanticType enclosingReceiverType = currentReceiverType;
     const AccessMode enclosingReceiverAccess = currentReceiverAccess;
     const std::string enclosingSourceFunctionName = currentSourceFunctionName;
@@ -3106,13 +2643,13 @@ private:
         "::" +
         (snapshot.generatedDefault ? owner.source->name().lexeme
                                    : snapshot.source->name().lexeme);
-    currentReceiverType = snapshot.ownerType;
+    currentReceiverType = owner.type;
     currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis *analysis =
         snapshot.generatedDefault ? nullptr
                                   : ensureConstructorAnalysis(snapshot.id);
     if (analysis == nullptr && !snapshot.generatedDefault) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       currentReceiverType = enclosingReceiverType;
       currentReceiverAccess = enclosingReceiverAccess;
       currentSourceFunctionName = enclosingSourceFunctionName;
@@ -3161,8 +2698,6 @@ private:
         if (resolved != nullptr) {
           lowered.kind = resolved->kind;
           lowered.targetType = resolved->targetType;
-          lowered.lifetimeArguments = resolved->lifetimeArguments;
-
           lowered.field = resolved->field;
           lowered.storesReference = resolved->storesReference;
           lowered.borrowAccess = resolved->borrowAccess;
@@ -3176,10 +2711,6 @@ private:
                     .constructor = resolved->constructor,
                     .declaration = resolved->declaration,
                     .constructedType = resolved->targetType,
-                    .typeArguments = resolved->typeArguments,
-                    .valueArguments = resolved->valueArguments,
-                    .lifetimeArguments = resolved->lifetimeArguments,
-                    .lifetimeApplication = resolved->lifetimeApplication,
                     .parameterTypes = resolved->parameterTypes,
                     .defaultArguments = resolved->defaultArguments,
                     .generatedDefault = resolved->generatedDefault});
@@ -3192,75 +2723,10 @@ private:
           if (const std::optional<HirValueId> value =
                   lowerExpression(argument, analysis->model, classArguments,
                                   classValueArguments, body)) {
-            const auto *input = body.findValue(*value);
-            if (resolved && resolved->kind == ConstructorInitializerTargetKind::Base &&
-                input && input->kind == HirValueKind::PackExpansion) {
-              // The source pack remains one checked binding. Its selected
-              // constructor consumes the exact concrete lanes in source order;
-              // these derived projections neither invent a new binding nor
-              // evaluate the source expression again.
-              const auto pack = *input;
-              const std::array<ConcreteFormalRoot, 1> roots{{{.binding = pack.symbol, .type = pack.info.type}}};
-              const std::array<SemanticType, 1> signature{pack.info.type};
-              const auto leaves = deriveConcreteFormalInputs(roots, signature);
-              const HirBinding *binding = nullptr;
-              for (const auto &candidate : body.bindings)
-                if (candidate.info.symbol == pack.symbol) {
-                  if (binding) {
-                    invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-                    return;
-                  }
-                  binding = &candidate;
-                }
-              if (!leaves || !pack.operands.empty() || !binding ||
-                  !binding->parameter || !binding->parameter->pack ||
-                  binding->info.type != pack.info.type ||
-                  leaves->size() != pack.packExpansionElements.size()) {
-                invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-                return;
-              }
-              // PackExpansion records the checked grouped binding, not an
-              // evaluated operand. A neutral Variable root addresses that
-              // same binding; each leaf below retains its exact index path.
-              const auto root = nextValueId++;
-              body.values.push_back({.id = root, .kind = HirValueKind::Variable,
-                  .info = {.type = binding->info.type, .category = ValueCategory::Place,
-                           .access = AccessMode::ReadOnly, .traits = binding->info.traits},
-                  .symbol = pack.symbol});
-              for (std::size_t lane = 0; lane < leaves->size(); ++lane) {
-                const auto &leaf = (*leaves)[lane];
-                if (pack.packExpansionElements[lane].type != leaf.type) {
-                  invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-                  return;
-                }
-                auto projected = root;
-                for (const auto &step : leaf.bindingPrefix) {
-                  const auto *parent = body.findValue(projected);
-                  if (!parent || step.kind != PlaceProjectionKind::ConstantIndex ||
-                      parent->info.type.kind != SemanticType::TypePack || !parent->info.type.concretePack ||
-                      step.index >= parent->info.type.arguments.size()) {
-                    invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-                    return;
-                  }
-                  const auto child = parent->info.type.arguments[step.index];
-                  const auto next = nextValueId++;
-                  body.values.push_back({.id = next, .kind = HirValueKind::PackElement,
-                      .info = {.type = child, .category = ValueCategory::Place,
-                               .access = AccessMode::ReadOnly, .traits = instanceProvider->traitsFor(child)},
-                      .symbol = pack.symbol, .operands = {projected}, .packElement = step.index});
-                  projected = next;
-                }
-                lowered.arguments.push_back(projected);
-                initializerValues.push_back(projected);
-              }
-            } else {
-              lowered.arguments.push_back(*value);
-              initializerValues.push_back(*value);
-            }
+            lowered.arguments.push_back(*value);
+            initializerValues.push_back(*value);
           }
         }
-        if (resolved && resolved->kind == ConstructorInitializerTargetKind::Base)
-          lowered.explicitArgumentCount = lowered.arguments.size();
         if (resolved != nullptr &&
             resolved->kind == ConstructorInitializerTargetKind::Base &&
             !resolved->defaultArguments.empty() && lowered.constructorTarget) {
@@ -3288,16 +2754,6 @@ private:
               lowered.arguments.push_back(*value);
               initializerValues.push_back(*value);
             }
-          }
-        }
-        if (resolved != nullptr) {
-          lowered.lifetimeApplication =
-              lowerLifetimeApplication(resolved->lifetimeApplication, body);
-          lowered.completeBorrow = resolved->completeBorrow;
-          if (lowered.completeBorrow) {
-            ensurePlaceDomain(body);
-            for (auto &dependency : lowered.completeBorrow->dependencies)
-              qualifyLoanDependency(dependency, body.placeDomain);
           }
         }
         initializers.push_back(std::move(lowered));
@@ -3382,15 +2838,10 @@ private:
     // lower them into the same body as explicit initializers so failure can
     // unwind previously completed fields and constructor parameters.
     SemanticInstanceAnalysis fieldAnalysis;
-    // Selected source defaults were checked in the constructor's own scope.
-    // Class initializer facts have different universal region identities and
-    // cannot be retagged into this model. Generated defaults retain the
-    // independently checked class initializer model.
-    const SemanticModel *fieldModel = analysis ? &analysis->model : baseModel;
+    const SemanticModel *fieldModel = baseModel;
     const auto *fieldOwner = baseModel->findClassType(owner.declaration);
-    if (snapshot.generatedDefault &&
-        ((fieldOwner && fieldOwner->hasGenericBindings()) ||
-         !classArguments.empty() || !classValueArguments.empty())) {
+    if ((fieldOwner && !fieldOwner->genericParameters.empty()) ||
+        !classArguments.empty() || !classValueArguments.empty()) {
       const PhaseTimeScope timeScope("hir-instance-analysis", "fields");
       fieldAnalysis = instanceProvider->analyzeClassFieldInitializers(
           owner.declaration, classArguments, classValueArguments);
@@ -3419,15 +2870,10 @@ private:
           fieldModel->resolvedFieldInitializer(*field.declaration), *fieldModel,
           classArguments, classValueArguments, body);
       if (!value) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         continue;
       }
-      const auto fieldType = substituteTypeLifetimes(field.info.type, *ownerBindings);
-      if (!fieldType) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-        continue;
-      }
-      initializers.push_back({.targetType = *fieldType,
+      initializers.push_back({.targetType = field.info.type,
                               .field = field.info.symbol,
                               .arguments = {*value},
                               .explicitArgumentCount = 1});
@@ -3460,11 +2906,7 @@ private:
           lowerStatements(snapshot.source->body()->statements(), bodyModel,
                           classArguments, classValueArguments, body);
     finalizeLifetimes(body, bodyModel, {}, initializers);
-    lowerLoans(bodyModel, body, nullptr, {}, initializers);
-    if (!snapshot.generatedDefault && snapshot.source->body())
-      lowerLifetimeBody(bodyModel.findLifetimeBody(*snapshot.source->body()),
-                        body);
-    synthesizeInitializerLifetimeBody(body);
+    lowerLoans(bodyModel, body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
     output.program.constructors[index].parameterBindings =
@@ -3491,11 +2933,11 @@ private:
     currentSourceFunctionName =
         (ownerInfo == nullptr ? std::string{} : ownerInfo->qualifiedName) +
         "::~" + snapshot.source->name().lexeme;
-    currentReceiverType = snapshot.ownerType;
+    currentReceiverType = owner.type;
     currentReceiverAccess = AccessMode::Mutable;
     SemanticInstanceAnalysis analysis;
     const SemanticModel *model = baseModel;
-    if ((ownerInfo != nullptr && ownerInfo->hasGenericBindings()) ||
+    if ((ownerInfo != nullptr && !ownerInfo->genericParameters.empty()) ||
         !owner.typeArguments.empty() || !owner.valueArguments.empty()) {
       const PhaseTimeScope timeScope("hir-instance-analysis", "destructor");
       analysis = instanceProvider->analyzeDestructorInstance(
@@ -3522,10 +2964,9 @@ private:
     HirBody body;
     body.roots =
         lowerStatements(snapshot.source->body()->statements(), *model,
-                        snapshot.ownerType.arguments, snapshot.ownerType.valueArguments, body);
+                        owner.typeArguments, owner.valueArguments, body);
     finalizeLifetimes(body, *model);
     lowerLoans(*model, body, snapshot.source);
-    lowerLifetimeBody(model->findLifetimeBody(*snapshot.source->body()), body);
     captureSourceDebug(SourceDebugBodyKind::Destructor, snapshot.source, *model,
                        body);
     output.program.destructors[index].body = std::move(body);
@@ -3632,7 +3073,7 @@ private:
         accepted->facts.collection !=
             SourceDebugCollection::CollectedLexicalV1 ||
         accepted->facts.tables == nullptr) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return;
     }
     ensurePlaceDomain(body);
@@ -3653,7 +3094,7 @@ private:
       if (binding != body.bindings.end() &&
           (binding->info.symbol != local.symbol ||
            binding->info.type != local.type)) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         return;
       }
       tables.locals.push_back(
@@ -3696,7 +3137,7 @@ private:
         accepted->facts.collection !=
             SourceDebugCollection::CollectedLexicalV1 ||
         !accepted->facts.tables || roots.empty()) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return;
     }
     ensurePlaceDomain(body);
@@ -3736,7 +3177,7 @@ private:
         if (binding != body.bindings.end() &&
             (binding->info.symbol != local.symbol ||
              binding->info.type != local.type))
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
         region.locals.push_back(
             {.id = local.id,
              .scope = local.scope,
@@ -3811,18 +3252,6 @@ private:
     return place;
   }
 
-  void qualifyLoanDependency(SemanticLoanDependency &dependency,
-                             PlaceDomain domain) {
-    if (dependency.referenceContents) {
-      // Contents are selected from the evaluated reference in an opening.
-      // Qualifying an empty owner place would invent a second source identity.
-      if (dependency.place != SemanticLoanPlace{})
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-      return;
-    }
-    dependency.place = qualifyPlace(dependency.place, domain);
-  }
-
   [[nodiscard]] static PlaceKey
   qualifyBorrowPlace(const BorrowOriginPlace &place, PlaceDomain domain) {
     return {
@@ -3837,8 +3266,7 @@ private:
 
   void lowerLoans(const SemanticModel &model, HirBody &body,
                   const Stmt *declaration = nullptr,
-                  std::span<const LambdaCaptureInfo> captures = {},
-                  std::span<const HirConstructorInitializer> initializers = {}) {
+                  std::span<const LambdaCaptureInfo> captures = {}) {
     ensurePlaceDomain(body);
     body.loans.clear();
     std::unordered_map<SymbolId, HirBindingId> bindings;
@@ -3849,12 +3277,6 @@ private:
     }
     std::unordered_set<SemanticLoanId> included;
     std::vector<SemanticLoanId> pending;
-    const auto requireDependency = [&](const SemanticLoanDependency &dependency) {
-      if (dependency.parent)
-        pending.push_back(dependency.parent);
-      if (dependency.referenceContents)
-        pending.push_back(dependency.referenceContents->openingLoan);
-    };
     for (const SemanticLoanInfo &loan : model.loans()) {
       if ((declaration != nullptr && loan.entryDeclaration == declaration) ||
           (loan.entry && std::any_of(captures.begin(), captures.end(),
@@ -3868,18 +3290,14 @@ private:
         pending.push_back(loan.id);
     }
     for (const auto &value : body.values) {
-      if (value.referenceContentsLoan)
-        pending.push_back(value.referenceContentsLoan);
       if (value.borrowDependencies)
         for (const auto &dependency : value.borrowDependencies->dependencies)
-          requireDependency(dependency);
+          if (dependency.parent != 0)
+            pending.push_back(dependency.parent);
       for (const auto &dependency : value.captureBorrowDependencies)
-        requireDependency(dependency);
+        if (dependency.parent != 0)
+          pending.push_back(dependency.parent);
     }
-    for (const auto &initializer : initializers)
-      if (initializer.completeBorrow)
-        for (const auto &dependency : initializer.completeBorrow->dependencies)
-          requireDependency(dependency);
     while (!pending.empty()) {
       const SemanticLoanId id = pending.back();
       pending.pop_back();
@@ -3890,13 +3308,9 @@ private:
         pending.push_back(loan->parent);
       if (loan->storedDependency != 0)
         pending.push_back(loan->storedDependency);
-      if (loan->referenceContents)
-        pending.push_back(loan->referenceContents->openingLoan);
-      if (loan->contentsOpening)
-        pending.insert(pending.end(), loan->contentsOpening->readLoans.begin(),
-                       loan->contentsOpening->readLoans.end());
       for (const auto &dependency : loan->additionalDependencies)
-        requireDependency(dependency);
+        if (dependency.parent != 0)
+          pending.push_back(dependency.parent);
     }
     for (const SemanticLoanInfo &loan : model.loans()) {
       if (!included.contains(loan.id))
@@ -3905,24 +3319,19 @@ private:
                       .kind = loan.kind,
                       .parent = loan.parent,
                       .storedDependency = loan.storedDependency,
-                      .place = loan.referenceContents ? SemanticLoanPlace{}
-                                  : qualifyPlace(loan.place, body.placeDomain),
-                      .referenceContents = loan.referenceContents,
+                      .place = qualifyPlace(loan.place, body.placeDomain),
                       .access = loan.access,
                       .designatedFields = loan.designatedFields,
                       .conditions = loan.conditions,
                       .additionalDependencies = loan.additionalDependencies,
                       .lifecycleBound = loan.lifecycleBound,
                       .entry = loan.entry};
-      if (loan.referenceContents && loan.place != SemanticLoanPlace{})
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
       for (auto &dependency : lowered.additionalDependencies) {
-        qualifyLoanDependency(dependency, body.placeDomain);
+        dependency.place = qualifyPlace(dependency.place, body.placeDomain);
       }
       if (loan.referenceSelection) {
         const auto &selection = *loan.referenceSelection;
-        HirReferenceSelection resolved{.kind = selection.kind,
-                                       .transferredFrom =
+        HirReferenceSelection resolved{.transferredFrom =
                                            selection.transferredFrom,
                                        .fields = selection.fields,
                                        .conditions = selection.conditions,
@@ -3944,27 +3353,8 @@ private:
         // generic instances have distinct local values for the same syntax.
         if (matches != 1 || selection.source == nullptr ||
             selection.carrier == nullptr)
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
         lowered.referenceSelection = std::move(resolved);
-      }
-      if (loan.contentsOpening) {
-        const auto &opening = *loan.contentsOpening;
-        HirReferenceContentsOpening resolved{
-            .referenceType = opening.referenceType,
-            .readLoans = opening.readLoans};
-        std::size_t matches = 0;
-        for (const auto &value : body.values)
-          if (opening.reference && value.source == opening.reference) {
-            resolved.reference = value.id;
-            ++matches;
-          }
-        // An opening is tied to this body's exact evaluated reference. A
-        // same-typed owner or another concrete instance is not a substitute.
-        if (matches != 1 || loan.kind != SemanticLoanKind::StoredValue ||
-            opening.referenceType.kind != SemanticType::Reference ||
-            opening.referenceType.arguments.size() != 1)
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-        lowered.contentsOpening = std::move(resolved);
       }
       for (const SymbolId carrier : loan.carriers) {
         const auto found = bindings.find(carrier);
@@ -3974,7 +3364,6 @@ private:
           lowered.carriers.push_back(found->second);
         }
       }
-      if (std::getenv("GTI_TRACE_HLC")) { std::fprintf(stderr, "[hlc] semantic=%llu kind=%d carriers:", (unsigned long long)loan.id, static_cast<int>(loan.kind)); for (auto c : loan.carriers) std::fprintf(stderr, " s%llu", (unsigned long long)c); std::fprintf(stderr, "\n"); } // TEMP-TRACE
       body.loans.push_back(std::move(lowered));
     }
   }
@@ -4180,7 +3569,7 @@ private:
       return;
     }
     if (found->fullExpression != 0 && found->fullExpression != fullExpression) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return;
     }
     found->fullExpression = fullExpression;
@@ -4235,7 +3624,7 @@ private:
       const HirValue *found =
           source == nullptr ? nullptr : lookup.forRoot(body, *source);
       if (found == nullptr) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         continue;
       }
       roots.push_back(found->id);
@@ -4269,7 +3658,7 @@ private:
                                ? std::nullopt
                                : model.callerLocationProof(*value.source);
         if (!proof) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
         } else {
           value.callerLocation = proof->origin();
           value.callerLocationProof = proof;
@@ -4507,7 +3896,7 @@ private:
         [&](const HirValue &value) { return value.id == *source; });
     if (found == body.values.end() || !found->ownership ||
         found->ownership->kind != OwnershipEventKind::Move) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return source;
     }
 
@@ -4529,7 +3918,6 @@ private:
                   .place = ownership.place,
                   .ownership = ownership};
     move.borrowDependencies = found->borrowDependencies;
-    move.referenceContentsLoan = model.findReferenceContentsLoan(*expression);
     const HirValueId moveId = move.id;
     body.values.push_back(std::move(move));
     output.program.sourceValueIds[expression.get()].push_back(moveId);
@@ -4611,7 +3999,7 @@ private:
     if (const auto *expression = stmtAs<ExpressionStmt>(statement)) {
       if (const auto proof = model.immediateVoidCompletionProof(*expression)) {
         if (proof->expression() != expression->expression().get())
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
         body.immediateVoidCompletions.push_back(
             {.source = expression, .completionProof = proof});
         return appendStatement(
@@ -4761,7 +4149,7 @@ private:
         }
       } else {
         // Deferred in the symbolic primary; concrete reanalysis expands it.
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
       }
       return appendStatement({.kind = HirStatementKind::CompileTimeBranch,
                               .source = statement,
@@ -4783,7 +4171,7 @@ private:
         } else {
           // A symbolic primary is not an executable body. Concrete semantic
           // reanalysis must choose the branch before HIR can publish it.
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
         }
         return appendStatement({.kind = HirStatementKind::CompileTimeBranch,
                                 .source = statement,
@@ -4822,7 +4210,7 @@ private:
               model.emptyReturnConstructionProof(*returnStatement)) {
         if (proof->immediateRequired()) {
           if (!proof->immediateValue()) {
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+            lifecycleValid = false;
           } else {
             const SemanticType &type = proof->construction().constructedType;
             (void)enqueueClass(type);
@@ -4899,7 +4287,7 @@ private:
           if (payloadPattern != nullptr &&
               payloadPattern->consuming != consumedSubject.has_value()) {
             // Pattern and switch must agree on whether bindings move.
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+            lifecycleValid = false;
           }
           if (payloadPattern != nullptr && subject) {
             for (const PayloadBindingInfo &payload : payloadPattern->bindings) {
@@ -5152,7 +4540,6 @@ private:
     currentSourceFunctionName = enclosingSourceFunctionName;
     finalizeLifetimes(body, model);
     lowerLoans(model, body, nullptr, info->captures);
-    lowerLifetimeBody(model.findLifetimeBody(lambda), body);
     captureSourceDebug(SourceDebugBodyKind::Lambda, &lambda, model, body);
     std::vector<bool> captureRequiresActiveCleanup;
     captureRequiresActiveCleanup.reserve(info->captures.size());
@@ -5163,13 +4550,10 @@ private:
     output.program.lambdas[id - 1] = {
         .id = id,
         .declaration = info->id,
-        .environmentLifetimes = info->environmentLifetimes,
-        .environmentContract = info->environmentContract,
         .source = &lambda,
-        .type = info->type.kind == SemanticType::Unknown ? model.typeOf(lambda) : info->type,
+        .type = model.typeOf(lambda),
         .returnType = info->returnType,
         .parameterTypes = info->parameterTypes,
-        .lifetimeContract = info->lifetimeContract,
         .parameterBindings = std::move(parameterBindings),
         .captures = info->captures,
         .capability = info->capability,
@@ -5181,7 +4565,6 @@ private:
         .returnBorrowOrigin = info->returnBorrowOrigin,
         .returnBorrowParameter = info->returnBorrowParameter,
         .returnBorrowAccess = info->returnBorrowAccess,
-        .completeReturnBorrow = info->completeReturnBorrow,
         .body = std::move(body),
     };
     return id;
@@ -5300,7 +4683,7 @@ private:
         if (input == nullptr || parameter.kind != SemanticType::Reference ||
             parameter.referenceAccess != AccessMode::ReadOnly ||
             parameter.arguments.size() != 1 ||
-            !sameLifetimeConversionShape(input->info.type, parameter.arguments.front()) ||
+            parameter.arguments.front() != input->info.type ||
             !isTemporaryBorrowReferentType(input->info.type) ||
             input->info.category != ValueCategory::Value ||
             (input->info.traits.containsBorrowedState &&
@@ -5318,7 +4701,7 @@ private:
       } else if (orderedValueParameterType(parameter)) {
         kind = HirCallInputKind::Value;
       } else if (!orderedOwningParameterType(parameter) ||
-                 !sameLifetimeConversionShape(input->info.type, parameter) ||
+                 input->info.type != parameter ||
                  (input->info.traits.containsBorrowedState &&
                   parameter.kind != SemanticType::Class &&
                   parameter.kind != SemanticType::Enum &&
@@ -5530,9 +4913,6 @@ private:
                              HirBody &body) {
     value.info = operatorResultInfo(resolved);
     value.parameterTypes = resolved.parameterTypes;
-    value.lifetimeArguments = resolved.lifetimeArguments;
-    value.lifetimeApplication =
-        lowerLifetimeApplication(resolved.lifetimeApplication, body);
     value.dispatch = resolved.dispatch;
     value.dispatchOwner = resolved.dispatchOwner;
     value.borrowOrigin = resolved.borrowOrigin;
@@ -5548,7 +4928,7 @@ private:
             ? FailurePropagationKind::VirtualCall
             : FailurePropagationKind::DirectCall;
     if (value.operands.empty()) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return;
     }
 
@@ -5576,7 +4956,7 @@ private:
 
     if (!value.functionTarget ||
         value.operands.size() != resolved.parameterTypes.size() + 1) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return;
     }
     std::vector<HirValueId> arguments(value.operands.begin() + 1,
@@ -5589,7 +4969,7 @@ private:
                          std::numeric_limits<std::size_t>::max(),
                          resolved.ephemeralBorrowArguments);
     if (!plannedReceiver || !plannedArguments) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return;
     }
     value.callPlan = HirCallPlan{.receiver = *plannedReceiver,
@@ -5637,13 +5017,6 @@ private:
         .functionTarget = value.functionTarget,
         .callableBoundary = value.callableBoundary,
     };
-    // The selected access call carries its own checked lifetime application;
-    // the field projection that reads its referent has none.
-    arrowCall.lifetimeArguments = resolved.lifetimeArguments;
-    arrowCall.lifetimeApplication =
-        lowerLifetimeApplication(resolved.lifetimeApplication, body);
-    value.lifetimeArguments.clear();
-    value.lifetimeApplication = {};
     // For a store the source expression's failure facts describe assignment,
     // not the separately selected checked-access call.
     arrowCall.definedFailure.propagation =
@@ -5655,7 +5028,7 @@ private:
                             resolved.receiverMode, body)) {
       arrowCall.callPlan = HirCallPlan{.receiver = *planned, .arguments = {}};
     } else {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
     }
     (void)enqueueClass(arrowCall.info.type);
 
@@ -5803,7 +5176,7 @@ private:
       return std::nullopt;
     }
     if (!activeDefaultArguments.insert(expression).second) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return std::nullopt;
     }
     const std::optional<SourceLocationLiteral> enclosing =
@@ -5835,12 +5208,8 @@ private:
                  .traits =
                      instanceProvider->traitsFor(construction.constructedType)},
         .parameterTypes = construction.parameterTypes,
-        .lifetimeArguments = construction.lifetimeArguments,
-        .lifetimeApplication =
-            lowerLifetimeApplication(construction.lifetimeApplication, body),
         .definedFailure = {.propagation =
                                construction.constructor != 0 &&
-                                       construction.kind == ConstructorKind::Ordinary &&
                                        !construction.generatedDefault
                                    ? FailurePropagationKind::Constructor
                                    : FailurePropagationKind::None},
@@ -5858,9 +5227,8 @@ private:
       value.constructorTarget = target;
       value.definedFailure.propagation = FailurePropagationKind::Constructor;
     } else if (construction.constructor != 0 &&
-               construction.kind == ConstructorKind::Ordinary &&
                !construction.generatedDefault) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return std::nullopt;
     }
 
@@ -5890,12 +5258,12 @@ private:
               sourceLocationAt(initializer.brace()))) {
         value.operands.push_back(*lowered);
       } else {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         return std::nullopt;
       }
     }
     if (value.operands.size() != value.parameterTypes.size()) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return std::nullopt;
     }
     if (!value.parameterTypes.empty()) {
@@ -5905,7 +5273,7 @@ private:
         value.callPlan = HirCallPlan{.receiver = std::nullopt,
                                      .arguments = std::move(*arguments)};
       } else {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         return std::nullopt;
       }
     }
@@ -6010,11 +5378,11 @@ private:
         .id = nextValueId++,
         .kind = HirValueKind::Call,
         .source = &raw,
-        .info = operatorResultInfo(resolved),
+        .info = {.type = resolved.returnType,
+                 .category = ValueCategory::Value,
+                 .access = AccessMode::ReadOnly,
+                 .traits = instanceProvider->traitsFor(resolved.returnType)},
         .operands = {receiverValue},
-        .parameterTypes = resolved.parameterTypes,
-        .lifetimeArguments = resolved.lifetimeArguments,
-        .lifetimeApplication = lowerLifetimeApplication(resolved.lifetimeApplication, body),
         .definedFailure = {.propagation =
                                resolved.dispatch == CallDispatch::Virtual
                                    ? FailurePropagationKind::VirtualCall
@@ -6028,8 +5396,6 @@ private:
     conversion.borrowOrigin = resolved.borrowOrigin;
     conversion.borrowArgument = resolved.borrowArgument;
     conversion.borrowAccess = resolved.borrowAccess;
-    conversion.borrowArguments = resolved.borrowArguments;
-    conversion.borrowFields = resolved.borrowFields;
     if (resolved.receiverMode == CallReceiverMode::Consuming) {
       conversion.callableInvocation = resolved.capability;
     }
@@ -6038,7 +5404,7 @@ private:
                             resolved.receiverMode, body)) {
       conversion.callPlan = HirCallPlan{.receiver = *planned, .arguments = {}};
     } else {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
     }
     const HirValueId conversionId = conversion.id;
     body.values.push_back(std::move(conversion));
@@ -6064,7 +5430,7 @@ private:
         (operandValue->info.category == ValueCategory::Value) !=
             plan.consumesOperand ||
         resultInfo->type != plan.resultType) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return std::nullopt;
     }
     const SourceSpan site = tokenSpan(expression.oper());
@@ -6112,15 +5478,14 @@ private:
         -> std::optional<HirValueId> {
       const FunctionInfo *target = baseModel->findFunction(call.function);
       if (target == nullptr || call.parameterTypes.size() != 1) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         return std::nullopt;
       }
       const HirFunctionInstanceId instance = enqueueFunction(
           *target, {}, {}, call.typeArguments, call.valueArguments,
           call.returnType, call.parameterTypes, site);
-      if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[hstep] next=%llu fn=%llu inst=%llu complete=%d bindings=%zu\n", (unsigned long long)nextValueId, (unsigned long long)call.function, (unsigned long long)instance, call.lifetimeApplication.complete, call.lifetimeApplication.bindings.size()); // TEMP-TRACE
       if (instance == 0) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         return std::nullopt;
       }
       (void)enqueueClass(call.returnType);
@@ -6136,7 +5501,7 @@ private:
         const std::optional<std::vector<HirCallArgument>> ordered =
             orderedArguments({argument}, call.parameterTypes, body);
         if (!ordered || ordered->size() != 1) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           return std::nullopt;
         }
         kind = ordered->front().kind;
@@ -6151,7 +5516,7 @@ private:
                                            return candidate.id == argument;
                                          });
         if (source == body.values.end() || !source->place) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           return std::nullopt;
         }
         // The protocol test reads the wrapper's storage before either arm
@@ -6174,10 +5539,6 @@ private:
                        borrowed ? call.borrowAccess : AccessMode::ReadOnly,
                    .traits = instanceProvider->traitsFor(resultType)},
           .operands = {argument},
-          .parameterTypes = call.parameterTypes,
-          .lifetimeArguments = call.lifetimeArguments,
-          .lifetimeApplication =
-              lowerLifetimeApplication(call.lifetimeApplication, body),
           .definedFailure = {.propagation = FailurePropagationKind::DirectCall},
           .borrowOrigin = call.borrowOrigin,
           .borrowArgument = call.borrowArgument,
@@ -6197,7 +5558,7 @@ private:
       if (dependencies) {
         value.borrowDependencies = *dependencies;
         for (auto &dependency : value.borrowDependencies->dependencies)
-          qualifyLoanDependency(dependency, body.placeDomain);
+          dependency.place = qualifyPlace(dependency.place, body.placeDomain);
       }
       const HirValueId id = value.id;
       body.values.push_back(std::move(value));
@@ -6229,9 +5590,6 @@ private:
                        construction.constructedType)},
           .operands = {*residual},
           .parameterTypes = construction.parameterTypes,
-          .lifetimeArguments = construction.lifetimeArguments,
-          .lifetimeApplication =
-              lowerLifetimeApplication(construction.lifetimeApplication, body),
           .definedFailure = {.propagation =
                                  FailurePropagationKind::Constructor},
           .constructorKind = construction.kind,
@@ -6239,7 +5597,7 @@ private:
       const HirConstructorInstanceId constructor =
           enqueueConstructor(construction, site);
       if (constructor == 0) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         return std::nullopt;
       }
       residualReturn.constructorTarget = constructor;
@@ -6247,7 +5605,7 @@ private:
           orderedConstructorArguments(residualReturn, residualReturn.operands,
                                       residualReturn.parameterTypes, body, 1);
       if (!arguments) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         return std::nullopt;
       }
       residualReturn.callPlan =
@@ -6279,9 +5637,8 @@ private:
       body.values.back().borrowDependencies = *outputDependencies;
       for (auto &dependency :
            body.values.back().borrowDependencies->dependencies)
-        qualifyLoanDependency(dependency, body.placeDomain);
+        dependency.place = qualifyPlace(dependency.place, body.placeDomain);
     }
-    body.values.back().referenceContentsLoan = model.findReferenceContentsLoan(expression);
     output.program.sourceValueIds[&expression].push_back(id);
     return id;
   }
@@ -6297,14 +5654,14 @@ private:
       const FunctionInfo *declaration = baseModel->findFunction(function);
       const auto arguments = orderedArguments(operands, parameters, body);
       if (declaration == nullptr || !arguments) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         return std::nullopt;
       }
       const auto target = enqueueFunction(
           *declaration, plan.type.arguments, plan.type.valueArguments, {}, {},
           plan.type, parameters, tokenSpan(expression.brace()));
       if (target == 0) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         return std::nullopt;
       }
       const HirValueId id = nextValueId++;
@@ -6340,7 +5697,7 @@ private:
       const auto value = lowerExpression(element, model, classArguments,
                                          classValueArguments, body);
       if (!value) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         return std::nullopt;
       }
       result =
@@ -6387,7 +5744,7 @@ private:
         (emptyReturn && (initializer || argument || !emptyProof)) || !site ||
         construction.kind != ConstructorKind::Ordinary ||
         construction.constructor == 0 || construction.generatedDefault) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return std::nullopt;
     }
     HirValue value{
@@ -6400,9 +5757,6 @@ private:
                  .traits =
                      instanceProvider->traitsFor(construction.constructedType)},
         .parameterTypes = construction.parameterTypes,
-        .lifetimeArguments = construction.lifetimeArguments,
-        .lifetimeApplication =
-            lowerLifetimeApplication(construction.lifetimeApplication, body),
         .definedFailure = {.propagation = FailurePropagationKind::Constructor},
         .borrowOrigin = construction.borrowOrigin,
         .borrowArgument = construction.borrowArgument,
@@ -6426,7 +5780,7 @@ private:
     if (construction.contextualBorrowDependencies) {
       value.borrowDependencies = construction.contextualBorrowDependencies;
       for (auto &dependency : value.borrowDependencies->dependencies)
-        qualifyLoanDependency(dependency, body.placeDomain);
+        dependency.place = qualifyPlace(dependency.place, body.placeDomain);
     }
     if (emptyProof && emptyProof->unsafeConstruction())
       value.unsafeOperation = UnsafeOperationKind::DeclaredUnsafeConstruction;
@@ -6435,7 +5789,7 @@ private:
     const HirConstructorInstanceId target =
         enqueueConstructor(construction, tokenSpan(*site));
     if (target == 0) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return std::nullopt;
     }
     value.constructorTarget = target;
@@ -6461,7 +5815,7 @@ private:
             defaultArgument, defaultModel, targetClassArguments,
             targetClassValueArguments, body, sourceLocationAt(*site));
         if (!lowered) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           return std::nullopt;
         }
         value.operands.push_back(*lowered);
@@ -6469,7 +5823,7 @@ private:
       }
     }
     if (value.operands.size() != value.parameterTypes.size()) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return std::nullopt;
     }
     // A built-in owning handle argument keeps its unstaged transport, as the
@@ -6486,7 +5840,7 @@ private:
                      return parameter.kind == SemanticType::UniqueOwner ||
                             parameter.kind == SemanticType::SharedPointer;
                    })) {
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return std::nullopt;
     }
     const HirValueId id = value.id;
@@ -6549,7 +5903,7 @@ private:
       if (auto expansion = model.shareMacroExpansion(*call)) {
         const auto *info = model.findExpression(expression);
         if (!info) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           return std::nullopt;
         }
         if (retainedSourceStatements.insert(expansion.get()).second)
@@ -6560,7 +5914,7 @@ private:
             expansion.get(), model, classArguments, classValueArguments, body);
         activeResultRegion = enclosing;
         if (!region) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           return std::nullopt;
         }
         body.values.push_back({.id = id,
@@ -6585,7 +5939,7 @@ private:
         prelude = lowerExpression(*source, model, classArguments,
                                   classValueArguments, body);
         if (!prelude) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           return std::nullopt;
         }
       }
@@ -6596,7 +5950,7 @@ private:
             body.values.begin(), body.values.end(),
             [&](const HirValue &value) { return value.id == *id; });
         if (produced == body.values.end()) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           return std::nullopt;
         }
         produced->sequencedInputs.insert(produced->sequencedInputs.begin(),
@@ -6622,7 +5976,7 @@ private:
           exprAs<Grouping>(&expression) != nullptr || comma != nullptr;
       if (info == nullptr || input == nullptr || info->type != input->type ||
           (!wrapper && !model.isFreshClassResult(*producer))) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
         return std::nullopt;
       }
       // A comma's left operand completes, with its result discarded, before
@@ -6633,7 +5987,7 @@ private:
         discarded = lowerExpression(comma->left(), model, classArguments,
                                     classValueArguments, body);
         if (!discarded) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           return std::nullopt;
         }
       }
@@ -6645,7 +5999,7 @@ private:
           if (candidate.id == *id)
             produced = &candidate;
         if (produced == nullptr) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           return std::nullopt;
         }
         produced->sequencedInputs.insert(produced->sequencedInputs.begin(),
@@ -6657,7 +6011,7 @@ private:
         if (!grouping) {
           proof = model.directInitializationProof(expression);
           if (!proof) {
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+            lifecycleValid = false;
             return std::nullopt;
           }
         }
@@ -6684,7 +6038,7 @@ private:
         return lowerPropagation(*unary, *propagation, model, classArguments,
                                 classValueArguments, body);
       }
-      invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+      lifecycleValid = false;
       return std::nullopt;
     }
     // Grouping does not create another closure environment. A parenthesized
@@ -6717,8 +6071,8 @@ private:
         const auto constant = model.findConstant(*raw);
         const auto *text =
             constant ? std::get_if<std::string>(&*constant) : nullptr;
-        if (!info || info->type.kind != SemanticType::StringView || !text) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        if (!info || info->type != SemanticType::StringView || !text) {
+          lifecycleValid = false;
           return std::nullopt;
         }
         // Source metadata is already a semantic literal. In particular, do
@@ -6775,7 +6129,7 @@ private:
         target.info = resolved->receiverInfo;
         if (target.info.type == SemanticType::Unknown ||
             target.info.category != ValueCategory::Place) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           return std::nullopt;
         }
         if (const PlaceKey *place = model.findPlace(*assign)) {
@@ -6808,7 +6162,7 @@ private:
                         classValueArguments, body)) {
               operands.push_back(*element);
             } else {
-              invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+              lifecycleValid = false;
               break;
             }
           }
@@ -6882,7 +6236,7 @@ private:
         }
       }
       if (!validResolvedCallArguments(*call, resolved))
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
       for (std::size_t index = 0;
            index < resolvedCallArgumentCount(*call, resolved); ++index) {
         const std::size_t lowered = operands.size();
@@ -6897,7 +6251,7 @@ private:
         const ResolvedOperatorInfo *arrow = model.findOperator(*member);
         if (arrow == nullptr || arrow->kind != OverloadedOperator::Arrow ||
             operands.size() != lowered + 1) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           continue;
         }
         operands.back() =
@@ -6946,7 +6300,7 @@ private:
                   body)) {
             operands.push_back(*lowered);
           } else {
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+            lifecycleValid = false;
           }
         }
       } else {
@@ -7071,7 +6425,6 @@ private:
         if (const auto *value = std::get_if<bool>(&*constant))
           literal = Literal{*value};
       }
-      if (std::getenv("GTI_TRACE_RQ")) std::fprintf(stderr, "[rq-hir] closure=%d found=%d classArgs=%zu\n", (int)constantClosure, model.findConstant(*raw).has_value(), classArguments.size()); // TEMP-TRACE
     } else if (exprAs<LayoutQuery>(raw) != nullptr) {
       kind = HirValueKind::LayoutQuery;
       if (const std::optional<ConstantValue> constant =
@@ -7242,7 +6595,7 @@ private:
         }
       }
       if (!functionItemTarget) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
       }
     }
 
@@ -7266,24 +6619,18 @@ private:
                    .enumValue = enumValue,
                    .enumVariant = enumVariant,
                    .payloadIndex = payloadIndex};
-    if (const auto *lambda = exprAs<Lambda>(raw))
-      if (const auto *selected = model.findLambda(*lambda))
-        value.lifetimeApplication = lowerLifetimeApplication(selected->environmentApplication, body);
-    if (const auto *conversion = model.findNativeFunctionConversion(*raw))
-      value.lifetimeApplication = lowerLifetimeApplication(conversion->lifetimeApplication, body);
     if (const auto *complete = model.findBorrowDependencySet(*raw)) {
       value.borrowDependencies = *complete;
       value.borrowDependencies->dependencies.clear();
       for (const auto &dependency : complete->dependencies) {
         auto lowered = dependency;
-        qualifyLoanDependency(lowered, body.placeDomain);
+        lowered.place = qualifyPlace(dependency.place, body.placeDomain);
         value.borrowDependencies->dependencies.push_back(std::move(lowered));
       }
     }
-    value.referenceContentsLoan = model.findReferenceContentsLoan(*raw);
     for (const auto &dependency : model.findCaptureBorrowDependencies(*raw)) {
       auto lowered = dependency;
-      qualifyLoanDependency(lowered, body.placeDomain);
+      lowered.place = qualifyPlace(dependency.place, body.placeDomain);
       value.captureBorrowDependencies.push_back(std::move(lowered));
     }
     if (const auto *call = exprAs<Call>(raw);
@@ -7314,7 +6661,7 @@ private:
       if (!dereference || value.operands.size() != 1 ||
           assertion->ownerReference.kind != SemanticType::Reference ||
           assertion->ownerReference.arguments.size() != 1) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
       } else {
         const auto access = assertion->ownerReference.referenceAccess;
         HirValueId witness = 0;
@@ -7357,25 +6704,29 @@ private:
     if (kind == HirValueKind::PackExpansion) {
       if (value.info.type.kind != SemanticType::TypePack ||
           !value.info.type.concretePack || value.symbol == 0) {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
       } else {
-        const std::array<ConcreteFormalRoot, 1> roots{{{.binding = value.symbol, .type = value.info.type}}};
-        const std::array<SemanticType, 1> signature{value.info.type};
-        const auto inputs = deriveConcreteFormalInputs(roots, signature);
-        if (!inputs) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
-          return std::nullopt;
-        }
-        value.packExpansionElements.reserve(inputs->size());
-        for (const auto &input : *inputs) {
-          const auto &element = input.type;
-          const auto traits = instanceProvider->traitsFor(element);
-          const bool storedEntry = std::any_of(model.loans().begin(), model.loans().end(),
-              [&](const auto &loan) {
-                return loan.entry && loan.kind == SemanticLoanKind::StoredValue &&
-                       loan.place.root == value.symbol && !loan.place.receiver &&
-                       loan.place.projections == input.bindingPrefix;
-              });
+        value.packExpansionElements.reserve(value.info.type.arguments.size());
+        for (std::size_t index = 0; index < value.info.type.arguments.size();
+             ++index) {
+          const SemanticType &element = value.info.type.arguments[index];
+          const SemanticTypeTraits traits =
+              instanceProvider->traitsFor(element);
+          const bool storedEntry =
+              element.kind == SemanticType::Class &&
+              std::any_of(model.loans().begin(), model.loans().end(),
+                          [&](const SemanticLoanInfo &loan) {
+                            return loan.entry &&
+                                   loan.kind == SemanticLoanKind::StoredValue &&
+                                   loan.place.root == value.symbol &&
+                                   !loan.place.receiver &&
+                                   loan.place.projections.size() == 1 &&
+                                   loan.place.projections.front().kind ==
+                                       PlaceProjectionKind::ConstantIndex &&
+                                   loan.place.projections.front().index ==
+                                       index &&
+                                   !loan.designatedFields.empty();
+                          });
           HirCallInputKind inputKind = HirCallInputKind::Value;
           if (element.kind == SemanticType::Reference) {
             inputKind = element.referenceAccess == AccessMode::Mutable
@@ -7392,7 +6743,7 @@ private:
                      traits.movable) {
             inputKind = HirCallInputKind::MoveValue;
           } else {
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+            lifecycleValid = false;
           }
           value.packExpansionElements.push_back(
               {.type = element, .traits = traits, .kind = inputKind});
@@ -7482,7 +6833,7 @@ private:
           }
           if (value.functionPointerFunctionTarget.has_value() ==
               value.functionPointerLambdaTarget.has_value())
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+            lifecycleValid = false;
         }
         if ((value.intrinsic == IntrinsicKind::ObjectDestroy ||
              value.intrinsic == IntrinsicKind::ObjectRelocate ||
@@ -7516,7 +6867,7 @@ private:
                 return v.source == resolved->retainedReceiverOwner;
               });
           if (anchor == body.values.rend()) {
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+            lifecycleValid = false;
           } else {
             value.retainedReceiverOwner = anchor->id;
           }
@@ -7524,9 +6875,6 @@ private:
         value.dispatch = resolved->dispatch;
         value.dispatchOwner = resolved->dispatchOwner;
         value.parameterTypes = resolved->parameterTypes;
-        value.lifetimeArguments = resolved->lifetimeArguments;
-        value.lifetimeApplication =
-            lowerLifetimeApplication(resolved->lifetimeApplication, body);
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
         value.borrowArguments = resolved->borrowArguments;
@@ -7550,7 +6898,7 @@ private:
           ensurePlaceDomain(body);
           if (resolved->scopedThreadTasks.size() !=
               resolved->parameterTypes.size())
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+            lifecycleValid = false;
           for (std::size_t index = 0;
                index < resolved->scopedThreadTasks.size(); ++index) {
             const auto &task = resolved->scopedThreadTasks[index];
@@ -7579,7 +6927,7 @@ private:
                 lambdaTarget = target->second;
             }
             if (functionTarget.has_value() == lambdaTarget.has_value()) {
-              invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+              lifecycleValid = false;
               continue;
             }
             HirThreadTaskAdapter adapter{
@@ -7646,7 +6994,7 @@ private:
             }
           }
           if (functionTarget.has_value() == lambdaTarget.has_value()) {
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+            lifecycleValid = false;
           } else {
             const HirThreadTaskAdapterId adapter =
                 output.program.threadTasks.size() + 1;
@@ -7664,7 +7012,7 @@ private:
                    resolved->parameterTypes.size() == 2 &&
                    resolved->parameterTypes[1].kind !=
                        SemanticType::TypeParameter) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
         }
         if (resolved->intrinsic == IntrinsicKind::ThreadSpawn) {
           value.synchronization.kind =
@@ -7681,7 +7029,7 @@ private:
                   : SynchronizationOperationKind::MutexUnlock;
           if (value.synchronization.kind != expected ||
               !validSynchronizationOperation(value.synchronization)) {
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+            lifecycleValid = false;
           }
         } else if (resolved->intrinsic == IntrinsicKind::AtomicLoad ||
                    resolved->intrinsic == IntrinsicKind::AtomicWait ||
@@ -7715,7 +7063,7 @@ private:
                   : SynchronizationOperationKind::AtomicCompareExchange;
           if (value.synchronization.kind != expected ||
               !validSynchronizationOperation(value.synchronization)) {
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+            lifecycleValid = false;
           }
         }
         if (resolved->intrinsic == IntrinsicKind::None &&
@@ -7764,16 +7112,9 @@ private:
       }
       if (const ResolvedLambdaCallInfo *resolved =
               model.findLambdaCall(*call)) {
-        value.neverReturns = resolved->neverReturns;
-        value.noNormalBorrowResultProof = model.noNormalBorrowResultProof(*call);
         value.parameterTypes = resolved->parameterTypes;
-        value.lifetimeArguments = resolved->lifetimeArguments;
-        value.lifetimeApplication =
-            lowerLifetimeApplication(resolved->lifetimeApplication, body);
         value.borrowOrigin = resolved->borrowOrigin;
         value.borrowArgument = resolved->borrowArgument;
-        value.borrowArguments = resolved->borrowArguments;
-        value.borrowFields = resolved->borrowFields;
         value.borrowAccess = resolved->borrowAccess;
         // The callee is an explicit receiver even when a final pack prevents
         // formation of the fixed-arity call plan. MIR stages it before the
@@ -7800,22 +7141,9 @@ private:
               output.program.lambdas.begin(), output.program.lambdas.end(),
               [&](const HirLambda &candidate) {
                 const SemanticType calleeType = model.typeOf(*call->callee());
-                const auto matches = [&](const SemanticType &universal,
-                                         const SemanticType &actual) {
-                  const auto applied = substituteTypeLifetimes(
-                      universal, resolved->lifetimeApplication.bindings);
-                  return applied && equivalentLifetimeTypes(*applied, actual);
-                };
-                if (!lambdaMatchesType(candidate, calleeType) ||
-                    candidate.parameterTypes.size() != resolved->parameterTypes.size() ||
-                    !matches(candidate.returnType, resolved->returnType))
-                  return false;
-                for (std::size_t index = 0;
-                     index < candidate.parameterTypes.size(); ++index)
-                  if (!matches(candidate.parameterTypes[index],
-                               resolved->parameterTypes[index]))
-                    return false;
-                return true;
+                return candidate.returnType == resolved->returnType &&
+                       candidate.parameterTypes == resolved->parameterTypes &&
+                       lambdaMatchesType(candidate, calleeType);
               });
           if (existing != output.program.lambdas.end()) {
             value.lambdaTarget = existing->id;
@@ -7841,7 +7169,7 @@ private:
         value.packFoldArgument = resolved->packArgument;
         value.packFoldElements.reserve(resolved->elements.size());
         if (value.operands.size() != resolved->packArgument + 1) {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
           return std::nullopt;
         }
         const HirValueId pack = value.operands[resolved->packArgument];
@@ -7859,7 +7187,7 @@ private:
                                     element.call.parameterTypes,
                                     tokenSpan(fold->ellipsis()));
           if (functionTarget == 0) {
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+            lifecycleValid = false;
           }
           // Each concrete invocation owns fresh evaluations of its named
           // prefix. Reusing their value IDs would cache a scalar load or TLS
@@ -7869,7 +7197,7 @@ private:
                ++argument) {
             const auto *input = body.findValue(value.operands[argument]);
             if (!input || input->kind != HirValueKind::Variable) {
-              invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+              lifecycleValid = false;
               return std::nullopt;
             }
             HirValue copy = *input;
@@ -7893,7 +7221,7 @@ private:
           const auto plan = orderedArguments(
               arguments, element.call.parameterTypes, body, arguments.size());
           if (!plan) {
-            invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+            lifecycleValid = false;
             return std::nullopt;
           }
           const HirValueId call = nextValueId++;
@@ -7909,9 +7237,6 @@ private:
                .unsafeOperation = model.unsafeOperation(*resolved->pattern),
                .operands = std::move(arguments),
                .parameterTypes = element.call.parameterTypes,
-               .lifetimeArguments = element.call.lifetimeArguments,
-               .lifetimeApplication = lowerLifetimeApplication(
-                   element.call.lifetimeApplication, body),
                .neverReturns = element.call.neverReturns,
                .tracksCaller = element.call.tracksCaller,
                .definedFailure = {.propagation =
@@ -7919,8 +7244,7 @@ private:
                .dispatch = CallDispatch::Static,
                .dispatchOwner = element.call.dispatchOwner,
                .callPlan = HirCallPlan{.arguments = *plan},
-               .functionTarget = functionTarget,
-               .callableArguments = element.call.callableArguments});
+               .functionTarget = functionTarget});
           output.program.sourceValueIds[resolved->pattern].push_back(call);
           value.packFoldElements.push_back(
               {.elementType = element.elementType,
@@ -7937,9 +7261,6 @@ private:
     if (const ResolvedConstructionInfo *construction =
             model.findConstruction(*raw)) {
       value.designatedConstruction = !construction->designatedArguments.empty();
-      value.lifetimeArguments = construction->lifetimeArguments;
-      value.lifetimeApplication =
-          lowerLifetimeApplication(construction->lifetimeApplication, body);
       const bool inPlaceStorageConstruction =
           value.intrinsic == IntrinsicKind::ObjectConstruct ||
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
@@ -8021,9 +7342,6 @@ private:
     if (const ResolvedOperatorInfo *resolved = resolvedValueOperator;
         resolved != nullptr && resolved->function != 0) {
       value.parameterTypes = resolved->parameterTypes;
-      value.lifetimeArguments = resolved->lifetimeArguments;
-      value.lifetimeApplication =
-          lowerLifetimeApplication(resolved->lifetimeApplication, body);
       value.dispatch = resolved->dispatch;
       value.dispatchOwner = resolved->dispatchOwner;
       value.callableBoundary = resolved->boundary;
@@ -8216,7 +7534,7 @@ private:
                                         .type = *value.nativeCalleeType},
             .arguments = std::move(*planned)};
       } else {
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
       }
     }
     // A fixed-arity lambda invocation is an ordinary ordered call. Its closure
@@ -8283,7 +7601,7 @@ private:
           value.callPlan = HirCallPlan{.receiver = std::nullopt,
                                        .arguments = std::move(*planned)};
         else
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
       }
       // A published text payload's owner is this call's fact (L-OWN-02),
       // as a constructor call's published text field is.
@@ -8312,7 +7630,7 @@ private:
         value.callPlan = HirCallPlan{.receiver = std::nullopt,
                                      .arguments = std::move(*planned)};
       else
-        invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+        lifecycleValid = false;
     }
     if (value.intrinsic == IntrinsicKind::ObjectConstruct &&
         ((value.constructorTarget &&
@@ -8414,7 +7732,7 @@ private:
           value.callPlan = HirCallPlan{.receiver = *plannedReceiver,
                                        .arguments = *plannedArguments};
         } else {
-          invalidateLifecycleTrace(__LINE__); // TEMP-TRACE
+          lifecycleValid = false;
         }
       }
     }
@@ -8472,10 +7790,6 @@ private:
   std::size_t placeSnapshotId = 0;
   std::size_t nextPlaceBodyId = 1;
   bool lifecycleValid = true;
-  void invalidateLifecycleTrace(int line) { // TEMP-TRACE
-    if (std::getenv("GTI_TRACE_HIR_VALID")) std::fprintf(stderr, "[hir] lifecycle invalid at hir_lowering.cpp:%d\n", line); // TEMP-TRACE
-    lifecycleValid = false; // TEMP-TRACE
-  } // TEMP-TRACE
   bool constantClosure = false;
   std::size_t discoveryDepth = 0;
   std::optional<SourceSpan> discoverySite;
@@ -8490,8 +7804,6 @@ private:
   std::vector<InstanceDiscovery> destructorDiscoveryDepths;
   std::vector<FunctionId> constantFunctions;
   std::vector<ConstructorId> constantConstructors;
-  HirConstantSourceAuthority constantSourceAuthority;
-  std::unordered_set<FunctionId> queriedConstantFunctions;
   // Signature-only instances of callees outside the completed constant
   // closure; see enqueueFunction.
   std::vector<HirFunctionInstanceId> constantUnavailableFunctions;
@@ -8538,22 +7850,20 @@ HirLoweringResult HirLowerer::lowerConstantFunction(
     const SemanticModel &semantics, SemanticInstanceProvider &instanceProvider,
     FunctionId root, const std::vector<FunctionId> &completedFunctions,
     const GenericSubstitution &substitution,
-    const std::vector<ConstructorId> &completedConstructors,
-    HirConstantSourceAuthority sourceAuthority) {
+    const std::vector<ConstructorId> &completedConstructors) {
   return impl->lowerConstantFunction(semantics, instanceProvider, root,
                                      completedFunctions, substitution,
-                                     completedConstructors, std::move(sourceAuthority));
+                                     completedConstructors);
 }
 
 HirLoweringResult HirLowerer::lowerConstantConstructor(
     const SemanticModel &semantics, SemanticInstanceProvider &instanceProvider,
     const ResolvedConstructionInfo &root,
     const std::vector<FunctionId> &completedFunctions,
-    const std::vector<ConstructorId> &completedConstructors,
-    HirConstantSourceAuthority sourceAuthority) {
+    const std::vector<ConstructorId> &completedConstructors) {
   return impl->lowerConstantConstructor(semantics, instanceProvider, root,
                                         completedFunctions,
-                                        completedConstructors, std::move(sourceAuthority));
+                                        completedConstructors);
 }
 
 } // namespace lang

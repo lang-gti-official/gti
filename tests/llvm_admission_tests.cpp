@@ -314,63 +314,6 @@ lang::VerifiedLoweredProgram lower(std::string_view source,
   return *verified;
 }
 
-void testHierarchyStoredDependencyMetadata() {
-  using namespace lang;
-  const auto verified = lower(R"gti(
-mut int observed = 0;
-struct Base<lifetime a> {
-  int&<a> value;
-  Base(int&<a> input) : value(input) {}
-  ~Base() { observed = observed + this.value; }
-};
-struct Pair<lifetime a, lifetime b> : public Base<a> {
-  int&<b> other;
-  Pair(int&<a> first, int&<b> second) : Base<a>(first), other(second) {}
-  ~Pair() { observed = observed + this.other; }
-};
-int&<a> external<lifetime a>(int&<a> input) {
-  int local = 9;
-  Pair pair{input, local};
-  return pair.value;
-}
-int main() { int value = 7; int result = external(value); return result + observed - 23; }
-)gti");
-  const auto admission = planLlvmAdmission(verified);
-  expect(admission.admitted(), "abstract hierarchy dependencies have native representation: " +
-                                   admission.limitation());
-  const auto multiple = std::find_if(admission.requirements().begin(),
-      admission.requirements().end(), [](const auto &use) {
-        return use.entry->family == "Shape" && use.entry->name == "MultipleBorrowOrigins" &&
-               use.body && use.body->kind == MirBodyKind::Destructor;
-      });
-  expect(multiple != admission.requirements().end() && multiple->implementedShape &&
-             multiple->implementedShape->name == "NativeBorrowMetadata",
-         "inherited and direct stored fields share the checked metadata representation");
-  bool controlled = false;
-  const auto &mir = verified.program().mir();
-  for (const auto address : enumerateMirBodyAddresses(mir)) {
-    const auto *body = findMirBody(mir, address);
-    if (!body || address.kind != MirBodyKind::Destructor) continue;
-    for (const auto &loan : body->loans) {
-      if (loan.kind != MirLoanKind::Stored || !loan.entry ||
-          loan.additionalDependencies.empty()) continue;
-      controlled = true;
-      for (int mutation = 0; mutation != 3; ++mutation) {
-        auto forged = mir;
-        auto *changed = findMirBody(forged, address);
-        auto &group = changed->loans[loan.id - 1];
-        if (mutation == 0) group.additionalDependencies.clear();
-        if (mutation == 1)
-          group.additionalDependencies.front().designatedFields = group.designatedFields;
-        if (mutation == 2) group.additionalDependencies.front().access = AccessMode::Mutable;
-        expect(!verifyMirProgram(forged).valid(),
-               "metadata representation cannot omit, duplicate or strengthen a stored entry dependency");
-      }
-    }
-  }
-  expect(controlled, "hierarchy metadata controls exercise a multi-origin destructor entry");
-}
-
 void testConditionalConsumingTemporary() {
   using namespace lang;
   const auto verified = lower(R"gti(
@@ -734,52 +677,6 @@ int main() {
          "a tombstoned restore producer cannot witness executable authority");
 }
 
-void testSharedErasedReturnPublication() {
-  using namespace lang;
-  const auto verified = lower(R"gti(
-import std.memory;
-struct Borrowed<lifetime storage> {
-  int&<storage> value;
-  Borrowed(int&<storage> input) : value(input) {}
-};
-T&<a> round_trip<T, lifetime a>(T&<a> input) requires outlives<T, a> {
-  unsafe { return std::restore_ref<T>(std::erase_ref(input)); }
-}
-int main() {
-  int number = 7;
-  Borrowed view{number};
-  Borrowed& same = round_trip(view);
-  return same.value - 7;
-}
-)gti", true);
-  bool projected = false;
-  for (const auto &function : verified.program().mir().functionInstances())
-    for (const auto &block : function.body.blocks)
-      for (const auto &instruction : block.instructions) {
-        if (instruction.kind != MirInstructionKind::Borrow || instruction.operands.size() != 1 ||
-            instruction.operands.front().kind != MirOperandKind::Loan)
-          continue;
-        const auto *input = function.body.findLoan(instruction.operands.front().loan);
-        const auto proof = input ? mir_detail::verifiedSharedErasedReferenceReturn(
-            verified.program().mir(), function.body, *input, function.id) : std::nullopt;
-        projected |= proof && mir_detail::matchesSharedErasedReferenceReturn(
-            function.body, block, instruction, *proof);
-        if (proof) {
-          const auto &referent = proof->referenceType.arguments.front();
-          expect(mir_detail::completeObjectType(verified.program().mir(), referent),
-                 "complete object identity instantiates its declared lifetime parameters");
-          auto malformed = referent;
-          malformed.lifetimeArguments.push_back(Lifetime::staticLifetime());
-          expect(!mir_detail::completeObjectType(verified.program().mir(), malformed),
-                 "complete object lookup rejects a forged lifetime application arity");
-        }
-      }
-  expect(projected, "native fixture exports original ownership at the exact restored pointer");
-  const auto admission = planLlvmAdmission(verified);
-  expect(admission.admitted(), "verified shared erasure return is ordinary pointer transport: " +
-                                  admission.limitation());
-}
-
 void testClosureEnvironmentPlan() {
   using namespace lang;
   using native_llvm::closureCleanupInstance;
@@ -1006,58 +903,6 @@ int main() {
          "a by-copy hierarchy capture and a closure copy are generated "
          "copies: " +
              byCopy.limitation());
-}
-
-void testClosedScopeFieldPublication() {
-  using namespace lang;
-  const auto verified = lower(R"gti(
-struct Badge<S> { int value; Badge(int input) : value(input) {} };
-struct Envelope<S> {
-  Badge<S> value;
-  Envelope(int input) : value(Badge<S>(input)) {}
-  Badge<S> get() { return this.value; }
-};
-using Bound = for<lifetime a> int&<a>(int&<a>);
-int main() { Envelope<Bound> envelope{7}; auto value = envelope.get(); return value.value - 7; }
-)gti");
-  expect(planLlvmAdmission(verified).admitted(),
-         "closed callable names do not change exact constructor field storage");
-  const auto &mir = verified.program().mir();
-  bool checked = false;
-  for (const auto &constructor : mir.constructorInstances())
-    for (const auto &block : constructor.body.blocks)
-      for (const auto &instruction : block.instructions) {
-        const auto plan = native_llvm::unstagedConstructorFieldPublication(
-            mir, constructor.body, constructor.id, instruction);
-        if (!plan.exact || plan.targetType.arguments.size() != 1 ||
-            plan.targetType.arguments.front().quantifiedLifetimes.size() != 1)
-          continue;
-        const auto index = static_cast<std::size_t>(plan.initializer - constructor.initializers.data());
-        for (unsigned mutation = 0; mutation < 4; ++mutation) {
-          auto copy = mir;
-          auto *owner = const_cast<MirConstructorInstance *>(copy.findConstructorInstance(constructor.id));
-          auto &target = owner->initializers[index].targetType.arguments.front();
-          if (mutation == 0) {
-            const auto before = Lifetime::parameter(target.quantifiedLifetimes.front());
-            const auto after = Lifetime::parameter(900081);
-            target.quantifiedLifetimes.front() = after.id;
-            for (auto &argument : target.arguments)
-              if (argument.referenceLifetime == before) argument.referenceLifetime = after;
-          }
-          if (mutation == 1) target.quantifiedLifetimes.clear();
-          if (mutation == 2) target.arguments.front().referenceLifetime = Lifetime::staticLifetime();
-          if (mutation == 3) target.arguments.back().referenceLifetime = Lifetime::parameter(900082);
-          const auto *producer = owner->body.findBlock(block.id);
-          const auto found = std::find_if(producer->instructions.begin(), producer->instructions.end(),
-              [&](const auto &candidate) { return candidate.id == instruction.id; });
-          const auto changed = native_llvm::unstagedConstructorFieldPublication(
-              copy, owner->body, owner->id, *found);
-          expect(changed.exact == (mutation == 0),
-                 "field publication renames only closed binders and preserves free, fixed and correlated regions");
-        }
-        checked = true;
-      }
-  expect(checked, "closed-field LLVM controls reach an actual record publication");
 }
 
 void testUnstagedConstructorFieldPublicationPlan() {
@@ -1541,7 +1386,7 @@ int main() {
   MirProgram wrongField = mir;
   auto &wrongFieldConstructor = constructorAt(wrongField, carrier.constructor);
   auto &wrongFieldLoan = loanAt(wrongFieldConstructor.body, carrier.loan);
-  ++wrongFieldLoan.storedPath.front().field;
+  ++wrongFieldLoan.storedField;
   const auto missing = native_llvm::storedFieldPublication(
       wrongField, wrongFieldConstructor.body, carrier.constructor,
       wrongFieldLoan);
@@ -1555,7 +1400,7 @@ int main() {
   const auto field = std::find_if(
       wrongTypeOwner.declaredFields.begin(),
       wrongTypeOwner.declaredFields.end(), [&](const auto &candidate) {
-        return lang::BorrowPath{lang::fieldProjection(candidate.symbol)} == wrongTypeLoan.storedPath;
+        return candidate.symbol == wrongTypeLoan.storedField;
       });
   expect(field != wrongTypeOwner.declaredFields.end(),
          "stored publication mutation retains its declared field");
@@ -4197,15 +4042,12 @@ void testDispatchPerUseWitnesses() {
 int main() {
   try {
     testConcreteParameterPackPlan();
-    testHierarchyStoredDependencyMetadata();
     testConditionalConsumingTemporary();
     testConcreteParameterAliases();
     testVerifiedConcretePackOwners();
     testClosureEnvironmentPlan();
     testHierarchyCapturePlan();
     testVerifiedRestorationRelay();
-    testSharedErasedReturnPublication();
-    testClosedScopeFieldPublication();
     testUnstagedConstructorFieldPublicationPlan();
     testStoredFieldPublicationPlan();
     testLedger();

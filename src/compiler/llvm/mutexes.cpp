@@ -1,4 +1,3 @@
-#include "representation.h"
 #include "mutexes.h"
 #include "closure_environment.h"
 #include "gti/mir_effects.h"
@@ -23,7 +22,13 @@ nativeMutexElement(const MirProgram &program, const SemanticType &type,
       type.arguments[0].kind == SemanticType::Reference ||
       type.arguments[0].kind == SemanticType::RawPointer)
     return {};
-  const auto *owner = exactClassInstance(program, type);
+  const MirClassInstance *owner = nullptr;
+  for (const auto &candidate : program.classInstances())
+    if (candidate.type == type) {
+      if (owner)
+        return {};
+      owner = &candidate;
+    }
   if (!owner || owner->compilerCapability != kind || owner->abstract ||
       owner->polymorphic || owner->cOpaqueHandle || owner->cAbiRecord ||
       owner->cAbiLayout || owner->unionLayout || owner->destructor ||
@@ -57,11 +62,11 @@ mutexComposition(const MirProgram &program, const SemanticType &type,
     else if (selected.kind == SemanticType::Array &&
              selected.arguments.size() == 1 && !selected.arrayLengthParameterId)
       valid = self(self, selected.arguments[0]);
-    else if (const auto *payload = native_llvm::exactPayloadEnum(program, selected)) {
+    else if (const auto *payload = program.findPayloadEnum(selected)) {
       valid = true;
       for (const auto &variant : payload->variants)
         for (const auto &element : variant.payloadTypes)
-          valid &= self(self, instantiateStorageType(program, selected, element));
+          valid &= self(self, element);
     } else if (selected.kind == SemanticType::Lambda && !leaf(selected)) {
       // A closure environment is an inline aggregate of its captures, so a
       // capture taken by value may hold mutex storage. A borrowing capture
@@ -79,7 +84,15 @@ mutexComposition(const MirProgram &program, const SemanticType &type,
                     : self(self, environment->captureTypes[index]);
       result.closure |= valid;
     } else if (selected.kind == SemanticType::Class) {
-      const auto *owner = exactClassInstance(program, selected);
+      const MirClassInstance *owner = nullptr;
+      for (const auto &candidate : program.classInstances())
+        if (candidate.type == selected) {
+          if (owner) {
+            visiting.pop_back();
+            return false;
+          }
+          owner = &candidate;
+        }
       if (owner && (owner->compilerCapability ==
                         CompilerCapabilityTypeKind::MutexStorage ||
                     owner->compilerCapability ==
@@ -97,7 +110,7 @@ mutexComposition(const MirProgram &program, const SemanticType &type,
                  owner->structuralBases.empty()) {
         valid = true;
         for (const auto &field : owner->declaredFields)
-          valid &= self(self, instantiateStorageType(program, selected, field.type));
+          valid &= self(self, field.type);
       } else
         valid = leaf(selected);
     } else
@@ -150,7 +163,7 @@ nativeMutexConstructor(const MirProgram &program,
       (parameterRecipe && escapes) || !body.values.empty() ||
       !body.loans.empty() || !body.fullExpressions.empty() ||
       body.places.size() != 1 || body.dropObligations.size() > 1 ||
-      !verifyMirBody(program, body, constructor.id).valid())
+      !verifyMirBody(body, constructor.id).valid())
     return {};
   const auto &parameter = body.places.front();
   if (parameter.root != MirPlaceRootKind::Binding ||

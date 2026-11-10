@@ -219,96 +219,6 @@ provenance queries resolve an exact dereferenced capture slot to its entry loan;
 selected fields/elements retain their separate identity. A same-typed captured
 array cannot substitute another capture's loan at a call boundary.
 
-Lifetime signature normalization records declaration parameters, implied
-well-formedness bounds and a Boolean requirement formula before checking a
-body. Input elision creates independent parameters; a receiver or sole input
-can supply an elided output. A call records its actual region bindings,
-inference variables, required relations and exact origin places separately.
-The body of a reusable instance assumes its declared formula; it does not
-attempt to prove universal lifetime requirements without the caller's bindings.
-Conjunction preserves all premises, while disjunction supplies only premises
-guaranteed by every feasible alternative.
-
-Type-outlives proof retains the exact stored-type implications of each assumption
-case. A checked borrow of an aggregate establishes its instantiated fields,
-payloads and non-interface bases for that borrow, including opaque generic field
-types. The same bounded storage walk supplies region implications and type
-premises. Unused generic arguments, raw pointees and callable invocation types
-contribute no stored components; closures contribute only checked captures.
-These are derived proof facts, not new public requirements or stronger regions.
-
-Checked erasure and restoration publish a complete scalar borrow through the
-same physical-input mapper as checked callable results. A reference to a
-borrowed aggregate retains its physical reference loan; its separate stored
-field dependencies do not replace that loan. Mapping the exact unprojected
-reference requires no enumeration of an opaque referent's contents. Mapping
-an external stored field still requires a complete typed path and guards.
-
-The staged reference-contents schema distinguishes a reference's address loan
-from an external reference read from its typed referent. An opening names the
-evaluated reference and its read capabilities; a contents source names that
-opening and an exact structural field path, with no lifetime-supplier place.
-The finite structural supplier query retains each crossed reference and enum
-guard. Unknown, cyclic and exhausted queries publish no partial path inventory.
-The semantic adapter derives direct inventories from checked storage paths and
-can prepare a complete shared-reference opening only after validating its exact
-reference type, read ancestry, guards and result projection. These routines are
-not yet connected to ordinary expression analysis. Tagged return normalization
-uses the evaluated binding/receiver and exact member, base or constant-index
-selector; it never projects through a call's lifetime-owner promise. Distinct
-opening IDs and distinct reference slots do not prove their external referents
-disjoint. Writes, loop entries and joins invalidate reuse of current contents,
-while copied shared snapshots retain their immutable authority. Activation still
-requires complete tagged-source transport, declaration/call supplier composition
-and independent MIR formation, access and cleanup replay; HIR rejects populated
-contents facts until those checks exist. Mutable contents and cleanup-bound reads
-retain their separate permission obligations. Recursive supplier graphs and
-compact selectors remain required work; existing direct recursive storage
-queries are unchanged.
-
-A stored-reference field return also checks the field's exact instantiated
-region against the declared result region. Its constructor's original input
-does not bypass an explicitly shorter field contract. Inferred direct and
-inherited field regions record this same relationship in the body proof.
-
-Returning the address of a field is checked independently from copying its
-value. An ordinary owned field can have a known-empty stored-reference set
-while its address still borrows the containing object. Reference-return
-validation and complete-return publication derive that exact physical owner
-without replacing the expression's empty copied-value fact. The result
-retains the owner's access and lifetime; an external reference stored in the
-same object cannot extend its owned field to a longer lifetime.
-
-Complete return normalization identifies a checked lifetime supplier separately
-from the produced referent's type. An owner-relative result may be governed by
-an owner containing other references or opaque fields, including an owner
-reached through a stored checked reference. The actual typed expression or
-unsafe owner-witness operation establishes the referent. Exact source paths,
-reference crossings, access, result-region requirements and cleanup ancestry
-remain mandatory; a local or consumed carrier shell supplies no caller storage.
-This general rule subsumes the previous empty-inventory and private
-owned-pointee admission exceptions without changing their operation proofs.
-An explicit unsafe raw-reference return publishes the same exact checked owner
-to its complete producer fact and its raw-borrow lowering. It retains an active
-physical reference entry when present; stored external fields never replace
-that entry, and the declared result lifetime and access still require proof.
-Generic instantiation rebuilds the full region-permitted supplier inventory
-after substituting concrete stored fields. The unsafe assertion's written owner
-remains exact and is not selected by taking the first supplier in that inventory.
-Call metadata uses that same complete concrete contract for namespace functions
-and member functions. A legacy compact `borrowed_from` spelling cannot erase
-newly revealed stored-field suppliers or their expanded parameter ordinals.
-
-Anonymous stored regions remain determined by field structure. A constructor's
-checked initializer-list summary may relate its inputs to those anonymous
-output slots. Those relations become its published declaration contract before
-body checking; arbitrary constructor statements do not infer or narrow them.
-Explicitly named owner regions still require a written input relationship or
-bound. Initializer analysis uses normalized member types, rather than resolving
-omitted source lifetimes a second time. Provenance matching can compare ordinary
-type shape, but conversion and initialization still require the full lifetime
-proof and the existing access, movement and cleanup checks.
-
 ## Generic payload enum signatures
 
 Nominal registration inventories class and enum identities and their ordinary
@@ -448,16 +358,6 @@ contextual conversion on its initializer or operand, in the map that holds a con
 `recordsDeclarationConversion`. Every contextual conversion now records its
 target's program effect edge, so a condition's `operator bool` contributes to
 initializer-order effects like a declaration's conversion does.
-
-Concrete operator selection applies the same lifetime contract as an ordinary
-function call. Exact non-lifetime shapes, literal-adoption tiers and access
-checks still select the target; its checked application proves region
-conversions and bounds. Only the selected application is committed. Deferred
-contextual arguments are completed before that application becomes executable.
-Synthetic operator receivers supply their exact checked place, rather than
-implicitly borrowing the current method's receiver. Normal, projected and
-contextual operator records all retain the selected lifetime arguments and
-application for independent HIR/MIR verification.
 
 ## Use-based accessor selection
 
@@ -1133,17 +1033,6 @@ ordinary lookup. Private homonyms in unrelated modules cannot select a different
 stored origin or ownerless-text contract; scoped context restoration also keeps
 recursive summaries and later caller analysis independent of import order.
 
-Empty constructor bodies publish a complete checked initializer summary for
-unconditional as well as guarded borrowed fields. Ordinary field initializers
-and selected base initializers contribute exact typed paths, including every
-possible supplier of a scalar reference. The body proof retains selected
-constructor generic arguments, lifetime application and defaults; an early
-declaration scan cannot reject that result merely because it lacks a one-source
-map. Concrete construction demands the complete summary before publication,
-and unavailable or recursive evidence remains unknown. Simultaneously active
-exclusive destinations cannot retain overlapping origins. This initializer
-proof does not extend the existing support for nonempty constructor bodies.
-
 `ownerlessTextConstructorInputs`, the pre-body input contract checked at each
 construction, includes a base initializer that passes a formal to a base
 constructor storing that parameter. The derived class keeps its text fields
@@ -1186,18 +1075,6 @@ scalar set rooted at the parameter. A consuming method on a fresh or moved
 carrier production uses the production's own access, as a fresh-temporary
 receiver does, so consuming a read-only carrier claims no exclusive access to
 its owners.
-
-Consuming reference and borrowed nominal results use the same complete
-normalization and exact instance query as other results. The declaration
-supplier inventory excludes a physical whole-receiver fallback in consuming
-mode. Selected calls require a complete result summary and instantiate its
-actual dependency set before publishing the result. Every receiver supplier
-must cross a checked stored reference on its typed path; argument/global
-suppliers and proven empty nominal alternatives retain their ordinary proof.
-The body normalizer still checks source access, parents, regions and cleanup,
-and rejects owned receiver storage even when a written bound names it. MIR
-independently reconstructs this supplier contract before admitting a consuming
-result. Retained owned-field/pointee invocation keeps its separate restriction.
 
 Dependent generic type defaults retain their resolved symbolic semantic type.
 Only while resolving that default, constraints on open type arguments defer;
@@ -1244,10 +1121,7 @@ inherit them with base value/function members. Type lookup, concrete generic
 reanalysis, and tooling all consume the same resolved target. Type lookup
 through a concrete type alias substitutes the containing specialization
 at every member step, preserving access checks on the qualifier chain and
-source identities for both qualifiers and selected members. Calling an alias as
-a constructor uses that same type application: anonymous alias regions are
-inferred at each use, while explicitly fixed regions remain exact.
-Written specialized
+source identities for both qualifiers and selected members. Written specialized
 type qualifiers use `TypeRef::qualifiedOwner` to retain each segment's generic
 arguments (`Box<T>::nested::value_type`), rather than appending them to the final
 alias. The ordinary class selection and substitution path resolves each owner;
@@ -1589,53 +1463,8 @@ pack, not a reference to the group. Forwarding and folds retain each element's
 origin and access: mutable elements may be reborrowed read-only, but read-only
 elements cannot acquire exclusive access. Named move-only values are observed
 without copying; multiple read-only aliases are permitted and exclusive alias
-conflicts use ordinary call checking. Function results use the same normalized
-lifetime contract and complete supplier proof as fixed reference inputs. An
-unresolved top-level pack defers supplier ordinals without publishing a summary;
-relational prototypes retain their normalized declaration contract on the same
-terms. Concrete instance analysis expands the signature and proves all returned
-owners.
-Only an exact call whose argument flattening encountered an unresolved pack may
-defer an unknown reference-result category. The body-local marker is cleared on
-each visit, and does not authorize sibling returns or create a provisional place.
-Named calls, invocation pointers, function items, lambdas and deferred callable
-parameters use this same staging boundary. Target, access, unsafe and declared
-call requirements remain checked; a lambda parameter's deferred requirement is
-attached to its own binding, not an enclosing function's parameter ordinal.
-During concrete lambda reanalysis, that call's contextual result is resolved in
-the current lambda scope; primary-body environment names are not reused as
-independent lifetime requirements.
-After selection, a contextual reference result is checked with the completed
-pending lifetime application and the ordinary type-conversion constraints.
-Its existential invocation region may meet the requested result region only
-when every resulting fixed-region obligation is proved. The selected result
-type and complete supplier proof remain unchanged; this adds no runtime state.
-A known leading reference or method receiver may be checked before an unresolved
-trailing pack by running the ordinary formal-input derivation and return
-normalizer on that exact leading slice and receiver. A consumed receiver still
-permits only proven external reference paths, never its physical shell.
-Published parameter binding metadata and the active body symbol
-use the same symbolic group for an explicit source reference pack, while the
-callable signature retains its reference-pack recipe. An ordinary reference to
-a pack remains one reference. This validates only those known origins; it
-publishes no complete summary and leaves the body pending concrete replay. This
-applies separately to
-a referenced carrier's physical shell and its stored external paths. Return
-supplier ordinals and completed-call comparisons expand concrete pack leaves,
-while body bindings, canonical instances and summary-query keys retain their
-grouped signature. Nested callable binders may compare under alpha-renaming at
-that invocation boundary; fixed and free regions must still match exactly.
-An explicit `borrowed_from` on the final pack selects from all remaining flat
-lanes after the written fixed formals, in both grouped and applied signatures.
-It still requires exactly one eligible supplier: an empty pack supplies none,
-and multiple eligible lanes remain ambiguous.
-Mutable element reborrows
-may shorten their outer region through a completed call application, while the
-referent's nested regions remain invariant.
-Constructor reference packs retain their non-borrowed-result boundary. Pack
-folds instantiate and commit an ordinary lifetime application for every exact
-element. Their named pack operand is a syntax carrier, while loan access is
-checked against each element's active entry and full index path. Exact fresh read-only arguments use
+conflicts use ordinary call checking. The first slice confines reference packs
+to invocations with non-borrowed results. Exact fresh read-only arguments use
 the same full-expression materialization and failure cleanup as fixed reference
 parameters, including ordinary source constructors whose result carries no
 borrow. Mutable arguments always require a mutable source place.
@@ -1643,9 +1472,9 @@ borrow. Mutable arguments always require a mutable source place.
 Named method packs can bind the enclosing class's final generic pack by its
 resolved identity. Declaration signatures retain symbolic `TypePack` metadata;
 class substitution preserves that identity through symbolic base forwarding.
-Method selection uses the owner's prescribed concrete list and reuses exact
-argument and ownership checks, including forwarding and `operator()`. It does
-not infer owner arguments from the call. Concrete
+Method selection groups the owner's prescribed concrete list by source argument
+expression and reuses exact argument and ownership checks, including forwarding
+and `operator()`. It does not infer owner arguments from the call. Concrete
 lexical pack scopes retain the declaring name/ID independently of a substituted
 pack's canonical type identity. Signature-pattern forwarding does not rewrite
 that type identity to impersonate the receiving declaration, and a nearer
@@ -1668,18 +1497,6 @@ constant element index and each resolved reference-field path/access mode.
 Expanded call arguments preserve that element path, even when several elements
 have the same type. Generic reanalysis forwards these exact dependencies rather
 than treating the grouped binding as a referent or dropping its other origins.
-
-Ordinary overload selection expands concrete call arguments into transient
-`AnalyzedCallArgument` descriptors before arity, generic, default, lifetime and
-ownership checks. Each forwarded lane retains its original expression and full
-constant-index path; a syntax view supplies diagnostic/contextual-expression
-access without reevaluating that expression. The selected call records the flat
-explicit count, so an empty expansion cannot suppress a trailing default.
-Symbolic packs defer executable target publication. Reference-origin checks use
-the same exact concrete-formal inventory as return normalization, keeping an
-indexed physical reference entry separate from its referent's external stored
-dependencies. Constructor initializer parsing shares the ordinary final-pack
-argument-list parser.
 
 One call to either public `SemanticVisitor::check` overload owns one complete
 semantic request session. `SemanticVisitor::Impl::RequestSessionState` owns one
@@ -1906,12 +1723,6 @@ with `classCanUseStructuralDefaultConstruction`. Default-availability queries,
 factory calls, and omitted subobjects consume the same selection facts. An
 otherwise eligible struct can retain designated construction alongside a
 structural default declaration. Copy, move, and destruction inference is unchanged.
-Structural defaults do not open an owner's nested callable invocation scopes:
-the existing structural-default predicate excludes constructor parameters,
-generics, requirements and initializer lists. Nested quantified signature slots
-remain closed storage metadata, while nominal formation obligations and free
-owner regions retain their ordinary checks. A source constructor invocation
-continues to import the member scopes it needs.
 This revises the earlier implicit-default policy: source must opt in even when
 all fields have declaration initializers. Existing generated HIR/MIR schedules
 execute the explicit default, with no additional runtime operation. Constant
@@ -1947,11 +1758,6 @@ saves and restores only source context, including early returns; it creates no
 lookup scope and changes no ownership or constant-evaluation rule. Ordinary
 locals remain in their function or lambda region. Each initializer region must
 resolve to the accepted declaration binding in its exact analysis snapshot.
-A selected source constructor reanalyzes its defaults in that constructor's
-instance and records initializer regions there. HIR checks those regions against
-the callable's exact owner substitution; a generated default or class layout
-initializer keeps its separate class-initializer context. Layout facts cannot
-stand in for a selected constructor's expression or source-region facts.
 
 
 `SemanticModel` is a set of snapshot-owned side tables keyed by AST identity or
@@ -2158,39 +1964,6 @@ packs, selected construction, capabilities, callables, and borrowed-return
 origins. HIR is not a second type checker; it asks semantics for the concrete
 facts it needs.
 
-Region-bearing generic type arguments pass through the provider's
-`canonicalizeExecutableInstance` query before executable discovery or body
-reanalysis. Each free region occurrence receives an instance-owned universal
-parameter; coincident caller regions do not make independent occurrences equal
-inside the body. A patterned nominal declaration may explicitly fix an
-occurrence to one of its lifetime parameters or to `static`; those occurrences
-retain the declared relationship during lifting. Repeated fixed occurrences
-must have consistent actual bindings and cannot capture an invocation-local
-binder. This rule follows the declaration pattern, never coincident regions
-inside a projected type argument. Higher-ranked binders preserve their scope and
-repeated uses under alpha-renaming. The canonical type arguments, normalized signature,
-formation requirements and lifetime contract identify the reusable instance.
-Actual caller choices remain in `SemanticLifetimeApplication` bindings.
-Explicit and default type arguments fix those choices; deduced arguments may
-infer a common valid region only through the ordinary checked call application.
-
-Lifted parameter identities occupy a checked, non-rewinding request-owned
-range. Nested analysis workers share that registry, while a preamble adoption
-copies it for the new request. Every consuming model records the descriptors;
-HIR and MIR retain their reduced kind and identity metadata alongside the
-universal contract. Region-bearing instance-cache keys are not reused across
-editor snapshots until that cache can independently remap these identities.
-Native representation erasure remains downstream of lifetime verification.
-
-An exact class specialization retains the primary's public type and value
-arguments in its selected semantic type. Its declaration identity selects
-storage and member definitions; public parameter projection supplies argument
-arity, substitution, and inherited formation obligations. This preserves
-regions nested inside generic type arguments without introducing a second
-hidden type tree. Selection compares runtime type/value structure independently
-of regions, while each application still proves the primary's complete lifetime
-contract. Primary type names do not enter the specialization's lexical scope.
-
 `HirLowerer` receives the immutable base `SemanticModel` and a narrow
 `SemanticInstanceProvider`; it cannot start a fresh semantic request or mutate
 the visitor facade. The provider adapts the existing request-local
@@ -2212,14 +1985,6 @@ the selected parameter types. `ResolvedCallInfo` and
 `ResolvedConstructionInfo` retain the separated type and value arguments plus
 the concrete fixed-array parameter types. Braces never acquire an independent
 semantic type.
-
-Constructor selection retains a failed lifetime proof for diagnostic purposes
-when the candidate's ordinary argument type, access and value-category checks
-match. If no candidate is viable, it reports `GTI-S2127` with the compatible
-constructor declarations instead of suggesting a type conversion. Free-region
-shape comparison only classifies that failure; it never admits the candidate.
-A different viable overload suppresses the speculative lifetime failure, and
-ordinary type/access mismatches retain their existing diagnostics.
 
 A written integer literal argument is analyzed at its default type and may
 match a candidate's integer parameter of another type as a
@@ -2327,11 +2092,7 @@ and an analysis with the raw-pointer audit enabled never uses it.
   the preamble's session state (the compiler-generated copy of
   `RequestSessionState`, with the catalog deep-copied and request-local
   budgets replaced), reopen the catalog, and run the registration passes over
-  the declarations after the prefix only. Reopening clears nominal-contract
-  readiness while preserving the prefix's completed contracts: new nominal
-  types first register their signatures, then the ordinary formation fixed
-  point and signature refresh establish readiness before body analysis.
-  The whole-catalog passes start at
+  the declarations after the prefix only: the whole-catalog passes start at
   the adopted class, enum, alias, concept and function floors, and native
   record and union shape states persist in the session so later records can
   refer to earlier ones. The body phase then analyses only the remaining
@@ -2618,19 +2379,6 @@ type, required receiver access, and selected concrete lambda or `operator()`
 target. A call used as a `void` operation has a `void` result requirement. A
 condition supplies exact `bool`; an explicitly typed initializer, assignment,
 or enclosing return supplies an exact non-reference value type. A direct
-value context may load that exact referent from a checked-reference invocation
-result. Contextual function-item selection and concrete invocation use the
-same rule; the item retains its reference result, storage region and supplier
-contract, and ordinary copying and escape checks still apply. A reference
-requirement cannot obtain a reference from a returned value. Namespace function
-items retain their exact declaration identity, fixed static choices and
-quantified invocation regions. Executable type canonicalization renames only
-those bound regions; it does not infer a captured environment for the item.
-An unused reference parameter is proven only from a fully checked body owned by
-the current semantic model. Skipped dependent branches provide no unused-parameter
-evidence; their concrete instances still perform ordinary value and call checks.
-Each invocation uses the ordinary selected lifetime application and complete
-result publication before HIR consumes it. A direct
 generic-parameter or generic-field invocation used as a call argument can also
 take its result requirement from the uniquely selected outer parameter. The
 contextual-argument pass inspects declaration types without evaluating the
@@ -2792,29 +2540,18 @@ complete resolved closure identity; consumption does not permit capture mutation
 
 ### Namespace Function Items
 
-A bare namespace function name in a value context selects one eligible,
-body-bearing GTI declaration with no unspecialized type or value binders. With no required signature, multiple
+A bare namespace function name in a value context selects one eligible
+non-generic, body-bearing GTI declaration. With no required signature, multiple
 eligible declarations are ambiguous. Existing confined callable contracts and
 managed-thread task contracts can instead select one exact matching target.
 Semantics constructs `SemanticType::FunctionItem` from the selected
 `FunctionId`, result, and parameter list; neither HIR nor a backend sees an
 overload set or must infer which declaration the source intended.
-Declaration lifetime parameters remain invocation quantifiers; fixed `static`
-results stay fixed when the item passes through a generic callable parameter.
 
 The expression records a function occurrence for hover and definition, the
 exact target, and read-callable capability. Its zero-state type is trivial,
 transfer-capable, and share-capable. Ordinary value rules allow storage,
 copy-capture, generic fields, and exact results without closure cleanup.
-An exact stateless item can also use the ordinary read-only temporary-value
-borrow rule when the selected source definition and its applied lifetime
-contract prove that the result cannot retain the temporary's storage. This
-permits a generic copy function to return the item value without claiming a
-confined invocation-only parameter. The selected namespace declaration and
-full quantified signature remain authoritative; reference or raw-pointer
-results into that temporary, mutable borrows, bodyless targets, and capturing
-closures do not gain permission from this rule. MIR independently checks the
-same producer, application, result, loan, and cleanup facts.
 Function-item calls expand concrete value/read-only/mutable-reference packs
 under ordinary argument matching. A callee-producing expression still evaluates
 before the arguments even though its selected function identity is static.
@@ -2826,36 +2563,6 @@ reanalysis; an expression entry inherited from another analysis does not prove
 the argument was analyzed here. Contextual array tails retain their selected
 constructor parameter context. Ordinary direct function calls and the separate
 named-native-callback conversion retain their existing resolution paths.
-
-Concrete class analysis substitutes only owner bindings into a member alias's
-normalized declaration recipe. The alias keeps its own type, value, and lifetime
-parameters, including anonymous regions and parameters used through another
-alias. Alias use-site resolution supplies explicit arguments or fresh inference
-regions. Re-resolving declaration syntax as an alias use would incorrectly store
-those inference regions in the class metadata.
-
-### Fixed Lambda Environment Premises
-
-A closure records an `environmentContract` separately from its invocation
-`lifetimeContract`. The former contains declared enclosing lifetime premises
-and capture storage well-formedness expressed only in the closure's fixed
-environment slots. Creation applies those exact slots to the enclosing body
-and records a checked lifetime application. Local body regions and a fresh
-invocation's binders cannot enter the published environment contract.
-
-Body analysis composes the two contracts through the shared callable helper.
-Complete `All`/`Any` formulas survive projection and composition. Forgetting a
-premise in another invocation scope weakens the formula; it never selects one
-arm of a disjunction. Lexical concept lookup remains available, but lifetime
-proof does not reimport its original, unrenamed enclosing binders.
-
-The fixed contract is part of the exact lambda type's formation requirements,
-including when the type supplies a generic argument. Callable erasure first
-reconciles those fixed slots with the requested carrier and then proves the
-invocation contract. A fixed input cannot implement a fresh universal input.
-HIR/MIR preserve the formation application and replay it before consuming the
-type invariant. These contracts add compile-time metadata, not closure fields
-or runtime checks; integrated runtime coverage remains a required gate.
 
 ## Owned Managed-Thread Tasks
 
@@ -3306,7 +3013,7 @@ Every function also carries a requires clause naming the block's own
 application, under a generated `requires` keyword. Each existing declaration
 and lowering pass therefore sees ordinary namespace functions. HIR enqueues their
 instances from ordinary `ResolvedCallInfo` records, MIR lowers them like any
-generic function, and code generation consumes the existing checked instance
+generic function, and the C++ backend names them by the existing instance
 identity, which includes the generated namespace.
 
 **Registration** happens in three stages before the catalog is sealed:
@@ -3336,25 +3043,6 @@ identity, which includes the generated namespace.
    other declaration. The restated requires clause on each block function is
    resolved for its body but not validated again, so a pattern problem
    reports once at the block rather than once per operation.
-
-Omitted stored regions in a conformance head become implicit block lifetime
-parameters through the same nominal declaration normalizer used by stored
-fields. Each exact occurrence keeps its identity, separately from an operation's
-reference-shell universals. Ordinary operation registration contextualizes only
-unwritten slots that structurally correspond to those head parameters; named or
-static regions are never replaced. The interface is normalized again after its
-block substitution, so associated-type aliases use ordinary per-use elision.
-Signature matching alpha-renames operation-local binders and proves the
-implementation's requirements under every interface assumption case. Block
-regions remain fixed even when an operation does not mention them in a value
-parameter or result. Concrete type arguments in lifetime-open heads keep exact
-identity during selection and overlap checks.
-A head is checked as a declaration over well-formed nominal instances. Its
-nominal formation premises are scoped to that conformance while associated
-definitions are checked, then discarded from the enclosing flow. Associated
-types still have to prove any stronger bounds; a head `View<T, a>` does not
-make `View<T, static>` well formed for an arbitrary `T`.
-
 
 `SemanticCatalog::conformances` is copied into instance-analysis snapshots and
 included in the instance-reuse fingerprint.
@@ -3508,15 +3196,7 @@ arrow access retains the owner/dereference/field key; restoring the field can
 therefore make the whole owner movable again in both semantics and MIR.
 
 A resolved non-static instance field always forms a receiver-rooted `PlaceKey`
-with its exact declaring field projection, whether the source spells `field` or
-`this.field`. Inherited fields retain each `Base` projection's declaring owner
-and full direct-base ordinal, including positions occupied by interfaces.
-The context-free place relation keeps unequal base projections conservative.
-Semantic loan overlap additionally derives inline disjointness from the exact
-root type and validated base/field paths. Every suffix must remain in inline
-storage; a reference field, indirect dereference, enum payload, union, missing
-layout or mismatched owner cannot supply this proof. Independent external
-referents still require their checked origins rather than different field slots.
+with a field projection, whether the source spells `field` or `this.field`.
 Borrow-return validation consumes that resolved identity, so lexical locals and
 parameters that shadow a field remain symbol-rooted and independent. HIR
 canonicalizes the unqualified field value to the same implicit-receiver member
@@ -3529,21 +3209,6 @@ retains the exact resolved `SymbolId` of the class's designated reference
 field. HIR and MIR carry that fact directionally so MIR verification can bind a
 returned runtime place or carrier value to the same formal dependency; later
 phases do not infer the field from its type or emitted representation.
-When the exact stored entry inventory is finite and complete, semantics also
-publishes its full dependency set for unconditional carriers, including receiver
-entries. Each dependency retains its typed external path, access and entry
-parent; it does not replace the separate physical reference or receiver shell.
-Conditional alternatives and lifecycle obligations remain part of that same
-checked group, while an unknown inventory remains unknown.
-
-A checked fresh receiver production supplies a distinct expression-local
-physical lifetime, even when its stored references point to static or caller
-storage. The lifetime application retains the exact evaluated receiver
-expression as its materialization witness; HIR and MIR map that witness to the
-receiver's temporary place. Ordinary retained receivers keep their existing
-place identity. A completed call application may shorten a fresh callable
-argument's regions before its exact producer is matched, while its access,
-escape and cleanup checks still use the original source value.
 
 Stored carriers generalize this to a set of reference-bearing field
 paths and checked owner places. `SemanticLoanInfo.additionalDependencies`
@@ -4459,9 +4124,9 @@ failed bindings preserve prior entries. Each snapshot builds its own registry,
 so decoding a reference selects that snapshot's declaration ID. An absent key is
 an error, never an invented declaration. The registry is capped at 4096 bindings.
 
-Nominal keys use `gti.nominal-key.3:` and the existing canonical length-framed
+Nominal keys use `gti.nominal-key.2:` and the existing canonical length-framed
 fields: kind (`class` or `enum`), package, target, module, qualified name, and ordered generic parameter shape. Shape characters
-are `t` (type), `v` (uint64 value), `l` (lifetime), and `p` (final type pack); empty denotes a
+are `t` (type), `v` (uint64 value), and `p` (final type pack); empty denotes a
 nongeneric declaration. They contain no layout or member records. Primary class
 and enum generics are admitted. Transformed class families, exact specializations,
 nested-class owners, projected binders and compiler capability types reject
@@ -4472,52 +4137,21 @@ qualified spellings. Logical ownership remains caller supplied; keys confer no
 visibility, capability trust or artifact compatibility.
 
 `writePersistentType`/`readPersistentType` map a bounded recipe directly between
-existing `SemanticType` values. `gti.type.3:` uses length-framed explicit scalar,
-nominal, reference, raw-pointer, fixed-array, text-view and callable signature
-tags. Nominal recipes carry compact type, value and lifetime argument vectors;
-references carry access and their own region separately from the referent.
-Callable recipes retain receiver mutability and scoped higher-ranked binders.
-Registry-based function keys use `gti.function-key.3:`; scalar-only version 1
-keys remain unchanged. Earlier recipe versions reject rather than acquiring
-new meaning.
-
-`PersistentLifetimeBindings` supplies declaration lifetime IDs, type IDs and
-preorder quantified IDs allocated by the importer. Recipes store binder
-positions, never these snapshot-local IDs. Writing can discover a callable's
-quantified IDs from its type; reading requires an exact supplied vector and
-rejects missing, duplicate or unused identities. The no-context type API rejects
-parameter-bearing and quantified types. `static` requires no binder. Local and
-unresolved inference regions cannot cross this interface. Absent annotations on
-existing reference types remain distinct from an explicit region.
-
-A separate `gti.lifetime-contract.2:` record preserves complete signature
-parameters, outlives bounds, exact type-outlives bounds, receiver region and
-contract origin. Boolean requirements retain their postfix `All`/`Any` topology,
-exact region/type leaves and declaration-local semantic predicate identity.
-A predicate may remain unresolved in a generic declaration artifact; executable
-MIR requires the exact instance's semantic truth. Bound ordering and duplicates normalize; alpha-renaming does
-not change bytes, while changing a relation does. Generic type references use
-positions in the supplied type declaration context. Nominal types in bounds
-require the same explicit registry as ordinary recipes. Associated projections use explicitly registered `gti.concept-key.1:` and
-`gti.associated-type-key.1:` identities: logical concept owner/name/kind shape,
-then associated member name/kind shape. Concept IDs and member positions remap
-to the importing snapshot; member reordering does not change the key. Missing
-or inconsistent concept/family descriptors reject. Exact projections are never
-reduced to bounds on their arguments. This codec does
-not make a contract callable or extend the compiled-library importer profile.
-
-Complete nominal argument vectors are required: defaults are resolved before
-serialization. The registry checks type/value/lifetime arity and permits
-expanded type arguments only for a final type pack. Anonymous normalized
-lifetime slots have a separate generic-shape tag from source-addressable
-lifetime parameters; both retain their compact region slots. The independent
-`gti.nominal-variance.1` interface record preserves complete type/lifetime slot
-variance in declaration order and checks exact imported arity; it is interface
-content, not declaration identity or an importer authorization.
-Symbolic values,
-unexpanded packs, unresolved nominal identities, extraneous type payloads,
-noncanonical bytes, truncation and trailing data reject. Defaults, visibility,
-capability trust and declaration constraints require separate interface proof.
+existing `SemanticType` values. `gti.type.2:` is followed by length-framed explicit
+scalar tags, or `nominal` plus a nominal key, a decimal type-argument count and those recursive
+recipes, then a decimal value-argument count and canonical decimal uint64 values;
+or a structural tag followed by its child recipe. Structural tags are `ref`, `mut-ref`, `ptr`, `mut-ptr`, and `array`;
+arrays also carry a canonical decimal uint64 extent before their element recipe.
+Access mode, extent, nominal identity and substitutions therefore survive
+remapping. Complete argument vectors are required: defaults are resolved before
+serialization. The registry checks fixed type/value arity and permits expanded
+arguments only for a final type pack, including an empty pack. Symbolic values,
+unexpanded packs, unknown/dependent type arguments and noncanonical value payloads
+reject. Binder names, numeric generic IDs, defaults and constraints do not enter
+identity; defaults and constraints remain mandatory future interface facts. Unknown
+or extraneous semantic payloads, unresolved nominal references, noncanonical bytes,
+truncation and trailing data reject. The existing scalar-only function-key version
+is unchanged; this type recipe is a prerequisite for richer function interfaces.
 
 The codec bounds encoded bytes to 16 KiB, depth to 32 and visited type/value nodes
 to 256; each declaration/argument vector is also limited to 256; ordinary fields retain the 1024-byte bound, with a complete nominal-key field

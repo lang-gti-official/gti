@@ -27,32 +27,6 @@ int main() {
     const CompiledBorrowContract second{BorrowOriginKind::Argument, 1,
                                         AccessMode::ReadOnly};
     validateCompiledBorrowContract(read, parameters, second);
-    const auto a = Lifetime::parameter(71), b = Lifetime::parameter(72);
-    auto firstInput = read, secondInput = read;
-    firstInput.referenceLifetime = a;
-    secondInput.referenceLifetime = b;
-    const std::vector sourceParameters{firstInput, secondInput};
-    LifetimeSignatureContract sourceContract{
-        .parameters = {a, b},
-        .typeBounds = {{SemanticType::Int32, a}, {SemanticType::Int32, b}},
-        .origin = LifetimeContractOrigin::Elided, .complete = true};
-    expect(isCompiledScalarLifetimeProfile(secondInput, sourceParameters,
-                                           sourceContract, second),
-           "compiled profile must reconstruct independent inferred reference regions");
-    expect(!isCompiledScalarLifetimeProfile(firstInput, sourceParameters,
-                                            sourceContract, second),
-           "wire argument origin cannot erase a different result region");
-    auto stronger = sourceContract;
-    stronger.bounds.push_back({a, b});
-    expect(!isCompiledScalarLifetimeProfile(secondInput, sourceParameters, stronger, second),
-           "bounded compiled profile cannot discard an extra outlives constraint");
-    auto correlated = sourceParameters;
-    correlated.back().referenceLifetime = a;
-    auto correlatedContract = sourceContract;
-    correlatedContract.parameters = {a};
-    correlatedContract.typeBounds = {{SemanticType::Int32, a}};
-    expect(!isCompiledScalarLifetimeProfile(firstInput, correlated, correlatedContract, second),
-           "bounded profile cannot discard correlated input regions");
     rejects([&] { validateCompiledBorrowContract(read, parameters, {}); });
     rejects([&] {
       validateCompiledBorrowContract(

@@ -237,7 +237,6 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
     part(std::to_string(currentClass.value_or(0)));
     part(std::to_string(currentDeclarationOrder));
     part(compileLimitsIdentity(compileLimits));
-    part(std::to_string(requestSession.lifetimeContractRevision));
     for (const auto &name : currentNamespace)
       part(name);
     part(call.capturedArguments()->text);
@@ -267,17 +266,18 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
       for (const auto &binding : bindings)
         part(binding);
     }
-    const auto genericContext = currentGenericSubstitution();
+    const GenericSubstitution genericContext{
+        .types = instanceTypeSubstitution, .values = instanceValueSubstitution};
     const auto reused = std::find_if(
         proceduralExpansions.begin(), proceduralExpansions.end(),
         [&](const auto &entry) {
           return reuseConstantEvaluations && entry.key == key &&
-                 entry.genericContext == genericContext;
+                 entry.genericContext.types == genericContext.types &&
+                 entry.genericContext.values == genericContext.values;
         });
     std::optional<ProceduralCachedExpansion> pendingCache;
     std::optional<SealedSyntaxExpression> sealed;
     if (reused != proceduralExpansions.end()) {
-      notePrivateLifetimeOpaqueDependency();
       if (workMetrics)
         ++workMetrics->proceduralExpansionReuses;
       const auto replay = [&](std::size_t cost, std::size_t &used,
@@ -841,7 +841,6 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
             *requestSession.programConcreteEffects);
   if (const auto &queries = requestSession.completeReturnQueries) {
     auto fork = std::make_shared<CompleteReturnQueryState>();
-    fork->lifetimeContractRevision = queries->lifetimeContractRevision;
     fork->depth = queries->depth;
     fork->discovered = queries->discovered;
     fork->completed = queries->completed;
@@ -851,7 +850,6 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
   }
   if (const auto &queries = requestSession.rawResultQueries) {
     auto fork = std::make_shared<RawResultQueryState>();
-    fork->lifetimeContractRevision = queries->lifetimeContractRevision;
     fork->depth = queries->depth;
     fork->nextIdentity = queries->nextIdentity;
     fork->hasRawGlobals = queries->hasRawGlobals;
@@ -1073,8 +1071,7 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
                             ? actual->arguments.front()
                         : actual ? *actual
                                  : SemanticType::Unknown;
-    if (value != SemanticType::Unknown && value != expected &&
-        eraseTypeLifetimes(value) != eraseTypeLifetimes(expected)) {
+    if (value != SemanticType::Unknown && value != expected) {
       reject("Macro arguments require exact expression types; write the "
              "conversion explicitly at the call site.");
       return true;

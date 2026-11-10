@@ -261,25 +261,6 @@ tokens with UTF-16 lengths; delimiters inside literals are excluded. The
 protocol layer must not repeat name lookup, overload selection, type rendering,
 or declaration parsing.
 
-Lifetime binders use their own compiler `LifetimeParameter` symbol kind and
-exact declaration/use occurrences. Hover presents `lifetime a`; navigation,
-references and rename follow that identity across return types, parameter types,
-local annotations and requirements. Equal names in unrelated binder scopes do
-not join a rename. `_` is an inference placeholder and cannot become a binder
-through rename; `static` and the receiver region `this` are fixed syntax rather
-than renamable declarations. Completion consumes compiler-supplied lifetime
-candidates, with the standard LSP `TypeParameter` completion and semantic-token
-categories. The protocol adapter does not infer a region from identifier text.
-
-Compiler-owned source, type and signature printers retain reference regions,
-borrowing-type arguments and quantified callable binders. Mixed type, value and
-lifetime generic arguments print in declaration order even though their semantic
-substitution vectors are separate. Region metadata adds no runtime argument to
-these signatures. Tree-sitter uses distinct lifetime nodes and `@type.lifetime`
-structural captures, while the contextual `lifetime` spelling remains available
-as an ordinary identifier outside a binder declaration. Incomplete edits use
-the existing snapshot, diagnostic and UTF-16 conversion paths.
-
 JSON-RPC admits only valid UTF-8 document text. Compiler byte offsets are
 converted through one source-position index at the protocol boundary; Unicode
 supplementary scalars count as two UTF-16 code units, CRLF counts as one line
@@ -437,10 +418,8 @@ constructor declaration hover retains its symbolic
 local type/value parameters and requirements, while selected construction
 hover substitutes the exact inferred arguments, requirements, and parameter
 types from `ResolvedConstructionInfo`. Definition, references, and signature
-help keep the generic constructor declaration's semantic identity. Constructor
-initializer argument lists accept the same final named pack expansion as
-ordinary calls, while preserving brace-array arguments in the structural editor
-grammar. Method calls also apply the concrete receiver specialization retained in
+help keep the generic constructor declaration's semantic identity. Method
+calls also apply the concrete receiver specialization retained in
 `ResolvedCallInfo::dispatchOwner`, including generic class type arguments.
 Forwarding-only parameters are identified without inventing a signature. The
 protocol adapter only serializes these notes. Hovering the parameter binding
@@ -507,15 +486,6 @@ Compile-time-conditional declarations contribute the semantically selected
 branch.
 Each node's detail reuses the hover signature query, so the outline and hover
 always present identical compiler-owned renderings.
-Selected lifetime arguments are displayed by the declaration binder's exact
-identity in the checked application. Synthesized conformance-head regions stay
-hidden; they do not shift written operation parameters or add an empty generic
-list. A source-only explicit-lifetime prefix is a fallback only when the
-parameter inventory has no hidden lifetime slots.
-Patterned nominal headers render their typed patterns followed by written
-trailing lifetime formals. The formatter preserves that order, and Tree-sitter
-uses its existing lifetime-parameter nodes so editor highlighting retains the
-same binder ranges as ordinary generic declarations.
 
 Signature help reads the semantic database's call occurrences: the analyzer
 records each selected call's and construction's byte-exact argument-list

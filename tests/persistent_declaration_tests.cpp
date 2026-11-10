@@ -247,7 +247,7 @@ void genericTests() {
   p.pack = true;
   c.genericParameters = {t, v, p};
   expect(persistentClassKey(c, owner) ==
-             "gti.nominal-key.3:5:class3:pkg4:core3:api7:Generic3:tvp",
+             "gti.nominal-key.2:5:class3:pkg4:core3:api7:Generic3:tvp",
          "generic nominal schema golden key");
   auto other = c;
   other.id = 99;

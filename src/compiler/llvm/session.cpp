@@ -482,7 +482,7 @@ void verifyTargetLayout(const TargetInfo &target,
 }
 
 Session::Session(VerifiedLoweredProgram program, LlvmBackendOptions options)
-    : input_(std::move(program)), representations_(input_), options_(options),
+    : input_(std::move(program)), options_(options),
       machine_(makeMachine(input_.program().target(), options)),
       module_("gti.native.v" + std::to_string(executionAbiVersion), context_) {
   context_.setDiagnosticHandler(

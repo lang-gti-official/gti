@@ -1298,7 +1298,7 @@ concept generic_operation<T> {
 };
 int main() { return 0; }
 )gti",
-           "GTI-S2123", "only lifetime generic parameters");
+           "GTI-S2123", "cannot declare generic parameters");
   rejected(R"gti(
 concept defaults<T> {
   int pick(T& value, int fallback = 1);
@@ -1421,7 +1421,7 @@ for concept measurable<Rope> {
 };
 int main() { return 0; }
 )gti",
-           "GTI-S2123", "requires clause may constrain only lifetimes");
+           "GTI-P0001", "cannot declare a requires clause");
   rejected(measurable + R"gti(
 for concept measurable<Rope> {
   using unit_type = Meters;
@@ -1430,7 +1430,7 @@ for concept measurable<Rope> {
 };
 int main() { return 0; }
 )gti",
-           "GTI-P0001", "additional lifetime parameters");
+           "GTI-P0001", "cannot declare its own");
   rejected(measurable + R"gti(
 class Holder {
   for concept measurable<Rope> {
@@ -1721,19 +1721,19 @@ concept identity_family<P> { typename value<T>; };
 struct Policy {};
 for concept identity_family<Policy> { using value<U> = U; };
 )gti";
-  accepted(identityFamily + R"gti(
+  rejected(identityFamily + R"gti(
 using Ref = identity_family<Policy>::value<int&>;
 int main() { return 0; }
 )gti",
-           "a reference projection alias retains its anonymous lifetime slot");
-  accepted(identityFamily + R"gti(
+           "GTI-S2030", "Reference aliases are not supported");
+  rejected(identityFamily + R"gti(
 struct Holder<T> {
   using Ref = identity_family<Policy>::value<T>;
   Holder() = default;
 };
 int main() { Holder<int&> value{}; return 0; }
 )gti",
-           "a dependent reference alias remains transparent after specialization");
+           "GTI-S2030", "Reference aliases are not supported");
   accepted(
       identityFamily + R"gti(
 [[borrowed_from(value)]] identity_family<Policy>::value<int&> view(int& value) {

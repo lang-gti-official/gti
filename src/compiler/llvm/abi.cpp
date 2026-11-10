@@ -69,8 +69,8 @@ Abi::virtualRoot(HirFunctionInstanceId rootId,
         "LLVM virtual caller attribution has no admitted source contract");
   for (const auto id : expected) {
     const auto &target = *program.findFunctionInstance(id);
-    if (!session.representations().sameType(target.returnType, root->returnType) ||
-        !session.representations().sameTypes(target.parameterTypes, root->parameterTypes) ||
+    if (target.returnType != root->returnType ||
+        target.parameterTypes != root->parameterTypes ||
         target.receiverMutability != root->receiverMutability ||
         target.overloadedOperator != root->overloadedOperator ||
         target.returnBorrowOrigin != root->returnBorrowOrigin ||

@@ -26,18 +26,6 @@ element; subsequent fields and selected operators project from the reference
 carrier, not from the coarser range origin. The lowering query preserves this
 distinction without changing access permissions, active-loan rules or endpoints.
 
-Nominal member selection, relocation lookup and selected constructor fields
-compare closed callable scopes by alpha equivalence. Free and fixed regions,
-repeated binder correlations, access and nominal identity remain exact. LLVM
-field publication uses that same type identity while retaining the exact
-producer, destination and cleanup protocol; it performs no runtime conversion.
-The private GTI invocation-pointer carrier has a separate, transient read
-operand from its callable signature inputs. Its unregioned shell is accepted
-only at a unique argument-zero stage consumed by the independently checked
-invocation. It supplies no result lifetime. Physical read permission and loan
-activity remain independently verified; an absent region is never an outlives
-proof.
-
 A text result whose owner is a reference to a borrowed carrier retains its own
 producing loan. Its parent protects the carrier's physical storage, while the
 separate stored dependency retains the carrier's external owners. A local text
@@ -457,182 +445,8 @@ and otherwise rejects represented synchronization in the single-threaded
 profile. Thus unused `<std/thread>` and `<std/atomic>` imports remain valid
 without granting a backend or transform executable concurrent authority.
 
-Lifetime annotations remain semantic proof metadata in MIR. Reference regions,
-nominal lifetime arguments, callable quantifiers, complete function lifetime
-contracts and exact call substitutions participate in structural serialization.
-Changing a region relation therefore changes the identity used by verification
-and caching even though it introduces no runtime operand or object field.
-Exact type-outlives bounds retain opaque types rather than reducing them to
-bounds on their spelling's type arguments. Raw pointers stop storage-outlives
-proof and assumption expansion: `T*:a` describes the pointer value, never `T:a`
-or any checked reference in the pointee. Type shape and nested region scope
-remain validated; dereference still requires its separate unsafe authority.
-
-An independently mapped local storage origin also establishes type-outlives
-facts for its actual inline class fields and state-bearing bases. This bounded
-closure uses the exact instantiated storage inventory, stops at reference, raw
-pointer and callable boundaries, and never treats generic arguments as stored
-objects. Every direct mapped-origin fact is retained independently of that
-expansion budget. An unknown or exhausted expansion adds no further premise;
-only obligations that still lack a proof reject. These remain local premises:
-they introduce no region edges, cannot establish a static guarantee, and do not
-replace initialization, availability, loan or cleanup proof.
-
-Each application preserves its full universal substitution, explicit existential
-inventory, required region and exact-type obligations, and local origin
-witnesses. Body records collect the selected applications with assignment and
-return obligations. HIR qualifies semantic places to its body and replaces
-source expressions with stable value IDs; MIR maps those witnesses to exact
-places, rejecting stale domains and ambiguous temporary materializations.
-A contextual `operator bool` or general target conversion has a distinct HIR
-value even when it shares its receiver's source expression. Body-origin finalization reuses the already
-checked region/place/source witness only through that exact conversion's
-receiver chain; conflicting evaluations cannot be selected by source order.
-These maps and completion states participate in the sealed fingerprint; a
-completion flag alone is not proof of any outlives relation. Direct reference
-arguments may differ in free region annotations only when their exact target is
-independently instantiated; mandatory body replay then proves the original
-place's outer and nested region relationships. Pointee shape, mutable access and
-argument tags remain exact. An addressed receiver uses its exact place's
-stored-reference region; deeper projections produced by the same source
-expression cannot substitute their different external regions. Result,
-constructor-owner and ordinary member receiver comparisons permit
-alpha-renaming only inside closed callable quantifier scopes. Fixed outer
-regions, binder counts and relationships remain exact; runtime representation
-erasure is not a type proof. Targetless generated defaults likewise select one
-exact nominal lifetime view and retain the generated/no-schedule policy check;
-that structural view does not authorize an unattached lifetime application.
-In-place construction retains the selected constructor's checked lifetime
-application. Its destination address or storage handle is not a constructor
-parameter: verification checks the instantiated parameter suffix and the exact
-constructed element type separately. Owned allocation checks that same object
-type inside its owner result. Reference arguments still require the ordinary
-body-wide origin and outlives proof; a matching signature alone is insufficient.
-Targetless generated operations cannot acquire an unattached application.
-Call supplier paths preserve the same target contract: typed enum guards are
-substituted through its independently checked invocation application before
-comparison. A sole global supplier retains its exact compact root and path,
-while the independently replayed complete dependency fact remains explicit.
-Lambda and
-destructor instances retain normalized contracts just as functions and
-constructors do. Authoritative nominal variance is preserved alongside the
-concrete field/base inventory; lowering never derives it from names.
-Abstract receiver-entry places and evaluated `this` expressions both retain
-the exact callable owner type. The independently scoped layout supplies the
-physical field recipe and traits; its universal names cannot become body
-lifetimes in a method or destructor. Abstract stored-entry verification checks
-that callable owner through the exact class-instance view as well.
-
-Complete constructor summaries include the selected declaration defaults from
-the constructor's own checked semantic model, alongside explicit initializers.
-An ownerless enum alternative contributes its complete guarded domain. A default
-that an explicit initializer overrides contributes no dependency facts; the
-selected initializer must independently retain every active owner.
-Direct reference fields are replayed from their escaping borrow publication,
-including every supplier of a reference-returning call. An exclusive formal
-may transfer its exact entry capability. These facts remain separate from SSA
-carrier initialization, are checked against the captured initializer set and
-must be present at every normal exit; stored referent and region conversion
-are independently checked against the callable owner's field recipe.
-Captured initializer and publication records may use distinct place IDs for the
-same typed binding and exact projection. Snapshot comparison permits that
-representation difference only with unambiguous physical identity, retaining
-type, access, parent loan, guards and result path. It never equates an external
-lifetime supplier with the object whose address is stored.
-
-Payload operations instantiate the selected enum's sealed variant recipe with
-its exact actual region bindings. Construction reconstructs each source type
-and reference origin, proves its conversion to the stored payload type against
-the body graph, and enforces nominal formation requirements. Variant identity,
-source loans, access, guards and cleanup remain separate mandatory checks.
-Call-input shape checks may recognize free-region variation only; independent
-program verification proves every such stage from original source facts,
-including stages without a consuming call. Bound callable scopes remain exact.
-Native C call witnesses compare staged values with the declaration's exact
-instantiated lifetime signature. Missing substitutions or mismatched input
-regions reject before emission. The native ABI still derives from the sealed
-declaration's runtime types; lifetime substitution adds no ABI argument.
-
-An exact local origin also proves that its value type is valid for that local
-borrow. This lets an owned generic value be borrowed without a public
-`T:static` promise. MIR derives that premise from the resolved place type;
-it does not accept an arbitrary supplied type bound. The premise stays local
-to the body, cannot extend the origin to a universal or static region, and
-does not replace availability, loan endpoint or cleanup verification.
-
-Owned callable transport uses those same instantiated signatures. The call's
-actual by-value operand must convert under the caller body's proved lifetime
-constraints, and its ownership still comes from an exact move, fresh value or
-checked copy. A generic constructor's field recipe is instantiated separately
-in caller and constructor-body scope; declaration region IDs are not compared
-across those scopes. Closure cleanup queries use the exact lambda lifetime view.
-When a constructor consumes a carrier, its result retains the external supplier
-permissions without becoming a child of the consumed local carrier group.
-This uses the same call preparation and transfer path for selected ordinary
-constructors with or without a call plan; targetless generated members retain
-their structural copy/move rules. Independent complete-value flow reconstructs
-closure captures from evaluated operands and the exact lambda recipe, prefixing
-captured field paths and enum conditions. Attached capture loans and claimed
-result summaries do not supply their own proof.
-For an independently known complete owned result, the attached `Stored` group
-must match the replayed source, parent, field, access and guard inventory even
-when no conditional tag is present. An unused result retains this obligation.
-
-Callable lifetime applications retain a universal function signature and fixed
-bindings for its free carrier regions. The trusted function-pointer capability
-selects the actual carrier signature. MIR reconstructs it by capture-avoiding
-substitution, derives the implied input type bounds, and instantiates only the
-higher-ranked binders for invocation. The declaration's permitted supplier set
-is retained even when the current target body uses only a subset. Full target
-requirement formulas are evaluated against the caller graph; semantic predicate
-truth belongs to the exact target instance and cannot be supplied by a call.
-Every feasible disjunct of the caller's declaration is checked independently,
-including the body graph's unconditional edges. Different branches may prove
-the same relation through different transitive paths; a fact from one branch
-never becomes an assumption for another. Type bounds and type-requirement
-leaves are checked for nested region scope before they grant any assumptions.
-Reference initialization uses this same graph to prove permitted shortening
-while retaining exact referent identity and access permission.
-
-Reference selections distinguish a stored external reference from a borrow of
-an owned enum payload. Both retain the evaluated extraction address. A physical
-payload selection keeps the enum shell as its conservative alias key, so
-replacement of the enum still conflicts with a live payload borrow. Its exact
-field and variant come from the typed `PayloadExtract(BorrowValue)` operation,
-independently of the selection annotation. Return-summary normalization retains
-that executable selector while tracing caller-owned storage, including generic
-payload types whose complete stored-reference inventory is not yet concrete.
-Reference-region checking replays that same exact selection to the carrier's
-declared region or checked local origin. A stored-reference selection instead
-reconstructs its external reference type from the exact extraction, instantiated
-enum variant, field and guard. Its abstract origin place can name the carrier
-for bookkeeping, but that carrier's storage region cannot replace the selected
-referent's region when checking a new reference binding.
-The physical selection cannot claim external-owner transfer authority. Variant
-dominance, access, parent liveness and cleanup remain separate required proofs.
-
-A program-level nominal recipe graph preserves symbolic generic identities,
-fields, bases, payload paths, specialization families and trusted capabilities.
-The shared variance fixed point operates on these recipes, retaining slot
-identity when concrete arguments coincide. Lifetimes projected inside generic
-argument patterns have a separate binder inventory. Matching the substituted
-pattern against the actual public arguments binds those regions without adding
-top-level lifetime arguments. Callable patterns use the same scoped matcher as
-semantics: projected result and parameter types retain the complete invocation
-binder inventory, including unused binders, and can be reconstructed only inside
-a closed callable field. A captured binder cannot escape into ordinary storage.
-Known owner region substitutions apply once after this scoped reconstruction;
-lexical binder alpha-renaming never changes fixed regions or their correlations.
-Public type slots selected by specialization
-patterns are conservatively invariant; precise variance composition through
-pattern positions is not implemented. Ordinary declared lifetime slots retain
-the variance derived from their stored uses. Concrete executable instances also
-retain descriptors for lifted universal regions and their extended contracts.
-These records are proof metadata and do not authorize runtime erasure by
-themselves.
-
-The combined deterministic serialization is currently `mir-v128`/`mir-body-v96`,
-with `lowered-program-v40` declaration metadata. Function, constructor and
+The combined deterministic serialization is currently `mir-v121`/`mir-body-v93`,
+with `lowered-program-v35` declaration metadata. Function, constructor and
 destructor instances and their sealed
 declarations retain the resolved cold hint and default/hint/never inlining policy;
 verification rejects a mismatching or non-source policy. These distinct combined
@@ -658,20 +472,7 @@ exact failure-channel self-copies erase before native code generation.
 Class records also preserve semantic-selected virtual root/target declarations.
 HIR binds each selection to exact concrete function and owner identities plus
 successive direct-base paths; MIR verifies complete root coverage, signatures,
-final target coherence and paths independently. Each path composes exact
-canonical-to-actual owner bindings before comparing a method signature. The
-Lowered verifier independently instantiates the selected declaration recipe
-before comparing that view. LLVM uses the same verified instantiated base view
-for layout, dispatch-state checks and receiver offsets;
-canonical declaration region identities do not replace the active view.
-
-Complete stored-content flow uses the same exact physical projection proof
-when a direct field is initialized beside a state-bearing base. That write
-preserves the base's current contents; whole-object, unknown and external
-reference writes retain conservative invalidation. Initializer publication,
-failure-edge retirement and the final constructor summary remain independent
-requirements.
-Abstract classes may retain pure
+final target coherence and paths independently. Abstract classes may retain pure
 targets. Lowered declaration and instance records seal and serialize the same
 selection. These are backend-neutral facts; this metadata alone does not admit
 LLVM virtual execution or prescribe a table layout or physical call ABI.
@@ -727,145 +528,17 @@ failure edges and malformed result activation.
 Function rows retain optional declaration-relative complete result dependency
 contracts. MIR independently validates
 each declared alternative's exact concrete type, tag and dependency-free
-payload layout, then reconstructs facts at every reachable normal return.
-A by-value return retains its producer's applied type. The summary query proves
-its conversion to the declared result with the body's lifetime contract and
-constraints, preserving nominal shape, access and every nested region relation.
-A physical reference result may retain an evaluated constant array index in its
-MIR address. Normalizing that address to a structural dependency path requires
-one exact, uniquely defined integral literal with the same index. The runtime
-SSA operand, evaluation and bounds checks remain intact; a different,
-nonconstant or ambiguous producer cannot supply the structural identity.
-The actual alternatives must be covered by the declaration contract; additional
+payload layout, then reconstructs facts at every reachable normal return. The
+actual alternatives must be covered by the declaration contract; additional
 well-typed dependency-free cases are conservative, so optimizer narrowing does
-not change caller lifetime obligations. For a declared or elided scalar reference
-result, a separate query reconstructs every permitted physical input root and
-stored reference path from the universal signature, exact type inventory,
-access and lifetime bounds. The published summary must retain all of them,
-including suppliers unused by the current body. Body-inferred contracts retain
-their precise source-inferred supplier policy. HIR-to-MIR forwarding preserves
-the complete summary and its scalar mirrors, and optimization replay seals the
-unchanged publication independently of body rewrites. Unknown return facts and a function
+not change caller lifetime obligations. Unknown return facts and a function
 with no normal return cannot prove this contract. A program-local memoized
 query treats recursive/in-progress callees as unknown; declarations cannot
 justify one another cyclically. Exact direct calls use only independently
 verified target contracts, and failure successors receive no result fact.
-Complete-summary queries cache the universal type/value instance. A call
-instantiates every guard with its checked lifetime application after matching
-the canonical signature. Value conversions instead transport guard types by
-exact subobject and variant paths between complete source and target type
-inventories. The original guard must occur in the source inventory; each path
-has one target counterpart. This preserves the active subset and every source
-place, parent loan, designated field and access mode, including when one source
-region shortens differently in two fields. MIR first proves the value conversion
-from body lifetime facts, then reconstructs this same transport for stages,
-carrier inputs, stores and returns. A global replacement of region IDs is not
-an equivalent proof. Missing inventories or ambiguous paths remain unknown.
-A retained loan keeps the immutable guard types of its producing value. When a
-binding has a checked shorter region, lowering preserves that producer identity
-and MIR derives a separate binding view from the unique producer, the exact
-stored contents and the proved conversion. It does not rewrite the producer's
-conditions. Missing initialization, ambiguous producers, stale guards, or an
-unproved conversion cannot establish that view. Semantic scalar-return mapping
-also compares a retained group's guards in the applied formal type's domain;
-it preserves the exact live parent and original ancestry across that conversion.
-The typed borrow-path query foundation walks exact declaration fields, full
-direct-base ordinals, bounded array or concrete-pack indices, and guarded enum
-payloads through actual nominal lifetime views. Its explicit root role separates
-a physical reference from a stored external-reference crossing. Base projections
-retain both the declaration-vector ordinal and concrete instance; interface
-entries cannot yield storage. Reverse mapping succeeds only when forward replay
-reproduces every projection and payload-selection position, without inherited
-field searches or guessed dereferences. These are structural facts, not origin,
-branch-dominance, capability, liveness or cleanup authority. Live dependency, condition, selection and result paths share this typed
-`BorrowPath`; there is no parallel symbol-only path. Constructor publication
-uses `storedPath` to identify one exact direct field or base initializer.
-Member reads and writes retain the selected Base chain through the actual
-receiver view, including interface positions in the ordinal count. When a
-materialized receiver has no semantic place key, lowering maps its already
-resolved field symbol through the unique checked storage-base chain; unknown
-or ambiguous catalog entries fail rather than flattening inherited fields.
-A base initializer preserves the semantic complete dependency set captured
-before argument effects are retired. MIR reconstructs it from the selected
-constructor summary, checked lifetime application and staged operands, then
-matches the exact destination, sources, parents, permissions and guards. An
-absent set is never a known-empty result. Rollback and cleanup remain separate
-mandatory proofs. Borrowed-base source admission uses these structural records;
-the mandatory program and native gates continue to reject incomplete proof. The
-one state-bearing base rule is unchanged. Loan production accepts an
-`InitializeBase` only when the unique publication query binds that exact stage
-and destination; retirement endpoints are not producers. Each structural base
-row selects its exact class instance through the actual lifetime view, preserving
-the declaring owner's region substitution instead of requiring layout-universe
-names to be equal.
-
-Reference and alternative inventories use one bounded work budget per query
-(4096 structural/leaf or emitted-alternative steps, depth 256). Arrays and
-concrete packs consume the same budget across all elements; exhaustion returns
-unknown rather than truncating a complete inventory. Equal element types still
-have distinct constant-index paths.
-
-Concrete formal inputs are derived from the grouped binding tree and the
-flattened callable signature. Each lane retains its exact flat ordinal, binding,
-full constant-index prefix and leaf type; repeated equal types cannot identify a
-lane. The same bounded derivation serves semantic entry publication, HIR and MIR
-queries. Only concrete packs expand; a reference to a pack remains one reference
-input. Reference leaves keep their physical parameter loan separate from any
-stored external-reference group. MIR checks both entries and their exact link,
-including copied or forwarded carrier lanes. Written base-initializer pack
-expansions produce prepared lanes in that same order, before trailing defaults;
-selected constructor type/value arguments and lifetime applications remain exact.
-An operandless HIR pack expansion still names its exact grouped parameter
-binding. Derived lanes address one neutral variable root through their full
-constant-index paths; HIR verifies that binding and index sequence independently
-before MIR prepares the selected inputs. A same-typed lane is not interchangeable.
-The nontrivial owning-input lifecycle policy is checked independently of this
-structural expansion. Complete reference-flow replay uses that same lane
-inventory to distinguish a grouped reference leaf from its enclosing pack.
-Physical subobjects and stored-reference paths reverse-replay through the exact
-typed Base/field/index walker; entry source, access and reference crossings remain
-separate checks. Unproved enum guards still cannot supply an unconditional fact.
-
-Body lowering runs `verifyMirBodyStructure`, a provisional structural check.
-Only the unconditional final `verifyMirProgram` runs the complete body loan,
-alias and effect proof with the sealed nominal catalog. Program-owned optimizer
-rewrites and effect queries pass that same explicit read-only context.
-Context-free body verification fails closed for paths that need nominal Base
-or index evidence, including metadata-only conditions and publications. Neither
-a provisional result nor a caller-supplied concrete base ID seals a program.
-Program-aware overlap checks can prove a direct inline field separate from an
-inherited inline field only after both complete projection chains reproduce the
-exact root type, base ordinal and concrete instance. All unprojected aliases must
-agree on that root type. A physical reference root denotes its referent; later
-reference or pointer crossings, enum selections, union/interface storage and
-ambiguous catalog views do not receive this disjointness proof.
-
-A structural enum-field region query resolves a unique payload symbol in the
-exact instantiated enum type and uses the stored external region when crossing
-a reference; branch guards, provenance and loan liveness remain independently
-required. Field projection filters sibling
-facts only after proving an exact ordinary Class field chain, and checks complete
-coverage of the selected field's typed enum domains. Crossing an enclosing enum
-guard requires a separate evaluated-selection proof; field projection does not
-discard that guard or treat it as an unrelated sibling.
-A copied carrier passed into a payload constructor reuses the same exact
-retained-copy proof as an ordinary callable result: the original complete
-contents must match before the copied value adopts the stored group's parent.
-The body-flow replay retains those normalized inputs for the independent
-payload and cleanup-handoff checks; no attached result claim supplies them.
 Value-annotation and return-contract checks share the same producer/storage
-dataflow reconstruction. Independently proved complete direct-call and constructor results use that
-replay, including scalar references whose lifetime suppliers
-include both an object's storage and its stored external references. The legacy
-single-origin mapper handles results without a complete contract; it cannot
-substitute a stored referent for the containing object's storage. A conditional
-complete call or constructor result can exclude the declaration's first compact supplier, such as an empty first
-enum field. Its exact active sources therefore use this mandatory complete-set
-replay instead of the scalar first-origin mapper. The reconstructed sources
-must equal the entire published Stored group, including parents, access,
-paths and guards; an attached result set alone grants no authority. These facts
-neither establish nor replace ordinary loan, access, escape, movement or cleanup
-proofs.
+dataflow reconstruction. These facts neither establish nor replace ordinary
+loan, access, escape, movement or cleanup proofs.
 
 A by-value conditional carrier formal, such as a payload enum with a reference
 alternative, names no single stored reference. When such a function's complete
@@ -902,46 +575,10 @@ the final lowering rounds.
 A carrier whose contract names a global borrows the global's storage-typed
 place, not a place typed as the carrier. The per-input returned-field checks
 skip `Global` mappings, which have no call input; the global-origin check and
-the complete-set flow verify them. A member function may return that same exact
-static storage; its receiver does not own it. The returned place and complete
-supplier set must still match the independently reconstructed global origin.
-A mapping may also name checked owner storage that governs the referent, such
-as an accessor receiver, an owned element buffer or an owning handle's checked
-pointee. This is a lifetime supplier, not a claim that the owner's type equals
-the referent's type. The exact typed path retains every stored-reference
-crossing, region, guard and access permission; unrelated stored references or
-opaque field types do not invalidate an otherwise checked owner. Independent
-return replay must still reach the typed borrow or unsafe owner-witness
-operation that produced the result. A by-value or consuming shell cannot become
-physical caller storage, and changing the source owner or adding a reference
-crossing cannot substitute another supplier. A call result with multiple
-permitted suppliers retains each source's own checked authority or physical
-owned input. An additional source need not lie inside the first parent's
-storage; unique call production, staged inputs, access/liveness and independent
-complete-result replay still prove the exact set. A mapped primary source is
-selected from the complete contract using its exact staged input, typed path,
-access and parent permission; other suppliers retain their own proofs.
-A reference formal's entry root and evaluated whole referent can select the
-same physical supplier only through the exact staged Parameter capability and
-validated pack prefix plus physical dereference. The original supplier and
-parent remain unchanged. A nominal receiver stage does not relabel that
-reference call's complete address set as stored contents: the set remains
-checked on its exact call result and loan, and missing contents remain unknown.
-This distinction does not enable a borrowed-result getter through an unopened
-reference.
-The raw-reference primitives replay their explicit checked owner operand only
-after verifying the address type, unsafe operation, access and produced loan.
-Their scalar-reference result domain is distinct from the owner's stored-field
-layout, and their published dependency annotation is checked against that
-independent operand replay. A `CallResult` lifetime source does not establish
-the selected runtime address for storage-content flow. Writes through such a
-reference cannot publish their value facts over its owner. A known empty
-reference and alternative inventory proves that a typed write cannot reseat
-tracked borrowed fields; other unknown-address writes invalidate conservatively.
-Mutable calls preserve contents only when independently verified effects prove
-that they do not write to storage; movement and cleanup retain their separate
-availability and loan proofs. Otherwise all potential supplier footprints are
-invalidated. A dereference through a class ends
+the complete-set flow verify them. A mapping may also name caller storage that
+contains the referent, such as an accessor receiver, an owned element buffer or
+an owning handle's checked pointee, provided that storage is reached without a
+stored reference and stores none itself. A dereference through a class ends
 that path. Published dependencies keep a `CallResult` accessor as their parent
 together with its exact source, as reference loan facts do; a parentless
 referent names the exact input place, either the reference argument's place or
@@ -963,42 +600,16 @@ the value annotation, and requires the transferred value to still hold exactly
 that set, so a formal written before its transfer is not accepted. The
 published field group remains active at every normal constructor
 exit. Known-empty alternatives require positive typed evidence and publish no
-manufactured loan. This carrier-initializer proof handles each borrowed field
-in the constructor's exact actual owner type, then composes all field facts.
-Independent sibling enum domains remain present, including an empty alternative
-beside a nonempty field. Every normal exit must match the complete initialized
-publication; an omitted field or an unrelated later assignment cannot stand in
-for that proof. Direct reference fields retain their separate reference-binding
-authority rather than being treated as copied carrier values. A mutable
-reference initializer snapshots the exact incoming capability before that
-entry loan transfers into the field. Independent replay validates the formal,
-addressed expression and unique destination, then compares a transient
-parentless publication view. It does not mutate the snapshot or accept an
-unrelated parent with a matching source.
-A shared reference initializer can likewise retain the caller-owned origin
-past its temporary formal entry. Its snapshot still names the exact physical
-reference entry, even when that entry has a separate stored-content group.
-The publication comparison removes that parent only after independently
-proving the same read-only formal and source. A stored-content entry, another
-formal, a local loan or an exclusive entry cannot authorize that adjustment.
+manufactured loan. The current source constructor slice uses an empty body
+and one common nominal field prefix; unrelated sibling obligations cannot be
+dropped during projection.
 
 A consuming receiver transfers its complete stored group through the ordinary
-ordered call-input stages. Reference and borrowed class/enum results may
-outlive the consumed shell only when the independently checked complete callee
-summary derives every supplier from an argument, static storage, or an exact
-receiver path crossing a stored external reference. A checked empty carrier
-alternative may have no supplier; a missing summary is never an empty proof.
-The declared scalar supplier inventory excludes the consumed shell and owned
-captures even if their region appears to satisfy the result bound. Exact
-receiver entry identity and access, selected alternative proof, group transfer
-and retirement remain separate requirements; a receiver-owned origin cannot
-escape its destroyed shell. Retained owned-pointee invocation keeps its
-separate non-borrowing-result policy. A fresh receiver's shared stored supplier
-may become a reference result or a designated field of a returned carrier. Body
-replay follows the exact prepared receiver, physical shell loan and retained
-external group to the active original parent; the result path and permissions
-must match the checked mapping. This does not grant mutable extraction or make
-the physical shell an external supplier.
+ordered call-input stages. A reference result may outlive the consumed shell
+only when the independently checked callee contract derives it from the
+retained external owners. Exact receiver entry identity and access, selected
+alternative proof, group transfer and retirement remain separate requirements;
+a receiver-owned origin cannot escape its destroyed shell.
 Initializing a distinct direct field of the same exact non-union record does
 not erase the retained field's complete fact. This separation is proved from
 the concrete record and its declared field identities, not merely unequal
@@ -1031,13 +642,6 @@ retain explicit restrictions without inventing a dependency for an empty
 alternative; nonempty conditional call transport is not yet enabled by this
 metadata increment. Body serialization remains version 90.
 
-A primitive `Load` copies scalar contents even when its source expression keeps
-the `Place` category. Lowering retains the address fact on the source and its
-loans, but does not attach that fact as scalar SSA contents. Independent MIR
-flow derives empty copied contents only when both the exact reference inventory
-and alternative inventory are known empty; an opaque type cannot use a negative
-borrowed-state trait as proof. Borrowed carrier loads retain their complete sets.
-
 Version 105/body 86 additionally distinguishes absent borrow-set evidence
 from a complete producer-attached set, including a proven empty set. An empty
 payload construction names its exact concrete enum alternative; MIR checks
@@ -1065,62 +669,9 @@ proof is implemented, the verifier rejects conditional primary and additional
 loans symmetrically rather than silently treating the first field as
 unconditional.
 
-A complete reference call's published loan is compared with its independently
-reconstructed producer set, including every additional supplier's parent, access,
-path and guard. This check also runs for unused results and does not rely on an
-attached result annotation. Passing a scalar reference onward reborrows all its
-suppliers through that exact input loan; the earlier parents are not substituted
-for the evaluated input capability. A returned carrier reference selects its
-retained Stored group from the evaluated input address and loan. The carrier's
-physical supplier may be the primary source while its external owners remain
-additional suppliers; changing that order preserves every original source,
-parent, access, path and guard. An external lifetime supplier is never used as
-the carrier's runtime address. Named-reference retention matches the complete
-unordered semantic supplier set against the active emitted call result before
-attaching its binding identity. Its actual returned pointer and already-derived
-Stored relation stay unchanged; a missing parent, altered source or extra
-supplier cannot be repaired by recreating an address from a lifetime owner.
-
-A physical subobject borrowed through a reference formal keeps its exact typed
-address and the unique matching Parameter entry as its parent. Reverse path
-replay validates the full grouped-input lane and each inline field, base or index;
-it never crosses a stored reference or replaces a selected guard. Complete-flow
-reconstruction cannot drop that entry parent merely because the result addresses
-a field rather than the whole formal. Ordinary loan verification separately
-requires that capability to remain active at the use.
-
 Checked erased-reference operations preserve the exact origin and access while
-changing the referent type. MIR rederives each operation's lifetime rule from
-its intrinsic identity, exact opaque capability, access, and equal input/result
-outer region. The attached callable signature is a checked witness, not an
-independent source of bounds. Restoration is explicitly unsafe and additionally
-requires the concrete restored referent to outlive the result region in the
-caller's graph. An opaque input supplies no such validity premise; stored and
-nested callable regions remain scoped and independently checked. Reference
-input stages retain the addressed source type before conversion. Complete
-address facts cross a stage only after its exact reference conversion is
-proved. Restoration retains the evaluated opaque input loan, not another loan
-with the same lifetime supplier; wrapper field recipes are instantiated through
-the selected lifetime application. Trusted intrinsic replay preserves the
-input's complete address suppliers without inventing referent contents.
-A shared carrier-reference return can export its incoming shell and Stored entry
-through erasure/restoration only after independently proving that every normal
-helper return preserves the exact whole reference argument address. A raw owner
-witness, matching lifetime summaries, or same-typed field cannot establish that
-identity. Lowering proposes an outgoing group without altering the transient
-calls; program verification replays both the helper addresses and the complete
-original supplier sets, including parents, at publication. Only the incoming
-shell's local parameter parent is removed; every external Stored parent remains.
-The original full reference type proves both the applied erasure-input conversion
-and the outgoing reference contract. A helper's shorter argument region does not
-replace the still-live original permission being exported.
-The evaluated restored pointer is forwarded once. Its transient loans retire
-before scope exit, while the outgoing Stored authority stays live. This initial
-projection supports shared, unconditional suppliers; exclusive and guarded
-transfers need their own capability proof. Context-free verification cannot
-admit this projection, and unused publications or absent optional annotations
-still require executable supplier proof.
-The GTI function-pointer operation records either one
+changing the referent type. Restoration is explicitly unsafe and retains its
+checked lifetime witness. The GTI function-pointer operation records either one
 safe function instance or one stateless lambda instance, with its exact signature;
 invocation uses the same explicit failure and cleanup protocol as other GTI
 calls. It is not a native C callback adapter. Reference-field initialization
@@ -1240,14 +791,6 @@ field path, selected receiver or parameter, source field path, and permission.
 Calls preserve the semantic contract; program verification also checks the
 callee's actual return publication or constructor initializers independently.
 Matching forged caller/callee summaries are therefore not sufficient proof.
-Publishing an inline borrowed carrier into a constructor field transfers its
-whole proved group: the primary selected field path, additional suppliers,
-permissions and alternative guards. The primary path remains present for
-unconditional references as well as enum alternatives. The field-initialization
-proof compares that group with the actual constructed SSA value before retiring
-the incoming group, and requires the published group to remain live on successful
-exit. Matching forged initializer and declaration annotations
-cannot redirect the construction to another same-typed input.
 An abstract entry retains caller-owned field identities without treating the
 carrier's physical shell as the external referent. Its complete value transfer
 is checked against the returned SSA producer. Compact sole-origin carriers
@@ -1277,11 +820,6 @@ temporary borrowed by a receiver stage or a call result keeps the drop-only
 rule. A copied carrier argument relays the binding's retained `Stored` group as
 the parent of a scalar reference result, and lowering maps a `Parameter` entry
 loan's complete dependency to the key-matched place under its referent.
-A constructor producer records the original external dependencies, including
-all permitted suppliers of one stored field. Its newly published `Stored`
-group is checked against those sources and is not itself an origin of the
-producer. Later uses of the bound carrier retain that exact group after
-matching the full source, field, permission, and guard inventory.
 Borrowed-result operators keep their ordinary value receiver stage. When their
 result protects the receiver's own storage, lowering and independent verification
 select the exact producer-owned temporary and its full-expression drop, retaining
@@ -1307,11 +845,6 @@ function/lambda receiver) and checks field access against
 the concrete class layout. Concrete parameter packs retain a separate entry for
 each opaque checked reference, including read-only references: the verified
 element index, referent type, access, source, and entry identity must all agree.
-A borrowed by-value pack lane retains its contents through the grouped formal
-binding. Its complete pack-index prefix selects the exact leaf, including
-opaque text contents whose dependency has no nominal field path. Body checks
-validate that structural lane and capability; the program check binds it to the
-unique flattened formal and complete stored inventory.
 A constructor reference initializer may execute a checked reference-returning
 helper, then publish its result while retaining the original caller-owned
 `Stored` dependency. The helper's body-derived origin, exact call result, and
@@ -1363,15 +896,6 @@ Checked restoration of an opaque reference has a separate explicit proof:
 the concrete restored field paths and access must match a verified restore
 operation or body-proven helper summary. Its hidden dependencies remain bounded
 by the original checked witness rather than becoming invented `Stored` owners.
-A separate derived address query follows actual reference operands through
-`Borrow`, reference `CallInput`, and statically selected source helpers to a
-trusted erasure operation. Every normal helper return must identify the same
-whole reference formal, including its exact pack lane. The query preserves the
-caller's original staged operand and applied reference type; it never derives
-pointer identity from a lifetime-owner place or a complete supplier summary.
-Cycles, ambiguous producers, raw owner-witness results, and projected helper
-fields fail this proof. Its result supplies no liveness, contents, escape, or
-lifetime-conversion authority.
 A named restored-reference return may retain that exact caller-parameter witness
 only when its source and access agree, there are no additional, designated, or
 cleanup-bound dependencies, and every local reference carrier has a unique
@@ -1414,13 +938,7 @@ resolves a borrow through the field to its referent rather than the carrier
 shell. The path is named only while every carrier is a value of that one
 class. When a carrier of another type joins, such as a view of the referent
 copied out of the holder, the loan returns to the compact form. A named path
-is still a single origin. A targetless generated copy of an exact whole local
-carrier uses that carrier's complete stored group when its semantic copy recipe
-is compact. One reference field can have several possible owners: each row keeps
-its field path, conditions and access, reborrowed through the actual input group.
-The independent producer replay verifies every row, including the temporary
-copy publication whose binding later shares an existing endpoint.
-An input that is the inner object holding the
+is still a single origin. An input that is the inner object holding the
 reference reaches the same referent: lowering selects through the input's own
 path, and program verification accepts the input's path as the tail of the
 carrier's. A result behind one field of a mapped carrier depends only on that
@@ -2008,13 +1526,8 @@ Concrete pack flattening uses the same bounded `CallInput` type-compatibility
 predicate as independent MIR verification. It retains the source operand type
 and exact selected parameter type for existing null-pointer and pointee-const
 conversions, rather than rejecting a valid conversion or changing the selected
-constructor signature. A whole-value null initializer carries no pointee
-storage: its already well-formed raw-pointer destination may contain scoped
-pointee regions without requiring those regions to be static. MIR reconstructs
-the actual null source before accepting the conversion. Non-null pointer
-arguments remain invariant in their nested regions; null conversion cannot be
-used recursively to rewrite a pointer's type argument. Removing pointee
-constness and changing pointee types remain invalid.
+constructor signature. Removing pointee constness and changing pointee types
+remain invalid.
 
 Generated same-type raw copy/move construction has no source-constructor target.
 Direct
@@ -2490,13 +2003,8 @@ Returning the carrier or its exact stored referent publishes a fresh escaping
 `Return` loan through one `Borrow` operand that names that entry loan. A carrier
 return also names the exact SSA value loaded or moved from one of that loan's
 carrier bindings. A reference return carries a binding-rooted runtime place
-whose projections replay the complete designated structural path, including exact
-Base ordinals, and its final reference dereference. For a referenced carrier,
-the physical `Parameter` shell and its distinct `Stored` external dependency
-end separately at that transfer. The publication operand names the external
-entry; its runtime address retains the full shell dereference and field path.
-Independent program replay checks the typed path, entry permissions, shell-to-entry
-identity and ordered endpoints. The verifier independently rejects a projected or
+whose only projections are that designated field path and its dereference. The entry
+loan ends at that transfer. The verifier independently rejects a projected or
 wrong-field entry, a shell or unrelated same-typed carrier, an ordinary call-
 result place, a reused or multiply produced return loan, a wrong payload or
 referent type, or a terminator that does not carry the same loan and exact
@@ -2589,16 +2097,6 @@ the new result. Retiring the original lifecycle-bound loan requires that exact
 source/result handoff and unchanged dependency set; a same-typed construction
 alone is insufficient. Native reference members preserve their bindings rather
 than moving the referents.
-
-A value-to-binding initialization may shorten an inferred free region while
-preserving the same object and cleanup recipe. It uses `Reparent`, with an
-exact evaluated value source and destination binding; the structural query
-compares the complete erased cleanup shape, including the destructor and
-nested cleanup descriptors. Independent program verification proves the
-forward lifetime conversion. Cleanup-bound dependencies follow this verified
-transfer until the destination's normal or failure cleanup, so generated moves
-do not collapse a fresh result into the consumed carrier's lifetime. Neither
-matching layout nor an absent region proves that conversion.
 
 The bounded mutable-carrier extension reuses this explicit loan vocabulary
 rather than adding backend-only lifetime inference. A mutable parameter or
@@ -4496,11 +3994,7 @@ value/borrow uses of the base place. Base success must dominate both derived
 field publication and observable field-argument evaluation. The verifier follows
 SSA and place dependencies, including scalar joins and their controlling
 conditions, using existing MIR effects to allow only harmless preparation before
-the base. Reference fields seed this walk from their checked address publication,
-including real call, index and control dependencies; they do not require a load
-of the referent. Their escaping `Borrow` must follow base success. Only an exact
-transferred mutable formal can use its entry address without a new `Borrow`.
-Selected generated base constructors retain their exact executable
+the base. Selected generated base constructors retain their exact executable
 target; targetless native defaults cannot satisfy a required generated schedule.
 Every selected base initializer's generated-default flag must match the selected
 constructor, including when the derived constructor is explicitly declared.
@@ -4625,18 +4119,6 @@ exactly one `TransferOut` of that obligation, as a converting initialization
 does. The destination keeps its own obligation, which now owns the converted
 value, and no later Drop names the transferred source. A same-typed `Replace`
 across the conversion fails verification.
-A prepared owning `CallInput` may shorten free regions while retaining one
-object and its cleanup identity. Lowering keeps the original source type and
-reparents its exact active obligation into the separately typed prepared slot.
-Body verification admits this only for `MoveValue` or `MoveBorrowedTemporary`,
-with identical non-region storage shape, destructor identities, field/base/
-payload/capture selectors, array extents and cleanup effects. Independent
-program verification reconstructs the original source and proves the lifetime
-conversion even if no call consumes the stage. A later consumer sees the
-stage's declared result type and cannot recover an earlier longer region.
-Distinct wrapper conversions retain their separate transfer/initialization
-rule; matching cleanup shape alone never proves a region relation.
-
 Full-expression cleanup is LIFO, lexical cleanup is reverse construction order,
 and a temporary created
 only by a logical or conditional branch retains a path-conditional obligation
@@ -5125,11 +4607,8 @@ the owning scope ends the whole chain child-first.
 
 Returning a read-only reference parameter directly uses the same transfer as
 the by-value carrier and summarized call-result returns above. The parameter's
-seeded `Parameter` entry loan is the body's whole-extent capability. A whole
-reference formal's entry access must exactly equal its reference type, as for
-captures and concrete pack elements; program verification separately matches
-the root to the declared signature. This entry loan has no producing
-instruction, so it cannot become the escaping `Return` loan by
+seeded `Parameter` entry loan is the body's whole-extent capability and has no
+producing instruction, so it cannot become the escaping `Return` loan by
 reclassification: nothing in the body would ever name the address the return
 publishes, and a backend can only default-initialize that pointer. Lowering
 publishes a fresh parentless escaping `Return` loan from the entry loan's own
@@ -5404,11 +4883,6 @@ published loans separately from ordinary scope loans and retires them only
 after armed subobject obligations are inactive. Independent verification rejects
 early retirement, missing failure retirement, and retirement on the successful
 constructor path, which must export the dependency to its caller.
-A failing base-initialization invocation has not activated its success-only
-rollback obligation. Its exact failure continuation releases the unpublished
-base dependency without a drop; the called constructor owns cleanup of its
-partial object. This does not permit release after a later initializer fails:
-a successfully completed base must still be dropped first.
 Non-lifecycle-bound constructor entry loans also remain live until rollback
 finishes. A later initializer can publish such a reference into a field and
 change its final loan classification after earlier failure edges were built.
@@ -5493,40 +4967,8 @@ dependency group. Its `CallArgument` shell retains that exact group as
 identity, selected origin, access and parent dependency. The shell loan ends
 after the call, while captured dependencies survive until the full-expression
 closure cleanup finishes. Missing, substituted or prematurely ended capture
-dependencies are invalid MIR. A closure's ordinary confined callable contract
-and invocation capability checks remain required independently of materialization.
-An exact namespace function item may instead use the ordinary read-only
-value-borrow rule, including a stateless value copy. The verifier still proves
-its producer, applied parameter and result, source-defined target, temporary
-loan and cleanup; a borrowed or raw address of that temporary cannot escape.
-A checked reference result exposes a referent place in expression metadata.
-The shared result-shape check compares its category, referent type and access
-with the full applied reference result; the complete supplier set and lifetime
-application independently prove that the temporary input is not exported.
-A function item's complete type is derived from its exact target signature and
-lifetime contract, including every declared invocation binder. HIR and MIR
-compare that closed type by bound alpha equivalence; fixed and free regions,
-unused binders, and repeated-region relationships remain exact. A temporary
-parameter may rename the item's bound scope, while its materialized value,
-place, producer and cleanup obligation retain one identical storage type.
-
-A closure records a fixed environment contract separately from its invocation
-contract. Its `Closure` producer carries the exact formation application; MIR
-reconstructs the canonical-to-actual environment mapping and proves the whole
-formula in the enclosing body. The lambda body receives the conjunction of
-formation and invocation premises, preserving every alternative in an OR.
-Typed transport retains that environment invariant. Function-pointer adaptation
-may consume it only through the exact closure type and requested fixed-slot
-mapping; a fixed slot cannot become a fresh invocation binder. HIR, MIR and the
-lowered program preserve the same contract, while LLVM uses the instantiated
-capture types and layout. This metadata adds no runtime environment fields.
-Callable descriptors retain their complete lifetime application; their result
-and parameter types are checked against that application's exact target
-substitution. Source and HIR keep explicit lifetime argument spelling. MIR
-stores its meaning once in the descriptor's complete application, including
-all fixed choices, inferred bindings and obligations. Executable calls replay
-their own complete application even when optimization removes an invocation
-whose descriptor remains.
+dependencies are invalid MIR. The ordinary confined callable contract and
+invocation capability checks remain required independently of materialization.
 
 An ordinary enum observer and the generated `has_value` observation for
 source-defined propagation use the same schedule. Their materialization may be the
@@ -5592,14 +5034,10 @@ of an ordinary staged input or authorize new complex input producers. Scalar
 reference inputs of calls also require independently initialized storage;
 raw address formation and storage-lifetime-start destinations remain distinct.
 Physical pointee checks distinguish an object place from a reference-valued
-formal-pack element. For an exact concrete `PackElement` prefix, including
-nested packs, the verifier resolves every index and checks the complete
-projected type and carrier facts. Each reference entry retains that full prefix
-when deriving its pointee, parent authority and separate stored dependency.
-Equal-typed sibling leaves cannot substitute for one another, and the grouped
-binding cannot select one leaf implicitly. Canonical reference crossing uses
-only the uniquely selected active entry; `Reference<TypePack>` remains atomic.
-The immutable carrier does not make its referent immutable. This
+formal-pack element. For an exact single `PackElement` projection, the verifier
+resolves the binding's concrete pack and element index, checks the complete
+projected type and carrier facts, and derives the element reference's pointee
+and access. The immutable carrier does not make its referent immutable. This
 does not unwrap arbitrary reference-typed places or waive unrelated type,
 origin, index or access mismatches; ordinary exact/public-base compatibility
 still applies to the derived referent.
@@ -5825,77 +5263,6 @@ If that cleanup fails, no reference is published: its failure edge ends the
 pending return loan before draining the remaining locals. Ordinary successful
 cleanup leaves the loan available to the Return terminator. Loan dataflow
 verification rejects an abandoned return loan that survives a failure exit.
-For an admitted shared-reference copy from a local carrier, the publication
-retains only the selected field's independently proved external sources. The
-carrier keeps its own complete dependency group through ordinary cleanup.
-The verifier captures the result fact at the exact `Borrow` instruction and
-carries it through control-flow joins; ending the loan clears that fact.
-Consumers read the captured loan pointer without a place override, so the
-return cannot reread field storage after destruction. Typed projection and
-current storage flow prove the selection independently of its attached loan
-metadata. This mechanism does not grant an exclusive reborrow permission or
-waive the semantic cleanup-bound carrier checks.
-
-Generated same-type record copying uses the existing targetless `Construct`
-with `Copy` policy. An implicit local copy that needs a fresh retained group
-publishes the complete identity mapping of its stored reference fields; named
-and inferred declarations use the same operation. Verification independently
-checks the generated policy and typed field inventory, then reconstructs the
-copied contents from the actual input storage. The physical reference used to
-read that storage remains separate from the retained external dependencies.
-A reference formal can supply its exact dereferenced operand; a call result's
-lifetime supplier cannot substitute for its runtime address. Local carrier
-publication and returning a copied field reuse the independently reconstructed
-contents. Ordinary ownership, availability and cleanup checks remain mandatory;
-a source destructor still makes its class noncopyable.
-Generated movement records the evaluated same-type value as its MIR parameter
-role. The source-level special-member reference chooses the policy; it does not
-turn the executable transfer into a fresh borrow. This distinction preserves
-all retained suppliers when a copied reference can select several owners.
-
-The staged checked-reference contents vocabulary keeps a
-`MirReferenceContentsSource` (opening identity plus typed field selector)
-separate from a physical source place. Its `MirReferenceContentsOpening`
-records the actual evaluated operand, full reference type and formation read
-loans. Formation reads are not external reborrow parents, and opening IDs do
-not establish disjointness. MIR version 127 serializes these facts explicitly,
-including value dependencies and constructor initializer metadata. Staged body
-lowering anchors an opening after its exact HIR reference evaluation, preserves
-the evaluated referent place and full reference type, and maps its separate read
-capabilities and field selectors to body-local MIR identities. Copied value
-facts retain these tagged origins instead of substituting a physical shell.
-Malformed markers and duplicate field or read identities cannot publish a
-partial opening.
-The staged `referenceContentsOpeningShape` query independently reconstructs the
-full reference from its typed named/field address or exact applied CallResult
-producer, checks the complete direct shared field inventory and explicit source
-tags, and rejects cyclic read ancestry. Producer result, block and instruction
-identities remain exact. Shape success does not prove address authorization,
-active reads, dominance or contents flow.
-A staged branch of the existing CFG loan-flow engine checks formation against
-that exact shape, observes the capabilities used by the canonical read, and
-requires a related live frontier covering every physical origin. Replacing an
-actual read capability with its parents requires each parent to independently
-permit a read of that origin's exact source place. An unparented primary shell
-cannot disappear merely because the reference also lists parented external
-lifetime witnesses. Tagged or unknown origins require their actual capability;
-ancestry alone grants no physical permission. An external stored dependency
-cannot stand in for permission to read the container shell. The separate
-stored-dependency checks retain its liveness obligation.
-The opening becomes a shared snapshot without acquiring its transient read
-capabilities as reborrow parents. This component check does not yet establish
-current-content invalidation, tagged result transport, later read authority or
-the complete alias/lifecycle proof needed for publication.
-This transport creates no admission permission: the normal HIR and MIR guards
-below remain closed. The MIR supplier selector query uses the shared bounded traversal with MIR's own exact
-concrete field inventory; it does not extend that finite storage inventory
-across references. Unknown, cyclic and exhausted queries remain explicit.
-All body verification profiles and program verification currently reject populated
-contents metadata before legacy place-only consumers run. The source/HIR
-staging guard remains in place; this representation does not enable nested
-reference opening yet. Admission requires independent evaluation, read
-permission, exact inventory/guard, alias and lifecycle replay, including
-separate authority for every later runtime field read.
 
 Cleanup blocks forward the same record through supported initialized and
 partially initialized shapes to the selected hosted, callback, or managed-task

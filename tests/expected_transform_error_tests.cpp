@@ -71,6 +71,22 @@ void reject(const std::string &source, std::string_view code,
          "invalid source must not escape into backend diagnostics");
 }
 
+// As reject, and the diagnostic is the program's only error, led by `first`.
+void rejectOnly(const std::string &source, std::string_view code,
+                std::string_view anchor, std::string_view first) {
+  const auto result = analyze(source);
+  const auto errors = std::count_if(
+      result.diagnostics.begin(), result.diagnostics.end(),
+      [](const auto &diagnostic) {
+        return diagnostic.severity == lang::DiagnosticSeverity::Error;
+      });
+  expect(errors == 1 && (result.diagnostics.front().message == first ||
+                         (!result.diagnostics.front().hints.empty() &&
+                          result.diagnostics.front().hints.front() == first)),
+         "the rejected mapper is one error, led by its explanation");
+  reject(source, code, anchor, first);
+}
+
 // A void mapper result reports exactly the member's assertion and the result
 // type's assertion, both at the requesting member name with their library
 // locations as notes.
@@ -128,14 +144,15 @@ void testDiagnostics() {
            "GTI-S2090", "map", "non-generic namespace-scope GTI function",
            true);
   }
-  // A mapper's global reference remains valid after the result receiver is
-  // consumed; the complete instantiated contract proves its external source.
-  expect(analyze(producer +
-                "int global = 1; int&<static> map(int e) { return global; }\n"
-                "int main() { [[discard]] read().transform_error(map); "
-                "return 0; }\n")
-            .canGenerateCode(),
-        "transform_error preserves a checked static reference result");
+  // A reference-returning mapper would make the consuming member return a
+  // borrow; the selected signature is rejected once, naming its result.
+  rejectOnly(producer + "int global = 1; int& map(int e) { return global; }\n"
+                        "int main() { [[discard]] read().transform_error(map); "
+                        "return 0; }\n",
+             "GTI-S2022", ")",
+             "A consuming method cannot return a reference or tracked "
+             "borrowed state; this call returns 'expected<int32_t, "
+             "int32_t&>'.");
   // A void mapper result fails the member's own assertion, which then is all
   // its instance reports, and the result type's assertion: two statements at
   // the call instead of the instance's cascade. Assertions are per concrete

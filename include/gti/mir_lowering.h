@@ -79,8 +79,7 @@ private:
       MirProgramInitializationPlan *loweredProgramInitialization = nullptr,
       bool compilerTrusted = false,
       const MirClassInstance *constructorOwner = nullptr,
-      const HirDestructorInstance *destructor = nullptr,
-      std::vector<MirConstructorInitializer> *loweredInitializers = nullptr);
+      const HirDestructorInstance *destructor = nullptr);
 
   [[nodiscard]] static bool
   lowerHostedStartup(const HirProgram &source,

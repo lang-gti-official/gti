@@ -20,10 +20,8 @@ public:
 export class erased_object {};
 export erased_object& erase_reference<T>(T& object);
 export mut erased_object& erase_reference_mut<T>(mut T& object);
-export unsafe T&<a> restore_reference<T, lifetime a>(erased_object&<a> object)
-    requires outlives<T, a>;
-export unsafe mut T&<a> restore_reference_mut<T, lifetime a>(mut erased_object&<a> object)
-    requires outlives<T, a>;
+export unsafe T& restore_reference<T>(erased_object& object);
+export unsafe mut T& restore_reference_mut<T>(mut erased_object& object);
 
 export uint64_t object_size<T>();
 export uint64_t object_alignment<T>();

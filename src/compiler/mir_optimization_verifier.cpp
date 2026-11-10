@@ -268,7 +268,7 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
     const MirBody before = *body;
     const MirPlace *place = before.findPlace(placeRecord.place);
     const std::optional<MirScalarPromotionRewrite> rewrite =
-        rewriteMirScalarPlace(*body, placeRecord.place, &candidate);
+        rewriteMirScalarPlace(*body, placeRecord.place);
     std::vector<MirInstructionId> relatedInstructions;
     if (rewrite) {
       relatedInstructions = rewrite->replacedInstructions;
@@ -746,7 +746,7 @@ MirVerificationResult mir_detail::verifyVerifiedMirOptimizationCoherence(
     MirBody *body = findMirBody(candidate, record.body);
     const std::optional<MirUnreachableBlockRewrite> rewrite =
         body == nullptr ? std::nullopt
-                        : rewriteMirUnreachableBlock(*body, record.block, &candidate);
+                        : rewriteMirUnreachableBlock(*body, record.block);
     if (!rewrite) {
       reject(record.body,
              "unreachable-block record names a block that canonical CFG "

@@ -1,7 +1,5 @@
-#include "representation.h"
 #include "places.h"
 #include "placement.h"
-#include "../mir_verification_queries.h"
 
 #include <algorithm>
 
@@ -72,7 +70,7 @@ llvm::GlobalVariable *Places::enumeratorStorage(const MirPlace &place) {
           ? session.program().findEnumDeclaration(place.type)
           : nullptr;
   if (!declaration || declaration->payload ||
-      !native_llvm::exactIntegralEnum(session.program().mir(), place.type))
+      !session.program().mir().findIntegralEnum(place.type))
     return nullptr;
   const auto enumerator = std::find_if(
       declaration->enumerators.begin(), declaration->enumerators.end(),
@@ -410,16 +408,12 @@ llvm::Value *Places::address(MirPlaceId id) {
       break;
     }
     case MirProjectionKind::Base: {
-      if (type.kind != SemanticType::Class || !projection.constantIndex)
-        throw std::logic_error("LLVM base projection lost its exact typed ordinal");
-      const BorrowPath path{baseProjection(type.classId, *projection.constantIndex)};
-      const auto view = mir_detail::walkBorrowPath(session.program().mir(), type,
-          AccessMode::Mutable, path, {}, mir_detail::MirBorrowPathRoot::Value);
-      if (!view || view->projections != std::vector<MirPlaceProjection>{projection})
-        throw std::logic_error("LLVM base projection lost its exact selected subobject");
-      const auto index = session.layouts().baseIndex(type, projection.selection);
-      address = ir.CreateStructGEP(session.layouts().get(type).storage, address, index);
-      type = view->type;
+      const auto &owner = session.layouts().instance(type);
+      const auto index =
+          session.layouts().baseIndex(type, projection.selection);
+      address = ir.CreateStructGEP(session.layouts().get(type).storage, address,
+                                   index);
+      type = owner.bases.at(index).type;
       break;
     }
     case MirProjectionKind::Dereference:

@@ -662,8 +662,7 @@ int main() {
           else if (mutation == 3)
             selected->restoredBorrowFields.clear();
           else if (mutation == 4)
-            selected->restoredBorrowFields.front().fields.front() =
-                lang::fieldProjection(0);
+            selected->restoredBorrowFields.front().fields.front() = 0;
           else if (mutation == 5)
             selected->restoredBorrowFields.front()
                 .referenceType.referenceAccess =

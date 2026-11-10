@@ -8,25 +8,25 @@ export module source_location;
 // caller, records the external invocation rather than this implementation.
 import std.string;
 export namespace gti_internal {
-std::string_view<static> source_file_name();
-std::string_view<static> source_function_name();
+std::string_view source_file_name();
+std::string_view source_function_name();
 uint32_t source_line();
 uint32_t source_column();
-std::string_view<static> source_expression_text<T>(T expression);
-std::string_view<static> source_expression_text_or<T>(T expression,
+std::string_view source_expression_text<T>(T expression);
+std::string_view source_expression_text_or<T>(T expression,
                                              std::string_view fallback);
 }
 
 export namespace std {
 /// Exact written expression text; the expression is checked but never evaluated.
 /// Interior whitespace and comments are retained. The result has static storage.
-#macro std::string_view<static> expression_text<T>(T expression) {
+#macro std::string_view expression_text<T>(T expression) {
   return gti_internal::source_expression_text<T>(expression);
 }
 
 /// Uses constant literal-backed fallback text when no exact written origin exists.
 /// Both arguments are checked without runtime evaluation or borrowing.
-#macro std::string_view<static> expression_text<T>(T expression,
+#macro std::string_view expression_text<T>(T expression,
                                          std::string_view fallback) {
   return gti_internal::source_expression_text_or<T>(expression, fallback);
 }

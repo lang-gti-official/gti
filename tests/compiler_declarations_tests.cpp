@@ -9550,14 +9550,11 @@ void missing_parameter<Args...>() {}
 void wrong_type<Args...>(int... values) {}
 void mutable_pack<Args...>(mut Args... values) {}
 void forwarding_pack<Args...>(Args&&... values) {}
-int&<static> borrowed_result<Args...>(int& first, Args&... values) {
-  int local = 1;
-  return local;
-}
+[[borrowed_from(first)]]
+int& borrowed_result<Args...>(int& first, Args&... values) { return first; }
 void direct_use<Args...>(Args... values) { values; }
 void local_pack<Args...>(Args... values) { Args local; }
 void bad_forward<Args...>(Args... values) { fixed(values...); }
-void wrong_flat_arity() { bad_forward(1, 2); }
 void not_a_pack(int value) { consume(value...); }
 )");
   expect(!invalid.canGenerateCode(),
@@ -9571,14 +9568,16 @@ void not_a_pack(int value) { consume(value...); }
           hasDiagnostic(invalid.diagnostics, "Parameter packs are immutable") &&
           hasDiagnostic(invalid.diagnostics,
                         "arrays and forwarding references are not supported") &&
-          hasDiagnostic(invalid.diagnostics, "Every possible owner of the returned reference") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "A reference parameter pack requires a result with "
+                        "no borrowed state") &&
           hasDiagnostic(invalid.diagnostics,
                         "must be expanded as the final call argument") &&
           hasDiagnostic(
               invalid.diagnostics,
               "can only appear in its matching final parameter-pack") &&
           hasDiagnostic(invalid.diagnostics,
-                        "Function expects 1 argument but received 2") &&
+                        "only be forwarded to another variadic") &&
           hasDiagnostic(invalid.diagnostics, "is not a parameter pack"),
       "variadic diagnostics should explain invalid pack placement, mutable "
       "value packs, forwarding references, borrowed results, and invalid "
@@ -11326,14 +11325,13 @@ int main() { return 0; }
 
   lang::SemanticVisitor invalidSemantic;
   expect(!invalidSemantic.check(invalidProgram),
-         "cycles, missing targets, and duplicates should "
+         "cycles, reference aliases, missing targets, and duplicates should "
          "be rejected");
   expect(hasDiagnostic(invalidSemantic, "Type alias cycle") &&
+             hasDiagnostic(invalidSemantic, "Reference aliases") &&
              hasDiagnostic(invalidSemantic, "Unknown type 'MissingType'") &&
              hasDiagnostic(invalidSemantic, "Duplicate declaration"),
          "invalid aliases should produce focused diagnostics");
-  expect(!hasDiagnostic(invalidSemantic, "Reference aliases"),
-         "an elided reference alias is valid independently of neighboring alias errors");
 
   const lang::FrontendResult invalidClassAliases =
       lang::Frontend().analyze("invalid-class-type-aliases.gti", R"(

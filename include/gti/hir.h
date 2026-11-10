@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -35,36 +34,6 @@ using HirFullExpressionId = std::size_t;
 using HirDropObligationId = std::size_t;
 using HirNativeCallbackAdapterId = std::size_t;
 using HirThreadTaskAdapterId = std::size_t;
-
-struct HirLifetimeOrigin {
-  Lifetime region;
-  PlaceKey place;
-  HirValueId source = 0;
-  friend bool operator==(const HirLifetimeOrigin &,
-                         const HirLifetimeOrigin &) = default;
-};
-
-struct HirLifetimeApplication {
-  std::vector<LifetimeBinding> bindings;
-  std::vector<Lifetime> variables;
-  std::vector<LifetimeBound> obligations;
-  std::vector<LifetimeTypeBound> typeObligations;
-  std::vector<HirLifetimeOrigin> origins;
-  std::optional<CallableLifetimeSignature> callableSignature;
-  bool complete = false;
-  friend bool operator==(const HirLifetimeApplication &,
-                         const HirLifetimeApplication &) = default;
-};
-
-struct HirLifetimeBody {
-  std::vector<Lifetime> variables;
-  std::vector<LifetimeBound> obligations;
-  std::vector<LifetimeTypeBound> typeObligations;
-  std::vector<HirLifetimeOrigin> origins;
-  bool complete = false;
-  friend bool operator==(const HirLifetimeBody &,
-                         const HirLifetimeBody &) = default;
-};
 
 enum class HirDropObligationKind {
   Binding,
@@ -170,19 +139,12 @@ struct HirBinding {
 };
 
 struct HirReferenceSelection {
-  ReferenceSelectionKind kind = ReferenceSelectionKind::StoredExternalReference;
   HirValueId value = 0;
   HirValueId carrier = 0;
   SemanticLoanId transferredFrom = 0;
-  BorrowPath fields;
+  std::vector<SymbolId> fields;
   std::vector<BorrowDependencyCondition> conditions;
   SemanticType reference = SemanticType::Unknown;
-};
-
-struct HirReferenceContentsOpening {
-  HirValueId reference = 0;
-  SemanticType referenceType = SemanticType::Unknown;
-  std::vector<SemanticLoanId> readLoans;
 };
 
 struct HirLoan {
@@ -191,13 +153,11 @@ struct HirLoan {
   SemanticLoanId parent = 0;
   SemanticLoanId storedDependency = 0;
   SemanticLoanPlace place;
-  std::optional<SemanticReferenceContentsSource> referenceContents;
   AccessMode access = AccessMode::ReadOnly;
-  BorrowPath designatedFields;
+  std::vector<SymbolId> designatedFields;
   std::vector<BorrowDependencyCondition> conditions;
   std::vector<SemanticLoanDependency> additionalDependencies;
   std::optional<HirReferenceSelection> referenceSelection;
-  std::optional<HirReferenceContentsOpening> contentsOpening;
   bool lifecycleBound = false;
   std::vector<HirBindingId> carriers;
   bool entry = false;
@@ -283,10 +243,6 @@ struct HirValue {
   // Retained even when a concrete pack prevents a fixed-arity call plan.
   std::vector<HirValueId> defaultArguments;
   std::vector<SemanticType> parameterTypes;
-  // Semantics-selected generic regions remain proof metadata, never operands.
-  std::vector<Lifetime> lifetimeArguments;
-  // Complete declaration-contract substitution, including elided/owner regions.
-  HirLifetimeApplication lifetimeApplication;
   std::optional<TokenKind> operation;
   std::optional<Literal> literal;
   std::optional<ConstantValue> constant;
@@ -324,9 +280,6 @@ struct HirValue {
   // semantic evidence. Origin places are body-qualified; structural paths are
   // declaration identities and must not be retagged.
   std::optional<SemanticBorrowDependencySet> borrowDependencies;
-  // The exact checked StoredValue group for this reference's direct
-  // referent contents. Its address dependencies remain in borrowDependencies.
-  SemanticLoanId referenceContentsLoan = 0;
   // Exact closure-construction inputs, consumed by its existing checked loan
   // producer; not a complete result dependency set.
   std::vector<SemanticLoanDependency> captureBorrowDependencies;
@@ -556,7 +509,6 @@ private:
 
 struct HirBody {
   PlaceDomain placeDomain;
-  HirLifetimeBody lifetimeBody;
   SourceDebugRecord<HirSourceDebugTables> sourceDebug;
   std::vector<HirBinding> bindings;
   std::vector<HirLoan> loans;
@@ -637,13 +589,10 @@ hirInitializerReachabilityBatch(
 struct HirLambda {
   HirLambdaId id = 0;
   LambdaId declaration = 0;
-  std::vector<Lifetime> environmentLifetimes;
-  LifetimeSignatureContract environmentContract{.complete = true};
   const Lambda *source = nullptr;
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
-  LifetimeSignatureContract lifetimeContract;
   std::vector<HirBindingId> parameterBindings;
   std::vector<LambdaCaptureInfo> captures;
   CallableInvocationCapability capability = CallableInvocationCapability::Read;
@@ -655,7 +604,6 @@ struct HirLambda {
   BorrowOriginKind returnBorrowOrigin = BorrowOriginKind::None;
   std::size_t returnBorrowParameter = 0;
   AccessMode returnBorrowAccess = AccessMode::ReadOnly;
-  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   HirBody body;
 };
 
@@ -669,9 +617,6 @@ struct HirEnumerator {
 };
 
 struct HirEnum {
-  std::vector<GenericParameterIdentity> liftedLifetimes;
-  NominalVariance variance;
-  LifetimeSignatureContract lifetimeContract;
   EnumId declaration = 0;
   SemanticType type = SemanticType::Unknown;
   SourceUnitId sourceUnit = 0;
@@ -723,9 +668,6 @@ struct HirVirtualDispatch {
 };
 
 struct HirClassInstance {
-  std::vector<GenericParameterIdentity> liftedLifetimes;
-  NominalVariance variance;
-  LifetimeSignatureContract lifetimeContract;
   HirClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ClassId declaration = 0;
@@ -777,8 +719,6 @@ struct HirCallableSignature {
   const Call *source = nullptr;
   SemanticType returnType = SemanticType::Void;
   std::vector<SemanticType> parameterTypes;
-  std::vector<Lifetime> lifetimeArguments;
-  HirLifetimeApplication lifetimeApplication;
   CallableInvocationCapability requiredCapability =
       CallableInvocationCapability::Read;
   std::optional<CallableInvocationCapability> selectedCapability;
@@ -804,19 +744,15 @@ struct HirCallableParameter {
 };
 
 struct HirFunctionInstance {
-  std::vector<GenericParameterIdentity> liftedLifetimes;
   HirFunctionInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   FunctionId declaration = 0;
   const FunctionDecl *source = nullptr;
   std::optional<HirClassInstanceId> owner;
-  // Universal owner type in this callable's region scope.
-  SemanticType ownerType = SemanticType::Unknown;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   SemanticType returnType = SemanticType::Unknown;
   std::vector<SemanticType> parameterTypes;
-  LifetimeSignatureContract lifetimeContract;
   std::vector<std::size_t> ownerlessTextParameters;
   std::vector<OwnerlessTextField> ownerlessTextFields;
   std::vector<PublishedTextField> publishedTextFields;
@@ -897,9 +833,6 @@ struct HirConstructorInitializer {
   std::optional<HirClassInstanceId> base;
   std::optional<HirConstructorInstanceId> constructorTarget;
   std::vector<HirValueId> arguments;
-  std::vector<Lifetime> lifetimeArguments;
-  HirLifetimeApplication lifetimeApplication;
-  std::optional<SemanticBorrowDependencySet> completeBorrow;
   std::size_t explicitArgumentCount = 0;
   bool storesReference = false;
   AccessMode borrowAccess = AccessMode::ReadOnly;
@@ -908,7 +841,6 @@ struct HirConstructorInitializer {
 };
 
 struct HirConstructorInstance {
-  std::vector<GenericParameterIdentity> liftedLifetimes;
   FunctionCodegenAttributes codegenAttributes;
   HirConstructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
@@ -921,12 +853,9 @@ struct HirConstructorInstance {
   bool constexprConstructor = false;
   bool requiresUnsafe = false;
   HirClassInstanceId owner = 0;
-  // Universal owner type in this callable's region scope.
-  SemanticType ownerType = SemanticType::Unknown;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<SemanticType> parameterTypes;
-  LifetimeSignatureContract lifetimeContract;
   std::vector<HirBindingId> parameterBindings;
   BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
   std::size_t borrowParameter = 0;
@@ -940,15 +869,11 @@ struct HirConstructorInstance {
 };
 
 struct HirDestructorInstance {
-  std::vector<GenericParameterIdentity> liftedLifetimes;
   FunctionCodegenAttributes codegenAttributes;
   HirDestructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   const DestructorDecl *source = nullptr;
   HirClassInstanceId owner = 0;
-  // Universal owner type in this callable's region scope.
-  SemanticType ownerType = SemanticType::Unknown;
-  LifetimeSignatureContract lifetimeContract;
   HirBody body;
 };
 
@@ -1025,10 +950,6 @@ struct HirEmbeddingPlan {
 
 class HirProgram {
 public:
-  [[nodiscard]] const std::vector<NominalVarianceRecipe> &nominalVarianceRecipes() const {
-    return nominalVarianceRecipes_;
-  }
-
   [[nodiscard]] bool requiresNativeObjectLayout() const {
     return nativeObjectLayout_;
   }
@@ -1170,8 +1091,6 @@ public:
   }
 
 private:
-  std::vector<NominalVarianceRecipe> nominalVarianceRecipes_;
-
   std::vector<ForeignStorageInfo> foreignStorage_;
   std::vector<std::shared_ptr<const Stmt>> sourceStatementOwners_;
   friend class HirLowerer;
@@ -1266,14 +1185,6 @@ struct HirLoweringScope {
   std::vector<std::string> trustedSources;
 };
 
-// A staged query may prove a source body before the primary lexical body pass
-// reaches it. Such a proof only authorizes concrete reanalysis in this closure;
-// it does not mark the immutable primary model's body as analyzed.
-struct HirConstantSourceAuthority {
-  std::function<bool(const FunctionDecl &)> function;
-  std::function<bool(const ConstructorDecl &)> constructor;
-};
-
 class HirLowerer {
 public:
   explicit HirLowerer(TargetInfo target = TargetInfo::host(),
@@ -1303,16 +1214,14 @@ public:
       SemanticInstanceProvider &instanceProvider, FunctionId root,
       const std::vector<FunctionId> &completedFunctions,
       const GenericSubstitution &substitution = {},
-      const std::vector<ConstructorId> &completedConstructors = {},
-      HirConstantSourceAuthority sourceAuthority = {});
+      const std::vector<ConstructorId> &completedConstructors = {});
 
   [[nodiscard]] HirLoweringResult lowerConstantConstructor(
       const SemanticModel &semantics,
       SemanticInstanceProvider &instanceProvider,
       const ResolvedConstructionInfo &root,
       const std::vector<FunctionId> &completedFunctions,
-      const std::vector<ConstructorId> &completedConstructors,
-      HirConstantSourceAuthority sourceAuthority = {});
+      const std::vector<ConstructorId> &completedConstructors);
 
 private:
   class Impl;

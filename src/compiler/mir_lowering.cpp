@@ -2,7 +2,6 @@
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
-#include "mir_lifetimes.h"
 #include "mir_source_debug.h"
 
 namespace lang {
@@ -285,7 +284,6 @@ MirLowerer::lowerProgram(const HirProgram &source,
   result.program.executionProfile_ = source.executionProfile();
   result.program.programKind_ = source.programKind();
   result.program.foreignStorage_ = source.foreignStorageDeclarations();
-  result.program.nominalVarianceRecipes_ = source.nominalVarianceRecipes();
   result.program.target_ = source.analysisSeal().target;
   result.program.semanticSnapshot_ = source.analysisSeal().programSnapshot;
   result.program.nativeObjectLayout_ = source.requiresNativeObjectLayout();
@@ -293,19 +291,13 @@ MirLowerer::lowerProgram(const HirProgram &source,
   for (const HirEnum &enumeration : source.enumDeclarations()) {
     if (!enumeration.payload) {
       result.program.integralEnums_.push_back(
-          {.liftedLifetimes = enumeration.liftedLifetimes,
-           .variance = enumeration.variance,
-           .lifetimeContract = enumeration.lifetimeContract,
-           .declaration = enumeration.declaration,
+          {.declaration = enumeration.declaration,
            .type = enumeration.type,
            .sourceUnit = enumeration.sourceUnit,
            .underlyingType = enumeration.underlyingType});
       continue;
     }
-    MirPayloadEnum lowered{.liftedLifetimes = enumeration.liftedLifetimes,
-                           .variance = enumeration.variance,
-                           .lifetimeContract = enumeration.lifetimeContract,
-                           .declaration = enumeration.declaration,
+    MirPayloadEnum lowered{.declaration = enumeration.declaration,
                            .sourceUnit = enumeration.sourceUnit,
                            .type = enumeration.type,
                            .traits = enumeration.traits,
@@ -336,9 +328,6 @@ MirLowerer::lowerProgram(const HirProgram &source,
   result.program.classes.reserve(source.classInstances().size());
   for (const HirClassInstance &instance : source.classInstances()) {
     MirClassInstance lowered{
-        .liftedLifetimes = instance.liftedLifetimes,
-        .variance = instance.variance,
-        .lifetimeContract = instance.lifetimeContract,
         .id = instance.id,
         .sourceUnit = instance.sourceUnit,
         .declaration = instance.declaration,
@@ -439,8 +428,6 @@ MirLowerer::lowerProgram(const HirProgram &source,
         lowered.signatures.push_back(
             {.returnType = signature.returnType,
              .parameterTypes = signature.parameterTypes,
-             .lifetimeApplication =
-                 lowerMirLifetimeApplication(signature.lifetimeApplication),
              .requiredCapability = signature.requiredCapability,
              .selectedCapability = signature.selectedCapability,
              .functionTarget = signature.functionTarget,
@@ -456,16 +443,13 @@ MirLowerer::lowerProgram(const HirProgram &source,
       callableParameters.emplace_back(std::move(lowered));
     }
     result.program.functions.push_back(
-        {.liftedLifetimes = instance.liftedLifetimes,
-         .id = instance.id,
+        {.id = instance.id,
          .declaration = instance.declaration,
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
          .owner = instance.owner,
-         .ownerType = instance.ownerType,
          .returnType = instance.returnType,
          .parameterTypes = instance.parameterTypes,
-         .lifetimeContract = instance.lifetimeContract,
          .ownerlessTextParameters = instance.ownerlessTextParameters,
          .ownerlessTextFields = instance.ownerlessTextFields,
          .publishedTextFields = instance.publishedTextFields,
@@ -527,17 +511,6 @@ MirLowerer::lowerProgram(const HirProgram &source,
              result.errors, instance.id, implicitZeroReturn, nullptr, &instance,
              nullptr, nullptr, nullptr, nullptr,
              compilerTrustedSourceUnit(source, instance.sourceUnit))});
-    auto &lowered = result.program.functions.back();
-    for (auto &parameter : lowered.callableParameters)
-      for (auto &signature : parameter.signatures)
-        if (!resolveMirLifetimeOrigins(signature.lifetimeApplication,
-                                       lowered.body)) {
-          valid = false;
-          result.errors.push_back(
-              {.body = {MirBodyKind::Function, instance.id},
-               .message =
-                   "MIR callable lifetime origin has no exact lowered place"});
-        }
   }
 
   if (const std::optional<HirEmbeddingPlan> &sourcePlan =
@@ -602,9 +575,6 @@ MirLowerer::lowerProgram(const HirProgram &source,
            .base = initializer.base,
            .constructorTarget = initializer.constructorTarget,
            .arguments = initializer.arguments,
-           .lifetimeArguments = initializer.lifetimeArguments,
-           .lifetimeApplication =
-               lowerMirLifetimeApplication(initializer.lifetimeApplication),
            .explicitArgumentCount = initializer.explicitArgumentCount,
            .storesReference = initializer.storesReference,
            .borrowAccess = initializer.borrowAccess,
@@ -612,18 +582,15 @@ MirLowerer::lowerProgram(const HirProgram &source,
            .ownedParameter = initializer.ownedParameter});
     }
     result.program.constructors.push_back(
-        {.liftedLifetimes = instance.liftedLifetimes,
-         .codegenAttributes = instance.codegenAttributes,
+        {.codegenAttributes = instance.codegenAttributes,
          .id = instance.id,
          .owner = instance.owner,
-         .ownerType = instance.ownerType,
          .constexprConstructor = instance.constexprConstructor,
          .requiresUnsafe = instance.requiresUnsafe,
          .generatedDefault = instance.generatedDefault,
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
          .parameterTypes = instance.parameterTypes,
-         .lifetimeContract = instance.lifetimeContract,
          .parameterBindings = instance.parameterBindings,
          .borrowOrigin = instance.borrowOrigin,
          .borrowParameter = instance.borrowParameter,
@@ -639,26 +606,15 @@ MirLowerer::lowerProgram(const HirProgram &source,
              definedFailureEffects.constructors.empty() || instance.id == 0 ||
              instance.id > definedFailureEffects.constructors.size() ||
              definedFailureEffects.constructors[instance.id - 1],
-         .initializers = {},
+         .initializers = std::move(initializers),
          .body = lowerBody(
              source, failureMetadata, instance.body, MirBodyKind::Constructor,
              SemanticType::Void, instance.initializerValues,
              definedFailureEffects, valid, result.errors, instance.id, false,
              &instance.initializers, nullptr, &instance, nullptr, nullptr,
              nullptr, compilerTrustedSourceUnit(source, instance.sourceUnit),
-             constructorOwner, nullptr, &initializers)});
+             constructorOwner)});
     auto &lowered = result.program.constructors.back();
-    lowered.initializers = std::move(initializers);
-    for (auto &initializer : lowered.initializers)
-      if (!resolveMirLifetimeOrigins(initializer.lifetimeApplication,
-                                     lowered.body)) {
-        valid = false;
-        result.errors.push_back(
-            {.body = {MirBodyKind::Constructor, instance.id},
-             .message =
-                 "MIR constructor lifetime origin has no exact lowered place"});
-      }
-
     if (constructorOwner && constructorOwner->polymorphic &&
         lowered.definitionKind == MirDefinitionKind::Source) {
       const auto stateBase = std::find_if(
@@ -690,12 +646,9 @@ MirLowerer::lowerProgram(const HirProgram &source,
   result.program.destructors.reserve(source.destructorInstances().size());
   for (const HirDestructorInstance &instance : source.destructorInstances()) {
     result.program.destructors.push_back(
-        {.liftedLifetimes = instance.liftedLifetimes,
-         .codegenAttributes = instance.codegenAttributes,
+        {.codegenAttributes = instance.codegenAttributes,
          .id = instance.id,
          .owner = instance.owner,
-         .ownerType = instance.ownerType,
-         .lifetimeContract = instance.lifetimeContract,
          .definitionKind =
              instance.source != nullptr && instance.source->body() != nullptr
                  ? MirDefinitionKind::Source
@@ -727,19 +680,15 @@ MirLowerer::lowerProgram(const HirProgram &source,
     MirLambdaInstance lowered{
         .id = instance.id,
         .declaration = instance.declaration,
-        .environmentLifetimes = instance.environmentLifetimes,
-        .environmentContract = instance.environmentContract,
         .type = instance.type,
         .returnType = instance.returnType,
         .parameterTypes = instance.parameterTypes,
-        .lifetimeContract = instance.lifetimeContract,
         .parameterBindings = instance.parameterBindings,
         .capability = instance.capability,
         .lifecycleBoundBorrowCarrier = instance.lifecycleBoundBorrowCarrier,
         .returnBorrowOrigin = instance.returnBorrowOrigin,
         .returnBorrowParameter = instance.returnBorrowParameter,
-        .returnBorrowAccess = instance.returnBorrowAccess,
-        .completeReturnBorrow = instance.completeReturnBorrow};
+        .returnBorrowAccess = instance.returnBorrowAccess};
     lowered.captureTypes.reserve(instance.captures.size());
     lowered.captureModes.reserve(instance.captures.size());
     lowered.captureSymbols.reserve(instance.captures.size());

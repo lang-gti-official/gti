@@ -62,7 +62,7 @@ export enum class errc {
   io_failure,
 };
 
-export std::string_view<static> describe(errc code) {
+export std::string_view describe(errc code) {
   switch (code) {
     case errc::unexpected_end: return "unexpected end of JSON text";
     case errc::unexpected_character: return "unexpected character";

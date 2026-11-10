@@ -1,6 +1,3 @@
-#include <cstdio>
-#include <cstdlib>
-#include "gti/lifetime_types.h"
 #include "cpp_mir_representation_snapshot.h"
 #include "gti/support.h"
 
@@ -230,9 +227,7 @@ substituteTemplateType(SemanticType type,
       return false;
     projected.arguments[index] = selected.arguments[index];
   }
-  // A C++ spelling never depends on a region; the selected instance's regions
-  // were verified before emission.
-  return eraseTypeLifetimes(projected) == eraseTypeLifetimes(selected);
+  return projected == selected;
 }
 
 [[nodiscard]] bool
@@ -398,10 +393,10 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
         !appendTemplateArguments(ownerSubstitution,
                                  ownerDeclaration->genericParameters,
                                  owner->typeArguments, owner->valueArguments)) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 399); return std::nullopt; } // TEMP-VOCAB
+      return std::nullopt;
     }
   } else if (declaration.ownerClass != 0) {
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 402); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   }
 
   CppMirCallableTemplateSignature result{
@@ -419,14 +414,14 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
                      return containsOnlyFunctionDependence(
                          type, declaration.genericParameters);
                    })) {
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 420); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   }
 
   TemplateSubstitution functionSubstitution;
   if (!appendTemplateArguments(
           functionSubstitution, declaration.genericParameters,
           instance.typeArguments, instance.valueArguments)) {
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 427); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   }
   // Native pointer types have no GTI metadata carrier. Their C result may
   // be T* while the logical GTI result uses raw_address<T>. Resolve only
@@ -458,7 +453,7 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
                                                           functionSubstitution,
                                                           &program),
                                    instance.returnType, program)) {
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 459); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   }
   std::vector<SemanticType> concreteParameters;
   for (const SemanticType &parameter : result.parameterTypes)
@@ -472,7 +467,7 @@ cppMirCallableTemplateSignature(const LoweredProgram &program,
                     return matchesSelectedTemplateType(projected, selected,
                                                        program);
                   }))
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 473); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   return result;
 }
 
@@ -480,18 +475,17 @@ std::optional<std::size_t> cppMirApplyCallableTemplateTypeOverlays(
     CppMirBodyEmissionMapRows &rows, const LoweredProgram &program,
     CppStandard standard, const LoweredFunctionDeclaration &declaration,
     const MirFunctionInstance &instance) {
-  if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] overlays for fn %llu typeArgs=%zu\n", (unsigned long long)instance.id, instance.typeArguments.size()); // TEMP-VOCAB
   const std::optional<CppMirCallableTemplateSignature> signature =
       cppMirCallableTemplateSignature(program, declaration, instance);
   if (!signature) {
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 484); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   }
 
   std::vector<std::pair<SemanticType, std::string>> overlays;
   TemplateSubstitution functionBindings;
   if (!appendTemplateArguments(functionBindings, declaration.genericParameters,
                                instance.typeArguments, instance.valueArguments))
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 491); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   for (const LoweredGenericParameter &parameter :
        declaration.genericParameters) {
     const auto binding = std::find_if(
@@ -503,7 +497,7 @@ std::optional<std::size_t> cppMirApplyCallableTemplateTypeOverlays(
       continue;
     if (!applyTemplateTypeOverlay(rows, overlays, binding->second,
                                   parameter.name))
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 503); return std::nullopt; } // TEMP-VOCAB
+      return std::nullopt;
   }
   if (instance.owner) {
     const LoweredClassInstance *owner =
@@ -512,12 +506,12 @@ std::optional<std::size_t> cppMirApplyCallableTemplateTypeOverlays(
         owner == nullptr ? nullptr
                          : program.findClassDeclaration(owner->declaration);
     if (ownerInfo == nullptr) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 512); return std::nullopt; } // TEMP-VOCAB
+      return std::nullopt;
     }
     TemplateSubstitution ownerBindings;
     if (!appendTemplateArguments(ownerBindings, ownerInfo->genericParameters,
                                  owner->typeArguments, owner->valueArguments)) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 517); return std::nullopt; } // TEMP-VOCAB
+      return std::nullopt;
     }
     for (const auto &[id, concrete] : ownerBindings.types) {
       const LoweredGenericParameter *parameter =
@@ -526,7 +520,7 @@ std::optional<std::size_t> cppMirApplyCallableTemplateTypeOverlays(
           (parameter == nullptr || parameter->pack ||
            !applyTemplateTypeOverlay(rows, overlays, concrete,
                                      parameter->name))) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 526); return std::nullopt; } // TEMP-VOCAB
+        return std::nullopt;
       }
     }
   }
@@ -538,7 +532,7 @@ std::optional<std::size_t> cppMirApplyCallableTemplateTypeOverlays(
           declaration.parameters[index].type.genericParameterId);
       if (parameter == nullptr || !parameter->pack ||
           index + 1 != declaration.parameters.size())
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 538); return std::nullopt; } // TEMP-VOCAB
+        return std::nullopt;
       for (std::size_t physical = index;
            physical < instance.parameterTypes.size(); ++physical) {
         const SemanticType &element = instance.parameterTypes[physical];
@@ -551,12 +545,12 @@ std::optional<std::size_t> cppMirApplyCallableTemplateTypeOverlays(
                            return overlay.first == element;
                          }) &&
             !applyTemplateTypeOverlay(rows, overlays, element, spelling))
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 551); return std::nullopt; } // TEMP-VOCAB
+          return std::nullopt;
       }
       continue;
     }
     if (index >= instance.parameterTypes.size())
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 556); return std::nullopt; } // TEMP-VOCAB
+      return std::nullopt;
     const SemanticType &concrete = instance.parameterTypes[index];
     if (declared.kind == SemanticType::TypeParameter) {
       const LoweredGenericParameter *parameter =
@@ -564,7 +558,7 @@ std::optional<std::size_t> cppMirApplyCallableTemplateTypeOverlays(
       if (parameter == nullptr ||
           !applyTemplateTypeOverlay(rows, overlays, concrete,
                                     parameter->name)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 564); return std::nullopt; } // TEMP-VOCAB
+        return std::nullopt;
       }
       continue;
     }
@@ -574,7 +568,7 @@ std::optional<std::size_t> cppMirApplyCallableTemplateTypeOverlays(
         !applyTemplateTypeOverlay(
             rows, overlays, concrete,
             cppSemanticTypeSpelling(program, standard, declared))) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 574); return std::nullopt; } // TEMP-VOCAB
+      return std::nullopt;
     }
   }
   if (signature->returnType != instance.returnType &&
@@ -584,7 +578,7 @@ std::optional<std::size_t> cppMirApplyCallableTemplateTypeOverlays(
       !applyTemplateTypeOverlay(
           rows, overlays, instance.returnType,
           cppSemanticTypeSpelling(program, standard, signature->returnType))) {
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 584); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   }
   return overlays.size();
 }
@@ -609,20 +603,20 @@ std::optional<std::size_t> cppMirApplyGenericOwnerConstructorTypeOverlays(
       owner->id != mirOwner->id ||
       owner->declaration != mirOwner->declaration ||
       declaration.owner != ownerInfo->id || !owner->valueArguments.empty()) {
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 609); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   }
 
   std::vector<std::pair<SemanticType, std::string>> overlays;
   TemplateSubstitution ownerBindings;
   if (!appendTemplateArguments(ownerBindings, ownerInfo->genericParameters,
                                owner->typeArguments, owner->valueArguments))
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 616); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   bool lambdaArgument = false;
   TemplateSubstitution constructorBindings;
   if (!appendTemplateArguments(constructorBindings,
                                declaration.genericParameters,
                                instance.typeArguments, instance.valueArguments))
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 622); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   std::vector<SemanticType> concreteParameters;
   for (const auto &parameter : declaration.parameters) {
     SemanticType::appendExpandedArgument(
@@ -632,18 +626,18 @@ std::optional<std::size_t> cppMirApplyGenericOwnerConstructorTypeOverlays(
             constructorBindings));
   }
   if (concreteParameters != instance.parameterTypes)
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 632); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   for (const LoweredGenericParameter &parameter :
        declaration.genericParameters) {
     const auto binding = std::find_if(
         constructorBindings.types.begin(), constructorBindings.types.end(),
         [&](const auto &entry) { return entry.first == parameter.id; });
     if (parameter.value || binding == constructorBindings.types.end())
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 639); return std::nullopt; } // TEMP-VOCAB
+      return std::nullopt;
     const SemanticType &argument = binding->second;
     if (parameter.pack) {
       if (argument.kind != SemanticType::TypePack || !argument.concretePack)
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 643); return std::nullopt; } // TEMP-VOCAB
+        return std::nullopt;
       for (std::size_t index = 0; index < argument.arguments.size(); ++index) {
         const auto &element = argument.arguments[index];
         if (!containsLambdaType(element))
@@ -653,12 +647,12 @@ std::optional<std::size_t> cppMirApplyGenericOwnerConstructorTypeOverlays(
                 rows, overlays, element,
                 "std::tuple_element_t<" + std::to_string(index) +
                     ", std::tuple<" + parameter.name + "...>>"))
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 653); return std::nullopt; } // TEMP-VOCAB
+          return std::nullopt;
       }
     } else if (containsLambdaType(argument)) {
       lambdaArgument = true;
       if (!applyTemplateTypeOverlay(rows, overlays, argument, parameter.name))
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 658); return std::nullopt; } // TEMP-VOCAB
+        return std::nullopt;
     }
   }
   for (const LoweredGenericParameter &parameter :
@@ -667,13 +661,13 @@ std::optional<std::size_t> cppMirApplyGenericOwnerConstructorTypeOverlays(
         ownerBindings.types.begin(), ownerBindings.types.end(),
         [&](const auto &entry) { return entry.first == parameter.id; });
     if (parameter.value || binding == ownerBindings.types.end()) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 667); return std::nullopt; } // TEMP-VOCAB
+      return std::nullopt;
     }
     const SemanticType &argument = binding->second;
     lambdaArgument = lambdaArgument || containsLambdaType(argument);
     if (parameter.pack) {
       if (argument.kind != SemanticType::TypePack || !argument.concretePack)
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 673); return std::nullopt; } // TEMP-VOCAB
+        return std::nullopt;
       for (std::size_t index = 0; index < argument.arguments.size(); ++index) {
         const auto &element = argument.arguments[index];
         if (!containsLambdaType(element) ||
@@ -685,16 +679,16 @@ std::optional<std::size_t> cppMirApplyGenericOwnerConstructorTypeOverlays(
                 rows, overlays, element,
                 "std::tuple_element_t<" + std::to_string(index) +
                     ", std::tuple<" + parameter.name + "...>>"))
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 685); return std::nullopt; } // TEMP-VOCAB
+          return std::nullopt;
       }
       continue;
     }
     if (!applyTemplateTypeOverlay(rows, overlays, argument, parameter.name)) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 690); return std::nullopt; } // TEMP-VOCAB
+      return std::nullopt;
     }
   }
   if (!lambdaArgument || overlays.empty()) {
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 694); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   }
   return overlays.size();
 }
@@ -719,7 +713,7 @@ std::optional<std::size_t> cppMirApplyGenericOwnerDestructorTypeOverlays(
       mirOwner->destructor != instance.id ||
       instance.definitionKind != MirDefinitionKind::Source ||
       !containsLambdaType(mirOwner->type) || !owner->valueArguments.empty())
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] null %d\n", 719); return std::nullopt; } // TEMP-VOCAB
+    return std::nullopt;
   TemplateSubstitution bindings;
   if (!appendTemplateArguments(bindings, declaration->genericParameters,
                                owner->typeArguments, owner->valueArguments))
@@ -788,14 +782,12 @@ specializedBodyTextIsReady(const LoweredProgram &program, CppStandard standard,
     }
     overlayCount = cppMirApplyCallableTemplateTypeOverlays(
         rows, program, standard, *declaration, *instance);
-    if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] fn %llu overlayCount=%d\n", (unsigned long long)instance->id, overlayCount ? (int)*overlayCount : -1); // TEMP-VOCAB
     if (!overlayCount || *overlayCount == 0) {
       return false;
     }
     const CppMirBodyEmissionMap overlay(std::move(rows));
     const CppMirBodyEmitter emitter(program.mir(), overlay);
     const CppMirBodyEmissionPlan plan = emitter.buildPlan(analysis.body);
-    if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[snap] fn %llu ready=%d plain=%d\n", (unsigned long long)instance->id, plan.analysis().ready(), plan.analysis().ready() && plan.supportsPlainText()); // TEMP-VOCAB
     if (!plan.analysis().ready()) {
       return false;
     }

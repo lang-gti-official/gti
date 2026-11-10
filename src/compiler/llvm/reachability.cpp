@@ -1,5 +1,4 @@
 #include "reachability.h"
-#include "../mir_lifetimes.h"
 #include "gti/mir_effects.h"
 #include "native_c_contract.h"
 
@@ -54,8 +53,14 @@ dynamicOwnerAllocation(const MirProgram &program,
       instruction.info.type.arguments.size() != 1 ||
       instruction.info.type.arguments.front().kind != SemanticType::Class)
     return std::nullopt;
-  const auto view = mirClassLifetimeView(program, instruction.info.type.arguments.front());
-  const auto *selected = view ? view->instance : nullptr;
+  const MirClassInstance *selected = nullptr;
+  for (const auto &candidate : program.classInstances())
+    if (candidate.type == instruction.info.type.arguments.front()) {
+      if (selected)
+        throw std::logic_error(
+            "LLVM dynamic owner allocation has ambiguous class identity");
+      selected = &candidate;
+    }
   if (!selected)
     throw std::logic_error("LLVM dynamic owner allocation has no sealed class");
   if (!selected->polymorphic)
@@ -216,8 +221,14 @@ Reachability reachableProgram(const LoweredProgram &program) {
                instruction.constructorKind == ConstructorKind::Move);
           if (instruction.info.type.kind == SemanticType::Class &&
               (generatedCopy || generatedMove)) {
-            const auto view = mirClassLifetimeView(mir, instruction.info.type);
-            const auto *object = view ? view->instance : nullptr;
+            const MirClassInstance *object = nullptr;
+            for (const auto &candidate : mir.classInstances())
+              if (candidate.type == instruction.info.type) {
+                if (object)
+                  throw std::logic_error(
+                      "LLVM transfer demand has ambiguous class identity");
+                object = &candidate;
+              }
             if (!object)
               throw std::logic_error(
                   "LLVM transfer demand has no sealed class");
@@ -235,8 +246,14 @@ Reachability reachableProgram(const LoweredProgram &program) {
               instruction.info.type.kind == SemanticType::Class &&
               (instruction.kind == MirInstructionKind::Construct ||
                instruction.kind == MirInstructionKind::InitializeBase)) {
-            const auto view = mirClassLifetimeView(mir, instruction.info.type);
-            const auto *object = view ? view->instance : nullptr;
+            const MirClassInstance *object = nullptr;
+            for (const auto &candidate : mir.classInstances())
+              if (candidate.type == instruction.info.type) {
+                if (object)
+                  throw std::logic_error(
+                      "LLVM generated default has ambiguous class identity");
+                object = &candidate;
+              }
             if (!object)
               throw std::logic_error(
                   "LLVM generated default has no sealed class");

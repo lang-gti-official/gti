@@ -15,13 +15,11 @@ public:
 /// Read-only paired access without copying either underlying element.
 /// A reference to this proxy borrows its cursor; advancing the cursor while
 /// that reference is live is excluded by the ordinary child-loan rules.
-// The viewed span's region is named: an element copies that reference, so a
-// derived element and its owning iterator keep the span's own region.
-class paired_span_element<std::storage_element L, std::storage_element R, lifetime storage> {
-  paired_span<L, R>&<storage> source;
+class paired_span_element<std::storage_element L, std::storage_element R> {
+  paired_span<L, R>& source;
   mut size_t current_position;
 public:
-  paired_span_element(paired_span<L, R>&<storage> source, size_t position)
+  paired_span_element(paired_span<L, R>& source, size_t position)
       : source(source), current_position(position) {
     if (position > this.size()) { gti_internal::index_bounds_check(position, this.size()); }
   }
@@ -35,18 +33,17 @@ public:
   R& second() {
     return this.source.second(this.current_position);
   }
-  paired_span_element<L, R, storage> at(size_t position) {
+  paired_span_element<L, R> at(size_t position) {
     gti_internal::index_bounds_check(position, this.size());
-    return paired_span_element<L, R, storage>(this.source, position);
+    return paired_span_element<L, R>(this.source, position);
   }
   // Every observation remains checked by the source view. Cursors establish
   // their inclusive base-position bounds before changing this coordinate.
   void select(size_t position) mut { this.current_position = position; }
 };
 
-class paired_span_iterator<std::storage_element L, std::storage_element R, uint64_t Reverse = 0,
-                           lifetime storage> {
-  mut paired_span_element<L, R, storage> element;
+class paired_span_iterator<std::storage_element L, std::storage_element R, uint64_t Reverse = 0> {
+  mut paired_span_element<L, R> element;
   mut size_t current_position;
 
   void advance(ptrdiff_t offset, bool subtract = false) mut {
@@ -71,15 +68,13 @@ class paired_span_iterator<std::storage_element L, std::storage_element R, uint6
     this.current_position = position;
   }
 public:
-  // The cursor stores the exact element it starts from, so its anonymous
-  // view regions are the element's own (initializer provenance).
-  paired_span_iterator(paired_span_element<L, R, storage> start, size_t position)
-      : element(start), current_position(position) {
+  paired_span_iterator(paired_span<L, R>& source, size_t position)
+      : element(paired_span_element<L, R>(source, position)), current_position(position) {
     if constexpr (Reverse != 0) {
       if (position != size_t(0)) { this.element.select(position - size_t(1)); }
     }
   }
-  paired_span_element<L, R, storage>& operator*() {
+  paired_span_element<L, R>& operator*() {
     if constexpr (Reverse != 0) {
       size_t position = detail::checked_iterator_position(this.current_position,
           size_t(0), this.element.size(), ptrdiff_t(-1));
@@ -89,10 +84,10 @@ public:
     }
     return this.element;
   }
-  paired_span_element<L, R, storage>& operator->() { return *this; }
+  paired_span_element<L, R>& operator->() { return *this; }
   // An indexed proxy owns only checked borrowing state. It does not change
   // the cursor's cached coordinate or copy either underlying element.
-  paired_span_element<L, R, storage> operator[](ptrdiff_t offset) {
+  paired_span_element<L, R> operator[](ptrdiff_t offset) {
     mut size_t position = detail::checked_iterator_position(this.current_position,
         size_t(0), this.element.size(), offset, Reverse != 0);
     if constexpr (Reverse != 0) {
@@ -154,23 +149,17 @@ public:
   }
 
   detail::paired_span_iterator<L, R> begin() {
-    return detail::paired_span_iterator<L, R>(
-        detail::paired_span_element<L, R>(this, size_t(0)), size_t(0));
+    return detail::paired_span_iterator<L, R>(this, size_t(0));
   }
   detail::paired_span_sentinel end() { return detail::paired_span_sentinel(this.size()); }
   detail::paired_span_iterator<L, R> end_iterator() {
-    return detail::paired_span_iterator<L, R>(
-        detail::paired_span_element<L, R>(this, this.size()), this.size());
+    return detail::paired_span_iterator<L, R>(this, this.size());
   }
   detail::paired_span_iterator<L, R> cbegin() { return this.begin(); }
   detail::paired_span_sentinel cend() { return this.end(); }
-  const_reverse_iterator rbegin() {
-    return const_reverse_iterator(detail::paired_span_element<L, R>(this, this.size()), this.size());
-  }
+  const_reverse_iterator rbegin() { return const_reverse_iterator(this, this.size()); }
   detail::paired_span_sentinel rend() { return detail::paired_span_sentinel(size_t(0)); }
-  const_reverse_iterator rend_iterator() {
-    return const_reverse_iterator(detail::paired_span_element<L, R>(this, size_t(0)), size_t(0));
-  }
+  const_reverse_iterator rend_iterator() { return const_reverse_iterator(this, size_t(0)); }
   const_reverse_iterator crbegin() { return this.rbegin(); }
   detail::paired_span_sentinel crend() { return this.rend(); }
 

@@ -1,8 +1,4 @@
-#include <execinfo.h> // TEMP-TRACE
-#include <cstdio> // TEMP-TRACE
 #include "gti/semantic_model.h"
-#include "gti/generic_type_patterns.h"
-#include "gti/lifetime_types.h"
 
 #include <algorithm>
 #include <atomic>
@@ -113,18 +109,6 @@ RestrictedBorrowResultDomain restrictCompleteBorrowResultDomain(
 SemanticType substituteSemanticType(const SemanticType &type,
                                     const GenericSubstitution &substitution,
                                     const SemanticModel *model) {
-  if (!substitution.valid)
-    return SemanticType::Unknown;
-  if (!substitution.callableScopes.empty())
-    return substituteScopedGenericType(
-        type, substitution,
-        [&](const auto &value) {
-          return substituteCompileTimeValue(value, substitution.values);
-        },
-        [&](SemanticType value) {
-          return model ? model->resolveExactClassSpecialization(std::move(value))
-                       : std::move(value);
-        }).value_or(SemanticType::Unknown);
   if (type.kind == SemanticType::TypeParameter ||
       (type.kind == SemanticType::TypePack && !type.concretePack)) {
     const auto found = substitution.types.find(type.genericParameterId);
@@ -767,18 +751,10 @@ SemanticModel::ownerlessTextContractProof(
 
 std::optional<SemanticNoNormalBorrowResultProof>
 SemanticModel::noNormalBorrowResultProof(const Call &call) const {
-  if (const auto *selected = findCall(call)) {
-    if (!selected->noNormalBorrowResult ||
-        selected->intrinsic != IntrinsicKind::None || !selected->function ||
-        selected->dispatch != CallDispatch::Static || !selected->neverReturns ||
-        findLambdaCall(call))
-      return std::nullopt;
-    return SemanticNoNormalBorrowResultProof(call, *selected,
-                                             analysisSeal().programSnapshot);
-  }
-  const auto *selected = findLambdaCall(call);
-  if (!selected || !selected->lambda || !selected->noNormalBorrowResult ||
-      !selected->neverReturns)
+  const auto *selected = findCall(call);
+  if (!selected || !selected->noNormalBorrowResult ||
+      selected->intrinsic != IntrinsicKind::None || !selected->function ||
+      selected->dispatch != CallDispatch::Static || !selected->neverReturns)
     return std::nullopt;
   return SemanticNoNormalBorrowResultProof(call, *selected,
                                            analysisSeal().programSnapshot);
@@ -1527,14 +1503,6 @@ SemanticModel::findClassType(ClassId id) const {
   return base == nullptr ? nullptr : base->findClassType(id);
 }
 
-[[nodiscard]] const ClassTypeInfo *
-SemanticModel::findPublicClassType(ClassId id) const {
-  const auto *record = findClassType(id);
-  while (record != nullptr && record->exactSpecializationPrimary != 0)
-    record = findClassType(record->exactSpecializationPrimary);
-  return record;
-}
-
 [[nodiscard]] SemanticType
 SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
   for (SemanticType &argument : type.arguments) {
@@ -1591,10 +1559,8 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
       return value;
     }
     SemanticType primary = SemanticType::classType(
-        info->exactSpecializationPrimary,
-        value.arguments.empty() ? info->exactTypeArguments : value.arguments,
-        value.valueArguments.empty() ? info->exactValueArguments : value.valueArguments,
-        value.lifetimeArguments);
+        info->exactSpecializationPrimary, info->exactTypeArguments,
+        info->exactValueArguments);
     return self(self, std::move(primary));
   };
   const SemanticType key = canonicalize(canonicalize, type);
@@ -1609,11 +1575,7 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
                      model->exactClassSpecializations.end(),
                      [&](const ExactClassSpecializationRecord &candidate) {
                        return candidate.primary == key.classId &&
-                              candidate.typeArguments.size() == key.arguments.size() &&
-                              std::equal(candidate.typeArguments.begin(), candidate.typeArguments.end(),
-                                         key.arguments.begin(), [](const auto &left, const auto &right) {
-                                           return eraseTypeLifetimes(left) == eraseTypeLifetimes(right);
-                                         }) &&
+                              candidate.typeArguments == key.arguments &&
                               candidate.valueArguments == key.valueArguments;
                      });
     return found == model->exactClassSpecializations.end()
@@ -1621,16 +1583,7 @@ SemanticModel::resolveExactClassSpecialization(SemanticType type) const {
                : found->specialization;
   };
   const ClassId specialization = find(find, this);
-  if (specialization != 0) {
-    type.classId = specialization;
-    // Already selected legacy declaration types may not yet have their
-    // public arguments. New selections always retain the actual arguments.
-    if (type.arguments.empty())
-      type.arguments = key.arguments;
-    if (type.valueArguments.empty())
-      type.valueArguments = key.valueArguments;
-  }
-  return type;
+  return specialization == 0 ? type : SemanticType::classType(specialization);
 }
 
 [[nodiscard]] const TypeAliasInfo *
@@ -2112,9 +2065,6 @@ SemanticModel::completionContext() const {
 
 [[nodiscard]] const GenericParameterInfo *
 SemanticModel::findGenericParameter(GenericParameterId id) const {
-  if (const auto parameter = genericParameterMetadata.find(id);
-      parameter != genericParameterMetadata.end())
-    return &parameter->second;
   const auto find = [id](const auto &records) -> const GenericParameterInfo * {
     for (const auto &[_, record] : records) {
       const auto parameter = std::find_if(
@@ -2151,11 +2101,6 @@ SemanticModel::findGenericParameter(GenericParameterId id) const {
     }
   }
   return base == nullptr ? nullptr : base->findGenericParameter(id);
-}
-
-void SemanticModel::recordGenericParameter(GenericParameterInfo parameter) {
-  assert(parameter.id != 0);
-  genericParameterMetadata.insert_or_assign(parameter.id, std::move(parameter));
 }
 
 [[nodiscard]] const ConstructorInfo *
@@ -2228,7 +2173,6 @@ void SemanticModel::clear() {
   payloadBindings.clear();
   retainedLoans.clear();
   expressionBorrowDependencies.clear();
-  referenceContentsLoans.clear();
   captureBorrowDependencies.clear();
   loanEnds.clear();
   conditionalLoanEnds.clear();
@@ -2247,7 +2191,6 @@ void SemanticModel::clear() {
   structuredBindings.clear();
   rangeIterations.clear();
   functions.clear();
-  genericParameterMetadata.clear();
   functionsById.clear();
   functionDeclarations.clear();
   lambdas.clear();
@@ -2267,8 +2210,6 @@ void SemanticModel::clear() {
   payloadConstructions.clear();
   payloadPatterns.clear();
   calls.clear();
-  blockLifetimeBodies.clear();
-  expressionLifetimeBodies.clear();
   suppressedInheritedCalls.clear();
   packFolds.clear();
   lambdaCalls.clear();
@@ -2552,7 +2493,6 @@ void SemanticModel::beginSpeculativeDelta(const SemanticModel &baseModel) {
   if (sourceDebug_.tables && baseModel.sourceDebug_.tables)
     sourceDebug_.tables->instance = baseModel.sourceDebug_.tables->instance;
   retainedLoans = baseModel.retainedLoans;
-  referenceContentsLoans = baseModel.referenceContentsLoans;
   setToolingOccurrencesEnabled(baseModel.semanticDatabase.toolingOccurrences);
 }
 
@@ -2703,85 +2643,30 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
   std::size_t borrowedDependencies = 0;
   for (const auto &loan : retainedLoans) {
     borrowedDependencies += loan.conditions.size();
-    if (loan.referenceContents)
-      borrowedDependencies += loan.referenceContents->fields.size();
-    if (loan.contentsOpening)
-      borrowedDependencies += loan.contentsOpening->readLoans.size();
     if (loan.referenceSelection)
       borrowedDependencies += loan.referenceSelection->fields.size() +
                               loan.referenceSelection->conditions.size();
-    for (const auto &dependency : loan.additionalDependencies) {
+    for (const auto &dependency : loan.additionalDependencies)
       borrowedDependencies += dependency.conditions.size();
-      if (dependency.referenceContents)
-        borrowedDependencies += dependency.referenceContents->fields.size();
-    }
   }
   for (const auto &[_, complete] : expressionBorrowDependencies) {
     if (!complete)
       continue;
     borrowedDependencies += complete->dependencies.size();
-    for (const auto &dependency : complete->dependencies) {
+    for (const auto &dependency : complete->dependencies)
       borrowedDependencies += dependency.conditions.size();
-      if (dependency.referenceContents)
-        borrowedDependencies += dependency.referenceContents->fields.size();
-    }
     for (const auto &alternative : complete->possibleAlternatives)
       borrowedDependencies += alternative.conditions.size();
   }
   for (const auto &[_, captures] : captureBorrowDependencies) {
     borrowedDependencies += captures.size();
-    for (const auto &dependency : captures) {
+    for (const auto &dependency : captures)
       borrowedDependencies += dependency.conditions.size();
-      if (dependency.referenceContents)
-        borrowedDependencies += dependency.referenceContents->fields.size();
-    }
   }
-  std::size_t lifetimeFacts = 0;
-  const auto countLifetimeBody = [&](const auto &bodies) {
-    for (const auto &[_, body] : bodies)
-      lifetimeFacts += body.variables.size() + body.obligations.size() +
-                       body.typeObligations.size() + body.origins.size();
-  };
-  countLifetimeBody(blockLifetimeBodies);
-  countLifetimeBody(expressionLifetimeBodies);
-  const auto countContract = [&](const LifetimeSignatureContract &contract) {
-    lifetimeFacts += contract.parameters.size() + contract.bounds.size() +
-                     contract.typeBounds.size() + contract.requirements.nodes.size();
-  };
-  const auto countApplications = [&](const auto &records) {
-    for (const auto &[_, record] : records) {
-      const auto &application = record.lifetimeApplication;
-      lifetimeFacts += application.bindings.size() + application.variables.size() +
-                       application.obligations.size() + application.typeObligations.size() +
-                       application.origins.size();
-      if (application.callableSignature) {
-        const auto &callable = *application.callableSignature;
-        lifetimeFacts += callable.signatureBindings.size() + callable.signature.arguments.size();
-        countContract(callable.contract);
-      }
-    }
-  };
-  countApplications(calls);
-  countApplications(lambdaCalls);
-  countApplications(operators);
-  countApplications(projectionOperators);
-  countApplications(contextualConversions);
-  countApplications(constructions);
-  countApplications(contextualConstructions);
-  for (const auto &[_, function] : functions)
-    countContract(function.lifetimeContract);
-  for (const auto &[_, lambda] : lambdas)
-    countContract(lambda.lifetimeContract);
-  for (const auto &[_, owner] : classTypes)
-    countContract(owner.lifetimeContract);
-  for (const auto &[_, enumeration] : enumTypes)
-    countContract(enumeration.lifetimeContract);
   // Records hold nested types and vectors whose allocator footprint is not
   // exposed; charge a deliberately generous per-record estimate so the LRU
   // bound is conservative rather than byte-exact.
   return sizeof(SemanticModel) + expressions.size() * 256 +
-         (blockLifetimeBodies.size() + expressionLifetimeBodies.size()) * 256 +
-         lifetimeFacts * 512 +
          (calls.size() + constructions.size() + contextualConstructions.size() +
           operators.size() + projectionOperators.size() +
           contextualConversions.size()) *
@@ -2791,12 +2676,11 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
           immediateInvocations.size() + immediateVoidCompletions.size()) *
              160 +
          (functions.size() + lambdas.size() + classLifecycles.size()) * 1024 +
-         genericParameterMetadata.size() * 512 +
          (statementFullExpressions.size() + constructorFullExpressions.size() +
           fullExpressionOrder.size()) *
              96 +
          (retainedLoans.size() + borrowedDependencies) * 256 +
-         (expressionBorrowDependencies.size() + referenceContentsLoans.size() +
+         (expressionBorrowDependencies.size() +
           captureBorrowDependencies.size()) *
              96 +
          semanticDatabase.symbolRecords.size() * 384 + occurrences * 256 +
@@ -2857,30 +2741,6 @@ void SemanticModel::recordLoanEndpoint(SemanticLoanId id,
     endpoints.push_back(
         {.kind = kind, .statement = &statement, .switchArm = switchArm});
   }
-}
-
-const SemanticLifetimeBody *
-SemanticModel::findLifetimeBody(const BlockStmt &body) const {
-  const auto found = blockLifetimeBodies.find(&body);
-  // Like retained loans, inference variables and local anchors are owned by
-  // one body analysis. A generic-instance delta cannot inherit the base body.
-  return found == blockLifetimeBodies.end() ? nullptr : &found->second;
-}
-
-const SemanticLifetimeBody *
-SemanticModel::findLifetimeBody(const Expr &body) const {
-  const auto found = expressionLifetimeBodies.find(&body);
-  return found == expressionLifetimeBodies.end() ? nullptr : &found->second;
-}
-
-void SemanticModel::recordLifetimeBody(const BlockStmt &body,
-                                       SemanticLifetimeBody facts) {
-  blockLifetimeBodies.insert_or_assign(&body, std::move(facts));
-}
-
-void SemanticModel::recordLifetimeBody(const Expr &body,
-                                       SemanticLifetimeBody facts) {
-  expressionLifetimeBodies.insert_or_assign(&body, std::move(facts));
 }
 
 void SemanticModel::record(const Expr &expression, ExpressionInfo info) {
@@ -3022,16 +2882,6 @@ SemanticModel::findBorrowDependencySet(const Expr &expression) const {
   return base == nullptr ? nullptr : base->findBorrowDependencySet(expression);
 }
 
-SemanticLoanId
-SemanticModel::findReferenceContentsLoan(const Expr &expression) const {
-  if (const auto found = referenceContentsLoans.find(&expression);
-      found != referenceContentsLoans.end())
-    return found->second.value_or(0);
-  // Contents indices name this body's loan table, whose identities restart in
-  // concrete instance analysis. Speculation explicitly copies both tables.
-  return 0;
-}
-
 std::span<const SemanticLoanDependency>
 SemanticModel::findBorrowDependencies(const Expr &expression) const {
   const auto *complete = findBorrowDependencySet(expression);
@@ -3071,23 +2921,10 @@ void SemanticModel::clearBorrowDependencySet(const Expr &expression) {
   expressionBorrowDependencies.insert_or_assign(&expression, std::nullopt);
 }
 
-void SemanticModel::recordReferenceContentsLoan(const Expr &expression,
-                                               SemanticLoanId loan) {
-  referenceContentsLoans.insert_or_assign(
-      &expression, loan ? std::optional{loan} : std::nullopt);
-}
-
-void SemanticModel::clearReferenceContentsLoan(const Expr &expression) {
-  // This index has no base fallback. Erasing also shadows a copied
-  // speculative entry without allocating tombstones for ordinary expressions.
-  referenceContentsLoans.erase(&expression);
-}
-
 void SemanticModel::recordLoan(SemanticLoanInfo info) {
   if (info.id == 0) {
     return;
   }
-  if (const char *want = std::getenv("GTI_TRACE_LOAN_BT"); want && std::to_string(info.id) == want) { void *frames[12]; int n = backtrace(frames, 12); std::fprintf(stderr, "[loan-bt] id=%llu kind=%d storage=%d\n", (unsigned long long)info.id, static_cast<int>(info.kind), info.protectsStorage); backtrace_symbols_fd(frames, n, 2); } // TEMP-TRACE
   if (retainedLoans.size() < info.id) {
     retainedLoans.resize(info.id);
   }
@@ -3220,7 +3057,6 @@ void SemanticModel::recordLoanCarrier(SemanticLoanId id, SymbolId carrier) {
     return;
   }
   std::vector<SymbolId> &carriers = retainedLoans[id - 1].carriers;
-  if (std::getenv("GTI_TRACE_HLC")) std::fprintf(stderr, "[rlc] loan=%llu carrier=s%llu\n", (unsigned long long)id, (unsigned long long)carrier); // TEMP-TRACE
   if (std::find(carriers.begin(), carriers.end(), carrier) == carriers.end()) {
     carriers.push_back(carrier);
   }
@@ -3237,7 +3073,6 @@ void SemanticModel::removeLoanCarrier(SemanticLoanId id, SymbolId carrier) {
 void SemanticModel::clearLoans() {
   retainedLoans.clear();
   expressionBorrowDependencies.clear();
-  referenceContentsLoans.clear();
   captureBorrowDependencies.clear();
   loanEnds.clear();
   conditionalLoanEnds.clear();
@@ -3790,13 +3625,6 @@ void SemanticModel::finalizeCallableArguments(
     if (const auto found = calls.find(call); found != calls.end())
       finalizeCallableArguments(found->second);
   }
-  // Concrete fold lanes are ordinary selected calls with their own applied
-  // parameter types. Refresh their boundaries with the same final target
-  // contracts as the recorded symbolic pattern call.
-  for (auto &[_, fold] : packFolds)
-    if (fold.pattern && batchCalls.contains(fold.pattern))
-      for (auto &element : fold.elements)
-        finalizeCallableArguments(element.call);
   for (const SourceUnitId unit : units) {
     const auto found = semanticDatabase.occurrencesByUnit.find(unit);
     if (found == semanticDatabase.occurrencesByUnit.end())
@@ -3813,9 +3641,6 @@ void SemanticModel::finalizeCallableArguments() {
   for (auto &[_, call] : calls) {
     finalizeCallableArguments(call);
   }
-  for (auto &[_, fold] : packFolds)
-    for (auto &element : fold.elements)
-      finalizeCallableArguments(element.call);
   for (auto &[_, occurrences] : semanticDatabase.occurrencesByUnit) {
     for (SemanticOccurrence &occurrence : occurrences) {
       if (occurrence.selectedCall) {
@@ -3906,16 +3731,6 @@ void SemanticModel::finalizeCallableForwardings() {
   if (!left.valid() || !right.valid()) {
     return {.relation = PlaceRelation::MayAlias};
   }
-  const auto malformedBase = [](const PlaceKey &place) {
-    return std::any_of(place.projections.begin(), place.projections.end(),
-                       [](const PlaceProjection &projection) {
-                         return projection.kind == PlaceProjectionKind::Base
-                                    ? !projection.baseOwner || projection.field || projection.selection
-                                    : projection.baseOwner != 0;
-                       });
-  };
-  if (malformedBase(left) || malformedBase(right))
-    return {.relation = PlaceRelation::MayAlias};
   if (left.receiver != right.receiver || left.root != right.root) {
     return {.relation = PlaceRelation::Disjoint};
   }
@@ -3929,10 +3744,6 @@ void SemanticModel::finalizeCallableForwardings() {
     if (lhs == rhs) {
       continue;
     }
-    // Unequal base projections need a typed layout proof of disjointness.
-    // The shared structural relation deliberately keeps them conservative.
-    if (lhs.kind == PlaceProjectionKind::Base || rhs.kind == PlaceProjectionKind::Base)
-      return {.relation = PlaceRelation::MayAlias};
     if (lhs.kind == PlaceProjectionKind::Field &&
         rhs.kind == PlaceProjectionKind::Field && lhs.field != 0 &&
         rhs.field != 0 && lhs.field != rhs.field) {

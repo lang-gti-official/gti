@@ -279,29 +279,6 @@ int main() {
         "  implicit constexpr operator bool() {\n    return true;\n  }\n};\n"
         "bool on = bool(id);\n",
         lang::FormatOptions{});
-  // Region suffixes bind to references, including imported nominal types,
-  // and remain distinct from expression-level ampersands and comparisons.
-  check("int&<a>identity<lifetime a>(int&<a>value){return value;}",
-        "int&<a> identity<lifetime a>(int&<a> value) {\n"
-        "  return value;\n}\n", {});
-  check("struct Borrowed<T,lifetime a>{T&<a>value;};"
-        "using Ref<T,lifetime a> =T&<a>;",
-        "struct Borrowed<T, lifetime a> {\n  T&<a> value;\n};\n"
-        "using Ref<T, lifetime a> = T&<a>;\n", {});
-  check("void use<T,uint64_t N,lifetime a>(mut Imported<T,a>&<_>value)"
-        "requires outlives<static,a>{Outer<Imported<T,a>&<a>>nested;"
-        "int lifetime=left&right;}",
-        "void use<T, uint64_t N, lifetime a>(mut Imported<T, a>&<_> value)\n"
-        "  requires outlives<static, a> {\n"
-        "  Outer<Imported<T, a>&<a>> nested;\n"
-        "  int lifetime = left & right;\n}\n", {});
-  check("Imported&<static>fetch();int&<a>unfinished<lifetime a>(int&<a>",
-        "Imported&<static> fetch();\n"
-        "int&<a> unfinished<lifetime a>(int&<a>\n", {});
-  check("using Callback=for<lifetime a,lifetime b>int&<a>(int&<a>,int&<b>);"
-        "struct Reader{int&<this>read(){return value;}};",
-        "using Callback = for<lifetime a, lifetime b> int&<a>(int&<a>, int&<b>);\n"
-        "struct Reader {\n  int&<this> read() {\n    return value;\n  }\n};\n", {});
   std::cout << "Constructor formatting configuration, layout, token "
                "preservation and idempotence passed\n";
 }

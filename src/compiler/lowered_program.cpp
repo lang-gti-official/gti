@@ -1,4 +1,3 @@
-#include "gti/lifetime_types.h"
 #include "gti/lowered_program.h"
 #include "lowered_program_closure.h"
 
@@ -65,9 +64,6 @@ void LoweredProgram::indexDeclarations() {
     } else if (const auto *item =
                    std::get_if<LoweredEnumDeclaration>(&payload)) {
       enumRows_.try_emplace(item->type.enumId, row);
-      parameters(item->genericParameters, row);
-    } else if (const auto *item =
-                   std::get_if<LoweredTypeAliasDeclaration>(&payload)) {
       parameters(item->genericParameters, row);
     }
   }
@@ -137,20 +133,7 @@ LoweredProgram::findEnumDeclarationRow(const SemanticType &type) const {
       return &declaration;
     }
   }
-  // Lifetime regions never change an enum's representation (RFC 0004): a
-  // region-carrying use selects the one declaration of the same erased shape.
-  const SemanticType erased = eraseTypeLifetimes(type);
-  const LoweredDeclaration *match = nullptr;
-  for (const LoweredDeclaration &declaration : declarations_) {
-    if (const auto *payload =
-            std::get_if<LoweredEnumDeclaration>(&declaration.payload);
-        payload != nullptr && eraseTypeLifetimes(payload->type) == erased) {
-      if (match != nullptr)
-        return nullptr;
-      match = &declaration;
-    }
-  }
-  return match;
+  return nullptr;
 }
 
 const LoweredEnumDeclaration *
@@ -214,10 +197,6 @@ LoweredProgram::findGenericParameter(GenericParameterId id) const {
             std::get_if<LoweredEnumDeclaration>(&declaration.payload)) {
       return find(payload->genericParameters);
     }
-    if (const auto *payload =
-            std::get_if<LoweredTypeAliasDeclaration>(&declaration.payload)) {
-      return find(payload->genericParameters);
-    }
     return nullptr;
   };
   if (const auto row = genericParameterRows_.find(id);
@@ -249,10 +228,6 @@ LoweredProgram::findGenericParameter(GenericParameterId id) const {
       }
     } else if (const auto *payload =
                    std::get_if<LoweredEnumDeclaration>(&declaration.payload)) {
-      if (const auto *parameter = find(payload->genericParameters))
-        return parameter;
-    } else if (const auto *payload = std::get_if<LoweredTypeAliasDeclaration>(
-                   &declaration.payload)) {
       if (const auto *parameter = find(payload->genericParameters))
         return parameter;
     }

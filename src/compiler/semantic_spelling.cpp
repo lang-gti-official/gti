@@ -147,40 +147,6 @@ std::string pathSpelling(const NamePath &path) {
 }
 
 std::string typeRefSpelling(const TypeRef &type) {
-  if (type.isFunctionSignature()) {
-    const std::size_t parameterCount = *type.functionSignatureParameterCount;
-    if (type.arguments.size() != parameterCount + 1) {
-      return "?()";
-    }
-    std::string result;
-    if (type.lifetimeBinder) {
-      result += "for<";
-      for (std::size_t index = 0;
-           index < type.lifetimeBinder->parameters.size(); ++index) {
-        if (index != 0) {
-          result += ", ";
-        }
-        result += "lifetime " + type.lifetimeBinder->parameters[index].name.lexeme;
-      }
-      result += "> ";
-    }
-    const auto component = [](const TypeRef &part) {
-      return (part.referenceMutability ? std::string("mut ") : std::string()) +
-             typeRefSpelling(part);
-    };
-    result += component(type.arguments.back()) + "(";
-    for (std::size_t index = 0; index < parameterCount; ++index) {
-      if (index != 0) {
-        result += ", ";
-      }
-      result += component(type.arguments[index]);
-    }
-    result += ")";
-    if (type.functionSignatureQualifier) {
-      result += " " + type.functionSignatureQualifier->lexeme;
-    }
-    return result;
-  }
   if (type.genericValueExpression) {
     return arrayExtentSpelling(*type.genericValueExpression);
   }
@@ -212,9 +178,6 @@ std::string typeRefSpelling(const TypeRef &type) {
   }
   if (type.reference) {
     result += type.reference->lexeme;
-    if (type.referenceLifetime) {
-      result += "<" + type.referenceLifetime->name.lexeme + ">";
-    }
   }
   return result;
 }

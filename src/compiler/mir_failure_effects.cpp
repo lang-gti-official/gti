@@ -5,7 +5,6 @@
 #include "gti/mir_verifier.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
-#include "mir_lifetimes.h"
 #include "mir_verification_queries.h"
 
 #include <algorithm>
@@ -209,7 +208,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         !destructor->body.dropObligations.empty() ||
         !destructor->body.cleanupBoundaries.empty() ||
         !destructor->body.failureRecords.empty() ||
-        !verifyMirBody(program, destructor->body, destructor->id).valid()) {
+        !verifyMirBody(destructor->body, destructor->id).valid()) {
       return false;
     }
     const MirBody &body = destructor->body;
@@ -418,7 +417,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         !body.loans.empty() || !body.failureRecords.empty() ||
         body.cleanupBoundaries.size() != 1 || body.dropObligations.empty() ||
         body.dropObligations.size() % 2 != 0 ||
-        !verifyMirBody(program, body, function.id).valid()) {
+        !verifyMirBody(body, function.id).valid()) {
       return false;
     }
     const std::size_t localCount = body.dropObligations.size() / 2;
@@ -939,7 +938,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
         body.kind == MirBodyKind::Function &&
         body.returnType == function.returnType && body.loans.empty() &&
         body.dropObligations.empty() && body.cleanupBoundaries.empty() &&
-        verifyMirBody(program, body, function.id).valid();
+        verifyMirBody(body, function.id).valid();
     for (const MirPlace &place : body.places) {
       const bool ordinaryScalar =
           (place.root == MirPlaceRootKind::Binding ||
@@ -1235,10 +1234,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
               instruction.callSite != 0 && !instruction.callInputRole &&
               !instruction.destination && !instruction.receiver &&
               instruction.functionTarget && target != nullptr &&
-              mirLifetimeParameterTypesMatch(
-                  instruction.parameterTypes, target->parameterTypes,
-                  target->lifetimeContract, instruction.lifetimeApplication,
-                  target->owner ? &target->ownerType : nullptr) &&
+              instruction.parameterTypes == target->parameterTypes &&
               instruction.operands.size() ==
                   instruction.parameterTypes.size() &&
               std::all_of(instruction.parameterTypes.begin(),
@@ -1250,7 +1246,7 @@ deriveMirFunctionDefinedFailureEffects(const MirProgram &program,
                instruction.definedFailure.propagation ==
                    FailurePropagationKind::None) &&
               instruction.fullExpressionEnd == 0 &&
-              mirLifetimeCallSignatureMatches(instruction, *target) &&
+              instruction.info.type == target->returnType &&
               (instruction.info.type == SemanticType::Void ||
                passiveInfo(instruction.info)) &&
               (instruction.info.type == SemanticType::Void
@@ -1747,7 +1743,7 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
                                        std::size_t owner,
                                        const MirClassInstance *ownerClass) {
   if (body.kind != kind || body.blocks.empty() || !body.loans.empty() ||
-      !verifyMirBody(program, body, owner).valid()) {
+      !verifyMirBody(body, owner).valid()) {
     return false;
   }
   const bool passiveConstructor = kind == MirBodyKind::Constructor &&
@@ -2090,10 +2086,7 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
             (instruction.receiver && !passiveReceiver) ||
             !instruction.functionTarget || target == nullptr ||
             instruction.constructorTarget ||
-            !mirLifetimeParameterTypesMatch(
-                instruction.parameterTypes, target->parameterTypes,
-                target->lifetimeContract, instruction.lifetimeApplication,
-                target->owner ? &target->ownerType : nullptr) ||
+            instruction.parameterTypes != target->parameterTypes ||
             instruction.operands.size() != target->parameterTypes.size() ||
             instruction.operation != MirOperation::None ||
             instruction.literal || !proveFunction(target->id) ||
@@ -2126,9 +2119,7 @@ bool MirOwnedFailureClosure::proveBody(const MirBody &body, MirBodyKind kind,
             instruction.lifecycle.empty() ||
             (!generatedDefault &&
              (target == nullptr || target->owner != constructed->id ||
-              !mirLifetimeParameterTypesMatch(
-                  instruction.parameterTypes, target->parameterTypes,
-                  target->lifetimeContract, instruction.lifetimeApplication) ||
+              instruction.parameterTypes != target->parameterTypes ||
               instruction.operands.size() != target->parameterTypes.size() ||
               !proveConstructor(target->id))) ||
             (instruction.definedFailure.propagation !=
@@ -2286,7 +2277,7 @@ bool MirOwnedFailureClosure::proveSingleFieldTransferConstructor(
       body.places.size() != 3 || !body.loans.empty() ||
       body.fullExpressions.size() != 1 || body.cleanupBoundaries.size() != 1 ||
       body.dropObligations.size() != 3 || !body.failureRecords.empty() ||
-      body.values.size() != 1 || !verifyMirBody(program, body, constructor.id).valid()) {
+      body.values.size() != 1 || !verifyMirBody(body, constructor.id).valid()) {
     return false;
   }
 

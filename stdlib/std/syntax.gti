@@ -10,8 +10,8 @@ export @compiler_type("syntax_span") struct span {};
 export @compiler_type("syntax_binding") struct binding {};
 
 export uint64_t size(tokens input);
-export std::string_view<static> text(tokens input);
-export std::string_view<static> kind(tokens input, uint64_t index);
+export std::string_view text(tokens input);
+export std::string_view kind(tokens input, uint64_t index);
 export bool adjacent(tokens input, uint64_t left);
 export tokens slice(tokens input, uint64_t begin, uint64_t end);
 export tokens group(tokens input, uint64_t opening);

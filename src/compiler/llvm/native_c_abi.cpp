@@ -1,5 +1,4 @@
 #include "native_c_abi.h"
-#include "../mir_lifetimes.h"
 #include "debug_info.h"
 #include "failure.h"
 #include "native_c_contract.h"
@@ -406,9 +405,8 @@ bool nativeCFunctionBorrowInputContract(const MirProgram &program,
           callee->definitionKind != MirDefinitionKind::Source ||
           index >= callee->parameterTypes.size() ||
           index >= stage.operands.size() ||
-          !mirLifetimeCallSignatureMatches(stage, *callee) ||
-          index >= stage.parameterTypes.size() ||
-          stage.parameterTypes[index] != type)
+          stage.parameterTypes != callee->parameterTypes ||
+          callee->parameterTypes[index] != type)
         continue;
       const auto &argument = stage.operands[index];
       consumed |= argument.kind == MirOperandKind::Value &&
@@ -516,8 +514,9 @@ bool nativeCDirectCallContract(const MirProgram &program,
        instruction.unsafeOperation != UnsafeOperationKind::None) ||
       !instruction.definedFailure.empty() ||
       !instruction.localFailureSites.empty() ||
-      !mirLifetimeCallSignatureMatches(instruction, *function) ||
-      instruction.operands.size() != instruction.parameterTypes.size())
+      instruction.parameterTypes != function->parameterTypes ||
+      instruction.info.type != function->returnType ||
+      instruction.operands.size() != function->parameterTypes.size())
     return false;
   bool selected = false;
   for (const auto &block : body.blocks)
@@ -533,9 +532,7 @@ bool nativeCDirectCallContract(const MirProgram &program,
     const auto *value = operand.kind == MirOperandKind::Value
                             ? body.findValue(operand.value)
                             : nullptr;
-    // The declaration owns the native ABI; this call owns its exact checked
-    // lifetime substitution. Runtime representation is unchanged by regions.
-    const auto &type = instruction.parameterTypes[index];
+    const auto &type = function->parameterTypes[index];
     if (!value || operand.type != type || value->info.type != type)
       return false;
     bool staged = false;
@@ -578,7 +575,11 @@ bool nativeCCallbackContract(const MirProgram &program,
           MirNativeCallbackFailurePolicy::TerminateInvocation ||
       !adapter.catchesNativeExceptions)
     return false;
-  if (!mirNativeCallbackLifetimeMatches(program, adapter))
+  const auto parameters = adapter.type.nativeFunctionParameterTypes();
+  if (function->returnType != *adapter.type.nativeFunctionReturnType() ||
+      !std::equal(function->parameterTypes.begin(),
+                  function->parameterTypes.end(), parameters.begin(),
+                  parameters.end()))
     return false;
   const auto attachment =
       program.executionProfile() == ExecutionProfile::Concurrent

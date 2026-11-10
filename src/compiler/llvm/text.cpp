@@ -13,7 +13,7 @@ const std::string *wholeCStringLiteral(const MirBody &body,
     const auto *value = body.findValue(input->value);
     const auto *block =
         value ? body.findBlock(value->definitionBlock) : nullptr;
-    if (!block || value->info.type.kind != SemanticType::StringView)
+    if (!block || value->info.type != SemanticType::StringView)
       return nullptr;
     const auto stage =
         std::find_if(block->instructions.begin(), block->instructions.end(),

@@ -1,4 +1,3 @@
-#include "gti/lifetime_types.h"
 #include "gti/semantic_core.h"
 
 #include <algorithm>
@@ -20,10 +19,8 @@ ConstantEvaluation convertConstantToType(const ConstantValue &value,
                      .failure = ConstantEvaluationFailure::UnsupportedType};
   }
   if (const auto *aggregate = std::get_if<ConstantAggregateValue>(&value)) {
-    // A constant value has no lifetime meaning: its exact type identity is
-    // the type shape (regions are proved for the program, not the value).
     if (aggregate->value == nullptr || aggregate->value->exactType == nullptr ||
-        eraseTypeLifetimes(*aggregate->value->exactType) != eraseTypeLifetimes(target)) {
+        *aggregate->value->exactType != target) {
       return {.failure = ConstantEvaluationFailure::UnsupportedType};
     }
     if (target.kind == SemanticType::Enum && target.enumId != 0 &&
@@ -66,22 +63,11 @@ ConstantEvaluation convertConstantToType(const ConstantValue &value,
           semanticFloatFormat(target)) {
     return convertConstantFloat(value, *format);
   }
-  // Literal text stores immutable content, not a runtime reference identity.
-  // Its checked storage region does not change the scalar value, but every
-  // other type fact and the single-region shape must remain exact. This
-  // conversion does not authorize nonconstant borrowed values or aggregates.
-  bool literalTextTarget = false;
-  if (target.kind == SemanticType::StringView) {
-    SemanticType text = SemanticType::StringView;
-    if (target.lifetimeArguments.size() == 1 &&
-        target.lifetimeArguments.front().specified())
-      text.lifetimeArguments = target.lifetimeArguments;
-    literalTextTarget = target == text;
-  }
   if ((target == SemanticType::Bool && std::holds_alternative<bool>(value)) ||
       (target == SemanticType::Char &&
        std::holds_alternative<CharacterLiteral>(value)) ||
-      (literalTextTarget && std::holds_alternative<std::string>(value)) ||
+      (target == SemanticType::StringView &&
+       std::holds_alternative<std::string>(value)) ||
       (target == SemanticType::NullPtr &&
        std::holds_alternative<NullConstant>(value))) {
     return {.value = value};

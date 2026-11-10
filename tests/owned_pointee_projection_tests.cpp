@@ -42,7 +42,7 @@ void checkProjectionMutations(const lang::FrontendResult &frontend,
         changed->ownedPointeeProjection->fields.clear();
         break;
       case 1:
-        changed->ownedPointeeProjection->fields.front() = lang::fieldProjection(0);
+        changed->ownedPointeeProjection->fields.front() = 0;
         break;
       case 2:
         changed->ownedPointeeProjection->borrowIntrinsic =
@@ -82,7 +82,7 @@ void checkProjectionMutations(const lang::FrontendResult &frontend,
         auto *owner = const_cast<lang::MirClassInstance *>(
             malformed.findClassInstance(*changed->owner));
         for (auto &field : owner->declaredFields)
-          if (lang::fieldProjection(field.symbol) == changed->ownedPointeeProjection->fields.front())
+          if (field.symbol == changed->ownedPointeeProjection->fields.front())
             field.type = lang::SemanticType::referenceTo(
                 field.type.arguments.front(), lang::AccessMode::ReadOnly);
         break;
@@ -106,7 +106,7 @@ void checkProjectionMutations(const lang::FrontendResult &frontend,
         auto *owner = const_cast<lang::MirClassInstance *>(
             malformed.findClassInstance(*changed->owner));
         for (auto &field : owner->declaredFields)
-          if (lang::fieldProjection(field.symbol) == changed->ownedPointeeProjection->fields.front())
+          if (field.symbol == changed->ownedPointeeProjection->fields.front())
             field.access = lang::AccessMode::ReadOnly;
         break;
       }
@@ -181,7 +181,7 @@ int main() { return 0; }
     if (owner == nullptr || owner->declaredFields.empty())
       continue;
     changed->ownedPointeeProjection = lang::OwnedPointeeProjection{
-        .fields = {lang::fieldProjection(owner->declaredFields.front().symbol)},
+        .fields = {owner->declaredFields.front().symbol},
         .borrowIntrinsic = lang::IntrinsicKind::UniqueOwnerBorrowMut};
     expect(hasProjectionIssue(lang::verifyMirProgram(malformed)),
            "an unproven reference accessor cannot forge unique ownership "

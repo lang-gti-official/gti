@@ -111,15 +111,13 @@ public:
   }
 };
 
-// The node storage region is named so a mutable iterator can lend this exact
-// projection: a mutable reference keeps its referent's regions invariant.
-class map_entry_projection<K, V, lifetime storage> {
-  mut vector<unique_ptr<map_node<K, V>>>&<storage> nodes;
+class map_entry_projection<K, V> {
+  mut vector<unique_ptr<map_node<K, V>>>& nodes;
   size_t root;
   mut size_t position;
 
 public:
-  map_entry_projection(mut vector<unique_ptr<map_node<K, V>>>&<storage> source, size_t index, size_t root)
+  map_entry_projection(mut vector<unique_ptr<map_node<K, V>>>& source, size_t index, size_t root)
       : nodes(source), root(root), position(index) {}
 
   // The owning record is read-only. Only the mapped field is writable.
@@ -205,18 +203,18 @@ public:
 
 // The inline projection is a view, not the owning node entry. Replacing or
 // moving a view cannot transfer or mutate a stored key.
-class map_mut_iterator<K, V, uint64_t Reverse = 0, lifetime storage> {
-  mut map_entry_projection<K, V, storage> projection;
+class map_mut_iterator<K, V, uint64_t Reverse = 0> {
+  mut map_entry_projection<K, V> projection;
 public:
-  map_mut_iterator(mut vector<unique_ptr<map_node<K, V>>>&<storage> source, size_t index, size_t root)
-      : projection(map_entry_projection<K, V, storage>(source, index, root)) {}
+  map_mut_iterator(mut vector<unique_ptr<map_node<K, V>>>& source, size_t index, size_t root)
+      : projection(map_entry_projection<K, V>(source, index, root)) {}
   map_entry<K, V>& operator*() { return this.projection.read_entry(); }
-  mut map_entry_projection<K, V, storage>& operator*() mut {
+  mut map_entry_projection<K, V>& operator*() mut {
     gti_internal::require_container_argument(this.projection.index() != 0);
     return this.projection;
   }
   map_entry<K, V>& operator->() { return *this; }
-  mut map_entry_projection<K, V, storage>& operator->() mut { return *this; }
+  mut map_entry_projection<K, V>& operator->() mut { return *this; }
   K& key() { return this.projection.key(); }
   bool operator!=(map_sentinel end) { return this.projection.index() != 0; }
   bool operator==(map_sentinel end) { return this.projection.index() == 0; }

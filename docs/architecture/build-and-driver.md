@@ -3071,20 +3071,6 @@ global and aggregate-carried origins reject. The virtual declaration publishes
 escape, mutation and aliasing. This does not yet export custom ownership/drop
 recipes or a general lifetime dependency graph.
 
-Inferred reference regions remain in the verified source signature. Before
-projecting this bounded interface, the compiler proves that its normalized
-contract consists of independent input reference regions, their implied referent
-validity, and the one selected result relationship. The existing wire profile
-then reconstructs those same relationships through elision and `borrowed_from`.
-It does not erase a stronger bound, correlate independent inputs, or admit a
-named generic lifetime API; those require the general interface profile. Import
-binding repeats the profile check against the newly normalized source signature.
-For a bodyless declaration in this profile, MIR reconstructs the single
-whole-argument supplier from that checked signature instead of requesting source
-return-flow evidence. This structural proof does not grant import authority:
-executable source admission still requires a trusted compiled interface, and the
-native binding still checks the artifact's exported contract.
-
 Callable metadata profile `gti.callable-interface.4` contains key-sorted,
 length-framed records: persistent function key, result recipe, common nominal
 metadata, borrow origin, parameter ordinal, access, inlining policy
@@ -3120,7 +3106,7 @@ contracts and colliding fully qualified nominal names remain separate work.
 
 `LoweredProgram` retains logical owner/source-unit bindings independently of
 callable reachability, including a library used only for its types. Serialization
-profile `lowered-program-v40` records these bindings. Wire metadata is validated
+profile `lowered-program-v35` records these bindings. Wire metadata is validated
 completely; concrete declaration comparison follows HIR reachability. An unused
 import may lack an instantiated type or function, but every reached GTI declaration
 must still bind to its exact validated callable contract. No new runtime adapter,

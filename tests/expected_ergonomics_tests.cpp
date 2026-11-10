@@ -154,13 +154,17 @@ void testDiagnostics() {
                   "same error type as the result it maps.",
           "and_then explains its mapper contract in one hint");
   }
-  // The consumed result does not own a mapper's global reference. Its exact
-  // complete result contract preserves that external supplier.
-  check(analyze("int value = 7; int&<static> map(int input) { return value; }\n" +
-                producer +
-                "int main() { [[discard]] read().transform(map); return 0; }\n")
-            .canGenerateCode(),
-        "transform preserves a checked static reference result");
+  // A reference-returning mapper would make the consuming member return a
+  // borrow its consumed receiver cannot keep alive. That selected signature
+  // is rejected once, naming the result, before its arguments are checked.
+  rejectOnly("int value = 7; int& map(int input) { return value; }\n" +
+                 producer +
+                 "int main() { [[discard]] read().transform(map); return 0; "
+                 "}\n",
+             "GTI-S2022", ")",
+             "A consuming method cannot return a reference or tracked "
+             "borrowed state; this call returns 'expected<int32_t&, "
+             "int32_t>'.");
   // A callable class has no reflectable result, so the call names no result
   // type; it is rejected once, before any library instance is formed.
   for (const std::string member : {"transform", "transform_error"}) {

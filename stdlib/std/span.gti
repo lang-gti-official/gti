@@ -206,10 +206,8 @@ public:
 }
 
 /// A checked read-only view over one source-defined contiguous owner.
-/// `storage` names the owner's region, so a narrowed view of the same owner
-/// can outlive this view shell (LT-4: an output tied to a stored region).
-export class span<std::storage_element T, lifetime storage> {
-  std::detail::prefix_owner<T>&<storage> data;
+export class span<std::storage_element T> {
+  std::detail::prefix_owner<T>& data;
   size_t first_position;
   size_t element_count;
 
@@ -230,7 +228,7 @@ public:
 
   // The source owner, not a raw address, retains the checked dependency.
   // Public containers provide as_span() factories over this same contract.
-  span(std::detail::prefix_owner<T>&<storage> source, size_t offset, size_t count)
+  span(std::detail::prefix_owner<T>& source, size_t offset, size_t count)
       : data(source), first_position(offset), element_count(count) {
     if (offset > source.length()) { gti_internal::index_bounds_check(offset, source.length()); }
     size_t remaining = source.length() - offset;
@@ -247,11 +245,11 @@ public:
     return this.element_count == 0;
   }
 
-  T&<storage> front() {
+  T& front() {
     return this.at(size_t(0));
   }
 
-  T&<storage> back() {
+  T& back() {
     mut size_t index = size_t(0);
     if (this.element_count > 0) {
       index = this.element_count - 1;
@@ -259,37 +257,37 @@ public:
     return this.at(index);
   }
 
-  T&<storage> at(size_t index) {
+  T& at(size_t index) {
     gti_internal::index_bounds_check(index, this.element_count);
     unsafe { return this.get_unchecked(index); }
   }
 
   /// The caller proves index < size(); the view's owner loan is retained.
-  unsafe T&<storage> get_unchecked(size_t index) {
+  unsafe T& get_unchecked(size_t index) {
     unsafe {
       return this.data.read_unchecked(
           gti_internal::integer_wrapping_add(this.first_position, index));
     }
   }
 
-  T&<storage> operator[](size_t index) {
+  T& operator[](size_t index) {
     return this.at(index);
   }
 
-  span<T, storage> first(size_t count) {
+  span<T> first(size_t count) {
     this.validate_subspan(size_t(0), count);
-    return span<T, storage>(this.data, this.first_position, count);
+    return span<T>(this.data, this.first_position, count);
   }
 
-  span<T, storage> last(size_t count) {
+  span<T> last(size_t count) {
     this.validate_subspan(size_t(0), count);
-    return span<T, storage>(this.data,
+    return span<T>(this.data,
                    this.first_position + (this.element_count - count), count);
   }
 
-  span<T, storage> subspan(size_t offset, size_t count) {
+  span<T> subspan(size_t offset, size_t count) {
     this.validate_subspan(offset, count);
-    return span<T, storage>(this.data, this.first_position + offset, count);
+    return span<T>(this.data, this.first_position + offset, count);
   }
 
   detail::span_iterator<T> begin() {

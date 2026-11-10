@@ -1,5 +1,4 @@
 #include "layout.h"
-#include "../mir_lifetimes.h"
 #include "atomic_types.h"
 #include "closure_environment.h"
 #include "gti/object_layout.h"
@@ -212,11 +211,11 @@ TypeLayout Layouts::get(const SemanticType &type) {
     return result;
   }
   case SemanticType::Enum: {
-    if (session.representations().payloadEnum(type))
-      return payload(type).type;
-    const auto *declaration = session.representations().integralEnum(type);
+    const auto *declaration = session.program().findEnumDeclaration(type);
     if (!declaration)
       throw std::logic_error("LLVM enum lost its sealed declaration");
+    if (declaration->payload)
+      return payload(type).type;
     return get(declaration->underlyingType);
   }
   case SemanticType::Class:
@@ -228,7 +227,7 @@ TypeLayout Layouts::get(const SemanticType &type) {
 }
 
 const PayloadLayout &Layouts::payload(const SemanticType &type) {
-  const auto *selected = session.representations().payloadEnum(type);
+  const auto *selected = session.program().mir().findPayloadEnum(type);
   if (!selected || selected->variants.empty() ||
       selected->variants.size() >= PayloadLayout::inactive)
     throw BackendUnsupportedError(
@@ -279,8 +278,22 @@ const PayloadLayout &Layouts::payload(const SemanticType &type) {
 }
 
 TypeLayout Layouts::record(const SemanticType &type) {
-  const auto &selected = instance(type);
-  auto &entry = records.at(selected.id);
+  const auto candidates = classes.find(type.classId);
+  Record *selected = nullptr;
+  if (candidates != classes.end()) {
+    for (const auto id : candidates->second) {
+      auto &candidate = records.at(id);
+      if (candidate.instance->type == type) {
+        if (selected)
+          throw std::logic_error("ambiguous concrete LLVM record identity");
+        selected = &candidate;
+      }
+    }
+  }
+  if (!selected)
+    throw BackendUnsupportedError(
+        "LLVM record layout requires an exact concrete class instance");
+  auto &entry = *selected;
   if (entry.layout)
     return *entry.layout;
   if (entry.building)
@@ -469,7 +482,7 @@ TypeLayout Layouts::closure(const SemanticType &type) {
   LambdaRecord *selected = nullptr;
   for (auto &[id, candidate] : lambdas) {
     (void)id;
-    if (mirLambdaLifetimeView(*candidate.instance, type) && !selected)
+    if (candidate.instance->type == type && !selected)
       selected = &candidate;
   }
   if (!selected)
@@ -511,7 +524,14 @@ unsigned Layouts::captureIndex(const SemanticType &type,
 }
 
 const MirClassInstance &Layouts::instance(const SemanticType &type) const {
-  const auto *result = session.representations().classInstance(type);
+  const MirClassInstance *result = nullptr;
+  if (auto found = classes.find(type.classId); found != classes.end())
+    for (auto id : found->second)
+      if (records.at(id).instance->type == type) {
+        if (result)
+          throw std::logic_error("ambiguous concrete LLVM class identity");
+        result = records.at(id).instance;
+      }
   if (!result)
     throw BackendUnsupportedError(
         "LLVM class requires an exact concrete instance");
@@ -596,12 +616,8 @@ Layouts::dispatchLocation(const SemanticType &type) {
     if (!base || !instance(base->type).polymorphic)
       throw std::logic_error(
           "LLVM dispatch pointer has no sealed primary owner");
-    const auto view = mirClassLifetimeView(session.program().mir(), selected);
-    const auto actual = view ? view->instantiate(base->type) : std::nullopt;
-    if (!actual || instance(*actual).id != base->instance)
-      throw std::logic_error("LLVM dispatch primary base lost its exact type view");
     path.push_back(base->instance);
-    selected = *actual;
+    selected = base->type;
   }
   throw std::logic_error("LLVM dispatch primary chain is cyclic");
 }
@@ -623,9 +639,8 @@ Layouts::basePath(const SemanticType &type,
         selected = &owner.bases[candidate];
         index = candidate;
       }
-    const auto view = mirClassLifetimeView(session.program().mir(), result.type);
-    const auto actual = view && selected ? view->instantiate(selected->type) : std::nullopt;
-    if (!selected || !seen.insert(id).second || !actual || instance(*actual).id != id)
+    if (!selected || !seen.insert(id).second ||
+        instance(selected->type).id != id)
       throw std::logic_error("LLVM base path lost its sealed direct identity");
     const auto parent = get(result.type);
     const auto offset = parent.fieldOffsets.at(index);
@@ -636,7 +651,7 @@ Layouts::basePath(const SemanticType &type,
           "LLVM base adjustment exceeds target range");
     result.offset += offset;
     result.indices.push_back(index);
-    result.type = *actual;
+    result.type = selected->type;
   }
   return result;
 }

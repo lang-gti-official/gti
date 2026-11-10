@@ -1,5 +1,3 @@
-#include <cstdio>
-#include <cstdlib>
 // Prefix `?` through the standard `std::tryable` protocol concept.
 //
 // Every operand, including the prelude's `expected`, must satisfy
@@ -30,8 +28,7 @@ auto SemanticVisitor::Impl::tryableConcept() const -> std::optional<ConceptId> {
 // function with the block's binding as its explicit type arguments.
 auto SemanticVisitor::Impl::protocolOperationCall(
     const RegisteredConformance &conformance,
-    const std::vector<SemanticType> &binding, std::size_t operation,
-    const LifetimeSubstitution &lifetimes) const
+    const std::vector<SemanticType> &binding, std::size_t operation) const
     -> std::optional<ResolvedCallInfo> {
   if (operation >= conformance.operations.size() ||
       conformance.operations[operation].overloads.size() != 1) {
@@ -41,27 +38,18 @@ auto SemanticVisitor::Impl::protocolOperationCall(
       conformance.operations[operation].overloads.front();
   const std::vector<GenericParameterInfo> &parameters =
       candidate.record().genericParameters;
-  if (genericTypeParameterCount(parameters) != binding.size() ||
-      parameters.size() != conformance.genericParameters.size()) {
+  if (parameters.size() != binding.size()) {
     return std::nullopt;
   }
-  GenericSubstitution substitution = nominalSubstitution(parameters, {.types = binding});
-  std::vector<Lifetime> lifetimeArguments;
+  GenericSubstitution substitution;
   for (std::size_t index = 0; index < parameters.size(); ++index) {
-    if (!parameters[index].lifetime)
-      continue;
-    const auto found = lifetimes.find(conformance.genericParameters[index].id);
-    if (found == lifetimes.end())
-      return std::nullopt;
-    substitution.lifetimes.emplace(parameters[index].id, found->second);
-    lifetimeArguments.push_back(found->second);
+    substitution.types.emplace(parameters[index].id, binding[index]);
   }
   ResolvedCallInfo call{.function = candidate.id,
                         .declaration = candidate.declaration,
                         .returnType =
                             substituteType(candidate.returnType, substitution),
-                        .typeArguments = binding,
-                        .lifetimeArguments = std::move(lifetimeArguments)};
+                        .typeArguments = binding};
   for (const SemanticType &parameter : candidate.parameterTypes) {
     call.parameterTypes.push_back(substituteType(parameter, substitution));
   }
@@ -171,40 +159,10 @@ auto SemanticVisitor::Impl::selectResidualReturn(
     diagnostics.emplace_back(std::move(diagnostic));
     return false;
   }
-  // Like a written construction, bind the executable constructor
-  // instance's lifted regions and apply its contract to the residual.
-  const auto canonical = canonicalizeExecutableInstance(
-      {.kind = InstanceAnalysisKind::Constructor, .declaration = selected.id,
-       .classTypes = target.arguments, .classValues = target.valueArguments});
-  if (!canonical || canonical->parameterTypes.size() != 1)
-    return reject(returned + ", whose residual constructor has no checked "
-                             "executable instance.",
-                  "Handle the failure explicitly instead of applying '?'.");
-  CallableCandidate lifetimeCandidate;
-  auto universalOwner = openClassType(owner->id);
-  universalOwner.arguments = canonical->classTypes;
-  universalOwner.valueArguments = target.valueArguments;
-  lifetimeCandidate.returnType = std::move(universalOwner);
-  lifetimeCandidate.parameterTypes = canonical->parameterTypes;
-  lifetimeCandidate.lifetimeApplication.bindings = canonical->lifetimeApplication.bindings;
-  lifetimeCandidate.ownerClass = owner->id;
-  lifetimeCandidate.dispatchOwner = target;
-  lifetimeCandidate.dispatchOwner.arguments = canonical->classTypes;
-  lifetimeCandidate.lifetimeContract = canonical->lifetimeContract;
-  lifetimeCandidate.requirements = canonical->requirements;
-  const std::array<AnalyzedCallArgument, 1> residualInput{
-      AnalyzedCallArgument{.type = residualType}};
-  if (!applyCallLifetimeContract(lifetimeCandidate, residualInput, site, nullptr, false))
-    return reject(returned + ", which does not satisfy its residual "
-                             "constructor's lifetime contract.",
-                  "Handle the failure explicitly instead of applying '?'.");
-  commitLifetimeApplication(lifetimeCandidate.lifetimeApplication);
   construction = ResolvedConstructionInfo{.constructor = selected.id,
                                           .declaration = selected.declaration,
                                           .constructedType = target,
-                                          .lifetimeApplication =
-                                              lifetimeCandidate.lifetimeApplication,
-                                          .parameterTypes = lifetimeCandidate.parameterTypes,
+                                          .parameterTypes = {residualType},
                                           .kind = ConstructorKind::Ordinary};
   return true;
 }
@@ -334,14 +292,11 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
   const RegisteredConformance &conformance =
       conformances[match->conformance - 1];
   std::optional<ResolvedCallInfo> test =
-      protocolOperationCall(conformance, match->binding, *hasValue,
-                            match->lifetimeBinding);
+      protocolOperationCall(conformance, match->binding, *hasValue);
   std::optional<ResolvedCallInfo> output =
-      protocolOperationCall(conformance, match->binding, *takeValue,
-                            match->lifetimeBinding);
+      protocolOperationCall(conformance, match->binding, *takeValue);
   std::optional<ResolvedCallInfo> residual =
-      protocolOperationCall(conformance, match->binding, *takeResidual,
-                            match->lifetimeBinding);
+      protocolOperationCall(conformance, match->binding, *takeResidual);
   if (!test || !output || !residual) {
     // The incomplete block has already been reported.
     return SemanticType::Unknown;
@@ -350,43 +305,6 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
     requireFunctionDefinition(conformance.operations[index].overloads.front(),
                               site);
   }
-  // Each step is an ordinary call on the operand, so its own declaration
-  // regions (such as the test's reference parameter) are instantiated at
-  // this site exactly as a written call would instantiate them.
-  const std::array<AnalyzedCallArgument, 1> stepInput{
-      AnalyzedCallArgument{.type = operandType, .expression = &expr.right()}};
-  const auto instantiateStep = [&](std::size_t index, ResolvedCallInfo &call) {
-    CallableCandidate candidate = conformance.operations[index].overloads.front();
-    candidate.returnType = call.returnType;
-    candidate.parameterTypes = call.parameterTypes;
-    candidate.lifetimeArguments = call.lifetimeArguments;
-    // The block's own requirements were proved by the conformance match
-    // above for this binding; only the step's regions remain to instantiate.
-    candidate.requirements.clear();
-    // Type-outlives bounds speak about the block's type parameters; select
-    // them with the same binding as the step's signature.
-    const GenericSubstitution substitution = nominalSubstitution(
-        candidate.record().genericParameters, {.types = match->binding});
-    for (auto &bound : candidate.lifetimeContract.typeBounds)
-      bound.type = substituteType(bound.type, substitution);
-    // Like a written call, bind the executable instance's lifted regions
-    // (for example a `static` region in the operand's type arguments).
-    std::vector<SemanticType> stepTypes = match->binding;
-    if (!universalizeFunctionCandidate(candidate, stepTypes, {}, {}))
-      return false;
-    if (!applyCallLifetimeContract(candidate, stepInput, site))
-      return false;
-    commitLifetimeApplication(candidate.lifetimeApplication);
-    if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[step] fn=%llu complete=%d bindings=%zu\n", (unsigned long long)candidate.id, candidate.lifetimeApplication.complete, candidate.lifetimeApplication.bindings.size()); // TEMP-TRACE
-    call.returnType = candidate.returnType;
-    call.parameterTypes = candidate.parameterTypes;
-    call.lifetimeApplication = candidate.lifetimeApplication;
-    return true;
-  };
-  if (!instantiateStep(*hasValue, *test) ||
-      !instantiateStep(*takeValue, *output) ||
-      !instantiateStep(*takeResidual, *residual))
-    return SemanticType::Unknown;
   const bool borrowedResult =
       output->returnType.kind == SemanticType::Reference;
   std::optional<SemanticBorrowDependencySet> outputDependencies;
@@ -394,28 +312,13 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
     auto candidate = conformance.operations[*takeValue].overloads.front();
     candidate.returnType = output->returnType;
     candidate.parameterTypes = output->parameterTypes;
-    // Select the step's executable instance exactly as the step did, then
-    // use the step's instantiated application as this call's region binding.
-    std::vector<SemanticType> stepTypes =
-        output->typeArguments.empty() ? match->binding : output->typeArguments;
-    std::optional<FunctionBorrowDependencySummary> complete;
-    const bool universal = universalizeFunctionCandidate(candidate, stepTypes, {}, {});
-    if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[s2086u] %d\n", universal); // TEMP-TRACE
-    if (universal) {
-      candidate.returnType = output->returnType;
-      candidate.parameterTypes = output->parameterTypes;
-      candidate.lifetimeApplication = output->lifetimeApplication;
-      if (auto actualOwner = substituteTypeLifetimes(
-              candidate.dispatchOwner, candidate.lifetimeApplication.bindings))
-        candidate.dispatchOwner = std::move(*actualOwner);
-      complete = completeFunctionReturnBorrow(candidate, stepTypes,
-                                              output->valueArguments, tokenSpan(site));
-    }
+    const auto complete =
+        completeFunctionReturnBorrow(candidate, output->typeArguments,
+                                     output->valueArguments, tokenSpan(site));
     const std::vector<const ExprPtr *> actualArguments{&expr.right()};
     if (complete)
       outputDependencies = instantiateCompleteBorrowArguments(
           *output, *complete, actualArguments);
-    if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[s2086c] complete=%d deps=%d\n", complete.has_value(), outputDependencies.has_value()); // TEMP-TRACE
   }
   const SemanticType resultType =
       borrowedResult && output->returnType.arguments.size() == 1
@@ -430,7 +333,6 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
       residualType.kind == SemanticType::Reference ||
       residualType == SemanticType::Void ||
       typeTraits(residualType).containsBorrowedState) {
-    if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[s2086] borrowed=%d origin=%d barg=%zu deps=%d storedPath=%d resultBorrowed=%d residualRef=%d residualVoid=%d residualBorrowed=%d\n", borrowedResult, (int)output->borrowOrigin, output->borrowArgument, outputDependencies.has_value(), storedReferencePath(operandType).has_value(), typeTraits(resultType).containsBorrowedState, residualType.kind == SemanticType::Reference, residualType == SemanticType::Void, typeTraits(residualType).containsBorrowedState); // TEMP-TRACE
     return reject("Error propagation through '" + operand +
                       "' needs an owned value or a reference transferred "
                       "from its operand's exact external dependency, and a "

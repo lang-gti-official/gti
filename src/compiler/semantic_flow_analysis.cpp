@@ -1,6 +1,4 @@
 #include "semantic_analyzer_impl.h"
-#include "gti/lifetime_types.h"
-#include "gti/borrow_conditions.h"
 
 namespace lang {
 namespace {
@@ -594,8 +592,6 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
     if (owner.kind == ProgramEffectOwnerKind::ConcreteInstance &&
         owner.id != 0 && owner.id <= state->queries.size()) {
       const auto query = state->queries[owner.id - 1];
-      if (query.complete)
-        notePrivateLifetimeOpaqueDependency();
       if (!query.complete) {
         if (query.target.kind != ProgramEffectOwnerKind::Function &&
             query.target.kind != ProgramEffectOwnerKind::Constructor &&
@@ -635,7 +631,6 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
         if (const auto cached =
                 shared ? adoptedPreamble->effectQuery(sharedHash, sharedKey)
                        : nullptr) {
-          notePrivateLifetimeOpaqueDependency();
           replaySharedQuery(owner, query, *cached);
           if (workMetrics != nullptr)
             ++workMetrics->semanticEffectQueryReuses;
@@ -667,17 +662,6 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
             worker->requestSession.constexprWork = requestSession.constexprWork;
             worker->requestSession.stagedConstants =
                 requestSession.stagedConstants;
-            worker->requestSession.executableLifetimes =
-                requestSession.executableLifetimes;
-            worker->requestSession.privateLifetimeDependencies =
-                requestSession.privateLifetimeDependencies;
-            worker->requestSession.privateConstexprPrerequisites =
-                requestSession.privateConstexprPrerequisites;
-            worker->requestSession.privateConstexprBoundary =
-                requestSession.privateConstexprBoundary;
-            worker->requestSession.lifetimeContractRevision =
-                requestSession.lifetimeContractRevision;
-            worker->reuseConstantEvaluations = reuseConstantEvaluations;
             worker->requestSession.programConcreteEffects = state;
             // An isolated query needs the same pending-body facts as ordinary
             // concrete discovery. Finalize only actually consulted late bodies
@@ -926,7 +910,6 @@ auto SemanticVisitor::Impl::preserveInvalidProgramEffectDiagnostics(
   const auto found = state->invalidInstances.find(key);
   if (found == state->invalidInstances.end())
     return;
-  notePrivateLifetimeOpaqueDependency();
   // A failed effect query is not an empty-effects proof. If ordinary
   // analysis later succeeds (for example after late demand), its selected
   // body still cannot proceed to MIR with unresolved effects. Report the
@@ -1007,7 +990,7 @@ auto SemanticVisitor::Impl::recordProgramDefaultConstructionEffects(
   }
   const ProgramEffectOwner fields{
       .kind = ProgramEffectOwnerKind::FieldInitializers, .id = owner.id};
-  if (owner.hasGenericBindings())
+  if (!owner.genericParameters.empty())
     recordConcreteProgramEffect(fields, type, {}, {}, span);
   else
     addProgramEffectEdge(fields, span);
@@ -1063,7 +1046,7 @@ auto SemanticVisitor::Impl::recordProgramSelectedConstructorEffect(
   if (constructor->declaration->body() != nullptr) {
     const ProgramEffectOwner effect{.kind = ProgramEffectOwnerKind::Constructor,
                                     .id = constructor->id};
-    if (classInfo(constructedType.classId).hasGenericBindings() ||
+    if (!classInfo(constructedType.classId).genericParameters.empty() ||
         !constructor->genericParameters.empty())
       recordConcreteProgramEffect(effect, constructedType, types, values, span);
     else
@@ -1196,7 +1179,7 @@ auto SemanticVisitor::Impl::recordProgramCleanupEffects(
   if (includeDirectDestructor && hasSourceDestructorBody(owner)) {
     const ProgramEffectOwner effect{.kind = ProgramEffectOwnerKind::Destructor,
                                     .id = owner.id};
-    if (owner.hasGenericBindings())
+    if (!owner.genericParameters.empty())
       recordConcreteProgramEffect(effect, type, {}, {}, span);
     else
       addProgramEffectEdge(effect, span);
@@ -1267,7 +1250,8 @@ auto SemanticVisitor::Impl::recordProgramConstructionEffects(
     const ProgramEffectOwner fields{
         .kind = ProgramEffectOwnerKind::FieldInitializers,
         .id = construction.constructedType.classId};
-    if (classInfo(construction.constructedType.classId).hasGenericBindings())
+    if (!classInfo(construction.constructedType.classId)
+             .genericParameters.empty())
       recordConcreteProgramEffect(fields, construction.constructedType, {}, {},
                                   span);
     else
@@ -1407,7 +1391,7 @@ auto SemanticVisitor::Impl::recordProgramOperatorTargetEffects(
     const ProgramEffectOwner effect{.kind = ProgramEffectOwnerKind::Function,
                                     .id = target->id};
     if (target->ownerClass != 0 &&
-        classInfo(target->ownerClass).hasGenericBindings())
+        !classInfo(target->ownerClass).genericParameters.empty())
       recordConcreteProgramEffect(effect, operation.dispatchOwner, {}, {},
                                   tokenSpan(expressionToken(expression)));
     else
@@ -1482,22 +1466,8 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
     -> void {
   // An expression alias denotes the operation already checked for its target.
   // Its source spelling must not publish a second invocation or unknown edge.
-  if ((!currentProgramEffectOwner.valid() && loanFlow.referenceContentsOpenings.empty()) ||
+  if (!currentProgramEffectOwner.valid() ||
       semanticModel.findExpressionAlias(expression) != nullptr)
-    return;
-  const bool invocation = exprAs<Call>(&expression) != nullptr ||
-      exprAs<PackFold>(&expression) != nullptr ||
-      exprAs<ArrayInitializer>(&expression) != nullptr ||
-      semanticModel.findConstruction(expression) != nullptr ||
-      semanticModel.findOperator(expression) != nullptr;
-  // Selected inputs and result suppliers already captured their snapshots.
-  // Until a complete no-write effect proof is available here, even a readonly
-  // receiver may call code that changes another aliased reference slot. End
-  // current-contents reuse without retiring any captured shared reference.
-  // This body-local barrier also applies to queries without a program owner.
-  if (invocation)
-    invalidateReferenceContents();
-  if (!currentProgramEffectOwner.valid())
     return;
   SymbolId threadStorage = semanticModel.findResolvedSymbol(expression);
   if (!isThreadLocalStorage(threadStorage)) {
@@ -1519,7 +1489,11 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
     publishProgramStorageBorrowCheck(std::move(initialization), owner, edges,
                                      unknown);
   }
-  if (!invocation)
+  if (exprAs<Call>(&expression) == nullptr &&
+      exprAs<PackFold>(&expression) == nullptr &&
+      exprAs<ArrayInitializer>(&expression) == nullptr &&
+      semanticModel.findConstruction(expression) == nullptr &&
+      semanticModel.findOperator(expression) == nullptr)
     return;
   auto check =
       captureProgramStorageBorrows(tokenSpan(expressionToken(expression)));
@@ -1759,16 +1733,6 @@ auto SemanticVisitor::Impl::discardImmediateProgramEffects(
       found->second.owner != currentProgramEffectOwner)
     return;
   auto evaluation = found->second;
-  // The checked substitution withdraws only this body's expression suffix.
-  // Nested instance analysis restores its own loan-flow state; a mismatched
-  // body or rewound inventory must never be treated as the same authority.
-  if (evaluation.lifetimeBlock != loanFlow.lifetimeBlock ||
-      evaluation.lifetimeExpression != loanFlow.lifetimeExpression ||
-      evaluation.lifetimeVariableStart > loanFlow.lifetimeVariables.size() ||
-      evaluation.lifetimeObligationStart > loanFlow.lifetimeObligations.size() ||
-      evaluation.lifetimeTypeObligationStart > loanFlow.lifetimeTypeObligations.size() ||
-      evaluation.lifetimeOriginStart > loanFlow.lifetimeOrigins.size())
-    return;
   auto &summary = programEffects[evaluation.owner];
   // Publication replaces the complete invocation, including its inputs, with
   // immutable data. Resolution, loan validation and constant execution have
@@ -1780,43 +1744,6 @@ auto SemanticVisitor::Impl::discardImmediateProgramEffects(
   summary.borrowUses.resize(evaluation.useStart);
   summary.uses.resize(evaluation.storageUseStart);
   summary.directFailure = evaluation.directFailureBefore;
-  // Invocation checking and constant execution already proved these facts.
-  // A substituted value carries no borrowed result; its temporary inputs no
-  // longer have executable origins. Preserve every pre-expression body fact.
-  // A contextual conversion may be selected only after later sibling
-  // arguments were analyzed (a deduced immediate parameter). Those siblings'
-  // facts are not this expression's suffix; keep them.
-  const auto withdraw = [](auto &values, std::size_t start,
-                           std::optional<std::size_t> end) {
-    if (!end || *end < start || *end > values.size()) {
-      values.resize(start);
-      return;
-    }
-    values.erase(values.begin() + static_cast<std::ptrdiff_t>(start),
-                 values.begin() + static_cast<std::ptrdiff_t>(*end));
-  };
-  withdraw(loanFlow.lifetimeVariables, evaluation.lifetimeVariableStart,
-           evaluation.lifetimeVariableEnd);
-  withdraw(loanFlow.lifetimeObligations, evaluation.lifetimeObligationStart,
-           evaluation.lifetimeObligationEnd);
-  withdraw(loanFlow.lifetimeTypeObligations, evaluation.lifetimeTypeObligationStart,
-           evaluation.lifetimeTypeObligationEnd);
-  withdraw(loanFlow.lifetimeOrigins, evaluation.lifetimeOriginStart,
-           evaluation.lifetimeOriginEnd);
-  // The published value keeps its checked result type. Its inference regions
-  // remain body variables (unconstrained: static data is valid for any
-  // region), so the destination that receives it stays in scope.
-  {
-    std::vector<SemanticType> resultTypes{semanticModel.typeOf(expression)};
-    if (const auto *contextual = semanticModel.findContextualConstruction(expression))
-      resultTypes.push_back(contextual->constructedType);
-    for (const auto &type : resultTypes)
-      for (const auto region : freeTypeLifetimes(type))
-        if (region.kind == Lifetime::Kind::Inference &&
-            std::find(loanFlow.lifetimeVariables.begin(), loanFlow.lifetimeVariables.end(),
-                      region) == loanFlow.lifetimeVariables.end())
-          loanFlow.lifetimeVariables.push_back(region);
-  }
   // Loan-flow conflicts retain indices into this vector. Keep those indices
   // stable while making the now nonexistent runtime checks vacuous.
   for (std::size_t index = evaluation.borrowCheckStart;
@@ -2376,7 +2303,7 @@ auto SemanticVisitor::Impl::recordProgramCallEffectTargets(
   if (!target->genericParameters.empty() || !resolved->typeArguments.empty() ||
       !resolved->valueArguments.empty() ||
       (target->ownerClass != 0 &&
-       classInfo(target->ownerClass).hasGenericBindings())) {
+       !classInfo(target->ownerClass).genericParameters.empty())) {
     recordConcreteProgramEffect(
         effect, resolved->dispatchOwner, resolved->typeArguments,
         resolved->valueArguments, tokenSpan(expressionToken(expression)));
@@ -2722,7 +2649,7 @@ auto SemanticVisitor::Impl::collectProgramInitializationStatement(
   }
   if (const auto *owner = stmtAs<ClassDecl>(&statement)) {
     const ClassTypeInfo *info = semanticModel.findClassType(*owner);
-    if (info == nullptr || info->hasGenericBindings()) {
+    if (info == nullptr || !info->genericParameters.empty()) {
       return;
     }
     for (const StmtPtr &child : owner->members()) {
@@ -2819,29 +2746,13 @@ auto SemanticVisitor::Impl::findProgramEntryConstructor(
   if (lifecycle == nullptr) {
     return 0;
   }
-  // Hosted startup supplies values valid for the whole program. A parameter
-  // matches when it has the required shape and every region it mentions is a
-  // universal parameter of the constructor, so any actual region is accepted.
-  // A constructor demanding a particular region is never selected here.
-  const auto accepts = [](const SemanticType &declared,
-                          const SemanticType &supplied) {
-    if (declared == supplied)
-      return true;
-    if (eraseTypeLifetimes(declared) != eraseTypeLifetimes(supplied))
-      return false;
-    const auto regions = freeTypeLifetimes(declared);
-    return std::all_of(regions.begin(), regions.end(), [](const Lifetime &region) {
-      return region.kind == Lifetime::Kind::Parameter;
-    });
-  };
   for (const ConstructorInfo &constructor : lifecycle->constructors) {
     if (constructor.kind == ConstructorKind::Ordinary &&
         constructor.access == AccessModifier::Public &&
         constructor.declaration != nullptr &&
         constructor.parameterTypes.size() == parameters.size() &&
         std::equal(constructor.parameterTypes.begin(),
-                   constructor.parameterTypes.end(), parameters.begin(),
-                   accepts)) {
+                   constructor.parameterTypes.end(), parameters.begin())) {
       return constructor.id;
     }
   }
@@ -3525,13 +3436,13 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
               field && borrowedTextType(type)) {
             const ExpressionInfo *sourceInfo =
                 semanticModel.findExpression(**field->origin);
-            std::vector<BorrowPath> held;
+            std::vector<std::vector<SymbolId>> held;
             if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
               held = textDependentPaths(**field->origin);
             const auto designated =
                 field->payload == 0
-                    ? BorrowPath{fieldProjection(field->field)}
-                    : BorrowPath{fieldProjection(field->field), fieldProjection(field->payload)};
+                    ? std::vector<SymbolId>{field->field}
+                    : std::vector<SymbolId>{field->field, field->payload};
             if (fieldSourcedTextFormal(*field) ||
                 std::find(held.begin(), held.end(), designated) != held.end())
               return ownerDependentTextInfo(
@@ -3720,7 +3631,7 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       const auto field = symbolForDeclaration(member->symbol.declaration);
       const auto paths = textDependentPaths(*get.object());
       if (std::any_of(paths.begin(), paths.end(), [&](const auto &path) {
-            return path.size() > 1 && path.front() == fieldProjection(field);
+            return path.size() > 1 && path.front() == field;
           }))
         return textDependentValueInfo(type, ValueCategory::Place,
                                       mutableAccess ? AccessMode::Mutable
@@ -3732,8 +3643,6 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
   }
   if (kind == ExprKind::Call) {
     const Call &call = static_cast<const Call &>(expr);
-    if (loanFlow.deferredPackCalls.contains(&call))
-      return expressionInfo(std::move(type));
     const ResolvedCallInfo *resolved = semanticModel.findCall(call);
     if (resolved != nullptr &&
         resolved->returnType.kind == SemanticType::Reference &&
@@ -3746,13 +3655,13 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
             field->origin == nullptr
                 ? nullptr
                 : semanticModel.findExpression(**field->origin);
-        std::vector<BorrowPath> held;
+        std::vector<std::vector<SymbolId>> held;
         if (sourceInfo != nullptr && isTextDependentValue(*sourceInfo))
           held = textDependentPaths(**field->origin);
         const auto designated =
             field->payload == 0
-                ? BorrowPath{fieldProjection(field->field)}
-                : BorrowPath{fieldProjection(field->field), fieldProjection(field->payload)};
+                ? std::vector<SymbolId>{field->field}
+                : std::vector<SymbolId>{field->field, field->payload};
         if (fieldSourcedTextFormal(*field) ||
             std::find(held.begin(), held.end(), designated) != held.end())
           return ownerDependentTextInfo(std::move(type), ValueCategory::Place,
@@ -4574,16 +4483,7 @@ auto SemanticVisitor::Impl::checkAssignmentResultUse(const Expr &expr,
 }
 
 auto SemanticVisitor::Impl::analyze(const Expr &expr,
-                                    OccurrenceRole requestedRoles,
-                                    const EnumeratorRecord *contextualEnumerator)
-    -> SemanticType {
-  return analyze(expr, requestedRoles, contextualEnumerator, {});
-}
-
-auto SemanticVisitor::Impl::analyze(const Expr &expr,
-                                    OccurrenceRole requestedRoles,
-                                    const EnumeratorRecord *contextualEnumerator,
-                                    std::span<const Lifetime> destinationInferences)
+                                    OccurrenceRole requestedRoles)
     -> SemanticType {
   if (!requestSession.recoveryCauses.empty())
     requestSession.recoveryCauses.erase(&expr);
@@ -4616,26 +4516,12 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     evaluation.storageUseStart = summary.uses.size();
     evaluation.borrowCheckStart =
         requestSession.programStorageBorrowChecks.size();
-    evaluation.lifetimeBlock = loanFlow.lifetimeBlock;
-    evaluation.lifetimeExpression = loanFlow.lifetimeExpression;
-    evaluation.lifetimeVariableStart = loanFlow.lifetimeVariables.size();
-    evaluation.lifetimeObligationStart = loanFlow.lifetimeObligations.size();
-    evaluation.lifetimeTypeObligationStart = loanFlow.lifetimeTypeObligations.size();
-    evaluation.lifetimeOriginStart = loanFlow.lifetimeOrigins.size();
     evaluation.directFailureBefore = summary.directFailure;
   }
   const auto fullExpression = beginProgramFullExpression(expr);
   if (instanceAnalysisActive) {
     semanticModel.suppressInheritedOperator(expr);
   }
-  // Dependency sets contain body-local binding and loan identities. An
-  // instance/speculative delta may inherit untouched expressions, but a
-  // re-evaluated expression must publish this evaluation's owners or an
-  // explicit absence, never retain the primary body's old parameter roots.
-  semanticModel.clearBorrowDependencySet(expr);
-  // An opening belongs to one checked evaluation. Reanalysis may retain its
-  // copied shared snapshots, but cannot reuse its old current-contents index.
-  semanticModel.clearReferenceContentsLoan(expr);
   valueFlow.rawOperatorResults.erase(&expr);
   const std::size_t diagnosticsBefore = diagnostics.size();
   recordSourceDebugExpression(expr);
@@ -4648,13 +4534,7 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
   if (macroLiteralType)
     enclosingLiteralContext =
         std::exchange(contextualOperatorIntegerType, *macroLiteralType);
-  if (const auto *qualified = exprAs<QualifiedName>(&expr); qualified && contextualEnumerator)
-    analyzeQualifiedName(*qualified, contextualEnumerator);
-  else if (const auto *direct = exprAs<DirectInitializer>(&expr);
-           direct && !destinationInferences.empty())
-    visitDirectInitializerExpr(*direct, destinationInferences);
-  else
-    expr.accept(*this);
+  expr.accept(*this);
   if (macroLiteralType)
     contextualOperatorIntegerType = std::move(enclosingLiteralContext);
   SemanticType result = currentType;
@@ -5119,13 +4999,6 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     evaluation.edgeEnd = summary.edges.size();
     evaluation.unknownEnd = summary.unknown.size();
     evaluation.useEnd = summary.borrowUses.size();
-    if (evaluation.lifetimeBlock == loanFlow.lifetimeBlock &&
-        evaluation.lifetimeExpression == loanFlow.lifetimeExpression) {
-      evaluation.lifetimeVariableEnd = loanFlow.lifetimeVariables.size();
-      evaluation.lifetimeObligationEnd = loanFlow.lifetimeObligations.size();
-      evaluation.lifetimeTypeObligationEnd = loanFlow.lifetimeTypeObligations.size();
-      evaluation.lifetimeOriginEnd = loanFlow.lifetimeOrigins.size();
-    }
     requestSession.programExpressionCache.programExpressionEffects
         .insert_or_assign(&expr, evaluation);
   }
@@ -5254,14 +5127,6 @@ auto SemanticVisitor::Impl::analyzeInitializer(
     const ExprPtr &expr, const SemanticType &expectedType,
     bool allowExactNullConstruction, bool allowDeclarationConstruction)
     -> SemanticType {
-  return analyzeInitializer(expr, expectedType, allowExactNullConstruction,
-                            allowDeclarationConstruction, nullptr);
-}
-
-auto SemanticVisitor::Impl::analyzeInitializer(
-    const ExprPtr &expr, const SemanticType &expectedType,
-    bool allowExactNullConstruction, bool allowDeclarationConstruction,
-    const TypeRef *destinationSyntax) -> SemanticType {
   const auto fullExpression =
       expr ? beginProgramFullExpression(*expr) : std::nullopt;
   const std::optional<SemanticType> enclosingType = contextualInitializerType;
@@ -5280,33 +5145,11 @@ auto SemanticVisitor::Impl::analyzeInitializer(
       isIntegral(expectedType) && isContextualIntegerLiteral(expr.get())
           ? integerConstant(expr.get())
           : std::nullopt;
-  SemanticType result;
-  if (destinationSyntax && expectedType.kind == SemanticType::Class &&
-      exprAs<DirectInitializer>(expr.get())) {
-    const auto bindings = inferredTypeSyntaxBindings(*destinationSyntax);
-    if (!bindings) {
-      report(destinationSyntax->name.last(),
-             "This destination has an unresolved lifetime inference context.", "GTI-S2127");
-      result = SemanticType::Unknown;
-    } else {
-      std::vector<Lifetime> inferences;
-      for (const auto &[key, region] : *bindings) {
-        (void)key;
-        if (std::find(inferences.begin(), inferences.end(), region) == inferences.end())
-          inferences.push_back(region);
-      }
-      result = analyze(*expr, OccurrenceRole::Reference | OccurrenceRole::Read,
-                       nullptr, inferences);
-    }
-  } else
-    result = literal &&
+  SemanticType result =
+      literal &&
               (!isInteger(expectedType) || integerFits(expectedType, *literal))
           ? analyzeContextualIntegerOperand(expr, expectedType)
           : analyzeExpectedCallableResult(expr, expectedType);
-  if (expr && expectedType.kind != SemanticType::Reference &&
-      expectedType != result && expectedType.kind == result.kind &&
-      (!freeTypeLifetimes(expectedType).empty() || !freeTypeLifetimes(result).empty()))
-    (void)applyLifetimeValueConversion(result, expectedType, expressionToken(expr));
   if (allowExactNullConstruction && expr &&
       expectedType.kind == SemanticType::Class &&
       result == SemanticType::NullPtr) {
@@ -5314,7 +5157,8 @@ auto SemanticVisitor::Impl::analyzeInitializer(
     std::vector<AnalyzedCallArgument> arguments = {
         {.type = result, .expression = &expr}};
     analyzeConstructorCallArguments(
-        *expr, expectedType, std::move(arguments),
+        *expr, expectedType.classId, expectedType.arguments,
+        expectedType.valueArguments, std::move(arguments),
         expressionToken(expr), true);
     result = currentType;
     const ExpressionInfo info = expressionInfo(result);
@@ -5382,7 +5226,8 @@ auto SemanticVisitor::Impl::analyzeDeclarationConstruction(
   const std::size_t diagnosticStart = diagnostics.size();
   const SourceSpan site = tokenSpan(expressionToken(expr));
   analyzeConstructorCallArguments(
-      *expr, declaredType,
+      *expr, declaredType.classId, declaredType.arguments,
+      declaredType.valueArguments,
       {{.type = initializerType, .expression = &expr}}, expressionToken(expr),
       false, true);
   if (!semanticModel.recordsContextualConstruction(*expr)) {
@@ -5773,8 +5618,7 @@ auto SemanticVisitor::Impl::recordToolingSymbol(
     const Token &name, SymbolKind kind, std::string qualified,
     const SemanticType &type, bool mutableBinding, bool definition,
     AccessModifier access, bool staticMember, bool internalLinkage,
-    bool compilerPrivate, bool instanceDependentType,
-    GenericParameterId genericParameter) -> SymbolId {
+    bool compilerPrivate, bool instanceDependentType) -> SymbolId {
   const SourceUnitId sourceUnit = sourceUnitFor(name);
   const SourceSpan span = tokenSpan(name);
   const std::string resolvedQualified = qualified;
@@ -5790,7 +5634,6 @@ auto SemanticVisitor::Impl::recordToolingSymbol(
            definition ? std::optional<SourceSpan>(span) : std::nullopt,
        .type = type,
        .traits = typeTraits(type),
-       .genericParameter = genericParameter,
        .access = access,
        .mutableBinding = mutableBinding,
        .defaultLibrary = isDefaultLibraryUnit(sourceUnit),
@@ -5917,8 +5760,6 @@ auto SemanticVisitor::Impl::toolingSymbolFor(const Symbol &symbol) -> SymbolId {
 
 auto SemanticVisitor::Impl::genericParameterInfo(GenericParameterId id) const
     -> const GenericParameterInfo * {
-  if (const auto *parameter = semanticModel.findGenericParameter(id))
-    return parameter;
   for (const EnumInfo &owner : enums) {
     const auto found = std::find_if(
         owner.genericParameters.begin(), owner.genericParameters.end(),
@@ -6440,9 +6281,7 @@ auto SemanticVisitor::Impl::sameFunctionSignature(
     if (left.record().genericParameters[index].pack !=
             right.record().genericParameters[index].pack ||
         left.record().genericParameters[index].value !=
-            right.record().genericParameters[index].value ||
-        left.record().genericParameters[index].lifetime !=
-            right.record().genericParameters[index].lifetime) {
+            right.record().genericParameters[index].value) {
       return false;
     }
   }
@@ -6466,9 +6305,7 @@ auto SemanticVisitor::Impl::sameConstructorSignature(
     if (left.genericParameters[index].pack !=
             right.genericParameters[index].pack ||
         left.genericParameters[index].value !=
-            right.genericParameters[index].value ||
-        left.genericParameters[index].lifetime !=
-            right.genericParameters[index].lifetime) {
+            right.genericParameters[index].value) {
       return false;
     }
   }
@@ -7188,7 +7025,8 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       }
       const SemanticType selected = substituteType(
           alias->type,
-          currentGenericSubstitution(false));
+          GenericSubstitution{.types = instanceTypeSubstitution,
+                              .values = instanceValueSubstitution});
       if (selected.kind == SemanticType::Class && selected.classId != 0 &&
           selected.classId <= classes.size()) {
         completionOwner = selected.classId;
@@ -7263,7 +7101,7 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
       if ((!canAccessMember(
               alias.access, alias.ownerClass, SemanticType::Unknown,
               specializedOwner.value_or(openClassType(*owner)))) ||
-          (!specializedOwner && classType.hasGenericBindings() &&
+          (!specializedOwner && !classType.genericParameters.empty() &&
            currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
            (alias.compilerPrivate ||
@@ -7293,7 +7131,7 @@ auto SemanticVisitor::Impl::captureQualifiedCompletion(const NamePath &path,
           (!canAccessMember(
               alias.access, alias.ownerClass, SemanticType::Unknown,
               specializedOwner.value_or(openClassType(*owner)))) ||
-          (!specializedOwner && classType.hasGenericBindings() &&
+          (!specializedOwner && !classType.genericParameters.empty() &&
            currentClass != *owner) ||
           (!isCompilerTrustedUnit(currentSourceUnit) &&
            (alias.compilerPrivate ||
@@ -7971,7 +7809,8 @@ auto SemanticVisitor::Impl::resolveTypeAliasPath(
   if (const auto qualifier = resolveTypeAliasPath(namespacePath, fromScope)) {
     const SemanticType ownerType = substituteType(
         qualifier->type,
-        currentGenericSubstitution(false));
+        GenericSubstitution{.types = instanceTypeSubstitution,
+                            .values = instanceValueSubstitution});
     if (ownerType.kind == SemanticType::Class) {
       if (auto alias = member(ownerType.classId, path.last().lexeme)) {
         alias->type = substituteType(alias->type, classSubstitution(ownerType));
@@ -8300,40 +8139,17 @@ auto SemanticVisitor::Impl::resolveEnumerator(const NamePath &path,
 }
 
 auto SemanticVisitor::Impl::resolveEnumerator(
-    const QualifiedName &expression, const SemanticType *contextualOwner,
-    std::vector<std::pair<LifetimeSyntaxKey, Lifetime>> *contextualBindings) const
-    -> std::optional<EnumeratorRecord> {
+    const QualifiedName &expression) const -> std::optional<EnumeratorRecord> {
   if (expression.name().segments.size() < 2)
     return std::nullopt;
-  const TypeRef unqualifiedOwner(NamePath(std::vector<Token>(
-      expression.name().segments.begin(), expression.name().segments.end() - 1)));
-  const TypeRef &ownerSyntax = expression.ownerType() ? *expression.ownerType() : unqualifiedOwner;
-  auto ownerType = typeOf(ownerSyntax);
+  const auto ownerType = expression.ownerType()
+                             ? typeOf(*expression.ownerType())
+                             : typeOf(TypeRef(NamePath(std::vector<Token>(
+                                   expression.name().segments.begin(),
+                                   expression.name().segments.end() - 1))));
   if (ownerType.kind != SemanticType::Enum || ownerType.enumId == 0 ||
       ownerType.enumId > enums.size())
     return std::nullopt;
-  if (contextualOwner) {
-    std::vector<Lifetime> inferences;
-    const auto inferenceSites = inferredTypeSyntaxBindings(ownerSyntax);
-    if (!inferenceSites)
-      return std::nullopt;
-    for (const auto &[key, region] : *inferenceSites) {
-      (void)key;
-      if (std::find(inferences.begin(), inferences.end(), region) == inferences.end())
-        inferences.push_back(region);
-    }
-    const auto bindings = matchInferredTypeLifetimes(ownerType, *contextualOwner, inferences);
-    if (!bindings)
-      return std::nullopt;
-    if (contextualBindings)
-      for (const auto &[key, region] : *inferenceSites)
-        for (const auto &[parameter, actual] : *bindings)
-          if (parameter == region)
-            contextualBindings->emplace_back(key, actual);
-    // Pattern syntax supplies no new value or loan. Its omitted regions name
-    // the already-checked scrutinee, with every fixed part matched exactly.
-    ownerType = *contextualOwner;
-  }
   const auto &owner = enums[ownerType.enumId - 1];
   const auto found = owner.enumerators.find(expression.name().last().lexeme);
   if (found == owner.enumerators.end())
@@ -8426,10 +8242,10 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
     const auto &field = enumerator.payloadTypes[index];
     // A constructor's text input formal is published by each call instead.
     const auto &inputs = requestSession.constructorTextPayloadArguments;
-    if (field.kind == SemanticType::StringView || field.kind == SemanticType::CString)
+    if (field == SemanticType::StringView || field == SemanticType::CString)
       noteLocalTextEscape(call.arguments()[index], LocalTextEscapeKind::Storage,
                           "stored in a payload-enum field");
-    if ((field.kind == SemanticType::StringView || field.kind == SemanticType::CString) &&
+    if ((field == SemanticType::StringView || field == SemanticType::CString) &&
         isOwnerDependentTextExpression(call.arguments()[index]) &&
         std::find(inputs.begin(), inputs.end(),
                   call.arguments()[index].get()) == inputs.end()) {
@@ -8447,7 +8263,7 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
                "would add a second owner dependency.",
                "GTI-S2045");
       else if (!dependencies.empty())
-        textOrigins.push_back({.resultFields = {fieldProjection(payload)},
+        textOrigins.push_back({.resultFields = {payload},
                                .origin = BorrowOriginKind::Argument,
                                .parameter = index,
                                .access = AccessMode::ReadOnly});
@@ -8455,29 +8271,9 @@ auto SemanticVisitor::Impl::analyzePayloadConstruction(
         reportOwnerDependentTextStorage(call.arguments()[index],
                                         "stored in a payload-enum field");
     }
-    if (field.kind == SemanticType::Reference)
-      validateReferenceBinding(field, actual, call.arguments()[index]);
-    SemanticType matched = actual;
-    if (actual != SemanticType::Unknown) {
-      const auto &target = field.kind == SemanticType::Reference && field.arguments.size() == 1
-          ? field.arguments.front() : field;
-      std::vector<LifetimeBound> obligations;
-      const auto adjusted = constrainLifetimeType(actual, target,
-          field.kind == SemanticType::Reference && field.referenceAccess == AccessMode::Mutable ? 0 : 1,
-          obligations, field.kind == SemanticType::Reference);
-      // Initializer/reference validation owns these body facts. Type matching
-      // may consume only the conversion already proved there, while retaining
-      // the original expression's copy/move category and borrow authority.
-      if (adjusted && validateLifetimeConstraints({}, obligations))
-        matched = *adjusted;
-    }
-    // Argument viability compares shape; a payload has no separate call
-    // contract, so a by-value payload's regions must be this proved conversion.
-    const bool unprovedRegions =
-        actual != SemanticType::Unknown && field.kind != SemanticType::Reference &&
-        matched != field && eraseTypeLifetimes(matched) == eraseTypeLifetimes(field);
     if (actual != SemanticType::Unknown &&
-        (unprovedRegions || !callArgumentMatches(field, matched, call.arguments()[index]))) {
+        !callArgumentMatches(enumerator.payloadTypes[index], actual,
+                             call.arguments()[index])) {
       report(expressionToken(call.arguments()[index]),
              "Payload argument " + std::to_string(index + 1) + " has type '" +
                  typeSpelling(actual) + "'; variant '" +
@@ -8565,8 +8361,7 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
            "GTI-S2067");
     return std::nullopt;
   }
-  std::vector<std::pair<LifetimeSyntaxKey, Lifetime>> contextualBindings;
-  const auto enumerator = resolveEnumerator(*qualified, &subjectType, &contextualBindings);
+  const auto enumerator = resolveEnumerator(*qualified);
   if (!enumerator &&
       reportInvisibleSymbol(qualified->name().last(),
                             pathSpelling(qualified->name()),
@@ -8576,7 +8371,7 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
     // different variant of the subject enum.
     return std::nullopt;
   }
-  if (!enumerator) {
+  if (!enumerator || enumerator->symbol.type != subjectType) {
     report(qualified->name().last(),
            "Switch case must name a variant of '" + typeSpelling(subjectType) +
                "'.",
@@ -8588,30 +8383,7 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
   const bool enclosingPayloadReference = allowPayloadEnumeratorReference;
   analyzingCallCallee = true;
   allowPayloadEnumeratorReference = true;
-  {
-    // Validation and tooling must observe the same contextual type as the
-    // pattern. Only this qualifier's exact syntax holes are rebound, and the
-    // request-wide inference inventory is restored after normal analysis.
-    struct SyntaxInferenceScope {
-      std::map<LifetimeSyntaxKey, Lifetime> &inventory;
-      std::vector<std::pair<LifetimeSyntaxKey, Lifetime>> saved;
-      SyntaxInferenceScope(std::map<LifetimeSyntaxKey, Lifetime> &inventory,
-                           const std::vector<std::pair<LifetimeSyntaxKey, Lifetime>> &bindings)
-          : inventory(inventory) {
-        for (const auto &[key, actual] : bindings) {
-          auto &region = inventory.at(key);
-          saved.emplace_back(key, region);
-          region = actual;
-        }
-      }
-      ~SyntaxInferenceScope() {
-        for (const auto &[key, region] : saved)
-          inventory.insert_or_assign(key, region);
-      }
-    } inferenceScope(lifetimeInferences, contextualBindings);
-    (void)analyze(*qualified, OccurrenceRole::Reference | OccurrenceRole::Read,
-                  &*enumerator);
-  }
+  (void)analyze(*qualified);
   allowPayloadEnumeratorReference = enclosingPayloadReference;
   analyzingCallCallee = enclosingCallCallee;
 
@@ -8741,18 +8513,13 @@ auto SemanticVisitor::Impl::analyzePayloadSwitchPattern(
                    ? PayloadExtractionKind::BorrowValue
                : consumingSubject ? PayloadExtractionKind::MoveValue
                                   : PayloadExtractionKind::CopyValue);
-    SemanticType bindingType =
+    const SemanticType bindingType =
         binding->isReferencePattern()
             ? SemanticType::referenceTo(
                   storedReference ? payloadType.arguments.front() : payloadType,
                   binding->isMutablePattern() ? AccessMode::Mutable
                                               : AccessMode::ReadOnly)
             : payloadType;
-    // A reference pattern forms a new reference just as a local declaration
-    // does. Its source relationship is recorded only after the arm establishes
-    // the exact physical payload or stored external-reference loan.
-    if (binding->isReferencePattern())
-      bindingType.referenceLifetime = inferredLifetime(binding->name());
     result.bindings.push_back(
         {.name = &binding->name(),
          .source = binding,
@@ -9164,12 +8931,7 @@ auto SemanticVisitor::Impl::memberReceiverIsMutable(const Get &member) const
 
 auto SemanticVisitor::Impl::transparentTemporaryProducer(
     const ExprPtr &expression) const -> const Expr * {
-  return transparentTemporaryProducer(expression.get());
-}
-
-auto SemanticVisitor::Impl::transparentTemporaryProducer(
-    const Expr *expression) const -> const Expr * {
-  const Expr *producer = expression;
+  const Expr *producer = expression.get();
   while (producer != nullptr) {
     const Expr *source = semanticModel.directInitializationSource(*producer);
     if (source == nullptr) {
@@ -9190,11 +8952,6 @@ auto SemanticVisitor::Impl::payloadEnumType(const SemanticType &type) const
 }
 
 auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
-    -> FreshTemporaryValueAssessment {
-  return freshTemporaryValue(expression.get());
-}
-
-auto SemanticVisitor::Impl::freshTemporaryValue(const Expr *expression) const
     -> FreshTemporaryValueAssessment {
   FreshTemporaryValueAssessment result;
   if (!expression) {
@@ -9219,7 +8976,7 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const Expr *expression) const
     return result;
   }
   result.type = info->type;
-  if (explicitMoveSource(expression) != nullptr) {
+  if (isExplicitMoveReceiver(expression)) {
     result.failure = FreshTemporaryValueFailure::ExplicitMove;
     return result;
   }
@@ -9392,11 +9149,6 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const Expr *expression) const
 
 auto SemanticVisitor::Impl::freshTemporaryBorrowValue(const ExprPtr &expression)
     -> FreshTemporaryValueAssessment {
-  return freshTemporaryBorrowValue(expression.get());
-}
-
-auto SemanticVisitor::Impl::freshTemporaryBorrowValue(const Expr *expression)
-    -> FreshTemporaryValueAssessment {
   FreshTemporaryValueAssessment result = freshTemporaryValue(expression);
   if (result.failure != FreshTemporaryValueFailure::BorrowedState) {
     return result;
@@ -9542,8 +9294,6 @@ auto SemanticVisitor::Impl::receiverModeForObject(
       isMutableObject(receiver)) {
     return CallReceiverMode::MutablePlace;
   }
-  if (std::getenv("GTI_TRACE_RECV") && info && info->traits.containsBorrowedState) { std::fprintf(stderr, "[recvfn] mut=%d origin=%d ret=%d fields=%zu:", static_cast<int>(function.receiverMutability), static_cast<int>(function.returnBorrowOrigin), static_cast<int>(function.returnType.kind), function.returnBorrowFields.size()); for (const auto &m : function.returnBorrowFields) std::fprintf(stderr, " [o=%d src=%zu res=%zu]", static_cast<int>(m.origin), m.sourceFields.size(), m.resultFields.size()); std::fprintf(stderr, "\n"); } // TEMP-TRACE
-  if (std::getenv("GTI_TRACE_RECV") && info) std::fprintf(stderr, "[recvmode] allow=%d freshSupp=%d borrowed=%d ephem=%d textDep=%d relay=%d eligible=%d consuming=%d\n", allowFreshTemporary, freshTemporaryMethodSupported(function), info->traits.containsBorrowedState, ephemeralBorrowResultSupported(function), isTextDependentValue(*info), receiverTextFieldRelay(function), freshTemporaryReceiverValue(receiver).eligible, consumingReceiverValue(receiver)); // TEMP-TRACE
   // A text field relay returns what a dependent temporary holds in that
   // field, its owner's text, never a view of the temporary itself.
   if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&
@@ -9738,13 +9488,6 @@ auto SemanticVisitor::Impl::classInfo(ClassId id) const -> const ClassInfo & {
   return classes.at(id - 1);
 }
 
-auto SemanticVisitor::Impl::publicClassInfo(ClassId id) const -> const ClassInfo & {
-  const ClassInfo *owner = &classInfo(id);
-  while (owner->exactSpecializationPrimary)
-    owner = &classInfo(owner->exactSpecializationPrimary);
-  return *owner;
-}
-
 auto SemanticVisitor::Impl::findMember(const SemanticType &objectType,
                                        const Token &name) const
     -> const MemberInfo * {
@@ -9885,44 +9628,6 @@ auto SemanticVisitor::Impl::receiverStateSymbol() -> Symbol * {
   return nullptr;
 }
 
-auto SemanticVisitor::Impl::memberBorrowPath(SemanticType object,
-                                                const Symbol &field) const
-    -> std::optional<BorrowPath> {
-  if (!field.ownerClass || field.staticMember || !field.variableDeclaration ||
-      field.bindingKind != SemanticBindingKind::Field)
-    return std::nullopt;
-  if (object.kind == SemanticType::Reference && object.arguments.size() == 1)
-    object = SemanticType(object.arguments.front());
-  BorrowPath path;
-  std::unordered_set<ClassId> visited;
-  while (object.classId != field.ownerClass) {
-    const auto *owner = classInfo(object);
-    if (!owner || !visited.insert(object.classId).second ||
-        path.size() >= borrowInventoryDepthLimit)
-      return std::nullopt;
-    std::optional<std::size_t> ordinal;
-    for (std::size_t index = 0; index < owner->bases.size(); ++index)
-      if (!owner->bases[index].interface) {
-        if (ordinal)
-          return std::nullopt; // The language permits one storage base.
-        ordinal = index;
-      }
-    if (!ordinal)
-      return std::nullopt;
-    const auto step = baseProjection(object.classId, *ordinal);
-    const auto child = borrowedPathElement(object, step);
-    if (!child)
-      return std::nullopt;
-    path.push_back(step);
-    object = *child;
-  }
-  const auto step = fieldProjection(symbolForDeclaration(field.declaration));
-  if (!borrowedPathElement(object, step))
-    return std::nullopt;
-  path.push_back(step);
-  return path;
-}
-
 auto SemanticVisitor::Impl::placeForSymbol(Symbol &symbol) -> SemanticPlace {
   // A by-reference capture is a checked reference held by the closure
   // environment. Inside the body its referent places follow the same overlap
@@ -9932,16 +9637,15 @@ auto SemanticVisitor::Impl::placeForSymbol(Symbol &symbol) -> SemanticPlace {
       symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
       symbol.bindingKind == SemanticBindingKind::StaticField ||
       (symbol.bindingKind == SemanticBindingKind::LambdaCapture &&
-       !analyzingCaptureList)) {
+       symbol.type.kind == SemanticType::Reference && !analyzingCaptureList)) {
     return {.root = &symbol, .rootIdentity = toolingSymbolFor(symbol)};
   }
   if (symbol.bindingKind == SemanticBindingKind::Field &&
       !symbol.staticMember && symbol.variableDeclaration != nullptr) {
-    const auto path = currentClass ? memberBorrowPath(openClassType(*currentClass), symbol)
-                                   : std::nullopt;
-    if (!path)
-      return {};
-    return {.root = receiverStateSymbol(), .projections = *path, .receiver = true};
+    return {.root = receiverStateSymbol(),
+            .projections = {{.kind = PlaceProjectionKind::Field,
+                             .field = toolingSymbolFor(symbol)}},
+            .receiver = true};
   }
   return {};
 }
@@ -10043,10 +9747,9 @@ auto SemanticVisitor::Impl::semanticPlace(const Expr *expression)
       if (resolved->symbol.variableDeclaration == nullptr) {
         return {};
       }
-      const auto path = memberBorrowPath(memberAccessObjectType(*member), resolved->symbol);
-      if (!path)
-        return {};
-      place.projections.insert(place.projections.end(), path->begin(), path->end());
+      place.projections.push_back(
+          {.kind = PlaceProjectionKind::Field,
+           .field = toolingSymbolFor(resolved->symbol)});
     }
     return place;
   }
@@ -10120,10 +9823,8 @@ auto SemanticVisitor::Impl::semanticPlace(const Set &expression)
   if (resolved == nullptr || resolved->symbol.variableDeclaration == nullptr) {
     return {};
   }
-  const auto path = memberBorrowPath(memberAccessObjectType(expression), resolved->symbol);
-  if (!path)
-    return {};
-  place.projections.insert(place.projections.end(), path->begin(), path->end());
+  place.projections.push_back({.kind = PlaceProjectionKind::Field,
+                               .field = toolingSymbolFor(resolved->symbol)});
   return place;
 }
 
@@ -10462,9 +10163,6 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
                                              const ScopeStack &right,
                                              bool leftCanFallThrough,
                                              bool rightCanFallThrough) -> void {
-  // A branch-local opening does not establish the slot's current contents on
-  // every incoming path. Copied shared snapshots retain their own loan facts.
-  invalidateReferenceContents();
   const std::size_t depth =
       std::min({scopes.size(), base.size(), left.size(), right.size()});
   for (std::size_t scopeIndex = 0; scopeIndex < depth; ++scopeIndex) {
@@ -10726,15 +10424,12 @@ auto SemanticVisitor::Impl::validateLoopBackedge(const ScopeStack &beforeLoop,
 }
 
 SemanticVisitor::Impl::SourceDebugRegionGuard::SourceDebugRegionGuard(
-    Impl &visitor, const VariableDecl &declaration,
-    bool selectedConstructorDefault)
+    Impl &visitor, const VariableDecl &declaration)
     : visitor(visitor) {
-  const bool constructorDefault = selectedConstructorDefault &&
-      visitor.constructorDepth != 0 && visitor.analyzingFieldInitializer;
   if (visitor.sourceDebugProfile != SourceDebugProfile::LexicalV1 ||
       visitor.scopes.empty() ||
-      (visitor.functionDepth != 0 && !constructorDefault &&
-       !declaration.isStatic() && !declaration.isThreadLocal()))
+      (visitor.functionDepth != 0 && !declaration.isStatic() &&
+       !declaration.isThreadLocal()))
     return;
   scopeIndex = visitor.scopes.size() - 1;
   const auto &frame = visitor.scopes[scopeIndex];
@@ -11222,30 +10917,6 @@ auto SemanticVisitor::Impl::rawPointerFields(const Expr *expression)
   return unresolved;
 }
 
-auto SemanticVisitor::Impl::rawPointerPathElement(
-    SemanticType type, const PlaceProjection &projection) const
-    -> std::optional<SemanticType> {
-  if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
-    type = SemanticType(type.arguments.front());
-  switch (projection.kind) {
-  case PlaceProjectionKind::Field:
-  case PlaceProjectionKind::Base:
-  case PlaceProjectionKind::ConstantIndex:
-    return borrowedPathElement(std::move(type), projection);
-  case PlaceProjectionKind::DynamicIndex:
-    if (type.kind == SemanticType::Array && type.arguments.size() == 1)
-      return type.arguments.front();
-    break;
-  case PlaceProjectionKind::Dereference:
-    if ((type.kind == SemanticType::RawPointer ||
-         type.kind == SemanticType::UniqueOwner ||
-         type.kind == SemanticType::SharedPointer) && type.arguments.size() == 1)
-      return type.arguments.front();
-    break;
-  }
-  return std::nullopt;
-}
-
 auto SemanticVisitor::Impl::rawPointerFieldsAt(const PlaceKey &place)
     -> std::vector<ProjectedRawPointerOrigins> {
   if (!rawAuditEnabled())
@@ -11268,9 +10939,18 @@ auto SemanticVisitor::Impl::rawPointerFieldsAt(const PlaceKey &place)
   auto selectedType = root->type;
   bool borrowedStorage = false;
   for (const auto &projection : place.projections) {
-    const auto element = rawPointerPathElement(selectedType, projection);
-    selectedType = element.value_or(SemanticType::Unknown);
-    borrowedStorage |= selectedType.kind == SemanticType::Reference;
+    if (selectedType.kind == SemanticType::Reference &&
+        selectedType.arguments.size() == 1)
+      selectedType = SemanticType(selectedType.arguments.front());
+    if (projection.kind == PlaceProjectionKind::Field) {
+      const auto *field = semanticModel.database().findSymbol(projection.field);
+      selectedType = field ? field->type : SemanticType::Unknown;
+      borrowedStorage |= selectedType.kind == SemanticType::Reference;
+    } else if (!selectedType.arguments.empty()) {
+      selectedType = SemanticType(selectedType.arguments.front());
+    } else {
+      selectedType = SemanticType::Unknown;
+    }
   }
   bool weak = false;
   for (const auto &storage :
@@ -11387,17 +11067,12 @@ auto SemanticVisitor::Impl::rawPointerFieldPaths(const SemanticType &type)
       return {};
     active.push_back(current);
     std::vector<std::vector<PlaceProjection>> result;
-    for (std::size_t ordinal = 0; ordinal < owner->bases.size(); ++ordinal) {
-      const auto &base = owner->bases[ordinal];
-      if (base.interface)
-        continue;
-      auto paths = self(
-          self, substituteType(base.type, classSubstitution(current)), false);
-      for (auto &path : paths) {
-        path.insert(path.begin(), baseProjection(current.classId, ordinal));
-        result.push_back(std::move(path));
+    for (const auto &base : owner->bases)
+      if (!base.interface) {
+        auto paths = self(
+            self, substituteType(base.type, classSubstitution(current)), false);
+        result.insert(result.end(), paths.begin(), paths.end());
       }
-    }
     for (const auto &field : owner->fields) {
       const auto member = owner->members.find(field.declaration->name().lexeme);
       if (member == owner->members.end())
@@ -11447,8 +11122,33 @@ auto SemanticVisitor::Impl::rawPointerTypesAt(
         result.push_back(std::move(current));
       return;
     }
-    if (const auto element = rawPointerPathElement(current, projections[index]))
-      self(self, *element, index + 1);
+    const auto &projection = projections[index];
+    if (projection.kind != PlaceProjectionKind::Field) {
+      if (!current.arguments.empty())
+        self(self, current.arguments.front(), index + 1);
+    } else if (current.kind == SemanticType::Lambda &&
+               current.hasLambdaShape()) {
+      if (const auto *lambda = semanticModel.findLambda(current.lambdaId)) {
+        const auto captures = current.lambdaCaptureTypes();
+        for (std::size_t capture = 0;
+             capture < captures.size() && capture < lambda->captures.size();
+             ++capture)
+          if (lambda->captures[capture].bindingSymbol == projection.field)
+            self(self, captures[capture], index + 1);
+      }
+    } else if (const auto *owner = classInfo(current)) {
+      for (const auto &[_, member] : owner->members)
+        // This is a lookup of an already-identified field, not symbol
+        // discovery. Registering every member here gives optional auditing
+        // authority over later method/local SymbolIds and mandatory MIR.
+        if (member.symbol.bindingKind == SemanticBindingKind::Field &&
+            symbolForDeclaration(member.symbol.declaration) == projection.field)
+          self(self, substituteSymbol(member.symbol, current).type, index + 1);
+      for (const auto &base : owner->bases)
+        if (!base.interface)
+          self(self, substituteType(base.type, classSubstitution(current)),
+               index);
+    }
   };
   visit(visit, type, 0);
   return result;
@@ -11687,11 +11387,8 @@ auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
       std::any_of(resolved.parameterTypes.begin(),
                   resolved.parameterTypes.end(), containsOpenTypeParameter))
     return nullptr;
-  if (!requestSession.rawResultQueries ||
-      requestSession.rawResultQueries->lifetimeContractRevision != requestSession.lifetimeContractRevision) {
+  if (!requestSession.rawResultQueries)
     requestSession.rawResultQueries = std::make_shared<RawResultQueryState>();
-    requestSession.rawResultQueries->lifetimeContractRevision = requestSession.lifetimeContractRevision;
-  }
   auto state = requestSession.rawResultQueries;
   const auto ownerTypes = owner.kind == SemanticType::Class
                               ? owner.arguments
@@ -11706,10 +11403,8 @@ auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
         entry->function == resolved.function &&
         entry->ownerTypes == ownerTypes && entry->ownerValues == ownerValues &&
         entry->types == resolved.typeArguments &&
-        entry->values == resolved.valueArguments) {
-      notePrivateLifetimeOpaqueDependency();
+        entry->values == resolved.valueArguments)
       return entry;
-    }
   if (topLevel)
     state->familyEntries.clear();
   auto entry = std::make_shared<RawResultQuery>();
@@ -11751,11 +11446,8 @@ auto SemanticVisitor::Impl::rawConstructorResultQuery(
       std::any_of(resolved.typeArguments.begin(), resolved.typeArguments.end(),
                   containsOpenTypeParameter))
     return nullptr;
-  if (!requestSession.rawResultQueries ||
-      requestSession.rawResultQueries->lifetimeContractRevision != requestSession.lifetimeContractRevision) {
+  if (!requestSession.rawResultQueries)
     requestSession.rawResultQueries = std::make_shared<RawResultQueryState>();
-    requestSession.rawResultQueries->lifetimeContractRevision = requestSession.lifetimeContractRevision;
-  }
   auto state = requestSession.rawResultQueries;
   const bool topLevel = state->depth == 0;
   const auto &candidates = topLevel ? state->cachedRoots : state->familyEntries;
@@ -11768,10 +11460,8 @@ auto SemanticVisitor::Impl::rawConstructorResultQuery(
         entry->ownerTypes == resolved.constructedType.arguments &&
         entry->ownerValues == resolved.constructedType.valueArguments &&
         entry->types == resolved.typeArguments &&
-        entry->values == resolved.valueArguments) {
-      notePrivateLifetimeOpaqueDependency();
+        entry->values == resolved.valueArguments)
       return entry;
-    }
   if (topLevel)
     state->familyEntries.clear();
   auto entry = std::make_shared<RawResultQuery>();
@@ -11860,12 +11550,6 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   // work account across this isolated worker instead of restarting it.
   worker->requestSession.constexprWork = requestSession.constexprWork;
   worker->requestSession.stagedConstants = requestSession.stagedConstants;
-  worker->requestSession.executableLifetimes = requestSession.executableLifetimes;
-  worker->requestSession.privateLifetimeDependencies = requestSession.privateLifetimeDependencies;
-  worker->requestSession.privateConstexprPrerequisites = requestSession.privateConstexprPrerequisites;
-  worker->requestSession.privateConstexprBoundary = requestSession.privateConstexprBoundary;
-  worker->requestSession.lifetimeContractRevision = requestSession.lifetimeContractRevision;
-  worker->reuseConstantEvaluations = reuseConstantEvaluations;
   worker->requestSession.rawResultQueries = state;
   worker->requestSession.collectingRawResult = entry;
   const auto analysis =
@@ -12378,7 +12062,15 @@ auto SemanticVisitor::Impl::recordRawWrite(
   }
   auto type = place.root->type;
   for (const auto &projection : place.projections) {
-    type = rawPointerPathElement(type, projection).value_or(SemanticType::Unknown);
+    if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+      type = SemanticType(type.arguments.front());
+    if (projection.kind == PlaceProjectionKind::Field) {
+      const auto *field = semanticModel.database().findSymbol(projection.field);
+      type = field ? field->type : SemanticType::Unknown;
+    } else if (!type.arguments.empty())
+      type = SemanticType(type.arguments.front());
+    else
+      type = SemanticType::Unknown;
   }
   if (rawPointerFieldPaths(type).empty())
     return;
@@ -12418,11 +12110,8 @@ auto SemanticVisitor::Impl::applyRawCallWrites(const Expr &expression,
                  : ResolvedCallArguments{};
   const auto span =
       tokenSpan(invocation ? invocation->site : expressionToken(expression));
-  if (!requestSession.rawResultQueries ||
-      requestSession.rawResultQueries->lifetimeContractRevision != requestSession.lifetimeContractRevision) {
+  if (!requestSession.rawResultQueries)
     requestSession.rawResultQueries = std::make_shared<RawResultQueryState>();
-    requestSession.rawResultQueries->lifetimeContractRevision = requestSession.lifetimeContractRevision;
-  }
   const auto state = requestSession.rawResultQueries;
   // A declaration's inferred/global binding type may be completed after an
   // earlier source body was checked. A negative answer is not yet permanent.
@@ -12924,7 +12613,17 @@ auto SemanticVisitor::Impl::rawPointerStoragePlaces(const SemanticPlace &place,
   const auto typeAt = [&](const SemanticPlace &selected) {
     auto type = selected.root->type;
     for (const auto &projection : selected.projections) {
-      type = rawPointerPathElement(type, projection).value_or(SemanticType::Unknown);
+      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+        type = SemanticType(type.arguments.front());
+      if (projection.kind == PlaceProjectionKind::Field) {
+        const auto *field =
+            semanticModel.database().findSymbol(projection.field);
+        type = field ? field->type : SemanticType::Unknown;
+      } else if (!type.arguments.empty()) {
+        type = SemanticType(type.arguments.front());
+      } else {
+        type = SemanticType::Unknown;
+      }
     }
     return type;
   };
@@ -13528,7 +13227,7 @@ auto SemanticVisitor::Impl::rawDispatchAccessFree(
                               member.symbol.overloads.end(), matches);
     if (!possible)
       continue;
-    if (owner.hasGenericBindings() ||
+    if (!owner.genericParameters.empty() ||
         !prove(owner, openClassType(owner.id)))
       return false;
     found = true;
@@ -14868,17 +14567,10 @@ auto SemanticVisitor::Impl::isOwnershipAssignable(
       target.acceptsNullInitialization() && value == SemanticType::NullPtr) {
     return true;
   }
-  SemanticType compatible = value;
-  if (target != value) {
-    CallableCandidate checked;
-    checked.lifetimeApplication.complete = true;
-    if (const auto adjusted = callLifetimeArgumentType(checked, value, target))
-      compatible = *adjusted;
-  }
-  if (!isAssignable(target, compatible, expression.get())) {
+  if (!isAssignable(target, value, expression.get())) {
     return false;
   }
-  if (target != compatible || !expression || target.kind == SemanticType::TypePack) {
+  if (target != value || !expression || target.kind == SemanticType::TypePack) {
     return true;
   }
   const ExpressionInfo *info = semanticModel.findExpression(*expression);
@@ -14993,15 +14685,8 @@ auto SemanticVisitor::Impl::isComparable(SemanticType left, SemanticType right,
     return numericResult(left, right, leftExpression, rightExpression) !=
            SemanticType::Unknown;
   }
-  // Equality observes both operands during this expression and returns no
-  // borrow. Their independent storage regions need not outlive one another.
-  // This is comparison permission, not an assignment/conversion relation.
-  if ((left.kind == SemanticType::StringView ||
-       left.kind == SemanticType::CString) &&
-      left.kind == right.kind && sameLifetimeConversionShape(left, right))
-    return true;
-  if ((left.kind == SemanticType::CString && right == SemanticType::NullPtr) ||
-      (right.kind == SemanticType::CString && left == SemanticType::NullPtr)) {
+  if ((left == SemanticType::CString && right == SemanticType::NullPtr) ||
+      (right == SemanticType::CString && left == SemanticType::NullPtr)) {
     return true;
   }
   if ((left.kind == SemanticType::NativeFunction &&
@@ -15017,16 +14702,7 @@ auto SemanticVisitor::Impl::isComparable(SemanticType left, SemanticType right,
 auto SemanticVisitor::Impl::baseTypeOf(
     const TypeRef &type, const std::vector<std::string> &fromScope) const
     -> SemanticType {
-  std::optional<LifetimeBinderScope> lifetimeScope;
-  if (type.lifetimeBinder)
-    lifetimeScope.emplace(lifetimeParameterScopes,
-                          lifetimeParametersFor(*type.lifetimeBinder));
   if (type.isNativeFunction() || type.isFunctionSignature()) {
-    struct CallablePatternDepth {
-      std::size_t &depth;
-      ~CallablePatternDepth() { --depth; }
-    } callableDepth{requestSession.callablePatternTypeDepth};
-    ++requestSession.callablePatternTypeDepth;
     const std::size_t parameterCount =
         type.isFunctionSignature() ? *type.functionSignatureParameterCount
                                    : *type.nativeFunctionParameterCount;
@@ -15045,24 +14721,12 @@ auto SemanticVisitor::Impl::baseTypeOf(
           : type.functionSignatureQualifier->kind == TokenKind::MUT
               ? ReceiverMutability::Mutable
               : ReceiverMutability::Consuming;
-      SemanticType result = SemanticType::functionSignature(
+      return SemanticType::functionSignature(
           typeOf(type.arguments.back(), fromScope), std::move(parameters),
           receiver);
-      if (type.lifetimeBinder)
-        for (const auto &parameter : lifetimeParametersFor(*type.lifetimeBinder))
-          result.quantifiedLifetimes.push_back(parameter.id);
-      if (!normalizeCallableLifetimeType(result, type.name.last()))
-        return SemanticType::Unknown;
-      return result;
     }
-    auto result = SemanticType::nativeFunctionType(
+    return SemanticType::nativeFunctionType(
         typeOf(type.arguments.back(), fromScope), parameters);
-    if (type.lifetimeBinder)
-      for (const auto &parameter : lifetimeParametersFor(*type.lifetimeBinder))
-        result.quantifiedLifetimes.push_back(parameter.id);
-    if (!normalizeCallableLifetimeType(result, type.name.last()))
-      return SemanticType::Unknown;
-    return result;
   }
   if (type.qualifiedOwner) {
     if (const std::optional<ConceptId> protocol =
@@ -15071,53 +14735,53 @@ auto SemanticVisitor::Impl::baseTypeOf(
       const auto member =
           std::find(conceptInfo.associatedTypes.begin(),
                     conceptInfo.associatedTypes.end(), type.name.last().lexeme);
-      if (member == conceptInfo.associatedTypes.end())
+      if (member == conceptInfo.associatedTypes.end() ||
+          type.qualifiedOwner->arguments.size() !=
+              conceptInfo.parameterIds.size()) {
         return SemanticType::Unknown;
+      }
       const auto index = static_cast<std::uint32_t>(
           member - conceptInfo.associatedTypes.begin());
-      const auto arguments = nominalArguments(
-          conceptInfo.genericParameters, type.qualifiedOwner->arguments,
-          fromScope, type.qualifiedOwner->name.last());
-      const auto family = nominalArguments(
-          conceptInfo.associatedTypeParameters[index], type.arguments,
-          fromScope, type.name.last());
-      if (!arguments || !family)
+      if (type.arguments.size() !=
+          conceptInfo.associatedTypeParameters[index].size())
         return SemanticType::Unknown;
-      if (const auto own = ownBlockProjection(
-              *protocol, index, arguments->types, fromScope, family->types,
-              arguments->lifetimes, family->lifetimes))
+      std::vector<SemanticType> arguments;
+      for (const TypeRef &argument : type.qualifiedOwner->arguments) {
+        arguments.push_back(typeOf(argument, fromScope));
+      }
+      std::vector<SemanticType> familyArguments;
+      for (const TypeRef &argument : type.arguments)
+        familyArguments.push_back(typeOf(argument, fromScope));
+      if (const std::optional<SemanticType> own = ownBlockProjection(
+              *protocol, index, arguments, fromScope, familyArguments)) {
         return *own;
+      }
       return substituteType(
-          associatedTypeProjection(*protocol, index, arguments->types,
-                                   family->types, arguments->lifetimes,
-                                   family->lifetimes),
-          currentGenericSubstitution());
+          associatedTypeProjection(*protocol, index, std::move(arguments),
+                                   std::move(familyArguments)),
+          GenericSubstitution{.types = instanceTypeSubstitution,
+                              .values = instanceValueSubstitution});
     }
     const auto alias = resolveTypeAliasPath(type, fromScope);
-    if (!alias || alias->id == 0 ||
+    if (!alias || !type.arguments.empty() || alias->id == 0 ||
         alias->id > typeAliases.size() ||
         typeAliases[alias->id - 1].resolution !=
             TypeAliasResolution::Resolved) {
       return SemanticType::Unknown;
     }
-    return instantiatedAliasType(*alias, type, fromScope);
+    return substituteType(
+        alias->type, GenericSubstitution{.types = instanceTypeSubstitution,
+                                         .values = instanceValueSubstitution});
   }
   const CompilerCapabilityTypeKind compilerCapability =
       compilerCapabilityType(type, fromScope);
-  if (compilerCapability == CompilerCapabilityTypeKind::TextView ||
-      compilerCapability == CompilerCapabilityTypeKind::CString) {
-    const auto id = resolveClassPath(type.name, fromScope);
-    if (!id)
-      return SemanticType::Unknown;
-    const auto arguments = nominalArguments(classInfo(*id).genericParameters,
-                                            type.arguments, fromScope,
-                                            type.name.last());
-    if (!arguments)
-      return SemanticType::Unknown;
-    SemanticType result = compilerCapability == CompilerCapabilityTypeKind::TextView
-                              ? SemanticType::StringView : SemanticType::CString;
-    result.lifetimeArguments = arguments->lifetimes;
-    return result;
+  if (compilerCapability == CompilerCapabilityTypeKind::TextView) {
+    return type.arguments.empty() ? SemanticType::StringView
+                                  : SemanticType::Unknown;
+  }
+  if (compilerCapability == CompilerCapabilityTypeKind::CString) {
+    return type.arguments.empty() ? SemanticType::CString
+                                  : SemanticType::Unknown;
   }
   if (compilerCapability == CompilerCapabilityTypeKind::NativeCScalar) {
     const auto selected = resolveClassPath(type.name, fromScope);
@@ -15173,33 +14837,18 @@ auto SemanticVisitor::Impl::baseTypeOf(
         const auto &parameters =
             concepts[parameter->projectionConcept - 1]
                 .associatedTypeParameters[parameter->projectionMember];
-        const auto family = nominalArguments(parameters, type.arguments,
-                                              fromScope, type.name.last());
-        if (!family)
+        if (parameters.size() != type.arguments.size())
           return SemanticType::Unknown;
+        std::vector<SemanticType> arguments;
+        for (const auto &argument : type.arguments)
+          arguments.push_back(typeOf(argument, fromScope));
         return associatedTypeProjection(
             parameter->projectionConcept, parameter->projectionMember,
-            parameter->arguments, family->types, parameter->lifetimeArguments,
-            family->lifetimes);
+            parameter->arguments, std::move(arguments));
       }
       return type.arguments.empty() ? *parameter : SemanticType::Unknown;
     }
     if (type.name.segments.size() == 1) {
-      if (const auto *conformance = enclosingConformance(fromScope)) {
-        const auto &names = concepts[conformance->conceptId - 1].associatedTypes;
-        const auto member = std::find(names.begin(), names.end(), type.name.last().lexeme);
-        if (member != names.end()) {
-          const auto index = static_cast<std::size_t>(member - names.begin());
-          const auto family = nominalArguments(
-              conformance->associatedTypeParameters[index], type.arguments,
-              fromScope, type.name.last());
-          if (!family)
-            return SemanticType::Unknown;
-          if (auto associated = blockAssociatedType(type.name.last().lexeme,
-                  fromScope, family->types, family->lifetimes))
-            return *associated;
-        }
-      }
       std::vector<SemanticType> arguments;
       for (const auto &argument : type.arguments)
         arguments.push_back(typeOf(argument, fromScope));
@@ -15210,7 +14859,7 @@ auto SemanticVisitor::Impl::baseTypeOf(
     }
     if (const std::optional<ResolvedTypeAlias> alias =
             resolveTypeAliasPath(type.name, fromScope)) {
-      if (alias->id == 0 ||
+      if (!type.arguments.empty() || alias->id == 0 ||
           alias->id > typeAliases.size()) {
         return SemanticType::Unknown;
       }
@@ -15218,18 +14867,19 @@ auto SemanticVisitor::Impl::baseTypeOf(
       if (declaration.resolution != TypeAliasResolution::Resolved) {
         return SemanticType::Unknown;
       }
-      return instantiatedAliasType(*alias, type, fromScope);
+      return substituteType(
+          alias->type,
+          GenericSubstitution{.types = instanceTypeSubstitution,
+                              .values = instanceValueSubstitution});
     }
     if (const std::optional<EnumId> id =
             resolveEnumPath(type.name, fromScope)) {
       if (*id == 0 || *id > enums.size())
         return SemanticType::Unknown;
       const auto arguments = nominalArguments(enums[*id - 1].genericParameters,
-                                              type.arguments, fromScope,
-                                              type.name.last());
+                                              type.arguments, fromScope);
       return arguments ? SemanticType::enumType(*id, arguments->types,
-                                                arguments->values,
-                                                arguments->lifetimes)
+                                                arguments->values)
                        : SemanticType::Unknown;
     }
     if (const std::optional<ClassId> id =
@@ -15238,43 +14888,85 @@ auto SemanticVisitor::Impl::baseTypeOf(
       if (!owner.declaration->genericArgumentPatterns().empty() ||
           !owner.definitionFamilyMembers.empty() ||
           owner.definitionFamilyPrimary != 0) {
-        const auto typeArity = owner.declaration->genericArgumentPatterns().empty()
-            ? genericTypeParameterCount(owner.genericParameters)
-            : owner.declaration->genericArgumentPatterns().size();
-        if (type.arguments.size() < typeArity)
-          return SemanticType::Unknown;
         std::vector<SemanticType> arguments;
-        for (const TypeRef &argument : std::span(type.arguments).first(typeArity))
+        for (const TypeRef &argument : type.arguments) {
           arguments.push_back(typeOf(argument, fromScope));
-        auto selected = selectExactClassSpecialization(
+        }
+        return selectExactClassSpecialization(
             SemanticType::classType(*id, std::move(arguments)));
-        if (selected.kind != SemanticType::Class)
-          return selected;
-        std::vector<GenericParameterInfo> lifetimeParameters;
-        for (const auto &parameter : classInfo(selected.classId).genericParameters)
-          if (parameter.lifetime)
-            lifetimeParameters.push_back(parameter);
-        const std::vector<TypeRef> trailing(
-            type.arguments.begin() + static_cast<std::ptrdiff_t>(typeArity),
-            type.arguments.end());
-        const auto regions = nominalArguments(lifetimeParameters, trailing,
-                                               fromScope, type.name.last());
-        if (!regions)
-          return SemanticType::Unknown;
-        selected.lifetimeArguments = regions->lifetimes;
-        return selected;
       }
-      const auto arguments = nominalArguments(owner.genericParameters,
-                                              type.arguments, fromScope,
-                                              type.name.last());
-      if (!arguments)
-        return SemanticType::Unknown;
-      if (owner.compilerType == CompilerTypeKind::MetaCallableReturnType &&
-          arguments->types.size() == 1 && arguments->values.empty() &&
-          arguments->lifetimes.empty())
-        recordCallableResultProjection(type, {*id, arguments->types.front()});
+      if (!owner.genericParameters.empty() &&
+          owner.genericParameters.back().pack) {
+        if (type.arguments.size() + 1 < owner.genericParameters.size()) {
+          return SemanticType::Unknown;
+        }
+        std::vector<SemanticType> arguments;
+        for (const TypeRef &argument : type.arguments) {
+          SemanticType::appendExpandedArgument(arguments,
+                                               typeOf(argument, fromScope));
+        }
+        return selectExactClassSpecialization(
+            SemanticType::classType(*id, std::move(arguments)));
+      }
+      GenericSubstitution substitution;
+      const std::size_t count =
+          std::min(type.arguments.size(), owner.genericParameters.size());
+      for (std::size_t index = 0; index < count; ++index) {
+        const GenericParameterInfo &parameter = owner.genericParameters[index];
+        const TypeRef &argument = type.arguments[index];
+        if (parameter.value) {
+          if (const std::optional<CompileTimeValue> value =
+                  genericValueArgument(argument)) {
+            substitution.values.emplace(parameter.id, *value);
+          }
+        } else {
+          substitution.types.emplace(parameter.id, typeOf(argument, fromScope));
+        }
+      }
+      for (const GenericParameterInfo &parameter : owner.genericParameters) {
+        if (parameter.value) {
+          if (substitution.values.contains(parameter.id) ||
+              !parameter.defaultValue) {
+            continue;
+          }
+          const GenericValueEvaluation evaluation =
+              evaluateGenericValueExpression(*parameter.defaultValue,
+                                             substitution);
+          if (evaluation.value) {
+            substitution.values.emplace(parameter.id, *evaluation.value);
+          }
+          continue;
+        }
+        if (substitution.types.contains(parameter.id) ||
+            !parameter.defaultType) {
+          continue;
+        }
+        substitution.types.emplace(
+            parameter.id, substituteType(*parameter.defaultType, substitution));
+      }
+      std::vector<SemanticType> arguments;
+      std::vector<CompileTimeValue> valueArguments;
+      arguments.reserve(genericTypeParameterCount(owner.genericParameters));
+      valueArguments.reserve(
+          genericValueParameterCount(owner.genericParameters));
+      for (const GenericParameterInfo &parameter : owner.genericParameters) {
+        if (parameter.value) {
+          const auto found = substitution.values.find(parameter.id);
+          if (found == substitution.values.end()) {
+            return SemanticType::Unknown;
+          }
+          valueArguments.emplace_back(found->second);
+        } else {
+          const auto found = substitution.types.find(parameter.id);
+          if (found == substitution.types.end() ||
+              found->second == SemanticType::Unknown) {
+            return SemanticType::Unknown;
+          }
+          arguments.emplace_back(found->second);
+        }
+      }
       return selectExactClassSpecialization(SemanticType::classType(
-          *id, arguments->types, arguments->values, arguments->lifetimes));
+          *id, std::move(arguments), std::move(valueArguments)));
     }
     return SemanticType::Unknown;
   }
@@ -15283,15 +14975,6 @@ auto SemanticVisitor::Impl::baseTypeOf(
 auto SemanticVisitor::Impl::typeOf(
     const TypeRef &type, const std::vector<std::string> &fromScope) const
     -> SemanticType {
-  if (const auto normalized = catalog.normalizedNominalTypes.find(&type);
-      normalized != catalog.normalizedNominalTypes.end()) {
-    if (!instanceCallableScopes.empty() && requestSession.callablePatternTypeDepth)
-      return normalized->second;
-    auto result = substituteType(normalized->second, currentGenericSubstitution());
-    if (!instanceCallableScopes.empty() && !normalizeCallableLifetimeType(result, type.name.last()))
-      return SemanticType::Unknown;
-    return result;
-  }
   SemanticType result = baseTypeOf(type, fromScope);
   for (const auto &pointer : type.pointers) {
     result = SemanticType::rawPointerTo(
@@ -15307,10 +14990,7 @@ auto SemanticVisitor::Impl::typeOf(
     result = SemanticType::arrayOf(std::move(result), *length);
   }
   if (type.reference) {
-    result = SemanticType::referenceTo(
-        std::move(result), AccessMode::ReadOnly,
-        type.referenceLifetime ? lifetimeOf(type.referenceLifetime->name)
-                               : inferredLifetime(*type.reference));
+    result = SemanticType::referenceTo(std::move(result));
     if (type.referenceMutability) {
       result.referenceAccess = AccessMode::Mutable;
     }
@@ -15321,11 +15001,6 @@ auto SemanticVisitor::Impl::typeOf(
     } else if (result.kind != SemanticType::TypePack) {
       return SemanticType::Unknown;
     }
-  }
-  if (!instanceCallableScopes.empty() && !requestSession.callablePatternTypeDepth) {
-    result = substituteType(result, currentGenericSubstitution());
-    if (!normalizeCallableLifetimeType(result, type.name.last()))
-      return SemanticType::Unknown;
   }
   return selectExactClassSpecialization(std::move(result));
 }
@@ -15363,8 +15038,7 @@ auto SemanticVisitor::Impl::typeOf(
     SemanticType pack = type.arguments.front();
     for (auto &element : pack.arguments)
       element =
-          SemanticType::referenceTo(std::move(element), type.referenceAccess,
-                                    type.referenceLifetime);
+          SemanticType::referenceTo(std::move(element), type.referenceAccess);
     return pack;
   }
   return type;
@@ -15378,29 +15052,7 @@ auto SemanticVisitor::Impl::typeOf(const Parameter &parameter) const
 auto SemanticVisitor::Impl::parameterBindingType(
     const Parameter &parameter) const -> SemanticType {
   SemanticType type = typeOf(parameter);
-  if (const FunctionInfo *function = currentFunctionInfo();
-      function && currentFunctionDeclaration) {
-    const auto &parameters = currentFunctionDeclaration->parameters();
-    for (std::size_t index = 0; index < parameters.size(); ++index) {
-      if (&parameters[index] == &parameter &&
-          index < function->parameterTypes.size()) {
-        type = substituteType(
-            function->parameterTypes[index],
-            currentGenericSubstitution(false));
-        break;
-      }
-    }
-  }
-  return parameterBindingType(parameter, std::move(type));
-}
-
-auto SemanticVisitor::Impl::parameterBindingType(
-    const Parameter &parameter, SemanticType type) -> SemanticType {
-  if (parameter.pack && type.kind == SemanticType::TypeParameter)
-    return SemanticType::typePack(type.genericParameterId);
-  // A symbolic source-pack binding names a group, never a reference to the
-  // group itself. Use the same view for BindingInfo and the active Symbol;
-  // the normalized callable signature retains its reference-pack recipe.
+  // A symbolic binding names a group, never a reference to the group itself.
   // Concrete reanalysis materializes its separately checked reference elements.
   if (parameter.pack && type.kind == SemanticType::Reference &&
       type.arguments.size() == 1 &&
@@ -15432,9 +15084,7 @@ auto SemanticVisitor::Impl::literalType(const Literal &literal)
     return SemanticType::Char;
   }
   if (std::holds_alternative<std::string>(literal)) {
-    SemanticType result = SemanticType::StringView;
-    result.lifetimeArguments.push_back(Lifetime::staticLifetime());
-    return result;
+    return SemanticType::StringView;
   }
   if (std::holds_alternative<bool>(literal)) {
     return SemanticType::Bool;

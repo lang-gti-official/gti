@@ -4,8 +4,6 @@
 
 #include <algorithm>
 #include <filesystem>
-#include <fstream>
-#include <source_location>
 #include <iostream>
 
 namespace lang {
@@ -14,7 +12,7 @@ struct MirProgramTestAccess {
 };
 } // namespace lang
 
-int main(int argc, char **argv) {
+int main() {
   int failures = 0;
   const auto expect = [&](bool condition, const char *message) {
     if (!condition) {
@@ -28,114 +26,13 @@ int main(int argc, char **argv) {
         .analyze(root / "tests" / "reference-payload-semantic.gti", source,
                  {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
   };
-  const auto evidence = argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
-  std::size_t reportedFailures = 0;
-  const auto report = [&](const lang::FrontendResult &result,
-                          std::source_location caller = std::source_location::current()) {
-    const auto *unit = result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
-    const auto label = "reference-payload-L" + std::to_string(caller.line()) + "-" +
-        std::to_string(unit ? unit->sourceDigest : 0);
-    if (!evidence.empty()) {
-      std::filesystem::create_directories(evidence);
-      if (unit)
-        if (const auto *source = result.sources.find(unit->path.string()))
-          std::ofstream(evidence / (label + ".gti")) << *source;
-      std::ofstream full(evidence / (label + ".diagnostics.txt"));
-      full << caller.file_name() << ':' << caller.line() << '\n';
-      if (unit)
-        full << unit->path << " digest=" << unit->sourceDigest << '\n';
-      for (const auto &diagnostic : result.diagnostics)
-        full << diagnostic.code << ": " << diagnostic.message << '\n';
+  const auto acceptedSemantics = [&](const lang::FrontendResult &result) {
+    for (const auto &diagnostic : result.diagnostics) {
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     }
-    if (reportedFailures++ >= 16) {
-      if (reportedFailures == 17)
-        std::cerr << "additional reference-payload failures retained under " << evidence << '\n';
-      return;
-    }
-    std::cerr << label << " diagnostics=" << result.diagnostics.size();
-    if (!evidence.empty())
-      std::cerr << " source=" << evidence / (label + ".gti");
-    std::cerr << '\n';
-    for (std::size_t index = 0; index < std::min<std::size_t>(6, result.diagnostics.size()); ++index) {
-      const auto &diagnostic = result.diagnostics[index];
-      std::cerr << "  " << diagnostic.code << ": " << diagnostic.message.substr(0, 512) << '\n';
-    }
-  };
-  const auto acceptedSemantics = [&](const lang::FrontendResult &result,
-                                     std::source_location caller = std::source_location::current()) {
-    if (!result.syntaxValid || !result.semanticValid)
-      report(result, caller);
     expect(result.syntaxValid && result.semanticValid,
            "reference payload positive passes semantic analysis");
   };
-  const auto checkContextualPattern = [&](const std::string &declaration,
-                                          const std::string &subject,
-                                          const std::string &qualifier,
-                                          bool accepted) {
-    const auto source = declaration +
-        "\nint inspect<lifetime a, lifetime b>(" + subject + " input) {\n"
-        "  switch (input) {\n"
-        "  case " + qualifier + "::item(value): return 1;\n"
-        "  case " + qualifier + "::empty: return 0;\n"
-        "  }\n}\nint main() { return 0; }\n";
-    const auto result = lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics})
-        .analyze(root / "tests" / "contextual-enum-pattern.gti", source);
-    if (!accepted) {
-      expect(result.syntaxValid && !result.semanticValid &&
-                 std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
-                     [](const auto &diagnostic) { return diagnostic.code == "GTI-S2067"; }),
-             "a switch pattern cannot change fixed region, type or value arguments");
-      return;
-    }
-    acceptedSemantics(result);
-    const auto &occurrences = result.semantics.database().occurrences(result.sourceGraph.entryUnit());
-    expect(std::none_of(occurrences.begin(), occurrences.end(),
-                       [](const auto &occurrence) { return occurrence.name == "_"; }),
-           "contextual lifetime placeholders do not become renameable binder references");
-    bool checked = false;
-    for (const auto &declaration : result.program.declarations()) {
-      const auto *function = lang::stmtAs<lang::FunctionDecl>(declaration.get());
-      if (!function || function->name().lexeme != "inspect" || !function->body())
-        continue;
-      for (const auto &statement : function->body()->statements()) {
-        const auto *switchStatement = lang::stmtAs<lang::SwitchStmt>(statement.get());
-        if (!switchStatement)
-          continue;
-        const auto *subjectInfo = result.semantics.findExpression(*switchStatement->expression());
-        for (const auto &arm : switchStatement->arms())
-          for (const auto &label : arm.labels) {
-            const auto *call = lang::exprAs<lang::Call>(label.value.get());
-            const auto *qualified = lang::exprAs<lang::QualifiedName>(
-                call ? call->callee().get() : label.value.get());
-            const auto *pattern = result.semantics.findPayloadPattern(*label.value);
-            const auto *enumerator = qualified ? result.semantics.findEnumerator(*qualified) : nullptr;
-            const auto *expression = qualified ? result.semantics.findExpression(*qualified) : nullptr;
-            expect(subjectInfo && pattern && enumerator && expression &&
-                       pattern->type == subjectInfo->type &&
-                       enumerator->type == subjectInfo->type && expression->type == subjectInfo->type,
-                   "pattern, enumerator and expression metadata retain the exact scrutinee regions");
-            checked = true;
-          }
-      }
-    }
-    expect(checked, "contextual pattern fixture records its checked enum labels");
-  };
-  const std::string namedReading =
-      "enum Reading<lifetime a> { empty, item(int&<a> value) };";
-  for (const auto &qualifier : {"Reading", "Reading<_>", "Reading<a>"})
-    checkContextualPattern(namedReading, "Reading<a>", qualifier, true);
-  for (const auto &qualifier : {"Reading<b>", "Reading<static>"})
-    checkContextualPattern(namedReading, "Reading<a>", qualifier, false);
-  const std::string packet =
-      "enum Packet<T, uint64_t N, lifetime a> { empty, item(T&<a> value) };";
-  checkContextualPattern(packet, "Packet<int, 3, a>", "Packet<int, 3>", true);
-  checkContextualPattern(packet, "Packet<int, 3, a>", "Packet<int, 3, _>", true);
-  checkContextualPattern(packet, "Packet<int, 3, a>", "Packet<bool, 3, _>", false);
-  checkContextualPattern(packet, "Packet<int, 3, a>", "Packet<int, 4, _>", false);
-  checkContextualPattern("enum Wrapped<T> { empty, item(T value) };",
-                         "Wrapped<int&<a>>", "Wrapped<int&<_>>", true);
-  checkContextualPattern(namedReading + " using Alias<lifetime a> = Reading<a>;",
-                         "Alias<a>", "Alias<_>", true);
   for (const bool exclusive : {false, true}) {
     const auto result = analyze(
         std::string(exclusive
@@ -156,10 +53,7 @@ int main() { return 0; }
     acceptedSemantics(result);
     bool found = false;
     for (const auto &loan : result.semantics.loans()) {
-      // Imported prelude bodies also contain physical owned-payload selections.
-      // This fixture verifies stored external reference extraction specifically.
-      if (!loan.referenceSelection || loan.referenceSelection->kind !=
-              lang::ReferenceSelectionKind::StoredExternalReference)
+      if (!loan.referenceSelection)
         continue;
       found = true;
       const auto *entry = result.semantics.findLoan(loan.parent);
@@ -178,9 +72,9 @@ int main() { return 0; }
              "resolved reference access survives selection");
       if (entry) {
         auto external = entry->place;
-        external.projections.insert(external.projections.end(),
-                                    entry->designatedFields.begin(),
-                                    entry->designatedFields.end());
+        for (const auto field : entry->designatedFields)
+          external.projections.push_back(
+              {.kind = lang::PlaceProjectionKind::Field, .field = field});
         expect(loan.place == external &&
                    loan.referenceSelection->fields == entry->designatedFields &&
                    loan.referenceSelection->conditions == entry->conditions,
@@ -188,7 +82,8 @@ int main() { return 0; }
       }
     }
     if (!found)
-      report(result);
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     expect(found,
            "checked entry must produce an exact selected reference loan");
   }
@@ -244,9 +139,7 @@ int main() { return 0; }
   acceptedSemantics(independent);
   std::vector<lang::SemanticLoanPlace> owners;
   for (const auto &loan : independent.semantics.loans())
-    if (loan.referenceSelection && loan.referenceSelection->kind ==
-            lang::ReferenceSelectionKind::StoredExternalReference &&
-        loan.access == lang::AccessMode::Mutable &&
+    if (loan.referenceSelection && loan.access == lang::AccessMode::Mutable &&
         std::find(owners.begin(), owners.end(), loan.place) == owners.end())
       owners.push_back(loan.place);
   expect(owners.size() == 2 && owners[0].root == owners[1].root &&
@@ -522,7 +415,8 @@ int main() {
     expect(observed.canGenerateCode(),
            "owned payload storage is independent of external reference owners");
     if (!observed.canGenerateCode())
-      report(observed);
+      for (const auto &diagnostic : observed.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     if (!observed.canGenerateCode())
       continue;
     auto forged = observed.mir;
@@ -688,7 +582,8 @@ int main() { return 0; }
   expect(referenceEntry.canGenerateCode(),
          "enum reference formal has a checked abstract external entry");
   if (!referenceEntry.canGenerateCode())
-    report(referenceEntry);
+    for (const auto &diagnostic : referenceEntry.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   if (referenceEntry.canGenerateCode()) {
     for (int mutation = 0; mutation != 5; ++mutation) {
       auto malformed = referenceEntry.mir;
@@ -744,7 +639,8 @@ int main() {
 )gti",
       {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
   if (!classCarrier.canGenerateCode())
-    report(classCarrier);
+    for (const auto &diagnostic : classCarrier.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(
       classCarrier.canGenerateCode(),
       "passive borrowed class payload preserves origin and prepared lifetime");
@@ -841,7 +737,8 @@ int main() { return 0; }
 )gti",
       {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
   if (!constructed.canGenerateCode())
-    report(constructed);
+    for (const auto &diagnostic : constructed.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(constructed.canGenerateCode(),
          "reference constructor reaches independently verified MIR");
   if (constructed.canGenerateCode()) {
@@ -940,7 +837,8 @@ int main() { return 0; }
 )gti",
         {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
     if (!nested.canGenerateCode())
-      report(nested);
+      for (const auto &diagnostic : nested.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     expect(nested.canGenerateCode(),
            "nested constructor retains the exact staged producer ancestry");
     if (nested.canGenerateCode()) {
@@ -1074,7 +972,8 @@ int main() { return 0; }
         root / "tests" / "reference-payload-factory.gti", source,
         {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
     if (!result.canGenerateCode())
-      report(result);
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     expect(
         result.canGenerateCode(),
         "factory calls and empty/borrowed return paths verify independently");

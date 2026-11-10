@@ -309,7 +309,7 @@ void unsafeReferenceReturnContract(
         to.producedBy = 0;
       },
       [](auto &, auto &, auto &, auto &, auto &, auto &, auto &to) {
-        to.designatedFields = {lang::fieldProjection(1)};
+        to.designatedFields = {1};
       },
       [](auto &, auto &, auto &, auto &stage, auto &, auto &from, auto &) {
         stage.operands.front().place = from.source;

@@ -2,7 +2,6 @@
 #include "gti/mir_effects.h"
 #include "gti/mir_verifier.h"
 #include "gti/support.h"
-#include "mir_lifetimes.h"
 
 #include "gti/ast.h"
 #include "gti/failure_metadata.h"
@@ -394,8 +393,6 @@ lowerGenericParameters(const std::vector<GenericParameterInfo> &parameters) {
          .name = parameter.name.lexeme,
          .pack = parameter.pack,
          .value = parameter.value,
-         .lifetime = parameter.lifetime,
-         .implicit = parameter.implicit,
          .constraints = parameter.constraints,
          .constraintName = parameter.constraintName
                                ? lowerNamePath(*parameter.constraintName)
@@ -412,12 +409,7 @@ lowerRequirements(const std::vector<AppliedConceptRequirement> &requirements) {
   result.reserve(requirements.size());
   for (const AppliedConceptRequirement &requirement : requirements) {
     LoweredConceptRequirement lowered{.conceptId = requirement.conceptId,
-                                      .arguments = requirement.arguments,
-                                      .lifetimeArguments = requirement.lifetimeArguments,
-                                      .lifetimeBound = requirement.lifetimeBound,
-                                      .outlivesType = requirement.outlivesType};
-    if (requirement.lifetimeBound)
-      lowered.kind = LoweredRequirementKind::Lifetime;
+                                      .arguments = requirement.arguments};
     if (requirement.syntax) {
       lowered.source = tokenSpan(requirement.syntax->name.last());
       if (requirement.syntax->predicate) {
@@ -723,7 +715,7 @@ private:
 
   [[nodiscard]] bool nonGenericClass(ClassId id) const {
     const ClassTypeInfo *owner = semantics_.findClassType(id);
-    return owner != nullptr && !owner->hasGenericBindings();
+    return owner != nullptr && owner->genericParameters.empty();
   }
 
   // A non-generic class, function, or constructor has exactly one possible
@@ -734,7 +726,7 @@ private:
   unreachableConcreteDeclaration(const Stmt &statement) const {
     if (const auto *declaration = stmtAs<ClassDecl>(&statement)) {
       const ClassTypeInfo *info = semantics_.findClassType(*declaration);
-      return info != nullptr && !info->hasGenericBindings() &&
+      return info != nullptr && info->genericParameters.empty() &&
              !classes_.contains(info->id);
     }
     if (const auto *declaration = stmtAs<FunctionDecl>(&statement)) {
@@ -806,8 +798,6 @@ private:
         row.source = tokenSpan(declaration->name());
         row.semanticIdentity = instance.declaration;
         LoweredEnumDeclaration payload{
-            .variance = instance.variance,
-            .lifetimeContract = instance.lifetimeContract,
             .explicitlyExported =
                 inheritedExport || declaration->exportKeyword().has_value(),
             .id = instance.declaration,
@@ -868,13 +858,10 @@ private:
       row.source = tokenSpan(declaration->name());
       if (const TypeAliasInfo *info = semantics_.findTypeAlias(*declaration)) {
         row.semanticIdentity = info->id;
-        row.generic = !info->genericParameters.empty();
         row.payload = LoweredTypeAliasDeclaration{
             .sourceUnit = info->sourceUnit,
             .qualifiedName = info->qualifiedName,
             .type = info->type,
-            .genericParameters =
-                lowerGenericParameters(info->genericParameters),
             .compilerPrivate = info->compilerPrivate};
       }
     } else if (const auto *declaration = stmtAs<ClassDecl>(&statement)) {
@@ -883,7 +870,7 @@ private:
       row.source = tokenSpan(declaration->name());
       row.generic = !declaration->genericParameters().empty();
       if (const ClassTypeInfo *info = semantics_.findClassType(*declaration)) {
-        row.generic = info->hasGenericBindings();
+        row.generic = !info->genericParameters.empty();
         row.semanticIdentity = info->id;
         // Namespace scope is separate from the lexical class prefix in the
         // semantic qualified name. Nested class ownership is already retained
@@ -896,8 +883,6 @@ private:
         childNamespace = row.namespaceScope;
         childOwner = info->id;
         LoweredClassDeclaration payload{
-            .variance = info->variance,
-            .lifetimeContract = info->lifetimeContract,
             .explicitlyExported =
                 inheritedExport || declaration->exportKeyword().has_value(),
             .id = info->id,
@@ -911,8 +896,6 @@ private:
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
             .genericArgumentPatterns = info->genericArgumentPatterns,
-            .genericArgumentPatternLifetimes =
-                lowerGenericParameters(info->genericArgumentPatternLifetimes),
             .virtualDispatch = info->virtualDispatch,
             .traits = info->traits,
             .transferPolicy = info->transferPolicy,
@@ -958,9 +941,6 @@ private:
       row.source = tokenSpan(declaration->name());
       row.generic = !declaration->genericParameters().empty();
       if (const FunctionInfo *info = semantics_.findFunction(*declaration)) {
-        // Elision can introduce declaration binders without source generic
-        // syntax (for example, a conformance head's stored regions).
-        row.generic = !info->genericParameters.empty();
         row.semanticIdentity = info->id;
         row.payload = LoweredFunctionDeclaration{
             .id = info->id,
@@ -972,7 +952,6 @@ private:
                                           info->parameterTypes, semantics_),
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
-            .lifetimeContract = info->lifetimeContract,
             .requirements = lowerRequirements(info->requirements),
             .requirementExpression =
                 lowerRequirementExpression(info->requirements),
@@ -1040,7 +1019,6 @@ private:
             .access = info->access,
             .genericParameters =
                 lowerGenericParameters(info->genericParameters),
-            .lifetimeContract = info->lifetimeContract,
             .requirements = lowerRequirements(info->requirements),
             .requirementExpression =
                 lowerRequirementExpression(info->requirements),
@@ -1072,7 +1050,6 @@ private:
             .codegenAttributes = info->codegenAttributes,
             .owner = info->owner,
             .access = info->access,
-            .lifetimeContract = info->lifetimeContract,
             .specifier =
                 declaration->specifier()
                     ? std::optional<
@@ -1215,20 +1192,10 @@ private:
   }
   for (const HirEnum &source : hir.enumDeclarations()) {
     if (!source.payload) {
-      const auto *lowered = mir.findIntegralEnum(source.type);
-      if (!lowered || source.sourceUnit != lowered->sourceUnit ||
-          source.variance != lowered->variance ||
-          source.lifetimeContract != lowered->lifetimeContract ||
-          source.liftedLifetimes != lowered->liftedLifetimes ||
-          source.underlyingType != lowered->underlyingType)
-        return reject("integral enum differs between HIR and MIR");
       continue;
     }
     const MirPayloadEnum *lowered = mir.findPayloadEnum(source.type);
     if (lowered == nullptr || source.sourceUnit != lowered->sourceUnit ||
-        source.variance != lowered->variance ||
-        source.lifetimeContract != lowered->lifetimeContract ||
-          source.liftedLifetimes != lowered->liftedLifetimes ||
         source.traits != lowered->traits ||
         source.requiresActiveCleanup != lowered->requiresActiveCleanup ||
         source.enumerators.size() != lowered->variants.size()) {
@@ -1256,9 +1223,6 @@ private:
                                     : semantics.findClassType(*source.source);
     if (source.id != lowered.id || source.declaration != lowered.declaration ||
         source.type != lowered.type || source.kind != lowered.kind ||
-        source.variance != lowered.variance ||
-        source.liftedLifetimes != lowered.liftedLifetimes ||
-        source.lifetimeContract != lowered.lifetimeContract ||
         source.traits != lowered.traits ||
         source.generatedDefaultRequiresSchedule !=
             lowered.generatedDefaultRequiresSchedule ||
@@ -1324,45 +1288,6 @@ private:
               "field declaration-only initialization differs from HIR");
       }
   }
-  const auto sameCallableParameters = [](const auto &source,
-                                         const auto &lowered) {
-    if (source.size() != lowered.size())
-      return false;
-    for (std::size_t index = 0; index < source.size(); ++index) {
-      const auto &input = source[index];
-      const auto &output = lowered[index];
-      if (input.parameterIndex != output.parameterIndex ||
-          input.callableType != output.callableType ||
-          input.access != output.access || input.boundary != output.boundary ||
-          input.ownedTransport != output.ownedTransport ||
-          input.signatures.size() != output.signatures.size() ||
-          input.forwardings.size() != output.forwardings.size())
-        return false;
-      for (std::size_t signature = 0; signature < input.signatures.size();
-           ++signature) {
-        const auto &a = input.signatures[signature];
-        const auto &b = output.signatures[signature];
-        if (a.returnType != b.returnType ||
-            a.parameterTypes != b.parameterTypes ||
-            !preservesHirLifetimeApplication(a.lifetimeApplication,
-                                             b.lifetimeApplication) ||
-            a.requiredCapability != b.requiredCapability ||
-            a.selectedCapability != b.selectedCapability ||
-            a.functionTarget != b.functionTarget ||
-            a.lambdaTarget != b.lambdaTarget ||
-            a.nativeCalleeType != b.nativeCalleeType)
-          return false;
-      }
-      for (std::size_t forwarding = 0; forwarding < input.forwardings.size();
-           ++forwarding)
-        if (input.forwardings[forwarding].parameterIndex !=
-                output.forwardings[forwarding].parameterIndex ||
-            input.forwardings[forwarding].functionTarget !=
-                output.forwardings[forwarding].functionTarget)
-          return false;
-    }
-    return true;
-  };
   for (std::size_t index = 0; index < hir.functionInstances().size(); ++index) {
     const HirFunctionInstance &source = hir.functionInstances()[index];
     const MirFunctionInstance &lowered = mir.functionInstances()[index];
@@ -1378,24 +1303,8 @@ private:
         source.typeArguments != lowered.typeArguments ||
         source.valueArguments != lowered.valueArguments ||
         source.owner != lowered.owner ||
-        source.ownerType != lowered.ownerType ||
         source.returnType != lowered.returnType ||
         source.parameterTypes != lowered.parameterTypes ||
-        !sameCallableParameters(source.callableParameters,
-                                lowered.callableParameters) ||
-        source.liftedLifetimes != lowered.liftedLifetimes ||
-        source.lifetimeContract != lowered.lifetimeContract ||
-        source.returnBorrowOrigin != lowered.returnBorrowOrigin ||
-        source.explicitReturnBorrowOrigin != lowered.explicitReturnBorrowOrigin ||
-        source.returnBorrowParameter != lowered.returnBorrowParameter ||
-        source.returnBorrowAccess != lowered.returnBorrowAccess ||
-        source.returnBorrowParameters != lowered.returnBorrowParameters ||
-        source.returnBorrowFields != lowered.returnBorrowFields ||
-        source.completeReturnBorrow != lowered.completeReturnBorrow ||
-        source.returnBorrowPlace != lowered.returnBorrowPlace ||
-        source.restoresReferenceResult != lowered.restoresReferenceResult ||
-        source.restoredBorrowFields != lowered.restoredBorrowFields ||
-        source.ownedPointeeProjection != lowered.ownedPointeeProjection ||
         source.parameterBindings != lowered.parameterBindings ||
         source.entryKind != lowered.entryKind ||
         source.entryArgumentAppendTarget != lowered.entryArgumentAppendTarget ||
@@ -1449,7 +1358,6 @@ private:
     // verifyHirProgramPlans independently proves their exact reachable
     // inventory; an empty-statements check would reject that verified schedule.
     if (source.id != lowered.id || source.owner != lowered.owner ||
-        source.ownerType != lowered.ownerType ||
         source.generatedDefault != lowered.generatedDefault ||
         source.codegenAttributes != lowered.codegenAttributes ||
         source.constexprConstructor != lowered.constexprConstructor ||
@@ -1461,8 +1369,6 @@ private:
         source.typeArguments != lowered.typeArguments ||
         source.valueArguments != lowered.valueArguments ||
         source.parameterTypes != lowered.parameterTypes ||
-        source.liftedLifetimes != lowered.liftedLifetimes ||
-        source.lifetimeContract != lowered.lifetimeContract ||
         source.parameterBindings != lowered.parameterBindings ||
         source.body.placeDomain != lowered.body.placeDomain) {
       return reject("constructor instance " + std::to_string(index + 1) +
@@ -1477,9 +1383,6 @@ private:
           input.field != output.field || input.base != output.base ||
           input.constructorTarget != output.constructorTarget ||
           input.arguments != output.arguments ||
-          input.lifetimeArguments != output.lifetimeArguments ||
-          !preservesHirLifetimeApplication(input.lifetimeApplication,
-                                           output.lifetimeApplication) ||
           input.explicitArgumentCount != output.explicitArgumentCount ||
           input.storesReference != output.storesReference ||
           input.borrowAccess != output.borrowAccess ||
@@ -1560,9 +1463,6 @@ private:
     const HirDestructorInstance &source = hir.destructorInstances()[index];
     const MirDestructorInstance &lowered = mir.destructorInstances()[index];
     if (source.id != lowered.id || source.owner != lowered.owner ||
-        source.ownerType != lowered.ownerType ||
-        source.liftedLifetimes != lowered.liftedLifetimes ||
-        source.lifetimeContract != lowered.lifetimeContract ||
         source.codegenAttributes != lowered.codegenAttributes ||
         source.body.placeDomain != lowered.body.placeDomain) {
       return reject("destructor instance " + std::to_string(index + 1) +
@@ -1573,13 +1473,9 @@ private:
     const HirLambda &source = hir.lambdaInstances()[index];
     const MirLambdaInstance &lowered = mir.lambdaInstances()[index];
     if (source.id != lowered.id || source.declaration != lowered.declaration ||
-        source.environmentLifetimes != lowered.environmentLifetimes ||
-        source.environmentContract != lowered.environmentContract ||
         source.type != lowered.type ||
         source.returnType != lowered.returnType ||
         source.parameterTypes != lowered.parameterTypes ||
-        source.lifetimeContract != lowered.lifetimeContract ||
-        source.completeReturnBorrow != lowered.completeReturnBorrow ||
         source.parameterBindings != lowered.parameterBindings ||
         source.body.placeDomain != lowered.body.placeDomain) {
       return reject("lambda instance " + std::to_string(index + 1) +
@@ -2097,19 +1993,9 @@ LoweredProgramBuild LoweredProgramBuilder::build(
       optimizedMir.sourceDebugProfile() != sourceMir.sourceDebugProfile())
     addIssue(build.issues, LoweredProgramIssueKind::FrontendMismatch,
              "MIR source-debug profile differs from its frontend request");
-  if (sourceMir.nominalVarianceRecipes() != hir.nominalVarianceRecipes() ||
-      optimizedMir.nominalVarianceRecipes() != sourceMir.nominalVarianceRecipes())
-    addIssue(build.issues, LoweredProgramIssueKind::FrontendMismatch,
-             "MIR nominal variance recipes differ from the accepted declaration graph");
   for (const auto address : enumerateMirBodyAddresses(sourceMir)) {
     const auto *sourceBody = debugHirBody(hir, address);
     const auto *mirBody = findMirBody(sourceMir, address);
-    if (sourceBody && mirBody &&
-        !preservesHirLifetimeBody(sourceBody->lifetimeBody,
-                                  mirBody->lifetimeBody))
-      addIssue(
-          build.issues, LoweredProgramIssueKind::FrontendMismatch,
-          "source MIR lifetime facts differ from exact accepted HIR facts");
     if (sourceBody && mirBody &&
         !mir_detail::sourceDebugMatchesHir(*sourceBody, *mirBody))
       addIssue(build.issues, LoweredProgramIssueKind::FrontendMismatch,
@@ -2244,7 +2130,6 @@ LoweredProgramBuild LoweredProgramBuilder::build(
          .definitionSource = symbol.definitionSpan,
          .type = symbol.type,
          .traits = symbol.traits,
-         .genericParameter = symbol.genericParameter,
          .access = symbol.access,
          .mutableBinding = symbol.mutableBinding,
          .defaultLibrary = symbol.defaultLibrary,
@@ -2267,10 +2152,7 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   lowered.classInstances_.reserve(hir.classInstances().size());
   for (const HirClassInstance &instance : hir.classInstances()) {
     lowered.classInstances_.push_back(
-        {.liftedLifetimes = instance.liftedLifetimes,
-         .variance = instance.variance,
-         .lifetimeContract = instance.lifetimeContract,
-         .id = instance.id,
+        {.id = instance.id,
          .sourceUnit = instance.sourceUnit,
          .declaration = instance.declaration,
          .typeArguments = instance.typeArguments,
@@ -2283,13 +2165,10 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   lowered.functionInstances_.reserve(hir.functionInstances().size());
   for (const HirFunctionInstance &instance : hir.functionInstances()) {
     lowered.functionInstances_.push_back(
-        {.lifetimeContract = instance.lifetimeContract,
-         .liftedLifetimes = instance.liftedLifetimes,
-         .id = instance.id,
+        {.id = instance.id,
          .sourceUnit = instance.sourceUnit,
          .declaration = instance.declaration,
          .owner = instance.owner,
-         .ownerType = instance.ownerType,
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
          .instantiationSource = instance.instantiationSite,
@@ -2302,13 +2181,10 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     const auto *sourceConstructor =
         sourceMir.findConstructorInstance(instance.id);
     lowered.constructorInstances_.push_back(
-        {.lifetimeContract = instance.lifetimeContract,
-         .liftedLifetimes = instance.liftedLifetimes,
-         .id = instance.id,
+        {.id = instance.id,
          .sourceUnit = instance.sourceUnit,
          .declaration = instance.declaration,
          .owner = instance.owner,
-         .ownerType = instance.ownerType,
          .typeArguments = instance.typeArguments,
          .valueArguments = instance.valueArguments,
          .parameterTypes = instance.parameterTypes,
@@ -2322,12 +2198,9 @@ LoweredProgramBuild LoweredProgramBuilder::build(
   lowered.destructorInstances_.reserve(hir.destructorInstances().size());
   for (const HirDestructorInstance &instance : hir.destructorInstances()) {
     lowered.destructorInstances_.push_back(
-        {.liftedLifetimes = instance.liftedLifetimes,
-         .id = instance.id,
+        {.id = instance.id,
          .sourceUnit = instance.sourceUnit,
          .owner = instance.owner,
-         .ownerType = instance.ownerType,
-         .lifetimeContract = instance.lifetimeContract,
          .source = instance.source == nullptr
                        ? SourceSpan{}
                        : tokenSpan(instance.source->tilde())});
@@ -2337,12 +2210,8 @@ LoweredProgramBuild LoweredProgramBuilder::build(
     LoweredLambdaInstance loweredLambda{
         .id = instance.id,
         .declaration = instance.declaration,
-        .environmentLifetimes = instance.environmentLifetimes,
-        .environmentContract = instance.environmentContract,
         .type = instance.type,
         .returnType = instance.returnType,
-        .lifetimeContract = instance.lifetimeContract,
-        .completeReturnBorrow = instance.completeReturnBorrow,
         .parameters = lowerLambdaParameters(instance),
         .traits = instance.traits,
         .source = instance.source == nullptr

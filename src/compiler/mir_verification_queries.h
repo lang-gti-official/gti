@@ -1,10 +1,7 @@
 #pragma once
 
-#include "gti/concrete_formals.h"
-
 #include "gti/mir.h"
 #include "gti/mir_verifier.h"
-#include "gti/reference_contents.h"
 
 #include <cstddef>
 #include <memory>
@@ -103,98 +100,6 @@ struct MirSelectedReferenceHandoff {
 [[nodiscard]] std::optional<MirSelectedReferenceHandoff>
 selectedReferenceHandoff(const MirBody &body, const MirLoan &selected);
 
-// Recover a physical payload address from the executable extraction and exact
-// typed enum instance. This grants no external-owner or consuming authority;
-// switch-edge, loan liveness and cleanup verification remain mandatory.
-[[nodiscard]] const MirPlace *
-physicalPayloadSelectionSource(const MirProgram &, const MirBody &,
-                               const MirReferenceSelection &);
-
-// Derive a stored reference's declared type from its exact executable payload
-// extraction and actual enum view. This establishes neither external origins
-// nor parent activity, switch dominance or consuming handoff authority.
-[[nodiscard]] std::optional<SemanticType>
-storedPayloadSelectionReference(const MirProgram &, const MirBody &,
-                                const MirReferenceSelection &);
-
-// Body-local executable shape only. This does not prove Base owner/selection,
-// field types or reference crossings; mandatory program verification must
-// replay the typed path with walkBorrowPath before accepting those facts.
-[[nodiscard]] std::optional<std::size_t> borrowPathProjectionPrefix(
-    std::span<const MirPlaceProjection>, std::span<const PlaceProjection>,
-    bool trailingReference);
-
-// Structural producer identity only; the program verifier replays the selected
-// constructor, lifetime application and complete staged argument dependencies.
-[[nodiscard]] const MirInstruction *baseConstructorPublicationStage(
-    const MirBody &, const MirLoan &);
-
-enum class MirBorrowPathRoot { Value, PhysicalReference };
-
-struct MirBorrowPathReferenceCrossing {
-  std::size_t pathOffset = 0;
-  std::size_t projectionOffset = 0;
-  SemanticType reference = SemanticType::Unknown;
-  bool physicalRoot = false;
-  friend bool operator==(const MirBorrowPathReferenceCrossing &,
-                         const MirBorrowPathReferenceCrossing &) = default;
-};
-
-struct MirBorrowPathPayloadSelection {
-  std::size_t pathOffset = 0;
-  std::size_t projectionOffset = 0;
-  SemanticType enumeration = SemanticType::Unknown;
-  std::size_t variant = 0;
-  std::size_t payloadIndex = 0;
-  friend bool operator==(const MirBorrowPathPayloadSelection &,
-                         const MirBorrowPathPayloadSelection &) = default;
-};
-
-struct MirBorrowPathView {
-  SemanticType type = SemanticType::Unknown;
-  AccessMode referenceAccessLimit = AccessMode::ReadOnly;
-  std::vector<MirPlaceProjection> projections;
-  std::vector<MirBorrowPathReferenceCrossing> referenceCrossings;
-  std::vector<MirBorrowPathPayloadSelection> payloadSelections;
-  friend bool operator==(const MirBorrowPathView &,
-                         const MirBorrowPathView &) = default;
-};
-
-// Typed structure only: these queries grant no origin, active-variant,
-// capability, parent, liveness, escape, write or cleanup authority. Physical
-// root-reference treatment is explicit; value roots cannot hide a reference.
-// Base uses the full direct declaration ordinal (including interfaces) in
-// constantIndex and the independently selected concrete instance in selection.
-[[nodiscard]] std::optional<MirBorrowPathView> walkBorrowPath(
-    const MirProgram &, const SemanticType &root, AccessMode rootAccess,
-    std::span<const PlaceProjection>, std::span<const BorrowDependencyCondition>,
-    MirBorrowPathRoot);
-
-// Derive which exact typed enum domains a stable payload-symbol path crosses.
-// This proves structural selection only; active-variant/dominance permission
-// remains with the caller. Duplicate symbols or any failed prefix replay reject.
-[[nodiscard]] std::optional<std::vector<BorrowDependencyCondition>>
-deriveBorrowPathConditions(const MirProgram &, const SemanticType &, AccessMode,
-                           std::span<const PlaceProjection>, MirBorrowPathRoot);
-
-// Recover only a path whose forward replay exactly reproduces the canonical
-// projections and payload selections. An SSA index needs an independently
-// canonicalized constant first; absent base ordinals and ambiguous views fail.
-[[nodiscard]] std::optional<BorrowPath> borrowPathForProjections(
-    const MirProgram &, const SemanticType &root, AccessMode rootAccess,
-    std::span<const MirPlaceProjection>, std::span<const BorrowDependencyCondition>,
-    std::span<const MirBorrowPathPayloadSelection>, MirBorrowPathRoot);
-
-// Additional inline Base/field disjointness only. Both canonical projection
-// chains must reverse-replay against this exact root and nominal catalog. A
-// physical reference root may retain or omit its one initial dereference in
-// canonical form; no later reference/pointer crossing or enum selection proves
-// disjoint external storage. False means unknown/overlap, not a valid path.
-[[nodiscard]] bool inlineBorrowProjectionsDisjoint(
-    const MirProgram &, SemanticType root,
-    std::span<const MirPlaceProjection> left,
-    std::span<const MirPlaceProjection> right);
-
 // Concrete complete object representation, independent of any lifetime action.
 [[nodiscard]] bool completeObjectType(const MirProgram &program,
                                       const SemanticType &type);
@@ -214,14 +119,6 @@ generatedUniqueConstruction(const MirInstruction &instruction);
 // full-expression drop, and call-loan verification remain mandatory.
 [[nodiscard]] bool
 generatedDefaultConstruction(const MirInstruction &instruction);
-
-// Structural same-type copy has no selected constructor body. This proves
-// only the exact instruction and identity field-map shape; program checks
-// independently prove the generated policy, typed field inventory and source
-// contents. A lifetime supplier is not an executable source address.
-[[nodiscard]] bool
-generatedCopyConstruction(const MirInstruction &instruction);
-
 
 // A passive union's one-input first-field initialization is independent of
 // generated default construction. Prove its exact concrete owner, overlapping
@@ -284,19 +181,6 @@ restoredBorrowAuthority(const MirBody &body, const MirLoan &loan);
 [[nodiscard]] bool
 verifiedReferenceRestoreCall(const MirProgram &program, const MirBody &body,
                              const MirInstruction &instruction);
-// Derived address identity through trusted erasure and finite source helpers.
-// The returned operand is the exact caller argument at the erasing boundary,
-// including its CallInput value if staged. Every normal helper return must
-// forward the same whole reference formal; lifetime-owner sources, summaries,
-// raw witnesses and projected helper fields never establish pointer identity.
-// This is not liveness, escape, contents or lifetime-conversion authority.
-struct MirReferenceErasureSource {
-  MirOperand operand;
-  SemanticType referenceType = SemanticType::Unknown;
-};
-[[nodiscard]] std::optional<MirReferenceErasureSource>
-verifiedReferenceErasureSource(const MirProgram &program, const MirBody &body,
-                               const MirOperand &opaqueOperand);
 // Nonempty, exact local reference aliases of a CallResult. Every alias has
 // one dominating Initialize from this loan, after its unique typed producer
 // and before consumerPosition; its pointer storage is never reseated, moved,
@@ -330,24 +214,19 @@ functionPointerSignature(const MirProgram &program, const SemanticType &type);
 referenceInitializerCall(const MirProgram &program,
                          const MirConstructorInstance &constructor,
                          const MirConstructorInitializer &initializer);
-// Derive concrete lanes from exact grouped binding records. Nested pack
-// indices remain part of identity even when their leaf types are equal.
-[[nodiscard]] std::optional<std::vector<ConcreteFormalInput>>
-concreteFormalInputs(const HirBody &, std::span<const SemanticType>,
-                     std::span<const HirBindingId>);
-[[nodiscard]] std::optional<std::vector<ConcreteFormalInput>>
-concreteFormalInputs(const MirBody &, std::span<const SemanticType>,
-                     std::span<const HirBindingId>);
-using MirReturnOriginFormal = ConcreteFormalInput;
+// The formal a return-origin contract names, by expanded parameter position.
+// Instance parameter lists are expanded per element and a concrete pack's
+// elements repeat the pack binding, so the origin is the binding plus the
+// element's position within that binding; whether the binding is a pack is a
+// fact of its place type, which callers consult.
+struct MirReturnOriginFormal {
+  HirBindingId binding = 0;
+  std::size_t elementWithinBinding = 0;
+};
 [[nodiscard]] std::optional<MirReturnOriginFormal>
-returnOriginFormal(const HirBody &, std::span<const SemanticType>,
-                   std::span<const HirBindingId>, std::size_t expandedIndex);
-[[nodiscard]] std::optional<MirReturnOriginFormal>
-returnOriginFormal(const MirBody &, std::span<const SemanticType>,
-                   std::span<const HirBindingId>, std::size_t expandedIndex);
-// Exact typed formal shell. It does not assert that an entry loan is valid,
-// live or permitted to escape; those facts remain with the owning verifier.
-[[nodiscard]] bool formalInputPlace(const MirPlace &, const ConcreteFormalInput &);
+returnOriginFormal(std::span<const SemanticType> parameterTypes,
+                   std::span<const HirBindingId> parameterBindings,
+                   std::size_t expandedIndex);
 // A text result that returns one direct text field of its origin formal or
 // receiver (L-OWN-02). It carries the dependency the caller's value holds in
 // that field; inside the callee the field's text is ownerless, so no loan
@@ -384,59 +263,6 @@ textAddressResultLoan(const MirBody &body, const MirInstruction &instruction,
 // dominating initializer chain must establish its typed address, and the return
 // expression must identify the selected alias. Shared by verification and
 // backend admission; carrier membership alone never proves the referent.
-// A scalar result selects one exact unconditional stored-reference path
-// from an input/receiver entry group, preserving its evaluated field pointer.
-// Program verification separately replays the declaration's typed path.
-// Declaration reachability is separate from the finite inventory stored in
-// one value. Crossings prove typed selectors only, never runtime read access.
-[[nodiscard]] ReferenceSupplierQuery referenceSupplierPaths(
-    const MirProgram &program, const SemanticType &type);
-
-// Staged structural profile only: exact evaluated reference type/address
-// shape, complete direct unconditional shared fields, explicit source tags and
-// finite read ancestry. This does not prove that the reads authorize this
-// address, dominate formation or remain active; it grants no alias, lifetime,
-// contents-flow or execution permission. The admission guards remain closed.
-[[nodiscard]] std::optional<ReferenceContentsInventory>
-referenceContentsOpeningShape(const MirProgram &, const MirBody &, const MirLoan &);
-
-// Detect the staged checked-reference contents vocabulary before legacy
-// physical-place consumers can mistake an absent place for absent provenance.
-[[nodiscard]] bool hasReferenceContents(const MirBorrowDependencySet &dependencies);
-[[nodiscard]] bool hasReferenceContents(const MirBody &body);
-
-// Exact whole-group publication into an inline constructor field. This is
-// independent of variant guards; program verification still derives the typed
-// initializer fact and checks all normal exits, while loan flow checks liveness.
-[[nodiscard]] bool storedCarrierConstructorPublication(const MirBody &body,
-                                                       const MirLoan &loan);
-
-// A lowering candidate only: preserve every original supplier while exporting
-// the exact incoming reference shell. Program admission must independently
-// replay address-preserving erasure/restoration and complete producer facts.
-// This initial structural profile has only shared, unconditional suppliers.
-struct MirReferenceReturnProjection {
-  const MirInstruction *restoration = nullptr;
-  const MirInstruction *erasure = nullptr;
-  MirOperand erasureInput;
-  SemanticType referenceType = SemanticType::Unknown;
-  MirLoanId parameter = 0;
-  MirLoanId stored = 0;
-  MirBorrowDependencySet originalSuppliers;
-  MirBorrowDependencySet publication;
-};
-[[nodiscard]] std::optional<MirReferenceReturnProjection>
-candidateSharedErasedReferenceReturn(const MirBody &, const MirLoan &);
-[[nodiscard]] std::optional<MirReferenceReturnProjection>
-verifiedSharedErasedReferenceReturn(const MirProgram &, const MirBody &,
-                                   const MirLoan &, std::size_t owner);
-[[nodiscard]] bool matchesSharedErasedReferenceReturn(
-    const MirBody &, const MirBlock &, const MirInstruction &,
-    const MirReferenceReturnProjection &);
-
-[[nodiscard]] bool storedReferenceReturnPublication(const MirBody &body,
-                                                    const MirBlock &block,
-                                                    const MirInstruction &instruction);
 [[nodiscard]] bool
 referenceParameterReturnPublication(const MirBody &body, const MirBlock &block,
                                     const MirInstruction &instruction);
@@ -458,17 +284,6 @@ fusedSignedMinimumNegation(const MirBody &body, const MirInstruction &carrier);
                                              HirBindingId binding,
                                              MirLoanId dependency,
                                              std::size_t depth = 0);
-// Structural entry-domain projection only. The caller still proves root,
-// formal identity, access and liveness. A grouped entry retains its complete
-// concrete PackElement prefix; references to packs remain atomic.
-[[nodiscard]] std::optional<std::size_t> entryProjectionPrefix(
-    const MirBody &, const MirPlace &entry,
-    std::span<const MirPlaceProjection> selected);
-// Match a whole entry lane or its exact physical reference referent. The
-// complete pack prefix and type remain exact; no field, payload or second
-// reference crossing is implied. Access, guards and liveness remain separate.
-[[nodiscard]] bool wholeEntryPlaceMatches(const MirBody &, const MirPlace &entry,
-                                          const MirPlace &selected);
 [[nodiscard]] std::optional<MirPlaceId>
 borrowSourceForPlace(const MirBody &body, MirPlaceId place, std::size_t depth);
 [[nodiscard]] std::optional<MirPlaceId>

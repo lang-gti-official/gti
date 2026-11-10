@@ -467,7 +467,7 @@ int main() {
     const_cast<lang::MirFunctionInstance *>(
         wrongField.findFunctionInstance(relay->id))
         ->returnBorrowFields.front()
-        .sourceFields = {lang::fieldProjection(kind)};
+        .sourceFields = {kind};
     expect(!lang::verifyMirProgram(wrongField).valid(),
            "a field relay naming another field is rejected by MIR");
     // Without the field, the summary would borrow the by-value formal.
@@ -602,7 +602,7 @@ int main() {
         enumeration->variants[*instruction.enumVariant].payloadSymbols.size() ==
             2)
       loanOf(retargeted, payloads.back())->designatedFields = {
-          lang::fieldProjection(enumeration->variants[*instruction.enumVariant].payloadSymbols[1])};
+          enumeration->variants[*instruction.enumVariant].payloadSymbols[1]};
   }
   expect(!lang::verifyMirProgram(retargeted).valid(),
          "a payload relabeled as dependent is rejected where it is stored");
@@ -854,7 +854,7 @@ int main() {
           instance.declaredFields[1].type.kind ==
               lang::SemanticType::StringView)
         loanOf(retargeted, location)->designatedFields = {
-            lang::fieldProjection(instance.declaredFields[1].symbol)};
+            instance.declaredFields[1].symbol};
   }
   const auto rejected = lang::verifyMirProgram(retargeted);
   expect(!rejected.valid() &&
@@ -1030,7 +1030,7 @@ int main() {
             : nullptr;
     if (target != nullptr && target->id == pairMaker->id)
       loanOf(retargeted, location)->designatedFields = {
-          lang::fieldProjection(target->publishedTextFields.back().field)};
+          target->publishedTextFields.back().field};
   }
   const auto stored = lang::verifyMirProgram(retargeted);
   expect(!stored.valid() &&
@@ -2114,7 +2114,7 @@ int main() {
     auto otherSource = result.mir;
     instructionAt(otherSource, location)
         .borrowFields.front()
-        .sourceFields.front() = lang::fieldProjection(0);
+        .sourceFields.front() = 0;
     expect(!lang::verifyMirProgram(otherSource).valid(),
            "MIR rejects a relay from a field the constructor does not store");
   }

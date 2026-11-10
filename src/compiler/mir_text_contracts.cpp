@@ -1,10 +1,6 @@
-#include <cstdio>
-#include <cstdlib>
 #include "mir_text_contracts.h"
 
 #include "mir_verification_queries.h"
-#include "mir_lifetimes.h"
-#include "gti/lifetime_types.h"
 
 #include <algorithm>
 #include <functional>
@@ -16,23 +12,8 @@
 #include <unordered_map>
 #include <utility>
 
-namespace {
-// Text field layout is a representation fact: regions never change which
-// fields of a class instance hold text (RFC 0004).
-[[maybe_unused]] bool sameTextClass(const lang::SemanticType &instance,
-                                    const lang::SemanticType &type) {
-  return instance == type ||
-         lang::eraseTypeLifetimes(instance) == lang::eraseTypeLifetimes(type);
-}
-} // namespace
 namespace lang::mir_detail {
 namespace {
-// Identifies an initializer's supplying value by stored shape. Region
-// relationships between that value and the field are proved separately.
-bool sameStoredShape(const SemanticType &left, const SemanticType &right) {
-  return left == right || eraseTypeLifetimes(left) == eraseTypeLifetimes(right);
-}
-
 bool textType(const SemanticType &type) {
   return type.kind == SemanticType::StringView ||
          type.kind == SemanticType::CString;
@@ -76,7 +57,7 @@ struct TextSources {
 };
 
 // A text field, or a text payload reached through a payload-enum field.
-using TextFieldPath = BorrowPath;
+using TextFieldPath = std::vector<SymbolId>;
 
 // Dynamic text that a value or local binding holds (L-OWN-02): the owner text
 // of `loan`, a read-only Stored loan that a publication designates, at `path`
@@ -115,7 +96,7 @@ bool textPublishableClass(const MirProgram &program, const SemanticType &type) {
     return false;
   const auto instance = std::find_if(
       program.classInstances().begin(), program.classInstances().end(),
-      [&](const auto &candidate) { return sameTextClass(candidate.type, type); });
+      [&](const auto &candidate) { return candidate.type == type; });
   return instance != program.classInstances().end() &&
          !instance->traits.containsBorrowedState && instance->bases.empty() &&
          !instance->polymorphic &&
@@ -131,7 +112,7 @@ bool nestedTextClass(const MirProgram &program, const SemanticType &type,
     return false;
   const auto instance = std::find_if(
       program.classInstances().begin(), program.classInstances().end(),
-      [&](const auto &candidate) { return sameTextClass(candidate.type, type); });
+      [&](const auto &candidate) { return candidate.type == type; });
   const auto text = [&](const SemanticType &candidate) {
     return textType(candidate) ||
            (candidate.kind == SemanticType::Class &&
@@ -365,14 +346,14 @@ private:
                                 const MirInstruction &call,
                                 const PublishedTextField &entry) {
     const auto *loan = call.loan ? context.body.findLoan(*call.loan) : nullptr;
-    const BorrowedFieldOrigin expected{.resultFields = {fieldProjection(entry.field)},
+    const BorrowedFieldOrigin expected{.resultFields = {entry.field},
                                        .origin = BorrowOriginKind::Argument,
                                        .parameter = entry.parameter,
                                        .access = AccessMode::ReadOnly};
     return call.dependentTextPublication && loan &&
            loan->kind == MirLoanKind::Stored &&
            loan->access == AccessMode::ReadOnly &&
-           loan->designatedFields == BorrowPath{fieldProjection(entry.field)} &&
+           loan->designatedFields == std::vector<SymbolId>{entry.field} &&
            loan->additionalDependencies.empty() &&
            std::find(call.borrowFields.begin(), call.borrowFields.end(),
                      expected) != call.borrowFields.end();
@@ -384,7 +365,7 @@ private:
   // phase 3).
   bool publishesWholeCallText(const TextBody &context,
                               const MirInstruction &call, std::size_t parameter,
-                              std::span<const PlaceProjection> held) const {
+                              std::span<const SymbolId> held) const {
     const auto *target =
         call.kind == MirInstructionKind::Call && call.functionTarget
             ? program.findFunctionInstance(*call.functionTarget)
@@ -399,12 +380,11 @@ private:
         loan->designatedFields.size() != held.size() + 1 ||
         !std::equal(held.begin(), held.end(),
                     loan->designatedFields.begin() + 1) ||
-        loan->designatedFields.front().kind != PlaceProjectionKind::Field ||
         !std::binary_search(
             target->publishedTextFields.begin(),
             target->publishedTextFields.end(),
             PublishedTextField{.parameter = parameter,
-                               .field = loan->designatedFields.front().field}))
+                               .field = loan->designatedFields.front()}))
       return false;
     const BorrowedFieldOrigin expected{
         .resultFields = loan->designatedFields,
@@ -502,7 +482,7 @@ private:
   bool payloadEnumField(const SemanticType &type, SymbolId field) const {
     const auto instance = std::find_if(
         program.classInstances().begin(), program.classInstances().end(),
-        [&](const auto &candidate) { return sameTextClass(candidate.type, type); });
+        [&](const auto &candidate) { return candidate.type == type; });
     return instance != program.classInstances().end() &&
            std::any_of(instance->declaredFields.begin(),
                        instance->declaredFields.end(), [&](const auto &entry) {
@@ -578,7 +558,7 @@ private:
     std::vector<OwnerlessTextField> fields;
     const auto instance = std::find_if(
         program.classInstances().begin(), program.classInstances().end(),
-        [&](const auto &candidate) { return sameTextClass(candidate.type, type); });
+        [&](const auto &candidate) { return candidate.type == type; });
     if (instance == program.classInstances().end())
       return fields;
     for (const auto &field : instance->declaredFields) {
@@ -660,8 +640,8 @@ private:
           place->projections.size() < candidate.designatedFields.size() &&
           std::equal(place->projections.begin(), place->projections.end(),
                      candidate.designatedFields.begin(),
-                     [](const auto &projection, const PlaceProjection &field) {
-                       return field == fieldProjection(projection.field);
+                     [](const auto &projection, SymbolId field) {
+                       return projection.field == field;
                      }))
         prefix = place->projections.size();
       else if (!(value && value->sourceValue == candidate.producedBy) &&
@@ -672,7 +652,10 @@ private:
       const TextFieldPath tail(candidate.designatedFields.begin() +
                                    static_cast<std::ptrdiff_t>(prefix),
                                candidate.designatedFields.end());
-      if (directTextPath(program, *type, tail))
+      if ((tail.size() == 1 &&
+           (directTextField(program, *type, tail.front()) ||
+            directTextPayload(program, *type, tail.front()))) ||
+          (tail.size() == 2 && directTextPath(program, *type, tail)))
         return tail;
     }
     return std::nullopt;
@@ -682,8 +665,8 @@ private:
   std::optional<SymbolId>
   dependentDesignation(const MirBody &body, const MirOperand &operand) const {
     const auto path = dependentDesignationPath(body, operand);
-    return path && path->size() == 1 && path->front().kind == PlaceProjectionKind::Field
-        ? std::optional{path->front().field} : std::nullopt;
+    return path && path->size() == 1 ? std::optional{path->front()}
+                                     : std::nullopt;
   }
 
   // What a call's argument or receiver holds in one of its direct text
@@ -705,7 +688,7 @@ private:
       held = &input->operands.front();
     }
     const TextFieldPath path =
-        payload == 0 ? TextFieldPath{fieldProjection(field)} : TextFieldPath{fieldProjection(field), fieldProjection(payload)};
+        payload == 0 ? TextFieldPath{field} : TextFieldPath{field, payload};
     // A carrier designating a path through `path` holds a relayed owner's
     // text under it, as one designating `path` itself does.
     if (const auto designated = dependentDesignationPath(context.body, *held))
@@ -870,7 +853,7 @@ private:
     } else if (instruction && instruction->kind == MirInstructionKind::Call &&
                (instruction->intrinsic == IntrinsicKind::SyntaxText ||
                 instruction->intrinsic == IntrinsicKind::SyntaxKind) &&
-               instruction->info.type.kind == SemanticType::StringView &&
+               instruction->info.type == SemanticType::StringView &&
                instruction->operands.size() ==
                    (instruction->intrinsic == IntrinsicKind::SyntaxText ? 1
                                                                         : 2)) {
@@ -1688,7 +1671,7 @@ private:
   bool publishesFieldRelay(const TextBody &context,
                            const MirInstruction &instruction,
                            std::size_t parameter,
-                           std::span<const PlaceProjection> held) {
+                           std::span<const SymbolId> held) {
     if (!instruction.constructorTarget || *instruction.constructorTarget == 0 ||
         *instruction.constructorTarget > constructorFieldRelays.size() ||
         !instruction.dependentTextPublication || !instruction.loan ||
@@ -1723,9 +1706,9 @@ private:
   // formal that `held` starts with, or 0 for the whole formal.
   std::optional<std::pair<TextFieldPath, SymbolId>>
   rerootedTextPath(std::size_t constructor, std::size_t parameter,
-                   std::span<const PlaceProjection> held) const {
+                   std::span<const SymbolId> held) const {
     const auto &relays = constructorFieldRelays[constructor - 1];
-    for (const SymbolId key : {held.front().field, SymbolId{0}}) {
+    for (const SymbolId key : {held.front(), SymbolId{0}}) {
       const auto relay = relays.find({parameter, key});
       if (relay == relays.end())
         continue;
@@ -1750,8 +1733,7 @@ private:
     const auto &type = instruction.info.type;
     const auto &path = loan->designatedFields;
     return (type.kind == SemanticType::Enum && path.size() == 1 &&
-            path.front().kind == PlaceProjectionKind::Field &&
-            directTextPayload(program, type, path.front().field)) ||
+            directTextPayload(program, type, path.front())) ||
                    (type.kind == SemanticType::Class &&
                     directTextPath(program, type, path))
                ? loan
@@ -1873,7 +1855,7 @@ private:
         HeldTexts inner;
         if (projection.kind == MirProjectionKind::Field)
           for (const auto &text : held)
-            if (!text.path.empty() && text.path.front() == fieldProjection(projection.field))
+            if (!text.path.empty() && text.path.front() == projection.field)
               inner.insert({.loan = text.loan,
                             .path = TextFieldPath(text.path.begin() + 1,
                                                   text.path.end()),
@@ -1956,8 +1938,8 @@ private:
                 ? &call.operands[field.parameter]
                 : nullptr;
         const TextFieldPath path =
-            field.payload == 0 ? TextFieldPath{fieldProjection(field.field)}
-                               : TextFieldPath{fieldProjection(field.field), fieldProjection(field.payload)};
+            field.payload == 0 ? TextFieldPath{field.field}
+                               : TextFieldPath{field.field, field.payload};
         if (origin)
           for (const auto &text : operandTexts(*origin))
             if (text.path == path)
@@ -2124,7 +2106,7 @@ private:
                                 initializer.arguments.size() == 1 &&
                                 initializer.arguments.front() ==
                                     value->sourceValue &&
-                                sameStoredShape(initializer.targetType, value->info.type);
+                                initializer.targetType == value->info.type;
                        });
   }
 
@@ -2269,7 +2251,7 @@ private:
         context.body.values.begin(), context.body.values.end(),
         [&](const auto &value) {
           return value.sourceValue == initializer.arguments.front() &&
-                 sameStoredShape(value.info.type, initializer.targetType);
+                 value.info.type == initializer.targetType;
         });
     const auto *producer = found == context.body.values.end()
                                ? nullptr
@@ -2300,7 +2282,7 @@ private:
           noteWholeRelay(
               context, producer->operands[index], variant.payloadTypes[index],
               !readBack,
-              TextFieldPath{fieldProjection(initializer.field), fieldProjection(variant.payloadSymbols[index])},
+              TextFieldPath{initializer.field, variant.payloadSymbols[index]},
               inputs, fieldUses);
         continue;
       }
@@ -2319,11 +2301,11 @@ private:
           initializer.field != 0 && index < variant.payloadSymbols.size())
         inputs.fields.emplace(
             *source.parameters.begin(),
-            TextFieldPath{fieldProjection(initializer.field), fieldProjection(variant.payloadSymbols[index])});
+            TextFieldPath{initializer.field, variant.payloadSymbols[index]});
       if (initializer.field != 0 && index < variant.payloadSymbols.size())
         noteFieldRelay(
             source, !readBack,
-            TextFieldPath{fieldProjection(initializer.field), fieldProjection(variant.payloadSymbols[index])},
+            TextFieldPath{initializer.field, variant.payloadSymbols[index]},
             inputs, fieldUses);
     }
   }
@@ -2689,8 +2671,8 @@ private:
             const OwnerlessTextField field{
                 .receiver = calleeFormal.receiver,
                 .parameter = calleeFormal.parameter,
-                .field = designated->front().kind == PlaceProjectionKind::Field ? designated->front().field : 0,
-                .payload = designated->size() >= 2 && (*designated)[1].kind == PlaceProjectionKind::Field ? (*designated)[1].field : 0};
+                .field = designated->front(),
+                .payload = designated->size() >= 2 ? (*designated)[1] : 0};
             // A construction re-roots the value's dependency at the path its
             // constructor stores that field, or the whole value, in, under its
             // own loan.
@@ -2707,11 +2689,10 @@ private:
             if (argument.kind == SemanticType::Reference &&
                 argument.arguments.size() == 1)
               argument = SemanticType(argument.arguments.front());
-            const bool contracted = designated->front().kind == PlaceProjectionKind::Field &&
-                (designated->size() == 1 ||
+            const bool contracted =
+                designated->size() == 1 ||
                 (designated->size() >= 2 &&
-                 (*designated)[1].kind == PlaceProjectionKind::Field &&
-                 payloadEnumField(argument, designated->front().field)));
+                 payloadEnumField(argument, designated->front()));
             if (reRooted) {
             } else if (!contracted || !target ||
                        !fieldContractFunction(program, *target) ||
@@ -2754,11 +2735,11 @@ private:
               const auto formal =
                   exactTextFormal(context, instruction.operands[index]);
               if (field != fields.end() && field->second.size() == 1 &&
-                  field->second.front().kind == PlaceProjectionKind::Field && formal &&
+                  formal &&
                   directTextField(program, instruction.info.type,
-                                  field->second.front().field)) {
+                                  field->second.front())) {
                 relayedFormals.insert(
-                    {.parameter = *formal, .field = field->second.front().field});
+                    {.parameter = *formal, .field = field->second.front()});
                 continue;
               }
             }
@@ -2778,12 +2759,11 @@ private:
           for (const auto &[key, path] :
                constructorFieldRelays[*instruction.constructorTarget - 1])
             if (key.second == 0 && path.size() == 1 &&
-                path.front().kind == PlaceProjectionKind::Field &&
                 key.first < instruction.operands.size())
               if (const auto formal = exactClassFormal(
                       context, instruction.operands[key.first]))
                 relayedFormals.insert(
-                    {.parameter = *formal, .field = path.front().field});
+                    {.parameter = *formal, .field = path.front()});
         // A callee that returns an argument in a text field of its fresh
         // result (L-OWN-02): a dynamic argument is published under the call's
         // own loan, a returned call relays this function's formal, and any
@@ -2838,7 +2818,7 @@ private:
                      loan->producedBy == instruction.hirValue &&
                      index < variant.payloadSymbols.size() &&
                      loan->designatedFields ==
-                         BorrowPath{fieldProjection(variant.payloadSymbols[index])};
+                         std::vector<SymbolId>{variant.payloadSymbols[index]};
             };
             // A constructor's field initializer accounts for the text it
             // stores in its payload (`initializerTextInputs`).
@@ -2968,7 +2948,7 @@ auto TextContracts::initializerTextInputs(
           constructor.body.values.begin(), constructor.body.values.end(),
           [&](const auto &value) {
             return value.sourceValue == initializer.arguments.front() &&
-                   sameStoredShape(value.info.type, initializer.targetType);
+                   value.info.type == initializer.targetType;
           });
       if (found != constructor.body.values.end())
         noteWholeRelay(context,
@@ -2976,7 +2956,7 @@ auto TextContracts::initializerTextInputs(
                         .value = found->id,
                         .type = found->info.type},
                        initializer.targetType, true,
-                       TextFieldPath{fieldProjection(initializer.field)}, inputs, fieldUses);
+                       TextFieldPath{initializer.field}, inputs, fieldUses);
       continue;
     }
     // A base initializer passes its arguments to the base constructor, which
@@ -3014,7 +2994,7 @@ auto TextContracts::initializerTextInputs(
         constructor.body.values.begin(), constructor.body.values.end(),
         [&](const auto &value) {
           return value.sourceValue == initializer.arguments.front() &&
-                 (sameStoredShape(value.info.type, initializer.targetType) ||
+                 (value.info.type == initializer.targetType ||
                   (initializer.targetType.kind == SemanticType::CString &&
                    value.info.type.kind == SemanticType::NullPtr));
         });
@@ -3032,9 +3012,9 @@ auto TextContracts::initializerTextInputs(
       ++uses[parameter];
     if (source.known && source.parameters.size() == 1 && initializer.field != 0)
       inputs.fields.emplace(*source.parameters.begin(),
-                            TextFieldPath{fieldProjection(initializer.field)});
+                            TextFieldPath{initializer.field});
     if (initializer.field != 0)
-      noteFieldRelay(source, true, TextFieldPath{fieldProjection(initializer.field)}, inputs,
+      noteFieldRelay(source, true, TextFieldPath{initializer.field}, inputs,
                      fieldUses);
   }
   std::erase_if(inputs.fields,
@@ -3138,7 +3118,6 @@ MirVerificationResult TextContracts::verify() {
     // A function's relays are what its returns derive (L-OWN-02); a caller
     // publishes nothing a callee does not derive, and a derived relay must be
     // declared or the caller would treat that text as ownerless.
-    if (std::getenv("GTI_TRACE_SCOPED")) { std::fprintf(stderr, "[text] fn=%llu decl=%llu relays=%zu published=%zu req=%zu declared=%zu params=%zu\n", (unsigned long long)function.id, (unsigned long long)function.declaration, relays[function.id - 1].size(), function.publishedTextFields.size(), requirements[function.id - 1].size(), function.ownerlessTextParameters.size(), function.parameterTypes.size()); for (auto r : requirements[function.id - 1]) std::fprintf(stderr, "[text]   req %zu\n", r); for (auto r : function.ownerlessTextParameters) std::fprintf(stderr, "[text]   decl %zu text=%d\n", (std::size_t)r, r < function.parameterTypes.size() && textType(function.parameterTypes[r])); } // TEMP-TRACE
     if (!std::equal(relays[function.id - 1].begin(),
                     relays[function.id - 1].end(),
                     function.publishedTextFields.begin(),
@@ -3202,7 +3181,7 @@ MirVerificationResult TextContracts::verify() {
       const OwnerlessTextField declared{
           .receiver = receiver,
           .parameter = receiver ? 0 : function.returnBorrowParameter,
-          .field = function.returnBorrowFields.front().sourceFields.front().field};
+          .field = function.returnBorrowFields.front().sourceFields.front()};
       if (!context.fieldContracts)
         fail(context, function.id, nullptr,
              "a text field result is declared on a function that cannot "
@@ -3216,10 +3195,9 @@ MirVerificationResult TextContracts::verify() {
                 std::any_of(
                     returned.fields.begin(), returned.fields.end(),
                     [&](const auto &field) { return field != declared; }))
-              { if (std::getenv("GTI_TRACE_SCOPED")) { std::fprintf(stderr, "[tfr] fn=%llu block=%llu known=%d params=%zu fields=%zu declared recv=%d param=%zu field=%llu\n", (unsigned long long)function.id, (unsigned long long)block.id, returned.known, returned.parameters.size(), returned.fields.size(), declared.receiver, declared.parameter, (unsigned long long)declared.field); for (const auto &f : returned.fields) std::fprintf(stderr, "[tfr]   field recv=%d param=%zu field=%llu\n", f.receiver, f.parameter, (unsigned long long)f.field); } // TEMP-TRACE
               fail(context, function.id, nullptr,
                    "text field result returns other text than its declared "
-                   "field"); } // TEMP-TRACE
+                   "field");
           }
     }
   }
@@ -3321,7 +3299,7 @@ bool dependentTextCarrierField(const MirBody &body, const MirPlace &place) {
   if (place.projections.size() != 1 ||
       place.projections.front().kind != MirProjectionKind::Field)
     return false;
-  const BorrowPath field{fieldProjection(place.projections.front().field)};
+  const std::vector<SymbolId> field{place.projections.front().field};
   const MirPlace *root = &place;
   for (std::size_t depth = 0;
        root->root == MirPlaceRootKind::Loan && depth <= body.loans.size();
@@ -3464,7 +3442,7 @@ bool directTextField(const MirProgram &program, const SemanticType &type,
     return false;
   const auto instance = std::find_if(
       program.classInstances().begin(), program.classInstances().end(),
-      [&](const auto &candidate) { return sameTextClass(candidate.type, type); });
+      [&](const auto &candidate) { return candidate.type == type; });
   return instance != program.classInstances().end() &&
          !instance->traits.containsBorrowedState &&
          std::any_of(instance->declaredFields.begin(),
@@ -3491,49 +3469,50 @@ bool directTextPayload(const MirProgram &program, const SemanticType &type,
 }
 
 bool directTextPath(const MirProgram &program, const SemanticType &type,
-                    std::span<const PlaceProjection> path) {
+                    std::span<const SymbolId> path) {
   if (path.empty())
     return false;
-  const auto conditions = deriveBorrowPathConditions(
-      program, type, AccessMode::ReadOnly, path, MirBorrowPathRoot::Value);
-  if (!conditions)
-    return false;
-  for (std::size_t offset = 0; offset <= path.size(); ++offset) {
-    std::vector<BorrowDependencyCondition> prefixConditions;
-    for (const auto &condition : *conditions)
-      if (condition.subobject.size() < offset)
-        prefixConditions.push_back(condition);
-    const auto view = walkBorrowPath(program, type, AccessMode::ReadOnly,
-                                    path.first(offset), prefixConditions, MirBorrowPathRoot::Value);
-    if (!view || !view->referenceCrossings.empty())
+  // Each step is a field of a class or a payload of a payload enum without
+  // borrowed state; the path ends at text.
+  std::optional<SemanticType> next;
+  if (type.kind == SemanticType::Class) {
+    const auto instance = std::find_if(
+        program.classInstances().begin(), program.classInstances().end(),
+        [&](const auto &candidate) { return candidate.type == type; });
+    if (instance == program.classInstances().end() ||
+        instance->traits.containsBorrowedState)
       return false;
-    if (offset == path.size())
-      return textType(view->type);
-    if (const auto owner = mirClassLifetimeView(program, view->type)) {
-      if (owner->instance->traits.containsBorrowedState)
-        return false;
-    } else if (const auto enumeration = mirEnumLifetimeView(program, view->type)) {
-      if (!enumeration->payload || enumeration->payload->traits.containsBorrowedState)
-        return false;
-    } else if (view->type.kind != SemanticType::Array &&
-               view->type.kind != SemanticType::TypePack) {
-      return false;
-    }
+    for (const auto &entry : instance->declaredFields)
+      if (entry.symbol == path.front())
+        next = entry.type;
+  } else if (const MirPayloadEnum *enumeration =
+                 type.kind == SemanticType::Enum ? program.findPayloadEnum(type)
+                                                 : nullptr;
+             enumeration != nullptr &&
+             !enumeration->traits.containsBorrowedState) {
+    for (const auto &variant : enumeration->variants)
+      for (std::size_t index = 0; index < variant.payloadSymbols.size() &&
+                                  index < variant.payloadTypes.size();
+           ++index)
+        if (variant.payloadSymbols[index] == path.front())
+          next = variant.payloadTypes[index];
   }
-  return false;
+  if (!next)
+    return false;
+  return path.size() == 1 ? textType(*next)
+                          : directTextPath(program, *next, path.subspan(1));
 }
 
 std::optional<TextFieldPath>
 dependentTextRelayPath(const MirProgram &program,
                        const MirConstructorInstance &constructor,
-                       std::size_t parameter, std::span<const PlaceProjection> held) {
-  if (held.empty() || !isWellFormedBorrowPath(held) ||
-      held.front().kind != PlaceProjectionKind::Field)
+                       std::size_t parameter, std::span<const SymbolId> held) {
+  if (held.empty())
     return std::nullopt;
   TextContracts contracts(program);
   const auto relays =
       contracts.initializerTextInputs(constructor, false).fieldRelays;
-  for (const SymbolId key : {held.front().field, SymbolId{0}}) {
+  for (const SymbolId key : {held.front(), SymbolId{0}}) {
     const auto found = relays.find({parameter, key});
     if (found == relays.end())
       continue;
@@ -3547,7 +3526,7 @@ dependentTextRelayPath(const MirProgram &program,
 std::optional<std::size_t>
 dependentTextFieldFormal(const MirProgram &program,
                          const MirConstructorInstance &constructor,
-                         std::span<const PlaceProjection> path) {
+                         std::span<const SymbolId> path) {
   TextContracts contracts(program);
   for (const auto &[formal, target] :
        contracts.initializerTextInputs(constructor, false).fields)

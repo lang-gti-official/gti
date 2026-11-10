@@ -2,7 +2,6 @@
 #include "gti/lowered_program_printer.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
-#include "../src/compiler/mir_verification_queries.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -257,10 +256,10 @@ void testPlans(const FrontendResult &frontend) {
 
   auto lowered = gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
   const auto text = LoweredProgramPrinter().print(lowered);
-  expect(text.starts_with("lowered-program-v40\n") &&
+  expect(text.starts_with("lowered-program-v35\n") &&
              text.find("virtual-dispatch=[{root=") != std::string::npos &&
              text == LoweredProgramPrinter().print(lowered) &&
-             MirPrinter().print(frontend.mir).starts_with("mir-v128 "),
+             MirPrinter().print(frontend.mir).starts_with("mir-v121 "),
          "dispatch selection and paths serialize deterministically");
   auto &sealed = const_cast<LoweredClassInstance &>(*std::find_if(
       lowered.classInstances().begin(), lowered.classInstances().end(),
@@ -588,182 +587,16 @@ void testExistingBaseBoundaries() {
              "source argument");
     }
   }
-  const auto inherited = Frontend().analyze(
+  const auto rejected = Frontend().analyze(
       root / "tests/fixtures/llvm_dispatch_borrowed_base.gti");
-  expect(inherited.canGenerateCode(),
-         "inherited borrowed state retains its checked base publication and dispatch");
-  if (!inherited.canGenerateCode())
-    for (const auto &diagnostic : inherited.diagnostics)
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(!rejected.canGenerateCode() &&
+             std::any_of(rejected.diagnostics.begin(),
+                         rejected.diagnostics.end(),
+                         [](const auto &diagnostic) {
+                           return diagnostic.code == "GTI-S2045";
+                         }),
+         "inherited borrowed state keeps its existing source rejection");
 }
-void testInheritedLifetimeDispatch() {
-  const auto frontend = Frontend().analyze("inherited-lifetime-dispatch.gti", R"gti(
-interface Marker { int marker(); };
-class Root<lifetime a, lifetime b> {
-  int&<a> first;
-  int&<b> second;
-public:
-  Root(int&<a> first, int&<b> second) : first(first), second(second) {}
-  virtual int read() { return this.first; }
-};
-class Middle<lifetime a, lifetime b> : public Marker, public Root<b, a> {
-public:
-  Middle(int&<a> first, int&<b> second) : Root<b, a>(second, first) {}
-  int marker() override { return 1; }
-};
-class Leaf<lifetime a, lifetime b> : public Middle<a, b> {
-public:
-  Leaf(int&<a> first, int&<b> second) : Middle<a, b>(first, second) {}
-  int read() override { return 4; }
-};
-int main() {
-  int first = 3; int second = 4;
-  Leaf leaf{first, second};
-  return leaf.read() - 4;
-}
-)gti");
-  if (!frontend.canGenerateCode()) {
-    for (const auto &diagnostic : frontend.diagnostics)
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
-    expect(false, "borrowed virtual bases retain exact instantiated views through multiple edges");
-    return;
-  }
-  const auto &middle = namedClass(frontend.hir, frontend.semantics, "Middle");
-  const auto &root = namedClass(frontend.hir, frontend.semantics, "Root");
-  const auto &leaf = namedClass(frontend.hir, frontend.semantics, "Leaf");
-  expect(middle.bases.size() == 2 && middle.bases.front().interface &&
-             middle.bases.back().instance == root.id &&
-             middle.bases.back().type.lifetimeArguments.size() == 2 &&
-             middle.bases.back().type != root.type,
-         "the state-bearing base follows an interface and keeps the parent's correlated region view");
-  const auto row = std::find_if(leaf.virtualDispatch.begin(), leaf.virtualDispatch.end(),
-      [&](const auto &entry) { return entry.rootOwner == root.id; });
-  expect(row != leaf.virtualDispatch.end() &&
-             row->rootPath == std::vector<HirClassInstanceId>{middle.id, root.id} &&
-             row->targetPath.empty(),
-         "the override retains its exact complete two-edge root path");
-  for (int mutation = 0; mutation != 7; ++mutation) {
-    const auto change = [&](auto &program) {
-      auto &changedMiddle = namedClass(program, frontend.semantics, "Middle");
-      auto &changedLeaf = namedClass(program, frontend.semantics, "Leaf");
-      auto &base = changedMiddle.bases.back();
-      if (mutation == 0) std::swap(base.type.lifetimeArguments[0], base.type.lifetimeArguments[1]);
-      if (mutation == 1) base.type.lifetimeArguments[0] = Lifetime::staticLifetime();
-      if (mutation == 2) base.instance = changedMiddle.bases.front().instance;
-      if (mutation == 3) changedMiddle.bases.push_back(base);
-      if constexpr (requires { changedMiddle.structuralBases; })
-        changedMiddle.structuralBases = changedMiddle.bases;
-      auto selected = std::find_if(changedLeaf.virtualDispatch.begin(), changedLeaf.virtualDispatch.end(),
-          [&](const auto &entry) { return entry.rootOwner == root.id; });
-      if (selected == changedLeaf.virtualDispatch.end()) throw std::runtime_error("missing lifetime dispatch row");
-      if (mutation == 4) selected->rootPath.clear();
-      if (mutation == 5) selected->rootPath.push_back(root.id);
-      if (mutation == 6) selected->targetOwner = root.id;
-    };
-    auto hir = frontend.hir;
-    change(hir);
-    expect(!verifyHirProgramPlans(frontend.semantics, hir).valid(),
-           "HIR rejects wrong region correlation, fixed region, identity and ambiguous/cyclic dispatch paths");
-    auto mir = frontend.mir;
-    change(mir);
-    expect(!verifyMirProgram(mir).valid(),
-           "MIR independently rejects coordinated wrong base views and dispatch paths");
-  }
-  const auto lowered = gti_test::lowerProgram(frontend, frontend.mir, frontend.mir);
-  expect(verifyLoweredProgram(lowered).empty(),
-         "sealing dispatch preserves the exact selected inherited owner view");
-  for (int mutation = 0; mutation != 4; ++mutation) {
-    auto forged = lowered;
-    auto *declaration = const_cast<LoweredClassDeclaration *>(
-        forged.findClassDeclaration(leaf.declaration));
-    auto selected = std::find_if(declaration->virtualDispatch.begin(), declaration->virtualDispatch.end(),
-        [&](const auto &entry) { return entry.root == frontend.mir.findFunctionInstance(row->root)->declaration; });
-    if (selected == declaration->virtualDispatch.end() || selected->targetOwner.lifetimeArguments.size() != 2)
-      throw std::runtime_error("missing exact lowered dispatch owner recipe");
-    if (mutation == 0) std::swap(selected->targetOwner.lifetimeArguments[0], selected->targetOwner.lifetimeArguments[1]);
-    if (mutation == 1) selected->targetOwner.lifetimeArguments[0] = Lifetime::staticLifetime();
-    if (mutation == 2) selected->targetOwner.classId = root.declaration;
-    if (mutation == 3) selected->targetOwner.lifetimeArguments.pop_back();
-    const auto issues = verifyLoweredProgram(forged);
-    expect(std::any_of(issues.begin(), issues.end(), [](const auto &issue) {
-      return issue.detail == "lowered dispatch differs from its exact semantic selection";
-    }), "sealed dispatch rejects changed correlations, fixed regions, identities and owner arity independently of its seal");
-  }
-
-}
-
-
-void testBorrowedBaseSiblingInitialization() {
-  const auto frontend = Frontend().analyze("borrowed-base-sibling-initialization.gti", R"gti(
-mut int retired = 0;
-interface Marker { int mark(); };
-struct Base<lifetime a> {
-  int&<a> value;
-  Base(int&<a> input) : value(input) {}
-  ~Base() { retired += this.value; }
-};
-int later(int divisor) { return 1 / divisor; }
-struct Derived<lifetime a> : public Marker, public Base<a> {
-  int after = 0;
-  Derived(int&<a> input, int divisor) : Base<a>(input), after(later(divisor)) {}
-  ~Derived() { retired += 100; }
-  int mark() override { return 0; }
-};
-int main() { int value = 7; Derived object{value, 0}; return 0; }
-)gti");
-  if (!frontend.canGenerateCode()) {
-    for (const auto &diagnostic : frontend.diagnostics)
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
-    expect(false, "a fallible sibling field initializer preserves the independently published base contents");
-    return;
-  }
-  const auto &owner = namedClass(frontend.mir, frontend.semantics, "Derived");
-  const auto &baseOwner = namedClass(frontend.mir, frontend.semantics, "Base");
-  const auto constructor = std::find_if(frontend.mir.constructorInstances().begin(),
-      frontend.mir.constructorInstances().end(), [&](const auto &item) { return item.owner == owner.id; });
-  if (constructor == frontend.mir.constructorInstances().end())
-    throw std::runtime_error("missing derived constructor flow proof");
-  const MirPlace *base = nullptr, *field = nullptr;
-  for (const auto &place : constructor->body.places) {
-    if (place.root != MirPlaceRootKind::This || place.projections.size() != 1) continue;
-    if (place.projections.front().kind == MirProjectionKind::Base &&
-        place.type.classId == baseOwner.declaration) base = &place;
-    if (place.projections.front().kind == MirProjectionKind::Field &&
-        place.type == SemanticType::Int32) field = &place;
-  }
-  if (!base || !field || baseOwner.declaredFields.size() != 1)
-    throw std::runtime_error("missing exact base and sibling field projections");
-  const auto separate = [&](std::span<const MirPlaceProjection> left,
-                            std::span<const MirPlaceProjection> right) {
-    return mir_detail::inlineBorrowProjectionsDisjoint(
-        frontend.mir, constructor->ownerType, left, right);
-  };
-  expect(separate(base->projections, field->projections),
-         "the exact typed state base and direct field have disjoint physical storage");
-  expect(!separate(base->projections, base->projections) &&
-             !separate({}, field->projections),
-         "same-base and whole-object writes retain conservative invalidation");
-  auto invalid = base->projections;
-  invalid.front().constantIndex = 0;
-  expect(!separate(invalid, field->projections),
-         "an interface ordinal cannot prove a state-base storage boundary");
-  invalid = base->projections;
-  invalid.push_back({.kind = MirProjectionKind::Field,
-                     .field = baseOwner.declaredFields.front().symbol});
-  invalid.push_back({.kind = MirProjectionKind::Dereference});
-  expect(!separate(invalid, field->projections),
-         "a reference crossing cannot turn different slots into disjoint external storage");
-  for (const bool whole : {false, true}) {
-    auto forged = frontend.mir;
-    auto *changed = const_cast<MirConstructorInstance *>(forged.findConstructorInstance(constructor->id));
-    auto *place = const_cast<MirPlace *>(changed->body.findPlace(base->id));
-    if (whole) place->projections.clear();
-    else place->projections.front().constantIndex = 0;
-    expect(!verifyMirProgram(forged).valid(),
-           "publication cannot retain base contents through a forged whole-object or interface path");
-  }
-}
-
 } // namespace
 
 int main() {
@@ -777,8 +610,6 @@ int main() {
   testPlans(frontend);
   testConstructorState(frontend);
   testExistingBaseBoundaries();
-  testInheritedLifetimeDispatch();
-  testBorrowedBaseSiblingInitialization();
   if (failures)
     return 1;
   std::cout << "LLVM dispatch prerequisite plans and mutations passed\n";

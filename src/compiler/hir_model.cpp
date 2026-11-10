@@ -1,133 +1,11 @@
-#include <cstdio>
 #include "gti/hir.h"
-#include "gti/concrete_formals.h"
 #include "gti/instance_analysis_cache.h"
-#include "gti/generic_type_patterns.h"
-#include "gti/lifetime_types.h"
-#include "gti/callable_lifetimes.h"
-#include "structural_constructor_policy.h"
-#include "class_hierarchy_lifetimes.h"
 
 #include <algorithm>
 #include <functional>
 #include <unordered_set>
 
 namespace lang {
-namespace {
-SemanticType substituteHirSemanticType(const SemanticType &type,
-                                      const GenericSubstitution &substitution,
-                                      const SemanticModel *model) {
-  auto result = substituteSemanticType(type, substitution, model);
-  if (substitution.lifetimes.empty())
-    return result;
-  std::vector<LifetimeBinding> regions;
-  for (const auto &[parameter, actual] : substitution.lifetimes)
-    regions.emplace_back(Lifetime::parameter(parameter), actual);
-  return substituteTypeLifetimes(std::move(result), regions)
-      .value_or(SemanticType::Unknown);
-}
-
-std::optional<LifetimeRequirementFormula> hirPolicyNominalRequirements(
-    const SemanticModel &semantics, const SemanticType &type) {
-  using namespace structural_policy_detail;
-  if (type.kind == SemanticType::Class) {
-    const auto *declaration = semantics.findClassType(type.classId);
-    const auto owner = declaration ? openClassType(*declaration) : std::nullopt;
-    return owner ? nominalRequirements(*owner, type, declaration->lifetimeContract,
-                       identities(declaration->genericParameters),
-                       identities(declaration->genericArgumentPatternLifetimes))
-                 : std::nullopt;
-  }
-  if (type.kind == SemanticType::Enum) {
-    const auto *declaration = semantics.findEnumType(type.enumId);
-    const auto owner = declaration
-        ? openNominalType(SemanticType::enumType(declaration->id),
-                          declaration->genericParameters) : std::nullopt;
-    return owner ? nominalRequirements(*owner, type, declaration->lifetimeContract,
-                                      identities(declaration->genericParameters))
-                 : std::nullopt;
-  }
-  if (type.kind == SemanticType::Lambda) {
-    const auto *declaration = semantics.findLambda(type.lambdaId);
-    return declaration ? lambdaEnvironmentLifetimeRequirements(
-                             declaration->type, type, declaration->environmentContract)
-                       : std::nullopt;
-  }
-  return std::nullopt;
-}
-
-bool hirStructuralPolicyMatches(const SemanticModel &semantics,
-                                const ClassTypeInfo &owner,
-                                const ConstructorInfo &policy) {
-  const auto type = structural_policy_detail::openClassType(owner);
-  if (!type || policy.owner != owner.id || !policy.declaration ||
-      !policy.declaration->specifier() ||
-      policy.declaration->specifier()->kind != SpecialMemberSpecifierKind::Defaulted ||
-      policy.access != AccessModifier::Public || policy.requiresUnsafe ||
-      !policy.genericParameters.empty() || policy.requiredParameterCount != 1 ||
-      policy.parameterPack)
-    return false;
-  auto contract = policy.lifetimeContract;
-  std::vector<const ConstraintExpression *> seen;
-  for (const auto &requirement : policy.requirements) {
-    if (!requirement.lifetimeBound || requirement.conceptId)
-      return false;
-    const auto leaf = [](const auto &value) -> std::optional<LifetimeRequirementNode> {
-      if (!value.lifetimeBound || value.conceptId)
-        return std::nullopt;
-      return LifetimeRequirementNode{
-          .kind = value.outlivesType ? LifetimeRequirementNode::Kind::Type
-                                    : LifetimeRequirementNode::Kind::Region,
-          .bound = *value.lifetimeBound,
-          .type = value.outlivesType.value_or(SemanticType::Unknown)};
-    };
-    LifetimeRequirementFormula part;
-    if (!requirement.expression) {
-      part = {.nodes = {*leaf(requirement)}, .root = 0};
-    } else {
-      const auto *expression = requirement.expression;
-      if (std::find(seen.begin(), seen.end(), expression) != seen.end())
-        continue;
-      seen.push_back(expression);
-      if (expression->nodes.size() > 4096)
-        return false;
-      std::size_t count = 0;
-      for (const auto &node : expression->nodes)
-        if (node.kind == ConstraintExpressionKind::Application)
-          count = std::max(count, node.application + 1);
-      std::size_t members = 0;
-      for (const auto &candidate : policy.requirements)
-        if (candidate.expression == expression) {
-          if (candidate.expressionApplication >= count)
-            return false;
-          ++members;
-        }
-      if (members != count)
-        return false;
-      const auto translated = structural_policy_detail::writtenRequirements(
-          expression->nodes, expression->root, count, [&](std::size_t index) {
-            const AppliedConceptRequirement *selected = nullptr;
-            for (const auto &candidate : policy.requirements)
-              if (candidate.expression == expression && candidate.expressionApplication == index) {
-                if (selected)
-                  return std::optional<LifetimeRequirementNode>{};
-                selected = &candidate;
-              }
-            return selected ? leaf(*selected) : std::nullopt;
-          });
-      if (!translated)
-        return false;
-      part = *translated;
-    }
-    if (!appendLifetimeRequirementFormula(contract.requirements, part))
-      return false;
-  }
-  return structuralConstructorPolicyMatches(*type, owner.lifetimeContract,
-      policy.parameterTypes, contract, [&](const SemanticType &node) {
-        return hirPolicyNominalRequirements(semantics, node);
-      });
-}
-} // namespace
 
 const HirValue *HirBody::valueForSource(const Expr &source) const {
   for (auto value = values.rbegin(); value != values.rend(); ++value)
@@ -609,8 +487,7 @@ verifyHirSourceDebug(const SemanticModel &semantics,
   const auto checkInitializers = [&](const HirBody &body,
                                      const InitializerRoots &expected,
                                      const HirClassInstance *owner = nullptr,
-                                     bool sourceRegionBody = false,
-                                     const SemanticSourceDebugInstance *selectedConstructor = nullptr) {
+                                     bool sourceRegionBody = false) {
     const auto &record = body.sourceDebug;
     if (!isValidSourceDebugRecord(record)) {
       reject("HIR initializer source collection/table state is invalid");
@@ -650,10 +527,7 @@ verifyHirSourceDebug(const SemanticModel &semantics,
         reject("HIR initializer source region has foreign roots or provenance");
         continue;
       }
-      if (selectedConstructor) {
-        if (facts.instance != *selectedConstructor)
-          reject("HIR selected default has a foreign constructor substitution");
-      } else if (facts.instance.concrete) {
+      if (facts.instance.concrete) {
         const SemanticSourceDebugInstance instance{
             .concrete = true,
             .kind = static_cast<std::uint8_t>(
@@ -762,11 +636,8 @@ verifyHirSourceDebug(const SemanticModel &semantics,
                   .values = function.valueArguments};
       if (function.owner)
         if (const auto *owner = findClass(*function.owner)) {
-          if (function.ownerType.kind != SemanticType::Class ||
-              function.ownerType.classId != owner->type.classId)
-            reject("HIR source function has a foreign callable owner");
-          instance.classTypes = function.ownerType.arguments;
-          instance.classValues = function.ownerType.valueArguments;
+          instance.classTypes = owner->typeArguments;
+          instance.classValues = owner->valueArguments;
         }
     }
     check(function.body, SourceDebugBodyKind::Function, function.source,
@@ -783,6 +654,7 @@ verifyHirSourceDebug(const SemanticModel &semantics,
             if (field.info.symbol == initializer.field && field.declaration &&
                 field.initializer)
               roots.emplace_back(field.declaration, initializer.arguments);
+    checkInitializers(constructor.body, roots, owner);
     SemanticSourceDebugInstance instance;
     if (constructor.body.sourceDebug.tables &&
         constructor.body.sourceDebug.tables->sourceFacts().instance.concrete) {
@@ -793,15 +665,10 @@ verifyHirSourceDebug(const SemanticModel &semantics,
           .types = constructor.typeArguments,
           .values = constructor.valueArguments};
       if (const auto *owner = findClass(constructor.owner)) {
-        if (constructor.ownerType.kind != SemanticType::Class ||
-            constructor.ownerType.classId != owner->type.classId)
-          reject("HIR source constructor has a foreign callable owner");
-        instance.classTypes = constructor.ownerType.arguments;
-        instance.classValues = constructor.ownerType.valueArguments;
+        instance.classTypes = owner->typeArguments;
+        instance.classValues = owner->valueArguments;
       }
     }
-    checkInitializers(constructor.body, roots, owner, false,
-                      constructor.generatedDefault ? nullptr : &instance);
     check(constructor.body, SourceDebugBodyKind::Constructor,
           constructor.source,
           !constructor.generatedDefault && constructor.source &&
@@ -819,11 +686,8 @@ verifyHirSourceDebug(const SemanticModel &semantics,
           .kind = static_cast<std::uint8_t>(InstanceAnalysisKind::Destructor),
           .declaration = owner ? owner->declaration : 0};
       if (owner) {
-        if (destructor.ownerType.kind != SemanticType::Class ||
-            destructor.ownerType.classId != owner->type.classId)
-          reject("HIR source destructor has a foreign callable owner");
-        instance.classTypes = destructor.ownerType.arguments;
-        instance.classValues = destructor.ownerType.valueArguments;
+        instance.classTypes = owner->typeArguments;
+        instance.classValues = owner->valueArguments;
       }
     }
     check(destructor.body, SourceDebugBodyKind::Destructor, destructor.source,
@@ -882,33 +746,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   }
   const auto verifyConcreteBindings = [&](const HirBody &body,
                                           const std::vector<HirValueId>
-                                              &initializerValues = {},
-                                          const HirConstructorInstance *constructor = nullptr) {
-    const auto hasContentsSource = [](const auto &dependencies) {
-      return std::any_of(dependencies.begin(), dependencies.end(),
-                         [](const auto &dependency) {
-                           return dependency.referenceContents.has_value();
-                         });
-    };
-    // Staged schema only: no source producer publishes these facts yet. Keep
-    // them fail-closed until MIR has the checked opening/permission replay;
-    // silently dropping a contents source would turn it into an empty place.
-    bool pendingContents = std::any_of(body.loans.begin(), body.loans.end(),
-        [&](const HirLoan &loan) {
-          return loan.referenceContents || loan.contentsOpening ||
-                 hasContentsSource(loan.additionalDependencies);
-        });
-    for (const auto &value : body.values)
-      pendingContents |= value.referenceContentsLoan != 0 ||
-          (value.borrowDependencies && hasContentsSource(value.borrowDependencies->dependencies)) ||
-          hasContentsSource(value.captureBorrowDependencies);
-    if (constructor)
-      for (const auto &initializer : constructor->initializers)
-        pendingContents |= initializer.completeBorrow &&
-            hasContentsSource(initializer.completeBorrow->dependencies);
-    if (pendingContents)
-      result.errors.emplace_back(
-          "HIR reference contents require checked opening replay before publication");
+                                              &initializerValues = {}) {
     std::unordered_set<HirValueId> expandedCalls;
     std::unordered_set<HirValueId> expandedInputs;
     std::unordered_set<HirValueId> expandedElements;
@@ -925,7 +763,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
              copy.programConstantSubstitution ==
                  source.programConstantSubstitution &&
              copy.borrowDependencies == source.borrowDependencies &&
-             copy.referenceContentsLoan == source.referenceContentsLoan &&
              copy.borrowPlace == source.borrowPlace &&
              copy.borrowOrigin == source.borrowOrigin &&
              copy.borrowArgument == source.borrowArgument &&
@@ -936,64 +773,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
              !copy.functionTarget && !copy.constructorTarget &&
              !copy.lambdaTarget && !copy.nativeCalleeType && !copy.callPlan &&
              !copy.packElement;
-    };
-    const auto appliedFoldSignatureMatches = [](
-        const HirFunctionInstance &target, const HirValue &call,
-        const std::vector<SemanticType> &parameters,
-        const SemanticType &argument) {
-      const auto &application = call.lifetimeApplication;
-      const auto &contract = target.lifetimeContract;
-      if (!contract.valid() || !application.complete ||
-          application.callableSignature ||
-          application.bindings.size() != contract.parameters.size() ||
-          target.parameterTypes.size() != parameters.size() ||
-          target.typeArguments.size() != 1 ||
-          call.callableArguments.size() != target.callableParameters.size())
-        return false;
-      for (std::size_t index = 0; index < target.callableParameters.size(); ++index)
-        if (call.callableArguments[index].parameterIndex !=
-                target.callableParameters[index].parameterIndex ||
-            call.callableArguments[index].boundary !=
-                target.callableParameters[index].boundary)
-          return false;
-      for (const auto parameter : contract.parameters)
-        if (std::count_if(application.bindings.begin(),
-                          application.bindings.end(), [&](const auto binding) {
-                            return binding.first == parameter &&
-                                   binding.second.specified();
-                          }) != 1)
-          return false;
-      std::vector<Lifetime> lifted;
-      for (const auto &parameter : target.liftedLifetimes) {
-        const auto region = Lifetime::parameter(parameter.id);
-        if (!parameter.lifetime || parameter.pack || parameter.value ||
-            !region.specified() ||
-            std::find(contract.parameters.begin(), contract.parameters.end(), region) ==
-                contract.parameters.end() ||
-            std::find(lifted.begin(), lifted.end(), region) != lifted.end())
-          return false;
-        lifted.push_back(region);
-      }
-      // The evaluated source lane retains its original regions. Match only
-      // the target's inventoried generic-region recipe here; a readonly
-      // reborrow may use shorter applied regions in the formal signature.
-      if (!matchUniversalTypeLifetimes(target.typeArguments.front(), argument, lifted) ||
-          target.parameterTypes.empty() ||
-          target.parameterTypes.back().kind != SemanticType::Reference ||
-          target.parameterTypes.back().arguments.size() != 1 ||
-          !equivalentLifetimeTypes(target.parameterTypes.back().arguments.front(),
-                                   target.typeArguments.front()))
-        return false;
-      // The selected lane uses this invocation's applied signature. The
-      // concrete target retains its universal declaration regions; MIR
-      // independently proves this exact application's argument obligations.
-      for (std::size_t index = 0; index < parameters.size(); ++index) {
-        const auto applied = substituteTypeLifetimes(
-            target.parameterTypes[index], application.bindings);
-        if (!applied || !equivalentLifetimeTypes(*applied, parameters[index]))
-          return false;
-      }
-      return true;
     };
     for (const auto &fold : body.values) {
       if (fold.kind != HirValueKind::PackFold)
@@ -1041,8 +820,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             element.parameterTypes.size() == fold.packFoldArgument + 1 &&
             target->declaration == fold.packFoldFunction && !target->owner &&
             target->returnType == SemanticType::Void &&
-            appliedFoldSignatureMatches(*target, *call, element.parameterTypes,
-                                        referent) &&
+            target->parameterTypes == element.parameterTypes &&
+            target->typeArguments == std::vector<SemanticType>{referent} &&
             target->valueArguments.empty() &&
             call->kind == HirValueKind::Call && call->source == pattern &&
             call->info == fold.info && call->dispatch == CallDispatch::Static &&
@@ -1099,10 +878,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                  (element.elementType.kind == SemanticType::Reference &&
                   element.elementType.referenceAccess ==
                       AccessMode::Mutable)) &&
-                // The signature check proved this applied pointee from the
-                // exact target recipe. MIR proves the actual source lane's
-                // reference conversion without retagging its regions.
-                parameter.arguments.size() == 1 &&
+                parameter.arguments == std::vector<SemanticType>{referent} &&
                 input.kind == (parameter.referenceAccess == AccessMode::Mutable
                                    ? HirCallInputKind::MutableBorrow
                                    : HirCallInputKind::ReadBorrow) &&
@@ -1115,82 +891,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             "HIR fold lost its exact ordered call, named input or concrete "
             "pack-element projection");
     }
-    if (constructor)
-      for (const auto &initializer : constructor->initializers) {
-        if (initializer.kind != ConstructorInitializerTargetKind::Base || !initializer.source)
-          continue;
-        std::size_t input = 0;
-        bool exact = true;
-        for (const auto &written : initializer.source->arguments) {
-          const auto *pack = written ? body.valueForSource(*written) : nullptr;
-          if (!pack || pack->kind != HirValueKind::PackExpansion) {
-            if (input >= initializer.explicitArgumentCount) exact = false;
-            ++input;
-            continue;
-          }
-          const HirBinding *binding = nullptr;
-          for (const auto &candidate : body.bindings)
-            if (candidate.info.symbol == pack->symbol) {
-              if (binding) exact = false;
-              binding = &candidate;
-            }
-          const std::array<ConcreteFormalRoot, 1> roots{{
-              {.binding = binding ? binding->id : 0, .type = pack->info.type}}};
-          const std::array<SemanticType, 1> signature{pack->info.type};
-          const auto leaves = deriveConcreteFormalInputs(roots, signature);
-          if (!binding || !binding->parameter || !binding->parameter->pack ||
-              binding->info.type != pack->info.type || !pack->operands.empty() ||
-              !leaves || leaves->size() != pack->packExpansionElements.size()) {
-            exact = false;
-            break;
-          }
-          HirValueId sharedRoot = 0;
-          for (const auto &leaf : *leaves) {
-            if (input >= initializer.explicitArgumentCount || input >= initializer.arguments.size()) {
-              exact = false;
-              break;
-            }
-            const auto *value = body.findValue(initializer.arguments[input++]);
-            auto expected = leaf.type;
-            for (auto step = leaf.bindingPrefix.rbegin(); step != leaf.bindingPrefix.rend(); ++step) {
-              if (!value || step->kind != PlaceProjectionKind::ConstantIndex ||
-                  value->kind != HirValueKind::PackElement || value->packElement != step->index ||
-                  value->symbol != pack->symbol || value->source || value->operands.size() != 1 ||
-                  value->info.type != expected || value->info.category != ValueCategory::Place ||
-                  value->info.access != AccessMode::ReadOnly || value->place || value->ownership ||
-                  value->unsafeOperation != UnsafeOperationKind::None || !value->definedFailure.empty() ||
-                  value->functionTarget || value->constructorTarget || value->lambdaTarget || value->callPlan ||
-                  !value->sequencedInputs.empty() || !expandedElements.insert(value->id).second) {
-                exact = false;
-                break;
-              }
-              const auto *parent = body.findValue(value->operands.front());
-              if (!parent || parent->info.type.kind != SemanticType::TypePack ||
-                  !parent->info.type.concretePack || step->index >= parent->info.type.arguments.size() ||
-                  parent->info.type.arguments[step->index] != expected) {
-                exact = false;
-                break;
-              }
-              value = parent;
-              expected = parent->info.type;
-            }
-            if (!exact || !value || value->kind != HirValueKind::Variable || value->source ||
-                value->symbol != pack->symbol || value->info.type != binding->info.type ||
-                value->info.category != ValueCategory::Place || value->info.access != AccessMode::ReadOnly ||
-                value->info.traits != binding->info.traits || !value->operands.empty() ||
-                value->place || value->ownership || value->functionTarget || value->constructorTarget ||
-                value->unsafeOperation != UnsafeOperationKind::None || !value->definedFailure.empty() ||
-                value->lambdaTarget || value->callPlan || !value->sequencedInputs.empty() ||
-                (sharedRoot && sharedRoot != value->id)) {
-              exact = false;
-              break;
-            }
-            sharedRoot = value->id;
-          }
-        }
-        if (!exact || input != initializer.explicitArgumentCount)
-          result.errors.emplace_back("HIR Base pack inputs lost their exact grouped binding or index sequence");
-      }
     for (const auto &value : body.values)
       if ((value.kind == HirValueKind::PackElement) !=
               value.packElement.has_value() ||
@@ -1319,140 +1019,11 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   for (const auto &instance : program.functionInstances())
     verifyConcreteBindings(instance.body);
   for (const auto &instance : program.constructorInstances())
-    verifyConcreteBindings(instance.body, instance.initializerValues, &instance);
+    verifyConcreteBindings(instance.body, instance.initializerValues);
   for (const auto &instance : program.destructorInstances())
     verifyConcreteBindings(instance.body);
   for (const auto &instance : program.lambdaInstances())
     verifyConcreteBindings(instance.body);
-  const auto bindConstructionArguments =
-      [&](GenericSubstitution &substitution,
-          const std::vector<GenericParameterInfo> &parameters,
-          const std::vector<SemanticType> &types,
-          const std::vector<CompileTimeValue> &values,
-          const std::vector<Lifetime> &lifetimes) {
-        std::size_t typeIndex = 0, valueIndex = 0, lifetimeIndex = 0;
-        for (const auto &parameter : parameters) {
-          if (parameter.lifetime) {
-            if (lifetimeIndex >= lifetimes.size()) {
-              result.errors.emplace_back("construction lifetime arguments are incomplete");
-              continue;
-            }
-            const auto argument = lifetimes[lifetimeIndex++];
-            if (!argument.specified())
-              result.errors.emplace_back("construction lifetime argument is unspecified");
-            else if (const auto [found, inserted] =
-                         substitution.lifetimes.emplace(parameter.id, argument);
-                     !inserted && found->second != argument)
-              result.errors.emplace_back("construction lifetime arguments conflict");
-          } else if (!parameter.typeArgumentPath.empty()) {
-            if (auto type = projectGenericTypeArgument(
-                    types, parameter.typeArgumentPath, parameter.id,
-                    parameter.pack))
-              if (const auto [found, inserted] =
-                      substitution.types.emplace(parameter.id, *type);
-                  !inserted && found->second != *type)
-                result.errors.emplace_back(
-                    "construction type arguments conflict");
-          } else if (parameter.pack) {
-            if (typeIndex <= types.size()) {
-              std::vector<SemanticType> elements(types.begin() + typeIndex,
-                                                 types.end());
-              const auto pack = SemanticType::concreteTypePack(
-                  parameter.id, std::move(elements));
-              if (const auto [found, inserted] =
-                      substitution.types.emplace(parameter.id, pack);
-                  !inserted && found->second != pack)
-                result.errors.emplace_back(
-                    "construction pack arguments conflict");
-              typeIndex = types.size();
-            }
-          } else if (parameter.value) {
-            if (valueIndex < values.size()) {
-              const auto &argument = values[valueIndex++];
-              if (const auto [found, inserted] =
-                      substitution.values.emplace(parameter.id, argument);
-                  !inserted && found->second != argument)
-                result.errors.emplace_back(
-                    "construction value arguments conflict");
-            }
-          } else if (typeIndex < types.size()) {
-            const auto &argument = types[typeIndex++];
-            if (const auto [found, inserted] =
-                    substitution.types.emplace(parameter.id, argument);
-                !inserted && found->second != argument)
-              result.errors.emplace_back(
-                  "construction type arguments conflict");
-          }
-        }
-        if (lifetimeIndex != lifetimes.size())
-          result.errors.emplace_back("construction lifetime arguments exceed their declaration");
-      };
-  const auto declaredConstructionLifetimes = [&](const auto &parameters,
-                                                  const LifetimeSignatureContract &contract) {
-    std::vector<Lifetime> lifetimes;
-    for (const auto &parameter : parameters)
-      if (parameter.lifetime) {
-        const auto region = Lifetime::parameter(parameter.id);
-        if (std::find(contract.parameters.begin(), contract.parameters.end(), region) ==
-            contract.parameters.end())
-          result.errors.emplace_back("construction context lacks its callable lifetime binder");
-        lifetimes.push_back(region);
-      }
-    return lifetimes;
-  };
-  const auto constructionClassContext = [&](HirClassInstanceId identity,
-                                             const SemanticType *callableOwner = nullptr) {
-    GenericSubstitution substitution;
-    const auto *instance =
-        identity != 0 && identity <= program.classInstances().size() &&
-                program.classInstances()[identity - 1].id == identity
-            ? &program.classInstances()[identity - 1]
-            : nullptr;
-    const auto *declaration =
-        instance ? semantics.findClassType(instance->declaration) : nullptr;
-    if (!declaration)
-      return substitution;
-    if (callableOwner && callableOwner->kind == SemanticType::Unknown &&
-        (!instance->lifetimeContract.parameters.empty() || !instance->liftedLifetimes.empty())) {
-      result.errors.emplace_back("construction context lacks its callable owner lifetime scope");
-      return substitution;
-    }
-    const SemanticType &ownerType = callableOwner && callableOwner->kind != SemanticType::Unknown
-        ? *callableOwner : instance->type;
-    if (!matchUniversalTypeLifetimes(instance->type, ownerType,
-                                    instance->lifetimeContract.parameters)) {
-      result.errors.emplace_back("construction context lost its exact callable owner type");
-      return substitution;
-    }
-    const auto *publicDeclaration = semantics.findPublicClassType(instance->declaration);
-    if (!publicDeclaration) {
-      result.errors.emplace_back("construction context lacks its public class arguments");
-      return substitution;
-    }
-    bindConstructionArguments(substitution, publicDeclaration->genericParameters,
-                              ownerType.arguments, ownerType.valueArguments,
-                              ownerType.lifetimeArguments);
-    if (!declaration->genericArgumentPatterns.empty()) {
-      GenericSubstitution valuesOnly;
-      valuesOnly.values = substitution.values;
-      valuesOnly.lifetimes = substitution.lifetimes;
-      std::vector<SemanticType> patterns;
-      for (const auto &pattern : declaration->genericArgumentPatterns)
-        patterns.push_back(substituteHirSemanticType(pattern, valuesOnly, &semantics));
-      const auto matched = deriveGenericArgumentPatternSubstitution(
-          patterns, ownerType.arguments,
-          genericParameterIdentities(publicDeclaration->genericParameters),
-          genericParameterIdentities(declaration->genericArgumentPatternLifetimes),
-          substitution);
-      if (!matched) {
-        result.errors.emplace_back("construction context lost its exact projected lifetime arguments");
-        substitution.valid = false;
-      } else {
-        substitution = *matched;
-      }
-    }
-    return substitution;
-  };
   for (const auto &instance : program.classInstances()) {
     verifyConcreteBindings(instance.fieldInitializers);
     verifyConcreteBindings(instance.staticFieldInitializers);
@@ -1463,48 +1034,57 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           "HIR class alias inventory differs from semantics");
       continue;
     }
-    if (owner->declaration) {
-      const auto *lifecycle = semantics.findClassLifecycle(*owner->declaration);
-      if (!lifecycle) {
-        result.errors.emplace_back("HIR class lacks its structural constructor policies");
-      } else {
-        for (const auto kind : {ConstructorKind::Copy, ConstructorKind::Move}) {
-          const auto &policy = kind == ConstructorKind::Copy
-              ? lifecycle->declaredCopyConstructor : lifecycle->declaredMoveConstructor;
-          const auto status = kind == ConstructorKind::Copy
-              ? instance.copyConstructor : instance.moveConstructor;
-          const bool available = kind == ConstructorKind::Copy
-              ? instance.traits.copyable : instance.traits.movable;
-          const bool defaulted = policy && policy->declaration && policy->declaration->specifier() &&
-              policy->declaration->specifier()->kind == SpecialMemberSpecifierKind::Defaulted;
-          const auto expected = defaulted && available ? SpecialMemberStatus::Generated
-                                                      : SpecialMemberStatus::Deleted;
-          if (policy && status != expected)
-            result.errors.emplace_back("HIR class changes its selected structural constructor policy");
-          if (defaulted && (policy->kind != kind ||
-               !hirStructuralPolicyMatches(semantics, *owner, *policy)))
-            result.errors.emplace_back("HIR defaulted constructor policy changes its structural lifetime contract");
-        }
+    GenericSubstitution substitution;
+    std::size_t typeIndex = 0, valueIndex = 0;
+    for (const auto &parameter : owner->genericParameters) {
+      if (!parameter.typeArgumentPath.empty()) {
+        if (auto type = projectGenericTypeArgument(
+                instance.typeArguments, parameter.typeArgumentPath,
+                parameter.id, parameter.pack))
+          substitution.types.emplace(parameter.id, std::move(*type));
+      } else if (parameter.value) {
+        if (valueIndex < instance.valueArguments.size())
+          substitution.values.emplace(parameter.id,
+                                      instance.valueArguments[valueIndex++]);
+      } else if (parameter.pack) {
+        std::vector<SemanticType> elements(
+            instance.typeArguments.begin() +
+                static_cast<std::ptrdiff_t>(typeIndex),
+            instance.typeArguments.end());
+        substitution.types.emplace(
+            parameter.id,
+            SemanticType::concreteTypePack(parameter.id, std::move(elements)));
+        typeIndex = instance.typeArguments.size();
+      } else if (typeIndex < instance.typeArguments.size()) {
+        substitution.types.emplace(parameter.id,
+                                   instance.typeArguments[typeIndex++]);
       }
     }
-    // Aliases and dispatch views use the same exact selected owner recipe as
-    // construction contexts, including compact lifetime and scoped callable
-    // arguments. Raw projected type leaves are not an independent authority.
-    const auto substitution = constructionClassContext(instance.id);
-    bool exactBases = instance.bases.size() == owner->bases.size();
-    for (std::size_t index = 0; exactBases && index < instance.bases.size(); ++index) {
-      const auto &base = instance.bases[index];
-      const auto &declared = owner->bases[index];
-      const auto actual = substituteHirSemanticType(declared.type, substitution, &semantics);
-      const auto selected = classHierarchyLifetimeView(program, base.instance, actual);
-      exactBases = selected && base.interface == declared.interface &&
-                   equivalentLifetimeTypes(base.type, actual);
-    }
-    if (!exactBases)
-      result.errors.emplace_back("HIR base inventory differs from its exact semantic owner view");
     if (instance.virtualDispatch.size() != owner->virtualDispatch.size())
       result.errors.emplace_back(
           "HIR virtual dispatch inventory differs from semantic selection");
+    const auto exactDispatchPath = [&](const auto &path,
+                                       HirClassInstanceId endpoint) {
+      auto current = instance.id;
+      std::unordered_set<HirClassInstanceId> seen{current};
+      for (const auto next : path) {
+        if (!current || current > program.classInstances().size() ||
+            !seen.insert(next).second)
+          return false;
+        const auto &bases = program.classInstances()[current - 1].bases;
+        const auto found =
+            std::find_if(bases.begin(), bases.end(), [&](const auto &base) {
+              return base.instance == next;
+            });
+        if (found == bases.end() || !next ||
+            next > program.classInstances().size() ||
+            program.classInstances()[next - 1].type != found->type)
+          return false;
+        current = next;
+      }
+      return current == endpoint && endpoint != 0 &&
+             endpoint <= program.classInstances().size();
+    };
     std::unordered_set<HirFunctionInstanceId> dispatchRoots;
     for (std::size_t index = 0; index < instance.virtualDispatch.size();
          ++index) {
@@ -1514,30 +1094,20 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const auto *selected = index < owner->virtualDispatch.size()
                                  ? &owner->virtualDispatch[index]
                                  : nullptr;
-      const auto rootView = classHierarchyPathView(
-          program, instance.id, instance.type, row.rootPath);
-      const auto targetView = classHierarchyPathView(
-          program, instance.id, instance.type, row.targetPath);
-      const auto rootSignature = rootView && root
-          ? hierarchyMemberSignature(*rootView, *root) : std::nullopt;
-      const auto targetSignature = targetView && target
-          ? hierarchyMemberSignature(*targetView, *target) : std::nullopt;
       if (!selected || !root || !target ||
           !dispatchRoots.insert(row.root).second ||
           root->declaration != selected->root ||
           target->declaration != selected->target ||
           root->owner != row.rootOwner || target->owner != row.targetOwner ||
-          !rootView || rootView->instance->id != row.rootOwner ||
-          !targetView || targetView->instance->id != row.targetOwner ||
-          targetView->type !=
-              substituteHirSemanticType(selected->targetOwner, substitution,
+          !exactDispatchPath(row.rootPath, row.rootOwner) ||
+          !exactDispatchPath(row.targetPath, row.targetOwner) ||
+          program.classInstances()[row.targetOwner - 1].type !=
+              substituteSemanticType(selected->targetOwner, substitution,
                                      &semantics) ||
           !root->virtualMethod || !target->virtualMethod ||
           root->staticMember || target->staticMember ||
-          !root->source || !target->source ||
-          root->source->receiverMutability() != target->source->receiverMutability() ||
-          !rootSignature || !targetSignature ||
-          !equivalentLifetimeTypes(*rootSignature, *targetSignature) ||
+          root->parameterTypes != target->parameterTypes ||
+          root->returnType != target->returnType ||
           (target->pureVirtual && !instance.abstract) ||
           (!target->pureVirtual &&
            (!target->source || !target->source->body())))
@@ -1553,7 +1123,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           alias.declaration != primary->id || alias.declaration == 0 ||
           containsUnresolvedGeneric(alias.type) ||
           alias.type !=
-              substituteHirSemanticType(primary->type, substitution, &semantics))
+              substituteSemanticType(primary->type, substitution, &semantics))
         result.errors.emplace_back(
             "HIR class alias differs from its exact semantic owner/type");
     }
@@ -1661,47 +1231,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       if (!value.nativeCalleeType)
         continue;
       const auto &signature = *value.nativeCalleeType;
-      const auto &application = value.lifetimeApplication;
-      const auto *callable = application.callableSignature
-                                 ? &*application.callableSignature : nullptr;
-      std::optional<SemanticType> appliedResult;
-      std::vector<SemanticType> parameters;
-      bool appliedSignature = callable && application.complete &&
-          callable->signature.hasNativeFunctionShape() && callable->contract.valid() &&
-          application.bindings.size() == callable->contract.parameters.size();
-      if (appliedSignature) {
-        // The callee value keeps its universal native carrier type; only this
-        // invocation's argument/result types use the checked application.
-        // MIR independently rederives the callable contract and proves its
-        // obligations before admitting a native operation.
-        const auto carrier = substituteTypeLifetimes(
-            callable->signature, callable->signatureBindings);
-        appliedSignature = carrier && equivalentLifetimeTypes(*carrier, signature);
-        for (const auto parameter : callable->contract.parameters) {
-          const auto count = std::count_if(application.bindings.begin(), application.bindings.end(),
-              [&](const auto binding) { return binding.first == parameter && binding.second.specified(); });
-          appliedSignature &= count == 1;
-        }
-        for (const auto fixed : callable->signatureBindings)
-          appliedSignature &= std::find(application.bindings.begin(), application.bindings.end(), fixed) !=
-                              application.bindings.end();
-        for (const auto quantified : callable->signature.quantifiedLifetimes)
-          appliedSignature &= std::any_of(application.bindings.begin(), application.bindings.end(),
-              [&](const auto binding) {
-                return binding.first == Lifetime::parameter(quantified) &&
-                       binding.second.kind == Lifetime::Kind::Inference;
-              });
-        appliedResult = substituteTypeLifetimes(callable->signature.arguments.front(), application.bindings);
-        appliedSignature &= appliedResult.has_value();
-        for (const auto &parameter : callable->signature.nativeFunctionParameterTypes()) {
-          const auto actual = substituteTypeLifetimes(parameter, application.bindings);
-          if (!actual) {
-            appliedSignature = false;
-            break;
-          }
-          SemanticType::appendExpandedArgument(parameters, *actual);
-        }
-      }
+      const auto parameters = signature.nativeFunctionParameterTypes();
       const auto *callee =
           value.receiver ? body.findValue(*value.receiver) : nullptr;
       const bool expandedArguments =
@@ -1721,16 +1251,14 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           value.callPlan->receiver->value == *value.receiver &&
           value.callPlan->receiver->type == signature &&
           value.callPlan->receiver->kind == HirCallInputKind::Value &&
-          value.callPlan->arguments.size() == parameters.size() &&
-          std::equal(parameters.begin(), parameters.end(), value.callPlan->arguments.begin(),
-              [](const SemanticType &type, const auto &input) { return input.parameterType == type; });
+          value.callPlan->arguments.size() == parameters.size();
       if (value.kind != HirValueKind::Call ||
           !signature.hasNativeFunctionShape() || !callee ||
           callee->info.type != signature || value.functionTarget ||
           value.constructorTarget || value.lambdaTarget ||
           value.nativeCallbackAdapter || (!orderedPlan && !expandedArguments) ||
           value.unsafeOperation != UnsafeOperationKind::ForeignPointerCall ||
-          !appliedSignature || !appliedResult || value.info.type != *appliedResult ||
+          value.info.type != *signature.nativeFunctionReturnType() ||
           value.parameterTypes.size() != parameters.size() ||
           !std::equal(parameters.begin(), parameters.end(),
                       value.parameterTypes.begin())) {
@@ -2030,11 +1558,75 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         constructionContexts.emplace(&body, substitution);
     if (inserted)
       constructionBodies.push_back(&body);
-    else if (!equivalentGenericSubstitutions(found->second, substitution)) {
+    else if (found->second.types != substitution.types ||
+             found->second.values != substitution.values) {
       ambiguousConstructionContexts.insert(&body);
       result.errors.emplace_back(
           "construction body has ambiguous instance arguments");
     }
+  };
+  const auto bindConstructionArguments =
+      [&](GenericSubstitution &substitution,
+          const std::vector<GenericParameterInfo> &parameters,
+          const std::vector<SemanticType> &types,
+          const std::vector<CompileTimeValue> &values) {
+        std::size_t typeIndex = 0, valueIndex = 0;
+        for (const auto &parameter : parameters) {
+          if (!parameter.typeArgumentPath.empty()) {
+            if (auto type = projectGenericTypeArgument(
+                    types, parameter.typeArgumentPath, parameter.id,
+                    parameter.pack))
+              if (const auto [found, inserted] =
+                      substitution.types.emplace(parameter.id, *type);
+                  !inserted && found->second != *type)
+                result.errors.emplace_back(
+                    "construction type arguments conflict");
+          } else if (parameter.pack) {
+            if (typeIndex <= types.size()) {
+              std::vector<SemanticType> elements(types.begin() + typeIndex,
+                                                 types.end());
+              const auto pack = SemanticType::concreteTypePack(
+                  parameter.id, std::move(elements));
+              if (const auto [found, inserted] =
+                      substitution.types.emplace(parameter.id, pack);
+                  !inserted && found->second != pack)
+                result.errors.emplace_back(
+                    "construction pack arguments conflict");
+              typeIndex = types.size();
+            }
+          } else if (parameter.value) {
+            if (valueIndex < values.size()) {
+              const auto &argument = values[valueIndex++];
+              if (const auto [found, inserted] =
+                      substitution.values.emplace(parameter.id, argument);
+                  !inserted && found->second != argument)
+                result.errors.emplace_back(
+                    "construction value arguments conflict");
+            }
+          } else if (typeIndex < types.size()) {
+            const auto &argument = types[typeIndex++];
+            if (const auto [found, inserted] =
+                    substitution.types.emplace(parameter.id, argument);
+                !inserted && found->second != argument)
+              result.errors.emplace_back(
+                  "construction type arguments conflict");
+          }
+        }
+      };
+  const auto constructionClassContext = [&](HirClassInstanceId identity) {
+    GenericSubstitution substitution;
+    const auto *instance =
+        identity != 0 && identity <= program.classInstances().size() &&
+                program.classInstances()[identity - 1].id == identity
+            ? &program.classInstances()[identity - 1]
+            : nullptr;
+    const auto *declaration =
+        instance ? semantics.findClassType(instance->declaration) : nullptr;
+    if (declaration)
+      bindConstructionArguments(substitution, declaration->genericParameters,
+                                instance->typeArguments,
+                                instance->valueArguments);
+    return substitution;
   };
   addConstructionContext(program.module(), {});
   for (const auto &storage : program.threadLocalStorage())
@@ -2045,28 +1637,26 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     addConstructionContext(owner.staticFieldInitializers, substitution);
   }
   for (const auto &function : program.functionInstances()) {
-    auto substitution = constructionClassContext(function.owner.value_or(0), &function.ownerType);
+    auto substitution = constructionClassContext(function.owner.value_or(0));
     if (const auto *declaration = semantics.findFunction(function.declaration))
       bindConstructionArguments(substitution, declaration->genericParameters,
-                                function.typeArguments, function.valueArguments,
-                                declaredConstructionLifetimes(declaration->genericParameters,
-                                                               function.lifetimeContract));
+                                function.typeArguments,
+                                function.valueArguments);
     addConstructionContext(function.body, std::move(substitution));
   }
   for (const auto &constructor : program.constructorInstances()) {
-    auto substitution = constructionClassContext(constructor.owner, &constructor.ownerType);
+    auto substitution = constructionClassContext(constructor.owner);
     if (const auto *declaration =
             constructor.source ? semantics.findConstructor(*constructor.source)
                                : nullptr)
       bindConstructionArguments(substitution, declaration->genericParameters,
-                                constructor.typeArguments, constructor.valueArguments,
-                                declaredConstructionLifetimes(declaration->genericParameters,
-                                                               constructor.lifetimeContract));
+                                constructor.typeArguments,
+                                constructor.valueArguments);
     addConstructionContext(constructor.body, std::move(substitution));
   }
   for (const auto &destructor : program.destructorInstances())
     addConstructionContext(destructor.body,
-                           constructionClassContext(destructor.owner, &destructor.ownerType));
+                           constructionClassContext(destructor.owner));
   // Establish an acyclic exact lexical creator graph before propagating
   // instance arguments. Every incoming context must agree; a target ID or
   // an inferred result type cannot supply a missing or conflicting context.
@@ -2095,18 +1685,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         return selected != nullptr && source != nullptr &&
                selected->id == source->id;
       };
-      const auto environment = lambda ? matchUniversalTypeLifetimes(
-          lambda->type, value.info.type, lambda->environmentLifetimes) : std::nullopt;
-      if (!lambda || !sameLambda(lambda->source) || !environment ||
-          !validLambdaEnvironmentContract(lambda->environmentContract, lambda->environmentLifetimes) ||
-          !composeLambdaLifetimeContract(lambda->environmentContract, lambda->lifetimeContract) ||
-          !value.lifetimeApplication.complete || value.lifetimeApplication.callableSignature ||
-          value.lifetimeApplication.bindings.size() != environment->size() ||
-          std::any_of(environment->begin(), environment->end(), [&](const auto binding) {
-            return std::find(value.lifetimeApplication.bindings.begin(),
-                             value.lifetimeApplication.bindings.end(), binding) ==
-                   value.lifetimeApplication.bindings.end();
-          })) {
+      if (!lambda || !sameLambda(lambda->source) ||
+          lambda->type != value.info.type) {
         result.errors.emplace_back(
             "construction context has no exact lambda creator");
         continue;
@@ -2236,17 +1816,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           construction != nullptr
               ? semantics.resolveExactClassSpecialization(
                     reduceComputedTypeProjections(
-                        substituteHirSemanticType(construction->constructedType,
+                        substituteSemanticType(construction->constructedType,
                                                substitution, &semantics),
                         semantics))
               : SemanticType::Unknown;
-      if (construction && (construction->kind == ConstructorKind::Copy ||
-                           construction->kind == ConstructorKind::Move)) {
-        if (value.constructorKind != construction->kind || value.constructorTarget ||
-            value.lifetimeApplication != HirLifetimeApplication{} ||
-            !value.lifetimeArguments.empty())
-          result.errors.emplace_back("HIR structural transfer retains an arbitrary constructor invocation");
-      }
       const auto *type = construction != nullptr &&
                                  construction->generatedDefault &&
                                  construction->kind == ConstructorKind::Ordinary
@@ -2264,8 +1837,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         const HirClassInstance *owner = nullptr;
         bool unique = true;
         for (const auto &candidate : program.classInstances()) {
-          if (!matchUniversalTypeLifetimes(candidate.type, value.info.type,
-                                            candidate.lifetimeContract.parameters))
+          if (candidate.type != value.info.type)
             continue;
           if (owner != nullptr)
             unique = false;
@@ -2274,9 +1846,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         const bool exactOwner =
             owner != nullptr && unique &&
             !containsUnresolvedGeneric(selectedType) &&
-            matchUniversalTypeLifetimes(owner->type, selectedType,
-                                        owner->lifetimeContract.parameters) &&
-            sameFamilySelection(selectedType, value.info.type, semantics);
+            sameFamilySelection(selectedType, owner->type, semantics);
         if (!exactOwner ||
             owner->defaultConstructor != SpecialMemberStatus::Generated ||
             owner->generatedDefaultRequiresSchedule ||
@@ -2311,8 +1881,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const bool inPlace =
           value.intrinsic == IntrinsicKind::ObjectConstruct ||
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
-      bool exactResult = owner != nullptr &&
-                         value.info.type == selectedType &&
+      bool exactResult = owner != nullptr && value.info.type == owner->type &&
                          value.intrinsic == IntrinsicKind::None;
       if (inPlace && owner != nullptr && !value.parameterTypes.empty()) {
         const auto &storage = value.parameterTypes.front();
@@ -2323,7 +1892,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         exactResult =
             value.info.type == SemanticType::Void &&
             storage.arguments.size() == 1 &&
-            storage.arguments.front() == selectedType &&
+            storage.arguments.front() == owner->type &&
             (value.intrinsic == IntrinsicKind::ObjectConstruct
                  ? storage.kind == SemanticType::RawPointer
                  : storageOwner != nullptr &&
@@ -2337,13 +1906,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       // Resolve the primary construction through this concrete instance's
       // declaration-bound arguments, including exact class specializations.
       // The selected constructor must belong to that exact resolved type.
-      const bool exactOwner =
-          owner != nullptr && !containsUnresolvedGeneric(selectedType) &&
-          matchUniversalTypeLifetimes(owner->type, selectedType,
-                                      owner->lifetimeContract.parameters) &&
-          target != nullptr &&
-          matchUniversalTypeLifetimes(target->ownerType, selectedType,
-                                      target->lifetimeContract.parameters);
+      const bool exactOwner = owner != nullptr &&
+                              !containsUnresolvedGeneric(selectedType) &&
+                              owner->type == selectedType;
       if (target == nullptr || !target->generatedDefault || owner == nullptr ||
           !exactOwner || !exactResult ||
           value.definedFailure.propagation != propagation)
@@ -2382,10 +1947,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         target->owner.has_value() || target->source == nullptr ||
         target->requiresUnsafe || target->linkage != LanguageLinkage::Gti ||
         declaration == nullptr || declaration->ownerClass != 0 ||
-        returnType == nullptr || !sameLifetimeConversionShape(target->returnType, *returnType) ||
+        returnType == nullptr || target->returnType != *returnType ||
         target->parameterTypes.size() != parameterTypes.size() ||
-        !std::equal(target->parameterTypes.begin(), target->parameterTypes.end(),
-                    parameterTypes.begin(), sameLifetimeConversionShape) ||
+        !std::equal(target->parameterTypes.begin(),
+                    target->parameterTypes.end(), parameterTypes.begin()) ||
         adapter.cThreadCallback !=
             (program.executionProfile() == ExecutionProfile::Concurrent
                  ? (target->threadConfinedCallback
@@ -2428,14 +1993,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           conversion->type != adapter->type ||
           conversion->cThreadCallback != adapter->cThreadCallback ||
           conversion->function != target->declaration ||
-          conversion->declaration != target->source ||
-          value.lifetimeApplication.callableSignature != conversion->lifetimeApplication.callableSignature ||
-          !value.lifetimeApplication.complete || !value.lifetimeApplication.callableSignature ||
-          !value.lifetimeApplication.bindings.empty() || !value.lifetimeApplication.variables.empty() ||
-          !value.lifetimeApplication.obligations.empty() || !value.lifetimeApplication.typeObligations.empty() ||
-          !value.lifetimeApplication.origins.empty() ||
-          !callableLifetimeTargetBindings(target->returnType, target->parameterTypes,
-              target->lifetimeContract, value.lifetimeApplication.callableSignature->signature)) {
+          conversion->declaration != target->source) {
         result.errors.emplace_back(
             "native callback HIR value differs from semantic conversion");
       }
@@ -2691,13 +2249,11 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           construction->kind != ConstructorKind::Ordinary ||
           (owner->traits.containsBorrowedState && !expectedDependencies) ||
           target->declaration != construction->constructor ||
-          // The instance's regions are its own canonical slots; the
-          // construction's are the use site's. Identity is the erased shape.
-          eraseTypeLifetimes(owner->type) != eraseTypeLifetimes(construction->constructedType) ||
-          eraseTypeLifetimes(value->info.type) != eraseTypeLifetimes(owner->type) ||
-          value->info.category != ValueCategory::Value ||
-          value->info.access != AccessMode::ReadOnly ||
-          value->info.traits != expectedTraits ||
+          owner->type != construction->constructedType ||
+          value->info != ExpressionInfo{.type = owner->type,
+                                        .category = ValueCategory::Value,
+                                        .access = AccessMode::ReadOnly,
+                                        .traits = expectedTraits} ||
           value->dependentTextPublication !=
               construction->dependentTextPublication ||
           value->parameterTypes != construction->parameterTypes ||
@@ -2720,7 +2276,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           (!unstagedOwnerHandle &&
            (!value->callPlan || value->callPlan->receiver ||
             value->callPlan->arguments.size() != value->operands.size()))) {
-        if (std::getenv("GTI_TRACE_SCOPED")) std::fprintf(stderr, "[ctxcons] ownerType=%d erasedOwner=%d info=%d infoTypeErased=%d params=%d paramsErased=%d origin=%d barg=%d bacc=%d bargs=%d bfields=%d bdeps=%d expDeps=%d plan=%d target=%d\n", owner->type == construction->constructedType, eraseTypeLifetimes(owner->type) == eraseTypeLifetimes(construction->constructedType), value->info == ExpressionInfo{.type = owner->type, .category = ValueCategory::Value, .access = AccessMode::ReadOnly, .traits = expectedTraits}, eraseTypeLifetimes(value->info.type) == eraseTypeLifetimes(owner->type), value->parameterTypes == construction->parameterTypes, value->parameterTypes.size() == construction->parameterTypes.size(), value->borrowOrigin == construction->borrowOrigin, value->borrowArgument == construction->borrowArgument, value->borrowAccess == construction->borrowAccess, value->borrowArguments == construction->borrowArguments, value->borrowFields == construction->borrowFields, value->borrowDependencies == expectedDependencies, expectedDependencies.has_value(), (bool)value->callPlan, target->declaration == construction->constructor); // TEMP-TRACE
         result.errors.emplace_back(
             "contextual construction HIR value differs from its semantic "
             "construction");
@@ -2952,64 +2507,27 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           (contractTarget != nullptr && contractTarget->neverReturns) ||
           value.noNormalBorrowResultProof.has_value();
       if (const auto &proof = value.noNormalBorrowResultProof; proof) {
-        const auto sameAppliedType = [&](const SemanticType &universal,
-                                         const SemanticType &actual) {
-          const auto applied = substituteTypeLifetimes(
-              universal, value.lifetimeApplication.bindings);
-          return applied && equivalentLifetimeTypes(*applied, actual);
-        };
-        const auto sameAppliedTypes = [&](const auto &universal, const auto &actual) {
-          if (universal.size() != actual.size()) return false;
-          for (std::size_t index = 0; index < universal.size(); ++index)
-            if (!sameAppliedType(universal[index], actual[index])) return false;
-          return true;
-        };
-        const auto sameApplication = [&](const SemanticLifetimeApplication &selected) {
-          return selected.bindings == value.lifetimeApplication.bindings &&
-                 selected.variables == value.lifetimeApplication.variables &&
-                 selected.obligations == value.lifetimeApplication.obligations &&
-                 selected.typeObligations == value.lifetimeApplication.typeObligations &&
-                 selected.callableSignature == value.lifetimeApplication.callableSignature &&
-                 selected.complete == value.lifetimeApplication.complete;
-        };
-        bool exactSelection = false;
-        if (const auto *selected = proof->functionCall()) {
-          exactSelection = contractTarget && !value.lambdaTarget &&
-              !contractTarget->neverReturns &&
-              value.dispatch == CallDispatch::Static &&
-              selected->function == contractTarget->declaration &&
-              selected->returnType.kind == SemanticType::Reference &&
-              sameAppliedType(contractTarget->returnType, selected->returnType) &&
-              selected->parameterTypes == value.parameterTypes &&
-              sameAppliedTypes(contractTarget->parameterTypes, selected->parameterTypes) &&
-              sameAppliedTypes(contractTarget->typeArguments, selected->typeArguments) &&
-              selected->valueArguments == contractTarget->valueArguments &&
-              selected->dispatchOwner == value.dispatchOwner &&
-              selected->noNormalBorrowResult && selected->neverReturns &&
-              sameApplication(selected->lifetimeApplication);
-        } else if (const auto *selected = proof->lambdaCall()) {
-          const auto *lambda = value.lambdaTarget
-              ? program.findLambda(*value.lambdaTarget) : nullptr;
-          exactSelection = lambda && !value.functionTarget &&
-              selected->lambda == lambda->declaration &&
-              selected->returnType.kind == SemanticType::Reference &&
-              sameAppliedType(lambda->returnType, selected->returnType) &&
-              selected->parameterTypes == value.parameterTypes &&
-              sameAppliedTypes(lambda->parameterTypes, selected->parameterTypes) &&
-              selected->capability == lambda->capability &&
-              selected->noNormalBorrowResult && selected->neverReturns &&
-              sameApplication(selected->lifetimeApplication);
-        }
+        const auto &selected = proof->call();
         if (value.kind != HirValueKind::Call ||
-            value.intrinsic != IntrinsicKind::None || !exactSelection ||
+            value.intrinsic != IntrinsicKind::None || !contractTarget ||
+            contractTarget->neverReturns ||
+            value.dispatch != CallDispatch::Static ||
             proof->source() != value.source ||
             proof->snapshot() != semantics.analysisSeal().programSnapshot ||
+            selected.function != contractTarget->declaration ||
+            selected.returnType.kind != SemanticType::Reference ||
+            selected.returnType != contractTarget->returnType ||
+            selected.parameterTypes != value.parameterTypes ||
+            selected.parameterTypes != contractTarget->parameterTypes ||
+            selected.typeArguments != contractTarget->typeArguments ||
+            selected.valueArguments != contractTarget->valueArguments ||
+            selected.dispatchOwner != value.dispatchOwner ||
+            !selected.noNormalBorrowResult || !selected.neverReturns ||
             value.borrowDependencies) {
           result.errors.emplace_back("HIR impossible normal result lost its "
                                      "exact semantic call proof");
         }
       }
-
       const bool expectedTracking =
           (value.kind == HirValueKind::Call &&
            (intrinsicContract ? intrinsicContract->tracksCaller()
@@ -3081,9 +2599,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       const FunctionInfo *declaration =
           target == nullptr ? nullptr
                             : semantics.findFunction(target->declaration);
-      const auto itemType = target ? functionItemLifetimeType(
-          target->declaration, target->returnType, target->parameterTypes,
-          target->lifetimeContract) : std::nullopt;
+      const SemanticType *returnType = value.info.type.functionItemReturnType();
+      const std::span<const SemanticType> parameters =
+          value.info.type.functionItemParameterTypes();
       if (selection == nullptr || target == nullptr || declaration == nullptr ||
           !value.operands.empty() ||
           value.info.category != ValueCategory::Value ||
@@ -3093,7 +2611,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           selection->function != target->declaration ||
           selection->declaration != target->source || target->owner ||
           target->linkage != LanguageLinkage::Gti || target->requiresUnsafe ||
-          !itemType || !equivalentLifetimeTypes(value.info.type, *itemType)) {
+          returnType == nullptr || *returnType != target->returnType ||
+          parameters.size() != target->parameterTypes.size() ||
+          !std::equal(parameters.begin(), parameters.end(),
+                      target->parameterTypes.begin())) {
         result.errors.emplace_back(
             "function-item HIR value has no exact free-function identity");
       }
@@ -3249,16 +2770,14 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           exactEntry && target != nullptr && declaration != nullptr &&
           target->source != nullptr &&
           declaration->declaration == target->source &&
-          eraseTypeLifetimes(target->returnType) ==
-              eraseTypeLifetimes(threadTaskResults[index]) &&
+          target->returnType == threadTaskResults[index] &&
           target->parameterTypes.empty() &&
           (functionItemEntry
                ? owner == nullptr &&
                      adapter.taskType.functionId == target->declaration &&
                      adapter.targetInvocation ==
                          CallableInvocationCapability::Read
-               : owner != nullptr &&
-                     eraseTypeLifetimes(owner->type) == eraseTypeLifetimes(adapter.taskType) &&
+               : owner != nullptr && owner->type == adapter.taskType &&
                      target->source->operatorName().has_value() &&
                      target->source->operatorName()->kind ==
                          OverloadedOperator::Call &&
@@ -3268,13 +2787,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
     }
     if (lambdaEntry) {
       const HirLambda *target = program.findLambda(*adapter.lambdaTarget);
-      // Task identity is the region-erased callable; its regions are proved
-      // by the spawn's lifetime application.
       exactEntry =
-          exactEntry && target != nullptr &&
-          eraseTypeLifetimes(target->type) == eraseTypeLifetimes(adapter.taskType) &&
-          eraseTypeLifetimes(target->returnType) ==
-              eraseTypeLifetimes(threadTaskResults[index]) &&
+          exactEntry && target != nullptr && target->type == adapter.taskType &&
+          target->returnType == threadTaskResults[index] &&
           target->parameterTypes.empty() &&
           adapter.targetInvocation == CallableInvocationCapability::Read;
     }
@@ -3509,14 +3024,11 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           (primaryDeferred && range != nullptr && exactConcreteTypes) ||
           (semantic != nullptr && range != nullptr && exactConcreteTypes &&
            (genericSemantic || range->strategy == semantic->strategy) &&
-           // Plan identity is structural: an anonymous iterator slot may get a
-           // fresh inference region per analysis; MIR proves the regions.
-           (genericSemantic ||
-            (eraseTypeLifetimes(range->rangeType) == eraseTypeLifetimes(semantic->rangeType) &&
-             eraseTypeLifetimes(range->iteratorType) == eraseTypeLifetimes(semantic->iteratorType) &&
-             eraseTypeLifetimes(range->sentinelType) == eraseTypeLifetimes(semantic->sentinelType) &&
-             eraseTypeLifetimes(range->elementType) == eraseTypeLifetimes(semantic->elementType) &&
-             range->arrayLength == semantic->arrayLength)) &&
+           (genericSemantic || (range->rangeType == semantic->rangeType &&
+                                range->iteratorType == semantic->iteratorType &&
+                                range->sentinelType == semantic->sentinelType &&
+                                range->elementType == semantic->elementType &&
+                                range->arrayLength == semantic->arrayLength)) &&
            range->elementAccess == semantic->elementAccess &&
            exactLoanProvenance &&
            (genericSemantic ||
@@ -3661,13 +3173,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       if (!exactSemantic || !exactStructure || !exactLoans || !exactStrategy ||
           !exactOwner || range == nullptr || !exactEndpointResult ||
           !exactElementStaging) {
-        if (std::getenv("GTI_TRACE_HIR_VALID") && semantic && range) // TEMP-TRACE
-          std::fprintf(stderr, "[range]  concrete=%d deferred=%d generic=%d strat=%d rt=%d it=%d st=%d et=%d len=%d acc=%d prov=%d fns=%d owns=%d nb=%d mat=%d\n", exactConcreteTypes, primaryDeferred, genericSemantic, range->strategy == semantic->strategy, range->rangeType == semantic->rangeType, range->iteratorType == semantic->iteratorType, range->sentinelType == semantic->sentinelType, range->elementType == semantic->elementType, range->arrayLength == semantic->arrayLength, range->elementAccess == semantic->elementAccess, exactLoanProvenance, range->beginFunction == semantic->beginFunction && range->endFunction == semantic->endFunction && range->compareFunction == semantic->compareFunction && range->dereferenceFunction == semantic->dereferenceFunction && range->incrementFunction == semantic->incrementFunction, range->ownsRangeTemporary == semantic->ownsRangeTemporary, range->nonBorrowingEndpoint == semantic->nonBorrowingEndpoint, range->materializesElementValue == semantic->materializesElementValue); // TEMP-TRACE
-        if (std::getenv("GTI_TRACE_HIR_VALID") && semantic && range) { // TEMP-TRACE
-          const auto dump = [](auto &&self, const SemanticType &t) -> std::string { std::string o = std::to_string(static_cast<int>(t.kind)) + ":" + std::to_string(t.classId) + "<" + std::to_string(static_cast<int>(t.referenceLifetime.kind)) + "." + std::to_string(t.referenceLifetime.id) + ">"; for (const auto &l : t.lifetimeArguments) o += "{" + std::to_string(static_cast<int>(l.kind)) + "." + std::to_string(l.id) + "}"; if (!t.arguments.empty()) { o += "("; for (const auto &a : t.arguments) o += self(self, a) + ","; o += ")"; } return o; }; // TEMP-TRACE
-          std::fprintf(stderr, "[range]  hir-it=%s sem-it=%s erasedEq=%d\n", dump(dump, range->iteratorType).c_str(), dump(dump, semantic->iteratorType).c_str(), eraseTypeLifetimes(range->iteratorType) == eraseTypeLifetimes(semantic->iteratorType)); } // TEMP-TRACE
-        if (std::getenv("GTI_TRACE_HIR_VALID")) // TEMP-TRACE
-          std::fprintf(stderr, "[range] semantic=%d structure=%d loans=%d strategy=%d owner=%d range=%d endpoint=%d staging=%d\n", exactSemantic, exactStructure, exactLoans, exactStrategy, exactOwner, range != nullptr, exactEndpointResult, exactElementStaging); // TEMP-TRACE
         result.errors.emplace_back(
             "range HIR plan differs from semantic owner/loan/protocol facts");
       }
@@ -3677,9 +3182,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
   for (const auto &storage : program.threadLocalStorage())
     verifyRangeIterations(storage.initializer);
   for (const HirClassInstance &instance : program.classInstances()) {
-    const auto *declaration = semantics.findClassType(instance.declaration);
     const bool reanalyzed =
-        (declaration && declaration->hasGenericBindings()) ||
         !instance.typeArguments.empty() || !instance.valueArguments.empty();
     verifyRangeIterations(instance.fieldInitializers, reanalyzed);
     verifyRangeIterations(instance.staticFieldInitializers, reanalyzed);
@@ -3697,7 +3200,7 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         instance.body,
         function != nullptr &&
             (!function->genericParameters.empty() ||
-             (owner != nullptr && owner->hasGenericBindings())));
+             (owner != nullptr && !owner->genericParameters.empty())));
   }
   for (const HirConstructorInstance &instance :
        program.constructorInstances()) {
@@ -4376,15 +3879,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
       exactOwner(stringConstructor->owner, stringType) &&
       stringConstructor->typeArguments.empty() &&
       stringConstructor->valueArguments.empty() &&
-      stringConstructor->parameterTypes.size() == 1 &&
-      stringConstructor->parameterTypes.front() == SemanticType::StringView &&
-      // Startup text is valid for the whole program: the constructor must
-      // accept any region, as semantic startup selection requires.
-      std::all_of(stringConstructor->parameterTypes.front().lifetimeArguments.begin(),
-                  stringConstructor->parameterTypes.front().lifetimeArguments.end(),
-                  [](const Lifetime &region) {
-                    return region.kind == Lifetime::Kind::Parameter;
-                  });
+      stringConstructor->parameterTypes ==
+          std::vector<SemanticType>{SemanticType::StringView};
   if (append == nullptr || vectorConstructor == nullptr ||
       stringConstructor == nullptr || vectorType.kind != SemanticType::Class ||
       stringType.kind != SemanticType::Class || !exactAppend ||

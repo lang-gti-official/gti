@@ -408,7 +408,7 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
     const MirBody *source = findMirBody(program, promotion.body);
     MirBody replay = source == nullptr ? MirBody{} : *source;
     if (source == nullptr || promotion.place == 0 ||
-        !rewriteMirScalarPlace(replay, promotion.place, &program)) {
+        !rewriteMirScalarPlace(replay, promotion.place)) {
       addError(result, promotion.body, 0, 0,
                "MIR scalar promotion claim is not proven by its source body");
     }
@@ -428,7 +428,7 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
     const MirBody *source = findMirBody(program, cleanup.body);
     MirBody replay = source == nullptr ? MirBody{} : *source;
     if (source == nullptr || cleanup.block == 0 ||
-        !rewriteMirUnreachableBlock(replay, cleanup.block, &program)) {
+        !rewriteMirUnreachableBlock(replay, cleanup.block)) {
       addError(result, cleanup.body, cleanup.block, 0,
                "MIR unreachable-block removal is not proven by reachability "
                "and schedule facts");
@@ -645,7 +645,7 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
     }
     const MirPlace *sourcePlace = source->findPlace(promotion.place);
     const std::optional<MirScalarPromotionRewrite> rewrite =
-        rewriteMirScalarPlace(*target, promotion.place, &candidate);
+        rewriteMirScalarPlace(*target, promotion.place);
     if (sourcePlace == nullptr || !rewrite) {
       addError(result, promotion.body, 0, 0,
                "MIR scalar promotion failed during atomic mutation");
@@ -748,7 +748,7 @@ MirEditResult MirEditor::applyWithSafetySnapshot(
     MirBody *target = findMirBody(candidate, cleanup.body);
     const std::optional<MirUnreachableBlockRewrite> rewrite =
         target == nullptr ? std::nullopt
-                          : rewriteMirUnreachableBlock(*target, cleanup.block, &candidate);
+                          : rewriteMirUnreachableBlock(*target, cleanup.block);
     if (!rewrite) {
       addError(result, cleanup.body, cleanup.block, 0,
                "MIR unreachable-block removal failed during atomic mutation");

@@ -1,4 +1,3 @@
-#include "gti/lifetime_types.h"
 #include "gti/mir_constant_evaluator.h"
 #include "gti/mir_procedural.h"
 #include "gti/mir_verifier.h"
@@ -8,14 +7,12 @@
 #include <algorithm>
 
 namespace lang {
-static inline ConstantEvaluationFailure gtiTraceUnsupported(ConstantEvaluationFailure f, int line) { if (std::getenv("GTI_TRACE_CONSTEXPR_IF")) std::fprintf(stderr, "[mirconst] unsupported at %d\n", line); return f; } // TEMP-TRACE-FILE
-
 namespace {
 
 bool scalarType(const SemanticType &type) {
   return constantIntegerDomain(type).has_value() ||
          semanticFloatFormat(type).has_value() || type == SemanticType::Bool ||
-         type == SemanticType::Char || type.kind == SemanticType::StringView ||
+         type == SemanticType::Char || type == SemanticType::StringView ||
          type == SemanticType::NullPtr;
 }
 
@@ -143,7 +140,7 @@ public:
                             const std::optional<ConstantValue> &receiver) {
     const auto verification = verifyMirProgram(program);
     if (!verification.valid()) {
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+      return {.failure = ConstantEvaluationFailure::UnsupportedExpression,
               .function = root.kind == MirBodyKind::Function ? root.owner : 0,
               .body = root,
               .detail = "Constant execution requires verified MIR: " +
@@ -180,7 +177,7 @@ public:
     if (result && !procedural && type != SemanticType::Void &&
         !persistentType(type)) {
       result.value.reset();
-      result.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__);
+      result.failure = ConstantEvaluationFailure::UnsupportedType;
       result.detail = "An object requiring cleanup cannot escape constant "
                       "execution; return a passive value instead.";
     }
@@ -198,7 +195,7 @@ public:
                     [](const auto &allocation) { return allocation->live; })) {
       result.value.reset();
       result.voidResult = false;
-      result.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__);
+      result.failure = ConstantEvaluationFailure::UnsupportedExpression;
       result.detail = "Every constant allocation must be destroyed before "
                       "constant evaluation finishes.";
     }
@@ -282,12 +279,6 @@ private:
       if (instance.type == type)
         return &instance;
     }
-    // A record's value layout and cleanup are its shape's; a constant value
-    // carries its caller's regions (proved in MIR), not the instance's.
-    const auto shape = eraseTypeLifetimes(type);
-    for (const auto &instance : program.classInstances())
-      if (eraseTypeLifetimes(instance.type) == shape)
-        return &instance;
     return nullptr;
   }
 
@@ -551,7 +542,7 @@ private:
                             bool writing = false) {
     const auto *place = frame.body.findPlace(id);
     if (!place || !observedStorageType(place->type))
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__)};
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
     const MirPlace *binding = nullptr;
     if (place->root == MirPlaceRootKind::Loan) {
       if (place->loan >= frame.loans.size() || !frame.loans[place->loan])
@@ -577,7 +568,7 @@ private:
                 ? record(*aggregate->value->exactType)
                 : nullptr;
         if (!owner)
-          return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__)};
+          return {.failure = ConstantEvaluationFailure::UnsupportedType};
         location = {.frame = &frame,
                     .root = MirPlaceRootKind::This,
                     .epoch = frame.receiverEpoch,
@@ -604,7 +595,7 @@ private:
     } else {
       const auto root = cell(frame, id);
       if (!root)
-        return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__)};
+        return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
       binding = frame.body.findPlace(root);
       if (root < frame.references.size() && frame.references[root]) {
         if (!charge(frame.references[root]->path.size()))
@@ -656,7 +647,7 @@ private:
       } else if (projection.kind == MirProjectionKind::Index) {
         if (!projectedType || projectedType->kind != SemanticType::Array ||
             projectedType->arguments.size() != 1)
-          return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__)};
+          return {.failure = ConstantEvaluationFailure::UnsupportedType};
         projectedType = &projectedType->arguments.front();
         if (projection.index != 0) {
           if (projection.index >= frame.values.size() ||
@@ -671,7 +662,7 @@ private:
       } else if (projection.kind == MirProjectionKind::Field) {
         const auto *owner = projectedType ? record(*projectedType) : nullptr;
         if (!owner)
-          return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__)};
+          return {.failure = ConstantEvaluationFailure::UnsupportedType};
         const auto field = std::find_if(
             owner->declaredFields.begin(), owner->declaredFields.end(),
             [&](const auto &candidate) {
@@ -683,7 +674,7 @@ private:
         if (field->access == AccessMode::ReadOnly)
           location.access = AccessMode::ReadOnly;
       } else {
-        return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__)};
+        return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
       }
       location.path.push_back(projection);
     }
@@ -730,7 +721,7 @@ private:
       }
       return {};
     }
-    return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__)};
+    return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
   }
 
   bool charge(std::size_t amount) {
@@ -791,7 +782,7 @@ private:
   ConstantEvaluation allocate(const SemanticType &owner,
                               std::optional<ConstantValue> value = {}) {
     if (owner.kind != SemanticType::UniqueOwner || !storageType(owner))
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__)};
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
     if (!charge(1) || heap.size() >= limits.allocations)
       return {.failure = ConstantEvaluationFailure::ResourceLimit};
     std::size_t units = 0;
@@ -940,7 +931,7 @@ private:
           return valid;
       }
     } else {
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__)};
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
     }
     return converted;
   }
@@ -960,7 +951,7 @@ private:
       const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
       if (!aggregate || !aggregate->value ||
           aggregate->value->kind != ConstantAggregateKind::Object)
-        return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__)};
+        return {.failure = ConstantEvaluationFailure::UnsupportedType};
       const auto &fields = aggregate->value->fields;
       const auto field = std::find_if(fields.begin(), fields.end(),
                                       [&](const ConstantAggregateField &item) {
@@ -978,13 +969,13 @@ private:
       return {.value = makeConstantAggregate(std::move(updated))};
     }
     if (projection.kind != MirProjectionKind::Index)
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__)};
+      return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
     const auto index = projection.constantIndex;
     const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
     if (!aggregate || !aggregate->value ||
         (aggregate->value->kind != ConstantAggregateKind::Array &&
          aggregate->value->kind != ConstantAggregateKind::PayloadEnum))
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__)};
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
     if (aggregate->value->kind == ConstantAggregateKind::PayloadEnum &&
         projection.selection != aggregate->value->variant)
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
@@ -1052,7 +1043,7 @@ private:
       const auto *aggregate =
           std::get_if<ConstantAggregateValue>(&*frame.receiver);
       if (!aggregate || !aggregate->value)
-        return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__)};
+        return {.failure = ConstantEvaluationFailure::UnsupportedType};
       const auto &fields = aggregate->value->fields;
       const auto symbol = target->projections[0].field;
       if (std::any_of(fields.begin(), fields.end(),
@@ -1075,7 +1066,7 @@ private:
     if (located.failure != ConstantEvaluationFailure::None)
       return located;
     if (!initializing && location.access != AccessMode::Mutable)
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__)};
+      return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
     return writeLocation(location, value, initializing);
   }
 
@@ -1136,13 +1127,13 @@ private:
       return {.value = false};
     if (type == SemanticType::Char)
       return {.value = CharacterLiteral{0}};
-    if (type.kind == SemanticType::StringView)
+    if (type == SemanticType::StringView)
       return {.value = std::string{}};
     if (type == SemanticType::NullPtr)
       return {.value = NullConstant{}};
     if (type.kind == SemanticType::UniqueOwner)
       return {.value = ownerValue(type, 0)};
-    return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__)};
+    return {.failure = ConstantEvaluationFailure::UnsupportedType};
   }
 
   ConstantEvaluation enumValue(const SemanticType &type,
@@ -1152,7 +1143,7 @@ private:
                             ? constantIntegerDomain(enumeration->underlyingType)
                             : std::nullopt;
     if (!domain)
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__)};
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
     if (!checkedIntegerFits({value.negative, value.magnitude}, *domain))
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
     return {.value = ConstantEnum{
@@ -1165,7 +1156,7 @@ private:
   ConstantEvaluation arrayValue(const SemanticType &type,
                                 const std::vector<ConstantValue> &values) {
     if (!storageType(type) || type.kind != SemanticType::Array)
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__)};
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
     if (values.size() > type.arrayLength)
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
     if (!charge(type.arrayLength))
@@ -1265,7 +1256,7 @@ private:
       return convertConstantToType(values.front(), type);
     }
     if (instruction.operation == MirOperation::Index && values.size() == 2 &&
-        instruction.operands[0].type.kind == SemanticType::StringView) {
+        instruction.operands[0].type == SemanticType::StringView) {
       return evaluateConstantTextIndex(values[0], values[1]);
     }
     if (const auto operation = operatorToken(instruction.operation)) {
@@ -1279,7 +1270,7 @@ private:
                                       semanticFloatFormat(type));
       }
     }
-    return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__)};
+    return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
   }
 
   MirConstantEvaluation destroy(const MirDropType &recipe, Location location,
@@ -1295,7 +1286,7 @@ private:
       return depthLimitFailure(caller);
     if (!storageType(recipe.type) || recipe.polymorphicCleanup ||
         recipe.recursiveCleanup || recipe.lambdaInstance)
-      return fail(caller, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__),
+      return fail(caller, ConstantEvaluationFailure::UnsupportedType,
                   "Cleanup is outside the constant execution profile.");
     for (const auto &moved : retired(location))
       if (moved.root == location.root && moved.cell == location.cell &&
@@ -1343,7 +1334,7 @@ private:
     }
     if (recipe.type.kind == SemanticType::Array) {
       if (!recipe.fixedArray || recipe.aggregate.size() != 1)
-        return fail(caller, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__));
+        return fail(caller, ConstantEvaluationFailure::UnsupportedType);
       for (std::size_t index = recipe.type.arrayLength; index != 0; --index) {
         auto element = location;
         element.path.push_back(
@@ -1384,14 +1375,14 @@ private:
       return {};
     }
     if (recipe.type.kind != SemanticType::Class)
-      return fail(caller, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__));
+      return fail(caller, ConstantEvaluationFailure::UnsupportedType);
     if (recipe.destructor) {
       const auto *destructor =
           program.findDestructorInstance(*recipe.destructor);
       const auto value = readLocation(location);
       if (!destructor ||
           destructor->definitionKind != MirDefinitionKind::Source || !value)
-        return fail(caller, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+        return fail(caller, ConstantEvaluationFailure::UnsupportedExpression,
                     "Constant destruction requires an available source body.");
       auto result = executeBody(destructor->body,
                                 {MirBodyKind::Destructor, destructor->id},
@@ -1405,7 +1396,7 @@ private:
     for (const auto &child : recipe.aggregate) {
       if (!child.uniqueOwnerField || child.uniqueOwnerBase ||
           child.captureIndex)
-        return fail(caller, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__));
+        return fail(caller, ConstantEvaluationFailure::UnsupportedType);
       auto field = location;
       field.path.push_back(
           {.kind = MirProjectionKind::Field, .field = child.uniqueOwnerField});
@@ -1470,7 +1461,7 @@ private:
           instruction.kind != MirInstructionKind::Call ||
           !instruction.functionTarget ||
           instruction.dispatch != CallDispatch::Static))) {
-      return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+      return fail(frame, ConstantEvaluationFailure::UnsupportedExpression,
                   "Operation is outside the constant MIR execution profile.");
     }
     if (instruction.kind == MirInstructionKind::Lifecycle) {
@@ -1492,7 +1483,7 @@ private:
     if (instruction.kind == MirInstructionKind::CleanupBeforeAssign) {
       if (!instruction.destination || !instruction.replacementCleanup ||
           !storageType(instruction.replacementCleanup->type))
-        return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__));
+        return fail(frame, ConstantEvaluationFailure::UnsupportedType);
       // Verification pairs this passive preparation with its assignment.
       // Preserve the aggregate shell; the assignment replaces the value and
       // retires the applicable generation. Bounds are checked at preparation.
@@ -1560,7 +1551,7 @@ private:
     if (!observedStorageType(instruction.info.type) &&
         !(instruction.kind == MirInstructionKind::Call &&
           instruction.info.type == SemanticType::Void)) {
-      return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__));
+      return fail(frame, ConstantEvaluationFailure::UnsupportedType);
     }
     // The positive magnitude/identity chain for a signed-minimum literal has
     // no standalone value in its final signed type. Retire that exact chain
@@ -1769,7 +1760,7 @@ private:
             instruction.objectAllocation))
         break;
       if (!instruction.constructorTarget || instruction.receiver)
-        return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__));
+        return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
       const auto *callee =
           program.findConstructorInstance(*instruction.constructorTarget);
       if (!callee || callee->parameterTypes.size() != arguments.size())
@@ -1818,14 +1809,14 @@ private:
       break;
     }
     default:
-      return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+      return fail(frame, ConstantEvaluationFailure::UnsupportedExpression,
                   "Instruction is outside the constant MIR profile.");
     }
     if (instruction.kind == MirInstructionKind::Call &&
         !instruction.objectAllocation) {
       if (syntaxIntrinsic(instruction.intrinsic)) {
         if (!procedural)
-          return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+          return fail(frame, ConstantEvaluationFailure::UnsupportedExpression,
                       "Syntax operations require procedural execution.");
         try {
           evaluated = executeSyntax(instruction, arguments);
@@ -1843,7 +1834,7 @@ private:
         if (type.kind != SemanticType::UniqueOwner ||
             type.arguments.size() != 1 || arguments.size() > 1 ||
             type.arguments[0].kind == SemanticType::Class)
-          return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__));
+          return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
         const auto value = arguments.empty()
                                ? defaultValue(type.arguments[0])
                                : convertValue(arguments[0], type.arguments[0]);
@@ -2013,11 +2004,9 @@ private:
             convertConstantToType(arguments.front(), instruction.info.type);
       }
     }
-    if (!evaluated && !voidResult && std::getenv("GTI_TRACE_CONSTEXPR_IF")) // TEMP-TRACE
-      std::fprintf(stderr, "[mirconst] intrinsic=%d fn=%d failure=%d receiver=%d args=%zu\n", static_cast<int>(instruction.intrinsic), instruction.functionTarget ? 1 : 0, static_cast<int>(evaluated.failure), instruction.receiver.has_value(), arguments.size()); // TEMP-TRACE
     if (!evaluated && !voidResult) {
       return fail(frame, evaluated.failure == ConstantEvaluationFailure::None
-                             ? gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__)
+                             ? ConstantEvaluationFailure::UnsupportedExpression
                              : evaluated.failure);
     }
     if (instruction.result) {
@@ -2043,7 +2032,7 @@ private:
         return fail(frame, ConstantEvaluationFailure::InvalidOperands);
       if (!reference) {
         if (!instruction.result || !evaluated)
-          return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__));
+          return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
         reference = Location{.frame = &frame,
                              .root = MirPlaceRootKind::Value,
                              .cell = *instruction.result,
@@ -2096,25 +2085,25 @@ private:
         function->definitionKind != MirDefinitionKind::Source ||
         (function->returnBorrowOrigin != BorrowOriginKind::None &&
          function->returnType.kind != SemanticType::Reference &&
-         function->returnType.kind != SemanticType::StringView) ||
+         function->returnType != SemanticType::StringView) ||
         function->entryKind != ProgramEntryKind::None ||
         function->linkage != LanguageLinkage::Gti ||
         (!observedStorageType(function->returnType) &&
          function->returnType != SemanticType::Void) ||
         arguments.size() != function->parameterTypes.size()) {
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+      return {.failure = ConstantEvaluationFailure::UnsupportedExpression,
               .function = id,
               .detail =
                   "Constant MIR calls require a supported constexpr function."};
     }
     const bool instanceMethod = function->owner && !function->staticMember;
     if (instanceMethod != receiver.has_value())
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+      return {.failure = ConstantEvaluationFailure::UnsupportedExpression,
               .function = id};
     if (receiver) {
       const auto *owner = program.findClassInstance(*function->owner);
       if (!owner || !storageType(owner->type))
-        return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__),
+        return {.failure = ConstantEvaluationFailure::UnsupportedType,
                 .function = id};
       const auto exact = exactValue(*receiver, owner->type);
       if (!exact)
@@ -2148,18 +2137,13 @@ private:
         constructor->requiresUnsafe ||
         constructor->definitionKind != MirDefinitionKind::Source ||
         !storageType(owner->type) ||
-        arguments.size() != constructor->parameterTypes.size()) {
-      if (std::getenv("GTI_TRACE_CONSTEXPR_IF") && (!constructor || !owner)) // TEMP-TRACE
-        std::fprintf(stderr, "[mirconst] construct id=%llu constructor=%d owner=%d\n", (unsigned long long)id, constructor != nullptr, owner != nullptr); // TEMP-TRACE
-      if (std::getenv("GTI_TRACE_CONSTEXPR_IF") && constructor && owner) // TEMP-TRACE
-        std::fprintf(stderr, "[mirconst] construct constexpr=%d generated=%d unsafe=%d source=%d storage=%d args=%zu params=%zu\n", constructor->constexprConstructor, constructor->generatedDefault, constructor->requiresUnsafe, constructor->definitionKind == MirDefinitionKind::Source, storageType(owner->type) ? 1 : 0, arguments.size(), constructor->parameterTypes.size()); // TEMP-TRACE
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+        arguments.size() != constructor->parameterTypes.size())
+      return {.failure = ConstantEvaluationFailure::UnsupportedExpression,
               .body = {MirBodyKind::Constructor, id}};
-    }
     // Every field must be initialized by this verified body. Declaration-owned
     // defaults require their own selected field-initializer execution schedule.
     if (constructor->initializers.size() != owner->declaredFields.size())
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+      return {.failure = ConstantEvaluationFailure::UnsupportedExpression,
               .body = {MirBodyKind::Constructor, id}};
     for (const auto &field : owner->declaredFields) {
       const auto count = std::count_if(
@@ -2173,7 +2157,7 @@ private:
                    !initializer.constructorTarget;
           });
       if (count != 1)
-        return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+        return {.failure = ConstantEvaluationFailure::UnsupportedExpression,
                 .body = {MirBodyKind::Constructor, id}};
       // The declaration inventory is not an executable initialization. Some
       // existing constructor families still use a different MIR schedule;
@@ -2217,8 +2201,8 @@ private:
                                [&](const MirValue &candidate) {
                                  return candidate.sourceValue ==
                                             initializer->arguments.front() &&
-                                        (eraseTypeLifetimes(candidate.info.type) ==
-                                             eraseTypeLifetimes(initializer->targetType) ||
+                                        (candidate.info.type ==
+                                             initializer->targetType ||
                                          (initializer->targetType.kind ==
                                               SemanticType::CString &&
                                           candidate.info.type.kind ==
@@ -2226,7 +2210,7 @@ private:
                                })
                 : constructor->body.values.end();
         if (value == constructor->body.values.end())
-          return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+          return {.failure = ConstantEvaluationFailure::UnsupportedExpression,
                   .body = {MirBodyKind::Constructor, id}};
         auto &pending = declarativeFields[&constructor->body];
         if (std::none_of(pending.begin(), pending.end(),
@@ -2239,7 +2223,7 @@ private:
         continue;
       }
       if (writes != 1)
-        return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+        return {.failure = ConstantEvaluationFailure::UnsupportedExpression,
                 .body = {MirBodyKind::Constructor, id}};
     }
     ConstantAggregate receiver{
@@ -2294,7 +2278,7 @@ private:
     for (const auto &obligation : body.dropObligations) {
       frame.liveDrops[obligation.id] = obligation.initiallyActive;
       if (!storageType(obligation.dropType.type)) {
-        return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__),
+        return fail(frame, ConstantEvaluationFailure::UnsupportedType,
                     "Constant MIR cannot execute this cleanup type.");
       }
     }
@@ -2323,7 +2307,7 @@ private:
       if ((loan.storedDependency != 0 && !constantTextDependency) ||
           !loan.additionalSources().empty() || loan.lifecycleBound ||
           source == nullptr || !observedStorageType(source->type)) {
-        return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__),
+        return fail(frame, ConstantEvaluationFailure::UnsupportedType,
                     "Constant MIR only admits checked loans to supported "
                     "values, without stored reference carriers.");
       }
@@ -2334,7 +2318,7 @@ private:
       if (block.terminator.provenance.kind !=
               MirTerminatorProvenanceKind::None ||
           !block.parameters.empty()) {
-        return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+        return fail(frame, ConstantEvaluationFailure::UnsupportedExpression,
                     "Constant evaluation requires canonical unoptimized MIR.");
       }
       for (const auto &instruction : block.instructions) {
@@ -2343,7 +2327,7 @@ private:
                                       instruction.literalProvenance.kind !=
                                           MirLiteralProvenanceKind::Source)) {
           return fail(
-              frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+              frame, ConstantEvaluationFailure::UnsupportedExpression,
               "Constant evaluation requires canonical unoptimized MIR.");
         }
       }
@@ -2351,7 +2335,7 @@ private:
     for (std::size_t index = 0; index < arguments.size(); ++index) {
       const auto &type = parameterTypes[index];
       if (!observedStorageType(type)) {
-        return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__));
+        return fail(frame, ConstantEvaluationFailure::UnsupportedType);
       }
       const auto exact = exactValue(arguments[index], observedType(type));
       if (!exact) {
@@ -2377,7 +2361,7 @@ private:
       if (place != body.places.end()) {
         const auto storage = cell(frame, place->id);
         if (!storage)
-          return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__));
+          return fail(frame, ConstantEvaluationFailure::UnsupportedType);
         if (pack) {
           if (!charge(count))
             return fail(frame, ConstantEvaluationFailure::ResourceLimit);
@@ -2488,7 +2472,7 @@ private:
           } else if (label.kind == SwitchCaseKind::Integer) {
             const auto domain = constantIntegerDomain(label.type);
             if (!domain)
-              return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__));
+              return fail(frame, ConstantEvaluationFailure::UnsupportedType);
             value = makeConstantInteger({.negative = label.value.negative,
                                          .magnitude = label.value.magnitude},
                                         *domain);
@@ -2500,7 +2484,7 @@ private:
               return fail(frame, enumerator.failure);
             value = *enumerator.value;
           } else {
-            return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__));
+            return fail(frame, ConstantEvaluationFailure::UnsupportedType);
           }
           const auto equal = evaluateConstantBinary(TokenKind::EQUAL_EQUAL,
                                                     *subject.value, value);
@@ -2521,7 +2505,7 @@ private:
             const auto *aggregate =
                 std::get_if<ConstantAggregateValue>(&*frame.receiver);
             if (!aggregate || !aggregate->value)
-              return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedType, __LINE__));
+              return fail(frame, ConstantEvaluationFailure::UnsupportedType);
             auto updated = *aggregate->value;
             for (const auto &entry : pending->second) {
               const auto &value = frame.values[entry.value];
@@ -2584,11 +2568,11 @@ private:
       }
       default:
         return fail(
-            frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__),
+            frame, ConstantEvaluationFailure::UnsupportedExpression,
             "Terminator is outside the constant MIR execution profile.");
       }
     }
-    return fail(frame, gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__));
+    return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
   }
 
   // A temporary produced only inside a conditional arm or a `&&`/`||`
@@ -2725,12 +2709,10 @@ private:
     }
     if (parameters.size() != args.size() ||
         instruction.operands.size() != args.size() ||
-        eraseTypeLifetimes(instruction.info.type) != eraseTypeLifetimes(resultType))
+        instruction.info.type != resultType)
       throw SyntaxError("Invalid procedural intrinsic signature.");
-    // Regions never change a procedural operand's representation.
     for (std::size_t i = 0; i < args.size(); ++i)
-      if (eraseTypeLifetimes(instruction.operands[i].type) !=
-              eraseTypeLifetimes(parameters[i]) ||
+      if (instruction.operands[i].type != parameters[i] ||
           !exactValue(args[i], parameters[i]))
         throw SyntaxError("Invalid procedural intrinsic argument type.");
     const auto argument = [&](std::size_t i) -> const ConstantValue & {
@@ -2818,7 +2800,7 @@ private:
       throw SyntaxError(syntaxDiagnostic->message);
     }
     default:
-      return {.failure = gtiTraceUnsupported(ConstantEvaluationFailure::UnsupportedExpression, __LINE__)};
+      return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
     }
   }
   const MirProgram &program;

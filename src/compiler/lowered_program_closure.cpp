@@ -547,7 +547,7 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
       continue;
     }
 
-    const bool generic = classDeclaration->hasGenericBindings();
+    const bool generic = !classDeclaration->genericParameters.empty();
     const bool instantiated =
         !owner->type.arguments.empty() || !owner->type.valueArguments.empty();
     if (generic && !instantiated) {
@@ -605,7 +605,7 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
     const bool generic =
         source != nullptr &&
         (!source->genericParameters.empty() ||
-         (owner != nullptr && owner->hasGenericBindings()));
+         (owner != nullptr && !owner->genericParameters.empty()));
     if (sourceRow == nullptr || !generic) {
       continue;
     }
@@ -665,7 +665,7 @@ structuralOperatorAdapter(const LoweredFunctionDeclaration &function,
     const bool generic =
         source != nullptr &&
         (!source->genericParameters.empty() ||
-         (owner != nullptr && owner->hasGenericBindings()));
+         (owner != nullptr && !owner->genericParameters.empty()));
     if (sourceRow == nullptr || !generic) {
       continue;
     }

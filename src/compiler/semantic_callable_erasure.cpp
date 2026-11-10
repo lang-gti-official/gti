@@ -1,73 +1,15 @@
 #include "semantic_analyzer_impl.h"
-#include "gti/callable_lifetimes.h"
-#include "gti/lifetime_requirements.h"
 
 #include <algorithm>
 
 namespace lang {
-
-auto SemanticVisitor::Impl::callableLifetimeTargetCompatible(
-    const SemanticType &result, std::span<const SemanticType> parameters,
-    const LifetimeSignatureContract &target,
-    const CallableLifetimeSignature &requested,
-    const LambdaInfo *lambda, const SemanticType *lambdaType) const -> bool {
-  auto assumptions = requested.contract;
-  auto bindings = callableLifetimeTargetBindings(result, parameters, target,
-                                                  requested.signature);
-  if (lambda || lambdaType) {
-    if (!lambda || !lambdaType || result != lambda->returnType ||
-        !std::equal(parameters.begin(), parameters.end(),
-                    lambda->parameterTypes.begin(), lambda->parameterTypes.end()))
-      return false;
-    const auto fixed = lambdaCallableLifetimeTarget(lambda->type, *lambdaType,
-        target, lambda->environmentContract, requested);
-    if (!fixed)
-      return false;
-    bindings = fixed->bindings;
-    for (const auto region : fixed->environment.parameters)
-      if (std::find(assumptions.parameters.begin(), assumptions.parameters.end(), region) ==
-          assumptions.parameters.end())
-        assumptions.parameters.push_back(region);
-    const auto composed = composeLambdaLifetimeContract(fixed->environment, assumptions);
-    if (!composed)
-      return false;
-    assumptions = *composed;
-  }
-  if (!bindings || !target.valid() || !target.requirements.resolved())
-    return false;
-  const auto region = [&](Lifetime value) {
-    for (const auto binding : *bindings)
-      if (binding.first == value)
-        return binding.second;
-    return value;
-  };
-  return visitLifetimeAssumptionCases(assumptions, [&](const auto &assumptions) {
-    LifetimeInferenceConstraints constraints(lifetimeBoundsForContract(assumptions));
-    for (const auto bound : target.bounds)
-      if (!constraints.proves(region(bound.longer), region(bound.shorter)))
-        return false;
-    const auto provesType = [&](const SemanticType &type, Lifetime lifetime) {
-      const auto actual = substituteTypeLifetimes(type, *bindings);
-      return actual && proveLifetimeTypeOutlives(*actual, region(lifetime),
-                                                 assumptions, constraints);
-    };
-    for (const auto &bound : target.typeBounds)
-      if (!provesType(bound.type, bound.region))
-        return false;
-    return evaluateLifetimeRequirements(target.requirements, [&](const auto &node) {
-      return node.kind == LifetimeRequirementNode::Kind::Region
-          ? constraints.proves(region(node.bound.longer), region(node.bound.shorter))
-          : provesType(node.type, node.bound.shorter);
-    }).value_or(false);
-  }).proof == LifetimeFormulaProof::Proven;
-}
 
 auto SemanticVisitor::Impl::restoredReferenceFields(
     const SemanticType &referent)
     -> std::optional<std::vector<RestoredBorrowField>> {
   std::vector<RestoredBorrowField> result;
   for (const auto &path : storedReferencePaths(referent)) {
-    auto fields = storedBorrowPath(referent, path.fields);
+    auto fields = storedFieldSymbols(referent, path.fields);
     if (fields.size() != path.fields.size())
       return std::nullopt;
     result.push_back(
@@ -140,14 +82,8 @@ auto SemanticVisitor::Impl::recordRestoredReferenceResult(
     const auto *resolved =
         call == nullptr ? nullptr : semanticModel.findCall(*call);
     if (resolved == nullptr || !resolved->restoresReferenceResult ||
-        resolved->returnType.kind != SemanticType::Reference ||
-        resolved->returnType.referenceAccess != function.returnType.referenceAccess ||
-        resolved->returnType.arguments != function.returnType.arguments ||
+        resolved->returnType != function.returnType ||
         resolved->borrowOrigin != BorrowOriginKind::Argument)
-      return;
-    const std::array resultBound{LifetimeBound{
-        resolved->returnType.referenceLifetime, function.returnType.referenceLifetime}};
-    if (!validateLifetimeConstraints({}, resultBound))
       return;
     const auto *argument =
         resolvedCallArgument(*call, resolved, resolved->borrowArgument);
@@ -168,7 +104,7 @@ auto SemanticVisitor::Impl::recordRestoredReferenceResult(
 }
 
 auto SemanticVisitor::Impl::analyzeReferenceErasureCall(const Call &expr,
-    IntrinsicKind intrinsic, const CallableCandidate &declaration)
+                                                        IntrinsicKind intrinsic)
     -> void {
   std::vector<SemanticType> arguments;
   for (const auto &argument : expr.arguments())
@@ -244,89 +180,18 @@ auto SemanticVisitor::Impl::analyzeReferenceErasureCall(const Call &expr,
     }
     restoredFields = std::move(*fields);
   }
-  CallableCandidate selected;
-  std::vector<SemanticType> typeArguments;
-  std::vector<CompileTimeValue> valueArguments;
-  ConstraintFailure failure;
-  if (!tryInstantiateFunction(declaration, {restoring ? result : arguments.front()},
-                              {}, arguments, expr.arguments(), selected,
-                              typeArguments, valueArguments, &failure)) {
-    report(expr.paren(), "Checked reference erasure must preserve its exact "
-                         "input and result lifetime contract.", "GTI-S2127");
-    currentType = SemanticType::Unknown;
-    return;
-  }
-  // Intrinsic calls have no executable function target. Retain their exact
-  // universal interface so MIR can independently derive its well-formedness
-  // contract and replay this application under the trusted operation's shape.
-  // Declaration normalization and callable derivation may order their facts
-  // differently; require implication in both directions rather than silently
-  // dropping an obligation when choosing the source-free witness.
-  auto signature = SemanticType::functionSignature(selected.returnType,
-                                                   selected.parameterTypes);
-  for (const auto region : selected.lifetimeContract.parameters)
-    signature.quantifiedLifetimes.push_back(region.id);
-  const auto contract = referenceErasureLifetimeContract(signature, restoring,
-      [&](const SemanticType &nominal) {
-        return nominalFormationRequirements(nominal, false);
-      });
-  CallableLifetimeSignature callable{.signature = signature};
-  if (contract)
-    callable.contract = *contract;
-  const CallableLifetimeSignature declarationContract{
-      .signature = std::move(signature), .contract = selected.lifetimeContract};
-  if (!contract ||
-      !callableLifetimeTargetCompatible(selected.returnType, selected.parameterTypes,
-                                        selected.lifetimeContract, callable) ||
-      !callableLifetimeTargetCompatible(selected.returnType, selected.parameterTypes,
-                                        callable.contract, declarationContract) ||
-      !applyCallLifetimeContract(selected, arguments, expr.arguments(), expr.paren()) ||
-      selected.returnType.kind != SemanticType::Reference ||
-      selected.returnType.arguments.size() != 1 ||
-      selected.returnType.referenceAccess != access ||
-      selected.returnType.arguments.front() != result ||
-      selected.parameterTypes.size() != 1 ||
-      selected.parameterTypes.front().kind != SemanticType::Reference ||
-      selected.parameterTypes.front().arguments.size() != 1 ||
-      selected.parameterTypes.front().referenceAccess != access ||
-      selected.parameterTypes.front().arguments.front() != arguments.front()) {
-    report(expr.paren(), "Checked reference erasure must preserve its exact "
-                         "input and result lifetime contract.", "GTI-S2127");
-    currentType = SemanticType::Unknown;
-    return;
-  }
-  selected.lifetimeApplication.callableSignature = std::move(callable);
-  ResolvedCallInfo resolved{
-      .returnType = std::move(selected.returnType),
-      .parameterTypes = std::move(selected.parameterTypes),
-      .typeArguments = std::move(typeArguments),
-      .valueArguments = std::move(valueArguments),
-      .lifetimeArguments = std::move(selected.lifetimeArguments),
-      .lifetimeApplication = std::move(selected.lifetimeApplication),
-      .requirements = std::move(selected.requirements),
-      .intrinsic = intrinsic,
-      .restoresReferenceResult = restoring,
-      .restoredBorrowFields = std::move(restoredFields),
-      .borrowOrigin = BorrowOriginKind::Argument,
-      .borrowArgument = 0,
-      .borrowAccess = access};
-  const FunctionBorrowDependencySummary physicalInput{
-      .dependencies = {{.origin = BorrowOriginKind::Argument,
-                         .parameter = 0, .access = access}}};
-  auto complete = instantiateCompleteCallBorrow(expr, resolved, physicalInput);
-  if (!complete) {
-    report(expr.paren(), "Checked reference erasure must preserve the complete "
-                         "physical input borrow and its access permission.", "GTI-S2045");
-    currentType = SemanticType::Unknown;
-    return;
-  }
-  // Erasure changes the referent type, not which physical object is borrowed.
-  // In particular a reference to a carrier keeps its shell loan rather than
-  // substituting the separate external references stored inside that carrier.
-  commitLifetimeApplication(resolved.lifetimeApplication);
-  currentType = resolved.returnType.arguments.front();
-  semanticModel.record(expr, std::move(resolved));
-  semanticModel.recordBorrowDependencySet(expr, std::move(*complete));
+  currentType = result;
+  semanticModel.record(
+      expr, ResolvedCallInfo{
+                .returnType = SemanticType::referenceTo(result, access),
+                .parameterTypes = {parameter},
+                .typeArguments = {restoring ? result : arguments.front()},
+                .intrinsic = intrinsic,
+                .restoresReferenceResult = restoring,
+                .restoredBorrowFields = std::move(restoredFields),
+                .borrowOrigin = BorrowOriginKind::Argument,
+                .borrowArgument = 0,
+                .borrowAccess = access});
 }
 
 auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
@@ -368,30 +233,7 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
     currentType = SemanticType::Unknown;
     return;
   }
-  if (!normalizeCallableLifetimeType(signature, expr.paren())) {
-    report(expr.paren(), "The callable type needs an unambiguous lifetime contract.",
-           "GTI-S2127");
-    currentType = SemanticType::Unknown;
-    return;
-  }
-  if (forming)
-    pointer.arguments.front() = signature;
-  std::size_t slot = 0;
-  const auto formed = makeCallableLifetimeSignature(signature,
-      [&](const SemanticType &nominal) { return nominalFormationRequirements(nominal, false); },
-      [&] {
-        ++slot;
-        return implicitSyntaxLifetime(expr.paren(), 4096 + slot,
-                                       "_carrier" + std::to_string(slot));
-      });
-  if (!formed) {
-    report(expr.paren(), "The callable lifetime signature is not fully normalized.",
-           "GTI-S2127");
-    currentType = SemanticType::Unknown;
-    return;
-  }
-  auto callable = *formed;
-  auto result = signature.arguments.front();
+  const auto &result = signature.arguments.front();
   if (!containsOpenTypeParameter(result) &&
       result.kind != SemanticType::Reference &&
       typeTraits(result).containsBorrowedState) {
@@ -406,20 +248,29 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
   for (const auto &type :
        std::span<const SemanticType>(signature.arguments).subspan(1))
     SemanticType::appendExpandedArgument(parameters, type);
-  std::vector<SemanticType> universalParameters;
-  for (const auto &type : std::span(callable.signature.arguments).subspan(1))
-    SemanticType::appendExpandedArgument(universalParameters, type);
-  const auto summary = functionReturnBorrowSummary(
-      callable.signature.arguments.front(), universalParameters, 0, true,
-      IntrinsicKind::None, std::nullopt, true, &callable.contract);
+  // A reference result's origin is the signature's one read-only reference
+  // parameter, inferred exactly like a free function's summary. An erased
+  // object is opaque and never an origin: a typed referent cannot be reached
+  // through it, so the thunk's erased receiver does not compete with the
+  // signature's own parameters.
+  std::optional<std::size_t> resultOrigin;
   if (result.kind == SemanticType::Reference &&
-      summary.origin == BorrowOriginKind::None &&
-      result.referenceLifetime != Lifetime::staticLifetime() &&
       !containsOpenTypeParameter(signature)) {
-    report(expr.paren(), "A callable reference result must be supplied by its "
-                        "declared input lifetimes or static storage.", "GTI-S2127");
-    currentType = SemanticType::Unknown;
-    return;
+    const FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
+        result, parameters, 0, true, IntrinsicKind::None);
+    if (summary.origin != BorrowOriginKind::Argument ||
+        summary.access != AccessMode::ReadOnly) {
+      report(expr.paren(),
+             summary.eligibleParameters > 1
+                 ? "A signature-erased reference result's origin is ambiguous; "
+                   "exactly one read-only reference parameter may own it."
+                 : "A signature-erased reference result must be read-only and "
+                   "borrow exactly one read-only reference parameter.",
+             "GTI-S2093");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    resultOrigin = summary.parameter;
   }
   // An invocation pointer's thunk forwards its arguments and result by
   // value through the typed invocation boundary. Arguments of any value
@@ -444,9 +295,6 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
     FunctionId function = 0;
     LambdaId lambda = 0;
     const SemanticType *targetResult = nullptr;
-    const LifetimeSignatureContract *targetContract = nullptr;
-    const LambdaInfo *lambdaInfo = nullptr;
-    std::optional<SemanticType> declaredItem;
     std::vector<SemanticType> targetParameters;
     if (target.hasFunctionItemShape()) {
       function = target.functionId;
@@ -466,40 +314,18 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
         currentType = SemanticType::Unknown;
         return;
       }
-      // A generic owner's canonical type can alpha-rename the item's closed
-      // invocation binders. Prove that exact item view, then use the signature
-      // in the declaration contract's own scope for lifetime implication.
-      declaredItem = functionItemLifetimeType(function, declaration->returnType,
-          declaration->parameterTypes, declaration->lifetimeContract);
-      if (!declaredItem || !equivalentLifetimeTypes(*declaredItem, target)) {
-        report(expressionToken(expr.arguments().front()),
-               "GTI invocation pointer construction requires an exact-signature "
-               "namespace function item or a lambda with no captures.",
-               "GTI-S2093");
-        currentType = SemanticType::Unknown;
-        return;
-      }
-      targetContract = &declaration->lifetimeContract;
-      targetResult = declaredItem->functionItemReturnType();
-      for (const auto &type : declaredItem->functionItemParameterTypes())
+      targetResult = target.functionItemReturnType();
+      for (const auto &type : target.functionItemParameterTypes())
         SemanticType::appendExpandedArgument(targetParameters, type);
     } else if (target.hasLambdaShape() && target.lambdaCaptureTypes().empty()) {
       lambda = target.lambdaId;
-      const auto *info = semanticModel.findLambda(lambda);
-      if (!info && instanceBaseModel)
-        info = instanceBaseModel->findLambda(lambda);
-      lambdaInfo = info;
-      targetContract = info ? &info->lifetimeContract : nullptr;
-      targetResult = info ? &info->returnType : nullptr;
-      for (const auto &type : info ? std::span<const SemanticType>(info->parameterTypes)
-                                  : std::span<const SemanticType>{})
+      targetResult = target.lambdaReturnType();
+      for (const auto &type : target.lambdaParameterTypes())
         SemanticType::appendExpandedArgument(targetParameters, type);
     }
-    const bool compatible = targetResult && targetContract &&
-        callableLifetimeTargetCompatible(*targetResult, targetParameters,
-                                         *targetContract, callable,
-                                         lambdaInfo, lambdaInfo ? &target : nullptr);
-    if (!containsOpenTypeParameter(target) && !compatible) {
+    if (!containsOpenTypeParameter(target) &&
+        (targetResult == nullptr || *targetResult != result ||
+         targetParameters != parameters)) {
       report(expressionToken(expr.arguments().front()),
              "GTI invocation pointer construction requires an exact-signature "
              "namespace function item or a lambda with no captures.",
@@ -604,15 +430,42 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
         return;
       }
     }
-    // Exact type and contract implication above preserves every permitted
-    // supplier. The target's current body may use a subset of those inputs.
+    // The target's own result-origin contract must name the signature's
+    // origin parameter: the erased invocation relays exactly that borrow.
+    if (resultOrigin && !containsOpenTypeParameter(target)) {
+      std::optional<std::size_t> targetOrigin;
+      if (function != 0) {
+        const auto *declaration = semanticModel.findFunction(function);
+        if (declaration == nullptr && instanceBaseModel != nullptr)
+          declaration = instanceBaseModel->findFunction(function);
+        if (declaration != nullptr &&
+            declaration->returnBorrowOrigin == BorrowOriginKind::Argument &&
+            declaration->returnBorrowAccess == AccessMode::ReadOnly)
+          targetOrigin = declaration->returnBorrowParameter;
+      } else if (lambda != 0) {
+        const LambdaInfo *info = semanticModel.findLambda(lambda);
+        if (info == nullptr && instanceBaseModel != nullptr)
+          info = instanceBaseModel->findLambda(lambda);
+        if (info != nullptr &&
+            info->returnBorrowOrigin == BorrowOriginKind::Argument &&
+            info->returnBorrowAccess == AccessMode::ReadOnly)
+          targetOrigin = info->returnBorrowParameter;
+      }
+      if (targetOrigin != resultOrigin) {
+        report(expressionToken(expr.arguments().front()),
+               "GTI invocation pointer construction requires a target whose "
+               "reference result borrows the signature's origin parameter " +
+                   std::to_string(*resultOrigin + 1) + ".",
+               "GTI-S2093");
+        currentType = SemanticType::Unknown;
+        return;
+      }
+    }
     currentType = pointer;
     semanticModel.record(expr,
                          ResolvedCallInfo{.returnType = pointer,
                                           .parameterTypes = arguments,
                                           .typeArguments = {signature, target},
-                                          .lifetimeApplication = {.callableSignature = callable,
-                                                                  .complete = true},
                                           .intrinsic = intrinsic,
                                           .functionPointerFunction = function,
                                           .functionPointerLambda = lambda});
@@ -621,26 +474,14 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
   const auto expanded = concreteCallArguments(arguments, expr.arguments());
   currentType = callExpressionType(result);
   if (!expanded) {
-    // Signature/category checks above still apply, but a symbolic argument
-    // pack cannot publish an invocation or a provisional reference place.
-    if (!deferUnexpandedPackCall(expr, arguments, result))
-      currentType = SemanticType::Unknown;
+    // A declaration-wide pack has no arity yet; the result still denotes a
+    // place for a reference result so the enclosing generic body types.
+    semanticModel.record(expr, ResolvedCallInfo{.returnType = result,
+                                                .parameterTypes = parameters,
+                                                .typeArguments = {signature},
+                                                .intrinsic = intrinsic});
     return;
   }
-  CallableCandidate invocation;
-  invocation.returnType = callable.signature.arguments.front();
-  invocation.parameterTypes = universalParameters;
-  invocation.lifetimeContract = callable.contract;
-  invocation.lifetimeApplication.bindings = callable.signatureBindings;
-  if (expanded->empty() || !applyCallLifetimeContract(
-          invocation, std::span<const AnalyzedCallArgument>(*expanded).subspan(1),
-          expr.paren())) {
-    currentType = SemanticType::Unknown;
-    return;
-  }
-  invocation.lifetimeApplication.callableSignature = callable;
-  result = invocation.returnType;
-  parameters = invocation.parameterTypes;
   parameters.insert(parameters.begin(),
                     SemanticType::referenceTo(pointer, AccessMode::ReadOnly));
   bool valid = expanded->size() == parameters.size();
@@ -662,12 +503,9 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
           std::span<const SemanticType>(&parameters[index], 1),
           std::span<const ExprPtr>(&expression, 1), expr.paren());
     }
-    const auto adjusted = index == 0 ? std::optional<SemanticType>{}
-        : callLifetimeArgumentType(invocation, argument.type, parameters[index]);
-    const auto &matchedType = adjusted ? *adjusted : argument.type;
     if (!(argument.forwardedPackElement
-              ? forwardedPackArgumentMatches(parameters[index], matchedType)
-              : callArgumentMatches(parameters[index], matchedType,
+              ? forwardedPackArgumentMatches(parameters[index], argument.type)
+              : callArgumentMatches(parameters[index], argument.type,
                                     expression))) {
       reportCallArgumentMismatch(index, parameters[index], argument.type,
                                  expression, "GTI invocation pointer");
@@ -682,38 +520,14 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
     ResolvedCallInfo resolved{.returnType = result,
                               .parameterTypes = parameters,
                               .typeArguments = {signature},
-                              .lifetimeApplication = invocation.lifetimeApplication,
                               .intrinsic = intrinsic};
-    resolved.borrowOrigin = summary.origin;
-    resolved.borrowArgument = summary.parameter +
-                              (summary.origin == BorrowOriginKind::Argument ? 1 : 0);
-    resolved.borrowAccess = summary.access;
-    for (const auto parameter : summary.parameters)
-      resolved.borrowArguments.push_back(parameter + 1);
-    resolved.borrowFields = summary.fields;
-    for (auto &field : resolved.borrowFields)
-      if (field.origin == BorrowOriginKind::Argument)
-        ++field.parameter;
-    std::optional<SemanticBorrowDependencySet> complete;
-    if (result.kind == SemanticType::Reference && summary.origin != BorrowOriginKind::None) {
-      FunctionBorrowDependencySummary allowed{.dependencies = resolved.borrowFields};
-      if (allowed.dependencies.empty())
-        allowed.dependencies.push_back({.origin = resolved.borrowOrigin,
-            .parameter = resolved.borrowArgument, .access = resolved.borrowAccess});
-      complete = instantiateCompleteCallBorrow(expr, resolved, allowed);
-      if (!complete) {
-        report(expr.paren(),
-               "The invocation pointer result cannot retain every permitted input borrow origin.",
-               "GTI-S2045");
-        currentType = SemanticType::Unknown;
-        return;
-      }
+    if (resultOrigin) {
+      resolved.borrowOrigin = BorrowOriginKind::Argument;
+      resolved.borrowArgument = *resultOrigin + 1;
+      resolved.borrowAccess = AccessMode::ReadOnly;
     }
-    commitLifetimeApplication(resolved.lifetimeApplication);
     currentType = callExpressionType(result);
     semanticModel.record(expr, std::move(resolved));
-    if (complete)
-      semanticModel.recordBorrowDependencySet(expr, std::move(*complete));
   } else {
     currentType = SemanticType::Unknown;
   }

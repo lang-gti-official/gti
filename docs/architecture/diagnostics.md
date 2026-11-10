@@ -746,11 +746,6 @@ construction retains its existing construction diagnostics.
 An explicit `mut` on a signature parameter without a reference also uses
 `GTI-S2093`, anchored to the prefix: `mut T&` is required. No fix-it silently
 changes a value parameter into a borrow.
-Invocation-pointer formation also uses `GTI-S2093` at the target expression
-when the requested signature cannot imply the target's lifetime requirements.
-The target's full requirement formula is checked, including alternatives; no
-fix-it discards a required bound. Missing checked input origins at invocation
-remain borrowing errors (`GTI-S2045`) at the call.
 
 `GTI-S2023` also owns invalid class-pack declarations and type-list expansions.
 For headerless patterned primaries it also rejects incompatible public type

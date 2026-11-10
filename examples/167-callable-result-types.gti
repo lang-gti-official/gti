@@ -10,23 +10,14 @@ public:
   Box<std::meta::callable_return_type<F>> map<F>(F& mapper) && {
     return Box<std::meta::callable_return_type<F>>(mapper(std::move(this.value)));
   }
-
-  std::meta::callable_return_type<F> project<F>(F& mapper) && {
-    return mapper(std::move(this.value));
-  }
 };
 
 int twice(int value) { return value * 2; }
-int stored = 42;
-int&<static> stored_result(int ignored) { return stored; }
 
 int main() {
   auto increment = [](int value) -> int { return value + 1; };
   auto double_value = twice;
   auto mapped = Box<int>(20).map(increment).map(double_value);
-  // The projected reference retains the mapper's exact static contract and
-  // checked global supplier; it never borrows the consumed Box or mapper.
-  int&<static> projected = Box<int>(0).project(stored_result);
-  std::println(mapped.read() == 42 && projected == 42 ? "mapped 42" : "incorrect");
-  return mapped.read() == 42 && projected == 42 ? 0 : 1;
+  std::println(mapped.read() == 42 ? "mapped 42" : "incorrect");
+  return mapped.read() == 42 ? 0 : 1;
 }

@@ -42,8 +42,6 @@ enum class InstanceAnalysisKind {
   Constructor,
   Destructor,
   ClassFieldInitializers,
-  // Layout canonicalization only; enums do not request executable bodies.
-  EnumLayout,
 };
 
 // One concrete instance request. Identities are snapshot-local, but every

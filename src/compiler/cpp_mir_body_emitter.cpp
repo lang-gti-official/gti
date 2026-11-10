@@ -2629,7 +2629,7 @@ transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
          stored.kind == MirLoanKind::Stored && stored.source == source.id &&
          stored.access == AccessMode::Mutable && stored.semanticLoan != 0 &&
          stored.parent == 0 && stored.producedBy == 0 && stored.entry &&
-         stored.escapes && stored.storedPath == BorrowPath{fieldProjection(initializer.field)} &&
+         stored.escapes && stored.storedField == initializer.field &&
          stored.carriers.size() == 1 &&
          stored.carriers.front() == source.binding;
 }
@@ -2649,7 +2649,7 @@ transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
          dependency.kind == MirLoanKind::Stored && dependency.entry &&
          !dependency.escapes && !dependency.lifecycleBound &&
          dependency.source == source.id && dependency.parent == 0 &&
-         dependency.storedDependency == 0 && dependency.storedPath.empty() &&
+         dependency.storedDependency == 0 && dependency.storedField == 0 &&
          dependency.producedBy == 0 &&
          dependency.access == AccessMode::ReadOnly &&
          dependency.carriers.empty() && dependency.designatedFields.empty() &&
@@ -2671,14 +2671,14 @@ transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
       source.access != AccessMode::ReadOnly || !source.initiallyAvailable ||
       shell.kind != MirLoanKind::Parameter || !shell.entry || shell.escapes ||
       shell.parent != 0 || shell.source != source.id ||
-      shell.access != AccessMode::ReadOnly || !shell.storedPath.empty() ||
+      shell.access != AccessMode::ReadOnly || shell.storedField != 0 ||
       shell.producedBy != 0 || !shell.additionalDependencies.empty() ||
       shell.carriers.size() != 1 || shell.carriers.front() != source.binding)
     return false;
   const auto *dependency = body.findLoan(shell.storedDependency);
   return dependency != nullptr && dependency->kind == MirLoanKind::Stored &&
          dependency->entry && !dependency->escapes && dependency->parent == 0 &&
-         dependency->storedDependency == 0 && dependency->storedPath.empty() &&
+         dependency->storedDependency == 0 && dependency->storedField == 0 &&
          dependency->producedBy == 0 && dependency->source == source.id &&
          dependency->access == AccessMode::ReadOnly &&
          (!dependency->designatedFields.empty() ||
@@ -2702,13 +2702,13 @@ sharedPhysicalStoredParameter(const MirBody &body,
       stored.kind != MirLoanKind::Stored || stored.source != source.id ||
       stored.access != AccessMode::ReadOnly || stored.parent != 0 ||
       stored.entry || !stored.escapes || !stored.carriers.empty() ||
-      stored.storedPath != BorrowPath{fieldProjection(initializer.field)} ||
+      stored.storedField != initializer.field ||
       stored.producedBy != initializer.arguments.front())
     return false;
   const auto *dependency = body.findLoan(stored.storedDependency);
   if (dependency == nullptr || dependency->kind != MirLoanKind::Stored ||
       !dependency->entry || dependency->escapes || dependency->parent != 0 ||
-      dependency->storedDependency != 0 || !dependency->storedPath.empty() ||
+      dependency->storedDependency != 0 || dependency->storedField != 0 ||
       dependency->producedBy != 0 || dependency->source != source.id ||
       dependency->access != AccessMode::ReadOnly ||
       (dependency->designatedFields.empty() &&
@@ -2788,7 +2788,7 @@ storedReferenceFieldPublication(const MirProgram &program, const MirBody &body,
     const MirLoan *stored = nullptr;
     for (const MirLoan &loan : body.loans) {
       if (loan.kind != MirLoanKind::Stored ||
-          loan.storedPath != BorrowPath{fieldProjection(binding.field)}) {
+          loan.storedField != binding.field) {
         continue;
       }
       if (stored != nullptr) {
@@ -4297,7 +4297,7 @@ constructedFieldOwnedSiblingMove(const MirProgram &program,
           loadedSource->type == reference.targetType.arguments.front();
       if (borrow.kind != MirInstructionKind::Borrow || loan == nullptr ||
           loan->kind != MirLoanKind::Stored ||
-          loan->storedPath != BorrowPath{fieldProjection(reference.field)} ||
+          loan->storedField != reference.field ||
           (loan->source != load.operands.front().place &&
            !sharedPhysicalLoad) ||
           loan->producedBy != reference.arguments.front() ||
@@ -5268,7 +5268,7 @@ stagedClassResultForSource(const MirBody &body, MirValueId sourceId) {
         !source->info.traits.movable ||
         producer->borrowOrigin == BorrowOriginKind::None || loan == nullptr ||
         loan->kind != MirLoanKind::Stored || loan->entry || loan->escapes ||
-        !loan->storedPath.empty() || !loan->carriers.empty() ||
+        loan->storedField != 0 || !loan->carriers.empty() ||
         loan->producedBy != producer->hirValue ||
         body.findPlace(loan->source) == nullptr)
       return {};
@@ -6286,7 +6286,7 @@ temporaryArgumentStage(const MirBody &body, const MirInstruction &call,
       loan->source != stage->operands.front().place ||
       loan->access != AccessMode::ReadOnly || loan->semanticLoan != 0 ||
       loan->parent != 0 || loan->entry || loan->escapes ||
-      !loan->carriers.empty() || !loan->storedPath.empty() ||
+      !loan->carriers.empty() || loan->storedField != 0 ||
       loan->producedBy != stage->callSite) {
     return {};
   }
@@ -6769,7 +6769,7 @@ transferredConstructorArgumentForSource(const MirBody &body,
         retained->parent != 0 || retained->access != AccessMode::ReadOnly ||
         retained->producedBy != producer->hirValue || retained->entry ||
         retained->escapes || !retained->carriers.empty() ||
-        !retained->storedPath.empty()) {
+        retained->storedField != 0) {
       return {};
     }
   }
@@ -11958,17 +11958,7 @@ representationTypeRow(const CppMirBodyEmissionMap &representations,
   const auto found = std::find_if(
       representations.types().begin(), representations.types().end(),
       [&](const CppMirTypeRepresentation &row) { return row.type == type; });
-  if (found != representations.types().end())
-    return &*found;
-  // Regions are verified before emission and never change a C++ spelling.
-  // A body's overlay row (a deduced-callable template spelling) is preferred.
-  const auto erased = eraseTypeLifetimes(type);
-  const CppMirTypeRepresentation *selected = nullptr;
-  for (const auto &row : representations.types())
-    if (eraseTypeLifetimes(row.type) == erased &&
-        (selected == nullptr || (row.bodyTypeOverlay && !selected->bodyTypeOverlay)))
-      selected = &row;
-  return selected;
+  return found == representations.types().end() ? nullptr : &*found;
 }
 
 [[nodiscard]] const MirClassInstance *
@@ -14583,14 +14573,14 @@ formalEntryLoanOnlyMove(const MirConstructorInstance &constructor,
   const MirBody &body = constructor.body;
   const MirLoan *entry = nullptr;
   for (const MirLoan &loan : body.loans) {
-    if (loan.storedPath == BorrowPath{fieldProjection(field)} || loan.producedBy == move.hirValue) {
+    if (loan.storedField == field || loan.producedBy == move.hirValue) {
       return false;
     }
     if (!loan.protectsSource(source.id)) {
       continue;
     }
     if (entry != nullptr || loan.source != source.id || !loan.entry ||
-        loan.escapes || loan.producedBy != 0 || !loan.storedPath.empty() ||
+        loan.escapes || loan.producedBy != 0 || loan.storedField != 0 ||
         loan.lifecycleBound || loan.twoPhase ||
         !loan.additionalDependencies.empty()) {
       return false;
@@ -14655,10 +14645,10 @@ formalEntryGroupPayloadMove(const MirConstructorInstance &constructor,
   }
   const MirLoan *published = nullptr;
   for (const MirLoan &loan : body.loans) {
-    if (loan.storedPath != BorrowPath{fieldProjection(field)} && loan.producedBy != move.hirValue) {
+    if (loan.storedField != field && loan.producedBy != move.hirValue) {
       continue;
     }
-    if (published != nullptr || loan.storedPath != BorrowPath{fieldProjection(field)} ||
+    if (published != nullptr || loan.storedField != field ||
         loan.producedBy != move.hirValue) {
       return false;
     }
@@ -14986,7 +14976,7 @@ formalEntryGroupPayloadMove(const MirConstructorInstance &constructor,
       if (deferredMove) {
         const MirLoan *stored = nullptr;
         for (const MirLoan &loan : constructor.body.loans) {
-          if (loan.storedPath != BorrowPath{fieldProjection(initializer.field)})
+          if (loan.storedField != initializer.field)
             continue;
           if (stored != nullptr)
             return false;
@@ -15491,7 +15481,7 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
     const auto &retire = entry->instructions[offset + 3];
     const auto *loan =
         publication.loan ? body.findLoan(*publication.loan) : nullptr;
-    if (!loan || loan->storedPath != BorrowPath{fieldProjection(copy->field)} ||
+    if (!loan || loan->storedField != copy->field ||
         loan->source != copy->sourcePlace ||
         storedFieldValueLoanProducer(body, *loan) != &publication ||
         publication.operands.front().value != copy->loadedValue ||
@@ -15638,7 +15628,7 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan);
                      [&](const auto &candidate) {
                        return candidate.id == boundary.fullExpressionEnd;
                      });
-    if (!loan || loan->storedPath != BorrowPath{fieldProjection(move->field)} ||
+    if (!loan || loan->storedField != move->field ||
         loan->source != move->sourcePlace ||
         storedFieldValueLoanProducer(body, *loan) != &publication ||
         publication.operands.front().value != move->movedValue ||
@@ -17274,7 +17264,7 @@ payloadEnumConstructorFieldPublication(const MirProgram &program,
       const auto count = std::count_if(
           body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
             const auto *publication = storedFieldValueLoanProducer(body, loan);
-            return loan.storedPath == BorrowPath{fieldProjection(fieldSymbol)} && publication &&
+            return loan.storedField == fieldSymbol && publication &&
                    publication->operands.front().value == valueId;
           });
       if (count != 1)
@@ -25789,17 +25779,8 @@ uniqueOwnerBorrowDetailSpelling(const MirProgram &program,
                                         const MirInstruction &instruction) {
   const bool panic = instruction.intrinsic == IntrinsicKind::Panic;
   const auto terminal = intrinsicTerminalFailureOutcome(instruction.intrinsic);
-  // Keep the existing panic vocabulary aligned with MIR's checked message
-  // shape. Its storage region is source metadata, not a different C++ value.
-  SemanticType messageType = SemanticType::StringView;
-  if (panic && instruction.operands.size() == 1) {
-    const auto &message = instruction.operands.front().type;
-    if (message.lifetimeArguments.size() == 1 &&
-        message.lifetimeArguments.front().specified())
-      messageType.lifetimeArguments = message.lifetimeArguments;
-  }
   const std::vector<SemanticType> parameters =
-      panic      ? std::vector<SemanticType>{messageType}
+      panic      ? std::vector<SemanticType>{SemanticType::StringView}
       : terminal ? std::vector<SemanticType>{}
                  : std::vector<SemanticType>{SemanticType::Bool};
   if (!explicitFailureCall(instruction) || instruction.result ||
@@ -27666,7 +27647,7 @@ constructorInputBorrowLoans(const MirBody &body,
         stage->preparedParameterDrop || !stage->lifecycle.empty() ||
         !stage->result || *stage->result != operand.value ||
         loan->access != AccessMode::ReadOnly || loan->entry || loan->escapes ||
-        !loan->carriers.empty() || !loan->storedPath.empty() ||
+        !loan->carriers.empty() || loan->storedField != 0 ||
         !loan->additionalDependencies.empty() ||
         std::find(loans.begin(), loans.end(), loan->id) != loans.end())
       return std::nullopt;
@@ -30103,7 +30084,7 @@ returnLoanErasedByClassSsaSlot(const MirProgram &program,
 storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan) {
   if (body.kind != MirBodyKind::Constructor ||
       loan.kind != MirLoanKind::Stored || loan.entry || !loan.escapes ||
-      loan.parent != 0 || loan.storedPath.empty() || loan.producedBy == 0) {
+      loan.parent != 0 || loan.storedField == 0 || loan.producedBy == 0) {
     return nullptr;
   }
   const MirInstruction *producer = nullptr;
@@ -30180,7 +30161,7 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan) {
           field == nullptr || field->root != MirPlaceRootKind::This ||
           field->projections.size() != 1 ||
           field->projections.front().kind != MirProjectionKind::Field ||
-          BorrowPath{fieldProjection(field->projections.front().field)} != loan.storedPath ||
+          field->projections.front().field != loan.storedField ||
           field->type != operand.type || operand.type != transfer.info.type ||
           retire.kind != MirInstructionKind::EndBorrow ||
           retire.loan != entry->id || retire.hirValue != transfer.hirValue) {
@@ -30205,7 +30186,7 @@ storedFieldValueLoanProducer(const MirBody &body, const MirLoan &loan) {
 storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
   if (loan.kind != MirLoanKind::Return || loan.entry || !loan.escapes ||
       loan.parent != 0 || loan.source == 0 || loan.producedBy == 0 ||
-      !loan.carriers.empty() || !loan.storedPath.empty() ||
+      !loan.carriers.empty() || loan.storedField != 0 ||
       body.returnType.kind == SemanticType::Reference) {
     return nullptr;
   }
@@ -30299,7 +30280,7 @@ storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
             dependency == nullptr || dependency->kind != MirLoanKind::Stored ||
             !dependency->entry || dependency->escapes ||
             dependency->parent != 0 || dependency->storedDependency != 0 ||
-            !dependency->storedPath.empty() || dependency->producedBy != 0 ||
+            dependency->storedField != 0 || dependency->producedBy != 0 ||
             dependency->designatedFields.empty() ||
             dependencySource == nullptr ||
             !sameMirPlaceRoot(*source, *dependencySource) ||
@@ -30312,7 +30293,7 @@ storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
       }
       const bool exactCopiedEntry = [&] {
         if (!retained->entry || retained->escapes || retained->parent != 0 ||
-            retained->storedDependency != 0 || !retained->storedPath.empty() ||
+            retained->storedDependency != 0 || retained->storedField != 0 ||
             retained->producedBy != 0 || retained->designatedFields.empty() ||
             retained->access != AccessMode::ReadOnly ||
             instruction.info.type.kind != SemanticType::Class ||
@@ -30395,7 +30376,7 @@ storedValueReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
 callResultReturnLoanProducer(const MirBody &body, const MirLoan &loan) {
   if (loan.kind != MirLoanKind::Return || loan.entry || !loan.escapes ||
       loan.parent != 0 || loan.source == 0 || loan.producedBy == 0 ||
-      !loan.carriers.empty() || !loan.storedPath.empty() ||
+      !loan.carriers.empty() || loan.storedField != 0 ||
       body.returnType.kind != SemanticType::Reference ||
       body.returnType.arguments.size() != 1) {
     return nullptr;
@@ -30655,7 +30636,6 @@ loanHasCppPointerCarrier(const MirProgram &program,
           const bool selectedAddress =
               instruction.kind == MirInstructionKind::Borrow &&
               loan.referenceSelection &&
-              loan.referenceSelection->kind == ReferenceSelectionKind::StoredExternalReference &&
               borrowedPayloadExtract(body, loan.referenceSelection->value);
           const bool transferredAddress =
               instruction.kind == MirInstructionKind::Borrow &&
@@ -30758,7 +30738,7 @@ loanHasCppPointerCarrier(const MirProgram &program,
                             ? body.findLoan(place.loan)
                             : nullptr;
   return loan != nullptr && loan->kind == MirLoanKind::Stored &&
-         loan->storedPath.empty() &&
+         loan->storedField == 0 &&
          provenanceOnlyLoanSource(program, body, place);
 }
 
@@ -36111,13 +36091,13 @@ private:
         // A deferred field's dependency travels inside the value just
         // published into its storage, not a native reference binding.
         const MirPlace *stored =
-            loan->storedPath.empty() ? nullptr : [&]() -> const MirPlace * {
+            loan->storedField == 0 ? nullptr : [&]() -> const MirPlace * {
           for (const MirPlace &candidate : facts.body.places)
             if (candidate.root == MirPlaceRootKind::This &&
                 candidate.projections.size() == 1 &&
                 candidate.projections.front().kind ==
                     MirProjectionKind::Field &&
-                BorrowPath{fieldProjection(candidate.projections.front().field)} == loan->storedPath)
+                candidate.projections.front().field == loan->storedField)
               return &candidate;
           return nullptr;
         }();
@@ -36192,8 +36172,7 @@ private:
           return;
         }
       }
-      if (loan != nullptr && loan->referenceSelection &&
-          loan->referenceSelection->kind == ReferenceSelectionKind::StoredExternalReference) {
+      if (loan != nullptr && loan->referenceSelection) {
         // The source places describe possible owners, not which address was
         // selected at runtime. Copy the independently verified cached address;
         // a consumed carrier may already have retired its active field.
@@ -45482,7 +45461,7 @@ cppMirStoredReferenceBindings(const MirProgram &program,
          ++loanIndex) {
       const MirLoan &loan = constructor.body.loans[loanIndex];
       if (loan.kind != MirLoanKind::Stored ||
-          loan.storedPath != BorrowPath{fieldProjection(initializer.field)}) {
+          loan.storedField != initializer.field) {
         continue;
       }
       if (stored != nullptr) {
@@ -45570,7 +45549,7 @@ cppMirStoredReferenceBindings(const MirProgram &program,
   for (std::size_t loanIndex = 0; loanIndex < constructor.body.loans.size();
        ++loanIndex) {
     if (constructor.body.loans[loanIndex].kind == MirLoanKind::Stored &&
-        !constructor.body.loans[loanIndex].storedPath.empty() &&
+        constructor.body.loans[loanIndex].storedField != 0 &&
         !loanUsed[loanIndex] &&
         storedFieldValueLoanProducer(
             constructor.body, constructor.body.loans[loanIndex]) == nullptr) {
@@ -46809,7 +46788,7 @@ cppMirCopyParameterFieldBindings(const MirProgram &program,
                 storedFieldValueLoanProducer(constructor.body, loan);
             return publication != nullptr && loan.source == source->id &&
                    loan.access == AccessMode::ReadOnly &&
-                   loan.storedPath == BorrowPath{fieldProjection(initializer.field)} &&
+                   loan.storedField == initializer.field &&
                    publication->operands.front().value == loadedValue->id;
           });
       if (publications != 1)
@@ -47483,7 +47462,7 @@ plainConstructedFieldTarget(const MirProgram &program,
     const auto *value = body.findValue(it->constructedValue);
     const MirLoan *published = nullptr;
     for (const auto &loan : body.loans) {
-      if (value && loan.storedPath == BorrowPath{fieldProjection(it->field)} &&
+      if (value && loan.storedField == it->field &&
           loan.producedBy == value->sourceValue) {
         if (published || !storedFieldValueLoanProducer(body, loan))
           return false;
@@ -48157,7 +48136,7 @@ nativeBorrowedConstructedFieldPrefix(
       construct.operands.size() != target->parameterTypes.size() ||
       loan == nullptr || loan->kind != MirLoanKind::Stored || loan->entry ||
       loan->escapes || loan->lifecycleBound != activeCleanup ||
-      !loan->storedPath.empty() || loan->producedBy != construct.hirValue)
+      loan->storedField != 0 || loan->producedBy != construct.hirValue)
     return std::nullopt;
 
   // Multiple native children require proof of actual absence of failure;
@@ -51450,7 +51429,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   case MirBodyKind::Module: {
     if (address.owner != 0 ||
         failureForm != moduleMayRaiseDefinedFailure(program_)) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51443); return false; } // TEMP-VOCAB
+      return false;
     }
     bodyPointer = &program_.module();
     break;
@@ -51460,7 +51439,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (storage == nullptr || !failureForm ||
         storage->initializer.returnType != storage->type ||
         storage->traits.containsBorrowedState)
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51453); return false; } // TEMP-VOCAB
+      return false;
     bodyPointer = &storage->initializer;
     break;
   }
@@ -51470,7 +51449,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (function == nullptr || function->body.kind != MirBodyKind::Function ||
         function->body.returnType != function->returnType) {
       {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51463); return false; } // TEMP-VOCAB
+        return false;
       }
     }
     // A plain body that may raise is not complete MIR execution: every
@@ -51479,7 +51458,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     // may emit only through the explicit failure form, where the record and
     // cleanup edges remain visible.
     if (!failureForm && function->mayRaiseDefinedFailure) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51472); return false; } // TEMP-VOCAB
+      return false;
     }
     if (failureForm) {
       // The transformed sibling's name comes from the shared naming
@@ -51498,7 +51477,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (row == representations_.bodies().end() ||
             cppMirFailureSiblingSpelling(row->spelling).empty()) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51491); return false; } // TEMP-VOCAB
+            return false;
           }
         }
       }
@@ -51580,7 +51559,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
              cppMirEnumBoundaryRow(program_, representations_,
                                    function->returnType)))) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51573); return false; } // TEMP-VOCAB
+          return false;
         }
       }
     }
@@ -51601,12 +51580,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         destructor->body.kind != MirBodyKind::Destructor ||
         destructor->body.returnType != SemanticType::Void) {
       {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51594); return false; } // TEMP-VOCAB
+        return false;
       }
     }
     if ((failureForm && !destructor->mayRaiseDefinedFailure) ||
         (!failureForm && destructor->mayRaiseDefinedFailure)) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51599); return false; } // TEMP-VOCAB
+      return false;
     }
     bodyPointer = &destructor->body;
     owner = destructor->owner;
@@ -51629,7 +51608,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         constructor->body.returnType != SemanticType::Void ||
         (failureForm ? !exactFailureBoundary : !baseBindings)) {
       {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51622); return false; } // TEMP-VOCAB
+        return false;
       }
     }
     // The carrier and the selected base's gate are members of their classes'
@@ -51646,7 +51625,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (target == nullptr ||
           !baseCarrierClass(program_, representations_, constructor->owner) ||
           !baseCarrierClass(program_, representations_, target->owner))
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51639); return false; } // TEMP-VOCAB
+        return false;
       for (const MirPlaceId id : preparation->slots) {
         const MirPlace *slot = constructor->body.findPlace(id);
         if (slot == nullptr ||
@@ -51654,7 +51633,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                *slot) ||
             canonicalSlotId(constructor->body, *slot) != slot->id ||
             !dropObligationGovernsSlot(constructor->body, *slot))
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51647); return false; } // TEMP-VOCAB
+          return false;
       }
     }
     if (!failureForm) {
@@ -51663,7 +51642,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (std::any_of(fields.begin(), fields.end(), [](const auto &binding) {
             return binding.failureStatus;
           }))
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51656); return false; } // TEMP-VOCAB
+        return false;
     }
     // Stores-reference initializers bind their fields in the C++ member
     // initializer list from the paired Stored loans; the single pairing
@@ -51682,7 +51661,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (!bindings || (constructor->borrowOrigin != BorrowOriginKind::None &&
                         bindings->empty() && nestedPublications == 0)) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51675); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       storedReferenceBindings = !bindings->empty();
@@ -51695,17 +51674,17 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         !(failureForm ? exactFailureBoundary
                       : cppMirOrdinaryBodyStagedParameterMoves(program_,
                                                                *constructor))) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51688); return false; } // TEMP-VOCAB
+      return false;
     }
     if (!cppMirCopyParameterFieldBindings(program_, *constructor)) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51691); return false; } // TEMP-VOCAB
+      return false;
     }
     // Native initializer bindings own their exact constructed values before
     // the local placement vocabulary is considered. Snapshot planning and
     // plain-body admission must use the same effective placement decision.
     if (!failureForm &&
         cppMirConstructorRequiresFieldPlacement(program_, *constructor)) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51698); return false; } // TEMP-VOCAB
+      return false;
     }
     bodyPointer = &constructor->body;
     owner = constructor->owner;
@@ -51718,7 +51697,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (lambda == nullptr || lambda->body.kind != MirBodyKind::Lambda ||
         lambda->body.returnType != lambda->returnType) {
       {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51711); return false; } // TEMP-VOCAB
+        return false;
       }
     }
     if (failureForm) {
@@ -51769,7 +51748,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             cppMirEnumBoundaryRow(program_, representations_,
                                   lambda->returnType)));
       if (!passiveResult) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51762); return false; } // TEMP-VOCAB
+        return false;
       }
     }
     bodyPointer = &lambda->body;
@@ -51781,14 +51760,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     break;
   }
   default: {
-    { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51774); return false; } // TEMP-VOCAB
+    return false;
   }
   }
   const MirBody &body = *bodyPointer;
   if (body.blocks.empty() || body.entry == 0 ||
       body.entry > body.blocks.size()) {
     {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51781); return false; } // TEMP-VOCAB
+      return false;
     }
   }
   const auto loanById = [&](MirLoanId id) -> const MirLoan * {
@@ -51807,7 +51786,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     const MirPlace *loanSource = body.findPlace(loan.source);
     if (loanSource == nullptr) {
       {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51800); return false; } // TEMP-VOCAB
+        return false;
       }
     }
     if (loan.kind == MirLoanKind::Return) {
@@ -51824,7 +51803,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                            !row.spelling.empty();
                                   });
       if (!represented) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51817); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -51868,7 +51847,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
       }
       if (matches != 1) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51861); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -51885,18 +51864,18 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // pointers. A place rooted at it never spells: it is admissible only
       // as provenance that nothing evaluates, such as the owner of a
       // reference selected from the carrier's payload.
-      if (loan.storedPath.empty() && !storedReferenceBindings) {
+      if (loan.storedField == 0 && !storedReferenceBindings) {
         for (const MirPlace &place : body.places) {
           if (place.root == MirPlaceRootKind::Loan && place.loan == loan.id &&
               !storedCarrierProvenancePlace(program_, body, place)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51882); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         continue;
       }
       if (!storedReferenceBindings) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51889); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
@@ -51922,14 +51901,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           std::find(parameterBindings->begin(), parameterBindings->end(),
                     loanSource->binding) == parameterBindings->end()) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51915); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
     }
     if (loan.kind != MirLoanKind::CallResult) {
       {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51922); return false; } // TEMP-VOCAB
+        return false;
       }
     }
     // An owner-borrow's call-result loan never binds a pointer local:
@@ -51984,7 +51963,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           discharged->operands.size() != (optionalRead ? 1 : 2) ||
           discharged->info.type != loanSource->type.arguments.front()) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51977); return false; } // TEMP-VOCAB
+          return false;
         }
       }
     } else if (checkedStorageRead != nullptr) {
@@ -51994,7 +51973,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           loanSource->type.arguments.empty() ||
           checkedStorageRead->operands.size() != (optionalRead ? 1 : 2) ||
           checkedStorageRead->info.type != loanSource->type.arguments.front()) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 51987); return false; } // TEMP-VOCAB
+        return false;
       }
     } else if (mutexGuardRead != nullptr) {
       const MirClassInstance *storage =
@@ -52009,7 +51988,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               (mutexGuardRead->intrinsic == IntrinsicKind::MutexGuardReadMut
                    ? AccessMode::Mutable
                    : AccessMode::ReadOnly)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52002); return false; } // TEMP-VOCAB
+        return false;
       }
     } else if (polymorphicRead != nullptr) {
       // The pointer local declares from the interface row; the slot itself
@@ -52027,7 +52006,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                   IntrinsicKind::PolymorphicStorageReadMut
                               ? AccessMode::Mutable
                               : AccessMode::ReadOnly)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52020); return false; } // TEMP-VOCAB
+        return false;
       }
     } else if (referenceCall != nullptr) {
       // The pointer local declares from the callee's return element row;
@@ -52056,7 +52035,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (producedCallResultLoan(body, *referenceCall) == nullptr ||
           !elementRow) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52049); return false; } // TEMP-VOCAB
+          return false;
         }
       }
     } else if (const MirInstruction *invokeCall =
@@ -52082,11 +52061,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           });
       if (producedCallResultLoan(body, *invokeCall) == nullptr || !elementRow ||
           !mir_detail::functionPointerOperation(program_, *invokeCall)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52075); return false; } // TEMP-VOCAB
+        return false;
       }
     } else {
       {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52079); return false; } // TEMP-VOCAB
+        return false;
       }
     }
     // The pointer local declares the element type; the producing call's
@@ -52102,7 +52081,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (borrowed) {
       // A Borrow would assign the pointer a second time.
       {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52095); return false; } // TEMP-VOCAB
+        return false;
       }
     }
   }
@@ -52124,7 +52103,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   const auto fieldRow = [&](SymbolId field) {
     if (!owner) {
       {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52117); return false; } // TEMP-VOCAB
+        return false;
       }
     }
     const MirClassInstance *receiverOwner = program_.findClassInstance(*owner);
@@ -52133,7 +52112,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             ? ResolvedMirField{}
             : resolveMirField(program_, receiverOwner->type, field);
     if (!resolved) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52126); return false; } // TEMP-VOCAB
+      return false;
     }
     const auto found = std::find_if(
         representations_.symbols().begin(), representations_.symbols().end(),
@@ -52240,7 +52219,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                     const SemanticType &type) {
     if (!literal) {
       {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52233); return false; } // TEMP-VOCAB
+        return false;
       }
     }
     if (std::holds_alternative<std::nullptr_t>(*literal)) {
@@ -52266,11 +52245,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
 
   const auto loanArgumentSupported = [&](const MirOperand &operand) {
     if (operand.kind != MirOperandKind::Loan || operand.loan == 0) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52259); return false; } // TEMP-VOCAB
+      return false;
     }
     const MirLoan *loan = body.findLoan(operand.loan);
     if (loan == nullptr) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52263); return false; } // TEMP-VOCAB
+      return false;
     }
     if (operand.place == 0) {
       return loanHasCppPointerCarrier(program_, representations_, body, *loan);
@@ -52283,12 +52262,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
   const auto checkedReferenceOperand = [&](const MirOperand &operand) {
     if (operand.type.kind != SemanticType::Reference ||
         operand.type.arguments.size() != 1)
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52276); return false; } // TEMP-VOCAB
+      return false;
     if (operand.kind == MirOperandKind::Loan)
       return loanArgumentSupported(operand);
     if (operand.kind != MirOperandKind::BorrowRead &&
         operand.kind != MirOperandKind::BorrowWrite)
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52281); return false; } // TEMP-VOCAB
+      return false;
     const auto *place = body.findPlace(operand.place);
     return place != nullptr && place->type == operand.type.arguments.front() &&
            typeRow(place->type);
@@ -52300,7 +52279,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           instruction.operands.size() == 1 &&
           instruction.operands.front().kind == MirOperandKind::Loan &&
           !loanArgumentSupported(instruction.operands.front())) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52293); return false; } // TEMP-VOCAB
+        return false;
       }
       if (instruction.kind != MirInstructionKind::Call &&
           instruction.kind != MirInstructionKind::Construct) {
@@ -52309,7 +52288,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       for (const MirOperand &operand : instruction.operands) {
         if (operand.kind == MirOperandKind::Loan &&
             !loanArgumentSupported(operand)) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52302); return false; } // TEMP-VOCAB
+          return false;
         }
       }
     }
@@ -52323,7 +52302,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     if (objectAllocationForPlace(body, place.id)) {
       if (!failureForm || !typeRow(place.type.arguments.front()))
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52316); return false; } // TEMP-VOCAB
+        return false;
       continue;
     }
     if (address.kind == MirBodyKind::Module &&
@@ -52335,13 +52314,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (storage == nullptr || storage->spelling.empty() ||
           storage->type != place.type ||
           place.type.kind == SemanticType::Reference) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52328); return false; } // TEMP-VOCAB
+        return false;
       }
       const bool runtimeOwningSlot = place.type.kind == SemanticType::Class ||
                                      fixedClassLeafArrayType(place.type);
       if (runtimeOwningSlot && slotPlace(place) &&
           (!storage->runtimeLifetimeSlot || !lifetimeSlotRow())) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52334); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -52351,7 +52330,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           !exactFieldProjectionRows(program_, representations_,
                                     access->elementType, access->fields, 0,
                                     place.type))
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52344); return false; } // TEMP-VOCAB
+        return false;
       continue;
     }
     if (place.root == MirPlaceRootKind::This) {
@@ -52367,7 +52346,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !exactFieldProjectionRows(program_, representations_,
                                       receiverOwner->type, array->projections,
                                       0, array->type)) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52360); return false; } // TEMP-VOCAB
+          return false;
         }
         continue;
       }
@@ -52388,7 +52367,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !typeRow(place.type) ||
             !statusBaseConstructorSurface(program_, *receiverOwner,
                                           *constructor)) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52381); return false; } // TEMP-VOCAB
+          return false;
         }
         // This is the exact native-base initializer/rollback identity, not a
         // field spelling or a separately materialized C++ lvalue.
@@ -52402,7 +52381,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           !exactFieldProjectionRows(program_, representations_,
                                     receiverOwner->type, place.projections, 0,
                                     place.type, true)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52395); return false; } // TEMP-VOCAB
+        return false;
       }
       // A storage-typed receiver field is only the staging carrier for
       // storage-intrinsic calls; it needs a field row but no value row.
@@ -52430,7 +52409,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (bindingPayloadEnum != nullptr &&
         bindingPayloadEnum->requiresActiveCleanup &&
         owningPayloadEnumBindingDrop(program_, body, place) == nullptr) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52423); return false; } // TEMP-VOCAB
+      return false;
     }
     if (slotPlace(place)) {
       const bool materializedLambda =
@@ -52444,7 +52423,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               : typeRow(place.type);
       if (!lifetimeSlotRow() || (!representedType && !materializedLambda)) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52437); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       // A function, exact lambda, or transformed constructor's slot-allocated
@@ -52502,7 +52481,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             (address.kind == MirBodyKind::Constructor ||
              address.kind == MirBodyKind::Lambda))) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52495); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
@@ -52511,7 +52490,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             arrayElementAccess(body, place)) {
       const MirPlace *array = body.findPlace(access->array);
       if (array == nullptr || !typeRow(array->type) || !typeRow(place.type)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52504); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -52532,7 +52511,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                       lambda->captureTypes[place.capture - 1],
                                       place.projections, 0, place.type, true)) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52525); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         continue;
@@ -52566,11 +52545,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           const MirPlace *array = body.findPlace(access->array);
           if (array == nullptr || !typeRow(array->type) ||
               !typeRow(place.type)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52559); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52563); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -52581,7 +52560,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           !exactFieldProjectionRows(program_, representations_,
                                     access->pointeeType, place.projections, 1,
                                     place.type)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52574); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -52589,7 +52568,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             arrayFieldElementAccess(body, place)) {
       const MirPlace *array = body.findPlace(access->array);
       if (array == nullptr || !typeRow(array->type) || !typeRow(place.type)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52582); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -52598,7 +52577,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       const MirPlace *view = body.findPlace(access->array);
       if (view == nullptr || !typeRow(view->type) || !typeRow(place.type)) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52591); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
@@ -52607,7 +52586,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // Reads and stores spell the class's subscript member; each
       // direction proves its contained member at its instruction rule.
       if (!typeRow(place.type)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52600); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -52620,7 +52599,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           !exactFieldProjectionRows(program_, representations_, *referent,
                                     place.projections, 0, place.type)) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52613); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
@@ -52640,7 +52619,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           place.type.arguments.size() != 1 ||
           (!parameter && carrier == nullptr)) {
         {
-          { if (std::getenv("GTI_VOCAB")) { const auto *rr = representationTypeRow(representations_, place.type); const auto *ir = place.type.arguments.empty() ? nullptr : representationTypeRow(representations_, place.type.arguments[0]); for (const auto &row : representations_.types()) if (semanticTypeContainsLambda(row.type)) std::fprintf(stderr, "[vocab-row] kind=%d refLt=%d:%llu overlay=%d spell=%s\n", (int)row.type.kind, (int)row.type.referenceLifetime.kind, (unsigned long long)row.type.referenceLifetime.id, row.bodyTypeOverlay, row.spelling.c_str()); std::fprintf(stderr, "[vocab-rows] tmpl=%d refRow=%d refSpell=%d innerRow=%d innerSpell=%d overlay=%d closure=%d\n", (int)callableTemplateBody, rr != nullptr, rr && !rr->spelling.empty(), ir != nullptr, ir && !ir->spelling.empty(), rr && rr->bodyTypeOverlay, place.type.arguments.empty() ? 0 : (int)static_cast<bool>(materializedClosureForType(program_, body, place.type.arguments[0]))); std::fprintf(stderr, "[vocab] %d repr=%d args=%zu param=%d carrier=%d refLt=%d:%llu argKind=%d argQ=%zu\n", 52633, lambdaDependentTypeRepresentable(program_, representations_, body, place.type), place.type.arguments.size(), parameter, carrier != nullptr, (int)place.type.referenceLifetime.kind, (unsigned long long)place.type.referenceLifetime.id, place.type.arguments.empty() ? -1 : (int)place.type.arguments[0].kind, place.type.arguments.empty() ? 0 : place.type.arguments[0].quantifiedLifetimes.size()); } return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
@@ -52667,7 +52646,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           !exactFieldProjectionRows(program_, representations_, *referent,
                                     place.projections, 1, place.type, true)) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52660); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
@@ -52690,7 +52669,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           !typeRow(base->type) || !typeRow(place.type) ||
           !exactFieldProjectionRows(program_, representations_, base->type,
                                     place.projections, 0, place.type, true)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52683); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -52724,7 +52703,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if ((slotPlace(place) && !typeRow(place.type) && !materialized) ||
           (callableTemplateBody && !typeRow(place.type) && !materialized &&
            !fused)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52717); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -52735,7 +52714,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (!slotPlace(place) ||
           (!typeRow(place.type) &&
            !materializedClosureForType(program_, body, place.type))) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52728); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -52794,7 +52773,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     }
     if (packElementParameterIndex(program_, body, address, place)) {
       if (!typeRow(place.type)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52787); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -52813,7 +52792,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           !exactFieldProjectionRows(program_, representations_,
                                     root->type.arguments[*index],
                                     place.projections, 1, place.type, true))
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52806); return false; } // TEMP-VOCAB
+        return false;
       continue;
     }
     if (borrowedPayloadPlace(program_, body, place) && typeRow(place.type))
@@ -52828,7 +52807,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // spell the declaration).
         (place.type.kind == SemanticType::Class &&
          !constructibleClassRow(place.type))) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52821); return false; } // TEMP-VOCAB
+      return false;
     }
   }
   for (const MirValue &value : body.values) {
@@ -52858,7 +52837,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       continue;
     if (pendingClassTemporaryReturnSlot(body, value.id) != nullptr) {
       if (!typeRow(value.info.type)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52851); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -52874,7 +52853,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         findInstruction(body, value.definition);
     if (fixedArrayInitializerPublication(program_, body, value.id)) {
       if (!failureForm)
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52867); return false; } // TEMP-VOCAB
+        return false;
       continue;
     }
     if (passiveArrayCopyPublication(program_, body, value.id))
@@ -52900,13 +52879,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       // constructor-argument proof was
       // lost, accepting the scalar fallback would both reference erased
       // element locals and discard the value-to-field lifetime transfer.
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52893); return false; } // TEMP-VOCAB
+      return false;
     }
     if (value.info.type.kind == SemanticType::TypePack) {
       // Concrete pack elements must be projected into ordinary typed MIR
       // places and staged individually. A TypePack SSA value would hide
       // copy/move policy from the backend.
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52899); return false; } // TEMP-VOCAB
+      return false;
     }
     if (valueRootedPlacementCallResultSlot(program_, representations_, body,
                                            value.id)) {
@@ -52930,7 +52909,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             representationTypeRow(representations_, value.info.type);
         if (row == nullptr || row->spelling.empty() ||
             !row->boundaryConstructible || !row->copyable) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52923); return false; } // TEMP-VOCAB
+          return false;
         }
         continue;
       }
@@ -52942,7 +52921,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           findInstruction(body, value.definition);
       const auto slotConsumed = [&](const MirInstruction &construct) {
         if (!construct.result) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52935); return false; } // TEMP-VOCAB
+          return false;
         }
         for (const MirValueUse &use : body.usesOf(*construct.result)) {
           const MirInstruction *consumer =
@@ -52957,7 +52936,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             }
           }
         }
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52950); return false; } // TEMP-VOCAB
+        return false;
       };
       const bool constructDefined =
           definition != nullptr &&
@@ -52974,7 +52953,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             definition->operands.front().place == 0 ||
             body.findPlace(definition->operands.front().place) == nullptr ||
             !definition->localFailureSites.empty()) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52967); return false; } // TEMP-VOCAB
+          return false;
         }
         const auto row = std::find_if(
             representations_.types().begin(), representations_.types().end(),
@@ -52997,7 +52976,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (definition == nullptr ||
             definition->kind != MirInstructionKind::Move ||
             stageUses.size() != 1) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 52990); return false; } // TEMP-VOCAB
+          return false;
         }
         const MirInstruction *user =
             findInstruction(body, stageUses.front().instruction);
@@ -53171,7 +53150,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           (definition != nullptr &&
            storageReferenceReadCall(body, *definition));
       if (!noLocal) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53164); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -53240,7 +53219,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           !(callableTemplateBody &&
             callableArgumentStage(body, value.id) != nullptr)) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53233); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
@@ -53263,13 +53242,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           producedCallResultLoan(body, *definition) == nullptr ||
           !body.usesOf(value.id).empty()) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53256); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
     }
     if (!typeRow(value.info.type)) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53262); return false; } // TEMP-VOCAB
+      return false;
     }
   }
   const auto stagedAcrossConditionalArguments = [&](MirValueId id,
@@ -53307,7 +53286,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
          stage->operands.front().kind != MirOperandKind::BorrowWrite) ||
         value->definitionBlock == targetBlock || uses.size() != 1 ||
         uses.front().block != targetBlock) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53300); return false; } // TEMP-VOCAB
+      return false;
     }
     const MirInstruction *consumer =
         findInstruction(body, uses.front().instruction);
@@ -53319,12 +53298,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            consumer->constructorKind == ConstructorKind::Ordinary)) ||
         consumer->callSite != stage->callSite || !dominance ||
         !dominance->dominates(value->definitionBlock, targetBlock)) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53312); return false; } // TEMP-VOCAB
+      return false;
     }
     if (place->root != MirPlaceRootKind::Binding &&
         directTemporaryBorrow(body, *consumer, *stage, place->type).slot !=
             place) {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53317); return false; } // TEMP-VOCAB
+      return false;
     }
     // An independently owned method result can precede a later conditional
     // argument. Its moved receiver and prepared result keep their exact MIR
@@ -53549,7 +53528,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            !result.producer->constructorTarget) ||
           result.producer->loan || result.producer->successResultDrop ||
           !result.producer->lifecycle.empty())
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53542); return false; } // TEMP-VOCAB
+        return false;
       const auto owner = std::find_if(
           program_.classInstances().begin(), program_.classInstances().end(),
           [&](const MirClassInstance &candidate) {
@@ -53621,7 +53600,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
              producer->constructorTarget &&
              cppMirConstructorStatusCannotFail(program_,
                                                *producer->constructorTarget))))
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53614); return false; } // TEMP-VOCAB
+        return false;
       const auto *receiver =
           producer->receiver ? borrowStagedCallInput(body, *producer->receiver)
                              : nullptr;
@@ -53797,7 +53776,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                        [&](const MirOperand &operand) {
                          if (operand.kind != MirOperandKind::Value ||
                              operand.value == id)
-                           { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53790); return false; } // TEMP-VOCAB
+                           return false;
                          const MirInstruction *borrow =
                              borrowStagedCallInput(body, operand);
                          if (borrow != nullptr)
@@ -53830,7 +53809,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             passiveRegionValue(call.info.type)) ||
           (!call.definedFailure.empty() &&
            !invokePairedInstruction(body, call.id)))
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53823); return false; } // TEMP-VOCAB
+        return false;
       if (call.receiver) {
         const MirInstruction *receiver =
             borrowStagedCallInput(body, *call.receiver);
@@ -53838,14 +53817,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             receiver->callInputRole != MirCallInputRole::Receiver ||
             !(nestedCallBorrow(*receiver, call) ||
               innerTemporaryBorrow(*receiver, call)))
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53831); return false; } // TEMP-VOCAB
+          return false;
       }
       std::vector<MirDropObligationId> transfers;
       const bool inputs = std::all_of(
           call.operands.begin(), call.operands.end(),
           [&](const MirOperand &input) {
             if (input.kind != MirOperandKind::Value || input.value == id)
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53838); return false; } // TEMP-VOCAB
+              return false;
             const MirInstruction *borrow = borrowStagedCallInput(body, input);
             if (borrow != nullptr)
               return borrow->callInputRole == MirCallInputRole::Argument &&
@@ -53856,7 +53835,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               return true;
             const PreparedArgument prepared = preparedArgument(input, call);
             if (prepared.stage == nullptr)
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53849); return false; } // TEMP-VOCAB
+              return false;
             transfers.push_back(*prepared.stage->preparedParameterDrop);
             return true;
           });
@@ -53884,7 +53863,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           operation.result && operation.info.type.kind == SemanticType::Class) {
         temporary = directTemporaryBorrowForValue(body, *operation.result);
         if (temporary.producer != &operation)
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53877); return false; } // TEMP-VOCAB
+          return false;
       } else if (operation.kind == MirInstructionKind::EndBorrow &&
                  operation.loan && !operation.result &&
                  !operation.destination && !operation.receiver &&
@@ -53899,9 +53878,9 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (source != nullptr)
           temporary = directTemporaryBorrowForSlot(body, *source);
         if (!temporary || temporary.stage->loan != operation.loan)
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53892); return false; } // TEMP-VOCAB
+          return false;
       } else {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53894); return false; } // TEMP-VOCAB
+        return false;
       }
       return innerTemporaryBorrow(*temporary.stage, *temporary.call) &&
              nestedPlainCall(*temporary.call);
@@ -53923,10 +53902,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (complete.contains(blockId))
         return true;
       if (!visiting.insert(blockId).second)
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53916); return false; } // TEMP-VOCAB
+        return false;
       const MirBlock *candidate = body.findBlock(blockId);
       if (candidate == nullptr)
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53919); return false; } // TEMP-VOCAB
+        return false;
       bool afterStage = blockId != value->definitionBlock;
       for (const MirInstruction &instruction : candidate->instructions) {
         if (&instruction == stage) {
@@ -53992,7 +53971,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                               }))
                 return true;
               if (classPublicationIdentityInput(body, instruction) == nullptr)
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 53985); return false; } // TEMP-VOCAB
+                return false;
               const StagedClassResult argument =
                   stagedClassResultForSource(body, *instruction.result);
               return argument.producer == conditional.move &&
@@ -54095,7 +54074,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                           return operand.kind == MirOperandKind::Value &&
                                  operand.value == id;
                         })) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54088); return false; } // TEMP-VOCAB
+          return false;
         }
         switch (instruction.kind) {
         case MirInstructionKind::Call:
@@ -54115,7 +54094,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !isPassiveScalarValueType(instruction.info.type) ||
               (!instruction.definedFailure.empty() &&
                !invokePairedInstruction(body, instruction.id))) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54108); return false; } // TEMP-VOCAB
+            return false;
           }
           break;
         case MirInstructionKind::Compute:
@@ -54125,7 +54104,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             break;
           if (!instruction.result || instruction.destination ||
               !passiveRegionValue(instruction.info.type)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54118); return false; } // TEMP-VOCAB
+            return false;
           }
           break;
         case MirInstructionKind::Initialize: {
@@ -54137,25 +54116,25 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !temporary->projections.empty() ||
               !passiveRegionValue(temporary->type) ||
               !instruction.definedFailure.empty()) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54130); return false; } // TEMP-VOCAB
+            return false;
           }
           break;
         }
         default:
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54135); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       if (!afterStage || blockId == targetBlock)
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54139); return false; } // TEMP-VOCAB
+        return false;
       const MirTerminator &edge = candidate->terminator;
       if (edge.kind != MirTerminatorKind::Goto &&
           edge.kind != MirTerminatorKind::Branch &&
           edge.kind != MirTerminatorKind::Invoke) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54144); return false; } // TEMP-VOCAB
+        return false;
       }
       if (!self(self, edge.target) || (edge.kind == MirTerminatorKind::Branch &&
                                        !self(self, edge.elseTarget))) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54148); return false; } // TEMP-VOCAB
+        return false;
       }
       visiting.erase(blockId);
       complete.insert(blockId);
@@ -54188,14 +54167,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (stage == nullptr || stage->kind != MirInstructionKind::CallInput ||
           record->definitionBlock == 0 ||
           record->definitionBlock == targetBlock) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54181); return false; } // TEMP-VOCAB
+        return false;
       }
       std::unordered_set<MirBlockId> visited;
       MirBlockId current = record->definitionBlock;
       while (current != targetBlock && visited.insert(current).second) {
         const MirBlock *source = body.findBlock(current);
         if (source == nullptr || source->terminator.target == 0) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54188); return false; } // TEMP-VOCAB
+          return false;
         }
         if (source->terminator.kind != MirTerminatorKind::Invoke) {
           const MirPlace *place =
@@ -54232,7 +54211,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               --last;
             if (last == source->instructions.begin() || place == nullptr ||
                 observation != &*std::prev(last))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54225); return false; } // TEMP-VOCAB
+              return false;
             bool afterStage = current != record->definitionBlock;
             for (const MirInstruction &member : source->instructions) {
               if (&member == observation)
@@ -54248,7 +54227,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   !member.localFailureSites.empty() ||
                   (member.destination &&
                    (written == nullptr || sameMirPlaceRoot(*written, *place))))
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54241); return false; } // TEMP-VOCAB
+                return false;
             }
             return afterStage;
           };
@@ -54278,7 +54257,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !place->projections.empty() || success == nullptr ||
               observation == nullptr || !inertBeforeObservation() ||
               !tryableObservation) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54271); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         const MirBlockId next = source->terminator.target;
@@ -54309,7 +54288,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           predecessors += reaches ? 1 : 0;
         }
         if (predecessors != 1) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54302); return false; } // TEMP-VOCAB
+          return false;
         }
         current = next;
       }
@@ -54350,7 +54329,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                      id) != pendingStaged.end() ||
                            stagedAcrossInvokeSuccessChain(id, block.id);
                   }))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54343); return false; } // TEMP-VOCAB
+            return false;
           for (const MirValueId id : consumed)
             pendingStaged.erase(
                 std::remove(pendingStaged.begin(), pendingStaged.end(), id),
@@ -54372,7 +54351,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // This exact argument was consumed by the native initializer. It
         // must not enter the body-local staging queue a second time.
         if (!pendingStaged.empty())
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54365); return false; } // TEMP-VOCAB
+          return false;
         continue;
       }
       if (pendingStaged.empty() &&
@@ -54520,12 +54499,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
              instruction.kind != MirInstructionKind::EndBorrow &&
              instruction.kind != MirInstructionKind::Call)) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54513); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         if (!consumingCall && referencesPendingStaged(instruction)) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54518); return false; } // TEMP-VOCAB
+            return false;
           }
         }
       }
@@ -54539,7 +54518,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                .owner = storage->symbol} ||
             (!storage->dataInitializer && !failureForm) ||
             !pendingStaged.empty())
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54532); return false; } // TEMP-VOCAB
+          return false;
         continue;
       }
       case MirInstructionKind::CleanupBeforeAssign:
@@ -54550,7 +54529,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             (!instruction.localFailureSites.empty() &&
              !checkedArrayElementDestination(
                  body, *body.findPlace(*instruction.destination))))
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54543); return false; } // TEMP-VOCAB
+          return false;
         continue;
       case MirInstructionKind::InitializeBase: {
         const MirConstructorInstance *constructor =
@@ -54564,7 +54543,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (!failureForm || constructor == nullptr || owner == nullptr ||
             constructorBaseInitialization(*constructor) != &instruction ||
             !statusBaseConstructorSurface(program_, *owner, *constructor))
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54557); return false; } // TEMP-VOCAB
+          return false;
         continue;
       }
       case MirInstructionKind::AllocateObject:
@@ -54572,7 +54551,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !objectAllocationForPlace(body, *instruction.destination) ||
             instruction.definedFailure.mayUnwind() ||
             !typeRow(instruction.info.type)) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54565); return false; } // TEMP-VOCAB
+          return false;
         }
         continue;
       case MirInstructionKind::Lifecycle:
@@ -54612,7 +54591,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (!typeRow(instruction.info.type) ||
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), valueOperand)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54605); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
@@ -54635,7 +54614,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 pendingStaged.erase(pending);
               } else if (!stagedAcrossInvokeSuccessChain(*input->result,
                                                          block.id)) {
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54628); return false; } // TEMP-VOCAB
+                return false;
               }
             }
             continue;
@@ -54750,7 +54729,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               (!publishesReturn && slot == nullptr &&
                !publishesConstructionSlot) ||
               !operandsReady) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54743); return false; } // TEMP-VOCAB
+            return false;
           }
           // A failure-capable publication constructor may consume an exact
           // borrow stage just like the plain publication form below. The
@@ -54772,7 +54751,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             }
           }
           if (!stagedConsumable) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54765); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
@@ -54813,7 +54792,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                            instruction.operands.end(), valueOperand) ||
               !instruction.localFailureSites.empty()) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54806); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           // A borrow-staged argument consumes its stage here: pending in
@@ -54842,7 +54821,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           if (!stagedConsumable) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54835); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -54910,7 +54889,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                          instruction.operands.end(), valueOperand) ||
             instruction.constructorKind != ConstructorKind::Ordinary) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54903); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         continue;
@@ -54929,7 +54908,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                         *body.findPlace(loan->source)))) &&
              elementBorrowLoanProducer(body, *loan) != &instruction)) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54922); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         if (loan->kind == MirLoanKind::Return &&
@@ -54943,10 +54922,8 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // that this verified Return copies the inner loan's runtime pointer.
           const auto nestedPayloadSource = [&] {
             if (retained == nullptr || retained->kind != MirLoanKind::Local ||
-                (retained->referenceSelection && retained->referenceSelection->kind ==
-                                                     ReferenceSelectionKind::StoredExternalReference) ||
-                retained->parent == 0)
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54939); return false; } // TEMP-VOCAB
+                retained->referenceSelection || retained->parent == 0)
+              return false;
             std::unordered_set<MirLoanId> seen;
             const MirLoan *ancestor = body.findLoan(retained->parent);
             MirPlaceId source = retained->source;
@@ -54966,12 +54943,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               operand.type != instruction.info.type ||
               (operand.place != 0 &&
                (!runtime || runtime->type != operand.type)))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54959); return false; } // TEMP-VOCAB
+            return false;
           if (retained->kind == MirLoanKind::Parameter &&
               operand.type != body.returnType &&
               !mir_detail::referenceParameterReturnPublication(body, block,
                                                                instruction))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54964); return false; } // TEMP-VOCAB
+            return false;
         }
         if (loan->kind == MirLoanKind::Stored) {
           // The reference field binds in the member initializer list;
@@ -54987,7 +54964,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 callResultReturnLoanProducer(body, *loan);
             transfer != nullptr) {
           if (transfer != &instruction || !typeRow(transfer->info.type)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54980); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
@@ -54996,7 +54973,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !lambdaDependentTypeRepresentable(program_, representations_, body,
                                               source->type)) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54989); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         continue;
@@ -55005,27 +54982,27 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         const MirLoan *loan =
             instruction.loan ? loanById(*instruction.loan) : nullptr;
         if (loan == nullptr || !loan->twoPhase) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 54998); return false; } // TEMP-VOCAB
+          return false;
         }
         continue;
       }
       case MirInstructionKind::EndBorrow:
         if (!instruction.loan || loanById(*instruction.loan) == nullptr) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55005); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         continue;
       case MirInstructionKind::ParkRangeCursor:
       case MirInstructionKind::RestoreRangeCursor:
         if (!exactRangeEndpointMarker(body, instruction))
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55012); return false; } // TEMP-VOCAB
+          return false;
         continue;
       case MirInstructionKind::Drop: {
         if (sharedOwnerValueDrop(program_, body, instruction)) {
           if (!instruction.definedFailure.empty() &&
               (!failureForm || !invokePairedInstruction(body, instruction.id)))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55018); return false; } // TEMP-VOCAB
+            return false;
           continue;
         }
         if (const auto *drop = returnResultDrop(body, instruction);
@@ -55057,7 +55034,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                    nullptr &&
                returnedFreshPayloadSlot(program_, representations_, body,
                                         place->value) == nullptr))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55050); return false; } // TEMP-VOCAB
+            return false;
           continue;
         }
         const MirPlace *droppedPlace =
@@ -55065,12 +55042,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                     : nullptr;
         if (droppedPlace && objectAllocationForPlace(body, droppedPlace->id)) {
           if (!failureForm)
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55058); return false; } // TEMP-VOCAB
+            return false;
           continue;
         }
         if (directOwnerDrop(program_, body, instruction)) {
           if (!failureForm && !instruction.definedFailure.empty())
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55063); return false; } // TEMP-VOCAB
+            return false;
           continue;
         }
         if (trivialMirDrop(body, instruction,
@@ -55094,7 +55071,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   : program_.findClassInstance(constructor->owner);
           if (constructor == nullptr || owner == nullptr ||
               !statusBaseConstructorSurface(program_, *owner, *constructor))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55087); return false; } // TEMP-VOCAB
+            return false;
           continue;
         }
         if (failureForm && instruction.destination) {
@@ -55128,7 +55105,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 parameter->terminator.kind !=
                     MirTerminatorKind::TerminateCleanupFailure ||
                 parameter->terminator.failureRecord != record->id))) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55121); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
@@ -55141,7 +55118,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               dropRepresentationSlot(program_, body, instruction);
           if (cleanupSlot == nullptr || !slotPlace(*cleanupSlot)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55134); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -55151,7 +55128,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                    : nullptr;
         if (slot == nullptr || !slotPlace(*slot)) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55144); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         continue;
@@ -55159,7 +55136,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       case MirInstructionKind::Compute: {
         if (!instruction.result) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55152); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         if (!cppMirTerminalCheckedHelperSpelling(instruction.operation)
@@ -55197,7 +55174,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                              return operand.type == instruction.info.type;
                            })) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55190); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -55227,7 +55204,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                            instruction.operands.end(), floatingOperand) ||
               !typeRow(instruction.info.type)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55220); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -55257,7 +55234,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             case SemanticType::Char:
               return true;
             default: {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55250); return false; } // TEMP-VOCAB
+              return false;
             }
             }
           };
@@ -55273,7 +55250,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           };
           if (!integralKind(instruction.info.type)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55266); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           if (instruction.localFailureSites.size() != 1 ||
@@ -55285,7 +55262,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                            instruction.operands.end(), detectorOperand) ||
               !typeRow(instruction.info.type)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55278); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -55302,7 +55279,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !instruction.localFailureSites.empty() ||
               !instruction.definedFailure.empty() || !bodyRow(target->id) ||
               !typeRow(instruction.info.type)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55295); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
@@ -55322,14 +55299,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !instruction.localFailureSites.empty() ||
               !instruction.definedFailure.empty() ||
               !typeRow(instruction.info.type)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55315); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
         case MirOperation::Literal:
           if (!literalSupported(instruction.literal, instruction.info.type)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55322); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -55350,7 +55327,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.literal || !instruction.localFailureSites.empty() ||
               !instruction.definedFailure.empty() ||
               !typeRow(instruction.info.type)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55343); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
@@ -55359,7 +55336,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (instruction.operands.size() != 1 ||
               !valueOperand(instruction.operands.front())) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55352); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -55378,7 +55355,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !instruction.localFailureSites.empty() ||
               !instruction.definedFailure.empty() ||
               !typeRow(instruction.info.type)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55371); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         case MirOperation::Closure: {
@@ -55420,7 +55397,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               (!fused && !materialized && !invocationAddress) ||
               !typeRow(lambda->returnType)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55413); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           bool rows = true;
@@ -55456,7 +55433,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                                     .owner = lambda->id},
                                                    lambdaFailureForm))) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55449); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -55467,7 +55444,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !valueOperand(instruction.operands.front()) ||
               !typeRow(instruction.info.type)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55460); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -55482,7 +55459,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               (instruction.operands.front().type != instruction.info.type &&
                fusedSignedMinimumLiteral(body, instruction) == nullptr) ||
               !typeRow(instruction.info.type)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55475); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         case MirOperation::Aggregate:
@@ -55517,7 +55494,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !instruction.localFailureSites.empty() ||
               !typeRow(instruction.info.type)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55510); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -55586,7 +55563,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                          *instruction.payloadIndex >=
                              variant->fieldTypes.size())) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55579); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           if (instruction.operation == MirOperation::PayloadConstruct) {
@@ -55595,16 +55572,16 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             // leaving them pending would mistake the next initializer for
             // an intervening use of an unconsumed reference argument.
             if (!hasCompleteCallInputSchedule(body, instruction))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55588); return false; } // TEMP-VOCAB
+              return false;
             std::vector<MirValueId> consumed;
             for (const auto &operand : instruction.operands)
               if (const auto *stage = borrowStagedCallInput(body, operand)) {
                 if (!stage->result)
-                  { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55593); return false; } // TEMP-VOCAB
+                  return false;
                 consumed.push_back(*stage->result);
               }
             if (!consumeStagedBorrows(consumed))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55597); return false; } // TEMP-VOCAB
+              return false;
           }
           continue;
         }
@@ -55614,7 +55591,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 instruction.operands.front().type.kind ==
                     SemanticType::RawPointer)) &&
               !mir_detail::rawPointerConversion(instruction))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55607); return false; } // TEMP-VOCAB
+            return false;
           // An unchecked conversion is proven in-range by MIR. A checked
           // one in the failure form belongs to the detector rules above;
           // in the plain form its single site spells the terminal
@@ -55628,7 +55605,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !valueOperand(instruction.operands.front()) ||
               !typeRow(instruction.info.type)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55621); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -55640,7 +55617,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !valueOperand(instruction.operands[1]) ||
               !typeRow(instruction.info.type)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55633); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -55661,7 +55638,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !comparisonOperand(instruction.operands[0]) ||
               !comparisonOperand(instruction.operands[1])) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55654); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -55693,7 +55670,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                !checkedAddress) ||
               !capabilityRow(CppMirEmissionCapabilityKind::RawMemory) ||
               !typeRow(instruction.info.type)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55686); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
@@ -55746,7 +55723,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !instruction.definedFailure.empty() ||
               !capabilityRow(CppMirEmissionCapabilityKind::RawMemory) ||
               !typeRow(instruction.info.type)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55739); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
@@ -55762,13 +55739,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                (!stringViewIndexFailureSite(program_, instruction) ||
                 !invokePairedInstruction(body, instruction.id)))) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55755); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
         }
         default: {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55761); return false; } // TEMP-VOCAB
+          return false;
         }
         }
       }
@@ -55776,7 +55753,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (!instruction.result || instruction.operands.size() != 1 ||
             instruction.operands.front().place == 0) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55769); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         if (const MirPlace *source =
@@ -55792,7 +55769,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                          ReceiverMutability::ReadOnly,
                                          subscript->indexType) == nullptr ||
                 !typeRow(instruction.info.type)) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55785); return false; } // TEMP-VOCAB
+              return false;
             }
             continue;
           }
@@ -55814,7 +55791,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   instruction.localFailureSites.front()) == nullptr ||
               !typeRow(instruction.info.type)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55807); return false; } // TEMP-VOCAB
+              return false;
             }
           }
         }
@@ -55827,7 +55804,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         if (!instruction.destination || instruction.operands.size() != 1) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55820); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         const MirPlace *destination = body.findPlace(*instruction.destination);
@@ -55845,7 +55822,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // An owned enum result cannot fall through to the generic
           // SSA spelling: its only native object is the value-rooted slot,
           // and publication must prove the exact constructor rollback edge.
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55838); return false; } // TEMP-VOCAB
+          return false;
         }
         // A store into a receiver field is only expressible through the
         // mutable-receiver binding; under a read-only receiver the text step
@@ -55854,7 +55831,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             destination->root == MirPlaceRootKind::This &&
             !receiverAllowsMutation(receiverMutability)) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55847); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         if (destination != nullptr &&
@@ -55868,7 +55845,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                        ReceiverMutability::Mutable,
                                        subscript->indexType) == nullptr ||
               !valueOperand(instruction.operands.front())) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55861); return false; } // TEMP-VOCAB
+            return false;
           } else {
             continue;
           }
@@ -55878,7 +55855,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // destination and emits as a comment only.
           if (!valueOperand(instruction.operands.front())) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55871); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -55889,14 +55866,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             destination->type.kind == SemanticType::Reference) {
           if (referenceBindingAddressPlace(program_, representations_, body,
                                            instruction) == nullptr) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55882); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
         if (!valueOperand(instruction.operands.front()) &&
             !syntheticBool(instruction.operands.front())) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55889); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         continue;
@@ -55906,7 +55883,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             instruction.operands.size() != 1 ||
             !valueOperand(instruction.operands.front())) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55899); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         const MirPlace *destination = body.findPlace(*instruction.destination);
@@ -55914,12 +55891,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             destination->type.kind == SemanticType::Enum &&
             destination->traits.drop == DropKind::Lexical &&
             !owningPayloadEnumAssignmentSlot(program_, body, instruction))
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55907); return false; } // TEMP-VOCAB
+          return false;
         if (destination != nullptr &&
             destination->root == MirPlaceRootKind::This &&
             !receiverAllowsMutation(receiverMutability)) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55912); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         if (destination != nullptr) {
@@ -55932,7 +55909,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                          subscript->owner,
                                          ReceiverMutability::Mutable,
                                          subscript->indexType) == nullptr) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 55925); return false; } // TEMP-VOCAB
+              return false;
             }
             continue;
           }
@@ -56011,7 +55988,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                program_.failureMetadata().findSite(
                    instruction.localFailureSites.front()) == nullptr)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56004); return false; } // TEMP-VOCAB
+              return false;
             }
           }
         }
@@ -56048,7 +56025,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // SSA object when its exact publication/lifetime proof is absent.
           // Sequenced call arguments construct at the Move, while exact
           // return moves publish directly into the caller's result slot.
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56041); return false; } // TEMP-VOCAB
+          return false;
         }
         const bool terminalElementMove =
             movedSource != nullptr &&
@@ -56066,7 +56043,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             instruction.info.type != movedSource->type ||
             (!instruction.localFailureSites.empty() && !terminalElementMove)) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56059); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         const MirPayloadEnum *owningPayloadEnum =
@@ -56078,19 +56055,19 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             !payloadEnumMoveValueSlot(program_, body, *instruction.result) &&
             !payloadEnumArgumentMoveStage(program_, body,
                                           *instruction.result)) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56071); return false; } // TEMP-VOCAB
+          return false;
         }
         if (const auto *publication = payloadEnumMovePublicationSlot(
                 program_, body, *instruction.result);
             publication && !slotPlace(*publication))
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56076); return false; } // TEMP-VOCAB
+          return false;
         continue;
       }
       case MirInstructionKind::CallInput: {
         if (!instruction.result || instruction.receiver ||
             instruction.operands.size() != 1) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56083); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         const MirValue *argumentValue =
@@ -56121,7 +56098,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // back to deferred copy staging at the consuming native call.
           if (stagedClassResultForResult(body, *instruction.result).stage !=
               &instruction)
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56114); return false; } // TEMP-VOCAB
+            return false;
           continue;
         }
         if (directTemporaryReceiverStage(body, instruction)) {
@@ -56162,7 +56139,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // only by the two exact transport recognizers above. Letting a
           // near-miss fall through to generic SSA staging would allocate a
           // second native object with no MIR cleanup identity.
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56155); return false; } // TEMP-VOCAB
+          return false;
         }
         if (staged.kind == MirOperandKind::BorrowRead ||
             staged.kind == MirOperandKind::BorrowWrite) {
@@ -56172,7 +56149,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               staged.place == 0 ? nullptr : body.findPlace(staged.place);
           if (borrowed == nullptr) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56165); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           // A temporary produced only inside a conditional arm or a `&&`/`||`
@@ -56189,7 +56166,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               hiddenProducer->kind != MirInstructionKind::Move &&
               hiddenProducer->kind != MirInstructionKind::Load &&
               !slotPlace(*borrowed)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56182); return false; } // TEMP-VOCAB
+            return false;
           }
           if (!mirCallInputAbandonedByTerminal(body, instruction))
             pendingStaged.push_back(*instruction.result);
@@ -56211,7 +56188,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         if (!valueOperand(staged)) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56204); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         continue;
@@ -56224,17 +56201,17 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !valueOperand(*instruction.receiver) ||
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), valueOperand))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56217); return false; } // TEMP-VOCAB
+            return false;
           continue;
         }
         if (simdIntrinsic(instruction.intrinsic)) {
           if (instruction.operands.size() != 3 || instruction.result ||
               instruction.receiver || instruction.functionTarget)
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56223); return false; } // TEMP-VOCAB
+            return false;
           for (const MirOperand &operand : instruction.operands) {
             const MirPlace *place = simdArrayPlace(body, operand);
             if (place == nullptr || !typeRow(place->type))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56227); return false; } // TEMP-VOCAB
+              return false;
           }
           continue;
         }
@@ -56259,11 +56236,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               (!optionalRead && !valueOperand(instruction.operands.back())) ||
               !instruction.result || !typeRow(instruction.info.type)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56252); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           if (!consumeStorageStage(instruction.operands.front())) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56256); return false; } // TEMP-VOCAB
+            return false;
           }
           if (instruction.receiver &&
               ((instruction.receiver->kind != MirOperandKind::BorrowRead &&
@@ -56271,7 +56248,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                instruction.receiver->place == 0 ||
                body.findPlace(instruction.receiver->place) == nullptr)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56264); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -56299,10 +56276,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               storageReadFailureHelperSpelling(instruction.intrinsic).empty() ||
               !typeRow(instruction.info.type) ||
               !typeRow(storage->type.arguments.front())) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56292); return false; } // TEMP-VOCAB
+            return false;
           }
           if (!consumeStorageStage(instruction.operands.front())) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56295); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
@@ -56348,10 +56325,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !instruction.localFailureSites.empty() ||
               !instruction.definedFailure.empty() ||
               !instruction.lifecycle.empty() || !resultReady) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56341); return false; } // TEMP-VOCAB
+            return false;
           }
           if (!consumeStorageStage(instruction.operands.front())) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56344); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
@@ -56380,10 +56357,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                            instruction.info.type != SemanticType::Bool)
                         : (instruction.result.has_value() ||
                            instruction.info.type != SemanticType::Void))) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56373); return false; } // TEMP-VOCAB
+            return false;
           }
           if (!consumeStorageStage(instruction.operands.front())) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56376); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
@@ -56403,10 +56380,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.definedFailure.propagation !=
                   FailurePropagationKind::None ||
               !optionalStorageConstructLifecycle(body, instruction)) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56396); return false; } // TEMP-VOCAB
+            return false;
           }
           if (!consumeStorageStage(instruction.operands.front())) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56399); return false; } // TEMP-VOCAB
+            return false;
           }
           continue;
         }
@@ -56421,7 +56398,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                              return valueOperand(operand) ||
                                     checkedReferenceOperand(operand);
                            }))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56414); return false; } // TEMP-VOCAB
+            return false;
           if (instruction.intrinsic == IntrinsicKind::FunctionPointerInvoke) {
             // The invocation spells every borrow-staged argument place
             // directly, exactly like a source call: the pointer's own
@@ -56440,18 +56417,18 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 pendingStaged.erase(pending);
               else if (!stagedAcrossInvokeSuccessChain(*stage->result,
                                                        block.id))
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56433); return false; } // TEMP-VOCAB
+                return false;
             }
             if (!failureForm ||
                 !std::all_of(instruction.operands.begin(),
                              instruction.operands.end(), consumeStorageStage))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56438); return false; } // TEMP-VOCAB
+              return false;
           } else if (instruction.functionPointerLambdaTarget) {
             if (!supportsBodyTextImpl(
                     {.kind = MirBodyKind::Lambda,
                      .owner = *instruction.functionPointerLambdaTarget},
                     true))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56444); return false; } // TEMP-VOCAB
+              return false;
           } else {
             const auto *target = program_.findFunctionInstance(
                 *instruction.functionPointerFunctionTarget);
@@ -56459,7 +56436,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !supportsBodyTextImpl(
                     {.kind = MirBodyKind::Function, .owner = target->id},
                     target->mayRaiseDefinedFailure))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56452); return false; } // TEMP-VOCAB
+              return false;
           }
           continue;
         }
@@ -56470,7 +56447,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               (!valueOperand(instruction.operands.front()) &&
                !checkedReferenceOperand(instruction.operands.front())) ||
               !consumeStorageStage(instruction.operands.front()))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56463); return false; } // TEMP-VOCAB
+            return false;
           continue;
         }
         if (instruction.intrinsic == IntrinsicKind::TextViewFromAddress ||
@@ -56485,7 +56462,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), valueOperand) ||
               !consumeStorageStage(instruction.operands[witness]))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56478); return false; } // TEMP-VOCAB
+            return false;
           continue;
         }
         if (instruction.intrinsic == IntrinsicKind::ObjectConstruct) {
@@ -56493,24 +56470,24 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !hasCompleteCallInputSchedule(body, instruction) ||
               !typeRow(instruction.parameterTypes.front()) ||
               !typeRow(instruction.parameterTypes.front().arguments.front()))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56486); return false; } // TEMP-VOCAB
+            return false;
           if (instruction.definedFailure.propagation ==
               FailurePropagationKind::Constructor) {
             if (!failureForm ||
                 !storageStatusConstructor(program_, representations_, body,
                                           instruction))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56492); return false; } // TEMP-VOCAB
+              return false;
           } else if (instruction.constructorTarget &&
                      !ordinaryConstructorBodyContained(
                          program_, representations_,
                          *instruction.constructorTarget,
                          instruction.parameterTypes.front()
                              .arguments.front())) {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56499); return false; } // TEMP-VOCAB
+            return false;
           }
           for (const auto &operand : instruction.operands)
             if (!valueOperand(operand) || !typeRow(operand.type))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56503); return false; } // TEMP-VOCAB
+              return false;
           // Reference constructor inputs name already-staged places just as
           // ordinary construction does. The exact call consumes those stages;
           // leaving them pending would incorrectly carry them past its Invoke.
@@ -56525,7 +56502,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             if (pending != pendingStaged.end())
               pendingStaged.erase(pending);
             else if (!stagedAcrossInvokeSuccessChain(*stage->result, block.id))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56518); return false; } // TEMP-VOCAB
+              return false;
           }
           continue;
         }
@@ -56538,7 +56515,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                    FailurePropagationKind::Destructor &&
                (!failureForm ||
                 !invokePairedInstruction(body, instruction.id))))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56531); return false; } // TEMP-VOCAB
+            return false;
           continue;
         }
         if (instruction.intrinsic == IntrinsicKind::ObjectRelocate ||
@@ -56550,7 +56527,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !valueOperand(instruction.operands[1]) ||
               (instruction.operands.size() == 3 &&
                !valueOperand(instruction.operands[2])))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56543); return false; } // TEMP-VOCAB
+            return false;
           continue;
         }
         if (callableValueInvocation(instruction)) {
@@ -56653,7 +56630,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             if (pending == pendingStaged.end()) {
               if (!stagedAcrossInvokeSuccessChain(*preparedReceiver->result,
                                                   block.id))
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56646); return false; } // TEMP-VOCAB
+                return false;
             } else {
               pendingStaged.erase(pending);
             }
@@ -56676,12 +56653,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 argument->callInputIndex != index ||
                 index >= instruction.parameterTypes.size() ||
                 argument->info.type != instruction.parameterTypes[index])
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56669); return false; } // TEMP-VOCAB
+              return false;
             const auto pending = std::find(
                 pendingStaged.begin(), pendingStaged.end(), *argument->result);
             if (pending == pendingStaged.end()) {
               if (!stagedAcrossInvokeSuccessChain(*argument->result, block.id))
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56674); return false; } // TEMP-VOCAB
+                return false;
             } else {
               pendingStaged.erase(pending);
             }
@@ -56722,7 +56699,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                    nullptr) ||
               (instruction.result && !typeRow(instruction.info.type))) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56715); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -56756,14 +56733,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               instruction.dispatch != CallDispatch::Static ||
               !typeRow(instruction.info.type)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56749); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           if (staged != nullptr) {
             consumedStaged.push_back(*staged->result);
           }
           if (!consumeStagedBorrows(consumedStaged))
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56756); return false; } // TEMP-VOCAB
+            return false;
           continue;
         }
         if (instruction.receiver &&
@@ -56784,7 +56761,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                  instruction.functionTarget &&
                  bodyRow(*instruction.functionTarget)))) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56777); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           // The receiver borrow arrives staged through a CallInput or
@@ -56836,7 +56813,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                          : temporaryReceiver.slot);
           if (receiverPlace == nullptr) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56829); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           const MirFunctionInstance *target =
@@ -56886,7 +56863,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !receiverMutabilityMatches ||
               target->linkage != LanguageLinkage::Gti) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56879); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           // The staged place must BE the member's owner object: a place
@@ -56909,7 +56886,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                !classTypeIsOrDerivesFrom(program_, receiverPlace->type,
                                          ownerInstance->id))) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56902); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           if (staged != nullptr) {
@@ -56939,7 +56916,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                target->definitionKind ==
                    MirFunctionInstance::DefinitionKind::Source)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56932); return false; } // TEMP-VOCAB
+              return false;
             }
           }
         }
@@ -56951,7 +56928,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             producedCallResultLoan(body, instruction) != nullptr &&
             !nonRootRecordUses(body, *instruction.result).empty()) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56944); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         // A paired call-result loan publishes a reference, not a class
@@ -56986,7 +56963,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // A plain class result publishes only at its consuming return;
           // any other consumer would need an undeclarable class local.
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56979); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         // An owning array result has no declarable C++ local either. A
@@ -57004,7 +56981,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                   *instruction.result) &&
             returnedCallResultSlot(program_, body, *instruction.result) ==
                 nullptr) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 56997); return false; } // TEMP-VOCAB
+          return false;
         }
         if (failureForm) {
           const MirFunctionInstance *target =
@@ -57016,7 +56993,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               virtualFailureCallee(program_, instruction) == target;
           if (instruction.functionTarget && target == nullptr) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57009); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           if (target != nullptr && target->mayRaiseDefinedFailure &&
@@ -57029,7 +57006,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             // plain goto; only the result row is demanded.
             if (instruction.result && !typeRow(instruction.info.type)) {
               {
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57022); return false; } // TEMP-VOCAB
+                return false;
               }
             }
           } else if (target != nullptr &&
@@ -57047,7 +57024,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             // this program is selected.
             if (!invokePairedInstruction(body, instruction.id) &&
                 !failureStatusCannotFail(target->body)) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57040); return false; } // TEMP-VOCAB
+              return false;
             }
             const std::optional<CppMirTypeRepresentationKind> returnKind =
                 cppMirExpectedTypeRepresentation(target->returnType);
@@ -57238,7 +57215,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                  !virtualFailureTarget) ||
                 !returnReady) {
               {
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57231); return false; } // TEMP-VOCAB
+                return false;
               }
             }
           }
@@ -57337,7 +57314,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             if (instruction.intrinsic == IntrinsicKind::MutexLockFailure) {
               if (!mutexLockFailureCall(program_, instruction) ||
                   !invokePairedInstruction(body, instruction.id)) {
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57330); return false; } // TEMP-VOCAB
+                return false;
               }
               continue;
             }
@@ -57403,7 +57380,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !instruction.lifecycle.empty() ||
                 instruction.synchronization.kind != expectedSynchronization ||
                 !validSynchronizationOperation(instruction.synchronization)) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57396); return false; } // TEMP-VOCAB
+              return false;
             }
             continue;
           }
@@ -57461,7 +57438,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 instruction.synchronization.kind != expectedSynchronization ||
                 !validSynchronizationOperation(instruction.synchronization) ||
                 !instruction.localFailureSites.empty()) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57454); return false; } // TEMP-VOCAB
+              return false;
             }
             const std::size_t scalarValueEnd =
                 instruction.intrinsic == IntrinsicKind::AtomicCompareExchange
@@ -57470,7 +57447,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             for (std::size_t index = 1; index < scalarValueEnd; ++index) {
               if (!valueOperand(instruction.operands[index]) ||
                   instruction.operands[index].type != *element) {
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57463); return false; } // TEMP-VOCAB
+                return false;
               }
             }
             if (instruction.intrinsic == IntrinsicKind::AtomicCompareExchange) {
@@ -57485,7 +57462,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   observed.type.arguments.size() != 1 ||
                   observed.type.arguments.front() != *element ||
                   observedPlace->type != *element) {
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57478); return false; } // TEMP-VOCAB
+                return false;
               }
             }
             continue;
@@ -57500,10 +57477,10 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                  (!failureForm || instruction.localFailureSites.size() != 1 ||
                   (instruction.definedFailure.mayUnwind() &&
                    !invokePairedInstruction(body, instruction.id)))))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57493); return false; } // TEMP-VOCAB
+              return false;
             if (sharedOwnerResult(instruction) &&
                 !sharedOwnerType(program_, instruction.info.type))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57496); return false; } // TEMP-VOCAB
+              return false;
             continue;
           }
           if (sourceLocationIntrinsic(instruction.intrinsic)) {
@@ -57525,7 +57502,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 instruction.synchronization.kind !=
                     SynchronizationOperationKind::None ||
                 !typeRow(instruction.info.type)) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57518); return false; } // TEMP-VOCAB
+              return false;
             }
             continue;
           }
@@ -57535,7 +57512,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 instruction.info.type.kind != SemanticType::Class ||
                 !instruction.localFailureSites.empty() ||
                 !typeRow(instruction.info.type)) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57528); return false; } // TEMP-VOCAB
+              return false;
             }
             continue;
           }
@@ -57549,7 +57526,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !instruction.localFailureSites.empty() ||
                 instruction.definedFailure.propagation !=
                     FailurePropagationKind::None) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57542); return false; } // TEMP-VOCAB
+              return false;
             }
             continue;
           }
@@ -57564,7 +57541,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !instruction.localFailureSites.empty() ||
                 instruction.definedFailure.propagation !=
                     FailurePropagationKind::TaskJoin)
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57557); return false; } // TEMP-VOCAB
+              return false;
             for (std::size_t index = 0; index < instruction.operands.size();
                  ++index) {
               const auto *adapter = program_.findThreadTaskAdapter(
@@ -57576,7 +57553,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                   adapter->taskType != instruction.operands[index].type ||
                   adapter->resultType != SemanticType::Void ||
                   !valueOperand(instruction.operands[index]))
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57569); return false; } // TEMP-VOCAB
+                return false;
             }
             continue;
           }
@@ -57613,7 +57590,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !instruction.localFailureSites.empty() ||
                 instruction.definedFailure.propagation !=
                     FailurePropagationKind::None) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57606); return false; } // TEMP-VOCAB
+              return false;
             }
             continue;
           }
@@ -57633,7 +57610,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !instruction.definedFailure.empty() ||
                 !instruction.localFailureSites.empty() ||
                 !typeRow(instruction.info.type)) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57626); return false; } // TEMP-VOCAB
+              return false;
             }
             continue;
           }
@@ -57674,7 +57651,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                     FailurePropagationKind::TaskJoin ||
                 !localFailureReady ||
                 !invokePairedInstruction(body, instruction.id)) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57667); return false; } // TEMP-VOCAB
+              return false;
             }
             continue;
           }
@@ -57730,7 +57707,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 (instruction.definedFailure.mayUnwind() &&
                  (!failureForm ||
                   !invokePairedInstruction(body, instruction.id))))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57723); return false; } // TEMP-VOCAB
+              return false;
             continue;
           }
           if (storageBoundsCheckCall(instruction)) {
@@ -57744,7 +57721,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 (failureForm &&
                  !invokePairedInstruction(body, instruction.id))) {
               {
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57737); return false; } // TEMP-VOCAB
+                return false;
               }
             }
             continue;
@@ -57763,7 +57740,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !valueOperand(instruction.operands.front()) ||
                 !typeRow(instruction.info.type)) {
               {
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57756); return false; } // TEMP-VOCAB
+                return false;
               }
             }
             continue;
@@ -57800,14 +57777,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !uniqueOwnerBorrowDetailSpelling(program_, instruction) ||
                 !invokePairedInstruction(body, instruction.id)) {
               {
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57793); return false; } // TEMP-VOCAB
+                return false;
               }
             }
             continue;
           }
           if (instruction.intrinsic == IntrinsicKind::RestoringIndexedSwap) {
             if (!failureForm || !invokePairedInstruction(body, instruction.id))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57800); return false; } // TEMP-VOCAB
+              return false;
             continue;
           }
           if (instruction.intrinsic == IntrinsicKind::RestoringExchange ||
@@ -57818,26 +57795,26 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !mirTypeRelocationIsDefinedFailureFree(
                     program_,
                     instruction.parameterTypes.front().arguments.front()))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57811); return false; } // TEMP-VOCAB
+              return false;
             if (instruction.intrinsic == IntrinsicKind::RestoringExchange &&
                 instruction.info.type.kind == SemanticType::Class &&
                 (!instruction.result ||
                  classValuePublicationSlot(program_, body,
                                            *instruction.result) == nullptr))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57817); return false; } // TEMP-VOCAB
+              return false;
             if (instruction.intrinsic == IntrinsicKind::RestoringExchange &&
                 cppMirOwningArrayPlacementResult(program_,
                                                  instruction.info.type) &&
                 fixedArrayValueDestinationSlot(program_, body, instruction) ==
                     nullptr)
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57823); return false; } // TEMP-VOCAB
+              return false;
             if (instruction.intrinsic == IntrinsicKind::RestoringExchange &&
                 instruction.info.type.kind == SemanticType::Enum &&
                 instruction.info.traits.drop == DropKind::Lexical &&
                 (!instruction.result ||
                  payloadEnumCallResultSlot(program_, body,
                                            *instruction.result) == nullptr))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57830); return false; } // TEMP-VOCAB
+              return false;
             continue;
           }
           if (instruction.intrinsic == IntrinsicKind::UniqueOwnerSwap) {
@@ -57847,7 +57824,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !typeRow(instruction.operands.front()
                              .type.arguments.front()
                              .arguments.front())) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57840); return false; } // TEMP-VOCAB
+              return false;
             }
             continue;
           }
@@ -57877,7 +57854,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 nonRootRecordUses(body, operandValue->id).size() != 1 ||
                 !typeRow(ownerPlace->type) ||
                 !typeRow(ownerPlace->type.arguments.front())) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57870); return false; } // TEMP-VOCAB
+              return false;
             }
             continue;
           }
@@ -57899,7 +57876,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                 !typeRow(instruction.info.type) || !typeRow(sourceType) ||
                 !typeRow(instruction.info.type.arguments.front()) ||
                 !typeRow(sourceType.arguments.front())) {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57892); return false; } // TEMP-VOCAB
+              return false;
             }
             continue;
           }
@@ -57918,7 +57895,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                        program_, constructor->id) &&
                                    !failureConstructorBoundaryEligible(
                                        program_, *constructor))))) {
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57911); return false; } // TEMP-VOCAB
+                return false;
               }
             }
             // Allocation consumes the ordinary explicit input schedule. Each
@@ -57939,7 +57916,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                       return valueOperand(operand) && typeRow(operand.type);
                     })) {
               {
-                { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57932); return false; } // TEMP-VOCAB
+                return false;
               }
             }
             // The intrinsic arm returns before ordinary call admission's
@@ -57947,7 +57924,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             // including when abort-only allocation and result publication
             // occupy the same block.
             if (!consumeStagedBorrows(consumedStaged))
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57940); return false; } // TEMP-VOCAB
+              return false;
             continue;
           }
           // The substituted type parameter's default construction names
@@ -57968,7 +57945,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
               !std::all_of(instruction.operands.begin(),
                            instruction.operands.end(), valueOperand)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57961); return false; } // TEMP-VOCAB
+              return false;
             }
           }
           continue;
@@ -57994,7 +57971,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (!instruction.functionTarget ||
             !bodyRow(*instruction.functionTarget)) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 57987); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         for (const MirOperand &operand : instruction.operands) {
@@ -58027,7 +58004,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
           if (!valueOperand(operand)) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58020); return false; } // TEMP-VOCAB
+              return false;
             }
           }
         }
@@ -58040,7 +58017,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           // vocabulary.
           if (instruction.info.type.kind == SemanticType::StringView) {
             {
-              { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58033); return false; } // TEMP-VOCAB
+              return false;
             }
           }
         }
@@ -58054,11 +58031,11 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // staged in the unique invoke-predecessor block is equally
         // exact: the predecessor's block-end rule proved the hand-off.
         if (!consumeStagedBorrows(consumedStaged))
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58047); return false; } // TEMP-VOCAB
+          return false;
         continue;
       }
       default: {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58051); return false; } // TEMP-VOCAB
+        return false;
       }
       }
     }
@@ -58127,14 +58104,14 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     if (!pendingStaged.empty()) {
       // A staged borrow must be consumed by a call in its own block.
       {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58120); return false; } // TEMP-VOCAB
+        return false;
       }
     }
     switch (block.terminator.kind) {
     case MirTerminatorKind::Invoke: {
       if (block.terminator.target == 0 || block.terminator.elseTarget == 0) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58127); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       // The invoke's producer must be this block's checked detector (the
@@ -58149,12 +58126,12 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       if (producer == nullptr) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58142); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       if (sharedOwnerFailure(*producer)) {
         if (!failureForm)
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58147); return false; } // TEMP-VOCAB
+          return false;
         continue;
       }
       if (producer->kind == MirInstructionKind::AllocateObject ||
@@ -58181,7 +58158,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (producer->kind == MirInstructionKind::Drop) {
         if (!failureForm ||
             failureDestructorTarget(program_, body, *producer) == nullptr) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58174); return false; } // TEMP-VOCAB
+          return false;
         }
         continue;
       }
@@ -58231,7 +58208,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (!failureForm) {
           continue;
         }
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58224); return false; } // TEMP-VOCAB
+        return false;
       }
       if (producer->kind == MirInstructionKind::Compute &&
           (!cppMirTerminalCheckedHelperSpelling(producer->operation).empty() ||
@@ -58263,7 +58240,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           if (plainConstructorBodyContainsFailure(program_, representations_,
                                                   *producer))
             continue;
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58256); return false; } // TEMP-VOCAB
+          return false;
         }
         if (checkedConversionIntrinsicCall(*producer)) {
           // The plain shape spells the terminal numeric_cast, which never
@@ -58294,7 +58271,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           {
           }
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58287); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         continue;
@@ -58313,7 +58290,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                                                  *producer))) {
           continue;
         }
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58306); return false; } // TEMP-VOCAB
+        return false;
       }
       if (producer->kind == MirInstructionKind::Call) {
         if (producer->intrinsic == IntrinsicKind::ObjectConstruct &&
@@ -58381,7 +58358,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         if (target == nullptr ||
             (!target->mayRaiseDefinedFailure && !virtualFailureTarget)) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58374); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         continue;
@@ -58404,7 +58381,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           cppMirCheckedOperationHelperSpelling(producer->operation).empty() ||
           producer->localFailureSites.size() != 1) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58397); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
@@ -58412,7 +58389,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
     case MirTerminatorKind::PropagateFailure:
       if (block.terminator.failureRecord == 0) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58405); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       if (!failureForm && address.kind != MirBodyKind::Lambda &&
@@ -58464,7 +58441,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           }
         }
         if (reachable) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58457); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
@@ -58486,7 +58463,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           producerBlock->activeFailure != block.activeFailure ||
           producer == nullptr || producer->kind != MirInstructionKind::Drop ||
           failureDestructorTarget(program_, body, *producer) == nullptr) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58479); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -58508,7 +58485,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           entry == nullptr || entry->id != block.terminator.target ||
           entry->failureParameter != continuation->id ||
           entry->activeFailure != continuation->id) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58501); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     }
@@ -58520,13 +58497,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
           block.terminator.elseTarget != 0 ||
           !block.terminator.switchTargets.empty() ||
           !block.terminator.successLifecycle.empty()) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58513); return false; } // TEMP-VOCAB
+        return false;
       }
       continue;
     case MirTerminatorKind::Branch:
       if (!block.terminator.value || !valueOperand(*block.terminator.value)) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58519); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
@@ -58534,7 +58511,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (!block.terminator.value ||
           !stableReadOperand(*block.terminator.value)) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58527); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       bool targets = true;
@@ -58566,7 +58543,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       }
       if (!targets) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58559); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
@@ -58603,7 +58580,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
            block.terminator.value->type != body.returnType ||
            returnedValue == nullptr ||
            returnedValue->info.type != body.returnType)) {
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58596); return false; } // TEMP-VOCAB
+        return false;
       }
       const bool directFreshPayloadReturn =
           activePayloadEnumReturn && returnedDefinition != nullptr &&
@@ -58625,7 +58602,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // through the transformed callable's result pointer or, in a plain
         // body, from its slot, and a variant that waits in its slot through
         // later cleanup is constructed into the result at the Return.
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58618); return false; } // TEMP-VOCAB
+        return false;
       }
       if (failureForm && activePayloadEnumReturn && !directFreshPayloadReturn &&
           returnMoveDefinition(body, block.terminator.value->value) ==
@@ -58638,7 +58615,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // call constructing directly in that storage, or a failure-free
         // call's result constructed there from its slot may publish another
         // active value; assignment would overwrite a nonexistent object.
-        { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58631); return false; } // TEMP-VOCAB
+        return false;
       }
       if (block.terminator.returnLoan && *block.terminator.returnLoan != 0) {
         if (loanById(*block.terminator.returnLoan) == nullptr ||
@@ -58663,7 +58640,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
                returnedClassSlot.consumerKind ==
                    ClassSsaSlotConsumerKind::Return))) {
           {
-            { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58656); return false; } // TEMP-VOCAB
+            return false;
           }
         }
         if (!(returnedClassSlot.returnBlock == &block &&
@@ -58675,7 +58652,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       const auto passiveReturnOperand = [&]() {
         if (!block.terminator.value ||
             block.terminator.value->type != body.returnType) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58668); return false; } // TEMP-VOCAB
+          return false;
         }
         const std::optional<CppMirTypeRepresentationKind> kind =
             expectedTypeRepresentation(block.terminator.value->type);
@@ -58689,7 +58666,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
             (*kind != CppMirTypeRepresentationKind::Scalar &&
              !passivePointer) ||
             !typeRow(block.terminator.value->type)) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58682); return false; } // TEMP-VOCAB
+          return false;
         }
         if (block.terminator.value->kind == MirOperandKind::Constant) {
           return literalSupported(block.terminator.value->literal,
@@ -58697,7 +58674,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         }
         if (block.terminator.value->kind != MirOperandKind::Copy ||
             block.terminator.value->place == 0) {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58690); return false; } // TEMP-VOCAB
+          return false;
         }
         const MirPlace *place = body.findPlace(block.terminator.value->place);
         return place != nullptr && place->type == block.terminator.value->type;
@@ -58705,7 +58682,7 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
       if (block.terminator.value && !valueOperand(*block.terminator.value) &&
           !passiveReturnOperand()) {
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58698); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       if (failureForm && block.terminator.value &&
@@ -58737,13 +58714,13 @@ bool CppMirBodyEmitter::supportsBodyTextImpl(MirBodyAddress address,
         // A class value publishes only through its paired inline
         // construct; anything else has no local to spell.
         {
-          { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58730); return false; } // TEMP-VOCAB
+          return false;
         }
       }
       continue;
     }
     default: {
-      { if (std::getenv("GTI_VOCAB")) std::fprintf(stderr, "[vocab] %d\n", 58736); return false; } // TEMP-VOCAB
+      return false;
     }
     }
   }

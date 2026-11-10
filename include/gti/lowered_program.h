@@ -185,8 +185,6 @@ struct LoweredGenericParameter {
   std::string name;
   bool pack = false;
   bool value = false;
-  bool lifetime = false;
-  bool implicit = false;
   GenericConstraintSet constraints = 0;
   std::vector<std::string> constraintName;
   ConceptId constraintConcept = 0;
@@ -198,7 +196,6 @@ struct LoweredGenericParameter {
 
 enum class LoweredRequirementKind {
   Concept,
-  Lifetime,
   Member,
   Expression,
   InferredExpression,
@@ -211,11 +208,6 @@ struct LoweredConceptRequirement {
   LoweredRequirementKind kind = LoweredRequirementKind::Concept;
   ConceptId conceptId = 0;
   std::vector<SemanticType> arguments;
-  std::vector<Lifetime> lifetimeArguments;
-  // Region/type-outlives leaves retain their typed declaration relationship.
-  // The normalized lifetime contract remains the executable proof authority.
-  std::optional<LifetimeBound> lifetimeBound;
-  std::optional<SemanticType> outlivesType;
   // For an unnamed structural leaf, arguments are receiver/result followed by
   // exact parameter types. Semantics establishes receiver access and the
   // caller's unsafe obligation; neither is inferred from a member spelling.
@@ -311,8 +303,6 @@ struct LoweredClassBase {
 };
 
 struct LoweredClassDeclaration {
-  NominalVariance variance;
-  LifetimeSignatureContract lifetimeContract;
   bool explicitlyExported = false;
   // Declaration-complete source facts survive executable member pruning.
   std::optional<AccessModifier> defaultedDefaultAccess;
@@ -330,13 +320,6 @@ struct LoweredClassDeclaration {
   std::vector<CompileTimeValue> exactValueArguments;
   std::vector<LoweredGenericParameter> genericParameters;
   std::vector<SemanticType> genericArgumentPatterns;
-  std::vector<LoweredGenericParameter> genericArgumentPatternLifetimes;
-  // Instantiation need is distinct from public generic argument arity.
-  [[nodiscard]] bool hasGenericBindings() const {
-    return !genericParameters.empty() || !genericArgumentPatternLifetimes.empty() ||
-           !genericArgumentPatterns.empty();
-  }
-
   std::vector<LoweredClassBase> bases;
   std::vector<ClassVirtualDispatch> virtualDispatch;
   SemanticTypeTraits traits;
@@ -387,8 +370,6 @@ struct LoweredEnumerator {
 };
 
 struct LoweredEnumDeclaration {
-  NominalVariance variance;
-  LifetimeSignatureContract lifetimeContract;
   bool explicitlyExported = false;
   EnumId id = 0;
   SemanticType type = SemanticType::Unknown;
@@ -415,7 +396,6 @@ struct LoweredFunctionDeclaration {
   SemanticType returnType = SemanticType::Unknown;
   std::vector<LoweredParameter> parameters;
   std::vector<LoweredGenericParameter> genericParameters;
-  LifetimeSignatureContract lifetimeContract;
   std::vector<LoweredConceptRequirement> requirements;
   std::vector<LoweredConstraintExpressionNode> requirementExpression;
   std::size_t requirementRoot = ConstraintExpressionNode::invalidIndex;
@@ -467,7 +447,6 @@ struct LoweredConstructorDeclaration {
   ConstructorKind kind = ConstructorKind::Ordinary;
   AccessModifier access = AccessModifier::Public;
   std::vector<LoweredGenericParameter> genericParameters;
-  LifetimeSignatureContract lifetimeContract;
   std::vector<LoweredConceptRequirement> requirements;
   std::vector<LoweredConstraintExpressionNode> requirementExpression;
   std::size_t requirementRoot = ConstraintExpressionNode::invalidIndex;
@@ -489,7 +468,6 @@ struct LoweredDestructorDeclaration {
   FunctionCodegenAttributes codegenAttributes;
   ClassId owner = 0;
   AccessModifier access = AccessModifier::Public;
-  LifetimeSignatureContract lifetimeContract;
   std::optional<SpecialMemberSpecifierKind> specifier;
 
   friend bool operator==(const LoweredDestructorDeclaration &,
@@ -529,7 +507,6 @@ struct LoweredTypeAliasDeclaration {
   SourceUnitId sourceUnit = 0;
   std::string qualifiedName;
   SemanticType type = SemanticType::Unknown;
-  std::vector<LoweredGenericParameter> genericParameters;
   bool compilerPrivate = false;
 
   friend bool operator==(const LoweredTypeAliasDeclaration &,
@@ -589,7 +566,6 @@ struct LoweredSymbol {
   std::optional<SourceSpan> definitionSource;
   SemanticType type = SemanticType::Unknown;
   SemanticTypeTraits traits;
-  GenericParameterId genericParameter = 0;
   AccessModifier access = AccessModifier::Public;
   bool mutableBinding = false;
   bool defaultLibrary = false;
@@ -619,9 +595,6 @@ struct LoweredVirtualDispatch {
 };
 
 struct LoweredClassInstance {
-  std::vector<GenericParameterIdentity> liftedLifetimes;
-  NominalVariance variance;
-  LifetimeSignatureContract lifetimeContract;
   LoweredClassInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ClassId declaration = 0;
@@ -635,14 +608,10 @@ struct LoweredClassInstance {
 };
 
 struct LoweredFunctionInstance {
-  LifetimeSignatureContract lifetimeContract;
-  std::vector<GenericParameterIdentity> liftedLifetimes;
   LoweredFunctionInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   FunctionId declaration = 0;
   std::optional<LoweredClassInstanceId> owner;
-  // Universal owner type in this callable's region scope.
-  SemanticType ownerType = SemanticType::Unknown;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::optional<SourceSpan> instantiationSource;
@@ -653,14 +622,10 @@ struct LoweredFunctionInstance {
 };
 
 struct LoweredConstructorInstance {
-  LifetimeSignatureContract lifetimeContract;
-  std::vector<GenericParameterIdentity> liftedLifetimes;
   LoweredConstructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   ConstructorId declaration = 0;
   LoweredClassInstanceId owner = 0;
-  // Universal owner type in this callable's region scope.
-  SemanticType ownerType = SemanticType::Unknown;
   std::vector<SemanticType> typeArguments;
   std::vector<CompileTimeValue> valueArguments;
   std::vector<SemanticType> parameterTypes;
@@ -673,13 +638,9 @@ struct LoweredConstructorInstance {
 };
 
 struct LoweredDestructorInstance {
-  std::vector<GenericParameterIdentity> liftedLifetimes;
   LoweredDestructorInstanceId id = 0;
   SourceUnitId sourceUnit = 0;
   LoweredClassInstanceId owner = 0;
-  // Universal owner type in this callable's region scope.
-  SemanticType ownerType = SemanticType::Unknown;
-  LifetimeSignatureContract lifetimeContract;
   SourceSpan source;
 
   friend bool operator==(const LoweredDestructorInstance &,
@@ -701,12 +662,8 @@ struct LoweredLambdaCapture {
 struct LoweredLambdaInstance {
   LoweredLambdaInstanceId id = 0;
   LambdaId declaration = 0;
-  std::vector<Lifetime> environmentLifetimes;
-  LifetimeSignatureContract environmentContract{.complete = true};
   SemanticType type = SemanticType::Unknown;
   SemanticType returnType = SemanticType::Unknown;
-  LifetimeSignatureContract lifetimeContract;
-  std::optional<FunctionBorrowDependencySummary> completeReturnBorrow;
   std::vector<LoweredParameter> parameters;
   std::vector<LoweredLambdaCapture> captures;
   SemanticTypeTraits traits;

@@ -1,9 +1,7 @@
 #include "constructor_field_publication.h"
 #include "placement.h"
-#include "gti/lifetime_types.h"
 
 #include "../mir_verification_queries.h"
-#include "../mir_lifetimes.h"
 
 #include <algorithm>
 
@@ -41,10 +39,7 @@ UnstagedConstructorFieldPublicationTransport
 publicationTransport(const MirProgram &program,
                      const MirInstruction &instruction,
                      const SemanticType &targetType) {
-  // Transport is a representation question. The value's region relationship
-  // to the field slot is proved by MIR lifetime verification, not here.
-  if (equivalentLifetimeTypes(instruction.info.type, targetType) ||
-      eraseTypeLifetimes(instruction.info.type) == eraseTypeLifetimes(targetType))
+  if (instruction.info.type == targetType)
     return UnstagedConstructorFieldPublicationTransport::ExactValue;
 
   MirInstruction exactSourceNull;
@@ -84,7 +79,7 @@ UnstagedConstructorFieldPublicationPlan unstagedConstructorFieldPublication(
   result.initializer = mirRecordPublishedConstructorInitializer(
       program, body, constructorId, instruction);
   if (!result.initializer)
-    { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #1\n"); return result; } // TEMP-TRACE
+    return result;
 
   const auto *constructor = program.findConstructorInstance(constructorId);
   const auto *owner =
@@ -96,20 +91,14 @@ UnstagedConstructorFieldPublicationPlan unstagedConstructorFieldPublication(
       value->definition != instruction.id ||
       value->info.type != instruction.info.type ||
       !recordOnlyResult(body, *instruction.result))
-    { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #2\n"); return result; } // TEMP-TRACE
+    return result;
 
   const auto &initializer = *result.initializer;
-  const auto ownerType = checkedMirCallableOwnerType(program, constructor->owner,
-      constructor->ownerType, constructor->lifetimeContract);
-  const auto view = ownerType ? mirClassLifetimeView(program, *ownerType) : std::nullopt;
-  if (!view || view->instance != owner)
-    { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #3\n"); return result; } // TEMP-TRACE
   const auto field =
       std::find_if(owner->declaredFields.begin(), owner->declaredFields.end(),
                    [&](const MirClassFieldInfo &candidate) {
-                     const auto actual = view->instantiate(candidate.type);
-                     return candidate.symbol == initializer.field && actual &&
-                            equivalentLifetimeTypes(*actual, initializer.targetType);
+                     return candidate.symbol == initializer.field &&
+                            candidate.type == initializer.targetType;
                    });
   if (initializer.kind != ConstructorInitializerTargetKind::Field ||
       initializer.field == 0 || initializer.storesReference ||
@@ -119,12 +108,12 @@ UnstagedConstructorFieldPublicationPlan unstagedConstructorFieldPublication(
                     [&](const MirClassFieldInfo &candidate) {
                       return candidate.symbol == initializer.field;
                     }) != 1)
-    { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #4\n"); return result; } // TEMP-TRACE
+    return result;
 
   const auto transport =
       publicationTransport(program, instruction, initializer.targetType);
   if (transport == UnstagedConstructorFieldPublicationTransport::None)
-    { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #5\n"); return result; } // TEMP-TRACE
+    return result;
 
   std::size_t publishers = 0;
   for (const MirBlock &block : body.blocks)
@@ -142,14 +131,14 @@ UnstagedConstructorFieldPublicationPlan unstagedConstructorFieldPublication(
         ++publishers;
     }
   if (publishers != 1)
-    { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #6\n"); return result; } // TEMP-TRACE
+    return result;
 
   result.value = *instruction.result;
   result.sourceType = instruction.info.type;
   result.targetType = initializer.targetType;
   result.transport = transport;
   result.exact = true;
-  { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #7\n"); return result; } // TEMP-TRACE
+  return result;
 }
 
 StoredFieldPublicationPlan
@@ -157,77 +146,54 @@ storedFieldPublication(const MirProgram &program, const MirBody &body,
                        HirConstructorInstanceId constructorId,
                        const MirLoan &loan) {
   StoredFieldPublicationPlan result;
-  result.requested = loan.kind == MirLoanKind::Stored && !loan.storedPath.empty();
+  result.requested = loan.kind == MirLoanKind::Stored && loan.storedField != 0;
   if (!result.requested)
-    { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #8\n"); return result; } // TEMP-TRACE
+    return result;
 
   const auto *constructor = program.findConstructorInstance(constructorId);
   const auto *owner =
       constructor ? program.findClassInstance(constructor->owner) : nullptr;
   if (!constructor || &constructor->body != &body || !owner ||
       constructor->owner != owner->id)
-    { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #9\n"); return result; } // TEMP-TRACE
+    return result;
 
-  const auto ownerType = checkedMirCallableOwnerType(program, constructor->owner,
-      constructor->ownerType, constructor->lifetimeContract);
-  const auto view = ownerType ? mirClassLifetimeView(program, *ownerType) : std::nullopt;
-  if (!view || view->instance != owner)
-    { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #10\n"); return result; } // TEMP-TRACE
-  if (loan.storedPath.size() == 1 && loan.storedPath.front().kind == PlaceProjectionKind::Base) {
-    const auto *stage = mir_detail::baseConstructorPublicationStage(body, loan);
-    const auto selected = mir_detail::walkBorrowPath(program, *ownerType,
-        AccessMode::Mutable, loan.storedPath, {}, mir_detail::MirBorrowPathRoot::Value);
-    if (!stage || !selected || !stage->constructorInitializer ||
-        stage->constructorInitializer > constructor->initializers.size())
-      { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #11\n"); return result; } // TEMP-TRACE
-    const auto &initializer = constructor->initializers[stage->constructorInitializer - 1];
-    const auto *destination = stage->destination ? body.findPlace(*stage->destination) : nullptr;
-    if (initializer.kind != ConstructorInitializerTargetKind::Base ||
-        !initializer.completeBorrow || !destination || destination->projections != selected->projections ||
-        destination->type != selected->type || initializer.targetType != selected->type)
-      { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #12\n"); return result; } // TEMP-TRACE
-    result.initializer = &initializer;
-    result.kind = StoredFieldPublicationKind::ProvenanceOnly;
-    result.exact = true;
-    { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #13\n"); return result; } // TEMP-TRACE
-  }
   const auto field =
       std::find_if(owner->declaredFields.begin(), owner->declaredFields.end(),
                    [&](const MirClassFieldInfo &candidate) {
-                     return BorrowPath{fieldProjection(candidate.symbol)} == loan.storedPath;
+                     return candidate.symbol == loan.storedField;
                    });
   const auto initializer = std::find_if(
       constructor->initializers.begin(), constructor->initializers.end(),
       [&](const MirConstructorInitializer &candidate) {
         return candidate.kind == ConstructorInitializerTargetKind::Field &&
-               BorrowPath{fieldProjection(candidate.field)} == loan.storedPath;
+               candidate.field == loan.storedField;
       });
   if (field == owner->declaredFields.end() ||
       initializer == constructor->initializers.end() ||
       std::count_if(owner->declaredFields.begin(), owner->declaredFields.end(),
                     [&](const MirClassFieldInfo &candidate) {
-                      return BorrowPath{fieldProjection(candidate.symbol)} == loan.storedPath;
+                      return candidate.symbol == loan.storedField;
                     }) != 1 ||
       std::count_if(
           constructor->initializers.begin(), constructor->initializers.end(),
           [&](const MirConstructorInitializer &candidate) {
             return candidate.kind == ConstructorInitializerTargetKind::Field &&
-                   BorrowPath{fieldProjection(candidate.field)} == loan.storedPath;
+                   candidate.field == loan.storedField;
           }) != 1 ||
-      view->instantiate(field->type) != std::optional<SemanticType>(initializer->targetType))
-    { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #14\n"); return result; } // TEMP-TRACE
+      field->type != initializer->targetType)
+    return result;
 
   const bool reference = field->type.kind == SemanticType::Reference;
   if (initializer->storesReference != reference ||
       (reference && field->type.arguments.size() != 1))
-    { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #15\n"); return result; } // TEMP-TRACE
+    return result;
 
   result.initializer = &*initializer;
   result.field = &*field;
   result.kind = reference ? StoredFieldPublicationKind::ReferenceAddress
                           : StoredFieldPublicationKind::ProvenanceOnly;
   result.exact = true;
-  { if (std::getenv("GTI_TRACE_LLVM_ADMIT")) std::fprintf(stderr, "[cfp] return #16\n"); return result; } // TEMP-TRACE
+  return result;
 }
 
 } // namespace lang::native_llvm

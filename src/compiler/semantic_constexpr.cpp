@@ -1,6 +1,4 @@
 #include "semantic_analyzer_impl.h"
-#include <cstdio>
-#include <cstdlib>
 
 #include "gti/failure_metadata.h"
 #include "gti/hir.h"
@@ -52,16 +50,6 @@ struct StagedHash {
     add(type.genericParameterId);
     add(type.functionId);
     add(type.arrayLength);
-    add(static_cast<std::size_t>(type.referenceLifetime.kind));
-    add(type.referenceLifetime.id);
-    add(type.lifetimeArguments.size());
-    for (const auto region : type.lifetimeArguments) {
-      add(static_cast<std::size_t>(region.kind));
-      add(region.id);
-    }
-    add(type.quantifiedLifetimes.size());
-    for (const auto parameter : type.quantifiedLifetimes)
-      add(parameter);
     add(type.arguments.size());
     for (const auto &argument : type.arguments)
       this->type(argument);
@@ -111,25 +99,8 @@ public:
   SemanticTypeTraits traitsFor(const SemanticType &type) const override {
     return facts.traitsFor(type);
   }
-  NominalVariance nominalVariance(const SemanticType &type) const override {
-    return facts.nominalVariance(type);
-  }
-  std::vector<NominalVarianceRecipe> nominalVarianceRecipes() const override {
-    return facts.nominalVarianceRecipes();
-  }
-  LifetimeSignatureContract
-  nominalLifetimeContract(const SemanticType &type) const override {
-    return facts.nominalLifetimeContract(type);
-  }
-  std::optional<SemanticExecutableInstantiation>
-  canonicalizeExecutableInstance(const InstanceAnalysisKey &key) override {
-    return acquire().canonicalizeExecutableInstance(key);
-  }
   bool requiresActiveCleanupFor(const SemanticType &type) const override {
     return facts.requiresActiveCleanupFor(type);
-  }
-  bool lifecycleBoundBorrowCarrierFor(const SemanticType &type) const override {
-    return facts.lifecycleBoundBorrowCarrierFor(type);
   }
   std::optional<EnumTypeInfo>
   enumTypeFor(const SemanticType &type) const override {
@@ -517,9 +488,6 @@ auto SemanticVisitor::Impl::SemanticCatalog::operator=(
   copy.exactClassSpecializations = other.exactClassSpecializations;
   copy.conformances = other.conformances;
   copy.enums = other.enums;
-  copy.normalizedNominalTypes = other.normalizedNominalTypes;
-  copy.callableResultProjectionRecipes = other.callableResultProjectionRecipes;
-  copy.nominalLifetimeContractsReady = other.nominalLifetimeContractsReady;
   copy.predeclaredVariables = other.predeclaredVariables;
   copy.mutableFieldGroupOrigins = other.mutableFieldGroupOrigins;
   copy.recursiveLayoutFields = other.recursiveLayoutFields;
@@ -577,9 +545,6 @@ auto SemanticVisitor::Impl::SemanticCatalog::snapshotForInstanceAnalysis() const
   copy.exactClassSpecializations = exactClassSpecializations;
   copy.conformances = conformances;
   copy.enums = enums;
-  copy.normalizedNominalTypes = normalizedNominalTypes;
-  copy.callableResultProjectionRecipes = callableResultProjectionRecipes;
-  copy.nominalLifetimeContractsReady = nominalLifetimeContractsReady;
   copy.predeclaredVariables = predeclaredVariables;
   copy.mutableFieldGroupOrigins = mutableFieldGroupOrigins;
   copy.recursiveLayoutFields = recursiveLayoutFields;
@@ -631,40 +596,7 @@ auto SemanticVisitor::Impl::StagedConstantResults::hash(const Key &key)
     entry.add(value.value);
     substitution += entry.value;
   }
-  for (const auto &[parameter, region] : key.substitution.lifetimes) {
-    StagedHash entry;
-    entry.add(parameter);
-    entry.add(static_cast<std::size_t>(region.kind));
-    entry.add(region.id);
-    substitution += entry.value;
-  }
   hash.add(substitution);
-  hash.add(key.substitution.valid);
-  for (const auto &scope : key.substitution.callableScopes) {
-    for (const auto path : scope.argumentPath)
-      hash.add(path);
-    hash.type(scope.pattern);
-    hash.type(scope.signature);
-    std::size_t captured = 0;
-    for (const auto &[parameter, type] : scope.capturedTypes) {
-      StagedHash entry;
-      entry.add(parameter);
-      entry.type(type);
-      captured += entry.value;
-    }
-    hash.add(captured);
-    for (const auto &[from, to] : scope.regionBindings) {
-      hash.add(static_cast<std::size_t>(from.kind)); hash.add(from.id);
-      hash.add(static_cast<std::size_t>(to.kind)); hash.add(to.id);
-    }
-    std::size_t imports = 0;
-    for (const auto &[parameter, region] : scope.imports) {
-      StagedHash entry;
-      entry.add(parameter); entry.add(static_cast<std::size_t>(region.kind)); entry.add(region.id);
-      imports += entry.value;
-    }
-    hash.add(imports);
-  }
   for (const auto &argument : key.arguments)
     hash.constant(argument);
   if (key.receiver)
@@ -688,7 +620,8 @@ auto SemanticVisitor::Impl::StagedConstantResults::same(const Key &left,
          left.parameterTypes == right.parameterTypes &&
          left.defaultArguments == right.defaultArguments &&
          left.designatedArguments == right.designatedArguments &&
-         left.substitution == right.substitution &&
+         left.substitution.types == right.substitution.types &&
+         left.substitution.values == right.substitution.values &&
          left.arguments == right.arguments && left.receiver == right.receiver;
 }
 
@@ -796,18 +729,13 @@ auto SemanticVisitor::Impl::stagedConstantKey(
     const std::optional<ConstantValue> &receiver,
     std::vector<FunctionId> completed, std::vector<ConstructorId> constructors)
     -> std::optional<StagedConstantResults::Key> {
-  if (!substitution.valid || !std::all_of(arguments.begin(), arguments.end(),
+  if (!std::all_of(arguments.begin(), arguments.end(),
                    StagedConstantResults::reusable) ||
       (receiver && !StagedConstantResults::reusable(*receiver)))
     return std::nullopt;
   // What the evaluation may execute: the definitions and constructors its
   // worker copies (those declared before this point) and those HIR lowers.
-  std::vector<std::uintptr_t> identity{
-      concreteReanalysis() ? 1U : 0U,
-      static_cast<std::uintptr_t>(requestSession.lifetimeContractRevision),
-      reinterpret_cast<std::uintptr_t>(requestSession.privateConstexprPrerequisites
-                                          ? privateConstexprSourceBoundary()
-                                          : nullptr)};
+  std::vector<std::uintptr_t> identity{concreteReanalysis() ? 1U : 0U};
   const auto append = [&](std::vector<std::uintptr_t> values) {
     std::sort(values.begin(), values.end());
     identity.push_back(values.size());
@@ -874,13 +802,8 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   for (const auto *definition : constexprConstructorsAnalyzed)
     constructors += declaredBeforeCurrent(definition) ? 1 : 0;
   const bool reanalysis = concreteReanalysis();
-  const Stmt *const sourceBoundary = requestSession.privateConstexprPrerequisites
-                                        ? privateConstexprSourceBoundary()
-                                        : nullptr;
   StagedWorker &worker = stagedWorker;
   if (worker.impl == nullptr || worker.reanalysis != reanalysis ||
-      worker.lifetimeContractRevision != requestSession.lifetimeContractRevision ||
-      worker.privateConstexprBoundary != sourceBoundary ||
       worker.declarationOrder != currentDeclarationOrder ||
       worker.definitions != definitions ||
       worker.constructors != constructors) {
@@ -901,8 +824,6 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.impl->semanticModel.setCallJournal(nullptr);
     worker.impl->valueFlow = valueFlow;
     worker.impl->valueFlow.rebindCallables(worker.impl->catalog);
-    worker.impl->declarationOrders = declarationOrders;
-    worker.impl->declarationOrderCounter = declarationOrderCounter;
     for (const FunctionDecl *definition : constexprDefinitionsAnalyzed) {
       if (declaredBeforeCurrent(definition))
         worker.impl->constexprDefinitionsAnalyzed.insert(definition);
@@ -915,20 +836,12 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.impl->defaultArgumentSyntax = defaultArgumentSyntax;
     worker.impl->defaultArgumentDependencies = defaultArgumentDependencies;
     worker.reanalysis = reanalysis;
-    worker.lifetimeContractRevision = requestSession.lifetimeContractRevision;
-    worker.privateConstexprBoundary = sourceBoundary;
     worker.declarationOrder = currentDeclarationOrder;
     worker.definitions = definitions;
     worker.constructors = constructors;
   }
   worker.impl->requestSession.constexprWork = work;
-  worker.impl->reuseConstantEvaluations = reuseConstantEvaluations;
-  worker.impl->requestSession.lifetimeContractRevision = requestSession.lifetimeContractRevision;
   worker.impl->requestSession.stagedConstants = requestSession.stagedConstants;
-  worker.impl->requestSession.executableLifetimes = requestSession.executableLifetimes;
-  worker.impl->requestSession.privateLifetimeDependencies = requestSession.privateLifetimeDependencies;
-  worker.impl->requestSession.privateConstexprPrerequisites = requestSession.privateConstexprPrerequisites;
-  worker.impl->requestSession.privateConstexprBoundary = sourceBoundary;
   // Concrete constant bodies also demand source access summaries. Share
   // their request-local cycle/depth accounting, not mutable body state.
   worker.impl->requestSession.rawResultQueries =
@@ -1064,7 +977,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     const std::optional<ConstantValue> &receiver, const Token &callSite,
     ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
   if (sourceGraph == nullptr || sources == nullptr) {
-    { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1065); return std::nullopt; }
+    return std::nullopt;
   }
   // Nested required constants use the canonical completed catalog, never the
   // caller's partially analyzed instance delta, whatever kind of instance is
@@ -1075,18 +988,13 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   const auto *construction = std::get_if<ResolvedConstructionInfo>(&selected);
   const auto *info =
       function && *function ? stagingModel.findFunction(**function) : nullptr;
-  if (function && *function && !constexprDefinitionsAnalyzed.contains(*function))
-    (void)ensurePrivateConstexprDefinition(*function);
-  if (construction && construction->declaration &&
-      !constexprConstructorsAnalyzed.contains(construction->declaration))
-    (void)ensurePrivateConstexprDefinition(construction->declaration);
   if ((function &&
        (info == nullptr || !constexprDefinitionsAnalyzed.contains(*function) ||
         !declaredBeforeCurrent(*function))) ||
       (construction && !construction->generatedDefault &&
        (!constexprConstructorsAnalyzed.contains(construction->declaration) ||
         !declaredBeforeCurrent(construction->declaration)))) {
-    { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1087); return std::nullopt; }
+    return std::nullopt;
   }
   const std::size_t enclosingDepth = context.work->stagingDepth;
   const void *const stagedTarget =
@@ -1166,7 +1074,6 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     if (reused != nullptr && reused->depth >= depth &&
         context.work->steps + reused->steps <= compileLimits.constexprSteps &&
         (!reused->voidCompletion || context.allowVoidCompletion)) {
-      notePrivateLifetimeOpaqueDependency();
       context.work->steps += reused->steps;
       appendStagedWarnings(reused->warnings);
       if (reused->nativeObjectLayout)
@@ -1201,7 +1108,6 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   stagedDetail += " args=" + std::to_string(arguments.size());
   const PhaseTimeScope stagedScope("constexpr-staged-mir", stagedDetail);
   if (closure != nullptr) {
-    notePrivateLifetimeOpaqueDependency();
     context.work->steps += closure->steps;
     appendStagedWarnings(closure->warnings);
     if (closure->nativeObjectLayout)
@@ -1214,22 +1120,10 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     // semantic provider and exact declaration identities without lending it
     // mutable caller state. It lives until HIR has consumed every concrete
     // instance delta; the lowered HIR retains the synthetic syntax it uses.
-    // Pin this closure's worker. Lazy source discovery may grow the checked
-    // availability sets while HIR retains deltas based on that worker; a
-    // subsequent acquire must update its availability, never replace its base.
-    Impl *closureWorker = nullptr;
     StagedInstanceProvider provider(
         *this,
         [&]() -> SemanticInstanceProvider & {
-          if (!closureWorker)
-            closureWorker = &stagedWorkerFor(stagingModel, context.work);
-          for (const auto *definition : constexprDefinitionsAnalyzed)
-            if (declaredBeforeCurrent(definition))
-              closureWorker->constexprDefinitionsAnalyzed.insert(definition);
-          for (const auto *definition : constexprConstructorsAnalyzed)
-            if (declaredBeforeCurrent(definition))
-              closureWorker->constexprConstructorsAnalyzed.insert(definition);
-          return *closureWorker;
+          return stagedWorkerFor(stagingModel, context.work);
         },
         [&](const StagedInstanceKeyView &request,
             SemanticInstanceAnalysis &analysis) {
@@ -1253,24 +1147,15 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
               analysis);
         });
     HirLowerer lowerer(target);
-    HirConstantSourceAuthority sourceAuthority;
-    if (requestSession.privateConstexprPrerequisites) {
-      sourceAuthority.function = [&](const FunctionDecl &declaration) {
-        return ensurePrivateConstexprDefinition(&declaration);
-      };
-      sourceAuthority.constructor = [&](const ConstructorDecl &declaration) {
-        return ensurePrivateConstexprDefinition(&declaration);
-      };
-    }
     auto hir = [&] {
       const PhaseTimeScope lowerScope("constexpr-staged-hir");
       return construction
                  ? lowerer.lowerConstantConstructor(stagingModel, provider,
                                                     *construction, completed,
-                                                    constructors, sourceAuthority)
+                                                    constructors)
                  : lowerer.lowerConstantFunction(stagingModel, provider,
                                                  info->id, completed,
-                                                 substitution, constructors, sourceAuthority);
+                                                 substitution, constructors);
     }();
     if (!hir.valid()) {
       if (hasErrorDiagnostics(hir.diagnostics)) {
@@ -1280,15 +1165,14 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
             callSite, ConstantEvaluationFailure::UnsupportedExpression,
             "The concrete constexpr instance failed semantic analysis.");
       }
-      { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1281); return std::nullopt; }
+      return std::nullopt;
     }
     appendStagedWarnings(hir.diagnostics);
-    if (std::getenv("GTI_TRACE_ELA")) { std::fprintf(stderr, "[ela-staged] hirClasses=%zu functions=%zu\n", hir.program.classInstances().size(), hir.program.functionInstances().size()); for (const auto &c : hir.program.classInstances()) std::fprintf(stderr, "[ela-staged]   class decl=%llu\n", (unsigned long long)c.type.classId); } // TEMP-TRACE
     if (hir.program.requiresNativeObjectLayout())
       semanticModel.requireNativeObjectLayout();
     const auto *entry = sourceGraph->findUnit(sourceGraph->entryUnit());
     if (entry == nullptr) {
-      { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1288); return std::nullopt; }
+      return std::nullopt;
     }
     auto metadata = [&] {
       const PhaseTimeScope metadataScope("constexpr-staged-failure-metadata");
@@ -1296,14 +1180,14 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                                             entry->path);
     }();
     if (!metadata.valid()) {
-      { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1296); return std::nullopt; }
+      return std::nullopt;
     }
     auto mir = [&] {
       const PhaseTimeScope mirScope("constexpr-staged-mir-lower");
       return MirLowerer().lower(hir.program, metadata.metadata);
     }();
     if (!mir.valid()) {
-      { if (std::getenv("GTI_TRACE_STAGED")) { std::fprintf(stderr,"[staged-null] %d\n",1303); for (const auto &e : mir.errors) std::fprintf(stderr,"  [staged-mir] kind=%d owner=%u blk=%u inst=%u %s\n",(int)e.body.kind,(unsigned)e.body.owner,(unsigned)e.block,(unsigned)e.instruction,e.message.c_str()); } return std::nullopt; }
+      return std::nullopt;
     }
     MirBodyAddress root;
     if (construction) {
@@ -1320,20 +1204,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
             construction->generatedDefault
                 ? candidate.generatedDefault
                 : candidate.declaration == construction->constructor;
-        if (std::getenv("GTI_TRACE_CONSTEXPR_IF") && candidate.declaration == construction->constructor) // TEMP-TRACE
-          std::fprintf(stderr, "[staged-ctor] cand=%llu owner=%s constructed=%s targs=%zu/%zu vargs=%d\n", (unsigned long long)candidate.id, owner ? typeSpelling(owner->type).c_str() : "-", typeSpelling(construction->constructedType).c_str(), candidate.typeArguments.size(), construction->typeArguments.size(), candidate.valueArguments == construction->valueArguments); // TEMP-TRACE
-        // The staged instance is selected by shape: a borrowed record's
-        // constructed type carries the caller's regions, the instance its own.
-        const auto sameShapes = [](const auto &left, const auto &right) {
-          return left.size() == right.size() &&
-                 std::equal(left.begin(), left.end(), right.begin(),
-                            [](const SemanticType &a, const SemanticType &b) {
-                              return eraseTypeLifetimes(a) == eraseTypeLifetimes(b);
-                            });
-        };
-        if (selected && owner &&
-            eraseTypeLifetimes(owner->type) == eraseTypeLifetimes(construction->constructedType) &&
-            sameShapes(candidate.typeArguments, construction->typeArguments) &&
+        if (selected && owner && owner->type == construction->constructedType &&
+            candidate.typeArguments == construction->typeArguments &&
             candidate.valueArguments == construction->valueArguments) {
           root = {MirBodyKind::Constructor, candidate.id};
           break;
@@ -1418,7 +1290,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   if (result.failure == ConstantEvaluationFailure::UnsupportedExpression ||
       result.failure == ConstantEvaluationFailure::UnsupportedType) {
     if (!requiresMir)
-      { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1418); return std::nullopt; }
+      return std::nullopt;
     // The compatibility walker does not own reference or receiver mutation.
     // Retrying a value-copy interpretation could silently lose a caller write.
     result.detail =
@@ -1479,7 +1351,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
         }
       }
     }
-    { if (std::getenv("GTI_TRACE_STAGED")) std::fprintf(stderr,"[staged-null] %d\n",1479); return std::nullopt; }
+    return std::nullopt;
   };
   if (result) {
     if (recordable && StagedConstantResults::reusable(*result.value))

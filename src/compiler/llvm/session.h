@@ -1,7 +1,6 @@
 #pragma once
 
 #include "gti/llvm_admission.h"
-#include "representation.h"
 
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
@@ -56,7 +55,6 @@ public:
   ~Session();
 
   [[nodiscard]] const LoweredProgram &program() const;
-  [[nodiscard]] const Representations &representations() const { return representations_; }
   [[nodiscard]] llvm::LLVMContext &context() { return context_; }
   [[nodiscard]] llvm::Module &module() { return module_; }
   [[nodiscard]] Layouts &layouts() { return *layouts_; }
@@ -94,7 +92,6 @@ public:
 
 private:
   VerifiedLoweredProgram input_;
-  Representations representations_;
   LlvmBackendOptions options_;
   std::vector<std::string> diagnostics_;
   std::vector<llvm::Function *> requiredDefinitions_;

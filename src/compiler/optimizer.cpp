@@ -1099,7 +1099,7 @@ public:
         }
         ++outcome.report.candidates;
         MirBody replay = *body;
-        if (rewriteMirUnreachableBlock(replay, index + 1, &context.program)) {
+        if (rewriteMirUnreachableBlock(replay, index + 1)) {
           editor.queueUnreachableBlockRemoval(address, index + 1);
         } else {
           ++outcome.report.missed;
