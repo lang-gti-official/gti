@@ -16485,6 +16485,9 @@ private:
                              retainedLoan.access, *statement.value);
               output.loans[published - 1].storedDependency =
                   retainedLoan.storedDependency;
+              // A region several stored paths share publishes every owner.
+              output.loans[published - 1].additionalDependencies =
+                  retainedLoan.additionalDependencies;
               (void)appendInstruction(
                   {.kind = MirInstructionKind::Borrow,
                    .hirValue = *statement.value,

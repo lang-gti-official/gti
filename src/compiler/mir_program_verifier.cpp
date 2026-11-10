@@ -7753,6 +7753,20 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
       if (instance.returnType.kind == SemanticType::Reference) {
         const MirOperand &published = transfer->operands.front();
         const MirPlace *runtime = body.findPlace(published.place);
+        // The referent is the primary designated path or, when several
+        // stored paths share the contract's region, one of the additional
+        // dependencies' designated paths.
+        const auto designates = [&](const std::vector<SymbolId> &fields) {
+          return runtime->projections.size() == fields.size() + 1 &&
+                 std::equal(fields.begin(), fields.end(),
+                            runtime->projections.begin(),
+                            [](SymbolId field,
+                               const MirPlaceProjection &projection) {
+                              return projection.kind ==
+                                         MirProjectionKind::Field &&
+                                     projection.field == field;
+                            });
+        };
         const bool exactDesignatedReferent =
             published.value == 0 && runtime != nullptr &&
             runtime->root == MirPlaceRootKind::Binding &&
@@ -7760,16 +7774,13 @@ exactStoredCarrierValueTransfer(const MirProgram &program, const MirBody &body,
                       storedCarrierEntryLoan->carriers.end(),
                       runtime->binding) !=
                 storedCarrierEntryLoan->carriers.end() &&
-            runtime->projections.size() ==
-                storedCarrierEntryLoan->designatedFields.size() + 1 &&
-            std::equal(
-                storedCarrierEntryLoan->designatedFields.begin(),
-                storedCarrierEntryLoan->designatedFields.end(),
-                runtime->projections.begin(),
-                [](SymbolId field, const MirPlaceProjection &projection) {
-                  return projection.kind == MirProjectionKind::Field &&
-                         projection.field == field;
-                }) &&
+            (designates(storedCarrierEntryLoan->designatedFields) ||
+             std::any_of(storedCarrierEntryLoan->additionalDependencies.begin(),
+                         storedCarrierEntryLoan->additionalDependencies.end(),
+                         [&](const MirLoanDependency &dependency) {
+                           return !dependency.designatedFields.empty() &&
+                                  designates(dependency.designatedFields);
+                         })) &&
             runtime->projections.back().kind ==
                 MirProjectionKind::Dereference &&
             runtime->type == expectedPayload;
