@@ -168,7 +168,9 @@ public:
                         "uri": uri, "range": {"start": lsp_position(bad, origin),
                                                "end": lsp_position(bad, origin + 1)}}, failure
                     assert "borrow originates here" in related[0]["message"], failure
-                    assert "until its carrier is destroyed" in failure["message"], failure
+                    # Legacy semantic wording, or MIR's conflict wording.
+                    assert ("until its carrier is destroyed" in failure["message"] or
+                            "overlapping" in failure["message"]), failure
                     action_params = {"textDocument": {"uri": uri},
                                      "range": failure["range"],
                                      "context": {"diagnostics": [failure], "only": ["quickfix"]}}

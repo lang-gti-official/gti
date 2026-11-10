@@ -3679,12 +3679,21 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                        block.id, instruction);
       }
       if (active[loan - 1] == MirLoanFlowState::Suspended) {
-        return failure(body, owner,
-                       "loan " + std::to_string(loan) +
-                           " is used while an exclusive child reborrow is "
-                           "active in " +
-                           context,
-                       block.id, instruction);
+        // Using a parent while its exclusive child reborrow is live is a
+        // source borrow conflict, not malformed MIR.
+        MirVerificationResult rejected =
+            failure(body, owner,
+                    "loan " + std::to_string(loan) +
+                        " is used while an exclusive child reborrow is "
+                        "active in " +
+                        context,
+                    block.id, instruction);
+        if (!rejected.errors.empty())
+          rejected.errors.back().borrow = {
+              .kind = MirBorrowRejectionKind::ParentUse,
+              .loanAccess = body.loans[loan - 1].access,
+              .loan = loan};
+        return rejected;
       }
       if (active[loan - 1] != MirLoanFlowState::Active) {
         return failure(body, owner,

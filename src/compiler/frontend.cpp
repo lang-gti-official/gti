@@ -144,6 +144,57 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       }
     return false;
   };
+  // The MIR and HIR bodies a borrow rejection belongs to.
+  const auto bodiesOf = [&](MirBodyKind kind, std::size_t owner)
+      -> std::pair<const MirBody *, const HirBody *> {
+    const auto find = [&](const auto &mirs,
+                          const auto &hirs) -> std::pair<const MirBody *,
+                                                         const HirBody *> {
+      const MirBody *lowered = nullptr;
+      const HirBody *source = nullptr;
+      for (const auto &candidate : mirs)
+        if (candidate.id == owner)
+          lowered = &candidate.body;
+      for (const auto &candidate : hirs)
+        if (candidate.id == owner)
+          source = &candidate.body;
+      return {lowered, source};
+    };
+    switch (kind) {
+    case MirBodyKind::Function:
+      return find(program.functionInstances(), hir.functionInstances());
+    case MirBodyKind::Constructor:
+      return find(program.constructorInstances(), hir.constructorInstances());
+    case MirBodyKind::Destructor:
+      return find(program.destructorInstances(), hir.destructorInstances());
+    case MirBodyKind::Lambda:
+      return find(program.lambdaInstances(), hir.lambdaInstances());
+    default:
+      return {nullptr, nullptr};
+    }
+  };
+  // A conflict names where the live borrow it overlaps originates.
+  const auto relateLoan = [&](const MirBodyAddress &address,
+                              const MirBorrowRejection &borrow) {
+    if (borrow.kind == MirBorrowRejectionKind::None || borrow.loan == 0 ||
+        check.diagnostics.empty())
+      return;
+    const auto [lowered, source] = bodiesOf(address.kind, address.owner);
+    const MirLoan *loan = lowered ? lowered->findLoan(borrow.loan) : nullptr;
+    const HirValue *produced =
+        loan && source && loan->producedBy != 0
+            ? source->findValue(loan->producedBy)
+            : nullptr;
+    if (produced == nullptr || produced->source == nullptr)
+      return;
+    const Token token = expressionAnchorToken(*produced->source);
+    if (token.lexeme.empty())
+      return;
+    auto &related = check.diagnostics.back().related;
+    if (related.empty())
+      related.push_back(
+          {tokenSpan(token), "The overlapping borrow originates here."});
+  };
   for (const MirLoweringError &error : mir.errors) {
     // The provisional program proof reports an escape without a body source.
     if (error.borrow.kind == MirBorrowRejectionKind::Escape && !error.source)
@@ -159,8 +210,10 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     if (error.borrow.kind == MirBorrowRejectionKind::Escape ||
         exitDropUnderStaticResult(error))
       addEscape(*error.source, error.body.kind, error.body.owner);
-    else
+    else {
       add(*error.source, conflictMessage(error.borrow));
+      relateLoan(error.body, error.borrow);
+    }
   }
   if (!mir.errors.empty())
     return check;

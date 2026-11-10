@@ -70,8 +70,12 @@ def main():
                                        for item in diagnostics), diagnostics
             assert any(item.get("code") == "GTI-S2017" for item in diagnostics), diagnostics
             conflict = next(item for item in diagnostics if item.get("code") == "GTI-S2017")
-            assert conflict["range"]["start"] == lsp_position(
-                edited, edited.index("records.add()") + len("records.add(")), conflict
+            # MIR reports the conflict at the mutated place the call uses; the
+            # legacy semantic checker reported it at the call's parenthesis.
+            assert conflict["range"]["start"] in (
+                lsp_position(edited, edited.index("records.add()")),
+                lsp_position(edited, edited.index("records.add()") +
+                             len("records.add("))), conflict
             assert conflict.get("relatedInformation"), conflict
             assert "string_view" in str(request("textDocument/hover", position))
             change(3, source)
