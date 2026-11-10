@@ -1503,6 +1503,14 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
     default:
       return std::nullopt;
     }
+  } else if (!method &&
+             function.returnBorrowOrigin == BorrowOriginKind::Argument) {
+    // The elided base origin already names the suppliers, such as the one
+    // parameter an iterator result moves from; the complete contract maps
+    // fields of those suppliers only.
+    namedParameters = function.returnBorrowParameters.empty()
+                          ? std::vector{function.returnBorrowParameter}
+                          : function.returnBorrowParameters;
   }
   // A result written with a region the class binds names the receiver's
   // stored regions, not the receiver itself (`int&<data> get()` in
