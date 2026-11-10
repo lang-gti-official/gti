@@ -63,9 +63,10 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
                                     const MirProgram &program,
                                     const HirProgram &hir) {
   MirBorrowCheck check;
-  const auto add = [&](SourceSpan span, std::string message) {
+  const auto add = [&](SourceSpan span, std::string message,
+                       const char *code = "GTI-S2017") {
     Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2017", DiagnosticPhase::Semantics, span, std::move(message));
+        code, DiagnosticPhase::Semantics, span, std::move(message));
     if (std::none_of(check.diagnostics.begin(), check.diagnostics.end(),
                      [&](const Diagnostic &existing) {
                        return existing.primary == diagnostic.primary &&
@@ -104,21 +105,62 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
         return tokenSpan(token);
     return std::nullopt;
   };
+  // A result declared `static` names its region: an escape from it is a
+  // region relationship failure, not an elision one.
+  const auto staticResult = [&](MirBodyKind kind, std::size_t owner) {
+    if (kind != MirBodyKind::Function)
+      return false;
+    for (const auto &candidate : hir.functionInstances())
+      if (candidate.id == owner && candidate.source != nullptr) {
+        const TypeRef &result = candidate.source->returnType();
+        return result.referenceLifetime &&
+               result.referenceLifetime->name.lexeme == "static";
+      }
+    return false;
+  };
+  const auto addEscape = [&](SourceSpan span, MirBodyKind kind,
+                             std::size_t owner) {
+    if (staticResult(kind, owner))
+      add(span,
+          "The result is declared 'static', but a return borrows storage "
+          "that does not live for 'static'.",
+          "GTI-S2127");
+    else
+      add(span, escapeMessage);
+  };
+  // A write conflict anchored at the declaration rather than in its body is
+  // the function's exit drop of storage it owns. Under a `static` result the
+  // returned borrow stays live there: that storage does not live for
+  // 'static'.
+  const auto exitDropUnderStaticResult = [&](const MirLoweringError &error) {
+    if (!error.borrow.write || !error.source ||
+        !staticResult(error.body.kind, error.body.owner))
+      return false;
+    for (const auto &candidate : hir.functionInstances())
+      if (candidate.id == error.body.owner && candidate.source != nullptr) {
+        const SourceSpan name = tokenSpan(candidate.source->name());
+        return error.source->source == name.source &&
+               error.source->start <= name.start;
+      }
+    return false;
+  };
   for (const MirLoweringError &error : mir.errors) {
     // The provisional program proof reports an escape without a body source.
     if (error.borrow.kind == MirBorrowRejectionKind::Escape && !error.source)
       if (const auto span =
               escapeSpan(error.body.kind, error.body.owner, error.block)) {
-        add(*span, escapeMessage);
+        addEscape(*span, error.body.kind, error.body.owner);
         continue;
       }
     if (error.borrow.kind == MirBorrowRejectionKind::None || !error.source) {
       check.internal = true;
       continue;
     }
-    add(*error.source, error.borrow.kind == MirBorrowRejectionKind::Escape
-                           ? std::string(escapeMessage)
-                           : conflictMessage(error.borrow));
+    if (error.borrow.kind == MirBorrowRejectionKind::Escape ||
+        exitDropUnderStaticResult(error))
+      addEscape(*error.source, error.body.kind, error.body.owner);
+    else
+      add(*error.source, conflictMessage(error.borrow));
   }
   if (!mir.errors.empty())
     return check;
@@ -132,7 +174,7 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       check.internal = true;
       continue;
     }
-    add(*span, escapeMessage);
+    addEscape(*span, error.bodyKind, error.owner);
   }
   return check;
 }
