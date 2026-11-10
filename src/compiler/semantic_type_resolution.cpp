@@ -5964,7 +5964,11 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
       isDirectStoredReferenceType(
           function->parameterTypes[function->returnBorrowParameter]);
   if (storedValueSource) {
-    validateStoredCarrierReturnSource(*function, source, value, description);
+    // Under MIR authority the returned loan's stored ancestry is MIR's to
+    // prove: a by-value carrier's stored referent outlives its shell.
+    if (!mirBorrowAuthority())
+      validateStoredCarrierReturnSource(*function, source, value,
+                                        description);
     return;
   }
   if (isParameterDerivedBorrow(value, source)) {
