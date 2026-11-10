@@ -1034,6 +1034,7 @@ int main() { int value = 3; Adder add{value}; return apply(add) - 7; }
 """,
     "user_defined_callback_environment": """
 import std.functional;
+import std.memory;
 class BorrowedCall<R(Args...), lifetime environment> {
   std::erased_object&<environment> object;
   std::function_ptr<R(std::erased_object&<environment>, Args...)> invoke;
@@ -1583,7 +1584,7 @@ struct Scanner {
 int main() { std::string_view v = "abc"; mut Scanner s = Scanner(v); return int(s.twice()) - 2; }
 """,
     'closure_environment_in_generic_class': r"""
-class Accumulator<T> {
+class Accumulator<std::numeric T> {
   mut T total;
 public:
   Accumulator(T start) : total(start) {}
