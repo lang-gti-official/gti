@@ -19021,12 +19021,12 @@ private:
                                    const CompleteBorrowFlow &flow) const {
     const auto domain = completeBorrowConstructorDomain(program, constructor);
     if (!domain || domain->fields.empty())
-      return false;
+      { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
     for (const auto &loan : constructor.body.loans)
       if (loan.escapes && !loan.storedPath.empty() &&
           std::none_of(domain->fields.begin(), domain->fields.end(),
                        [&](const auto &field) { return BorrowPath{field.step} == loan.storedPath; }))
-        return false;
+        { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
     return std::all_of(domain->fields.begin(), domain->fields.end(), [&](const auto &fieldInfo) {
       const auto &body = constructor.body;
       if (fieldInfo.step.kind == PlaceProjectionKind::Base) {
@@ -19037,13 +19037,13 @@ private:
           if (candidate.kind != ConstructorInitializerTargetKind::Base ||
               candidate.targetType != fieldInfo.type)
             continue;
-          if (initializer) return false;
+          if (initializer) { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
           initializer = &candidate;
           for (const auto &block : body.blocks)
             for (const auto &instruction : block.instructions)
               if (!instruction.tombstone && instruction.kind == MirInstructionKind::InitializeBase &&
                   instruction.constructorInitializer == index + 1) {
-                if (stage) return false;
+                if (stage) { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
                 stage = &instruction;
               }
         }
@@ -19056,14 +19056,14 @@ private:
             found == flow.initializerFacts.end() || !found->second ||
             !equalCompleteBorrowSets(initializer->completeBorrow, found->second) ||
             !completeBorrowSetHasTypedShape(program, fieldInfo.type, *found->second))
-          return false;
+          { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
         const auto &fact = *found->second;
         if (fact.dependencies.empty())
           return !stage->loan;
         const auto *publication = stage->loan ? body.findLoan(*stage->loan) : nullptr;
         if (!publication || mir_detail::baseConstructorPublicationStage(body, *publication) != stage ||
             publication->storedPath != BorrowPath{fieldInfo.step})
-          return false;
+          { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
         std::vector<MirLoanDependency> claims{{.source = publication->source,
             .parent = publication->parent, .designatedFields = publication->designatedFields,
             .access = publication->access, .conditions = publication->conditions}};
@@ -19077,7 +19077,7 @@ private:
           [&](const auto &item) { return item.field == field; });
       if (initializer == constructor.initializers.end() ||
           initializer->arguments.size() != 1)
-        return false;
+        { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
       const auto index = static_cast<std::size_t>(
                              initializer - constructor.initializers.begin()) +
                          1;
@@ -19100,7 +19100,7 @@ private:
               instruction.constructorInitializer != index)
             continue;
           if (stage)
-            return false;
+            { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
           stage = &instruction;
           stageBlock = &block;
           stagePosition = position;
@@ -19116,19 +19116,19 @@ private:
           stage->operands.size() != 1 ||
           stage->operands.front().kind != MirOperandKind::Value ||
           stage->hirValue != initializer->arguments.front())
-        return false;
+        { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
       const auto value = stage->operands.front().value;
       if (!value || value > flow.values.size() || !flow.values[value - 1])
-        return false;
+        { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
       const auto &fact = *flow.values[value - 1];
       const auto &sourceType = stage->operands.front().type;
       if (!transportCompleteBorrowFact(program, body, constructor.id, sourceType, fieldInfo.type, fact))
-        return false;
+        { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
       const MirLoan *publication = nullptr;
       for (const auto &loan : body.loans)
         if (loan.escapes && loan.storedPath == BorrowPath{fieldProjection(field)}) {
           if (publication)
-            return false;
+            { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
           publication = &loan;
         }
       if (fact.dependencies.empty())
@@ -19170,10 +19170,25 @@ private:
                 (producer->kind == MirInstructionKind::Move) ||
             operand.type != sourceType ||
             entry->dependencies.possibleAlternatives != fact.possibleAlternatives)
-          return false;
+          { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
         input = body.findLoan(entry->group);
         exact = entry->dependencies.dependencies;
       }
+      // The producer's group may name the runtime parent it was derived
+      // under (a formal's entry loan); replay facts that publish no parent
+      // still name the same suppliers, fields, access and guards exactly.
+      const bool exactSuppliers =
+          exact.size() == fact.dependencies.size() &&
+          std::equal(exact.begin(), exact.end(), fact.dependencies.begin(),
+                     [](const MirLoanDependency &claim, const MirLoanDependency &observed) {
+                       if (claim == observed)
+                         return true;
+                       if (observed.parent != 0)
+                         return false;
+                       auto unparented = claim;
+                       unparented.parent = 0;
+                       return unparented == observed;
+                     });
       if (!input || !publication || input->kind != MirLoanKind::Stored ||
           input->escapes || input->storedDependency ||
           publication->kind != MirLoanKind::Stored || publication->entry ||
@@ -19184,8 +19199,9 @@ private:
           publication->designatedFields != input->designatedFields ||
           publication->conditions != input->conditions ||
           publication->additionalDependencies != input->additionalDependencies ||
-          exact != fact.dependencies)
-        return false;
+          !exactSuppliers)
+        { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] detail input=%d pub=%d inKind=%d inEsc=%d inSd=%llu pubKind=%d pubEntry=%d pubParent=%llu pubSd=%llu prodEq=%d srcEq=%d accEq=%d dfEq=%d condEq=%d addEq=%d exactEq=%d exact=%zu fact=%zu\n", input != nullptr, publication != nullptr, input ? (int)input->kind : -1, input ? (int)input->escapes : -1, input ? (unsigned long long)input->storedDependency : 0ull, publication ? (int)publication->kind : -1, publication ? (int)publication->entry : -1, publication ? (unsigned long long)publication->parent : 0ull, publication ? (unsigned long long)publication->storedDependency : 0ull, publication && publication->producedBy == initializer->arguments.front(), input && publication && publication->source == input->source, input && publication && publication->access == input->access, input && publication && publication->designatedFields == input->designatedFields, input && publication && publication->conditions == input->conditions, input && publication && publication->additionalDependencies == input->additionalDependencies, exact == fact.dependencies, exact.size(), fact.dependencies.size()); if (std::getenv("GTI_TRACE_CFP")) { for (const auto &d : exact) std::fprintf(stderr, "[cfp]   exact src=p%llu parent=%llu df=%zu acc=%d cond=%zu contents=%d\n", (unsigned long long)d.source, (unsigned long long)d.parent, d.designatedFields.size(), (int)d.access, d.conditions.size(), d.referenceContents.has_value()); for (const auto &d : fact.dependencies) std::fprintf(stderr, "[cfp]   fact  src=p%llu parent=%llu df=%zu acc=%d cond=%zu contents=%d\n", (unsigned long long)d.source, (unsigned long long)d.parent, d.designatedFields.size(), (int)d.access, d.conditions.size(), d.referenceContents.has_value()); }
+        if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
       bool published = false;
       bool retired = false;
       for (std::size_t position = stagePosition + 1;
@@ -19198,13 +19214,13 @@ private:
               instruction.operands.front().loan != input->id ||
               instruction.operands.front().value != value ||
               instruction.operands.front().type != sourceType)
-            return false;
+            { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
           published = true;
         }
         if (instruction.kind == MirInstructionKind::EndBorrow &&
             instruction.loan == input->id) {
           if (!published || retired)
-            return false;
+            { if (std::getenv("GTI_TRACE_CFP")) std::fprintf(stderr, "[cfp] ctor=%zu false#%d\n", (std::size_t)constructor.id, __LINE__); return false; } // TEMP-TRACE
           retired = true;
         }
       }
