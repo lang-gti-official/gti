@@ -3486,19 +3486,24 @@ private:
     frontendOptions.requireEntryPoint = project.requireEntryPoint;
     frontendOptions.program = project.program;
     frontendOptions.synthesizeTestEntry = false;
-    // HIR performs the compiler's concrete generic-instance reanalysis. The
-    // LSP retains it only so editor diagnostics agree with `gti check` for
-    // the open file's own code; MIR remains code-generation work and is not
-    // built for editor snapshots. Lowering is scoped to the program roots and
-    // the open file's declarations: library instances nothing in the file
-    // reaches are the library's own `gti check` concern.
-    frontendOptions.stopAfter = lang::FrontendPhase::Hir;
+    // Editor snapshots run the compiler through MIR, the single owner of
+    // body-local borrow and lifetime checking, so the editor publishes the
+    // same body diagnostics as `gti check` for the open file's code. HIR
+    // performs concrete generic-instance discovery; lowering is scoped to the
+    // program roots and the open file's declarations, and MIR lowers exactly
+    // that HIR. Library instances nothing in the file reaches are the
+    // library's own `gti check` concern. MIR's diagnostics arrive in
+    // `FrontendResult::diagnostics` like every other phase's.
+    frontendOptions.stopAfter = lang::FrontendPhase::Mir;
     frontendOptions.cancellation = request.cancellation.get();
     frontendOptions.lowerEntryUnitOnly = true;
-    // The LSP never reads HIR bodies: library-only instances (trusted
-    // declarations with only trusted arguments) are analysed for their
-    // diagnostics but not lowered, so the library code only they reach is
-    // not discovered; see HirLoweringScope::omitLibraryOnlyBodies.
+    // The editor does not need the bodies of library-only instances (trusted
+    // declarations with only trusted arguments): their callers depend only
+    // on signature contracts, and their own bodies are the library's
+    // `gti check` concern. The frontend honours this only once MIR can take
+    // such an instance as a signature-only declaration; until then, analysis
+    // through MIR lowers and checks them. See
+    // FrontendOptions::lowerLibraryOnlyInstanceBodies.
     frontendOptions.lowerLibraryOnlyInstanceBodies = false;
     // Likewise, standard-library bodies nothing in the open file reaches are
     // not analysed; their diagnostics are that library's `gti check` concern.
@@ -3544,11 +3549,14 @@ private:
         std::chrono::duration_cast<std::chrono::microseconds>(
             SteadyClock::now() - frontendStart)
             .count());
-    // HIR runs so that instantiated generic bodies report the same
-    // diagnostics as `gti check`; those diagnostics are already in
-    // `frontend.diagnostics`. No editor query reads HIR, so it is released
-    // here instead of being retained with every open document's snapshot.
+    // HIR and MIR run so that instantiated generic bodies and body-local
+    // borrow checking report the same diagnostics as `gti check`; those
+    // diagnostics are already in `frontend.diagnostics`. No editor query
+    // reads HIR, failure metadata or MIR, so they are released here instead
+    // of being retained with every open document's snapshot.
     frontend.hir = lang::HirProgram{};
+    frontend.failureMetadata = lang::FailureMetadata{};
+    frontend.mir = lang::MirProgram{};
     frontend.includeSuggestionsRequested =
         !request.audit && lang::canSuggestIncludes(frontend);
     if (frontend.includeSuggestionsRequested) {
@@ -5010,6 +5018,7 @@ private:
         {"hirMicroseconds", static_cast<std::int64_t>(metrics.hirMicroseconds)},
         {"hirFunctionInstances",
          static_cast<std::int64_t>(metrics.hirFunctionInstances)},
+        {"mirMicroseconds", static_cast<std::int64_t>(metrics.mirMicroseconds)},
         {"includeSuggestionsRequested", includeSuggestionsRequested},
         {"preambleBuilds",
          static_cast<std::int64_t>(metrics.semanticPreambleBuilds)},

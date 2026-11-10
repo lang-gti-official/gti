@@ -182,8 +182,10 @@ counts the omissions and `FrontendWorkMetrics::hirOmittedInstanceBodies`
 reports them. Class instances are never omitted: lowered bodies of the file's
 own instances reference their layout.
 
-The LSP clears the option because it never reads HIR bodies, only HIR's
-diagnostics. The contract follows from the scope rule above: an instance that
+The LSP clears the option because it never reads HIR bodies, only the
+diagnostics of HIR and MIR. The frontend applies it only to analysis that
+stops at HIR: MIR has no signature-only instance form, so analysis through
+MIR, including editor snapshots, still lowers these bodies. The contract follows from the scope rule above: an instance that
 only a library-only body would request is, like one that only unreached
 library code requests, the library's own `gti check` concern. `gti check` and
 builds keep every body.

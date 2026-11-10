@@ -68,8 +68,9 @@ struct FrontendOptions {
   bool requireFunctionDefinitions = false;
   ProgressObserver *progress = nullptr;
   // An editor's stop request for a superseded snapshot. Set by another
-  // thread; semantic analysis stops at its next safe point and the result
-  // reports `cancelled`. Caches receive only work completed before the stop.
+  // thread; semantic analysis stops at its next safe point, and the frontend
+  // checks it again before MIR; the result then reports `cancelled`. Caches
+  // receive only work completed before the stop.
   const std::atomic<bool> *cancellation = nullptr;
   // Optional synchronous work accounting. The caller owns this object for the
   // complete Frontend invocation.
@@ -108,12 +109,18 @@ struct FrontendOptions {
   // diagnostics are then reported for the entry unit's code and the library
   // code it instantiates, not for library instances nothing in the entry unit
   // reaches. Editor snapshots set this; `gti check` and builds never do, so
-  // their diagnostics remain complete. Meaningful only with `stopAfter == Hir`.
+  // their diagnostics remain complete. With `stopAfter == Mir`, MIR lowers
+  // and checks exactly that HIR, so MIR diagnostics have the same scope.
+  // Never combined with code generation.
   bool lowerEntryUnitOnly = false;
   // When false, HIR analyses but does not lower the bodies of library-only
   // instances (compiler-trusted declarations whose arguments name only
   // compiler-trusted types); see HirLoweringScope::omitLibraryOnlyBodies.
-  // Editor snapshots clear it because the LSP never reads HIR bodies.
+  // Editor snapshots clear it; code generation requires it. Omission applies
+  // only with `stopAfter == Hir` for now: MIR has no signature-only instance
+  // form, so analysis through MIR lowers these bodies and checks them. Once
+  // MIR lowers an omitted instance as a declaration whose callers are checked
+  // against its signature contract, this restriction is lifted.
   bool lowerLibraryOnlyInstanceBodies = true;
   // Report raw-pointer audit findings located inside compiler-trusted units
   // (the prelude and the standard library) to an application. Off by default:
