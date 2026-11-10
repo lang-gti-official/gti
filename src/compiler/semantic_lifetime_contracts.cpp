@@ -1445,6 +1445,7 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
     // The stored reference this source reaches; Unknown for caller storage,
     // which may hold a referent of any type.
     SemanticType reference = SemanticType::Unknown;
+    SymbolId globalRoot = 0;
   };
   std::vector<Source> sources;
   // A value's stored regions, each reached through its own field path.
@@ -1582,6 +1583,24 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
     }
   }
 
+  // A result with no borrow-carrying input is `static`; an exact static
+  // place the body refines it to supplies every stored path. MIR proves each
+  // returned loan against it.
+  if (sources.empty() && !method &&
+      function.returnBorrowOrigin == BorrowOriginKind::Global &&
+      function.returnBorrowPlace && function.returnBorrowPlace->valid()) {
+    Source global{.origin = BorrowOriginKind::Global,
+                  .parameter = 0,
+                  .access = AccessMode::ReadOnly,
+                  .globalRoot = function.returnBorrowPlace->root};
+    for (const PlaceProjection &projection :
+         function.returnBorrowPlace->projections) {
+      if (projection.kind != PlaceProjectionKind::Field)
+        return std::nullopt;
+      global.fields.push_back(projection.field);
+    }
+    sources.push_back(std::move(global));
+  }
   FunctionBorrowDependencySummary summary{.possibleAlternatives =
                                               *alternatives};
   for (const auto &path : *inventory) {
@@ -1619,6 +1638,7 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
       BorrowedFieldOrigin dependency{.resultFields = fields,
                                      .origin = source.origin,
                                      .parameter = source.parameter,
+                                     .globalRoot = source.globalRoot,
                                      .sourceFields = source.fields,
                                      .access = access,
                                      .resultConditions = *conditions,

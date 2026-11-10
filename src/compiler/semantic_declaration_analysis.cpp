@@ -9378,6 +9378,29 @@ auto SemanticVisitor::Impl::receiverAccessorFields(
                              : accessorReceiverFields(*accessor, visiting);
 }
 
+namespace {
+// An expression that names no storage: literals, qualified names that are
+// not storage (the caller checks those first) and calls of such arguments.
+bool dependencyFreeReturn(const Expr &expression) {
+  if (const auto *group = exprAs<Grouping>(&expression))
+    return group->expression() && dependencyFreeReturn(*group->expression());
+  if (exprAs<LiteralExpr>(&expression) != nullptr ||
+      exprAs<QualifiedName>(&expression) != nullptr)
+    return true;
+  if (const auto *call = exprAs<Call>(&expression)) {
+    if (!call->callee() || (exprAs<Variable>(call->callee().get()) == nullptr &&
+                            exprAs<QualifiedName>(call->callee().get()) ==
+                                nullptr))
+      return false;
+    return std::all_of(call->arguments().begin(), call->arguments().end(),
+                       [](const ExprPtr &argument) {
+                         return argument && dependencyFreeReturn(*argument);
+                       });
+  }
+  return false;
+}
+} // namespace
+
 auto SemanticVisitor::Impl::globalReturnBorrowPlace(
     const FunctionInfo &function) -> std::optional<BorrowOriginPlace> {
   if (function.declaration == nullptr ||
@@ -9465,6 +9488,36 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
     } else if (!candidate) {
       candidate = predeclaredGlobalBorrowPlace(*returned);
     }
+    // RFC 0004: a result with no borrow-carrying input is `static`. A return
+    // built only from literals and names, such as `unexpected(code::missing)`
+    // or `lookup<int&>(false)`, borrows nothing, so it leaves the exact
+    // static place of the other returns as the refinement. MIR still proves
+    // every returned loan against that place.
+    if (!candidate && signatureContractDefaults() &&
+        dependencyFreeReturn(**returned))
+      continue;
+    // A construction such as `slot::item(global)` whose only storage input
+    // is one static place carries that place.
+    if (!candidate && signatureContractDefaults())
+      if (const auto *call = exprAs<Call>(returned->get());
+          call != nullptr && call->callee() &&
+          (exprAs<Variable>(call->callee().get()) != nullptr ||
+           exprAs<QualifiedName>(call->callee().get()) != nullptr)) {
+        std::optional<BorrowOriginPlace> input;
+        bool single = true;
+        for (const ExprPtr &argument : call->arguments()) {
+          if (argument && dependencyFreeReturn(*argument))
+            continue;
+          auto place = predeclaredGlobalBorrowPlace(argument);
+          if (!place || input) {
+            single = false;
+            break;
+          }
+          input = std::move(place);
+        }
+        if (single)
+          candidate = std::move(input);
+      }
     if (!candidate) {
       valid = false;
       break;
