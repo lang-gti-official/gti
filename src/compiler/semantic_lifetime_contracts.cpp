@@ -49,6 +49,10 @@ std::optional<Token> resultRegion(const TypeRef &result) {
 std::optional<std::string> argumentRegion(const TypeRef &argument) {
   if (argument.referenceLifetime)
     return argument.referenceLifetime->name.lexeme;
+  // A raw pointer carries no region: `outlives<T*, r>` holds for every T and
+  // states nothing about its pointee.
+  if (!argument.pointers.empty() && !argument.reference)
+    return std::nullopt;
   if (!argument.lifetimeArguments.empty() &&
       argument.lifetimeArguments.front().name.segments.size() == 1)
     return argument.lifetimeArguments.front().name.last().lexeme;
@@ -690,22 +694,95 @@ auto SemanticVisitor::Impl::validateCallTypeOutlives(const Call &call,
     }
     return std::nullopt;
   };
-  // Declared relations, plus Rust's implied bounds: a parameter written
-  // `X<..T..>&<r>` implies T outlives r.
+  // Declared relations, plus implied bounds: a parameter written `X&<r>`
+  // implies that every caller type parameter X stores outlives r. Storage is
+  // structural: fields, bases and enum payloads after substitution. A raw
+  // pointee and a phantom argument are not stored, so they gain nothing.
   auto relations = declaredOutlives(caller);
-  const auto implied = [&](const auto &self, const TypeRef &type,
-                           const std::string &region) -> void {
-    for (const auto &argument : type.arguments) {
-      if (argument.name.segments.size() == 1 &&
-          contains(callerTypes, argument.name.last().lexeme))
-        relations.emplace_back(argument.name.last().lexeme, region);
-      self(self, argument, region);
+  const auto stored = [&](const auto &self, const TypeRef &type,
+                          std::vector<std::string> &out,
+                          std::size_t depth) -> void {
+    if (depth > 8 || !type.pointers.empty())
+      return;
+    if (type.name.segments.size() == 1 && type.arguments.empty() &&
+        contains(callerTypes, type.name.last().lexeme)) {
+      if (!contains(out, type.name.last().lexeme))
+        out.push_back(type.name.last().lexeme);
+      return;
     }
+    if (type.arguments.empty())
+      return;
+    std::vector<std::string> formals;
+    std::vector<const TypeRef *> members;
+    std::vector<TypeRef> payloads;
+    const auto formalsOf = [&](const std::vector<GenericParameter> &params) {
+      for (const auto &parameter : params)
+        if (!parameter.lifetimeKeyword)
+          formals.push_back(parameter.name.lexeme);
+    };
+    auto classId = resolveClassPath(type.name, currentNamespace);
+    if (!classId)
+      classId = resolveClassPathGlobally(type.name, currentNamespace);
+    auto enumId = classId ? std::nullopt
+                          : resolveEnumPath(type.name, currentNamespace);
+    if (!classId && !enumId)
+      enumId = resolveEnumPathGlobally(type.name, currentNamespace);
+    if (classId && *classId <= classes.size() &&
+        classes[*classId - 1].declaration != nullptr) {
+      const ClassDecl &decl = *classes[*classId - 1].declaration;
+      formalsOf(decl.genericParameters());
+      for (const auto &base : decl.bases())
+        members.push_back(&base.type);
+      for (const auto &member : decl.members())
+        if (const auto *field = stmtAs<VariableDecl>(member.get());
+            field != nullptr && !field->isStatic())
+          members.push_back(&field->type());
+    } else if (enumId && *enumId <= enums.size() &&
+               enums[*enumId - 1].declaration != nullptr) {
+      const EnumDecl &decl = *enums[*enumId - 1].declaration;
+      formalsOf(decl.genericParameters());
+      for (const auto &enumerator : decl.enumerators())
+        for (const auto &field : enumerator.payload)
+          members.push_back(&field.type);
+    } else {
+      // An unresolved container: conservatively, every argument is stored.
+      for (const auto &argument : type.arguments)
+        self(self, argument, out, depth + 1);
+      return;
+    }
+    // Substitute the container's formals by this use's arguments.
+    const auto substitute = [&](const auto &again,
+                                const TypeRef &member) -> TypeRef {
+      if (member.name.segments.size() == 1 && member.arguments.empty())
+        for (std::size_t index = 0;
+             index < formals.size() && index < type.arguments.size(); ++index)
+          if (formals[index] == member.name.last().lexeme) {
+            TypeRef actual = type.arguments[index];
+            actual.pointers.insert(actual.pointers.end(),
+                                   member.pointers.begin(),
+                                   member.pointers.end());
+            if (member.reference)
+              actual.reference = member.reference;
+            return actual;
+          }
+      TypeRef copy = member;
+      for (auto &argument : copy.arguments)
+        argument = again(again, argument);
+      return copy;
+    };
+    for (const TypeRef *member : members)
+      self(self, substitute(substitute, *member), out, depth + 1);
   };
   for (const auto &parameter : caller.parameters())
-    if (parameter.type.referenceLifetime)
-      implied(implied, parameter.type,
-              parameter.type.referenceLifetime->name.lexeme);
+    if (parameter.type.referenceLifetime) {
+      TypeRef referent = parameter.type;
+      referent.reference.reset();
+      referent.referenceLifetime.reset();
+      std::vector<std::string> reached;
+      stored(stored, referent, reached, 0);
+      for (const auto &name : reached)
+        relations.emplace_back(name, parameter.type.referenceLifetime->name.lexeme);
+    }
   const auto holds = [&](const std::string &longer,
                          const std::string &shorter) {
     if (longer == shorter)
