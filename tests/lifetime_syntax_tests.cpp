@@ -73,9 +73,10 @@ using Static = Borrowed<int, static>;
          "lifetime binders and annotated reference/type forms must parse");
 
   const auto *identity = findFunction(program, "identity");
-  expect(identity && identity->genericParameters().size() == 1,
+  expect(identity && identity->sourceGenericParameters().size() == 1 &&
+             identity->genericParameters().empty(),
          "a function must retain its lifetime binder");
-  const auto &parameter = identity->genericParameters().front();
+  const auto &parameter = identity->sourceGenericParameters().front();
   expect(parameter.lifetimeKeyword && !parameter.valueType &&
              !parameter.constraint && parameter.name.lexeme == "a" &&
              parameter.lifetimeKeyword->kind == lang::TokenKind::IDENTIFIER &&
@@ -93,9 +94,11 @@ using Static = Borrowed<int, static>;
          "lifetime annotations must preserve mutable reference access");
   const auto *record =
       lang::stmtAs<lang::ClassDecl>(program.declarations()[2].get());
-  expect(record && record->genericParameters().size() == 2 &&
-             !record->genericParameters()[0].lifetimeKeyword &&
-             record->genericParameters()[1].lifetimeKeyword,
+  expect(record && record->sourceGenericParameters().size() == 2 &&
+             !record->sourceGenericParameters()[0].lifetimeKeyword &&
+             record->sourceGenericParameters()[1].lifetimeKeyword &&
+             record->genericParameters().size() == 1 &&
+             record->lifetimeParameters().size() == 1,
          "ordinary and lifetime record parameters must remain distinct");
   const auto *field =
       lang::stmtAs<lang::VariableDecl>(record->members().front().get());
@@ -105,29 +108,36 @@ using Static = Borrowed<int, static>;
 
   const auto *alias =
       lang::stmtAs<lang::TypeAliasDecl>(program.declarations()[3].get());
-  expect(alias && alias->genericParameters()[1].lifetimeKeyword &&
-             alias->target().arguments[1].genericArgumentSyntax ==
-                 lang::GenericArgumentSyntax::UnresolvedIdentifier,
-         "named generic arguments must leave parameter-kind resolution to "
-         "semantics");
+  expect(alias && alias->sourceGenericParameters()[1].lifetimeKeyword &&
+             alias->target().arguments.size() == 1 &&
+             alias->target().lifetimeArguments.size() == 1 &&
+             alias->target().lifetimeArguments[0].genericArgumentSyntax ==
+                 lang::GenericArgumentSyntax::Lifetime &&
+             alias->target().lifetimeArguments[0].name.last().lexeme == "a",
+         "an in-scope lifetime binder used as an argument is lifetime syntax, "
+         "kept out of the type's argument list (RFC 0004 parametricity)");
   const auto *conceptDeclaration =
       lang::stmtAs<lang::ConceptDecl>(program.declarations()[4].get());
   expect(conceptDeclaration &&
-             conceptDeclaration->genericParameters()[1].lifetimeKeyword &&
+             conceptDeclaration->sourceGenericParameters()[1].lifetimeKeyword &&
              conceptDeclaration->typeParameters().size() == 1 &&
              conceptDeclaration->typeParameters()[0].lexeme == "T",
          "concepts must retain lifetime binders");
   const auto *shorten = findFunction(program, "shorten");
   expect(shorten && shorten->requiresClause() &&
-             shorten->requiresClause()->requirements().size() == 2 &&
-             shorten->requiresClause()->requirements()[0].name.last().lexeme ==
-                 "outlives" &&
+             shorten->requiresClause()->requirements().empty() &&
+             shorten->requiresClause()->expression.lifetimeRequirements.size() == 2 &&
              shorten->requiresClause()
-                     ->requirements()[1]
+                     ->expression.lifetimeRequirements[0]
+                     .name.last()
+                     .lexeme == "outlives" &&
+             shorten->requiresClause()
+                     ->expression.lifetimeRequirements[1]
                      .arguments[1]
                      .genericArgumentSyntax ==
                  lang::GenericArgumentSyntax::Lifetime,
-         "outlives must share requirement syntax and preserve argument kinds");
+         "outlives is a lifetime requirement, lifted out of type-level "
+         "satisfaction with its argument kinds preserved");
 
   const auto *nested =
       lang::stmtAs<lang::TypeAliasDecl>(program.declarations()[6].get());
@@ -146,8 +156,9 @@ using Static = Borrowed<int, static>;
   for (const std::size_t index : {8U, 9U}) {
     const auto *argumentAlias =
         lang::stmtAs<lang::TypeAliasDecl>(program.declarations()[index].get());
-    expect(argumentAlias &&
-               argumentAlias->target().arguments[1].genericArgumentSyntax ==
+    expect(argumentAlias && argumentAlias->target().arguments.size() == 1 &&
+               argumentAlias->target().lifetimeArguments.size() == 1 &&
+               argumentAlias->target().lifetimeArguments[0].genericArgumentSyntax ==
                    lang::GenericArgumentSyntax::Lifetime,
            "placeholder and static arguments must be classified as lifetime "
            "syntax");
@@ -195,8 +206,9 @@ int main() {
       binding ? lang::exprAs<lang::Call>(binding->initializer().get())
               : nullptr;
   expect(
-      call && call->typeArguments().size() == 1 &&
-          call->typeArguments()[0].genericArgumentSyntax ==
+      call && call->typeArguments().empty() &&
+          call->lifetimeArguments().size() == 1 &&
+          call->lifetimeArguments()[0].genericArgumentSyntax ==
               lang::GenericArgumentSyntax::Lifetime,
       "explicit generic-call lookahead must admit static lifetime arguments");
 }
@@ -258,9 +270,10 @@ int main() {
       lang::stmtAs<lang::TypeAliasDecl>(program.declarations()[2].get());
   expect(mutableAlias &&
              mutableAlias->target().arguments[0].referenceMutability &&
-             mutableAlias->target().arguments[1].genericArgumentSyntax ==
+             mutableAlias->target().lifetimeArguments.size() == 1 &&
+             mutableAlias->target().lifetimeArguments[0].genericArgumentSyntax ==
                  lang::GenericArgumentSyntax::Lifetime &&
-             mutableAlias->target().arguments[1].name.last().kind ==
+             mutableAlias->target().lifetimeArguments[0].name.last().kind ==
                  lang::TokenKind::THIS,
          "generic arguments must preserve mutable references and receiver "
          "lifetimes");
@@ -276,8 +289,10 @@ int main() {
              get->returnType().referenceLifetime->name.kind ==
                  lang::TokenKind::THIS &&
              retain && retain->requiresClause() &&
+             retain->requiresClause()->requirements().empty() &&
+             retain->requiresClause()->expression.lifetimeRequirements.size() == 1 &&
              retain->requiresClause()
-                     ->requirements()[0]
+                     ->expression.lifetimeRequirements[0]
                      .arguments[0]
                      .genericArgumentSyntax ==
                  lang::GenericArgumentSyntax::Lifetime,
@@ -485,16 +500,18 @@ for<T> concept P<Wrap<T>> {
   if (!block || block->members().empty())
     return;
   const auto *operation = lang::stmtAs<lang::FunctionDecl>(block->members()[0].get());
-  expect(operation && operation->genericParameters().size() == 2 &&
-             operation->genericParameters()[0].name.lexeme == "T" &&
-             !operation->genericParameters()[0].lifetimeKeyword &&
-             operation->genericParameters()[1].lifetimeKeyword &&
-             operation->genericParameters()[1].name.lexeme == "a",
+  expect(operation && operation->sourceGenericParameters().size() == 2 &&
+             operation->sourceGenericParameters()[0].name.lexeme == "T" &&
+             !operation->sourceGenericParameters()[0].lifetimeKeyword &&
+             operation->sourceGenericParameters()[1].lifetimeKeyword &&
+             operation->sourceGenericParameters()[1].name.lexeme == "a" &&
+             operation->genericParameters().size() == 1,
          "the operation keeps block parameters before its local lifetime binders");
   const auto *shorten = block->members().size() == 2
       ? lang::stmtAs<lang::FunctionDecl>(block->members()[1].get()) : nullptr;
   expect(shorten && shorten->requiresClause() &&
-             shorten->requiresClause()->requirements().size() == 2 &&
+             shorten->requiresClause()->requirements().size() == 1 &&
+             shorten->requiresClause()->expression.lifetimeRequirements.size() == 1 &&
              !shorten->requiresClause()->keyword.generated,
          "a local lifetime requirement conjoins with the block's inherited application");
 }
@@ -512,9 +529,11 @@ class Callback<R&<result>(Args...), lifetime environment> {
          "patterned primaries accept trailing nominal lifetime parameters");
   const auto *owner = lang::stmtAs<lang::ClassDecl>(program.declarations().front().get());
   expect(owner && owner->genericArgumentPatterns().size() == 1 &&
-             owner->genericParameters().size() == 1,
+             owner->sourceGenericParameters().size() == 1 &&
+             owner->lifetimeParameters().size() == 1 &&
+             owner->genericParameters().empty(),
          "public type patterns and nominal lifetime declarations remain distinct");
-  const auto &parameter = owner->genericParameters().front();
+  const auto &parameter = owner->sourceGenericParameters().front();
   expect(parameter.lifetimeKeyword && parameter.name.lexeme == "environment" &&
              parameter.name.position == source.find("environment") &&
              parameter.lifetimeKeyword->position == source.find("lifetime") &&

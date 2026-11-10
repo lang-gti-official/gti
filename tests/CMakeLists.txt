@@ -1571,6 +1571,10 @@ add_executable(gti_borrow_origin_syntax_tests "${PROJECT_SOURCE_DIR}/tests/borro
 target_link_libraries(gti_borrow_origin_syntax_tests PRIVATE gti_compiler)
 add_test(NAME borrow_origin_syntax COMMAND gti_borrow_origin_syntax_tests)
 
+add_executable(gti_lifetime_syntax_tests lifetime_syntax_tests.cpp)
+target_link_libraries(gti_lifetime_syntax_tests PRIVATE gti_compiler)
+add_test(NAME lifetime_syntax COMMAND gti_lifetime_syntax_tests)
+
 add_executable(gti_lambda_reference_tests lambda_reference_tests.cpp)
 target_link_libraries(gti_lambda_reference_tests PRIVATE gti_compiler)
 add_test(NAME lambda_reference COMMAND gti_lambda_reference_tests)

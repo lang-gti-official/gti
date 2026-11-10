@@ -1161,6 +1161,14 @@ public:
   }
 
   [[nodiscard]] const ExprPtr &callee() const { return callee_; }
+  // Explicit lifetime arguments (RFC 0004): call metadata, never part of
+  // the type argument list used for overload or instance selection.
+  [[nodiscard]] const std::vector<TypeRef> &lifetimeArguments() const {
+    return lifetimeArguments_;
+  }
+  void setLifetimeArguments(std::vector<TypeRef> arguments) {
+    lifetimeArguments_ = std::move(arguments);
+  }
   [[nodiscard]] const std::vector<TypeRef> &typeArguments() const {
     return typeArguments_;
   }
@@ -1206,6 +1214,7 @@ public:
 
 private:
   ExprPtr callee_;
+  std::vector<TypeRef> lifetimeArguments_;
   std::vector<TypeRef> typeArguments_;
   Token paren_;
   ExprList arguments_;

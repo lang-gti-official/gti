@@ -653,11 +653,17 @@ private:
         }
         combined.nodes.push_back(std::move(node));
       }
-      combined.nodes.push_back({.kind = ConstraintExpressionKind::Conjunction,
-                                .left = combined.root,
-                                .right = extra.root + nodeOffset,
-                                .operation = requiresClause->keyword});
-      combined.root = combined.nodes.size() - 1;
+      // A clause of only lifetime requirements leaves no type-level root.
+      if (extra.root != ConstraintExpressionNode::invalidIndex) {
+        combined.nodes.push_back({.kind = ConstraintExpressionKind::Conjunction,
+                                  .left = combined.root,
+                                  .right = extra.root + nodeOffset,
+                                  .operation = requiresClause->keyword});
+        combined.root = combined.nodes.size() - 1;
+      }
+      combined.lifetimeRequirements.insert(combined.lifetimeRequirements.end(),
+                                           extra.lifetimeRequirements.begin(),
+                                           extra.lifetimeRequirements.end());
     }
     consume(TokenKind::LEFT_BRACE, "Expect '{' before conformance block body.");
     StmtList members;
@@ -739,7 +745,9 @@ private:
       arguments.emplace_back(parseGenericArgument());
     } while (match({TokenKind::COMMA}));
     consumeGenericClose("Expect '>' after concept arguments.");
-    (void)takeLifetimeArguments(arguments);
+    // `outlives<a, b>` relates lifetimes: its arguments are the requirement.
+    if (!(name.segments.size() == 1 && name.last().lexeme == "outlives"))
+      (void)takeLifetimeArguments(arguments);
     return {std::move(name), std::move(arguments)};
   }
 
@@ -1703,11 +1711,17 @@ private:
           }
           combined.nodes.push_back(std::move(node));
         }
-        combined.nodes.push_back({.kind = ConstraintExpressionKind::Conjunction,
-                                  .left = combined.root,
-                                  .right = extra.root + nodeOffset,
-                                  .operation = requiresClause->keyword});
-        combined.root = combined.nodes.size() - 1;
+        // A clause of only lifetime requirements leaves no type-level root.
+        if (extra.root != ConstraintExpressionNode::invalidIndex) {
+          combined.nodes.push_back({.kind = ConstraintExpressionKind::Conjunction,
+                                    .left = combined.root,
+                                    .right = extra.root + nodeOffset,
+                                    .operation = requiresClause->keyword});
+          combined.root = combined.nodes.size() - 1;
+        }
+        combined.lifetimeRequirements.insert(combined.lifetimeRequirements.end(),
+                                             extra.lifetimeRequirements.begin(),
+                                             extra.lifetimeRequirements.end());
         requiresClause->expression = std::move(combined);
       }
     }
@@ -3961,7 +3975,8 @@ private:
         expr = std::make_unique<QualifiedName>(
             std::move(path), TypeRef(std::move(owner), std::move(arguments)));
       } else if (isExplicitGenericCallStart()) {
-        std::vector<TypeRef> typeArguments = typeArgumentList();
+        std::vector<TypeRef> lifetimeArguments;
+        std::vector<TypeRef> typeArguments = typeArgumentList(&lifetimeArguments);
         const std::optional<Token> bang = match({TokenKind::BANG})
                                               ? std::optional<Token>(previous())
                                               : std::nullopt;
@@ -3970,6 +3985,8 @@ private:
         expr = bang ? finishMacroCall(std::move(expr), std::move(typeArguments),
                                       *bang)
                     : finishCall(std::move(expr), std::move(typeArguments));
+        if (auto *call = exprAs<Call>(expr.get()))
+          call->setLifetimeArguments(std::move(lifetimeArguments));
       } else if (isConceptTestStart() && (exprAs<Variable>(expr.get()) ||
                                           exprAs<QualifiedName>(expr.get()))) {
         NamePath name = exprAs<Variable>(expr.get())
@@ -4156,7 +4173,7 @@ private:
     return call;
   }
 
-  std::vector<TypeRef> typeArgumentList() {
+  std::vector<TypeRef> typeArgumentList(std::vector<TypeRef> *lifetimes = nullptr) {
     consume(TokenKind::LESS, "Expect '<' before generic arguments.");
     std::vector<TypeRef> arguments;
     if (!check(TokenKind::GREATER)) {
@@ -4165,7 +4182,9 @@ private:
       } while (match({TokenKind::COMMA}));
     }
     consumeGenericClose("Expect '>' after generic arguments.");
-    (void)takeLifetimeArguments(arguments);
+    auto lifetimeArguments = takeLifetimeArguments(arguments);
+    if (lifetimes != nullptr)
+      *lifetimes = std::move(lifetimeArguments);
     return arguments;
   }
 

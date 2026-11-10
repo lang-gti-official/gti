@@ -301,14 +301,18 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
   if (type.referenceMutability) {
     text = "mut " + text;
   }
-  if (!type.arguments.empty()) {
+  if (!type.arguments.empty() || !type.lifetimeArguments.empty()) {
+    // Type and value arguments, then lifetime arguments (RFC 0004 order).
     text += "<";
-    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
-      if (index > 0) {
-        text += ",";
+    bool first = true;
+    for (const auto *list : {&type.arguments, &type.lifetimeArguments})
+      for (const TypeRef &argument : *list) {
+        if (!first) {
+          text += ",";
+        }
+        first = false;
+        text += typeToString(argument);
       }
-      text += typeToString(type.arguments[index]);
-    }
     text += ">";
   }
   for (std::size_t index = 0; index < type.pointers.size(); ++index) {
