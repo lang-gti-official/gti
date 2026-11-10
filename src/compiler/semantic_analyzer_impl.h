@@ -4569,6 +4569,12 @@ private:
   [[nodiscard]] bool isParameterDerivedBorrow(const ExprPtr &expression,
                                               const Parameter &parameter) const;
 
+  // A read of one stored reference field (through ordinary or inherited
+  // fields) of a local borrowed carrier names that field's own dependency in
+  // the carrier's retained group, not the whole group.
+  [[nodiscard]] std::optional<SemanticLoanDependency>
+  storedFieldReadDependency(const Expr *expression) const;
+
   [[nodiscard]] bool
   isParameterDerivedBorrow(const ExprPtr &expression,
                            const Parameter &parameter,

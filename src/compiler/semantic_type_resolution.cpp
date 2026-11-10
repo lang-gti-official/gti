@@ -5290,6 +5290,20 @@ auto SemanticVisitor::Impl::rejectEscapingLocalChildLoan(
   }
   if (returnsCarrier)
     return false;
+  // A reference read out of one stored reference field of a local carrier
+  // names that field's external referent when its own dependency is a
+  // parameter's: the carrier and its other fields do not travel with it.
+  // The return-origin check still proves the exact declared supplier.
+  if (currentReturnType.kind == SemanticType::Reference)
+    if (const auto dependency = storedFieldReadDependency(returned);
+        dependency && !dependency->place.receiver &&
+        dependency->place.root != 0)
+      for (const auto &scope : scopes)
+        for (const auto &[_, candidate] : scope)
+          if (candidate.bindingKind == SemanticBindingKind::Parameter &&
+              symbolForDeclaration(candidate.declaration) ==
+                  dependency->place.root)
+            return false;
   if (symbol == nullptr ||
       symbol->bindingKind != SemanticBindingKind::LocalVariable ||
       loan == nullptr || (loan->parent == 0 && !loan->lifecycleBound)) {
@@ -6210,6 +6224,60 @@ auto SemanticVisitor::Impl::validateStoredCarrierReturnSource(
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
+auto SemanticVisitor::Impl::storedFieldReadDependency(
+    const Expr *expression) const -> std::optional<SemanticLoanDependency> {
+  const auto ungroup = [](const Expr *current) {
+    while (const auto *group = exprAs<Grouping>(current))
+      current = group->expression().get();
+    return current;
+  };
+  std::vector<const Get *> chain;
+  const Expr *current = ungroup(expression);
+  while (const auto *get = exprAs<Get>(current)) {
+    if (get->access().kind == TokenKind::ARROW || !get->object())
+      return std::nullopt;
+    chain.push_back(get);
+    current = ungroup(get->object().get());
+  }
+  const auto *variable = exprAs<Variable>(current);
+  if (variable == nullptr || chain.empty())
+    return std::nullopt;
+  const Symbol *symbol = resolve(variable->name());
+  if (symbol == nullptr || symbol->retainedLoan == 0 ||
+      symbol->type.kind == SemanticType::Reference ||
+      (symbol->bindingKind != SemanticBindingKind::LocalVariable &&
+       symbol->bindingKind != SemanticBindingKind::Parameter))
+    return std::nullopt;
+  const SemanticLoanInfo *loan = semanticModel.findLoan(symbol->retainedLoan);
+  if (loan == nullptr || loan->kind != SemanticLoanKind::StoredValue ||
+      loan->referenceSelection || !loan->conditions.empty())
+    return std::nullopt;
+  std::vector<SymbolId> path;
+  SemanticType type = symbol->type;
+  for (auto get = chain.rbegin(); get != chain.rend(); ++get) {
+    const MemberInfo *member = findMember(type, (*get)->name());
+    if (member == nullptr || member->symbol.type == SemanticType::Function)
+      return std::nullopt;
+    const SymbolId field = symbolForDeclaration(member->symbol.declaration);
+    if (field == 0)
+      return std::nullopt;
+    path.push_back(field);
+    type = substituteType(member->symbol.type, classSubstitution(type));
+  }
+  if (type.kind != SemanticType::Reference)
+    return std::nullopt;
+  if (loan->designatedFields == path)
+    return SemanticLoanDependency{.place = loan->place,
+                                  .designatedFields = path,
+                                  .access = loan->access,
+                                  .protectsStorage = loan->protectsStorage,
+                                  .parent = loan->parent};
+  for (const auto &dependency : loan->additionalDependencies)
+    if (dependency.designatedFields == path && dependency.conditions.empty())
+      return dependency;
+  return std::nullopt;
+}
+
 auto SemanticVisitor::Impl::isParameterDerivedBorrow(
     const ExprPtr &expression, const Parameter &parameter) const -> bool {
   std::unordered_set<const Expr *> visiting;
@@ -6301,6 +6369,15 @@ auto SemanticVisitor::Impl::isParameterDerivedBorrow(
     return isParameterDerivedBorrow(index->object(), parameter, visiting);
   }
   if (const auto *member = exprAs<Get>(expression)) {
+    // One stored reference field of a composed local carrier derives from
+    // that field's own dependency.
+    if (const auto dependency = storedFieldReadDependency(expression)) {
+      const auto *binding = semanticModel.findBinding(parameter);
+      if (binding != nullptr && binding->symbol != 0 &&
+          !dependency->place.receiver &&
+          dependency->place.root == binding->symbol)
+        return true;
+    }
     return isParameterDerivedBorrow(member->object(), parameter, visiting);
   }
   if (const auto *unary = exprAs<Unary>(expression);
