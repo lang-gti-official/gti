@@ -1,5 +1,5 @@
-// Frozen C++-backend coverage moved from prefix_constructor_tests.cpp: the C++ MIR body
-// emitter's admission, rejection and text for this fixture. The
+// Frozen C++-backend coverage moved from prefix_constructor_tests.cpp: the C++
+// MIR body emitter's admission, rejection and text for this fixture. The
 // backend-neutral MIR/LLVM checks live in the original file.
 #include "../src/compiler/mir_verification_support.h"
 #include "cpp_mir_body_emitter_test_fixture.h"

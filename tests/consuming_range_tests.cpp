@@ -1,6 +1,6 @@
-#include "mir_test_fixture.h"
-#include "lowered_program_test_support.h"
 #include "gti/mir_printer.h"
+#include "lowered_program_test_support.h"
+#include "mir_test_fixture.h"
 
 namespace {
 lang::FrontendResult check(std::string source) {

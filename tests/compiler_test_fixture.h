@@ -124,8 +124,9 @@ concreteBackendSymbols(std::string_view text, std::string_view marker,
   return result;
 }
 
-// Analyzes a backend-neutral emission fixture and requires that it completes verified MIR lowering. Assert on the
-// returned MIR/HIR/semantics, or on gti_test::llvmEmits for native emission.
+// Analyzes a backend-neutral emission fixture and requires that it completes
+// verified MIR lowering. Assert on the returned MIR/HIR/semantics, or on
+// gti_test::llvmEmits for native emission.
 [[maybe_unused]] lang::FrontendResult
 analyzeEmissionFixture(std::string_view source,
                        lang::TargetInfo target = lang::TargetInfo::host()) {

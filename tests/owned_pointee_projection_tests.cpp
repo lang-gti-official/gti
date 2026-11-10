@@ -1,5 +1,5 @@
-#include "mir_test_fixture.h"
 #include "lowered_program_test_support.h"
+#include "mir_test_fixture.h"
 
 namespace {
 bool hasProjectionIssue(const lang::MirVerificationResult &result) {

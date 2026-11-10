@@ -1,5 +1,5 @@
-// Frozen C++-backend coverage moved from nested_guarded_expected_tests.cpp: the C++ MIR body
-// emitter's admission, rejection and text for this fixture. The
+// Frozen C++-backend coverage moved from nested_guarded_expected_tests.cpp: the
+// C++ MIR body emitter's admission, rejection and text for this fixture. The
 // backend-neutral MIR/LLVM checks live in the original file.
 #include "cpp_mir_body_emitter_test_fixture.h"
 

@@ -31,7 +31,6 @@ emitAnalyzedSource(std::string_view source,
   return gti_test::emitCppText(frontend, standard, std::move(target));
 }
 
-
 void testClassesStructsAndAccessCppEmission() {
   const std::string validSource = R"(
 class Vault {
