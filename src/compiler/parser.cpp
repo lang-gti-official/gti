@@ -666,9 +666,7 @@ private:
                                   .operation = requiresClause->keyword});
         combined.root = combined.nodes.size() - 1;
       }
-      combined.lifetimeRequirements.insert(combined.lifetimeRequirements.end(),
-                                           extra.lifetimeRequirements.begin(),
-                                           extra.lifetimeRequirements.end());
+      conjoinLifetimes(combined, extra);
     }
     consume(TokenKind::LEFT_BRACE, "Expect '{' before conformance block body.");
     StmtList members;
@@ -756,21 +754,62 @@ private:
     return {std::move(name), std::move(arguments)};
   }
 
+  // Lifetime relations of a constraint sub-expression in disjunctive normal
+  // form: alternatives, each a conjunction of `outlives` relations.
+  using LifetimeAlternatives = std::vector<std::vector<ConceptApplication>>;
+
+  // `combined && extra` for their lifetime relations, in the same normal
+  // form constraintExpression() produces.
+  static void conjoinLifetimes(ConstraintExpression &combined,
+                               const ConstraintExpression &extra) {
+    const auto alternatives = [](const ConstraintExpression &expression) {
+      return expression.lifetimeAlternatives.empty()
+                 ? LifetimeAlternatives{expression.lifetimeRequirements}
+                 : expression.lifetimeAlternatives;
+    };
+    LifetimeAlternatives product;
+    for (const auto &first : alternatives(combined))
+      for (const auto &second : alternatives(extra)) {
+        auto both = first;
+        both.insert(both.end(), second.begin(), second.end());
+        product.push_back(std::move(both));
+      }
+    combined.lifetimeRequirements.clear();
+    combined.lifetimeAlternatives.clear();
+    if (product.size() == 1)
+      combined.lifetimeRequirements = std::move(product.front());
+    else
+      combined.lifetimeAlternatives = std::move(product);
+  }
+
   ConstraintExpression constraintExpression() {
     ConstraintExpression expression;
-    expression.root = constraintDisjunction(expression);
+    LifetimeAlternatives lifetimes;
+    expression.root = constraintDisjunction(expression, lifetimes);
+    if (lifetimes.size() == 1)
+      expression.lifetimeRequirements = std::move(lifetimes.front());
+    else
+      expression.lifetimeAlternatives = std::move(lifetimes);
     return expression;
   }
 
-  std::size_t constraintDisjunction(ConstraintExpression &expression) {
-    std::size_t left = constraintConjunction(expression);
+  std::size_t constraintDisjunction(ConstraintExpression &expression,
+                                    LifetimeAlternatives &lifetimes) {
+    std::size_t left = constraintConjunction(expression, lifetimes);
     while (match({TokenKind::OR})) {
       Token operation = previous();
-      const std::size_t right = constraintConjunction(expression);
+      LifetimeAlternatives alternative;
+      const std::size_t right = constraintConjunction(expression, alternative);
+      lifetimes.insert(lifetimes.end(),
+                       std::make_move_iterator(alternative.begin()),
+                       std::make_move_iterator(alternative.end()));
+      // An alternative that is purely a lifetime relation leaves no
+      // type-level operand: the type-level disjunction imposes nothing.
       if (left == ConstraintExpressionNode::invalidIndex ||
-          right == ConstraintExpressionNode::invalidIndex)
-        throw error(operation, "An 'outlives' lifetime requirement cannot be "
-                               "an alternative of '||'.");
+          right == ConstraintExpressionNode::invalidIndex) {
+        left = ConstraintExpressionNode::invalidIndex;
+        continue;
+      }
       expression.nodes.push_back({.kind = ConstraintExpressionKind::Disjunction,
                                   .left = left,
                                   .right = right,
@@ -780,11 +819,22 @@ private:
     return left;
   }
 
-  std::size_t constraintConjunction(ConstraintExpression &expression) {
-    std::size_t left = constraintPrimary(expression);
+  std::size_t constraintConjunction(ConstraintExpression &expression,
+                                    LifetimeAlternatives &lifetimes) {
+    std::size_t left = constraintPrimary(expression, lifetimes);
     while (match({TokenKind::AND})) {
       Token operation = previous();
-      const std::size_t right = constraintPrimary(expression);
+      LifetimeAlternatives operand;
+      const std::size_t right = constraintPrimary(expression, operand);
+      // Conjunction distributes over the alternatives.
+      LifetimeAlternatives product;
+      for (const auto &first : lifetimes)
+        for (const auto &second : operand) {
+          auto combined = first;
+          combined.insert(combined.end(), second.begin(), second.end());
+          product.push_back(std::move(combined));
+        }
+      lifetimes = std::move(product);
       // A lifted lifetime requirement leaves no type-level operand.
       if (right == ConstraintExpressionNode::invalidIndex)
         continue;
@@ -801,7 +851,9 @@ private:
     return left;
   }
 
-  std::size_t constraintPrimary(ConstraintExpression &expression) {
+  std::size_t constraintPrimary(ConstraintExpression &expression,
+                                LifetimeAlternatives &lifetimes) {
+    lifetimes = {{}};
     if (match({TokenKind::REQUIRES})) {
       const Token keyword = previous();
       auto requirements = expressionRequirements(keyword);
@@ -844,7 +896,7 @@ private:
     }
     if (match({TokenKind::LEFT_PAREN})) {
       const NestingGuard nesting = enterNesting(previous());
-      const std::size_t nested = constraintDisjunction(expression);
+      const std::size_t nested = constraintDisjunction(expression, lifetimes);
       consume(TokenKind::RIGHT_PAREN,
               "Expect ')' after parenthesized constraint expression.");
       return nested;
@@ -854,7 +906,7 @@ private:
     if (leaf.name.segments.size() == 1 &&
         leaf.name.last().lexeme == "outlives" &&
         !check(TokenKind::LEFT_PAREN)) {
-      expression.lifetimeRequirements.push_back(std::move(leaf));
+      lifetimes = {{std::move(leaf)}};
       return ConstraintExpressionNode::invalidIndex;
     }
     if (match({TokenKind::LEFT_PAREN})) {
@@ -1750,10 +1802,7 @@ private:
                .operation = requiresClause->keyword});
           combined.root = combined.nodes.size() - 1;
         }
-        combined.lifetimeRequirements.insert(
-            combined.lifetimeRequirements.end(),
-            extra.lifetimeRequirements.begin(),
-            extra.lifetimeRequirements.end());
+        conjoinLifetimes(combined, extra);
         requiresClause->expression = std::move(combined);
       }
     }

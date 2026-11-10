@@ -90,17 +90,88 @@ auto SemanticVisitor::Impl::explicitLifetimeResult(
 
   // Regions that outlive the result's region also supply it.
   std::vector<std::string> suppliers{name};
-  if (const auto &clause = syntax.requiresClause())
-    for (const auto &requirement : clause->expression.lifetimeRequirements) {
-      std::vector<std::string> pair;
-      for (const auto &argument : requirement.arguments)
-        if (argument.name.segments.size() == 1)
-          pair.push_back(argument.name.last().lexeme);
-      for (const auto &argument : requirement.arguments)
-        collectRegionNames(argument, pair);
-      if (pair.size() >= 2 && pair[1] == name && !contains(suppliers, pair[0]))
-        suppliers.push_back(pair[0]);
+  // `outlives<longer, shorter>` pairs, written directly or through a named
+  // concept whose definition states them over its lifetime parameters.
+  const auto regionPair = [](const ConceptApplication &requirement) {
+    std::vector<std::string> pair;
+    for (const auto &argument : requirement.arguments)
+      if (argument.name.segments.size() == 1)
+        pair.push_back(argument.name.last().lexeme);
+    for (const auto &argument : requirement.arguments)
+      collectRegionNames(argument, pair);
+    return pair;
+  };
+  // Relations every alternative holds, plus each alternative's own.
+  std::vector<std::pair<std::string, std::string>> outlives;
+  std::vector<std::vector<std::pair<std::string, std::string>>> alternatives;
+  if (const auto &clause = syntax.requiresClause()) {
+    for (const auto &requirement : clause->expression.lifetimeRequirements)
+      if (const auto pair = regionPair(requirement); pair.size() >= 2)
+        outlives.emplace_back(pair[0], pair[1]);
+    for (const auto &alternative : clause->expression.lifetimeAlternatives) {
+      auto &relations = alternatives.emplace_back();
+      for (const auto &requirement : alternative)
+        if (const auto pair = regionPair(requirement); pair.size() >= 2)
+          relations.emplace_back(pair[0], pair[1]);
     }
+    for (const auto &application : clause->expression.applications) {
+      auto id = resolveConceptPath(application.name, currentNamespace);
+      if (!id)
+        id = resolveConceptPathGlobally(application.name, currentNamespace);
+      const ConceptDecl *named = id && *id <= concepts.size()
+                                     ? concepts[*id - 1].declaration
+                                     : nullptr;
+      if (named == nullptr)
+        continue;
+      const auto parameters = named->lifetimeParameters();
+      const auto arguments = regionPair(application);
+      const auto rename = [&](const std::string &region) -> std::string {
+        for (std::size_t index = 0;
+             index < parameters.size() && index < arguments.size(); ++index)
+          if (parameters[index].name.lexeme == region)
+            return arguments[index];
+        return region;
+      };
+      for (const auto &requirement :
+           named->constraintExpression().lifetimeRequirements)
+        if (const auto pair = regionPair(requirement); pair.size() >= 2)
+          outlives.emplace_back(rename(pair[0]), rename(pair[1]));
+    }
+  }
+  // A region supplies the result when, in every alternative, it outlives
+  // the result's region through a chain of relations.
+  if (alternatives.empty())
+    alternatives.emplace_back();
+  const auto outlivesIn = [&](const auto &relations, const std::string &from) {
+    std::vector<std::string> reached{from};
+    for (bool grew = true; grew;) {
+      grew = false;
+      for (const auto &[longer, shorter] : relations)
+        if (contains(reached, longer) && !contains(reached, shorter)) {
+          reached.push_back(shorter);
+          grew = true;
+        }
+    }
+    return contains(reached, name);
+  };
+  std::vector<std::string> candidates;
+  for (const auto &[longer, shorter] : outlives)
+    candidates.push_back(longer);
+  for (const auto &relations : alternatives)
+    for (const auto &[longer, shorter] : relations)
+      candidates.push_back(longer);
+  for (const auto &candidate : candidates) {
+    if (contains(suppliers, candidate))
+      continue;
+    const bool always = std::all_of(
+        alternatives.begin(), alternatives.end(), [&](const auto &relations) {
+          auto all = outlives;
+          all.insert(all.end(), relations.begin(), relations.end());
+          return outlivesIn(all, candidate);
+        });
+    if (always)
+      suppliers.push_back(candidate);
+  }
 
   // Expanded parameter positions, so the index agrees with MIR's bindings.
   std::vector<SemanticType> expanded;
@@ -165,32 +236,6 @@ auto SemanticVisitor::Impl::validateSignatureRegions(
       for (const auto &pattern : owner->genericArgumentPatterns())
         collectRegionNames(pattern, bound);
     }
-  // A region use is bound by an enclosing binder, or is static/this/_.
-  const auto checkType = [&](const auto &self, const TypeRef &type,
-                             std::vector<std::string> &scope) -> void {
-    const std::size_t restore = scope.size();
-    if (type.lifetimeBinder)
-      for (const auto &parameter : type.lifetimeBinder->parameters)
-        scope.push_back(parameter.name.lexeme);
-    if (type.referenceLifetime &&
-        type.referenceLifetime->name.kind == TokenKind::IDENTIFIER) {
-      const Token &name = type.referenceLifetime->name;
-      if (name.lexeme != "_" && name.lexeme != "static" &&
-          name.lexeme != "this" && !contains(scope, name.lexeme))
-        report(name,
-               "Unknown lifetime '" + name.lexeme +
-                   "'; declare it as `lifetime " + name.lexeme +
-                   "` in the function's or class's binder list.",
-               "GTI-S2126");
-    }
-    for (const auto &argument : type.arguments)
-      self(self, argument, scope);
-    scope.resize(restore);
-  };
-  checkType(checkType, syntax.returnType(), bound);
-  for (const auto &parameter : syntax.parameters())
-    checkType(checkType, parameter.type, bound);
-
   // Thread storage ends with its thread: it does not live for `static`
   // (Rust likewise refuses a 'static borrow of a thread_local).
   if (function.returnBorrowOrigin == BorrowOriginKind::Global &&

@@ -520,6 +520,11 @@ struct ConstraintExpression {
   // contracts, never type-level requirements, so the parser lifts them out of
   // the conjunction that type-level satisfaction evaluates.
   std::vector<ConceptApplication> lifetimeRequirements;
+  // When `||` separates lifetime relations, their disjunctive normal form:
+  // each alternative is a conjunction of `outlives` relations, and
+  // `lifetimeRequirements` is then empty. Only relations every alternative
+  // implies may be relied on.
+  std::vector<std::vector<ConceptApplication>> lifetimeAlternatives;
 
   [[nodiscard]] bool empty() const { return applications.empty(); }
 };
