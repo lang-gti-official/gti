@@ -4012,6 +4012,24 @@ private:
                   std::equal(base->key->projections.begin(), base->key->projections.end(),
                              place.key->projections.begin()))
                 consider(place.id, loan->access);
+        // A typed field path below that borrowed place is materialized from
+        // the parent's source exactly as a direct owner's field path is.
+        if (selected == 0 && !loan->entry && loan->kind == MirLoanKind::Local)
+          if (const auto *base = output.findPlace(loan->source);
+              base && base->key && base->key->root == dependency.place.root &&
+              base->key->receiver == dependency.place.receiver &&
+              dependency.place.projections.size() > base->key->projections.size() &&
+              std::equal(base->key->projections.begin(), base->key->projections.end(),
+                         dependency.place.projections.begin())) {
+            BorrowPath fields(dependency.place.projections.begin() +
+                                  base->key->projections.size(),
+                              dependency.place.projections.end());
+            if (isWellFormedBorrowPath(fields) &&
+                std::all_of(fields.begin(), fields.end(), [](const auto &step) {
+                  return step.kind == PlaceProjectionKind::Field;
+                }))
+              consider(projectBorrowFields(loan->source, fields), loan->access);
+          }
       }
     } else {
       // A direct physical owner can be materialized from its existing typed
