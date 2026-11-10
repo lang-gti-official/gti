@@ -35,14 +35,38 @@ validity together, which keeps AST-address semantic side tables alive.
 | Layer | Owns | Must not decide |
 | --- | --- | --- |
 | Source loader/lexer/parser/AST | source units, tokens, grammar, syntax, recovery, written source structure | types, overloads, ownership validity |
-| Semantic analysis | names, scopes, types, conversions, calls, lifecycle, ownership and source-place validity, access, dispatch, target selection and layout-query constants, tooling symbols | backend representation |
-| Typed HIR | concrete generic/class/callable instances, executable typed value graphs, full-expression/drop obligations, and preserved semantic place/ownership events | a second type system or a different place relation |
-| MIR | body-local CFG, mapped places, values, resolved calls, moves, loans, typed lifecycle cleanup, ownership/lifecycle fixed-point verification, and structural verification | language rules missing from semantics/HIR |
+| Semantic analysis | names, scopes, types, conversions, calls, lifecycle, ownership and source-place validity, access, dispatch, target selection and layout-query constants, tooling symbols; lifetime syntax, binder resolution, signature lifetime contracts (elision, well-formedness, outlives requirements) | backend representation; body-local lifetime validity or per-expression region facts |
+| Typed HIR | concrete generic/class/callable instances, executable typed value graphs, full-expression/drop obligations, and preserved semantic place/ownership events, all over lifetime-erased types | a second type system, a different place relation, or any lifetime region |
+| MIR | body-local CFG, mapped places, values, resolved calls, moves, loans, typed lifecycle cleanup, ownership/lifecycle fixed-point verification, body-local lifetime inference and validity against signature contracts, and structural verification | language rules missing from semantics/HIR; signature lifetime contracts |
 | Optimization | proven transformations over authoritative IR | host-C++ behavior as a proof |
 | Lowered program | immutable complete backend-neutral declarations, symbols, concrete instances, optimized bodies, target/ABI facts, and generated-item graph | frontend analysis or target-specific spelling |
-| Backend | representation and artifact generation | name/type/overload/lifetime inference |
+| Backend | representation and artifact generation from lifetime-erased types | name/type/overload/lifetime inference |
 | Driver | requests, resources, manifests, artifacts, native tools, processes | GTI parsing or semantics |
 | CLI/LSP | presentation or protocol conversion | independent language analysis |
+
+## Lifetime Authority
+
+Lifetime regions (RFC 0004) follow the table above:
+
+- **Semantics** resolves lifetime syntax and binders and normalizes each
+  signature's lifetime contract: elision, well-formedness and explicit outlives
+  requirements. It keeps its existing source-level ownership diagnostics.
+  Inside a function body it erases lifetimes. It publishes no per-expression
+  supplier or region facts for HIR or MIR to replay. A type relation inside
+  semantics yields lifetime constraints, never a silent equal/unequal answer.
+- **MIR** is the body-local authority. It re-infers regions from its own CFG,
+  places and loans, as part of the ownership fixed-point. It checks each body
+  only against its own signature contract and its callees' contracts.
+  Semantics and MIR are compared at signature-contract level only. A
+  disagreement there is an internal compiler error. User-facing lifetime errors
+  found by MIR carry source spans.
+- **Parametricity** is a language rule. Lifetimes never affect layout,
+  overload or specialization selection, instance identity, `constexpr`
+  results, reflection output, guards, or either backend.
+- **One canonical erasure function** produces the types that instance keys,
+  layout queries, HIR instances and both backends require.
+  `GTI_COMPILER_VALIDATION` asserts erasure at each of those boundaries. No
+  layer adds its own region-blind comparison.
 
 ## Backend Boundary
 
