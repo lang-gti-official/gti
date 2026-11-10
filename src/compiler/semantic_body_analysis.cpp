@@ -11504,6 +11504,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       normalizedLifetime.contract = summary->lifetimeContract;
       inferredLambdaSuppliers = summary->completeReturnBorrow;
     }
+    if (std::getenv("GTI_TRACE_LAMBDA")) { const auto *summary = probe->semanticModel.findLambda(expr); std::fprintf(stderr, "[lambda] line=%d summary=%d valid=%d bounds=%zu complete=%d probeDiag=%zu ret=%d:%llu\n", expr.bracket().line, summary != nullptr, summary && summary->lifetimeContract.valid(), summary ? summary->lifetimeContract.bounds.size() : 0, summary && summary->completeReturnBorrow.has_value(), probe->diagnostics.size(), (int)returnType.referenceLifetime.kind, (unsigned long long)returnType.referenceLifetime.id); if (summary) for (auto b : summary->lifetimeContract.bounds) std::fprintf(stderr, "[lambda]   %d:%llu >= %d:%llu\n", (int)b.longer.kind, (unsigned long long)b.longer.id, (int)b.shorter.kind, (unsigned long long)b.shorter.id); for (const auto &d : probe->diagnostics) std::fprintf(stderr, "[lambda]   diag %s %s\n", d.code.c_str(), d.message.c_str()); } // TEMP-TRACE
   }
   if (normalizedLifetime.ambiguousResult)
     report(expr.returnType().name.last(),

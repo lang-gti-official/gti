@@ -199,6 +199,13 @@ auto SemanticVisitor::Impl::validateLambdaLifetimeReturn(const ExprPtr &value) -
     }
     complete = SemanticBorrowDependencySet{.dependencies = std::move(dependencies)};
   }
+  // A read-only reference result of a mutable source is a covariant
+  // downgrade: the returned borrow grants only read access to its owner.
+  if (currentReturnType.kind == SemanticType::Reference &&
+      currentReturnType.referenceAccess == AccessMode::ReadOnly)
+    for (auto &dependency : complete->dependencies)
+      if (dependency.designatedFields.empty() && dependency.conditions.empty())
+        dependency.access = AccessMode::ReadOnly;
   FunctionInfo signature{.returnType = currentReturnType,
                           .parameterTypes = context.parameterTypes,
                           .lifetimeContract = context.lifetimeContract,
