@@ -292,10 +292,11 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     const MirLoan *loan = body ? body->findLoan(error.borrow.loan) : nullptr;
     return loan != nullptr && loan->escapes ? loan : nullptr;
   };
-  // The escaping loan borrows a projection of a by-value parameter that
-  // carries borrowed state: the parameter's shell, not the owner it borrows.
-  // The declaration of the by-value carrier parameter whose shell a
-  // returned projection borrows, when the escape is one.
+  // The escaping loan borrows a by-value parameter that carries borrowed
+  // state, or a projection of it: the parameter's shell, not the owner it
+  // borrows. A whole-shell borrow counts only when the body returns a
+  // reference; a returned carrier value transfers the shell instead. Yields
+  // the parameter's declaration.
   const auto byValueCarrierShell =
       [&](const MirLoweringError &error) -> std::optional<SourceSpan> {
     const MirLoan *loan = escapingLoan(error);
@@ -303,7 +304,8 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
         findMirBody(program, error.body.kind, error.body.owner);
     const MirPlace *source = loan ? body->findPlace(loan->source) : nullptr;
     if (source == nullptr || source->root != MirPlaceRootKind::Binding ||
-        source->projections.empty())
+        (source->projections.empty() &&
+         body->returnType.kind != SemanticType::Reference))
       return std::nullopt;
     for (const auto &function : program.functionInstances())
       if (function.id == error.body.owner)
@@ -444,10 +446,18 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
                              ? std::nullopt
                              : byValueCarrierShell(error);
       if (shell) {
+        const MirBody *body =
+            findMirBody(program, error.body.kind, error.body.owner);
+        const MirLoan *loan = escapingLoan(error);
+        const MirPlace *source =
+            body && loan ? body->findPlace(loan->source) : nullptr;
         Diagnostic diagnostic = makeDiagnostic(
             "GTI-S2085", DiagnosticPhase::Semantics, span,
-            "Returned reference is a projection of the by-value carrier "
-            "shell rather than its external owner dependency.");
+            source != nullptr && source->projections.empty()
+                ? "Returned reference refers to the by-value carrier shell "
+                  "rather than its external owner dependency."
+                : "Returned reference is a projection of the by-value "
+                  "carrier shell rather than its external owner dependency.");
         diagnostic.related.push_back(
             {*shell, "Stored owner dependency enters here."});
         diagnostic.hints.emplace_back(

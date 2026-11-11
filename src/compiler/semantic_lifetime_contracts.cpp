@@ -360,7 +360,11 @@ auto SemanticVisitor::Impl::validateSignatureRegions(
   const bool elidedCarrier =
       !written.reference && written.lifetimeArguments.empty() &&
       typeTraits(function.returnType).containsBorrowedState;
-  if (signatureContracts &&
+  // An out-of-class definition repeats a declaration whose signature, not
+  // the definition's spelling, states the contract.
+  const bool separateDefinition =
+      function.declaration != nullptr && function.declaration != &syntax;
+  if (signatureContracts && !separateDefinition &&
       (function.ownerClass == 0 || function.staticMember) &&
       (elidedReference || elidedCarrier) &&
       !syntax.hasFunctionAttribute("borrowed_from") &&

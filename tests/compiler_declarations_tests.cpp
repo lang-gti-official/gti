@@ -571,13 +571,13 @@ int main() {
       "  return values.as_span();\n"
       "}\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!escapedSpan.canGenerateCode() &&
-             hasDiagnosticCode(escapedSpan.diagnostics, "GTI-S2045") &&
-             hasDiagnostic(escapedSpan.diagnostics,
-                           "borrowed return requires either one exact "
-                           "global/static storage origin"),
-         "a span must not escape the local owner that supplies its retained "
-         "loan");
+  // RFC 0004: no input supplies the span, so it is implicitly `static`.
+  expect(
+      !escapedSpan.canGenerateCode() &&
+          hasDiagnosticCode(escapedSpan.diagnostics, "GTI-S2127") &&
+          hasDiagnostic(escapedSpan.diagnostics, "does not live for 'static'"),
+      "a span must not escape the local owner that supplies its retained "
+      "loan");
 
   const lang::FrontendResult invalidatedTextView = lang::Frontend().analyze(
       "invalidated-string-view.gti",
