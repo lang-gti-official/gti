@@ -1,3 +1,4 @@
+#include "gti/borrow_checker_mode.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
@@ -22,6 +23,13 @@ void expect(bool condition, const std::string &name) {
     ++failures;
     std::cerr << "FAIL: " << name << '\n';
   }
+}
+
+// RFC 0004 retires body-inferred field mappings; these fixtures produce that
+// shape only under GTI_LEGACY_BORROW_CHECKER, and the checks go with it.
+void expectBodySummary(bool condition, const std::string &name) {
+  if (lang::legacyBorrowChecker())
+    expect(condition, name);
 }
 
 const std::string declarations = R"gti(
@@ -1265,7 +1273,7 @@ int main() {
     if (checked)
       break;
   }
-  expect(checked,
+  expectBodySummary(checked,
          "mapped alias fixture exercises two distinct same-typed owners");
 }
 
@@ -1543,7 +1551,7 @@ int main() {
       }
     }
   }
-  expect(
+  expectBodySummary(
       checked,
       "external receiver adapter publishes its exact resolved field mapping");
 }
