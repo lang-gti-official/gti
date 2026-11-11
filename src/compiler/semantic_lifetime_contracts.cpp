@@ -1146,53 +1146,87 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
       }
     return;
   }
-  // A reference field read from a by-value carrier parameter lives in the
-  // region the parameter's type supplies for that field: a written lifetime
-  // argument, or a fresh elided region no declaration relates to the result.
+  // A carrier parameter's storage and what it stores live in different
+  // regions. A reference field (or a method result) written in one of the
+  // class's regions lives in the region the parameter's type supplies for
+  // that binder. Anything else read from the carrier itself, a value field or
+  // a `this`-region method result, lives in the carrier's own storage: for a
+  // reference parameter that is the reference's region; a by-value
+  // parameter's storage ends with the call, which MIR reports.
+  const auto carrierClass =
+      [&](const Parameter &parameter) -> const ClassDecl * {
+    const SemanticType type = typeOf(parameter);
+    const SemanticType carrier =
+        type.kind == SemanticType::Reference && !type.arguments.empty()
+            ? type.arguments.front()
+            : type;
+    if (carrier.kind != SemanticType::Class || carrier.classId == 0 ||
+        carrier.classId > classes.size())
+      return nullptr;
+    return classInfo(carrier.classId).declaration;
+  };
+  const auto checkCarrierRegion = [&](const Parameter &parameter,
+                                      const ClassDecl &declaration,
+                                      std::optional<std::string> written,
+                                      const Token &at,
+                                      const std::string &what) {
+    const auto binders = declaration.lifetimeParameters();
+    std::optional<std::size_t> index;
+    if (written)
+      for (std::size_t position = 0; position < binders.size(); ++position)
+        if (binders[position].name.lexeme == *written)
+          index = position;
+    std::optional<std::string> supplier;
+    std::string description;
+    if (index) {
+      const auto &arguments = parameter.type.lifetimeArguments;
+      supplier = *index < arguments.size() ? writtenRegion(arguments[*index])
+                                           : std::nullopt;
+      description = supplier ? "region '" + *supplier + "'"
+                             : std::string("the parameter's elided region");
+    } else if (parameter.type.reference) {
+      if (parameter.type.referenceLifetime)
+        supplier = parameter.type.referenceLifetime->name.lexeme;
+      description = supplier ? "region '" + *supplier + "'"
+                             : std::string("the parameter reference's "
+                                           "elided region");
+    } else {
+      return; // by-value storage: MIR rejects its escape
+    }
+    if (supplier && (*supplier == "_" || outlivesTarget(*supplier)))
+      return;
+    report(at,
+           what + " of parameter '" + parameter.name.lexeme + "' borrows " +
+               description +
+               ", which is not declared to outlive the result's region '" +
+               target + "'.",
+           "GTI-S2127");
+  };
   if (const auto *get = exprAs<Get>(returned)) {
     const auto *object = exprAs<Variable>(get->object().get());
     for (const auto &parameter : syntax.parameters()) {
-      if (object == nullptr || parameter.type.reference || parameter.pack ||
+      if (object == nullptr || parameter.pack ||
           parameter.name.lexeme != object->name().lexeme)
         continue;
-      const SemanticType type = typeOf(parameter);
-      if (type.kind != SemanticType::Class || type.classId == 0 ||
-          type.classId > classes.size())
-        return;
-      const auto *declaration = classInfo(type.classId).declaration;
+      const ClassDecl *declaration = carrierClass(parameter);
       if (declaration == nullptr)
         return;
       const auto binders = declaration->lifetimeParameters();
       for (const auto &member : declaration->members()) {
         const auto *field = stmtAs<VariableDecl>(member.get());
-        if (field == nullptr || field->name().lexeme != get->name().lexeme ||
-            !field->type().reference)
+        if (field == nullptr || field->name().lexeme != get->name().lexeme)
           continue;
-        std::optional<std::size_t> index;
-        if (field->type().referenceLifetime) {
-          for (std::size_t at = 0; at < binders.size(); ++at)
-            if (binders[at].name.lexeme ==
-                field->type().referenceLifetime->name.lexeme)
-              index = at;
-        } else if (binders.size() <= 1) {
-          index = 0; // the class's one (possibly implicit) region
+        std::optional<std::string> written;
+        if (field->type().reference) {
+          if (field->type().referenceLifetime)
+            written = field->type().referenceLifetime->name.lexeme;
+          else if (binders.size() == 1)
+            written = binders.front().name.lexeme;
+          else
+            return; // an anonymous slot: constructor binding decides
         }
-        if (!index)
-          return;
-        const auto &written = parameter.type.lifetimeArguments;
-        const auto supplier = *index < written.size()
-                                  ? writtenRegion(written[*index])
-                                  : std::nullopt;
-        if (supplier && (*supplier == "_" || outlivesTarget(*supplier)))
-          return;
-        report(get->name(),
-               "Field '" + get->name().lexeme + "' of parameter '" +
-                   parameter.name.lexeme + "' borrows " +
-                   (supplier ? "region '" + *supplier + "'"
-                             : std::string("the parameter's elided region")) +
-                   ", which is not declared to outlive the result's region '" +
-                   target + "'.",
-               "GTI-S2127");
+        checkCarrierRegion(parameter, *declaration, written, get->name(),
+                           "Field '" + get->name().lexeme + "'");
         return;
       }
       return;
@@ -1205,6 +1239,26 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
     return;
   const FunctionDecl &callee = *resolved->declaration;
   const auto calleeRegion = resultRegion(callee.returnType());
+  // A method result follows the same rule as a field read from the carrier;
+  // a `this`-region result borrows the carrier's own storage.
+  if (const auto *member = exprAs<Get>(call->callee().get());
+      member != nullptr && calleeRegion &&
+      (calleeRegion->kind == TokenKind::IDENTIFIER ||
+       calleeRegion->lexeme == "this")) {
+    const auto *object = exprAs<Variable>(member->object().get());
+    for (const auto &parameter : syntax.parameters()) {
+      if (object == nullptr || parameter.pack ||
+          parameter.name.lexeme != object->name().lexeme)
+        continue;
+      const ClassDecl *declaration = carrierClass(parameter);
+      if (declaration == nullptr)
+        return;
+      checkCarrierRegion(parameter, *declaration, calleeRegion->lexeme,
+                         member->name(),
+                         "Method '" + member->name().lexeme + "'");
+      return;
+    }
+  }
   if (!calleeRegion || calleeRegion->kind != TokenKind::IDENTIFIER)
     return;
   const auto outlives = [&](const std::string &longer) {

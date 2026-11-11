@@ -565,7 +565,89 @@ bool referenceParameterReturnPublication(const MirBody &body,
              (runtime->access == AccessMode::ReadOnly ||
               resultLoan->access == AccessMode::Mutable);
     };
-    if (!exactRuntimeAlias(exactRuntimeAlias, body.findPlace(source.place),
+    // A by-value local carrier whose only supplier is this parameter (its
+    // single initialization stores a call result whose Stored loan is sourced
+    // at the formal and carries no other dependency) holds references into
+    // the parameter's referent. Its dereferenced reference field, and fields
+    // below it, therefore designate storage the entry loan protects.
+    const auto carrierFieldReferent = [&](const MirPlace *runtime) {
+      if (runtime == nullptr || runtime->root != MirPlaceRootKind::Binding ||
+          runtime->binding == carrier->binding ||
+          runtime->type != source.type ||
+          runtime->sourceValue != instruction.hirValue ||
+          runtime->projections.size() < 2 ||
+          runtime->projections.front().kind != MirProjectionKind::Field ||
+          runtime->projections[1].kind != MirProjectionKind::Dereference ||
+          !std::all_of(std::next(runtime->projections.begin(), 2),
+                       runtime->projections.end(),
+                       [](const auto &projection) {
+                         return projection.kind == MirProjectionKind::Field &&
+                                projection.field != 0 &&
+                                projection.index == 0 &&
+                                !projection.constantIndex &&
+                                projection.selection == 0;
+                       }) ||
+          produced.access != AccessMode::ReadOnly ||
+          std::find(retained->carriers.begin(), retained->carriers.end(),
+                    runtime->binding) == retained->carriers.end())
+        return false;
+      const MirInstruction *initialize = nullptr;
+      const MirBlock *initializeBlock = nullptr;
+      for (const auto &candidateBlock : body.blocks)
+        for (const auto &candidate : candidateBlock.instructions) {
+          const auto *destination = candidate.destination
+                                        ? body.findPlace(*candidate.destination)
+                                        : nullptr;
+          if (destination == nullptr ||
+              destination->root != MirPlaceRootKind::Binding ||
+              destination->binding != runtime->binding)
+            continue;
+          // Any write to the carrier or one of its fields other than its
+          // single whole initialization could rebind what it designates; its
+          // final drop only ends it.
+          if (candidate.kind == MirInstructionKind::Drop &&
+              destination->projections.empty())
+            continue;
+          if (candidate.kind != MirInstructionKind::Initialize ||
+              initialize != nullptr || !destination->projections.empty() ||
+              destination->type.kind != SemanticType::Class ||
+              candidate.operands.size() != 1)
+            return false;
+          initialize = &candidate;
+          initializeBlock = &candidateBlock;
+        }
+      if (initialize == nullptr ||
+          initialize->operands.front().kind != MirOperandKind::Value)
+        return false;
+      const MirInstruction *producer = nullptr;
+      for (const auto &candidateBlock : body.blocks)
+        for (const auto &candidate : candidateBlock.instructions)
+          if (candidate.result &&
+              *candidate.result == initialize->operands.front().value)
+            producer = &candidate;
+      const MirLoan *stored = producer != nullptr && producer->loan
+                                  ? body.findLoan(*producer->loan)
+                                  : nullptr;
+      if (producer == nullptr || producer->kind != MirInstructionKind::Call ||
+          stored == nullptr || stored->kind != MirLoanKind::Stored ||
+          stored->entry || stored->source != retained->source ||
+          !stored->additionalDependencies.empty() ||
+          !stored->conditions.empty() || stored->referenceSelection)
+        return false;
+      if (initializeBlock == &block) {
+        const auto before = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &candidate) { return &candidate == initialize; });
+        const auto after = std::find_if(
+            block.instructions.begin(), block.instructions.end(),
+            [&](const auto &candidate) { return &candidate == &instruction; });
+        return before < after;
+      }
+      const auto dominance = computeMirDominance(body);
+      return dominance && dominance->dominates(initializeBlock->id, block.id);
+    };
+    if (!carrierFieldReferent(body.findPlace(source.place)) &&
+        !exactRuntimeAlias(exactRuntimeAlias, body.findPlace(source.place),
                            block, instruction, 0))
       return false;
   }

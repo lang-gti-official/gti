@@ -9241,10 +9241,47 @@ auto SemanticVisitor::Impl::freshTemporaryMethodSupported(
        (function.returnType.kind == SemanticType::Reference &&
         function.returnType.referenceAccess == AccessMode::ReadOnly &&
         !textReference));
-  return readObservation ||
+  return readObservation || receiverClassRegionRelay(function) ||
          (function.returnType.kind != SemanticType::Reference &&
           function.returnBorrowOrigin == BorrowOriginKind::None &&
           !typeTraits(function.returnType).containsBorrowedState);
+}
+
+auto SemanticVisitor::Impl::receiverClassRegionRelay(
+    const CallableCandidate &function) const -> bool {
+  // A result written in one of the receiver's class regions is what one of
+  // its reference fields stores, never storage of the receiver itself, so a
+  // fresh carrier temporary can supply it beyond the full expression: the
+  // result keeps the temporary's external owners, not the temporary.
+  // A carrier result takes the stored reference into one of its own fields.
+  const bool referenceResult =
+      function.returnType.kind == SemanticType::Reference;
+  const bool carrierResult =
+      function.returnType.kind == SemanticType::Class &&
+      typeTraits(function.returnType).containsBorrowedState;
+  if (function.receiverMutability != ReceiverMutability::ReadOnly ||
+      function.returnBorrowOrigin != BorrowOriginKind::Receiver ||
+      (!referenceResult && !carrierResult))
+    return false;
+  // A generic class's member reaches resolution before its instance maps
+  // the stored fields; its signature already states the relationship: a
+  // result written only in a class binder that the class stores.
+  if (function.returnBorrowFields.empty()) {
+    if (function.declaration == nullptr)
+      return false;
+    const auto lifetime =
+        explicitLifetimeResult(*function.declaration, {}, function.ownerClass);
+    return lifetime.kind == ExplicitLifetimeResult::Kind::Region &&
+           lifetime.classBinder && lifetime.classStoresRegion &&
+           lifetime.parameters.empty();
+  }
+  if (function.returnBorrowFields.size() != 1)
+    return false;
+  const BorrowedFieldOrigin &mapping = function.returnBorrowFields.front();
+  return mapping.origin == BorrowOriginKind::Receiver &&
+         mapping.sourceFields.size() == 1 &&
+         mapping.resultFields.empty() == referenceResult &&
+         mapping.resultConditions.empty() && mapping.sourceConditions.empty();
 }
 
 auto SemanticVisitor::Impl::receiverTextFieldRelay(
@@ -9315,7 +9352,8 @@ auto SemanticVisitor::Impl::receiverModeForObject(
   if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&
       (info == nullptr || !info->traits.containsBorrowedState ||
        ephemeralBorrowResultSupported(function) ||
-       (isTextDependentValue(*info) && receiverTextFieldRelay(function))) &&
+       (isTextDependentValue(*info) && receiverTextFieldRelay(function)) ||
+       receiverClassRegionRelay(function)) &&
       (freshTemporaryReceiverValue(receiver).eligible ||
        (consumingReceiverValue(receiver) && !virtualCarrierProducer()))) {
     return function.receiverMutability == ReceiverMutability::Mutable

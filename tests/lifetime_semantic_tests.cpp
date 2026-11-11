@@ -1335,5 +1335,789 @@ using bad = int&;
 int main() { return 0; }
 )gti",
         false, "GTI-S2030");
+  check("class-region-method-relays-by-value-carrier", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<h> pick<lifetime h>(Window<h> c) { return c.get(); }
+int main() { Holder h{}; return pick(h.window()) - 7; }
+)gti",
+        true);
+  check("class-region-method-relays-carrier-reference", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<h> pick<lifetime h>(Window<h>& c) { return c.get(); }
+int main() { Holder h{}; auto w = h.window(); return pick(w) - 7; }
+)gti",
+        true);
+  check("class-region-method-relays-second-region", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<b> rightOf<lifetime a, lifetime b>(Pair<a, b> p) { return p.right(); }
+int main() { int x = 1; int y = 2; return rightOf(Pair(x, y)) - 2; }
+)gti",
+        true);
+  check("class-region-method-relays-second-region-reference", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<b> rightOf<lifetime a, lifetime b>(Pair<a, b>& p) { return p.right(); }
+int main() { int x = 1; int y = 2; auto p = Pair(x, y); return rightOf(p) - 2; }
+)gti",
+        true);
+  check("class-region-method-outlives-relation", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<b> narrow<lifetime a, lifetime b>(Pair<a, b> p) requires outlives<a, b> { return p.left(); }
+int main() { int x = 1; int y = 2; return narrow(Pair(x, y)) - 1; }
+)gti",
+        true);
+  check("local-carrier-from-reference-formal-relays-method", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<h> f<lifetime h>(Holder&<h> holder) { auto w = holder.window(); return w.get(); }
+int main() { Holder h{}; return f(h) - 7; }
+)gti",
+        true);
+  check("local-carrier-from-reference-formal-relays-field", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<h> f<lifetime h>(Holder&<h> holder) { auto w = holder.window(); return w.value; }
+int main() { Holder h{}; return f(h) - 7; }
+)gti",
+        true);
+  check("temporary-carrier-relays-reference", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int main() { Holder h{}; int& r = h.window().get(); return r - 7; }
+)gti",
+        true);
+  check("temporary-carrier-relays-in-expression", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int twice(int& v) { return v + v; }
+int main() { Holder h{}; return twice(h.window().get()) - 14; }
+)gti",
+        true);
+  check("temporary-carrier-relays-carrier", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int main() { Holder h{}; auto relayed = h.window().again(); return relayed.get() - 7; }
+)gti",
+        true);
+  check("temporary-generic-carrier-relays", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int main() { Holder h{}; int& direct = h.cell().get(); auto relayed = h.cell().again(); return direct + relayed.get() - 14; }
+)gti",
+        true);
+  check("temporary-two-region-carrier-borrows-its-region-only", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int main() { mut int x = 1; int y = 2; int& r = Pair(x, y).right(); x = 5; return r - 2; }
+)gti",
+        true);
+  check("class-region-method-wrong-region-rejected", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<a> bad<lifetime a, lifetime b>(Pair<a, b> p) { return p.right(); }
+int main() { int x = 1; int y = 2; return bad(Pair(x, y)); }
+)gti",
+        false, "GTI-S2127");
+  check("class-region-method-wrong-region-reference-rejected", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<a> bad<lifetime a, lifetime b>(Pair<a, b>& p) { return p.right(); }
+int main() { int x = 1; int y = 2; auto p = Pair(x, y); return bad(p); }
+)gti",
+        false, "GTI-S2127");
+  check("receiver-region-from-by-value-carrier-rejected", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<h> bad<lifetime h>(Window<h> c) { return c.own_ref(); }
+int main() { int x = 7; return bad(Window(x)); }
+)gti",
+        false, "GTI-S2017");
+  check("receiver-region-from-carrier-reference-rejected", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<h> bad<lifetime h>(Window<h>& c) { return c.own_ref(); }
+int main() { int x = 7; auto w = Window(x); return bad(w); }
+)gti",
+        false, "GTI-S2127");
+  check("value-field-of-carrier-reference-rejected", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<h> bad<lifetime h>(Window<h>& c) { return c.own; }
+int main() { int x = 7; auto w = Window(x); return bad(w); }
+)gti",
+        false, "GTI-S2127");
+  check("relayed-owner-mutation-rejected", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<h> pick<lifetime h>(Window<h> c) { return c.get(); }
+int main() { mut int x = 7; int& r = pick(Window(x)); x = 3; return r; }
+)gti",
+        false, "GTI-S2017");
+  check("local-carrier-over-local-rejected", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int&<h> f<lifetime h>(Holder&<h> holder) { int local = 1; auto w = Window(local); return w.get(); }
+int main() { Holder h{}; return f(h); }
+)gti",
+        false, "GTI-S2017");
+  check("temporary-receiver-region-rejected", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int main() { int x = 7; int& r = Window(x).own_ref(); return r; }
+)gti",
+        false, "GTI-S2081");
+  check("temporary-relayed-owner-mutation-rejected", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int main() { mut int x = 7; int& r = Window(x).get(); x = 3; return r; }
+)gti",
+        false, "GTI-S2017");
+  check("temporary-relay-cannot-outlive-local-owner", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int& bad() { int x = 7; return Window(x).get(); }
+int main() { return bad(); }
+)gti",
+        false, "GTI-S2017");
+  check("temporary-two-region-carrier-keeps-its-region-borrowed", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int main() { int x = 1; mut int y = 2; int& r = Pair(x, y).right(); y = 5; return r; }
+)gti",
+        false, "GTI-S2017");
+  check("temporary-relayed-carrier-owner-mutation-rejected", R"gti(
+struct Window<lifetime a> {
+  int&<a> value;
+  int own = 1;
+  Window(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+  int&<this> own_ref() { return this.own; }
+  Window<a> again() { return Window<a>(this.value); }
+};
+struct Pair<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Pair(int&<a> x, int&<b> y) : first(x), second(y) {}
+  int&<a> left() { return this.first; }
+  int&<b> right() { return this.second; }
+};
+struct Cell<T, lifetime a> {
+  T&<a> value;
+  Cell(T&<a> input) : value(input) {}
+  T&<a> get() { return this.value; }
+  Cell<T, a> again() { return Cell<T, a>(this.value); }
+};
+class Holder {
+  int stored = 7;
+public:
+  Holder() = default;
+  Window<this> window() { return Window(this.stored); }
+  Cell<int, this> cell() { return Cell<int, this>(this.stored); }
+};
+int main() { mut Holder h{}; auto relayed = h.window().again(); h = Holder(); return relayed.get(); }
+)gti",
+        false, "GTI-S2017");
   return failures == 0 ? 0 : 1;
 }
