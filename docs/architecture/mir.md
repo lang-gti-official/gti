@@ -3328,6 +3328,16 @@ loan's end points from its own CFG; generic bodies are checked per concrete
 instance. Semantics and MIR are compared at signature-contract level, and a
 disagreement there remains an internal compiler error.
 
+MIR derives a body's entry loans (what the caller lends it) from the
+declared types of its receiver, captures and parameters: which carriers
+receive one, its kind and access, the stored reference paths a by-value
+carrier or referent holds (with the enum alternatives guarding each), the
+stored dependency linking a reference formal to its referent, and whether
+the loan is lifecycle-bound. The stored-reference inventory walks HIR class,
+enum and closure instances. A semantic entry loan now only names the MIR loan
+for later HIR facts and adds the later locals its carrier flows into; MIR
+rejects a body whose semantic entries it did not derive itself.
+
 A lifetime error that MIR finds in source code is a user diagnostic. It
 carries the source span of the HIR value or statement involved and uses the
 same diagnostic codes as the corresponding ownership errors, with the loan's
