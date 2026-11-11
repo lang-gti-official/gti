@@ -5284,31 +5284,6 @@ private:
                                                 : std::vector<SymbolId>{};
   }
 
-  // Adds the bindings semantics records as carrying `loan` to `lowered`.
-  void mergeSemanticCarriers(MirLoan &lowered, const HirLoan &loan) const {
-    const bool capturedEntry = capturedReferenceEntry(lowered);
-    for (const HirBindingId carrier : loan.carriers) {
-      if (capturedEntry)
-        break;
-      // Semantic traversal carriers also express the element escape boundary.
-      // Concrete cursor/proxy shells have their own producer-owned loans.
-      // Re-recording an outer shared traversal for a nested loop must not
-      // reattach those bindings to its coarse owner loan.
-      if (isPhysicalProxyRangeProtocolBinding(carrier) &&
-          std::any_of(source.statements.begin(), source.statements.end(),
-                      [&](const auto &statement) {
-                        return statement.rangeIteration &&
-                               statement.rangeIteration->rangeLoan ==
-                                   loan.semanticLoan;
-                      }))
-        continue;
-      if (std::find(lowered.carriers.begin(), lowered.carriers.end(),
-                    carrier) == lowered.carriers.end()) {
-        lowered.carriers.push_back(carrier);
-      }
-    }
-  }
-
   void recordLoanIdentity(MirLoanId id, const HirLoan &loan,
                           HirBindingId binding = 0) {
     if (id == 0 || id > output.loans.size()) {
@@ -5553,7 +5528,6 @@ private:
     // Each local alias that semantics records as its carrier holds its own
     // loan below that entry instead (see referenceOperand).
     const bool capturedEntry = capturedReferenceEntry(lowered);
-    mergeSemanticCarriers(lowered, loan);
     if (binding != 0 && !capturedEntry &&
         std::find(lowered.carriers.begin(), lowered.carriers.end(), binding) ==
             lowered.carriers.end()) {
@@ -14802,7 +14776,6 @@ private:
       return;
     }
     output.loans[id - 1].semanticLoan = identity.semanticLoan;
-    mergeSemanticCarriers(output.loans[id - 1], identity);
     semanticLoans.insert_or_assign(identity.semanticLoan, id);
   }
 

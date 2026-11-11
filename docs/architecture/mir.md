@@ -3378,6 +3378,10 @@ dependency sets. A local's set after an `if` joins both branches' owners and
 alternatives; a loop forgets every local set, a `switch` keeps only sets no arm
 changed, and lending a local mutably forgets its set.
 
+A loan's carriers are MIR's own: a loan starts with the binding or formal
+that holds it, and lowering each later transfer records its recipient.
+Semantic carrier lists (the completed flow's later locals) are not read.
+
 A lifetime error that MIR finds in source code is a user diagnostic. It
 carries the source span of the HIR value or statement involved and uses the
 same diagnostic codes as the corresponding ownership errors, with the loan's
