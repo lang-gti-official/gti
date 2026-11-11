@@ -8538,7 +8538,7 @@ int& escape_shell_projection(ReadCarrier carrier) {
 class Node {
 public:
   Node& next;
-  Node(Node& source) : next(source) {}
+  Node(Node& source, int tag) : next(source) {}
 };
 class NodeCarrier {
 public:
@@ -8552,10 +8552,15 @@ Node& escape_referent_projection(NodeCarrier carrier) {
   const lang::FrontendResult referentProjection = lang::Frontend().analyze(
       "stored-carrier-referent-projection.gti", referentProjectionSource);
   expect(!referentProjection.canGenerateCode() &&
+             // MIR rejects the return as a borrow the carrier formal's
+             // contract does not relay.
              hasDiagnosticAt(referentProjection.diagnostics, "GTI-S2085",
                              "stored-carrier-referent-projection.gti",
                              referentProjectionSource.rfind("next"),
-                             "projection of the carried referent"),
+                             mirBorrowAuthority()
+                                 ? "does not relay the exact external owner "
+                                   "dependency"
+                                 : "projection of the carried referent"),
          "a same-typed projection beyond the designated stored referent "
          "should not masquerade as the exact external dependency");
 
@@ -8563,7 +8568,7 @@ Node& escape_referent_projection(NodeCarrier carrier) {
 class Node {
 public:
   Node& next;
-  Node(Node& source) : next(source) {}
+  Node(Node& source, int tag) : next(source) {}
 };
 class NodeCarrier {
 public:

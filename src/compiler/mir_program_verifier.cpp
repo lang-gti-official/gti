@@ -7965,11 +7965,27 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
           (transfer->operands.front().loan == storedCarrierEntryLoan->id ||
            relay != nullptr || borrowedCarrierReferent);
       if (!exactTransfer) {
-        return verificationFailure(
+        MirVerificationResult rejected = verificationFailure(
             body, instance.id,
             "stored-carrier return loan does not transfer its "
             "exact entry dependency and payload type",
             block.id);
+        // A same-typed call result over the carried referent is not
+        // proven to be that exact external referent (the callee may return
+        // a projection of it): a borrow the formal's contract does not
+        // relay, not malformed MIR.
+        const MirLoan *relayed =
+            transfer != nullptr &&
+                    transfer->kind == MirInstructionKind::Borrow &&
+                    transfer->operands.size() == 1 &&
+                    transfer->operands.front().kind == MirOperandKind::Loan
+                ? body.findLoan(transfer->operands.front().loan)
+                : nullptr;
+        if (relayed != nullptr && relayed->kind == MirLoanKind::CallResult &&
+            !rejected.errors.empty())
+          rejected.errors.back().borrow = {
+              .kind = MirBorrowRejectionKind::Supplier, .loan = loan->id};
+        return rejected;
       }
       if (!block.terminator.value ||
           block.terminator.value->type != expectedPayload) {
