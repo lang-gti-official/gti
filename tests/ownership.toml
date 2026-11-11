@@ -1024,11 +1024,13 @@ paths = [
   "runtime/src/process.cpp",
   "runtime/src/random.cpp",
   "runtime/src/http.cpp",
+  "runtime/src/tcp.cpp",
   "runtime/include/gti/chrono.h",
   "runtime/include/gti/environment.h",
   "runtime/include/gti/filesystem.h",
   "runtime/include/gti/random.h",
   "runtime/include/gti/http.h",
+  "runtime/include/gti/tcp.h",
 ]
 owners = [
   "chrono_runtime_boundary",

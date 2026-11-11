@@ -1,113 +1,150 @@
-# TCP Socket Ownership
+# TCP Streams And Listeners
 
-Status: current bounded standard-library contract
+Status: current standard-library contract (POSIX targets)
 
-`import std.tcp;` provides a small POSIX socket owner implemented in
-ordinary GTI over the bounded C ABI:
+`import std.tcp;` provides IP addresses, connected streams, listeners and name
+resolution. Every resource is a move-only owner with deterministic cleanup,
+every fallible operation returns `expected<T, std::tcp::errc>`, and the
+address, buffering and error policy is ordinary GTI source over a small
+versioned runtime boundary.
 
 ```gti
 import std.tcp;
 
-int main() {
-  mut auto opened = std::tcp::open();
-  if (!opened) {
-    return 1;
-  }
-
-  auto closed = opened.value().close();
-  return closed ? 0 : 2;
+expected<void, std::tcp::errc> exchange() {
+  auto any = std::tcp::socket_address(std::tcp::ipv4_address::loopback(), uint16_t(0));
+  mut auto server = ?std::tcp::listener::bind(any);   // port 0: ephemeral
+  auto endpoint = ?server.local_address();
+  mut auto client = ?std::tcp::stream::connect(endpoint);
+  mut auto peer = ?server.accept();
+  // client.send_all(...), peer.receive(...), ...
+  return;                                              // all three close here
 }
 ```
 
-## Public Surface
+[`examples/037-tcp-socket-owner.gti`](../../examples/037-tcp-socket-owner.gti)
+is a complete loopback exchange.
 
-The current public names are:
+## Addresses
 
-```gti
-namespace std {
-namespace tcp {
-enum class errc {
-  open_failed,
-  close_failed,
-  not_open,
-};
+`std::tcp::ipv4_address` and `std::tcp::ipv6_address` are plain copyable
+values. Each has `loopback()`, `any()` (the wildcard), `parse(string_view)`,
+`to_string()`, `is_loopback()`, `is_unspecified()` and equality. IPv4 exposes
+`octet(i)` and `to_uint32()`; IPv6 exposes `segment(i)` and
+`mapped(ipv4_address)` for `::ffff:a.b.c.d`.
 
-class socket {
-public:
-  socket(socket& other) = delete;
-  socket(socket&& other) = default;
-  static expected<socket, errc> open();
+Parsing is strict and allocation-free:
 
-  // The module supplies automatic public cleanup.
-  bool is_open();
-  expected<void, errc> close() mut;
-};
+- IPv4 accepts exactly four decimal parts of 1–3 digits, each at most 255,
+  without leading zeros (`01.2.3.4` is rejected, as an octal ambiguity).
+- IPv6 accepts RFC 4291 text: eight hex groups of 1–4 digits, at most one
+  `::` run, and an optional trailing dotted quad.
 
-expected<socket, errc> open();
-}
-}
-```
+`ipv6_address::to_string()` produces RFC 5952 canonical text: lowercase, no
+leading zeros, the longest run of two or more zero groups (the first on a tie)
+written as `::`, and IPv4-mapped addresses in dotted form.
 
-`socket::open()` is the authorized construction path. It asks POSIX for an
-IPv4 stream socket using `AF_INET` and `SOCK_STREAM`, returns `open_failed` when
-creation fails, and otherwise returns an `expected` whose value alternative
-owns the move-only socket. The free `std::tcp::open()` function is a convenience
-wrapper around that static factory. The descriptor-adopting constructor is
-private, and `gti_internal::tcp_socket_handle` is visible only inside
-compiler-trusted source units. Application declarations, references, and
-namespace aliases involving root `gti_internal` are rejected with
-`GTI-S2058`; completion, hover, definition, and semantic classification do not
-present the handle to application documents. The public API exposes no
-descriptor getter or adoption path. The private handle explicitly opts out of
-transfer and sharing despite its integer representation.
+`std::tcp::socket_address` is an IP address plus port (and an IPv6 scope id).
+Construct it from `(ipv4_address, port)` or `(ipv6_address, port, scope_id = 0)`,
+or parse `a.b.c.d:port`, `[v6]:port` or `[v6%scope]:port` with a numeric scope.
+`ipv4()` and `ipv6()` return the host as `expected`, failing with
+`invalid_address` for the other family; `port()`, `scope_id()`, `family()`,
+`with_port(p)` and `to_string()` complete the value API. Host names are never
+parsed here: use `resolve`.
 
-The owner is noncopyable and movable. Its generated move transfers the active
-cleanup obligation, so only the destination may close the descriptor. A socket
-that remains open is closed once during lexical destruction. Destructor close
-is best-effort because cleanup cannot return an error; call `close()` explicitly
+All three address types conform to the `std::formatting` protocol concept, so
+`std::format("{}", address)` renders their canonical text.
+
+`std::tcp::resolve(string_view host, uint16_t port)` returns
+`expected<std::vector<socket_address>, errc>` in resolver preference order (at
+most 16 entries). Numeric hosts need no name service. An empty host is
+`invalid_address`; an unknown name is `name_not_found`.
+
+## Streams
+
+`std::tcp::stream` is a connected socket. It is noncopyable and movable;
+moving it transfers the duty to close the descriptor. It may move to another
+thread (`[[unsafe_transfer]]`: a descriptor is process-wide) but is not
+share-capable. The public API never exposes the descriptor: the adopting
+constructor takes `gti_internal::tcp_socket_handle`, which application source
+cannot name (`GTI-S2058`).
+
+| Operation | Result |
+| --- | --- |
+| `static connect(socket_address&)` | `expected<stream, errc>` |
+| `static connect(socket_address&, std::chrono::nanoseconds timeout)` | fails with `timed_out` after `timeout` |
+| `receive(mut mutable_span<uint8_t>&) mut` | bytes received; `0` is the peer's end of stream |
+| `send(span<uint8_t>&) mut` | bytes sent (possibly a prefix) |
+| `send_all(span<uint8_t>&) mut` | `expected<void, errc>`; retries partial sends |
+| `shutdown(shutdown_mode) mut` | ends `read`, `write` or `both` directions |
+| `local_address()`, `peer_address()` | `expected<socket_address, errc>` |
+| `set_nonblocking(bool) mut` | nonblocking `receive`/`send` report `would_block` |
+| `set_read_timeout(nanoseconds) mut`, `set_write_timeout(nanoseconds) mut` | bounds each blocking call; expiry is `timed_out`; zero removes the bound |
+| `wait_readable(nanoseconds)`, `wait_writable(nanoseconds)` | readiness, or `timed_out` |
+| `set_nodelay(bool) mut`, `set_keepalive(bool) mut` | `TCP_NODELAY`, `SO_KEEPALIVE` |
+| `close() mut` | closes once; a second call is `not_open` |
+| `is_open()` | whether the stream still owns a descriptor |
+
+Durations are rounded up to whole milliseconds, so a positive timeout never
+becomes "do not wait"; a negative duration is `invalid_argument`.
+
+A stream also satisfies `std::io::reader` and `std::io::writer`:
+`read_some`/`write_some` return `expected<size_t, std::io_errc>` and `flush()`
+succeeds while the stream is open (a stream has no user-space buffer). Every
+`std::io` helper therefore works on a socket: `read_exact`, `write_all`,
+`copy`, `getline`, and `buffered_reader`/`buffered_writer` borrowing the
+stream. Through that interface a closed stream reports `invalid_stream`; other
+failures collapse to `read_failed`/`write_failed`. Use `receive`/`send` when
+the specific `tcp::errc` matters.
+
+## Listeners
+
+`std::tcp::listener::bind(socket_address&, int32_t backlog = 0)` binds with
+address reuse and starts listening; a nonpositive backlog uses the host
+default. Port 0 selects an ephemeral port, which `local_address()` reports.
+`accept() mut` returns a connected, blocking `stream`. A nonblocking listener
+(`set_nonblocking(true)`) reports `would_block` when nothing is pending, and
+`wait_acceptable(nanoseconds)` waits for a connection or fails with
+`timed_out`. `close()` and `is_open()` behave as for streams. A listener has the
+same move-only, transferable, non-shareable ownership as a stream.
+
+## Errors
+
+`std::tcp::errc` has stable categories, mapped from host error numbers by the
+runtime: `would_block`, `timed_out`, `connection_refused`, `connection_reset`,
+`connection_aborted`, `not_connected`, `broken_pipe`, `address_in_use`,
+`address_unavailable`, `network_unreachable`, `host_unreachable`,
+`permission_denied`, `invalid_argument`, `invalid_address`, `name_not_found`,
+`name_resolution_failed`, `resource_exhausted`, `unsupported`, `not_open`,
+`close_failed` and `failed` (an unclassified host error). No native error
+number crosses the boundary.
+
+## Cleanup
+
+`close()` invalidates the owner before the native close, so success and
+failure both end ownership and nothing is closed twice; a failed close is
+`close_failed` and is not retried. Destruction performs one best-effort close
+of a still-open owner, because cleanup cannot report an error: call `close()`
 when the result matters.
 
-The returned `expected<socket, errc>` owns the socket in its value alternative
-and is itself move-only. Moving that result transfers whole-result ownership;
-consuming extraction with `std::move(result).value()` or `?` in a compatible
-Expected-returning function can instead transfer the socket. `socket`'s
-declared cleanup and private handle make it neither
-transfer-capable nor share-capable across threads.
-A borrowed lvalue observer such as `result.value()` does not itself authorize
-moving the socket through that reference; use the consuming result operation.
+## Runtime Boundary
 
-`close()` invalidates the private handle before calling POSIX `close`. A native
-close failure therefore returns `close_failed` but is not retried by a later
-call or by destruction. Calling `close()` after ownership has already ended
-returns `not_open` without entering native code.
+The module calls the versioned `gti_rt_tcp_*_v1` entries declared in
+[`runtime/include/gti/tcp.h`](../../runtime/include/gti/tcp.h). They exist
+because the host differs where source cannot see: `sockaddr` layout (BSD
+`sin_len`), constant values, `errno`, `EINTR` retries, close-on-exec and
+`SIGPIPE` suppression (`MSG_NOSIGNAL` or `SO_NOSIGPIPE`). Addresses cross as a
+24-byte encoded record, never a native `sockaddr`; buffers cross as
+call-bounded pointer and length pairs inside lexical `unsafe` blocks; the
+runtime retains nothing. A blocking socket whose `SO_RCVTIMEO`/`SO_SNDTIMEO`
+expires reports `timed_out`, while a nonblocking socket reports
+`would_block`. Connection timeouts use a nonblocking `connect` and `poll`,
+then restore blocking mode.
 
-## Native And Target Boundary
+Importing `std.tcp` on Windows or an unknown target is a compile-time error;
+the runtime's Windows entries return `unsupported` only so the archive links.
 
-The optional unit declares only these exact C symbols:
+## Not Yet Provided
 
-```gti
-extern "C" {
-  int32_t socket(int32_t domain, int32_t type, int32_t protocol);
-  int32_t close(int32_t descriptor);
-}
-```
-
-The `gti_internal::runtime` declarations are compiler-private implementation
-details. Trusted `std.tcp` source can call them, while application lookup and
-tooling cannot resolve or present them. The private `socket` constructor adds
-the ordinary class-access boundary inside the trusted implementation; neither
-layer exposes a raw descriptor API.
-
-The implementation currently relies on the Linux/macOS values `AF_INET = 2`
-and `SOCK_STREAM = 1`. Importing `std.tcp` on Windows or an unknown target is
-a compile-time error. Creating an unconnected socket allocates a local kernel
-resource but sends no network traffic.
-
-This slice intentionally does not provide address construction, `connect`,
-`bind`, `listen`, `accept`, `send`, or `receive`. Those operations require a
-reviewed cross-platform address and traffic/retention policy. Passive records
-and bounded mutable/read-only byte buffers now supply useful prerequisites,
-but do not implement those socket operations. General recursive raw pointers do not define native
-`sockaddr` layout, a safe slice, a public descriptor API, traffic ownership and
-retention rules merely because this owner uses C
-linkage internally.
+UDP, Unix-domain sockets, TLS, a readiness multiplexer over many sockets,
+socket options beyond those listed, scatter/gather I/O and Windows support.

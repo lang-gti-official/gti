@@ -1306,16 +1306,17 @@ namespace std { export int cpp_keyword_path_value() { return 0; } }
       lang::Frontend(linuxOptions)
           .analyze(entry,
                    "import std.tcp;\n"
-                   "int main() {\n"
-                   "  mut auto opened = std::tcp::open();\n"
-                   "  if (!opened or !opened.value().is_open()) { return 1; }\n"
-                   "  auto closed = opened.value().close();\n"
-                   "  if (!closed or opened.value().is_open()) { return 2; }\n"
-                   "  auto closed_again = opened.value().close();\n"
-                   "  if (closed_again or closed_again.error() != "
+                   "expected<int32_t, std::tcp::errc> run() {\n"
+                   "  auto local = std::tcp::socket_address(\n"
+                   "      std::tcp::ipv4_address::loopback(), uint16_t(0));\n"
+                   "  mut auto client = ?std::tcp::stream::connect(local);\n"
+                   "  ?client.close();\n"
+                   "  auto again = client.close();\n"
+                   "  if (again or again.error() != "
                    "std::tcp::errc::not_open) { return 3; }\n"
                    "  return 0;\n"
-                   "}\n",
+                   "}\n"
+                   "int main() { return run() ? 0 : 1; }\n",
                    {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   if (!tcp.canGenerateCode()) {
     for (const lang::Diagnostic &diagnostic : tcp.diagnostics) {
@@ -1324,37 +1325,38 @@ namespace std { export int cpp_keyword_path_value() { return 0; } }
     }
   }
   expect(tcp.canGenerateCode(),
-         "the POSIX std::tcp owner should provide typed open and close");
-  const lang::MirClassInstance *tcpSocket =
-      mirClassNamed(tcp, "std::tcp::socket");
-  const lang::MirFunctionInstance *posixSocket =
-      mirFunctionNamed(tcp, "gti_internal::runtime::socket");
-  const lang::MirFunctionInstance *posixClose =
-      mirFunctionNamed(tcp, "gti_internal::runtime::close");
-  const lang::MirFunctionInstance *socketOpen =
-      mirFunctionNamed(tcp, "std::tcp::socket::open");
-  const lang::MirFunctionInstance *socketClose =
-      mirFunctionNamed(tcp, "std::tcp::socket::close");
-  expect(
-      tcpSocket != nullptr &&
-          tcpSocket->copyConstructor == lang::SpecialMemberStatus::Deleted &&
-          tcpSocket->moveConstructor == lang::SpecialMemberStatus::Generated &&
-          posixSocket != nullptr && posixSocket->externalSymbol == "socket" &&
-          posixClose != nullptr && posixClose->externalSymbol == "close" &&
-          socketOpen != nullptr && socketClose != nullptr &&
-          callsMirFunction(socketOpen->body, posixSocket) &&
-          callsMirFunction(socketClose->body, posixClose) &&
-          socketOpen->mayRaiseDefinedFailure &&
-          lang::verifyMirProgram(tcp.mir).valid(),
-      "the tcp owner should retain private POSIX acquisition and generated "
-      "move cleanup");
+         "the POSIX std::tcp stream should provide typed connect and close");
+  const lang::MirClassInstance *tcpStream =
+      mirClassNamed(tcp, "std::tcp::stream");
+  const lang::MirFunctionInstance *runtimeConnect =
+      mirFunctionNamed(tcp, "gti_internal::runtime::gti_rt_tcp_connect_v1");
+  const lang::MirFunctionInstance *runtimeClose =
+      mirFunctionNamed(tcp, "gti_internal::runtime::gti_rt_tcp_close_v1");
+  const lang::MirFunctionInstance *streamConnect =
+      mirFunctionNamed(tcp, "std::tcp::stream::connect_with");
+  const lang::MirFunctionInstance *streamClose =
+      mirFunctionNamed(tcp, "std::tcp::stream::close");
+  expect(tcpStream != nullptr &&
+             tcpStream->copyConstructor == lang::SpecialMemberStatus::Deleted &&
+             tcpStream->moveConstructor ==
+                 lang::SpecialMemberStatus::Generated &&
+             runtimeConnect != nullptr &&
+             runtimeConnect->externalSymbol == "gti_rt_tcp_connect_v1" &&
+             runtimeClose != nullptr &&
+             runtimeClose->externalSymbol == "gti_rt_tcp_close_v1" &&
+             streamConnect != nullptr && streamClose != nullptr &&
+             callsMirFunction(streamConnect->body, runtimeConnect) &&
+             callsMirFunction(streamClose->body, runtimeClose) &&
+             lang::verifyMirProgram(tcp.mir).valid(),
+         "the tcp stream should retain private runtime acquisition and "
+         "generated move cleanup");
 
   const lang::FrontendResult copiedTcp =
       lang::Frontend(linuxOptions)
           .analyze(entry,
                    "import std.tcp;\n"
-                   "void copy_socket(std::tcp::socket& original) {\n"
-                   "  std::tcp::socket copied = original;\n"
+                   "void copy_stream(std::tcp::stream& original) {\n"
+                   "  std::tcp::stream copied = original;\n"
                    "}\n"
                    "int main() {\n"
                    "  return 0;\n"
@@ -1365,22 +1367,21 @@ namespace std { export int cpp_keyword_path_value() { return 0; } }
           hasDiagnostic(copiedTcp.diagnostics, "Cannot initialize 'copied'") &&
           hasDiagnosticHint(copiedTcp.diagnostics,
                             "Move-only owners cannot be copied"),
-      "std::tcp::socket should reject copies before backend emission");
+      "std::tcp::stream should reject copies before backend emission");
 
   const lang::FrontendResult forgedTcp =
       lang::Frontend(linuxOptions)
           .analyze(entry,
                    "import std.tcp;\n"
                    "int main() {\n"
-                   "  auto forged = std::make_unique<std::tcp::socket>(\n"
+                   "  auto forged = std::make_unique<std::tcp::stream>(\n"
                    "      gti_internal::tcp_socket_handle(1));\n"
                    "  return 0;\n"
                    "}\n",
                    {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!forgedTcp.canGenerateCode() &&
              countDiagnosticCode(forgedTcp.diagnostics, "GTI-S2058") == 1 &&
-             !hasDiagnostic(forgedTcp.diagnostics,
-                            "Constructor of 'socket' is private"),
+             !hasDiagnostic(forgedTcp.diagnostics, "is private"),
          "applications should reject private descriptor names directly "
          "without leaking constructor details");
 
@@ -1407,7 +1408,7 @@ namespace std { export int cpp_keyword_path_value() { return 0; } }
   expect(!windowsTcp.semanticValid &&
              hasDiagnostic(windowsTcp.diagnostics,
                            "std/tcp currently exposes only the POSIX socket "
-                           "ABI"),
+                           "runtime"),
          "std::tcp should reject Windows targets at import time");
 }
 
