@@ -5218,8 +5218,28 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
       return;
     }
   }
-  // Under MIR authority MIR proves the binding's loans outlive their uses.
-  if (!mirBorrowAuthority() && !hasStableBorrowStorage(initializer)) {
+  // Under MIR authority MIR proves the binding's loans outlive their uses,
+  // except for a result borrowing the own storage of a temporary receiver
+  // that holds no borrow: MIR does not see that temporary's storage end.
+  const bool temporaryReceiverStorage = [&] {
+    const Expr *expression = initializer.get();
+    while (const auto *group = exprAs<Grouping>(expression))
+      expression = group->expression().get();
+    const auto *call = exprAs<Call>(expression);
+    const auto *member =
+        call == nullptr ? nullptr : exprAs<Get>(call->callee().get());
+    const ResolvedCallInfo *resolved =
+        call == nullptr ? nullptr : semanticModel.findCall(*call);
+    const ExpressionInfo *receiver =
+        member == nullptr ? nullptr : semanticModel.findExpression(*member->object());
+    return resolved != nullptr && receiver != nullptr &&
+           resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+           receiver->category == ValueCategory::Value &&
+           receiver->type.kind == SemanticType::Class &&
+           !receiver->traits.containsBorrowedState;
+  }();
+  if ((!mirBorrowAuthority() || temporaryReceiverStorage) &&
+      !hasStableBorrowStorage(initializer)) {
     report(expressionToken(initializer),
            "Stored-reference value is derived from temporary storage that "
            "does not outlive the binding.",
