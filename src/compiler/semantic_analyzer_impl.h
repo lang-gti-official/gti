@@ -1,4 +1,3 @@
-#include "gti/borrow_checker_mode.h"
 #include "gti/mir_procedural.h"
 #pragma once
 
@@ -2350,7 +2349,6 @@ private:
                 std::vector<const ReturnStmt *> *normalReturns = nullptr,
                 bool structural = false) const;
 
-  void recordCompleteFunctionReturnBorrow(const FunctionInfo &function);
   [[nodiscard]] bool conditionalReferenceReturn(
       const SemanticType &result, std::span<const SemanticType> parameters,
       const SemanticType &receiver = SemanticType::Unknown) const;
@@ -3010,11 +3008,6 @@ private:
 
   void applyFunctionReturnBorrowSummary(CallableCandidate &function) const;
 
-  [[nodiscard]] std::optional<FunctionReturnBorrowSummary>
-  storedFieldReturnBorrowSummary(
-      const FunctionInfo &function,
-      SemanticType ownerType = SemanticType::Unknown);
-
   // An explicit result-region contract on a generic-result declaration binds
   // the instances whose substituted result is a checked reference: the named
   // parameter, or the one eligible element of the named final pack, owns it.
@@ -3140,15 +3133,11 @@ private:
                                    const FunctionDecl &callee,
                                    std::span<const ExprPtr> arguments,
                                    const Token &site);
-  // RFC 0004 shadow phase: MIR reports body-local borrow conflicts.
-  [[nodiscard]] static bool mirBorrowAuthority();
   // The single parameter an explicit result contract names, either spelling.
   [[nodiscard]] std::optional<std::size_t>
   declaredContractParameter(const FunctionDecl &syntax,
                             const SemanticType &returnType,
                             std::span<const SemanticType> parameterTypes) const;
-  // RFC 0004 shadow phase: contracts come only from signatures.
-  [[nodiscard]] static bool signatureContractDefaults();
   // RFC 0004 elision of a free function result written as a bare type
   // parameter: per declared parameter, whether its written type mentions it.
   [[nodiscard]] static std::optional<std::vector<bool>>
@@ -4622,9 +4611,6 @@ private:
   void validateStoredBorrowInitialization(const SemanticType &type,
                                           const ExprPtr &initializer);
 
-  bool rejectEscapingLocalChildLoan(const ExprPtr &value,
-                                    std::string_view destination);
-
   void validateStoredBorrowReturn(const SemanticType &returnType,
                                   const SemanticType &valueType,
                                   const ExprPtr &value);
@@ -4649,11 +4635,6 @@ private:
   [[nodiscard]] StoredCarrierReturnProvenance storedCarrierReturnProvenance(
       const Expr *expression, const Parameter &parameter,
       std::unordered_set<const Expr *> &visiting) const;
-
-  void validateStoredCarrierReturnSource(const FunctionInfo &function,
-                                         const Parameter &source,
-                                         const ExprPtr &value,
-                                         std::string_view description);
 
   [[nodiscard]] bool isParameterDerivedBorrow(const ExprPtr &expression,
                                               const Parameter &parameter) const;

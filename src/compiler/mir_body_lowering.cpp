@@ -1,4 +1,3 @@
-#include "gti/borrow_checker_mode.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_lowering.h"
@@ -239,8 +238,7 @@ public:
         }
       }
     }
-    if (!legacyBorrowChecker())
-      derivedLoanEnds = deriveLoanEnds(source);
+    derivedLoanEnds = deriveLoanEnds(source);
     for (const HirStatement &statement : source.statements) {
       statements.emplace(statement.id, &statement);
       for (const SemanticLoanId loan : endedAfter(statement)) {
@@ -4808,12 +4806,10 @@ private:
                       alternative) == lowered.additionalDependencies.end())
           lowered.additionalDependencies.push_back(std::move(alternative));
     }
-    // RFC 0004: a composed carrier's suppliers keep their own argument
-    // access in MIR, which owns loans; the retired semantic model widened a
-    // read-only supplier to the composition's strongest access.
-    const bool composedSupplier =
-        !legacyBorrowChecker() && lowered.kind == MirLoanKind::Stored &&
-        !loan.entry && !loan.additionalDependencies.empty();
+    // A composed carrier's suppliers keep their own argument access in MIR.
+    const bool composedSupplier = lowered.kind == MirLoanKind::Stored &&
+                                  !loan.entry &&
+                                  !loan.additionalDependencies.empty();
     if (lowered.access == AccessMode::ReadOnly &&
         loan.access == AccessMode::Mutable && !composedSupplier) {
       valid = false;
@@ -9154,8 +9150,8 @@ private:
                 ? findBinding(shell->binding)
                 : nullptr;
         const bool ownerlessLocalShell =
-            !legacyBorrowChecker() && local != nullptr &&
-            local->variable != nullptr && local->parameter == nullptr &&
+            local != nullptr && local->variable != nullptr &&
+            local->parameter == nullptr &&
             std::none_of(output.loans.begin(), output.loans.end(),
                          [&](const MirLoan &candidate) {
                            return std::find(candidate.carriers.begin(),
@@ -9203,11 +9199,9 @@ private:
           if (dependency.source != 0)
             output.loans[loan - 1].additionalDependencies.push_back(dependency);
         // A carrier relayed whole through a by-value argument of its own
-        // type keeps the field that holds its primary dependency. (The
-        // legacy model takes it from the consumed binding's semantic loan.)
+        // type keeps the field that holds its primary dependency.
         const HirValue *relayed =
-            !legacyBorrowChecker() &&
-                    value.borrowOrigin == BorrowOriginKind::Argument &&
+            value.borrowOrigin == BorrowOriginKind::Argument &&
                     value.borrowArgument < arguments.size()
                 ? findValue(arguments[value.borrowArgument])
                 : nullptr;
@@ -10608,8 +10602,7 @@ private:
                                                 MirLoanId owner,
                                                 HirValueId valueId,
                                                 AccessMode access) const {
-    if (legacyBorrowChecker() || owner == 0 ||
-        !retainableCallResultChain(outermost, 0, valueId, access))
+    if (owner == 0 || !retainableCallResultChain(outermost, 0, valueId, access))
       return false;
     const MirLoan *root = output.findLoan(outermost);
     while (root != nullptr && root->parent != 0)
@@ -10872,35 +10865,24 @@ private:
                      parameter) != candidate.carriers.end();
   }
 
-  // Loan end points: the ones MIR derives itself, or under the legacy borrow
-  // checker the semantic points HIR transports.
+  // Loan end points: the ones MIR derives from its own CFG.
   [[nodiscard]] const std::vector<SemanticLoanId> &
   endedAfter(const HirStatement &statement) const {
-    if (!derivedLoanEnds)
-      return statement.endedLoans;
-    return derivedList(derivedLoanEnds->after, statement.id);
+    return derivedList(derivedLoanEnds.after, statement.id);
   }
   [[nodiscard]] const std::vector<SemanticLoanId> &
   thenEntryEnded(const HirStatement &statement) const {
-    if (!derivedLoanEnds)
-      return statement.thenEntryEndedLoans;
-    return derivedList(derivedLoanEnds->thenEntry, statement.id);
+    return derivedList(derivedLoanEnds.thenEntry, statement.id);
   }
   [[nodiscard]] const std::vector<SemanticLoanId> &
   elseEntryEnded(const HirStatement &statement) const {
-    if (!derivedLoanEnds)
-      return statement.elseEntryEndedLoans;
-    return derivedList(derivedLoanEnds->elseEntry, statement.id);
+    return derivedList(derivedLoanEnds.elseEntry, statement.id);
   }
   [[nodiscard]] const std::vector<SemanticLoanId> &
   armEntryEnded(const HirStatement &statement, std::size_t arm) const {
-    if (!derivedLoanEnds)
-      return statement.switchArms[arm].entryEndedLoans;
     static const std::vector<SemanticLoanId> none;
-    const auto found =
-        derivedLoanEnds->switchArmEntry.find({statement.id, arm});
-    return found == derivedLoanEnds->switchArmEntry.end() ? none
-                                                          : found->second;
+    const auto found = derivedLoanEnds.switchArmEntry.find({statement.id, arm});
+    return found == derivedLoanEnds.switchArmEntry.end() ? none : found->second;
   }
   [[nodiscard]] static const std::vector<SemanticLoanId> &derivedList(
       const std::unordered_map<HirStatementId, std::vector<SemanticLoanId>>
@@ -17578,7 +17560,7 @@ private:
   std::unordered_map<SemanticLoanId, HirStatementId>
       uniqueSemanticLoanEndpoints;
   // Shadow phase: MIR-derived loan end points replace the transported ones.
-  std::optional<MirDerivedLoanEnds> derivedLoanEnds;
+  MirDerivedLoanEnds derivedLoanEnds;
   std::unordered_map<HirBindingId, const HirBinding *> bindings;
   std::unordered_map<SymbolId, HirBindingId> localSymbols;
   std::unordered_map<SymbolId, std::size_t> lambdaCaptures;

@@ -1,5 +1,4 @@
 #include "compiler_test_fixture.h"
-#include "gti/borrow_checker_mode.h"
 
 #include <cstdlib>
 
@@ -548,18 +547,6 @@ int main() {
 }
 )",
            "GTI-S2017");
-  // Under RFC 0004 signature contracts a reference result shared by several
-  // eligible reference parameters borrows all of them (and a lambda body is
-  // checked by MIR); without them two eligible parameters are ambiguous.
-  const bool signatureContracts = !lang::legacyBorrowChecker();
-  const auto unionOrNegative = [&](const std::string &name,
-                                   const std::string &source,
-                                   const std::string &code) {
-    if (signatureContracts)
-      (void)positive(name, source);
-    else
-      negative(name, source, code);
-  };
   negative("lambda-reference-result-ambiguous", R"(
 int main() {
   int left = 1;
@@ -587,15 +574,16 @@ int main() {
   return view - 5;
 }
 )");
-  unionOrNegative("invocation-pointer-ambiguous-origin", R"(
+  // A function-pointer signature's read-only reference result shared by
+  // several reference parameters borrows all of them.
+  (void)positive("invocation-pointer-ambiguous-origin", R"(
 import std.functional;
 int&<r> first<lifetime r>(int&<r> a, int& b) { return a; }
 int main() {
   std::function_ptr<int&(int&, int&)> pointer{first};
   return 0;
 }
-)",
-                  "GTI-S2093");
+)");
   negative("invocation-pointer-origin-mismatch", R"(
 import std.functional;
 import std.memory;

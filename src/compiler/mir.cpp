@@ -1,5 +1,4 @@
 #include "gti/mir.h"
-#include "gti/borrow_checker_mode.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
@@ -3427,8 +3426,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       // access is exact for a reference result and for a receiver contract,
       // which accounts for every stored path; an argument-supplied carrier's
       // scalar access does not describe its paths one by one.
-      if (!legacyBorrowChecker() &&
-          (instruction.kind == MirInstructionKind::Call ||
+      if ((instruction.kind == MirInstructionKind::Call ||
            instruction.kind == MirInstructionKind::Construct) &&
           (instruction.info.type.kind == SemanticType::Reference ||
            (instruction.kind == MirInstructionKind::Call &&

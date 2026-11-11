@@ -1,4 +1,3 @@
-#include "gti/borrow_checker_mode.h"
 #include "gti/mir.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
@@ -2011,7 +2010,7 @@ mirFieldTypeThroughBases(const MirProgram &program,
       // the consumed shell itself carries only the external referents its
       // stored references reach (`View<a> carrier() &&` in `C<lifetime a>`).
       const bool externalCarrierResult =
-          !legacyBorrowChecker() && functionTarget != nullptr &&
+          functionTarget != nullptr &&
           functionTarget->returnType.kind != SemanticType::Reference &&
           functionTarget->completeReturnBorrow &&
           std::none_of(
@@ -2224,9 +2223,8 @@ mirFieldTypeThroughBases(const MirProgram &program,
             functionTarget && borrowedCarrier && mutableInput &&
             functionTarget->receiverMutability ==
                 ReceiverMutability::Consuming &&
-            (referenceResult ? functionTarget->returnType.referenceAccess ==
-                                   AccessMode::ReadOnly
-                             : !legacyBorrowChecker()) &&
+            (!referenceResult || functionTarget->returnType.referenceAccess ==
+                                     AccessMode::ReadOnly) &&
             functionTarget->completeReturnBorrow &&
             !functionTarget->completeReturnBorrow->dependencies.empty() &&
             std::all_of(
@@ -2506,8 +2504,7 @@ mirFieldTypeThroughBases(const MirProgram &program,
         // borrows nothing (checked below) needs no confined parameter.
         const bool confined =
             !callable ||
-            (!legacyBorrowChecker() &&
-             argumentPlace->type.kind == SemanticType::FunctionItem) ||
+            argumentPlace->type.kind == SemanticType::FunctionItem ||
             (functionTarget &&
              std::any_of(functionTarget->callableParameters.begin(),
                          functionTarget->callableParameters.end(),
@@ -3995,11 +3992,9 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                 block.id, instruction.id);
           }
         }
-        // RFC 0004 shadow phase: a call that publishes no field mapping for a
-        // signature contract borrows the whole origin, a coarser bound.
-        static const bool signatureCalls = !legacyBorrowChecker();
-        const bool coarserSignatureFields = signatureCalls &&
-                                            instruction.borrowFields.empty() &&
+        // A call that publishes no field mapping for a signature contract
+        // borrows the whole origin, a coarser bound.
+        const bool coarserSignatureFields = instruction.borrowFields.empty() &&
                                             !target->returnBorrowFields.empty();
         if (!dependentTextCallPublication(instruction, *target) &&
             (instruction.borrowOrigin != target->returnBorrowOrigin ||
@@ -7716,15 +7711,9 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
           block.id);
       // A return whose loan originates in storage this body owns (a local
       // binding, not any formal) is a borrow escape, not malformed MIR.
-      // Under signature contracts a formal the signature does not name as a
-      // supplier is equally outside the returned borrow's contract.
-      static const bool signatureSuppliers = !legacyBorrowChecker();
-      const bool bodyLocal =
-          source->root == MirPlaceRootKind::Binding &&
-          (signatureSuppliers ||
-           std::find(instance.parameterBindings.begin(),
-                     instance.parameterBindings.end(),
-                     source->binding) == instance.parameterBindings.end());
+      // A formal the signature does not name as a supplier is equally
+      // outside the returned borrow's contract.
+      const bool bodyLocal = source->root == MirPlaceRootKind::Binding;
       if (bodyLocal && !rejected.errors.empty())
         rejected.errors.back().borrow = {.kind = MirBorrowRejectionKind::Escape,
                                          .loan = *block.terminator.returnLoan};
@@ -8123,13 +8112,11 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
           loan->additionalDependencies == group->additionalDependencies)
         verifiedValueEntry = group;
     }
-    // RFC 0004 shadow phase: a signature claim's field mapping lists every
-    // alternative supplier per result path; its complete-claim coverage, not
-    // this positional exact-field check, verifies each return.
-    static const bool signatureReturns = !legacyBorrowChecker();
-    // The coverage proof still requires each published path to name a
-    // field chain of the result type itself.
-    if (signatureReturns && instance.returnType.kind == SemanticType::Class &&
+    // A signature claim's field mapping lists every alternative supplier per
+    // result path; its complete-claim coverage, not a positional exact-field
+    // check, verifies each return. The coverage proof still requires each
+    // published path to name a field chain of the result type itself.
+    if (instance.returnType.kind == SemanticType::Class &&
         !instance.returnBorrowFields.empty()) {
       const auto names = [&](const std::vector<SymbolId> &fields) {
         SemanticType current = instance.returnType;
@@ -8160,7 +8147,7 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
     // A signature contract, elided or written, is proved by its complete
     // dependency set rather than a body-derived positional field map.
     if (!instance.returnBorrowFields.empty() && !completeReferenceResult &&
-        !(signatureReturns && instance.completeReturnBorrow)) {
+        !instance.completeReturnBorrow) {
       std::vector<MirLoanDependency> actual{
           {.source = loan->source,
            .designatedFields = loan->designatedFields,
@@ -16202,19 +16189,16 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
       source && !source->externalPrefix
           ? findStoredCarrierReferenceInventory(program, source->referent)
           : std::nullopt;
-  // RFC 0004 shadow phase: a signature contract may conservatively name
-  // whole caller storage; borrowing it keeps everything it reaches borrowed.
-  static const bool signatureClaims = !legacyBorrowChecker();
+  // A signature contract may conservatively name whole caller storage;
+  // borrowing it keeps everything it reaches borrowed.
   // A result in a stored class region may borrow storage inside the
   // external referent of that region's reference (a projection of it).
-  const bool storedProjection = signatureClaims && source &&
-                                source->externalPrefix &&
+  const bool storedProjection = source && source->externalPrefix &&
                                 mapping.origin == BorrowOriginKind::Receiver;
   return source &&
          (source->referent == result->reference.arguments.front() ||
           storedProjection || (contained && contained->empty()) ||
-          (signatureClaims && !source->externalPrefix &&
-           mapping.sourceFields.empty())) &&
+          (!source->externalPrefix && mapping.sourceFields.empty())) &&
          (mapping.access == AccessMode::ReadOnly ||
           source->access == AccessMode::Mutable) &&
          source->conditions == mapping.sourceConditions;
@@ -16406,40 +16390,10 @@ public:
                                          alternative) !=
                                claim.possibleAlternatives.end();
                       });
-      // RFC 0004 shadow phase: a signature-derived claim is an upper bound.
-      // When MIR cannot reconstruct the body's complete flow, the body's own
-      // return and escape checks bound it instead.
-      static const bool signatureClaims = !legacyBorrowChecker();
-      if (std::getenv("GTI_SHADOW_CLAIM_TRACE")) { // shadow-phase debugging
-        const auto print = [](const char *label, const auto &deps) {
-          std::cerr << "  " << label << " " << deps.size() << ":";
-          for (const auto &d : deps) {
-            std::cerr << " {r=";
-            for (auto f : d.resultFields)
-              std::cerr << f << '.';
-            std::cerr << " o=" << static_cast<int>(d.origin)
-                      << " p=" << d.parameter << " s=";
-            for (auto f : d.sourceFields)
-              std::cerr << f << '.';
-            std::cerr << " a=" << static_cast<int>(d.access)
-                      << " rc=" << d.resultConditions.size()
-                      << " sc=" << d.sourceConditions.size() << "}";
-          }
-          std::cerr << "\n";
-        };
-        std::cerr << "CLAIM fn=" << id
-                  << " well=" << wellFormed(*function, claim)
-                  << " observed=" << observed.has_value()
-                  << " covers=" << covers
-                  << " alts=" << claim.possibleAlternatives.size() << "/"
-                  << (observed ? observed->possibleAlternatives.size() : 0)
-                  << "\n";
-        print("claim", claim.dependencies);
-        if (observed)
-          print("observed", observed->dependencies);
-      }
-      if (wellFormed(*function, claim) &&
-          (covers || (signatureClaims && !observed))) {
+      // A signature-derived claim is an upper bound. When MIR cannot
+      // reconstruct the body's complete flow, the body's own return and
+      // escape checks bound it instead.
+      if (wellFormed(*function, claim) && (covers || !observed)) {
         // Keep the declaration contract stable across optimizer narrowing.
         // Its additional well-typed alternatives and dependency obligations
         // are conservative cases, not inferred from an attached claim or

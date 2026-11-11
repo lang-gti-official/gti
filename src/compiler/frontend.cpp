@@ -1,6 +1,5 @@
 #include "gti/frontend.h"
 #include "diagnostic_registry.h"
-#include "gti/borrow_checker_mode.h"
 #include "gti/diagnostic.h"
 #include "gti/hir.h"
 #include "gti/lexer.h"
@@ -590,11 +589,6 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
   return check;
 }
 
-bool mirBorrowAuthority() {
-  static const bool enabled = !legacyBorrowChecker();
-  return enabled;
-}
-
 // Adds the MIR stage's elapsed time to the caller's work metrics when the
 // stage returns, whichever of its exits it takes.
 class MirStageTimer {
@@ -951,27 +945,6 @@ Frontend::analyzeLoaded(const std::filesystem::path &entryPath,
 
 FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                         FrontendResult result) const {
-  // RFC 0004 shadow phase only: record each analyzed entry program so the
-  // borrow-checker agreement recorder can replay the test corpus. Removed
-  // with the semantic loan flow.
-  if (const char *harvest = std::getenv("GTI_SHADOW_HARVEST_DIR")) {
-    const SourceUnit *entry =
-        result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
-    if (const std::string *text =
-            entry == nullptr ? nullptr
-                             : result.sources.find(entry->path.string())) {
-      std::uint64_t hash = 1469598103934665603ull;
-      for (const unsigned char byte : *text)
-        hash = (hash ^ byte) * 1099511628211ull;
-      std::ostringstream name;
-      name << std::hex << hash << ".gti";
-      std::error_code error;
-      std::filesystem::create_directories(harvest, error);
-      std::ofstream out(std::filesystem::path(harvest) / name.str(),
-                        std::ios::binary);
-      out << *text;
-    }
-  }
   if (!result.sourceValid && !options.analyzeRecoveredSourceGraph) {
     return result;
   }
@@ -1442,7 +1415,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         // units are lowered first so the check need not see the rest.
         if (options.lowerLibraryReachableOnly)
           scope.completeDeclarations = std::move(complete);
-        else if (mirBorrowAuthority())
+        else
           scope.borrowCheckedDeclarations = std::move(complete);
       }
       if (options.lowerEntryUnitOnly) {
@@ -1567,8 +1540,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   // complete program above has already reported every diagnostic.
   // Every application body is borrow-checked, reachable or not: MIR checks
   // the complete HIR before code generation narrows it to what roots reach.
-  if (mirBorrowAuthority() && hir.reachable &&
-      !options.retainApplicationBodies) {
+  if (hir.reachable && !options.retainApplicationBodies) {
     const HirProgram &checked =
         hir.borrowChecked ? *hir.borrowChecked : result.hir;
     FailureMetadataBuildResult completeMetadata =

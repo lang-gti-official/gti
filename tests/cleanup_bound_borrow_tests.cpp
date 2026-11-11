@@ -1,4 +1,3 @@
-#include "gti/borrow_checker_mode.h"
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
@@ -95,8 +94,7 @@ void negative(const std::string &name, const std::string &source,
       result.diagnostics.begin(), result.diagnostics.end(), [&](const auto &d) {
         return d.severity == lang::DiagnosticSeverity::Error &&
                (d.code == expectedCode ||
-                (!staticResultCode.empty() && d.code == staticResultCode &&
-                 !lang::legacyBorrowChecker()));
+                (!staticResultCode.empty() && d.code == staticResultCode));
       });
   if (result.canGenerateCode() || !semanticError)
     show(result);

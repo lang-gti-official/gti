@@ -9265,14 +9265,9 @@ auto SemanticVisitor::Impl::consumingReceiverValue(
     const ExprPtr &receiver) const -> bool {
   const ExpressionInfo *info =
       receiver ? semanticModel.findExpression(*receiver) : nullptr;
-  // A dependent text value's text is governed by the callee's field
-  // contract, which a relay checks at the call (L-OWN-02).
+  // MIR follows a consumed carrier's loans from its own places.
   return info != nullptr && info->category == ValueCategory::Value &&
-         info->type.kind == SemanticType::Class && info->traits.movable &&
-         (!info->traits.containsBorrowedState || isTextDependentValue(*info) ||
-          // MIR follows a consumed carrier's loans from its own places.
-          mirBorrowAuthority() ||
-          completeBorrowDependencySet(receiver).has_value());
+         info->type.kind == SemanticType::Class && info->traits.movable;
 }
 
 auto SemanticVisitor::Impl::receiverModeForObject(

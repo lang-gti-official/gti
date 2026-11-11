@@ -1,5 +1,4 @@
 #include "mir_verification_queries.h"
-#include "gti/borrow_checker_mode.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_effects.h"
 #include "mir_verification_support.h"
@@ -735,11 +734,10 @@ bool referenceAddressRetainsLoan(const MirBody &body, const MirPlace &address,
           child->storedDependency == retained.storedDependency &&
           child->additionalDependencies == retained.additionalDependencies)
         return true;
-      // Under signature contracts an accessor of a carrier borrows the
-      // carrier shell: the chain is rooted there, retaining the carrier's
-      // shared owner group as its stored dependency.
-      if (!legacyBorrowChecker() && child->parent == 0 &&
-          child->access == AccessMode::ReadOnly &&
+      // An accessor of a carrier borrows the carrier shell: the chain is
+      // rooted there, retaining the carrier's shared owner group as its
+      // stored dependency.
+      if (child->parent == 0 && child->access == AccessMode::ReadOnly &&
           retained.access == AccessMode::ReadOnly &&
           retained.kind == MirLoanKind::Stored &&
           child->storedDependency == retained.id)
@@ -2068,9 +2066,7 @@ returnOriginFormal(std::span<const SemanticType> parameterTypes,
 std::vector<std::size_t>
 functionPointerSignatureOrigins(const MirProgram &program,
                                 const SemanticType &signature) {
-  static const bool signatureContracts = !legacyBorrowChecker();
-  if (!signatureContracts ||
-      signature.kind != SemanticType::FunctionSignature ||
+  if (signature.kind != SemanticType::FunctionSignature ||
       signature.arguments.empty() ||
       signature.arguments.front().kind != SemanticType::Reference ||
       signature.arguments.front().referenceAccess != AccessMode::ReadOnly)
