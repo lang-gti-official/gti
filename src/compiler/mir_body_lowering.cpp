@@ -16488,6 +16488,10 @@ private:
           // The reference parameter's shell loan, when storedCarrierEntry is
           // the external dependency that shell reaches.
           MirLoanId carrierShellEntry = 0;
+          // The returned referent is itself a borrowed carrier reached
+          // through a by-value carrier formal: the entry stays live as the
+          // Return loan's stored dependency.
+          bool borrowedCarrierReferent = false;
           MirLoanId referenceParameterEntry = 0;
           if (const std::optional<HirBindingId> summarized =
                   returnBorrowParameterBinding();
@@ -16499,9 +16503,40 @@ private:
                 source != nullptr && sourceIsReturnOriginFormal(*source) &&
                 std::find(candidate.carriers.begin(), candidate.carriers.end(),
                           parameter) != candidate.carriers.end();
+            // A stored reference whose referent itself carries borrowed
+            // state is read through a body-local loan whose stored
+            // dependency is the by-value carrier's entry. That loan retires
+            // first, like a shell; the entry names the caller-owned
+            // dependency.
+            const MirLoan *carriedEntry =
+                candidate.kind == MirLoanKind::Local && !candidate.entry &&
+                        !candidate.escapes && candidate.carriers.empty() &&
+                        candidate.parent == 0 && !candidate.referenceSelection
+                    ? output.findLoan(candidate.storedDependency)
+                    : nullptr;
+            const MirPlace *carriedSource =
+                carriedEntry ? output.findPlace(carriedEntry->source) : nullptr;
             if (candidate.kind == MirLoanKind::Stored && candidate.entry &&
                 !candidate.designatedFields.empty() && carriedByParameter) {
               storedCarrierEntry = borrow.loan;
+            } else if (carriedEntry != nullptr && source != nullptr &&
+                       carriedEntry->kind == MirLoanKind::Stored &&
+                       carriedEntry->entry &&
+                       !carriedEntry->designatedFields.empty() &&
+                       carriedSource != nullptr &&
+                       sourceIsReturnOriginFormal(*carriedSource) &&
+                       std::find(carriedEntry->carriers.begin(),
+                                 carriedEntry->carriers.end(),
+                                 parameter) != carriedEntry->carriers.end() &&
+                       source->root == MirPlaceRootKind::Binding &&
+                       source->binding == parameter &&
+                       source->projections.size() > 1 &&
+                       source->projections.back().kind ==
+                           MirProjectionKind::Dereference &&
+                       source->traits.containsBorrowedState) {
+              storedCarrierEntry = carriedEntry->id;
+              carrierShellEntry = borrow.loan;
+              borrowedCarrierReferent = true;
             } else if (candidate.kind == MirLoanKind::Parameter &&
                        candidate.entry && carriedByParameter) {
               // A stored reference read through a reference parameter to
@@ -16679,8 +16714,9 @@ private:
               // at the same instruction boundary.
               const MirLoan retainedLoan = output.loans[storedCarrierEntry - 1];
               // The shell retires first: its stored dependency may not end
-              // before it.
-              if (carrierShellEntry != 0) {
+              // before it. A borrowed-carrier referent's loan instead
+              // publishes the Return loan and retires right after it.
+              if (carrierShellEntry != 0 && !borrowedCarrierReferent) {
                 (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
                                          .hirValue = *statement.value,
                                          .loan = carrierShellEntry});
@@ -16690,7 +16726,8 @@ private:
                   createLoan(MirLoanKind::Return, retainedLoan.source,
                              retainedLoan.access, *statement.value);
               output.loans[published - 1].storedDependency =
-                  retainedLoan.storedDependency;
+                  borrowedCarrierReferent ? storedCarrierEntry
+                                          : retainedLoan.storedDependency;
               // A region several stored paths share publishes every owner.
               output.loans[published - 1].additionalDependencies =
                   retainedLoan.additionalDependencies;
@@ -16699,14 +16736,23 @@ private:
                    .hirValue = *statement.value,
                    .operands = {{.kind = MirOperandKind::Loan,
                                  .place = runtimePlace,
-                                 .loan = storedCarrierEntry,
+                                 .loan = borrowedCarrierReferent
+                                             ? carrierShellEntry
+                                             : storedCarrierEntry,
                                  .type = value->info.type}},
                    .loan = published,
                    .info = value->info});
-              (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
-                                       .hirValue = *statement.value,
-                                       .loan = storedCarrierEntry});
-              removeLoanFromState(storedCarrierEntry, scopes, bindingLoans);
+              if (borrowedCarrierReferent) {
+                (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                         .hirValue = *statement.value,
+                                         .loan = carrierShellEntry});
+                removeLoanFromState(carrierShellEntry, scopes, bindingLoans);
+              } else {
+                (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
+                                         .hirValue = *statement.value,
+                                         .loan = storedCarrierEntry});
+                removeLoanFromState(storedCarrierEntry, scopes, bindingLoans);
+              }
               output.loans[published - 1].escapes = true;
               borrow = {.kind = MirOperandKind::Loan,
                         .place = runtimePlace,

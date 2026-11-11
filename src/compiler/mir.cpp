@@ -6325,7 +6325,25 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         const bool returnedRestoreWitness =
             loan.entry && returned && returned->storedDependency == loan.id &&
             mir_detail::restoredBorrowAuthority(body, *returned);
-        if ((abstractStoredEntry(body, loan) || returnedRestoreWitness) &&
+        // A by-value carrier parameter's entry names the external owners its
+        // stored references reach. A returned borrow of one of those
+        // referents (itself a borrowed carrier) keeps that caller-owned
+        // dependency, not the parameter's own storage.
+        const MirPlace *entrySource = body.findPlace(loan.source);
+        const bool byValueCarrierEntry =
+            loan.kind == MirLoanKind::Stored && loan.entry && !loan.escapes &&
+            loan.parent == 0 && loan.storedDependency == 0 &&
+            !loan.lifecycleBound && loan.producedBy == 0 &&
+            loan.storedField == 0 && !loan.designatedFields.empty() &&
+            loan.conditions.empty() && entrySource != nullptr &&
+            entrySource->root == MirPlaceRootKind::Binding &&
+            entrySource->projections.empty() &&
+            entrySource->initiallyAvailable &&
+            entrySource->type.kind == SemanticType::Class &&
+            std::find(loan.carriers.begin(), loan.carriers.end(),
+                      entrySource->binding) != loan.carriers.end();
+        if ((abstractStoredEntry(body, loan) || returnedRestoreWitness ||
+             byValueCarrierEntry) &&
             returned != nullptr && returned->kind == MirLoanKind::Return &&
             returned->escapes &&
             active[returned->id - 1] == MirLoanFlowState::Active &&
@@ -14578,6 +14596,24 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
             return false;
           }
           const MirLoan *retained = body.findLoan(source.loan);
+          // A returned borrowed-carrier referent of a by-value carrier formal
+          // is read through a body-local loan whose stored dependency is the
+          // formal's entry; the Return loan keeps that entry dependency.
+          if (const MirLoan *entry =
+                  retained != nullptr && retained->kind == MirLoanKind::Local &&
+                          !retained->entry && !retained->escapes &&
+                          retained->parent == 0 && retained->carriers.empty() &&
+                          produced.kind == MirLoanKind::Return &&
+                          produced.storedDependency != 0 &&
+                          retained->storedDependency ==
+                              produced.storedDependency &&
+                          instruction.info.traits.containsBorrowedState
+                      ? body.findLoan(retained->storedDependency)
+                      : nullptr;
+              entry != nullptr && entry->kind == MirLoanKind::Stored &&
+              entry->entry && !entry->designatedFields.empty() &&
+              entry->source == produced.source)
+            retained = entry;
           // A reference read out of one field of a local composed carrier
           // publishes that field's own dependency (designated by the exact
           // field path the runtime place reads), not the carrier's group.
