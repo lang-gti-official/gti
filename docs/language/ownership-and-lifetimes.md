@@ -471,7 +471,10 @@ as in a callable pattern `class Local<R&<result>(R&<result>)>` with
 `R&<result> invoke(R&<result> value)`, the parameters written in it are its
 suppliers, exactly as for a method's own binder. A class that also stores
 the region does not yet combine its receiver fields with such parameters;
-returning the parameter there remains rejected.
+returning the parameter there remains rejected. Such a result never borrows
+storage the receiver owns (GTI-S2127), so a consuming method may return it,
+by reference or as a carrier like `View<a> take() &&`: it outlives the
+consumed receiver, as Rust's `fn take(self) -> View<'a>` does.
 
 A reference parameter pack follows the same rule lane by lane. In
 `int&<a> relay<lifetime a, Args...>(Args&<a>... values)` every lane of
@@ -1901,7 +1904,11 @@ Exactly one eligible parameter supplies the inferred result origin, and every
 `return` must derive from that parameter. A mutable result requires mutable
 input authority. A read-only result may borrow a read-only parameter or
 reborrow a mutable parameter with reduced access. Two eligible parameters are
-ambiguous; the return body does not silently choose between them.
+ambiguous; the return body does not silently choose between them. Inside a
+class matched by a callable pattern `R&<result>(Args...)`, a lambda written
+`-> R&<result>` whose final parameter is the pattern's `Args...` pack is
+supplied by that pack's reference lanes alone, exactly as a method of the
+class is, so `[](F& target, Args... values) -> R&<result>` names `values`.
 
 This extends the earlier read-only lambda result contract. Local reference
 aliases, nested reborrows and field projections may preserve the selected
@@ -2050,6 +2057,10 @@ explicit moves still obey the ordinary moved-binding rules. Signature reference
 types describe invocation arguments, not stored borrowed state. The existing
 managed-thread boundary retains its once-task contract. None of this exposes a
 native address or allows an unsafe function to become a safe callable.
+A fresh function item may bind a generic `T&` parameter for one call, as in
+`duplicate(identity)` with `T duplicate<T>(T& value)`, without a body-proven
+confined contract when the call's result borrows nothing; MIR checks that the
+temporary outlives each use. A borrowing result still requires one.
 
 Contextual function names can also fill individual positions in a generic
 parameter pack, including after a fixed parameter or another pack element.
