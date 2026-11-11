@@ -3338,6 +3338,16 @@ enum and closure instances. A semantic entry loan now only names the MIR loan
 for later HIR facts and adds the later locals its carrier flows into; MIR
 rejects a body whose semantic entries it did not derive itself.
 
+A closure's capture dependencies are MIR's too. A borrowing capture lends its
+input place, keyed by what it names (through a reference binding, the
+referent that binding's loan protects; an enclosing closure's by-value
+capture, that capture). A copied reference keeps the loan it was copied
+from. A by-value capture that holds borrowed state carries every owner of
+the captured value's loan, its fields prefixed by the capture's environment
+field; copying reborrows those owners below the source's loan, moving
+transfers them. A parallel scope keeps a task argument's loan exactly when
+the task type holds borrowed state.
+
 A lifetime error that MIR finds in source code is a user diagnostic. It
 carries the source span of the HIR value or statement involved and uses the
 same diagnostic codes as the corresponding ownership errors, with the loan's

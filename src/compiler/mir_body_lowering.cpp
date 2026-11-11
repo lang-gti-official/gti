@@ -9871,12 +9871,15 @@ private:
         for (std::size_t index = 0; index < call.operands.size(); ++index) {
           const auto *adapter =
               program.findThreadTaskAdapter(value.scopedThreadTasks[index]);
+          // A task whose type holds borrowed state keeps its argument's
+          // loan for the whole scope.
+          const bool borrowing =
+              adapter != nullptr &&
+              resolvedTraits(adapter->taskType).containsBorrowedState;
           const auto loan =
-              adapter != nullptr && !adapter->scopeDependencies.empty()
-                  ? argumentDependencies[index]
-                  : MirLoanId{0};
+              borrowing ? argumentDependencies[index] : MirLoanId{0};
           if (adapter == nullptr || !adapter->scoped ||
-              (!adapter->scopeDependencies.empty() && loan == 0))
+              (borrowing && loan == 0))
             valid = false;
           if (const auto *entry = output.findLoan(loan);
               entry != nullptr && entry->entry &&
@@ -12916,81 +12919,125 @@ private:
         (void)initializeValueLifecycle(instruction, *value);
       }
     }
-    if (instruction.operation == MirOperation::Closure &&
-        !value->captureBorrowDependencies.empty()) {
+    if (instruction.operation == MirOperation::Closure) {
+      // Each borrowing capture lends its operand place; a by-value capture
+      // carries every owner of the captured value's own loan, its fields
+      // prefixed by the capture's environment field.
       const auto *target = program.findLambda(*instruction.lambdaTarget);
       std::vector<MirLoanDependency> dependencies;
-      for (const auto &dependency : value->captureBorrowDependencies) {
-        const auto capture = target == nullptr ? 0 : [&] {
-          for (std::size_t index = 0; index < target->captures.size(); ++index)
-            if (!dependency.designatedFields.empty() &&
-                target->captures[index].bindingSymbol ==
-                    dependency.designatedFields.front())
-              return index + 1;
-          return std::size_t{0};
-        }();
-        if (capture == 0 || capture > instruction.operands.size()) {
+      for (std::size_t index = 0;
+           target != nullptr && index < target->captures.size(); ++index) {
+        const auto &capture = target->captures[index];
+        if (index >= value->operands.size() ||
+            index >= instruction.operands.size()) {
           valid = false;
-          continue;
+          break;
         }
-        auto sourcePlace = instruction.operands[capture - 1].place;
-        if (!isBorrowingCapture(target->captures[capture - 1].mode)) {
-          const std::vector<SymbolId> fields(
-              dependency.designatedFields.begin() + 1,
-              dependency.designatedFields.end());
-          const auto *retained =
-              output.findLoan(loanForValue(value->operands[capture - 1]));
+        const MirLoanId operandLoan = loanForValue(value->operands[index]);
+        const std::size_t before = dependencies.size();
+        if (isBorrowingCapture(capture.mode)) {
+          MirPlaceId sourcePlace = instruction.operands[index].place;
+          const auto *source = output.findPlace(sourcePlace);
+          if (source == nullptr) {
+            valid = false;
+            continue;
+          }
+          // Capturing through a reference binding borrows its referent: the
+          // input place keeps the key of the place that binding's loan
+          // protects.
+          if (const MirLoan *through = output.findLoan(operandLoan);
+              through != nullptr && source->capture == 0 &&
+              !source->projections.empty() &&
+              source->projections.back().kind ==
+                  MirProjectionKind::Dereference) {
+            const MirPlace *referent = output.findPlace(through->source);
+            if (referent == nullptr || !referent->key) {
+              valid = false;
+              continue;
+            }
+            if (source->key != referent->key) {
+              auto keyed = *source;
+              keyed.id = 0;
+              keyed.key = referent->key;
+              sourcePlace = appendPlace(std::move(keyed));
+              source = output.findPlace(sourcePlace);
+            }
+          }
+          if (!source->key && source->capture != 0) {
+            // An enclosing lambda's by-reference capture has no keyed owner
+            // this body can protect; its by-value capture is owned by this
+            // body's environment and keyed by the capture binding.
+            if (!source->projections.empty()) {
+              rejectSource(value->id, MirBorrowRejectionKind::NestedCapture);
+              continue;
+            }
+            auto keyed = *source;
+            keyed.id = 0;
+            keyed.key =
+                PlaceKey{.domain = output.placeDomain, .root = source->symbol};
+            sourcePlace = appendPlace(std::move(keyed));
+          }
+          dependencies.push_back({.source = sourcePlace,
+                                  .parent = operandLoan,
+                                  .designatedFields = {capture.bindingSymbol},
+                                  .access = capture.type.referenceAccess});
+        } else if (capture.type.kind == SemanticType::Reference) {
+          // A copied reference keeps the loan it was copied from.
+          const MirLoan *retained = output.findLoan(operandLoan);
+          if (retained == nullptr) {
+            valid = false;
+            continue;
+          }
+          dependencies.push_back({.source = retained->source,
+                                  .parent = operandLoan,
+                                  .designatedFields = {capture.bindingSymbol},
+                                  .access = capture.type.referenceAccess});
+        } else if (resolvedTraits(capture.type).containsBorrowedState) {
+          const MirLoan *retained = output.findLoan(operandLoan);
           if (retained && retained->kind != MirLoanKind::Stored &&
               retained->storedDependency != 0)
             retained = output.findLoan(retained->storedDependency);
-          sourcePlace = 0;
-          if (retained && retained->entry)
-            sourcePlace = projectBorrowFields(retained->source, fields);
-          else if (retained) {
-            if (retained->designatedFields == fields)
-              sourcePlace = retained->source;
-            // Semantics expands a compact one-reference source into its exact
-            // field path before prefixing the capture. Program verification
-            // independently checks that the source has precisely that path.
-            else if (retained->designatedFields.empty() &&
-                     retained->additionalDependencies.empty() &&
-                     !fields.empty())
-              sourcePlace = retained->source;
-            for (const auto &nested : retained->additionalDependencies)
-              if (nested.designatedFields == fields)
-                sourcePlace = nested.source;
+          if (retained == nullptr) {
+            valid = false;
+            continue;
           }
-          if (sourcePlace == 0)
-            sourcePlace = projectBorrowFields(
-                instruction.operands[capture - 1].place, fields);
+          const MirLoan owner = *retained;
+          // Moving a carrier into the environment transfers its owners;
+          // copying one reborrows them below the source's loan.
+          const MirLoanId parent =
+              capture.mode == LambdaCaptureMode::Move ? 0 : operandLoan;
+          auto primary = owner.designatedFields;
+          if (primary.empty())
+            if (const auto path = soleStoredReferencePath(capture.type))
+              primary = path->first;
+          const auto prefixed = [&](const std::vector<SymbolId> &fields) {
+            std::vector<SymbolId> result{capture.bindingSymbol};
+            result.insert(result.end(), fields.begin(), fields.end());
+            return result;
+          };
+          // An entry contract names abstract external paths; project them
+          // from its carrier. A local loan already names each owner place.
+          const auto ownerPlace = [&](MirPlaceId base,
+                                      const std::vector<SymbolId> &fields) {
+            return owner.entry ? projectBorrowFields(base, fields) : base;
+          };
+          dependencies.push_back({.source = ownerPlace(owner.source, primary),
+                                  .parent = parent,
+                                  .designatedFields = prefixed(primary),
+                                  .access = owner.access});
+          for (const auto &nested : owner.additionalDependencies)
+            dependencies.push_back(
+                {.source = owner.entry
+                               ? projectBorrowFields(owner.source,
+                                                     nested.designatedFields)
+                               : nested.source,
+                 .parent = parent,
+                 .designatedFields = prefixed(nested.designatedFields),
+                 .access = nested.access});
         }
-        const auto *source = output.findPlace(sourcePlace);
-        if (source == nullptr) {
-          valid = false;
-          continue;
-        }
-        // Semantics names no keyed place for an enclosing lambda's
-        // by-reference capture, so this body cannot protect its owner.
-        if (!dependency.place.valid() && source->capture != 0) {
-          rejectSource(value->id, MirBorrowRejectionKind::NestedCapture);
-          continue;
-        }
-        if (source->key != dependency.place) {
-          auto projected = *source;
-          projected.id = 0;
-          projected.key = dependency.place;
-          sourcePlace = appendPlace(std::move(projected));
-        }
-        const auto parent = dependency.parent == 0 ? 0
-                            : semanticLoans.contains(dependency.parent)
-                                ? semanticLoans.at(dependency.parent)
-                                : 0;
-        if (dependency.parent != 0 && parent == 0)
-          valid = false;
-        dependencies.push_back({.source = sourcePlace,
-                                .parent = parent,
-                                .designatedFields = dependency.designatedFields,
-                                .access = dependency.access});
+        for (std::size_t added = before; added < dependencies.size(); ++added)
+          if (output.findPlace(dependencies[added].source) == nullptr)
+            valid = false;
       }
       if (!dependencies.empty()) {
         const auto &primary = dependencies.front();
