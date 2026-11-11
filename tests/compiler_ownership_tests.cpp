@@ -4995,16 +4995,18 @@ void testStoredReferenceGroundwork() {
   const std::string source = R"(
 struct SingleSentinel { public: SingleSentinel() = default; };
 
-class BorrowingIterator<T> {
-  T& value;
+// RFC 0004: the iterator names its referent region, so a dereference
+// borrows the range, not the iterator shell.
+class BorrowingIterator<T, lifetime a> {
+  T&<a> value;
   mut uint64_t position = 0;
 
 public:
-  BorrowingIterator(T& source) : value(source) {}
+  BorrowingIterator(T&<a> source) : value(source) {}
 
-  T& operator*() { return value; }
+  T&<a> operator*() { return value; }
   void operator++() mut { this.position++; }
-  bool operator!=(BorrowingIterator<T>& other) {
+  bool operator!=(BorrowingIterator<T, a>& other) {
     return this.position != other.position;
   }
   bool operator!=(SingleSentinel& sentinel) { return this.position == 0; }
