@@ -465,7 +465,8 @@ gti_tcp_status_v1 gti_rt_tcp_shutdown_v1(int32_t descriptor, uint32_t how) {
   default:
     return GTI_TCP_INVALID_ARGUMENT_V1;
   }
-  return shutdown(descriptor, native) == 0 ? GTI_TCP_OK_V1 : classify(errno);
+  return shutdown(descriptor, native) == 0 ? gti_tcp_status_v1(GTI_TCP_OK_V1)
+                                           : classify(errno);
 }
 
 gti_tcp_status_v1 gti_rt_tcp_close_v1(int32_t descriptor) {
@@ -492,8 +493,8 @@ gti_tcp_status_v1 gti_rt_tcp_local_address_v1(int32_t descriptor,
     return classify(errno);
   }
   return encodeAddress(reinterpret_cast<sockaddr *>(&storage), output)
-             ? GTI_TCP_OK_V1
-             : GTI_TCP_UNSUPPORTED_V1;
+             ? gti_tcp_status_v1(GTI_TCP_OK_V1)
+             : gti_tcp_status_v1(GTI_TCP_UNSUPPORTED_V1);
 }
 
 gti_tcp_status_v1 gti_rt_tcp_peer_address_v1(int32_t descriptor,
@@ -508,8 +509,8 @@ gti_tcp_status_v1 gti_rt_tcp_peer_address_v1(int32_t descriptor,
     return classify(errno);
   }
   return encodeAddress(reinterpret_cast<sockaddr *>(&storage), output)
-             ? GTI_TCP_OK_V1
-             : GTI_TCP_UNSUPPORTED_V1;
+             ? gti_tcp_status_v1(GTI_TCP_OK_V1)
+             : gti_tcp_status_v1(GTI_TCP_UNSUPPORTED_V1);
 }
 
 gti_tcp_status_v1 gti_rt_tcp_set_option_v1(int32_t descriptor,
@@ -520,8 +521,9 @@ gti_tcp_status_v1 gti_rt_tcp_set_option_v1(int32_t descriptor,
     if (value != 0 && value != 1) {
       return GTI_TCP_INVALID_ARGUMENT_V1;
     }
-    return setNonblocking(descriptor, value == 1) ? GTI_TCP_OK_V1
-                                                  : classify(errno);
+    return setNonblocking(descriptor, value == 1)
+               ? gti_tcp_status_v1(GTI_TCP_OK_V1)
+               : classify(errno);
   case GTI_TCP_OPTION_NODELAY_V1:
   case GTI_TCP_OPTION_KEEPALIVE_V1: {
     if (value != 0 && value != 1) {
@@ -533,7 +535,7 @@ gti_tcp_status_v1 gti_rt_tcp_set_option_v1(int32_t descriptor,
     const int name =
         option == GTI_TCP_OPTION_NODELAY_V1 ? TCP_NODELAY : SO_KEEPALIVE;
     return setsockopt(descriptor, level, name, &enabled, sizeof(enabled)) == 0
-               ? GTI_TCP_OK_V1
+               ? gti_tcp_status_v1(GTI_TCP_OK_V1)
                : classify(errno);
   }
   case GTI_TCP_OPTION_READ_TIMEOUT_MS_V1:
@@ -548,7 +550,7 @@ gti_tcp_status_v1 gti_rt_tcp_set_option_v1(int32_t descriptor,
         option == GTI_TCP_OPTION_READ_TIMEOUT_MS_V1 ? SO_RCVTIMEO : SO_SNDTIMEO;
     return setsockopt(descriptor, SOL_SOCKET, name, &timeout,
                       sizeof(timeout)) == 0
-               ? GTI_TCP_OK_V1
+               ? gti_tcp_status_v1(GTI_TCP_OK_V1)
                : classify(errno);
   }
   default:
@@ -653,7 +655,8 @@ gti_tcp_status_v1 gti_rt_tcp_resolve_v1(gti_c_string_view host, uint32_t port,
   }
   freeaddrinfo(results);
   *output_count = written;
-  return written == 0 ? GTI_TCP_NAME_NOT_FOUND_V1 : GTI_TCP_OK_V1;
+  return written == 0 ? gti_tcp_status_v1(GTI_TCP_NAME_NOT_FOUND_V1)
+                      : gti_tcp_status_v1(GTI_TCP_OK_V1);
 }
 
 } // extern "C"
