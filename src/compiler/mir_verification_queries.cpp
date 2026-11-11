@@ -735,6 +735,15 @@ bool referenceAddressRetainsLoan(const MirBody &body, const MirPlace &address,
           child->storedDependency == retained.storedDependency &&
           child->additionalDependencies == retained.additionalDependencies)
         return true;
+      // Under signature contracts an accessor of a carrier borrows the
+      // carrier shell: the chain is rooted there, retaining the carrier's
+      // shared owner group as its stored dependency.
+      if (!legacyBorrowChecker() && child->parent == 0 &&
+          child->access == AccessMode::ReadOnly &&
+          retained.access == AccessMode::ReadOnly &&
+          retained.kind == MirLoanKind::Stored &&
+          child->storedDependency == retained.id)
+        return true;
     }
     link = child->parent;
   }

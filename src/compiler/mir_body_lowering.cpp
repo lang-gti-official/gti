@@ -668,6 +668,12 @@ public:
   rejection() const {
     return firstRejection;
   }
+  // A source program MIR refuses with a user diagnostic rather than an ICE.
+  [[nodiscard]] const std::optional<std::pair<HirValueId,
+                                              MirBorrowRejectionKind>> &
+  userRejection() const {
+    return firstUserRejection;
+  }
 
 private:
   void reject(HirValueId value, std::string message) {
@@ -675,6 +681,13 @@ private:
     if (!firstRejection)
       firstRejection = std::pair{value, std::move(message)};
   }
+  void rejectSource(HirValueId value, MirBorrowRejectionKind kind) {
+    valid = false;
+    if (!firstUserRejection)
+      firstUserRejection = std::pair{value, kind};
+  }
+  std::optional<std::pair<HirValueId, MirBorrowRejectionKind>>
+      firstUserRejection;
   struct Scope {
     std::vector<MirPlaceId> drops;
     std::vector<MirLoanId> loans;
@@ -9131,9 +9144,29 @@ private:
         // A text reference may select a literal-backed local. The program
         // verifier independently proves that case from its initialization;
         // every dynamic text source still requires its exact owner witness.
+        // Under a signature contract a receiver-tied reference borrows the
+        // receiver shell. A local carrier that retains no external loan at
+        // all (a dependency-free alternative) has no owner to protect beyond
+        // its own storage, which this loan's source already names.
+        const MirPlace *shell = output.findPlace(origin);
+        const HirBinding *local =
+            shell != nullptr && shell->root == MirPlaceRootKind::Binding
+                ? findBinding(shell->binding)
+                : nullptr;
+        const bool ownerlessLocalShell =
+            !legacyBorrowChecker() && local != nullptr &&
+            local->variable != nullptr && local->parameter == nullptr &&
+            std::none_of(output.loans.begin(), output.loans.end(),
+                         [&](const MirLoan &candidate) {
+                           return std::find(candidate.carriers.begin(),
+                                            candidate.carriers.end(),
+                                            local->id) !=
+                                  candidate.carriers.end();
+                         });
         if (output.loans[loan - 1].storedDependency == 0 &&
             value.info.type.kind != SemanticType::StringView &&
-            value.info.type.kind != SemanticType::CString)
+            value.info.type.kind != SemanticType::CString &&
+            !ownerlessLocalShell)
           valid = false;
       } else if (parent != 0) {
         // A referent returned through an existing carrier reference remains
@@ -10546,6 +10579,22 @@ private:
       link = candidate->parent;
     }
     return true;
+  }
+
+  // Under signature contracts an accessor of a carrier borrows the carrier
+  // shell: its call-result chain is rooted there, with the carrier's owner
+  // group as the chain root's stored dependency rather than its parent.
+  [[nodiscard]] bool shellRootedCallResultChain(MirLoanId outermost,
+                                                MirLoanId owner,
+                                                HirValueId valueId,
+                                                AccessMode access) const {
+    if (legacyBorrowChecker() || owner == 0 ||
+        !retainableCallResultChain(outermost, 0, valueId, access))
+      return false;
+    const MirLoan *root = output.findLoan(outermost);
+    while (root != nullptr && root->parent != 0)
+      root = output.findLoan(root->parent);
+    return root != nullptr && root->storedDependency == owner;
   }
 
   static void removeLoanFromState(
@@ -12668,6 +12717,12 @@ private:
           valid = false;
           continue;
         }
+        // Semantics names no keyed place for an enclosing lambda's
+        // by-reference capture, so this body cannot protect its owner.
+        if (!dependency.place.valid() && source->capture != 0) {
+          rejectSource(value->id, MirBorrowRejectionKind::NestedCapture);
+          continue;
+        }
         if (source->key != dependency.place) {
           auto projected = *source;
           projected.id = 0;
@@ -12923,7 +12978,9 @@ private:
               desired->access != AccessMode::ReadOnly ||
               (!sameBorrowSource(transient->source, retained->source) &&
                !retainableCallResultChain(existing, found->second, valueId,
-                                          desired->access))) {
+                                          desired->access) &&
+               !shellRootedCallResultChain(existing, found->second, valueId,
+                                           desired->access))) {
             reject(valueId, "reference initializer's accessor result does not "
                             "retain the selected owner and access");
           }
@@ -15008,6 +15065,28 @@ private:
               retainableCallResultChain(retained.parent, accessorAncestor,
                                         arguments[initializer->borrowArgument],
                                         desired->access);
+          // Under signature contracts an accessor of a by-value carrier
+          // parameter borrows the parameter's shell; the accessor chain is
+          // rooted there, while the formal's entry group the semantic record
+          // names as parent remains the carrier's stored dependency.
+          const MirLoan *entryParent = output.findLoan(expectedParent);
+          const bool exactShellAccessorParent =
+              entryParent != nullptr && entryParent->entry &&
+              entryParent->kind == MirLoanKind::Stored &&
+              retained.kind == MirLoanKind::Stored &&
+              retained.storedDependency == expectedParent &&
+              initializer != nullptr &&
+              (initializer->constructorTarget ||
+               storesCarrierReference(*initializer)) &&
+              initializer->borrowOrigin == BorrowOriginKind::Argument &&
+              initializer->borrowArgument < arguments.size() &&
+              retained.parent ==
+                  loanForValue(arguments[initializer->borrowArgument]) &&
+              retainableCallResultChain(retained.parent, 0,
+                                        arguments[initializer->borrowArgument],
+                                        desired->access) &&
+              output.loans[retained.parent - 1].storedDependency ==
+                  expectedParent;
           // A carrier returned by a method of an accessor's referent, such
           // as `owner->lock()`, borrows that referent through the accessor
           // result, exactly as a constructor argument does.
@@ -15051,7 +15130,8 @@ private:
           // carrier retains it.
           if (retained.parent != expectedParent &&
               !exactRuntimeTransferParent && !exactAccessorParent &&
-              !exactAccessorReceiverParent && !selectedArgumentParent) {
+              !exactShellAccessorParent && !exactAccessorReceiverParent &&
+              !selectedArgumentParent) {
             valid = false;
           }
           recordLoanIdentity(retainedLoan, *desired, *statement.binding);
@@ -16757,7 +16837,10 @@ private:
                                          .hirValue = *statement.value,
                                          .loan = carrierShellEntry});
                 removeLoanFromState(carrierShellEntry, scopes, bindingLoans);
-              } else {
+              } else if (!retainedLoan.lifecycleBound) {
+                // A cleanup-bound carrier parameter keeps its entry group
+                // until its own exit drop: its destructor still reads the
+                // stored references.
                 (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
                                          .hirValue = *statement.value,
                                          .loan = storedCarrierEntry});
@@ -17607,7 +17690,18 @@ MirBody MirLowerer::lowerBody(
       }
       return selected;
     };
-    if (const auto &rejection = lowerer->rejection(); rejection)
+    if (const auto &rejection = lowerer->userRejection(); rejection) {
+      std::optional<SourceSpan> anchor;
+      if (const HirValue *rejected = body.findValue(rejection->first);
+          rejected != nullptr && rejected->source != nullptr)
+        if (const Token token = expressionAnchorToken(*rejected->source);
+            !token.lexeme.empty())
+          anchor = tokenSpan(token);
+      errors.push_back({.body = {kind, owner},
+                        .source = anchor ? anchor : sourceFor(rejection->first),
+                        .message = "lambda borrows an enclosing capture",
+                        .borrow = {.kind = rejection->second}});
+    } else if (const auto &rejection = lowerer->rejection(); rejection)
       errors.push_back({.body = {kind, owner},
                         .source = sourceFor(rejection->first),
                         .message = rejection->second});
@@ -17665,7 +17759,8 @@ MirBody MirLowerer::lowerBody(
                temporaryDestroyed &&
                error.borrow.kind == MirBorrowRejectionKind::Conflict});
     }
-    if (!lowerer->rejection() && lowerer->proof().valid())
+    if (!lowerer->rejection() && !lowerer->userRejection() &&
+        lowerer->proof().valid())
       errors.push_back({.body = {kind, owner},
                         .source = sourceFor(0),
                         .message = "body lowering rejected its checked HIR "

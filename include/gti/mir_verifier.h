@@ -24,6 +24,9 @@ enum class MirBorrowRejectionKind {
   // A returned borrow comes from a formal parameter its signature does not
   // name as a supplier of the result.
   Supplier,
+  // A lambda borrows a place MIR cannot key in its body's ownership domain:
+  // an enclosing lambda's by-reference capture.
+  NestedCapture,
 };
 
 struct MirBorrowRejection {

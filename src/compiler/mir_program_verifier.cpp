@@ -8094,6 +8094,36 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
     // this positional exact-field check, verifies each return.
     static const bool signatureReturns =
         !legacyBorrowChecker();
+    // The coverage proof still requires each published path to name a
+    // field chain of the result type itself.
+    if (signatureReturns && instance.returnType.kind == SemanticType::Class &&
+        !instance.returnBorrowFields.empty()) {
+      const auto names = [&](const std::vector<SymbolId> &fields) {
+        SemanticType current = instance.returnType;
+        for (const SymbolId field : fields) {
+          if (current.kind != SemanticType::Class &&
+              current.kind != SemanticType::Lambda)
+            return true;
+          auto next = mirFieldProjectionType(program, current, field);
+          if (!next)
+            return false;
+          if (next->kind == SemanticType::Reference &&
+              next->arguments.size() == 1)
+            current = next->arguments.front();
+          else
+            current = std::move(*next);
+        }
+        return true;
+      };
+      if (!names(loan->designatedFields) ||
+          std::any_of(loan->additionalDependencies.begin(),
+                      loan->additionalDependencies.end(),
+                      [&](const auto &dependency) {
+                        return !names(dependency.designatedFields);
+                      }))
+        return invalidSummary(
+            "return publication names a path outside its result type");
+    }
     if (!instance.returnBorrowFields.empty() && !completeReferenceResult &&
         !(signatureReturns && instance.completeReturnBorrow &&
           !instance.explicitReturnBorrowOrigin)) {
@@ -15539,6 +15569,21 @@ completeBorrowSourcePath(const MirProgram &program,
             claims.front().designatedFields.empty())
           claims.front().designatedFields =
               reconstructed.dependencies.front().designatedFields;
+        // A shared carrier constructed through a reference formal roots
+        // its own loan on the formal's referent rather than reborrowing the
+        // formal's whole-body entry loan; the two denote the same origin.
+        for (std::size_t index = 0; index < claims.size() &&
+                                    index < reconstructed.dependencies.size();
+             ++index) {
+          auto &dependency = reconstructed.dependencies[index];
+          const MirLoan *formal = body.findLoan(dependency.parent);
+          if (claims[index].parent == 0 && formal != nullptr && formal->entry &&
+              formal->kind == MirLoanKind::Parameter &&
+              dependency.access == AccessMode::ReadOnly &&
+              claims[index].access == AccessMode::ReadOnly &&
+              !published->lifecycleBound)
+            dependency.parent = 0;
+        }
         if (claims == reconstructed.dependencies) {
           // Copies of the constructed carrier retain its proven group, not
           // a fresh claim about the original parameter's storage.
@@ -15620,6 +15665,21 @@ completeBorrowSourcePath(const MirProgram &program,
           dependency.access = access;
         }
       }
+    }
+    // A copied reference-free scalar (or other layout without reference
+    // paths or alternatives) retains none of its source place's origins.
+    if (result && instruction.kind == MirInstructionKind::Load &&
+        instruction.result &&
+        instruction.info.category == ValueCategory::Value &&
+        instruction.info.type.kind != SemanticType::Reference &&
+        !instruction.info.traits.containsBorrowedState) {
+      const auto inventory =
+          findStoredCarrierReferenceInventory(program, instruction.info.type);
+      const auto alternatives =
+          findStoredCarrierAlternativeInventory(program, instruction.info.type);
+      if (inventory && inventory->empty() && alternatives &&
+          alternatives->empty())
+        result = MirBorrowDependencySet{};
     }
     if (!result && instruction.result &&
         instruction.info.category == ValueCategory::Value) {

@@ -408,12 +408,38 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       check.internal = true;
       continue;
     }
-    if (error.borrow.kind == MirBorrowRejectionKind::Escape)
+    if (error.borrow.kind == MirBorrowRejectionKind::NestedCapture) {
+      const std::size_t before = check.diagnostics.size();
+      add(*error.source,
+          "A lambda cannot borrow an enclosing lambda's by-reference "
+          "capture.",
+          "GTI-S2045");
+      if (check.diagnostics.size() > before)
+        check.diagnostics.back().hints.emplace_back(
+          "Capture the original owner in the enclosing lambda by value, or "
+          "pass the borrowed value to the inner lambda as a parameter.");
+    } else if (error.borrow.kind == MirBorrowRejectionKind::Escape)
       addEscape(*error.source, error.body.kind, error.body.owner);
     else if (exitDropUnderReturnedBorrow(error)) {
-      const SourceSpan span =
-          escapeSpan(escapeSpan, error.body.kind, error.body.owner, error.block, true)
-              .value_or(*error.source);
+      // The exit drop sits in a cleanup block; name the return that
+      // publishes the escaping loan instead.
+      std::optional<SourceSpan> returned =
+          escapeSpan(escapeSpan, error.body.kind, error.body.owner, error.block,
+                     false);
+      if (!returned)
+        if (const MirBody *body =
+                findMirBody(program, error.body.kind, error.body.owner))
+          for (const MirBlock &block : body->blocks)
+            if (!returned &&
+                block.terminator.kind == MirTerminatorKind::Return &&
+                block.terminator.returnLoan == error.borrow.loan)
+              returned =
+                  escapeSpan(escapeSpan, error.body.kind, error.body.owner,
+                              block.id, false);
+      if (!returned)
+        returned = escapeSpan(escapeSpan, error.body.kind, error.body.owner,
+                              error.block, true);
+      const SourceSpan span = returned.value_or(*error.source);
       const auto shell = staticResult(error.body.kind, error.body.owner)
                              ? std::nullopt
                              : byValueCarrierShell(error);
@@ -429,8 +455,66 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
             "referent with the same type; ordinary carrier fields and shell "
             "projections cannot escape.");
         check.diagnostics.push_back(std::move(diagnostic));
-      } else
-        addEscape(span, error.body.kind, error.body.owner);
+      } else {
+        // Name the function-owned storage whose exit drop the returned
+        // borrow cannot survive.
+        const auto [lowered, source] =
+            bodiesOf(error.body.kind, error.body.owner);
+        const MirBlock *block =
+            lowered ? lowered->findBlock(error.block) : nullptr;
+        const MirInstruction *drop = nullptr;
+        if (block != nullptr)
+          for (const MirInstruction &instruction : block->instructions)
+            if (instruction.id == error.instruction)
+              drop = &instruction;
+        const MirPlace *dropped =
+            drop && drop->destination ? lowered->findPlace(*drop->destination)
+                                      : nullptr;
+        const Token *name = nullptr;
+        if (dropped != nullptr && source != nullptr &&
+            dropped->root == MirPlaceRootKind::Binding)
+          for (const HirBinding &binding : source->bindings)
+            if (binding.id == dropped->binding)
+              name = binding.variable    ? &binding.variable->name()
+                     : binding.parameter ? &binding.parameter->name
+                                         : nullptr;
+        // An exclusive result of a cleanup-bound carrier: the carrier's own
+        // cleanup still uses the referent the result would hand out.
+        const MirLoan *escaping = escapingLoan(error);
+        const bool cleanupBound =
+            escaping != nullptr && escaping->access == AccessMode::Mutable &&
+            dropped != nullptr && dropped->root == MirPlaceRootKind::Binding &&
+            std::any_of(lowered->loans.begin(), lowered->loans.end(),
+                        [&](const MirLoan &loan) {
+                          return loan.lifecycleBound &&
+                                 std::find(loan.carriers.begin(),
+                                           loan.carriers.end(),
+                                           dropped->binding) !=
+                                     loan.carriers.end();
+                        });
+        const std::size_t before = check.diagnostics.size();
+        if (cleanupBound)
+          add(span,
+              "An exclusive borrow retained by a cleanup-bound carrier cannot "
+              "escape through a reference return.");
+        else
+          addEscape(span, error.body.kind, error.body.owner);
+        if (check.diagnostics.size() > before && name != nullptr &&
+            !name->lexeme.empty()) {
+          auto &diagnostic = check.diagnostics.back();
+          diagnostic.related.push_back(
+              {tokenSpan(*name),
+               "'" + name->lexeme +
+                   "' is destroyed when the function returns." +
+                   (cleanupBound ? " Its cleanup still uses the borrow." : "")});
+          diagnostic.hints.emplace_back(
+              cleanupBound
+                  ? "Keep the borrow within the carrier's lifetime, or return "
+                    "an owned value."
+                  : "Return an owned value, or return a borrow of storage the "
+                    "caller provides.");
+        }
+      }
     } else if (error.temporaryDestroyed) {
       add(*error.source,
           "Borrowed value is derived from temporary storage that is destroyed "
