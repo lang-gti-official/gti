@@ -6953,7 +6953,16 @@ auto SemanticVisitor::Impl::callablePatternResultPack(
 auto SemanticVisitor::Impl::callablePatternResultPack(
     const FunctionDecl &syntax, ClassId ownerClass) const
     -> std::optional<std::size_t> {
-  const auto &parameters = syntax.parameters();
+  for (const auto &generic : syntax.genericParameters())
+    if (generic.name.lexeme == syntax.returnType().name.last().lexeme)
+      return std::nullopt;
+  return callablePatternResultPack(syntax.returnType(), syntax.parameters(),
+                                   ownerClass);
+}
+
+auto SemanticVisitor::Impl::callablePatternResultPack(
+    const TypeRef &result, std::span<const Parameter> parameters,
+    ClassId ownerClass) const -> std::optional<std::size_t> {
   if (parameters.empty() || !parameters.back().pack ||
       parameters.back().type.reference || ownerClass == 0 ||
       ownerClass > classes.size())
@@ -6961,12 +6970,8 @@ auto SemanticVisitor::Impl::callablePatternResultPack(
   const ClassDecl *owner = classInfo(ownerClass).declaration;
   if (owner == nullptr)
     return std::nullopt;
-  const TypeRef &result = syntax.returnType();
   if (!result.arguments.empty() || result.name.segments.size() != 1)
     return std::nullopt;
-  for (const auto &generic : syntax.genericParameters())
-    if (generic.name.lexeme == result.name.last().lexeme)
-      return std::nullopt;
   for (const TypeRef &pattern : owner->genericArgumentPatterns()) {
     if (!pattern.isFunctionSignature() ||
         *pattern.functionSignatureParameterCount == 0 ||

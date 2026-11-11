@@ -4296,6 +4296,15 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
       continue;
     }
     const FunctionInfo *target = semanticModel.findFunction(resolved.function);
+    // RFC 0004: a function item holds no state, so its borrowed temporary
+    // matters only while the call can use it. A result whose signature
+    // borrows nothing cannot retain it, and MIR checks that the temporary
+    // outlives every other use; no body-classified confinement is needed.
+    if (signatureContractDefaults() && target != nullptr &&
+        target->returnType.kind != SemanticType::Reference &&
+        target->returnBorrowOrigin == BorrowOriginKind::None &&
+        !typeTraits(target->returnType).containsBorrowedState)
+      continue;
     for (const std::size_t index : resolved.ephemeralBorrowArguments) {
       if (index >= call->arguments().size()) {
         continue;
@@ -5535,15 +5544,10 @@ auto SemanticVisitor::Impl::consumingResultCarriesBorrow(
     if (lifetime.classBinder ||
         lifetime.kind == ExplicitLifetimeResult::Kind::Static)
       return false;
-    // RFC 0004: a consumed receiver can only lend what it holds. When it
-    // holds no borrowed state, a borrowing by-value result borrows from the
-    // other inputs (a mapper's result, as Rust's `Result::map(self, f)`).
-    if (signatureContractDefaults() &&
-        function.returnType.kind != SemanticType::Reference &&
-        function.returnBorrowOrigin != BorrowOriginKind::Receiver &&
-        function.dispatchOwner.kind == SemanticType::Class &&
-        !typeTraits(function.dispatchOwner).containsBorrowedState)
-      return false;
+    // A by-value result's regions would have to come from its type
+    // arguments (Rust's `U` in `Result::map(self, f) -> Result<U, E>`);
+    // signatures cannot yet carry a region through a type argument, so a
+    // borrowing result of a consuming method has no supplier contract.
   }
   return function.receiverMutability == ReceiverMutability::Consuming &&
          !receiverTextFieldResult(function.returnType,
@@ -7183,9 +7187,13 @@ auto SemanticVisitor::Impl::resolveOperator(
                               receiverProduction->place)}
                         : loanPlace(receiver);
   }
+  // Consuming a fresh carrier does not upgrade a stored shared dependency
+  // into exclusive access to its owner, exactly as for a member call.
   const AccessMode callReceiverAccess =
-      receiverProduction && receiverProduction->access == AccessMode::Mutable
-          ? AccessMode::Mutable
+      receiverProduction &&
+              (receiverProduction->access == AccessMode::Mutable ||
+               selected.receiverMutability == ReceiverMutability::Consuming)
+          ? receiverProduction->access
           : selectedReceiverAccess;
   const auto receiverOrigins = receiverState ? loanPlaces(receiverState->place)
                                : !temporaryReceiver
