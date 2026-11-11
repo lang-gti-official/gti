@@ -4827,10 +4827,12 @@ int main() {
          "move-only receivers must remain stable while borrowed");
   // The MIR borrow checker reports the first conflict of each concrete body
   // (the uncalled generic method has no instance to check).
+  // A move-only receiver names that storage kind in the MIR conflict.
   expect(mirBorrowAuthority()
              ? hasDiagnostic(invalidated.diagnostics,
-                             "A mutable call cannot use storage while a "
-                             "reference borrowed from it may still be live")
+                             "Mutable method cannot use move-only storage "
+                             "while a reference borrowed from it may still "
+                             "be live")
              : countDiagnosticCode(invalidated.diagnostics, "GTI-S2017") == 3 &&
                    hasDiagnostic(invalidated.diagnostics,
                                  "Cannot move storage while an overlapping "
@@ -7234,12 +7236,18 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  // RFC 0004 reports the two-supplier factory as an ambiguous elided region
+  // (Rust E0106); the legacy model as an ambiguous body dependency.
   expect(!unsupported.canGenerateCode() &&
-             hasDiagnostic(unsupported.diagnostics,
-                           "Borrowed return dependency is ambiguous") &&
-             hasDiagnostic(unsupported.diagnostics,
-                           "mutable reference or direct mutable "
-                           "borrowed-value parameter") &&
+             (mirBorrowAuthority()
+                  ? hasDiagnostic(unsupported.diagnostics,
+                                  "elided region is ambiguous among 2 "
+                                  "borrowed parameters")
+                  : hasDiagnostic(unsupported.diagnostics,
+                                  "Borrowed return dependency is ambiguous") &&
+                        hasDiagnostic(unsupported.diagnostics,
+                                      "mutable reference or direct mutable "
+                                      "borrowed-value parameter")) &&
              hasDiagnostic(unsupported.diagnostics,
                            "cannot have global or static storage") &&
              hasDiagnostic(unsupported.diagnostics,
@@ -8684,7 +8692,9 @@ uint64_t& escape_incompatible(ReadCarrier carrier) {
               hasDiagnosticAt(incompatible.diagnostics, "GTI-S2085",
                               "stored-carrier-incompatible-referent.gti",
                               incompatibleSource.rfind("position"),
-                              "proves only 'int32_t'")),
+                              mirBorrowAuthority()
+                                  ? "projection of the by-value carrier shell"
+                                  : "proves only 'int32_t'")),
          "a carrier-shell reference with a type unlike the external referent "
          "should report the incoherent owner-dependency type");
 
@@ -20354,15 +20364,18 @@ enum class lookup_errc { missing };
 expected<int&, lookup_errc> choose(int& first, int& second) { return first; }
 int main() { return 0; }
 )");
-  // Under RFC 0004 signature contracts the result borrows every eligible
-  // reference parameter instead of rejecting the ambiguity.
-  expect(!lang::legacyBorrowChecker()
-             ? ambiguousOwner.canGenerateCode()
-             : !ambiguousOwner.canGenerateCode() &&
-                   hasDiagnostic(ambiguousOwner.diagnostics,
-                                 "Borrowed return dependency is ambiguous") &&
-                   hasRelatedDiagnostic(ambiguousOwner.diagnostics,
-                                        "Eligible owner dependency source"),
+  // Under RFC 0004 signature contracts the elided result region is
+  // ambiguous between the two reference parameters (Rust E0106).
+  expect(!ambiguousOwner.canGenerateCode() &&
+             (!lang::legacyBorrowChecker()
+                  ? hasDiagnostic(ambiguousOwner.diagnostics,
+                                  "elided region is ambiguous among 2 "
+                                  "borrowed parameters")
+                  : hasDiagnostic(ambiguousOwner.diagnostics,
+                                  "Borrowed return dependency is ambiguous") &&
+                        hasRelatedDiagnostic(
+                            ambiguousOwner.diagnostics,
+                            "Eligible owner dependency source")),
          "a free fallible borrow should require one unambiguous owner "
          "parameter");
 
