@@ -115,6 +115,32 @@ concept readable<C> = requires(C&<owner> owner) { { owner.read() } -> auto&<owne
 static_assert(readable<Box>);
 int main() { return 0; }
 """),
+    "requirement-carrier-result": (
+        """class Window { int& first; public: Window(int& first) : first(first) {} };
+struct Src { int value = 1; Src() = default; Window view() { return Window(this.value); } };
+concept views<S> = requires(S& source) { { source.view() } -> Window [[borrowed_from(source)]]; };
+static_assert(views<Src>);
+int main() { Src s{}; Window w = s.view(); return 0; }
+""",
+        """class Window { int& first; public: Window(int& first) : first(first) {} };
+struct Src { int value = 1; Src() = default; Window view() { return Window(this.value); } };
+concept views<S> = requires(S&<source> source) { { source.view() } -> Window<source>; };
+static_assert(views<Src>);
+int main() { Src s{}; Window w = s.view(); return 0; }
+"""),
+    "inferred-requirement-carrier-result": (
+        """class Window { int& first; public: Window(int& first) : first(first) {} };
+struct Src { int value = 1; Src() = default; Window view() { return Window(this.value); } };
+concept views<S> = requires(S& source) { { source.view() } -> auto [[borrowed_from(source)]]; };
+static_assert(views<Src>);
+int main() { Src s{}; Window w = s.view(); return 0; }
+""",
+        """class Window { int& first; public: Window(int& first) : first(first) {} };
+struct Src { int value = 1; Src() = default; Window view() { return Window(this.value); } };
+concept views<S> = requires(S&<source> source) { { source.view() } -> auto<source>; };
+static_assert(views<Src>);
+int main() { Src s{}; Window w = s.view(); return 0; }
+"""),
 }
 
 
