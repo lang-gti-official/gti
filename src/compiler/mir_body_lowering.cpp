@@ -5306,6 +5306,86 @@ private:
                                              : loan->storedDependency;
   }
 
+  // The shape of the retained Stored group a binding is initialized from,
+  // from MIR facts alone. The group is lifecycle-bound when its carrier type
+  // is. It names the carrier type's single unconditional stored reference
+  // path (base-free classes only) when the group's source is that path's
+  // referent, or when it reborrows a parent loan from a binding without a
+  // Stored dependency of its own. Each owner without a parent reborrows the
+  // group's Stored parent, or its reference formal's entry loan; each owner
+  // without a path stores through the group's path; owners a call-result
+  // parent selected from follow the group's own.
+  void deriveRetainedShape(MirLoanId id, HirBindingId binding) {
+    MirLoan &loan = output.loans[id - 1];
+    if (loan.kind != MirLoanKind::Stored)
+      return;
+    const HirBinding *carrier = findBinding(binding);
+    const auto entries = carrier != nullptr
+                             ? storedReferenceEntries(carrier->info.type)
+                             : std::vector<StoredReferenceEntry>{};
+    if (carrier != nullptr && lifecycleBoundCarrier(carrier->info.type))
+      loan.lifecycleBound = true;
+    const MirPlace *source = output.findPlace(loan.source);
+    // Semantics' sole path is exact only for base-free classes.
+    const auto instance =
+        carrier == nullptr
+            ? program.classInstances().end()
+            : std::find_if(program.classInstances().begin(),
+                           program.classInstances().end(),
+                           [&](const HirClassInstance &candidate) {
+                             return candidate.type == carrier->info.type;
+                           });
+    const bool derivedClass =
+        instance != program.classInstances().end() && !instance->bases.empty();
+    if (loan.designatedFields.empty() && entries.size() == 1 &&
+        entries.front().conditions.empty() && !derivedClass) {
+      const SemanticType &reference = entries.front().reference;
+      // A reference formal names its referent.
+      SemanticType sourceType =
+          source != nullptr ? source->type : SemanticType::Unknown;
+      if (sourceType.kind == SemanticType::Reference &&
+          sourceType.arguments.size() == 1)
+        sourceType = SemanticType(sourceType.arguments.front());
+      const bool referent =
+          source != nullptr && reference.arguments.size() == 1 &&
+          SemanticType(reference.arguments.front()) == sourceType;
+      const bool boundReborrow =
+          loan.parent != 0 && loan.storedDependency == 0 && source != nullptr &&
+          source->root == MirPlaceRootKind::Binding;
+      if (referent || boundReborrow)
+        loan.designatedFields = entries.front().fields;
+    }
+    const MirLoan *parent = output.findLoan(loan.parent);
+    const bool storedParent =
+        parent != nullptr && parent->kind == MirLoanKind::Stored;
+    for (auto &owner : loan.additionalDependencies) {
+      if (owner.parent == 0 && storedParent)
+        owner.parent = loan.parent;
+      // An owner named through a reference formal reborrows its entry loan.
+      if (owner.parent == 0)
+        for (const MirLoan &entry : output.loans)
+          if (entry.entry && entry.kind == MirLoanKind::Parameter &&
+              entry.source == owner.source) {
+            owner.parent = entry.id;
+            break;
+          }
+      if (owner.designatedFields.empty())
+        owner.designatedFields = loan.designatedFields;
+    }
+    // The owners a call-result parent selected from follow the group's own.
+    if (parent != nullptr && parent->kind == MirLoanKind::CallResult)
+      std::stable_partition(
+          loan.additionalDependencies.begin(),
+          loan.additionalDependencies.end(), [&](const MirLoanDependency &d) {
+            return d.source == loan.source ||
+                   std::none_of(parent->additionalDependencies.begin(),
+                                parent->additionalDependencies.end(),
+                                [&](const MirLoanDependency &selected) {
+                                  return selected.source == d.source;
+                                });
+          });
+  }
+
   // Names a MIR loan with the semantic loan later HIR facts refer to,
   // without copying any of that loan's shape.
   void bindLoanIdentity(MirLoanId id, const HirLoan &identity) {
@@ -14674,6 +14754,14 @@ private:
     for (const auto &owner : program.lambdaInstances())
       if (owner.type == type)
         return owner.lifecycleBoundBorrowCarrier;
+    // A payload enum is lifecycle-bound when any alternative's payload is.
+    if (type.kind == SemanticType::Enum)
+      for (const auto &owner : program.enumDeclarations())
+        if (owner.type == type && owner.payload)
+          for (const auto &alternative : owner.enumerators)
+            for (const auto &payload : alternative.payloadTypes)
+              if (payload != type && lifecycleBoundCarrier(payload))
+                return true;
     return false;
   }
 
@@ -16448,7 +16536,8 @@ private:
               !selectedArgumentParent) {
             valid = false;
           }
-          recordLoanIdentity(retainedLoan, *desired, *statement.binding);
+          deriveRetainedShape(retainedLoan, *statement.binding);
+          bindLoanIdentity(retainedLoan, *desired);
         } else {
           MirLoan &retained = output.loans[retainedLoan - 1];
           if (retained.semanticLoan != 0 &&
