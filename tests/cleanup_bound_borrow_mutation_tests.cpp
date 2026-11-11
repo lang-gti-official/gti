@@ -1273,8 +1273,8 @@ int main() {
     if (checked)
       break;
   }
-  expectBodySummary(checked,
-         "mapped alias fixture exercises two distinct same-typed owners");
+  expectBodySummary(
+      checked, "mapped alias fixture exercises two distinct same-typed owners");
 }
 
 void checkPassiveCleanupParent() {

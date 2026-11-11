@@ -685,8 +685,7 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
                            substitution);
   concreteFunction.returnedTextReference =
       textReferenceReturnSummary(concreteFunction, concreteOwner);
-  static const bool signatureContracts =
-      !legacyBorrowChecker();
+  static const bool signatureContracts = !legacyBorrowChecker();
   // Text-view relays (L-OWN-02) keep their own derivation until text views
   // get a signature rule; stored-field refinement is body inference.
   if (!concreteFunction.explicitReturnBorrowOrigin) {
@@ -5438,8 +5437,8 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       validateReturnedCallRegion(*currentFunctionDeclaration, stmt.value());
     if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr &&
         currentClass)
-      validateReturnedReceiverRegion(*currentFunctionDeclaration,
-                                     *currentClass, stmt.value());
+      validateReturnedReceiverRegion(*currentFunctionDeclaration, *currentClass,
+                                     stmt.value());
     noteReturnedFormalReference(*stmt.value());
     if (expressionNeverReturns(stmt.value().get()))
       return;
@@ -5493,8 +5492,8 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     validateStoredBorrowReturn(currentReturnType, valueType, stmt.value());
     if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr &&
         currentClass)
-      validateReturnedReceiverRegion(*currentFunctionDeclaration,
-                                     *currentClass, stmt.value());
+      validateReturnedReceiverRegion(*currentFunctionDeclaration, *currentClass,
+                                     stmt.value());
   }
   if (currentReturnType.kind == SemanticType::StringView ||
       currentReturnType.kind == SemanticType::CString) {

@@ -15,9 +15,7 @@ namespace {
 // is the single body-local borrow authority. It states conflicts and escapes
 // in its own words, and like Rust it accepts a program whose carrier is
 // never used again after a conditional transfer.
-bool mirBorrowAuthority() {
-  return !lang::legacyBorrowChecker();
-}
+bool mirBorrowAuthority() { return !lang::legacyBorrowChecker(); }
 
 // RFC 0004 retires the semantic loan model's statement endpoints (HIR
 // endedLoans): MIR derives where each loan ends. A check of that protocol
@@ -10532,8 +10530,7 @@ int main() {
 )");
     // Under RFC 0004 signature contracts the operator's elided result
     // borrows its whole receiver, so moving the wrapper is the conflict.
-    const bool receiverElision =
-        !lang::legacyBorrowChecker();
+    const bool receiverElision = !lang::legacyBorrowChecker();
     expect(!invalidOwner.canGenerateCode() &&
                hasDiagnosticCode(invalidOwner.diagnostics, "GTI-S2017") &&
                (receiverElision

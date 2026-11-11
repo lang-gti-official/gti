@@ -19,9 +19,9 @@ int main(int argc, char **argv) {
     // is invisible at the semantic stop. Without --mir, accepted programs
     // must pass semantics and rejected ones are checked through MIR.
     const bool throughMir = mir || !accepted;
-    const auto frontend =
-        lang::Frontend({.stopAfter = throughMir ? lang::FrontendPhase::Mir
-                                                : lang::FrontendPhase::Semantics});
+    const auto frontend = lang::Frontend(
+        {.stopAfter = throughMir ? lang::FrontendPhase::Mir
+                                 : lang::FrontendPhase::Semantics});
     const auto root =
         std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
     const auto prelude =

@@ -1,5 +1,5 @@
-#include "gti/borrow_checker_mode.h"
 #include "gti/mir.h"
+#include "gti/borrow_checker_mode.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
@@ -781,10 +781,9 @@ findMirMovedTemporaryMaterialization(const MirBody &body, const MirPlace &place,
       source != nullptr && source->root == MirPlaceRootKind::Value
           ? body.findValue(source->value)
           : nullptr;
-  return loan.kind == MirLoanKind::Stored && !loan.entry &&
-         loan.parent == 0 && loan.storedDependency == 0 &&
-         loan.additionalDependencies.empty() && value != nullptr &&
-         source->projections.empty() &&
+  return loan.kind == MirLoanKind::Stored && !loan.entry && loan.parent == 0 &&
+         loan.storedDependency == 0 && loan.additionalDependencies.empty() &&
+         value != nullptr && source->projections.empty() &&
          source->type == value->info.type &&
          value->info.traits.containsBorrowedState &&
          loan.producedBy == value->sourceValue;
@@ -840,10 +839,10 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
   // while lifetime dataflow keeps its full ancestry live through cleanup.
   const auto stableOwner = [&](MirPlaceId id) {
     const auto *owner = body.findPlace(id);
-    return owner != nullptr && ((owner->root != MirPlaceRootKind::Value &&
-                                 owner->root != MirPlaceRootKind::Temporary) ||
-                                (id == loan->source &&
-                                 staticCarrierRootLoan(body, *loan)));
+    return owner != nullptr &&
+           ((owner->root != MirPlaceRootKind::Value &&
+             owner->root != MirPlaceRootKind::Temporary) ||
+            (id == loan->source && staticCarrierRootLoan(body, *loan)));
   };
   if (!stableOwner(loan->source) ||
       std::any_of(loan->additionalDependencies.begin(),
@@ -3806,20 +3805,24 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
               source->projections.empty() && accessed->id == source->id)
             return !returnsShellReference(source) &&
                    std::any_of(
-                body.loans.begin(), body.loans.end(),
-                [&](const MirLoan &entry) {
-                  const auto *entrySource = body.findPlace(entry.source);
-                  return entry.entry && entry.kind == MirLoanKind::Stored &&
-                         !(entry.lifecycleBound &&
-                           loan.access == AccessMode::Mutable &&
-                           body.returnType.kind == SemanticType::Reference) &&
-                         entry.parent == 0 && entry.storedDependency == 0 &&
-                         !entry.designatedFields.empty() &&
-                         entrySource != nullptr &&
-                         entrySource->root == MirPlaceRootKind::Binding &&
-                         entrySource->binding == source->binding &&
-                         entrySource->projections.empty();
-                });
+                       body.loans.begin(), body.loans.end(),
+                       [&](const MirLoan &entry) {
+                         const auto *entrySource = body.findPlace(entry.source);
+                         return entry.entry &&
+                                entry.kind == MirLoanKind::Stored &&
+                                !(entry.lifecycleBound &&
+                                  loan.access == AccessMode::Mutable &&
+                                  body.returnType.kind ==
+                                      SemanticType::Reference) &&
+                                entry.parent == 0 &&
+                                entry.storedDependency == 0 &&
+                                !entry.designatedFields.empty() &&
+                                entrySource != nullptr &&
+                                entrySource->root ==
+                                    MirPlaceRootKind::Binding &&
+                                entrySource->binding == source->binding &&
+                                entrySource->projections.empty();
+                       });
           if (accessed->root != MirPlaceRootKind::Binding ||
               accessed->binding != source->binding ||
               !accessed->projections.empty())

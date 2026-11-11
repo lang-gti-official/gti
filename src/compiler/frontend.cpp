@@ -1,6 +1,6 @@
 #include "gti/frontend.h"
-#include "gti/borrow_checker_mode.h"
 #include "diagnostic_registry.h"
+#include "gti/borrow_checker_mode.h"
 #include "gti/diagnostic.h"
 #include "gti/hir.h"
 #include "gti/lexer.h"
@@ -129,8 +129,8 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
   const auto add = [&](SourceSpan span, std::string message,
                        const char *code = "GTI-S2017",
                        const MirLoweringError *explained = nullptr) {
-    Diagnostic diagnostic = makeDiagnostic(
-        code, DiagnosticPhase::Semantics, span, std::move(message));
+    Diagnostic diagnostic = makeDiagnostic(code, DiagnosticPhase::Semantics,
+                                           span, std::move(message));
     if (explained != nullptr) {
       if (explained->loanOrigin)
         diagnostic.related.push_back(
@@ -343,11 +343,12 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     return false;
   };
   // The MIR and HIR bodies a borrow rejection belongs to.
-  const auto bodiesOf = [&](MirBodyKind kind, std::size_t owner)
-      -> std::pair<const MirBody *, const HirBody *> {
-    const auto find = [&](const auto &mirs,
-                          const auto &hirs) -> std::pair<const MirBody *,
-                                                         const HirBody *> {
+  const auto bodiesOf =
+      [&](MirBodyKind kind,
+          std::size_t owner) -> std::pair<const MirBody *, const HirBody *> {
+    const auto find =
+        [&](const auto &mirs,
+            const auto &hirs) -> std::pair<const MirBody *, const HirBody *> {
       const MirBody *lowered = nullptr;
       const HirBody *source = nullptr;
       for (const auto &candidate : mirs)
@@ -379,10 +380,9 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       return;
     const auto [lowered, source] = bodiesOf(address.kind, address.owner);
     const MirLoan *loan = lowered ? lowered->findLoan(borrow.loan) : nullptr;
-    const HirValue *produced =
-        loan && source && loan->producedBy != 0
-            ? source->findValue(loan->producedBy)
-            : nullptr;
+    const HirValue *produced = loan && source && loan->producedBy != 0
+                                   ? source->findValue(loan->producedBy)
+                                   : nullptr;
     if (produced == nullptr || produced->source == nullptr)
       return;
     const Token token = expressionAnchorToken(*produced->source);
@@ -412,8 +412,8 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     if ((error.borrow.kind == MirBorrowRejectionKind::Escape ||
          error.borrow.kind == MirBorrowRejectionKind::Supplier) &&
         !error.source)
-      if (const auto span =
-              escapeSpan(escapeSpan, error.body.kind, error.body.owner, error.block, true)) {
+      if (const auto span = escapeSpan(escapeSpan, error.body.kind,
+                                       error.body.owner, error.block, true)) {
         if (error.borrow.kind == MirBorrowRejectionKind::Supplier)
           addSupplier(*span, error.body.kind, error.body.owner);
         else
@@ -432,16 +432,15 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
           "GTI-S2045");
       if (check.diagnostics.size() > before)
         check.diagnostics.back().hints.emplace_back(
-          "Capture the original owner in the enclosing lambda by value, or "
-          "pass the borrowed value to the inner lambda as a parameter.");
+            "Capture the original owner in the enclosing lambda by value, or "
+            "pass the borrowed value to the inner lambda as a parameter.");
     } else if (error.borrow.kind == MirBorrowRejectionKind::Escape)
       addEscape(*error.source, error.body.kind, error.body.owner);
     else if (exitDropUnderReturnedBorrow(error)) {
       // The exit drop sits in a cleanup block; name the return that
       // publishes the escaping loan instead.
-      std::optional<SourceSpan> returned =
-          escapeSpan(escapeSpan, error.body.kind, error.body.owner, error.block,
-                     false);
+      std::optional<SourceSpan> returned = escapeSpan(
+          escapeSpan, error.body.kind, error.body.owner, error.block, false);
       if (!returned)
         if (const MirBody *body =
                 findMirBody(program, error.body.kind, error.body.owner))
@@ -449,9 +448,8 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
             if (!returned &&
                 block.terminator.kind == MirTerminatorKind::Return &&
                 block.terminator.returnLoan == error.borrow.loan)
-              returned =
-                  escapeSpan(escapeSpan, error.body.kind, error.body.owner,
-                              block.id, false);
+              returned = escapeSpan(escapeSpan, error.body.kind,
+                                    error.body.owner, block.id, false);
       if (!returned)
         returned = escapeSpan(escapeSpan, error.body.kind, error.body.owner,
                               error.block, true);
@@ -468,10 +466,10 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
           exitBody->returnType.kind == SemanticType::Reference &&
           std::any_of(exitBody->loans.begin(), exitBody->loans.end(),
                       [](const MirLoan &loan) { return loan.lifecycleBound; });
-      const auto shell = staticResult(error.body.kind, error.body.owner) ||
-                                 cleanupBoundResult
-                             ? std::nullopt
-                             : byValueCarrierShell(error);
+      const auto shell =
+          staticResult(error.body.kind, error.body.owner) || cleanupBoundResult
+              ? std::nullopt
+              : byValueCarrierShell(error);
       if (shell) {
         const MirBody *body =
             findMirBody(program, error.body.kind, error.body.owner);
@@ -504,8 +502,8 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
           for (const MirInstruction &instruction : block->instructions)
             if (instruction.id == error.instruction)
               drop = &instruction;
-        const MirPlace *dropped =
-            drop && drop->destination ? lowered->findPlace(*drop->destination)
+        const MirPlace *dropped = drop && drop->destination
+                                      ? lowered->findPlace(*drop->destination)
                                       : nullptr;
         const Token *name = nullptr;
         if (dropped != nullptr && source != nullptr &&
@@ -525,10 +523,9 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
             std::any_of(lowered->loans.begin(), lowered->loans.end(),
                         [&](const MirLoan &loan) {
                           return loan.lifecycleBound &&
-                                 std::find(loan.carriers.begin(),
-                                           loan.carriers.end(),
-                                           dropped->binding) !=
-                                     loan.carriers.end();
+                                 std::find(
+                                     loan.carriers.begin(), loan.carriers.end(),
+                                     dropped->binding) != loan.carriers.end();
                         });
         const std::size_t before = check.diagnostics.size();
         if (cleanupBound)
@@ -544,7 +541,8 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
               {tokenSpan(*name),
                "'" + name->lexeme +
                    "' is destroyed when the function returns." +
-                   (cleanupBound ? " Its cleanup still uses the borrow." : "")});
+                   (cleanupBound ? " Its cleanup still uses the borrow."
+                                 : "")});
           diagnostic.hints.emplace_back(
               cleanupBound
                   ? "Keep the borrow within the carrier's lifetime, or return "
@@ -577,7 +575,8 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     const auto span =
         error.borrow.kind == MirBorrowRejectionKind::Escape ||
                 error.borrow.kind == MirBorrowRejectionKind::Supplier
-            ? escapeSpan(escapeSpan, error.bodyKind, error.owner, error.block, true)
+            ? escapeSpan(escapeSpan, error.bodyKind, error.owner, error.block,
+                         true)
             : std::nullopt;
     if (!span) {
       check.internal = true;

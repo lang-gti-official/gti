@@ -350,8 +350,7 @@ auto SemanticVisitor::Impl::validateSignatureRegions(
   // (or a method's receiver). With several, the result is ambiguous and needs
   // a declared relationship (Rust E0106). The legacy body inference reports
   // the same programs from their bodies.
-  static const bool signatureContracts =
-      !legacyBorrowChecker();
+  static const bool signatureContracts = !legacyBorrowChecker();
   // A by-value result carrying borrowed state elides its regions the same
   // way when none is written.
   const TypeRef &written = syntax.returnType();
@@ -524,7 +523,8 @@ auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
         return true;
       if (projection.kind != PlaceProjectionKind::Field)
         continue;
-      const SymbolRecord *field = semanticModel.database().findSymbol(projection.field);
+      const SymbolRecord *field =
+          semanticModel.database().findSymbol(projection.field);
       if (field == nullptr && instanceBaseModel != nullptr)
         field = instanceBaseModel->database().findSymbol(projection.field);
       if (field == nullptr)
@@ -545,9 +545,9 @@ auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
       "The result declares region '" + lifetime.region +
           "', which the receiver supplies only through the references it "
           "stores, but this return borrows storage the receiver owns.");
-  diagnostic.hints.emplace_back(
-      "Return a reference stored in region '" + lifetime.region +
-      "', or declare a result borrowed from 'this'.");
+  diagnostic.hints.emplace_back("Return a reference stored in region '" +
+                                lifetime.region +
+                                "', or declare a result borrowed from 'this'.");
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
@@ -774,7 +774,7 @@ auto SemanticVisitor::Impl::validateCallLifetimeRequirements(
 }
 
 auto SemanticVisitor::Impl::validateWrittenPatternRegions(const TypeRef &use,
-                                                         const Token &site)
+                                                          const Token &site)
     -> void {
   for (const auto &argument : use.arguments)
     validateWrittenPatternRegions(argument, site);
@@ -834,8 +834,8 @@ auto SemanticVisitor::Impl::validateWrittenPatternRegions(const TypeRef &use,
                         ? std::string("bound per invocation")
                         : "'" + *have + "'") +
                    " does not match the region '" + *want +
-                   "' fixed by the patterned primary '" +
-                   owner.name().lexeme + "'.",
+                   "' fixed by the patterned primary '" + owner.name().lexeme +
+                   "'.",
                "GTI-S2127");
         reported = true;
         return;
@@ -852,9 +852,10 @@ auto SemanticVisitor::Impl::validateWrittenPatternRegions(const TypeRef &use,
     if (signature) {
       if (!left.empty() && !right.empty())
         self(self, left.back(), right.back(), true);
-      const bool pack = std::any_of(left.begin(), left.end(), [](const auto &p) {
-        return p.packExpansion.has_value();
-      });
+      const bool pack =
+          std::any_of(left.begin(), left.end(), [](const auto &p) {
+            return p.packExpansion.has_value();
+          });
       if (pack || left.size() != right.size())
         return;
       for (std::size_t index = 0; index + 1 < left.size(); ++index)
@@ -907,8 +908,7 @@ auto SemanticVisitor::Impl::validateWrittenConstructionRegions(
   const auto binders = owner.lifetimeParameters();
   std::vector<std::pair<std::string, std::string>> substitution;
   for (std::size_t index = 0;
-       index < binders.size() && index < type.lifetimeArguments.size();
-       ++index)
+       index < binders.size() && index < type.lifetimeArguments.size(); ++index)
     if (type.lifetimeArguments[index].name.segments.size() == 1)
       substitution.emplace_back(
           binders[index].name.lexeme,
@@ -1109,7 +1109,8 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
   const auto relations = declaredOutlives(syntax);
   // A disjunctive requires clause proves the relation only when every
   // alternative does (each one, plus the conjunctive relations).
-  const auto alternatives = declaredOutlivesAlternatives(syntax.requiresClause());
+  const auto alternatives =
+      declaredOutlivesAlternatives(syntax.requiresClause());
   const auto outlivesTarget = [&](const std::string &longer) {
     if (longer == target || longer == "static")
       return true;
@@ -1327,8 +1328,8 @@ auto SemanticVisitor::Impl::validateCallTypeOutlives(const Call &call,
     auto classId = resolveClassPath(type.name, currentNamespace);
     if (!classId)
       classId = resolveClassPathGlobally(type.name, currentNamespace);
-    auto enumId = classId ? std::nullopt
-                          : resolveEnumPath(type.name, currentNamespace);
+    auto enumId =
+        classId ? std::nullopt : resolveEnumPath(type.name, currentNamespace);
     if (!classId && !enumId)
       enumId = resolveEnumPathGlobally(type.name, currentNamespace);
     if (classId && *classId <= classes.size() &&
@@ -1385,7 +1386,8 @@ auto SemanticVisitor::Impl::validateCallTypeOutlives(const Call &call,
       std::vector<std::string> reached;
       stored(stored, referent, reached, 0);
       for (const auto &name : reached)
-        relations.emplace_back(name, parameter.type.referenceLifetime->name.lexeme);
+        relations.emplace_back(name,
+                               parameter.type.referenceLifetime->name.lexeme);
     }
   const auto holds = [&](const std::string &longer,
                          const std::string &shorter) {

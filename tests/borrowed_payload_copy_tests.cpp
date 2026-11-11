@@ -199,11 +199,12 @@ Holder nested() {
 }
 int main() { return 0; }
 )gti");
-    expect(localReturn.syntaxValid && !localReturn.canGenerateCode() &&
-               std::none_of(localReturn.diagnostics.begin(),
-                            localReturn.diagnostics.end(),
-                            [](const auto &d) { return d.code == "GTI-B0001"; }),
-           "a nested payload copy cannot escape its local referent");
+    expect(
+        localReturn.syntaxValid && !localReturn.canGenerateCode() &&
+            std::none_of(localReturn.diagnostics.begin(),
+                         localReturn.diagnostics.end(),
+                         [](const auto &d) { return d.code == "GTI-B0001"; }),
+        "a nested payload copy cannot escape its local referent");
   }
   return failures ? 1 : 0;
 }

@@ -1,5 +1,5 @@
-#include "gti/borrow_checker_mode.h"
 #include "../src/compiler/mir_verification_queries.h"
+#include "gti/borrow_checker_mode.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
@@ -415,7 +415,8 @@ int main() { return choose(true); }
                          std::to_string(mutation));
             }
           }
-    expectBodySummary(found, "known missing alternative has a call-local terminal proof");
+    expectBodySummary(
+        found, "known missing alternative has a call-local terminal proof");
     const auto unknownId = functionId(result, "inspect_unknown");
     const auto presentId = functionId(result, "inspect_present");
     const auto *unknown = result.mir.findFunctionInstance(unknownId);
@@ -1256,9 +1257,10 @@ int main() { int owner = 3; return twice(owner) == 6 ? 0 : 1; }
       continue;
     const auto *forward =
         result.mir.findFunctionInstance(functionId(result, "forward"));
-    expectBodySummary(forward && forward->completeReturnBorrow &&
-               forward->completeReturnBorrow->possibleAlternatives.size() == 1,
-           "forward result evidence must be independent of declaration order");
+    expectBodySummary(
+        forward && forward->completeReturnBorrow &&
+            forward->completeReturnBorrow->possibleAlternatives.size() == 1,
+        "forward result evidence must be independent of declaration order");
     bool provedCall = false;
     if (forward)
       for (const auto &block : forward->body.blocks)
@@ -1267,13 +1269,14 @@ int main() { int owner = 3; return twice(owner) == 6 ? 0 : 1; }
               instruction.result)
             provedCall |= forward->body.findValue(*instruction.result)
                               ->borrowDependencies.has_value();
-    expectBodySummary(provedCall,
-           "exact calls transport independently verified complete facts");
+    expectBodySummary(
+        provedCall,
+        "exact calls transport independently verified complete facts");
     auto missing = result.mir;
     auto &functions = lang::MirProgramTestAccess::functions(missing);
     functions[functionId(result, "leaf") - 1].completeReturnBorrow.reset();
     expectBodySummary(!lang::verifyMirProgram(missing).valid(),
-           "caller cannot rely on a missing callee result contract");
+                      "caller cannot rely on a missing callee result contract");
   }
 
   const auto joined = analyze(token + R"gti(
@@ -1290,9 +1293,10 @@ int main() { auto value = choose(true); return 0; }
   if (joined.canGenerateCode()) {
     const auto id = functionId(joined, "choose");
     const auto *function = joined.mir.findFunctionInstance(id);
-    expectBodySummary(function && function->completeReturnBorrow &&
-               function->completeReturnBorrow->possibleAlternatives.size() == 2,
-           "all reachable return alternatives contribute to the contract");
+    expectBodySummary(
+        function && function->completeReturnBorrow &&
+            function->completeReturnBorrow->possibleAlternatives.size() == 2,
+        "all reachable return alternatives contribute to the contract");
     if (function && function->completeReturnBorrow) {
       for (int mutation = 0; mutation < 6; ++mutation) {
         auto malformed = joined.mir;
@@ -1608,10 +1612,11 @@ int main() { auto value = identity(Token::empty); return 0; }
 )gti");
     const auto id = functionId(result, "identity");
     const auto *function = result.mir.findFunctionInstance(id);
-    expectBodySummary(function && function->completeReturnBorrow &&
-               function->completeReturnBorrow->dependencies.empty() &&
-               function->completeReturnBorrow->possibleAlternatives.size() == 2,
-           "a dependency-free enum parameter retains every possible tag");
+    expectBodySummary(
+        function && function->completeReturnBorrow &&
+            function->completeReturnBorrow->dependencies.empty() &&
+            function->completeReturnBorrow->possibleAlternatives.size() == 2,
+        "a dependency-free enum parameter retains every possible tag");
     if (function && function->completeReturnBorrow)
       for (int mutation = 0; mutation < 4; ++mutation) {
         auto malformed = result.mir;
@@ -1657,8 +1662,9 @@ int main() { auto value = identity(Token::empty); return 0; }
             .possibleAlternatives = {
                 {.conditions = {
                      {.enumeration = candidate.returnType, .variant = 0}}}}};
-    expectBodySummary(!lang::verifyMirProgram(malformed).valid(),
-           "forged cycle/no-return/unknown evidence cannot justify itself");
+    expectBodySummary(
+        !lang::verifyMirProgram(malformed).valid(),
+        "forged cycle/no-return/unknown evidence cannot justify itself");
   }
 
   const auto generic = analyze(R"gti(
@@ -1674,8 +1680,8 @@ int main() { auto first = integer(); auto second = boolean(); return 0; }
     const auto *left = generic.mir.findFunctionInstance(integer);
     const auto *right = generic.mir.findFunctionInstance(boolean);
     expectBodySummary(left && right && left->completeReturnBorrow &&
-               right->completeReturnBorrow,
-           "concrete generic calls compute exact result summaries");
+                          right->completeReturnBorrow,
+                      "concrete generic calls compute exact result summaries");
     if (left && right && left->completeReturnBorrow &&
         right->completeReturnBorrow) {
       auto malformed = generic.mir;
@@ -1706,8 +1712,9 @@ Token before() { return factory<0>(); }
     const auto *after =
         cache.mir.findFunctionInstance(functionId(cache, "after"));
     expectBodySummary(before && after && before->completeReturnBorrow &&
-               before->completeReturnBorrow == after->completeReturnBorrow,
-           "eviction and requery preserve exact result contracts");
+                          before->completeReturnBorrow ==
+                              after->completeReturnBorrow,
+                      "eviction and requery preserve exact result contracts");
   }
   const auto chain = [&](unsigned depth) {
     return token + R"gti(

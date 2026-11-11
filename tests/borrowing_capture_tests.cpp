@@ -551,8 +551,7 @@ int main() {
   // Under RFC 0004 signature contracts a reference result shared by several
   // eligible reference parameters borrows all of them (and a lambda body is
   // checked by MIR); without them two eligible parameters are ambiguous.
-  const bool signatureContracts =
-      !lang::legacyBorrowChecker();
+  const bool signatureContracts = !lang::legacyBorrowChecker();
   const auto unionOrNegative = [&](const std::string &name,
                                    const std::string &source,
                                    const std::string &code) {
@@ -570,7 +569,7 @@ int main() {
   return view;
 }
 )",
-                  "GTI-S2017");
+           "GTI-S2017");
   negative("lambda-reference-result-from-capture", R"(
 int main() {
   int cell = 4;

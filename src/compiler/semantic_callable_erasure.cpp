@@ -274,8 +274,9 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
              parameter.referenceAccess == AccessMode::ReadOnly;
     };
     const bool typed = std::any_of(
-        parameters.begin(), parameters.end(),
-        [&](const auto &parameter) { return readOnly(parameter) && !erased(parameter); });
+        parameters.begin(), parameters.end(), [&](const auto &parameter) {
+          return readOnly(parameter) && !erased(parameter);
+        });
     for (std::size_t index = 0; index < parameters.size(); ++index)
       if (readOnly(parameters[index]) && !(typed && erased(parameters[index])))
         resultOrigins.push_back(index);
@@ -492,8 +493,8 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
           if (kind != BorrowOriginKind::Argument ||
               access != AccessMode::ReadOnly)
             return;
-          suppliers = several.empty() ? std::vector<std::size_t>{parameter}
-                                      : several;
+          suppliers =
+              several.empty() ? std::vector<std::size_t>{parameter} : several;
         };
         if (function != 0) {
           const auto *declaration = semanticModel.findFunction(function);
@@ -512,13 +513,13 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
             collect(info->returnBorrowOrigin, info->returnBorrowParameter, {},
                     info->returnBorrowAccess);
         }
-        subset = !suppliers.empty() &&
-                 std::all_of(suppliers.begin(), suppliers.end(),
-                             [&](std::size_t supplier) {
-                               return std::find(resultOrigins.begin(),
-                                                resultOrigins.end(),
-                                                supplier) != resultOrigins.end();
-                             });
+        subset =
+            !suppliers.empty() &&
+            std::all_of(
+                suppliers.begin(), suppliers.end(), [&](std::size_t supplier) {
+                  return std::find(resultOrigins.begin(), resultOrigins.end(),
+                                   supplier) != resultOrigins.end();
+                });
       }
       if (!subset && targetOrigin != resultOrigin) {
         report(expressionToken(expr.arguments().front()),

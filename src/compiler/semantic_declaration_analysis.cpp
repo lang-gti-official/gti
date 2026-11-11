@@ -9388,9 +9388,9 @@ bool dependencyFreeReturn(const Expr &expression) {
       exprAs<QualifiedName>(&expression) != nullptr)
     return true;
   if (const auto *call = exprAs<Call>(&expression)) {
-    if (!call->callee() || (exprAs<Variable>(call->callee().get()) == nullptr &&
-                            exprAs<QualifiedName>(call->callee().get()) ==
-                                nullptr))
+    if (!call->callee() ||
+        (exprAs<Variable>(call->callee().get()) == nullptr &&
+         exprAs<QualifiedName>(call->callee().get()) == nullptr))
       return false;
     return std::all_of(call->arguments().begin(), call->arguments().end(),
                        [](const ExprPtr &argument) {

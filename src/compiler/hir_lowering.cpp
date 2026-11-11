@@ -1,5 +1,5 @@
-#include "gti/hir.h"
 #include "gti/borrow_checker_mode.h"
+#include "gti/hir.h"
 #include <cstdlib>
 
 #include "diagnostic_registry.h"

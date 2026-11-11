@@ -1,5 +1,5 @@
-#include "gti/mir.h"
 #include "gti/borrow_checker_mode.h"
+#include "gti/mir.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
@@ -2011,8 +2011,7 @@ mirFieldTypeThroughBases(const MirProgram &program,
       // the consumed shell itself carries only the external referents its
       // stored references reach (`View<a> carrier() &&` in `C<lifetime a>`).
       const bool externalCarrierResult =
-          !legacyBorrowChecker() &&
-          functionTarget != nullptr &&
+          !legacyBorrowChecker() && functionTarget != nullptr &&
           functionTarget->returnType.kind != SemanticType::Reference &&
           functionTarget->completeReturnBorrow &&
           std::none_of(
@@ -3998,8 +3997,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         }
         // RFC 0004 shadow phase: a call that publishes no field mapping for a
         // signature contract borrows the whole origin, a coarser bound.
-        static const bool signatureCalls =
-            !legacyBorrowChecker();
+        static const bool signatureCalls = !legacyBorrowChecker();
         const bool coarserSignatureFields = signatureCalls &&
                                             instruction.borrowFields.empty() &&
                                             !target->returnBorrowFields.empty();
@@ -4959,8 +4957,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         if (callee == nullptr ||
             callee->returnBorrowOrigin != BorrowOriginKind::Global ||
             callee->returnBorrowPlace || !instruction.result ||
-            loan->kind != expectedKind || loan->entry ||
-            loan->parent != 0 || loan->storedDependency != 0 ||
+            loan->kind != expectedKind || loan->entry || loan->parent != 0 ||
+            loan->storedDependency != 0 ||
             !loan->additionalDependencies.empty() || referent == nullptr ||
             referent->root != MirPlaceRootKind::Value ||
             referent->value != *instruction.result ||
@@ -7720,8 +7718,7 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
       // binding, not any formal) is a borrow escape, not malformed MIR.
       // Under signature contracts a formal the signature does not name as a
       // supplier is equally outside the returned borrow's contract.
-      static const bool signatureSuppliers =
-          !legacyBorrowChecker();
+      static const bool signatureSuppliers = !legacyBorrowChecker();
       const bool bodyLocal =
           source->root == MirPlaceRootKind::Binding &&
           (signatureSuppliers ||
@@ -7735,9 +7732,9 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
       // permit, not malformed MIR.
       else if (source->root == MirPlaceRootKind::Binding &&
                !rejected.errors.empty())
-        rejected.errors.back().borrow = {
-            .kind = MirBorrowRejectionKind::Supplier,
-            .loan = *block.terminator.returnLoan};
+        rejected.errors.back().borrow = {.kind =
+                                             MirBorrowRejectionKind::Supplier,
+                                         .loan = *block.terminator.returnLoan};
       return rejected;
     }
     if (!instance.returnBorrowParameters.empty()) {
@@ -8003,14 +8000,12 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
         // dependencies' designated paths.
         const auto designates = [&](const std::vector<SymbolId> &fields) {
           return runtime->projections.size() == fields.size() + 1 &&
-                 std::equal(fields.begin(), fields.end(),
-                            runtime->projections.begin(),
-                            [](SymbolId field,
-                               const MirPlaceProjection &projection) {
-                              return projection.kind ==
-                                         MirProjectionKind::Field &&
-                                     projection.field == field;
-                            });
+                 std::equal(
+                     fields.begin(), fields.end(), runtime->projections.begin(),
+                     [](SymbolId field, const MirPlaceProjection &projection) {
+                       return projection.kind == MirProjectionKind::Field &&
+                              projection.field == field;
+                     });
         };
         const bool exactDesignatedReferent =
             published.value == 0 && runtime != nullptr &&
@@ -8131,8 +8126,7 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
     // RFC 0004 shadow phase: a signature claim's field mapping lists every
     // alternative supplier per result path; its complete-claim coverage, not
     // this positional exact-field check, verifies each return.
-    static const bool signatureReturns =
-        !legacyBorrowChecker();
+    static const bool signatureReturns = !legacyBorrowChecker();
     // The coverage proof still requires each published path to name a
     // field chain of the result type itself.
     if (signatureReturns && instance.returnType.kind == SemanticType::Class &&
@@ -15612,8 +15606,8 @@ completeBorrowSourcePath(const MirProgram &program,
         // A shared carrier constructed through a reference formal roots
         // its own loan on the formal's referent rather than reborrowing the
         // formal's whole-body entry loan; the two denote the same origin.
-        for (std::size_t index = 0; index < claims.size() &&
-                                    index < reconstructed.dependencies.size();
+        for (std::size_t index = 0;
+             index < claims.size() && index < reconstructed.dependencies.size();
              ++index) {
           auto &dependency = reconstructed.dependencies[index];
           const MirLoan *formal = body.findLoan(dependency.parent);
@@ -16210,8 +16204,7 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
           : std::nullopt;
   // RFC 0004 shadow phase: a signature contract may conservatively name
   // whole caller storage; borrowing it keeps everything it reaches borrowed.
-  static const bool signatureClaims =
-      !legacyBorrowChecker();
+  static const bool signatureClaims = !legacyBorrowChecker();
   // A result in a stored class region may borrow storage inside the
   // external referent of that region's reference (a projection of it).
   const bool storedProjection = signatureClaims && source &&
@@ -16416,8 +16409,7 @@ public:
       // RFC 0004 shadow phase: a signature-derived claim is an upper bound.
       // When MIR cannot reconstruct the body's complete flow, the body's own
       // return and escape checks bound it instead.
-      static const bool signatureClaims =
-          !legacyBorrowChecker();
+      static const bool signatureClaims = !legacyBorrowChecker();
       if (std::getenv("GTI_SHADOW_CLAIM_TRACE")) { // shadow-phase debugging
         const auto print = [](const char *label, const auto &deps) {
           std::cerr << "  " << label << " " << deps.size() << ":";

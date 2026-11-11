@@ -231,11 +231,10 @@ auto SemanticVisitor::Impl::currentReturnBorrowContract() const
       .lambda = false,
       // A callable pattern's result over a still-symbolic pack names lanes
       // only a concrete instance expands; that instance checks the relay.
-      .deferred =
-          function->bodyDeclaration() != nullptr &&
-          containsOpenTypeParameter(function->returnType) &&
-          patternResultContract(*function->bodyDeclaration(),
-                                function->returnType)};
+      .deferred = function->bodyDeclaration() != nullptr &&
+                  containsOpenTypeParameter(function->returnType) &&
+                  patternResultContract(*function->bodyDeclaration(),
+                                        function->returnType)};
 }
 
 auto SemanticVisitor::Impl::callableParameterContract(

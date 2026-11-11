@@ -212,8 +212,8 @@ int invoke_owned<F>(F callback, int value) { return callback(value); }
   }
   // RFC 0004: a stateless function item lent for one call whose result
   // borrows nothing needs no body-proven confined parameter.
-  const auto lent = analyzeFresh(
-      prefix + "int main() { return unproven(increment); }");
+  const auto lent =
+      analyzeFresh(prefix + "int main() { return unproven(increment); }");
   expect(lent.canGenerateCode(),
          "a function item lends to a call whose result borrows nothing");
   // An explicit move transfers a named closure into a full-expression

@@ -10,7 +10,8 @@ namespace lang {
 // GTI_LEGACY_BORROW_CHECKER restores the retired semantic loan model, for
 // comparison only, until that model is deleted.
 inline bool legacyBorrowChecker() {
-  static const bool legacy = std::getenv("GTI_LEGACY_BORROW_CHECKER") != nullptr;
+  static const bool legacy =
+      std::getenv("GTI_LEGACY_BORROW_CHECKER") != nullptr;
   return legacy;
 }
 

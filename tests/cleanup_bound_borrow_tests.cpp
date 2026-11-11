@@ -1,5 +1,5 @@
-#include "gti/frontend.h"
 #include "gti/borrow_checker_mode.h"
+#include "gti/frontend.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
 

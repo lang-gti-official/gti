@@ -147,8 +147,8 @@ std::string callableSource(const CompiledScalarSignature &signature,
   for (std::size_t i = 0; i < key.parameters.size(); ++i) {
     if (i)
       out += ", ";
-    const std::string spelling = compiledInterfaceTypeSpelling(
-        key.parameters[i], registry, aliasPrefix);
+    const std::string spelling =
+        compiledInterfaceTypeSpelling(key.parameters[i], registry, aliasPrefix);
     out += (borrows && i == signature.borrow.parameter ? regioned(spelling)
                                                        : spelling) +
            " arg" + std::to_string(i);

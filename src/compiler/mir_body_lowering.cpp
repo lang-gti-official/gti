@@ -1,5 +1,5 @@
-#include "gti/mir_editor.h"
 #include "gti/borrow_checker_mode.h"
+#include "gti/mir_editor.h"
 #include "gti/mir_effects.h"
 #include "gti/mir_lowering.h"
 #include "gti/mir_verifier.h"
@@ -669,8 +669,8 @@ public:
     return firstRejection;
   }
   // A source program MIR refuses with a user diagnostic rather than an ICE.
-  [[nodiscard]] const std::optional<std::pair<HirValueId,
-                                              MirBorrowRejectionKind>> &
+  [[nodiscard]] const std::optional<
+      std::pair<HirValueId, MirBorrowRejectionKind>> &
   userRejection() const {
     return firstUserRejection;
   }

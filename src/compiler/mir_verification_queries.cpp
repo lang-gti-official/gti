@@ -1,10 +1,10 @@
-#include <cstdio>
-#include <cstdlib>
 #include "mir_verification_queries.h"
 #include "gti/borrow_checker_mode.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_effects.h"
 #include "mir_verification_support.h"
+#include <cstdio>
+#include <cstdlib>
 
 #include <algorithm>
 #include <climits>
@@ -2068,9 +2068,9 @@ returnOriginFormal(std::span<const SemanticType> parameterTypes,
 std::vector<std::size_t>
 functionPointerSignatureOrigins(const MirProgram &program,
                                 const SemanticType &signature) {
-  static const bool signatureContracts =
-      !legacyBorrowChecker();
-  if (!signatureContracts || signature.kind != SemanticType::FunctionSignature ||
+  static const bool signatureContracts = !legacyBorrowChecker();
+  if (!signatureContracts ||
+      signature.kind != SemanticType::FunctionSignature ||
       signature.arguments.empty() ||
       signature.arguments.front().kind != SemanticType::Reference ||
       signature.arguments.front().referenceAccess != AccessMode::ReadOnly)
@@ -2092,9 +2092,8 @@ functionPointerSignatureOrigins(const MirProgram &program,
            parameter.referenceAccess == AccessMode::ReadOnly;
   };
   const bool typed =
-      std::any_of(parameters.begin(), parameters.end(), [&](const auto &p) {
-        return readOnly(p) && !erased(p);
-      });
+      std::any_of(parameters.begin(), parameters.end(),
+                  [&](const auto &p) { return readOnly(p) && !erased(p); });
   std::vector<std::size_t> origins;
   for (std::size_t index = 0; index < parameters.size(); ++index)
     if (readOnly(parameters[index]) && !(typed && erased(parameters[index])))
@@ -2184,28 +2183,27 @@ bool functionPointerOperation(const MirProgram &program,
   }
   const auto &targetType = instruction.parameterTypes.front();
   // The target's own result-origin contract names the signature's origin.
-  const auto originMatches = [&](BorrowOriginKind targetOrigin,
-                                 std::size_t targetParameter,
-                                 AccessMode targetAccess,
-                                 std::span<const std::size_t> targetSeveral =
-                                     {}) {
-    if (!origin)
-      return targetOrigin == BorrowOriginKind::None;
-    if (targetOrigin != BorrowOriginKind::Argument ||
-        targetAccess != AccessMode::ReadOnly)
-      return false;
-    if (origins.empty())
-      return targetParameter == *origin;
-    // Under the union contract the target borrows any subset of them.
-    const auto eligible = [&](std::size_t supplier) {
-      return std::find(origins.begin(), origins.end(), supplier) !=
-             origins.end();
-    };
-    return targetSeveral.empty()
-               ? eligible(targetParameter)
-               : std::all_of(targetSeveral.begin(), targetSeveral.end(),
-                             eligible);
-  };
+  const auto originMatches =
+      [&](BorrowOriginKind targetOrigin, std::size_t targetParameter,
+          AccessMode targetAccess,
+          std::span<const std::size_t> targetSeveral = {}) {
+        if (!origin)
+          return targetOrigin == BorrowOriginKind::None;
+        if (targetOrigin != BorrowOriginKind::Argument ||
+            targetAccess != AccessMode::ReadOnly)
+          return false;
+        if (origins.empty())
+          return targetParameter == *origin;
+        // Under the union contract the target borrows any subset of them.
+        const auto eligible = [&](std::size_t supplier) {
+          return std::find(origins.begin(), origins.end(), supplier) !=
+                 origins.end();
+        };
+        return targetSeveral.empty()
+                   ? eligible(targetParameter)
+                   : std::all_of(targetSeveral.begin(), targetSeveral.end(),
+                                 eligible);
+      };
   if (instruction.functionPointerFunctionTarget) {
     const auto *target = program.findFunctionInstance(
         *instruction.functionPointerFunctionTarget);
@@ -2213,10 +2211,9 @@ bool functionPointerOperation(const MirProgram &program,
            targetType.functionId == target->declaration && !target->owner &&
            target->linkage == LanguageLinkage::Gti && !target->requiresUnsafe &&
            target->definitionKind == MirDefinitionKind::Source &&
-           originMatches(target->returnBorrowOrigin,
-                         target->returnBorrowParameter,
-                         target->returnBorrowAccess,
-                         target->returnBorrowParameters) &&
+           originMatches(
+               target->returnBorrowOrigin, target->returnBorrowParameter,
+               target->returnBorrowAccess, target->returnBorrowParameters) &&
            !target->tracksCaller &&
            target->entryKind == ProgramEntryKind::None &&
            target->returnType == result && target->parameterTypes == parameters;
