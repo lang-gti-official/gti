@@ -749,7 +749,7 @@ int main() {
          fixedExternal(view, ignored) + read(value) - 28;
 }
 """,
-    "borrowed_from_pack_ordinals": """
+    "pack_ordinal_regions": """
 int&<a> select<lifetime a>(int ignored, int&<a> value) { return value; }
 class Relay<R(Args...)> {
 public:

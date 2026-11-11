@@ -84,10 +84,10 @@ def main():
             assert any(item.get("code") == "GTI-S2055" for item in errors), errors
             change(8, safe_address)
             assert not published(8)
-            contract_source = """/*😀*/ [[borrowed_from(right)]] int& choose(int& left, int& right) { return right; }
+            contract_source = """/*😀*/ int&<r> choose<lifetime r>(int& left, int&<r> right) { return right; }
 struct Holder {
   int value = 7; Holder() = default;
-  [[borrowed_from(this)]] int& get() { return this.value; }
+  int&<this> get() { return this.value; }
 };
 int borrowed_from(int value) { return value; }
 int main() {
@@ -115,12 +115,12 @@ int main() {
                     "textDocument": {"uri": uri},
                     "position": lsp_position(source, offset + 1)}))
 
-            for offset in [contract_source.index("choose("),
+            for offset in [contract_source.index("choose<"),
                            contract_source.rindex("choose(")]:
-                assert "[[borrowed_from(right)]]" in hover(contract_source, offset)
+                assert "int32_t&<r> right)" in hover(contract_source, offset)
             for offset in [contract_source.index("get()"),
                            contract_source.rindex("get()")]:
-                assert "[[borrowed_from(this)]]" in hover(contract_source, offset)
+                assert "&<this>" in hover(contract_source, offset)
 
             def token_type_at(source, offset):
                 result = request("textDocument/semanticTokens/full", {
@@ -130,28 +130,27 @@ int main() {
                 token = tokens[(position["line"], position["character"])]
                 return token_types[token["type"]]
 
-            assert token_type_at(contract_source, contract_source.index("borrowed_from")) == "decorator"
-            assert token_type_at(contract_source, contract_source.index("borrowed_from(this)")) == "decorator"
+            # The removed attribute's name is an ordinary identifier now.
             assert token_type_at(contract_source, contract_source.rindex("borrowed_from(1)")) == "function"
-            incomplete = contract_source.replace("borrowed_from(right)", "borrowed_from(right", 1)
-            change(10, incomplete)
-            assert any(item.get("code") == "GTI-P0001" for item in published(10))
-            assert token_type_at(incomplete, incomplete.index("borrowed_from")) == "decorator"
+            removed = contract_source.replace(
+                "int&<r> choose<lifetime r>(int& left, int&<r> right)",
+                "[[borrowed_from(right)]] int& choose(int& left, int& right)", 1)
+            change(10, removed)
+            assert any(item.get("code") == "GTI-P0001" and "was removed" in item.get("message", "")
+                       for item in published(10))
             change(11, contract_source)
             assert not published(11)
-            assert "[[borrowed_from(right)]]" in hover(contract_source, contract_source.rindex("choose("))
-            origin = contract_source.index("right)")
             declaration = contract_source.index("right) { return")
             returned = contract_source.index("return right") + len("return ")
             owner_params = {"textDocument": {"uri": uri},
-                            "position": lsp_position(contract_source, origin + 1)}
+                            "position": lsp_position(contract_source, declaration + 1)}
             definition = request("textDocument/definition", owner_params)
             location = definition[0] if isinstance(definition, list) else definition
             assert location["uri"] == uri and location["range"]["start"] == lsp_position(contract_source, declaration), definition
             references = request("textDocument/references", {
                 **owner_params, "context": {"includeDeclaration": True}})
             expected_positions = [lsp_position(contract_source, offset)
-                                  for offset in [origin, declaration, returned]]
+                                  for offset in [declaration, returned]]
             assert [item["range"]["start"] for item in references] == expected_positions, references
             assert all(item["uri"] == uri for item in references), references
             edits = request("textDocument/rename", {
@@ -167,11 +166,11 @@ int main() {
             # Rename only this function's parameter, not the equal-spelled local
             # in main. Apply the edits as a new snapshot and verify its contract.
             renamed = contract_source
-            for offset in sorted([origin, declaration, returned], reverse=True):
+            for offset in sorted([declaration, returned], reverse=True):
                 renamed = renamed[:offset] + "selected_owner" + renamed[offset + len("right"):]
             change(12, renamed)
             assert not published(12)
-            assert "[[borrowed_from(selected_owner)]]" in hover(renamed, renamed.rindex("choose("))
+            assert "int32_t&<r> selected_owner)" in hover(renamed, renamed.rindex("choose("))
             helper_source = """unsafe int read_address(const int* pointer) {
   unsafe { return *pointer; }
 }

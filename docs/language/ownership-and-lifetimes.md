@@ -459,9 +459,7 @@ results require a declared relationship.
 
 A result region bound by the function itself names its suppliers: exactly the
 parameters whose types mention that region. `int&<a> pick<lifetime a>(int&<a>
-first, int& second)` states the same contract as the older attribute spelling
-`[[borrowed_from(first)]] int& pick(int& first, int& second)`, and both
-declarations produce the same verified MIR. A region shared by several
+first, int& second)` names `first` as the result's only supplier. A region shared by several
 parameters, as in `choose` above, names all of them. A body may return a
 borrow of any subset of them; callers keep every named supplier borrowed.
 
@@ -504,9 +502,7 @@ A type alias may name a reference only when the reference's region is one of
 the alias's own lifetime parameters, as in
 `using borrow<lifetime a> = Slots&<a>;`: each use, such as
 `borrow<a> access<lifetime a>(Slots&<a> input)`, still spells the borrow and
-its region. Every other reference alias remains `GTI-S2030`. `[[borrowed_from]]` still
-works and is slated for deprecation; every contract it states has a lifetime
-spelling. A receiver-owned result, including an overloaded operator's, is
+its region. Every other reference alias remains `GTI-S2030`. A receiver-owned result, including an overloaded operator's, is
 `int&<this> get()`; a parameter supplier is a region the function binds, also
 for a by-value carrier before a value pack
 (`int&<a> lane<lifetime a, Args...>(View<a> first, Args... rest)`); protocol
@@ -1983,8 +1979,7 @@ invocation's full-expression; no borrow outlives the call. Binding that
 result to a reference inside the generic body still requires a declared
 result relationship.
 
-A generic relay names the parameter its result borrows with a result region
-(or the older `[[borrowed_from(value)]]` spelling); each concrete instance
+A generic relay names the parameter its result borrows with a result region; each concrete instance
 verifies that the selected callable's own origin reaches exactly that
 parameter. On a declaration whose result type is a generic parameter,
 the result region binds only the instances whose result is a

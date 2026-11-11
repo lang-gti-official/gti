@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Every [[borrowed_from]] contract has an equivalent lifetime spelling.
+"""Every former [[borrowed_from]] contract keeps a lifetime spelling.
 
-RFC 0004 slates the attribute for deprecation. Each pair below states one
-contract twice, with the attribute and with lifetime syntax. Accepted pairs
-must lower to the same verified MIR (source positions aside); rejected pairs
-must be rejected with the same diagnostic codes. A form missing here has no
-proven lifetime spelling and would block the deprecation.
+RFC 0004 replaced the attribute with lifetime syntax, and the attribute was
+then removed. Each pair below states one contract with the removed attribute
+and with lifetime syntax: the attribute form must be refused by the parser
+with the removal diagnostic, and the lifetime form must keep its verdict
+(compiling to verified MIR, or the listed rejection).
 """
 
 import argparse
@@ -170,6 +170,10 @@ def compile_one(compiler, stdlib, directory, name, source):
     return result.returncode, codes, text
 
 
+REJECTED = {"computed-result-wrong-supplier": ["GTI-S2017"],
+            "parameter-supplier-retained": ["GTI-S2017"]}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("compiler", type=pathlib.Path)
@@ -179,15 +183,17 @@ def main():
     with tempfile.TemporaryDirectory() as temporary:
         directory = pathlib.Path(temporary)
         for label, (attribute, lifetime) in PAIRS.items():
-            old = compile_one(args.compiler, args.stdlib, directory,
-                              label + "-attribute", attribute)
-            new = compile_one(args.compiler, args.stdlib, directory,
-                              label + "-lifetime", lifetime)
-            if old[0] != new[0] or old[1] != new[1]:
-                failures.append(f"{label}: attribute exit {old[0]} {old[1]}, "
-                                f"lifetime exit {new[0]} {new[1]}")
-            elif old[2] != new[2]:
-                failures.append(f"{label}: verified MIR differs")
+            removed = compile_one(args.compiler, args.stdlib, directory,
+                                  label + "-attribute", attribute)
+            current = compile_one(args.compiler, args.stdlib, directory,
+                                  label + "-lifetime", lifetime)
+            expected = REJECTED.get(label, [])
+            if removed[0] == 0 or removed[1] != ["GTI-P0001"]:
+                failures.append(f"{label}: attribute form was not refused "
+                                f"(exit {removed[0]} {removed[1]})")
+            elif (current[0] == 0) != (not expected) or current[1] != expected:
+                failures.append(f"{label}: lifetime form exit {current[0]} "
+                                f"{current[1]}, expected {expected or 'success'}")
             else:
                 print(f"PASS {label}")
     if failures:

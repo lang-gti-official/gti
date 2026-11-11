@@ -103,8 +103,7 @@ function-contract-attributes = function-contract-attribute
 function-contract-attribute = "[[" function-contract-name
                               { "," function-contract-name } "]]" ;
 function-contract-name = "test" | "noreturn" | "track_caller" | "discardable" | "thread_confined_callback"
-                       | "inline" | "noinline" | "cold"
-                       | "borrowed_from" "(" ( IDENTIFIER | "this" ) ")" ;
+                       | "inline" | "noinline" | "cold" ;
 (* test: defined, safe, non-generic namespace-scope void functions with no
    parameters or attribute arguments. Explicit test targets discover these
    functions and execute them separately; ordinary compilation does not run them.
@@ -115,17 +114,14 @@ function-contract-name = "test" | "noreturn" | "track_caller" | "discardable" | 
    direct calls. Neither changes the declared result type.
    discardable permits ignoring a non-void function or method result; it
    does not change evaluation, failure, cleanup, borrowing or the result type.
-   borrowed_from is the compatibility spelling of a result-region contract and
-   is slated for deprecation: `[[borrowed_from(x)]] T& f(T& x)` means
-   `T&<a> f<lifetime a>(T&<a> x)`. It selects one checked reference parameter,
-   the single external
-   dependency of a by-value carrier parameter, or a non-static
-   receiver as the returned reference's owner. Safe returns must preserve it.
-   On a declaration whose result type is a generic parameter it binds only the
-   instances whose substituted result is a checked reference, and it may name
-   a final parameter pack: the one reference element of the expanded pack in
-   that instance owns the result. Protocol operations may state this contract;
-   their implementations preserve the selected parameter position.
+   A borrowed result names its owner with a result region rather than an
+   attribute: `T&<a> f<lifetime a>(T&<a> x)` selects the parameters written in
+   `a`, and `T&<this>` the non-static receiver. Safe returns must preserve it.
+   On a declaration whose result type is a generic parameter the region binds
+   only the instances whose substituted result is a checked reference, and a
+   final parameter pack written in it supplies the one reference element of
+   the expanded pack in that instance. Protocol operations may state this
+   contract; their implementations preserve the selected parameter position.
    A direct raw dereference returned inside lexical unsafe may assert that
    relationship, retaining known lifetime/access contradictions. *)
 
@@ -213,8 +209,7 @@ concept-member         = "typename" IDENTIFIER [ generic-parameter-clause ] ";"
    constraint identities positionally. A member function is a prototype ending
    in ';'. It may declare lifetime parameters and lifetime requirements, but
    takes no additional type/value parameters, defaults, modifiers or receiver
-   qualifier. Its borrowed_from attribute remains a compatibility spelling for
-   the normalized region relationship. *)
+   qualifier. *)
 
 conformance-declaration
                        = "for" [ generic-parameter-clause ] "concept"
@@ -262,15 +257,14 @@ expression-requirement = "requires" [ "(" [ requirement-parameter
                          "{" requirement-check { requirement-check } "}" ;
 requirement-parameter  = [ "mut" ] type IDENTIFIER ;
 requirement-check      = [ "unsafe" ] "{" assignment-expression "}"
-                         [ "->" [ "mut" ] type [ requirement-borrow-origin ] ] ";"
+                         [ "->" [ "mut" ] type ] ";"
                        | [ "unsafe" ] "for" "(" [ "mut" ] type IDENTIFIER
                          ":" assignment-expression ")" "{" { static-assert-declaration } "}" ;
-requirement-borrow-origin
-                       = "[[" "borrowed_from" "(" IDENTIFIER ")" "]]" ;
 (* A requirement's `mut` parameters must be references. A written result is an
-   exact owned non-borrowed type, or a checked reference whose borrowed_from
-   names a borrowed query parameter. A mutable result requires a mutable origin.
-   `auto&` (optionally mut) with borrowed_from infers only the referent; omitting
+   exact owned non-borrowed type, or a checked reference or borrowing value
+   whose region (`T&<p>`, `C<p>`) is bound by one requirement parameter
+   (`C&<p> p`). A mutable result requires a mutable origin. `auto&<p>`
+   (optionally mut) and `auto<p>` infer only the referent or value; omitting
    the arrow checks expression validity without promising a result type or
    category. A loop query uses ordinary range analysis and may contain
    static_assert checks of the actual bound element;

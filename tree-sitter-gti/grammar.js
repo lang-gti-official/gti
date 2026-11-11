@@ -774,13 +774,11 @@ module.exports = grammar({
     function_contract_attribute: ($) =>
       seq(
         "[[",
-        choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline", $.borrow_origin_attribute),
-        repeat(seq(",", choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline", $.borrow_origin_attribute))),
+        choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline"),
+        repeat(seq(",", choice("test", "noreturn", "track_caller", "discardable", "thread_confined_callback", "inline", "cold", "noinline"))),
         "]]",
       ),
 
-    borrow_origin_attribute: ($) =>
-      seq("borrowed_from", "(", field("origin", choice($.identifier, "this")), ")"),
 
     _function_declaration_body: ($) =>
       seq(
@@ -1514,8 +1512,7 @@ module.exports = grammar({
           optional(field("unsafe", "unsafe")), choice(seq(
             "{", field("expression", $._expression_not_comma), "}",
             optional(seq("->", optional("mut"), choice(
-              seq(field("result_type", $.type),
-                optional(seq("[[", "borrowed_from", "(", field("borrow_origin", $.identifier), ")", "]]"))),
+              field("result_type", $.type),
               // `auto<r>`: an inferred carrier result with a named region.
               seq(field("result_type", alias("auto", $.primitive_type)),
                 "<", field("result_region", $.lifetime_argument), ">"),

@@ -674,16 +674,9 @@ Reading<a> inspect<lifetime a>(int&<a> owner, bool fail) {
     // unrelated admission failures are not evidence that they were checked.
     for (const auto &[source, expectedCode] :
          std::vector<std::pair<std::string, std::string>>{
-             {declaration +
-                  "[[borrowed_from(typo)]] Reading wrong(int& owner) { "
-                  "return Reading::value(owner); }\n",
-              "GTI-S2099"},
              {declaration + "Reading<a> wrong<lifetime a>(int&<a> owner, "
                             "int& other) { return Reading::value(other); }\n",
-              "GTI-S2045"},
-             {"[[borrowed_from(owner)]] int wrong(int& owner) { "
-              "return owner; }\n",
-              "GTI-S2099"}}) {
+              "GTI-S2045"}}) {
       const auto result =
           lang::Frontend({.stopAfter = lang::FrontendPhase::Semantics})
               .analyze(root / "tests" / "complete-borrow-constraint.gti",

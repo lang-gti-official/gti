@@ -1,11 +1,11 @@
 ==================
 Borrowed requirement owner contracts
 ==================
-concept borrowed<I, T> = requires(I& cursor) {
-  { *cursor } -> T& [[borrowed_from(cursor)]];
+concept borrowed<I, T> = requires(I&<cursor> cursor) {
+  { *cursor } -> T&<cursor>;
 };
-concept writable<I, T> = requires(mut I& cursor, int index) {
-  { cursor[index] } -> mut T& [[borrowed_from(cursor)]];
+concept writable<I, T> = requires(mut I&<cursor> cursor, int index) {
+  { cursor[index] } -> mut T&<cursor>;
 };
 ---
 
@@ -19,7 +19,9 @@ concept writable<I, T> = requires(mut I& cursor, int index) {
         (type
           (user_type
             (identifier))
-          (reference_declarator))
+          (reference_declarator
+            (lifetime_argument
+              (identifier))))
         (identifier)
         (unary_expression
           (primary_expression
@@ -27,8 +29,9 @@ concept writable<I, T> = requires(mut I& cursor, int index) {
         (type
           (user_type
             (identifier))
-          (reference_declarator))
-        (identifier))))
+          (reference_declarator
+            (lifetime_argument
+              (identifier)))))))
   (concept_declaration
     (identifier)
     (identifier)
@@ -38,7 +41,9 @@ concept writable<I, T> = requires(mut I& cursor, int index) {
         (type
           (user_type
             (identifier))
-          (reference_declarator))
+          (reference_declarator
+            (lifetime_argument
+              (identifier))))
         (identifier)
         (type
           (primitive_type))
@@ -51,17 +56,18 @@ concept writable<I, T> = requires(mut I& cursor, int index) {
         (type
           (user_type
             (identifier))
-          (reference_declarator))
-        (identifier)))))
+          (reference_declarator
+            (lifetime_argument
+              (identifier))))))))
 
 ==================
 Borrow-carrying value requirement results
 ==================
-concept views<S> = requires(S& source) {
-  { source.buffered() } -> std::span<uint8_t> [[borrowed_from(source)]];
+concept views<S> = requires(S&<source> source) {
+  { source.buffered() } -> std::span<uint8_t, source>;
 };
-concept infers<S> = requires(S& source) {
-  { source.view() } -> auto [[borrowed_from(source)]];
+concept infers<S> = requires(S&<source> source) {
+  { source.view() } -> auto<source>;
 };
 ---
 
@@ -74,7 +80,9 @@ concept infers<S> = requires(S& source) {
         (type
           (user_type
             (identifier))
-          (reference_declarator))
+          (reference_declarator
+            (lifetime_argument
+              (identifier))))
         (identifier)
         (call_expression
           (member_expression
@@ -89,8 +97,10 @@ concept infers<S> = requires(S& source) {
               (identifier))
             (type_argument_clause
               (type
-                (primitive_type)))))
-        (identifier))))
+                (primitive_type))
+              (type
+                (user_type
+                  (identifier)))))))))
   (concept_declaration
     (identifier)
     (identifier)
@@ -99,7 +109,9 @@ concept infers<S> = requires(S& source) {
         (type
           (user_type
             (identifier))
-          (reference_declarator))
+          (reference_declarator
+            (lifetime_argument
+              (identifier))))
         (identifier)
         (call_expression
           (member_expression
@@ -107,5 +119,6 @@ concept infers<S> = requires(S& source) {
               (identifier))
             (identifier))
           (argument_list))
-        (type)
-        (identifier)))))
+        (primitive_type)
+        (lifetime_argument
+          (identifier))))))

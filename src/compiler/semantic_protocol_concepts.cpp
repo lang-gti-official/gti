@@ -259,42 +259,14 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
       resolved.parameterTypes.push_back(
           typeOf(formal, conceptInfo.namespaceScope));
     }
-    for (const FunctionAttribute &attribute : operation->functionAttributes()) {
-      if (attribute.name.lexeme != "borrowed_from") {
-        reject(attribute.name, "only accepts a borrowed_from origin attribute");
-        continue;
-      }
-      if (resolved.returnBorrowParameter) {
-        reject(attribute.name, "cannot repeat its borrowed_from contract");
-        continue;
-      }
-      const auto &formals = operation->parameters();
-      const auto selected = std::find_if(
-          formals.begin(), formals.end(), [&](const Parameter &parameter) {
-            return attribute.argument &&
-                   attribute.argument->kind != TokenKind::THIS &&
-                   parameter.name.lexeme == attribute.argument->lexeme;
-          });
-      if (selected == formals.end()) {
-        reject(attribute.name,
-               "must name one of its parameters in borrowed_from");
-        continue;
-      }
-      resolved.returnBorrowParameter = std::size_t(selected - formals.begin());
-      if (!containsOpenTypeParameter(resolved.returnType) &&
-          resolved.returnType.kind != SemanticType::Reference) {
-        reject(attribute.name,
-               "requires a checked reference or dependent result for "
-               "borrowed_from");
-      }
-    }
-    // RFC 0004: a result region the operation binds names the same parameter
-    // the borrowed_from attribute would.
+    for (const FunctionAttribute &attribute : operation->functionAttributes())
+      reject(attribute.name, "accepts no function attributes; name a "
+                             "borrowed result's supplier with a region");
+    // RFC 0004: a result region the operation binds names its supplying
+    // parameter. The result may be dependent, made a reference only by an
+    // instance.
     if (!resolved.returnBorrowParameter &&
-        !operation->hasFunctionAttribute("borrowed_from") &&
         hasExplicitBorrowContract(*operation)) {
-      // Like the attribute, the region names its parameter directly: the
-      // result may be dependent, made a reference only by an instance.
       const auto lifetime =
           explicitLifetimeResult(*operation, resolved.parameterTypes, 0);
       if (lifetime.kind == ExplicitLifetimeResult::Kind::Region &&
@@ -805,7 +777,7 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
           reportConformanceError(
               function->name(),
               "Operation '" + function->name().lexeme +
-                  "' must preserve the concept's borrowed_from parameter "
+                  "' must preserve the concept's result region parameter "
                   "contract.",
               &operation.declaration->name(), "Operation declared here.");
           continue;
@@ -1661,7 +1633,7 @@ auto SemanticVisitor::Impl::analyzeProtocolOperationCall(
         reportConformanceError(
             site,
             "Operation '" + operation.name +
-                "' must preserve the concept's borrowed_from parameter "
+                "' must preserve the concept's result region parameter "
                 "contract for its concrete reference result.",
             &operation.declaration->name(), "Operation declared here.");
         return fail();

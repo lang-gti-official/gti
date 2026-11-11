@@ -166,8 +166,8 @@ Two mutable scalar references carry the observed count and mismatch flag. Every
 normal run checks the final count and exits zero only if all observations match.
 Generated user functions receive those two instrumentation references; mutable
 reference-returning functions declare their separately traced actual argument
-origin with `[[borrowed_from(parameter)]]`. The compiler still checks that
-annotation against the body. The instrumented observer signature is reserved by
+origin with a result region (`mut int&<o> f<lifetime o>(..., mut int&<o> p)`).
+The compiler still checks that contract against the body. The instrumented observer signature is reserved by
 this profile: two mutable scalar state references followed by one by-value
 `int`. The interpreter records the third argument at these calls, then executes
 the observer's entire ordinary body. Compare this sequence to model reads at

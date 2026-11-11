@@ -553,9 +553,7 @@ unsafe T&<a> assume_ref<T, Owner, lifetime a>(const T* address,
 
 An application can define the same pattern without access to compiler-private
 declarations. The result region names the checked-reference parameter that
-owns the result, and `T&<this>` selects the non-static receiver. The older
-spelling `[[borrowed_from(owner)]]` states the same contract, still works and
-is slated for deprecation. The
+owns the result, and `T&<this>` selects the non-static receiver. The
 parameter must grant sufficient access for the returned reference. Unambiguous
 existing return-origin inference remains available without an annotation.
 Safe returns must prove the selected origin; the annotation alone cannot

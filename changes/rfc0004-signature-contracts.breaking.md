@@ -10,5 +10,4 @@ a body-inferred contract may now be rejected:
 - Borrow conflicts inside a generic body are reported for each concrete
   instance.
 
-`[[borrowed_from]]` remains as a compatibility spelling; every contract it
-states has a lifetime spelling, and compiled interfaces now use that spelling.
+Compiled interfaces spell borrowed results with lifetime parameters.

@@ -1555,7 +1555,7 @@ rejected.
 `complete_borrow_summaries` covers the new fixture,
 `borrowed_enum_relay_returns`.
 - Seven functions return a by-value borrowed carrier formal whole: a payload
-  enum moved, copied and under `borrowed_from`, a class whose borrowed state
+  enum moved, copied and under a result region, a class whose borrowed state
   is such an enum, a concrete generic `Outcome<int&, E>` with plain and owning
   errors, and a `mut` reference enum. All verify.
 - Six MIR mutations per relay are rejected: a `Return` borrow from itself, a

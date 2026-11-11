@@ -58,10 +58,19 @@ std::string expressionSpelling(const Expr &expression) {
       result += ")";
     }
     result += " }";
-    if (!query->inferredResult() || query->borrowedFrom())
-      result += " -> " + type(query->result());
-    if (query->borrowedFrom())
-      result += " [[borrowed_from(" + query->borrowedFrom()->lexeme + ")]]";
+    if (!query->inferredResult() || query->borrowedFrom()) {
+      // The supplier is the requirement parameter the result's region names.
+      std::string spelled = type(query->result());
+      if (query->borrowedFrom()) {
+        const std::string region = query->borrowedFrom()->lexeme;
+        if (!spelled.empty() && spelled.back() == '>' &&
+            !query->result().reference)
+          spelled.insert(spelled.size() - 1, ", " + region);
+        else
+          spelled += "<" + region + ">";
+      }
+      result += " -> " + spelled;
+    }
     return result + "; }";
   }
   if (const auto *variable = exprAs<Variable>(&expression))

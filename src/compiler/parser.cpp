@@ -1146,14 +1146,10 @@ private:
         FunctionAttribute attribute{.name = std::move(name),
                                     .argument = std::nullopt};
         if (attribute.name.lexeme == "borrowed_from") {
-          consume(TokenKind::LEFT_PAREN, "Expect '(' after 'borrowed_from'.");
-          if (!match({TokenKind::IDENTIFIER, TokenKind::THIS})) {
-            throw error(peek(), "Expect an owner parameter name or 'this' in "
-                                "'[[borrowed_from(...)]]'.");
-          }
-          attribute.argument = previous();
-          consume(TokenKind::RIGHT_PAREN,
-                  "Expect ')' after the borrowed_from owner.");
+          throw error(attribute.name,
+                      "'[[borrowed_from]]' was removed; name the result's "
+                      "region with a lifetime parameter, as in "
+                      "'T&<a> f<lifetime a>(T&<a> owner)', or 'T&<this>'.");
         } else if (attribute.name.lexeme == "unsatisfied") {
           consume(TokenKind::LEFT_PAREN, "Expect '(' after 'unsatisfied'.");
           attribute.argument =
@@ -1253,8 +1249,7 @@ private:
             attribute.name.lexeme == "cold" ||
             attribute.name.lexeme == "track_caller" ||
             attribute.name.lexeme == "thread_confined_callback" ||
-            attribute.name.lexeme == "discardable" ||
-            attribute.name.lexeme == "borrowed_from";
+            attribute.name.lexeme == "discardable";
       }
       if (functionAttributeList) {
         for (FunctionAttribute &attribute : attributes) {
@@ -4473,7 +4468,7 @@ private:
     const NestingGuard nesting = enterNesting(keyword);
     // RFC 0004: a region written in a requirement parameter's type is bound
     // there, as in a class argument pattern; a result naming it borrows from
-    // that parameter, exactly as [[borrowed_from(parameter)]] states.
+    // that parameter.
     const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     std::vector<TypeRef> parameters;
     std::vector<Token> bindings;
@@ -4589,28 +4584,11 @@ private:
             "A mutable requirement result must be a checked reference.");
       requiredResult.referenceMutability = resultAccess;
       std::optional<Token> borrowedFrom;
-      if (match({TokenKind::LEFT_BRACKET})) {
-        consume(TokenKind::LEFT_BRACKET, "Expect '[[' before borrow origin.");
-        const Token attribute =
-            consume(TokenKind::IDENTIFIER, "Expect 'borrowed_from' attribute.");
-        if (attribute.lexeme != "borrowed_from")
-          throw error(attribute,
-                      "A requirement result supports only 'borrowed_from'.");
-        consume(TokenKind::LEFT_PAREN, "Expect '(' before borrow origin.");
-        borrowedFrom =
-            consume(TokenKind::IDENTIFIER,
-                    "Expect a requirement parameter as borrow origin.");
-        if (std::none_of(bindings.begin(), bindings.end(),
-                         [&](const Token &binding) {
-                           return binding.lexeme == borrowedFrom->lexeme;
-                         }))
-          throw error(*borrowedFrom,
-                      "Borrow origin must name a requirement parameter.");
-        consume(TokenKind::RIGHT_PAREN, "Expect ')' after borrow origin.");
-        consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after borrow origin.");
-        consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after borrow origin.");
-      }
-      if (!borrowedFrom) {
+      if (check(TokenKind::LEFT_BRACKET))
+        throw error(peek(),
+                    "A requirement result names its supplier with a region: "
+                    "'-> T&<owner>' with 'C&<owner> owner'.");
+      {
         std::optional<std::string> region;
         if (requiredResult.referenceLifetime &&
             requiredResult.referenceLifetime->name.kind ==
@@ -4651,8 +4629,8 @@ private:
            !requiredResult.arrayExtents.empty() ||
            !requiredResult.arguments.empty()))
         throw error(requiredResult.name.last(),
-                    "An inferred result uses 'auto&' or 'auto' with "
-                    "borrowed_from; omit '-> type' to check an expression "
+                    "An inferred result uses 'auto&<owner>' or "
+                    "'auto<owner>'; omit '-> type' to check an expression "
                     "without a result type contract.");
 
       // Preserve the earlier exact-member contract as a subset. Every other

@@ -12518,7 +12518,7 @@ auto SemanticVisitor::Impl::invalidateRawCallOrigins(
   default:
     break;
   }
-  // A bounded source-effect proof, not a privilege attached to borrowed_from:
+  // A bounded source-effect proof, not a privilege attached to a result region:
   // a direct assertion over a raw formal cannot replace any object. Inspect
   // only this normalized syntax shape so the proof is declaration-order
   // independent; ordinary semantic analysis still validates its raw assertion.

@@ -849,26 +849,6 @@
     "fields": {}
   },
   {
-    "type": "borrow_origin_attribute",
-    "named": true,
-    "fields": {
-      "origin": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          },
-          {
-            "type": "this",
-            "named": false
-          }
-        ]
-      }
-    }
-  },
-  {
     "type": "break_statement",
     "named": true,
     "fields": {}
@@ -3008,17 +2988,7 @@
   {
     "type": "function_contract_attribute",
     "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "borrow_origin_attribute",
-          "named": true
-        }
-      ]
-    }
+    "fields": {}
   },
   {
     "type": "function_declaration",
@@ -4332,16 +4302,6 @@
     "fields": {
       "binding": {
         "multiple": false,
-        "required": false,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      },
-      "borrow_origin": {
-        "multiple": true,
         "required": false,
         "types": [
           {
@@ -6820,10 +6780,6 @@
   },
   {
     "type": "bool",
-    "named": false
-  },
-  {
-    "type": "borrowed_from",
     "named": false
   },
   {

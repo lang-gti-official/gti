@@ -115,23 +115,6 @@ SignaturePrinter::function(const FunctionInfo &info,
   if (info.threadConfinedCallback) {
     result += "[[thread_confined_callback]] ";
   }
-  // A result region already states the contract the attribute would.
-  const bool regionContract =
-      declaration != nullptr &&
-      !declaration->hasFunctionAttribute("borrowed_from") &&
-      writesRegion(declaration->returnType());
-  if (info.explicitReturnBorrowOrigin && !regionContract) {
-    if (info.returnBorrowOrigin == BorrowOriginKind::Receiver) {
-      result += "[[borrowed_from(this)]] ";
-    } else if (info.returnBorrowOrigin == BorrowOriginKind::Argument &&
-               declaration != nullptr &&
-               info.returnBorrowParameter < declaration->parameters().size()) {
-      result +=
-          "[[borrowed_from(" +
-          declaration->parameters()[info.returnBorrowParameter].name.lexeme +
-          ")]] ";
-    }
-  }
   if (info.requiresUnsafe) {
     result += "unsafe ";
   }

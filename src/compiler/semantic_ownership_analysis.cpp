@@ -5684,7 +5684,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
       }
     } else if (!hasStableBorrowStorage(*argument)) {
       // A relayed reference value, such as ?carrier through a checked
-      // borrowed_from contract, has no stable place of its own; its complete
+      // result-region contract, has no stable place of its own; its complete
       // external dependency set is recorded on the expression itself.
       if (!input || input->dependencies.empty() ||
           std::any_of(input->dependencies.begin(), input->dependencies.end(),
@@ -5758,7 +5758,7 @@ auto SemanticVisitor::Impl::instantiateCompleteBorrowArguments(
                                       dependency.conditions.empty();
                              })) {
         // A relayed reference with no place of its own, such as the result
-        // of `?` through a borrowed_from contract, carries its complete
+        // of `?` through a result-region contract, carries its complete
         // external dependency set on the expression itself.
         sources = input->dependencies;
       } else {
@@ -6976,7 +6976,6 @@ auto SemanticVisitor::Impl::patternResultContract(
     const FunctionDecl &syntax, const SemanticType &returnType) const -> bool {
   return (returnType.kind == SemanticType::Reference ||
           isBorrowReturningType(returnType)) &&
-         !syntax.hasFunctionAttribute("borrowed_from") &&
          callablePatternResultPack(syntax).has_value();
 }
 
@@ -7044,12 +7043,10 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
     std::span<const SemanticType> parameterTypes, ClassId ownerClass,
     bool staticMember) const -> GenericReturnBorrowContract {
   GenericReturnBorrowContract contract;
-  const auto *attribute = syntax.findFunctionAttribute("borrowed_from");
   // A callable pattern's result is supplied by its invocation lanes: every
   // lane this instance makes a reference or borrowing carrier with
   // sufficient access. A result this instance makes owned is inert.
-  if (const auto pack = attribute == nullptr ? callablePatternResultPack(syntax)
-                                             : std::nullopt) {
+  if (const auto pack = callablePatternResultPack(syntax)) {
     const bool reference = returnType.kind == SemanticType::Reference &&
                            returnType.arguments.size() == 1;
     contract.access =
@@ -7087,7 +7084,7 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
       contract.parameters = std::move(suppliers);
     return contract;
   }
-  if (attribute == nullptr) {
+  {
     // RFC 0004: a result written with a region states its suppliers in the
     // signature. It translates into the same core contract.
     const auto lifetime =
@@ -7119,7 +7116,7 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
         contract.missing = true;
         return contract;
       }
-      // Like the attribute, a region on a result this instance makes owned
+      // A region on a result this instance makes owned
       // (neither a reference nor a conditional borrow carrier) is inert.
       if (!reference && !isBorrowReturningType(returnType))
         return contract;
@@ -7181,83 +7178,6 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
     }
     return contract;
   }
-  if (!attribute->argument)
-    return contract;
-  const bool reference = returnType.kind == SemanticType::Reference &&
-                         returnType.arguments.size() == 1;
-  const bool conditional = !reference && isConditionalBorrowResult(returnType);
-  if (!reference && !conditional) {
-    return contract;
-  }
-  // Conditional results retain access per guarded reference path in their
-  // complete contract. This scalar compatibility field is not a proof of
-  // their individual permissions; normalization checks each actual mapping.
-  contract.access =
-      reference ? returnType.referenceAccess : AccessMode::ReadOnly;
-  if (attribute->argument->kind == TokenKind::THIS) {
-    if (ownerClass != 0 && !staticMember)
-      contract.origin = BorrowOriginKind::Receiver;
-    else
-      contract.missing = true;
-    return contract;
-  }
-  // Expanded parameter positions, so the index agrees with MIR's bindings.
-  std::vector<SemanticType> expanded;
-  for (const SemanticType &type : parameterTypes)
-    SemanticType::appendExpandedArgument(expanded, type);
-  const auto &parameters = syntax.parameters();
-  std::size_t position = 0;
-  for (std::size_t index = 0;
-       index < parameters.size() && index < parameterTypes.size(); ++index) {
-    // A pack's lanes are what the fixed formals leave, whether the types
-    // arrive grouped or already expanded.
-    const std::size_t width =
-        parameters[index].pack ? expanded.size() - (parameters.size() - 1) : 1;
-    if (parameters[index].name.lexeme == attribute->argument->lexeme) {
-      std::optional<std::size_t> selected;
-      for (std::size_t element = position;
-           element < position + width && element < expanded.size(); ++element) {
-        const SemanticType &type = expanded[element];
-        // A by-value carrier transfers its external dependency, never the
-        // lifetime of its own parameter storage. The executable return proof
-        // still requires the exact designated external referent.
-        const auto inventory = storedReferenceInventory(type);
-        const bool compatibleExternal =
-            inventory &&
-            std::any_of(
-                inventory->begin(), inventory->end(), [&](const auto &path) {
-                  return path.reference.kind == SemanticType::Reference &&
-                         path.reference.arguments.size() == 1 &&
-                         (contract.access == AccessMode::ReadOnly ||
-                          path.reference.referenceAccess ==
-                              AccessMode::Mutable);
-                });
-        const bool eligible =
-            conditional ? (type.kind == SemanticType::Reference ||
-                           (inventory && !inventory->empty()))
-                        : (type.kind == SemanticType::Reference ||
-                           compatibleExternal) &&
-                              (contract.access == AccessMode::ReadOnly ||
-                               compatibleExternal ||
-                               borrowAccess(type) == AccessMode::Mutable);
-        if (!eligible)
-          continue;
-        if (selected)
-          contract.ambiguous = true;
-        selected = element;
-      }
-      if (selected && !contract.ambiguous) {
-        contract.origin = BorrowOriginKind::Argument;
-        contract.parameter = *selected;
-      } else if (!selected) {
-        contract.missing = true;
-      }
-      return contract;
-    }
-    position += width;
-  }
-  contract.missing = true;
-  return contract;
 }
 
 auto SemanticVisitor::Impl::resolveGenericReturnBorrowContract(
@@ -7280,15 +7200,13 @@ auto SemanticVisitor::Impl::resolveGenericReturnBorrowContract(
   instance.returnBorrowParameter = contract.parameter;
   instance.returnBorrowParameters = contract.parameters;
   if (contract.ambiguous || contract.missing) {
-    const auto *attribute = syntax->findFunctionAttribute("borrowed_from");
-    report(attribute && attribute->argument ? *attribute->argument
-                                            : syntax->name(),
+    report(syntax->name(),
            contract.ambiguous
-               ? "The borrowed_from pack must expand to exactly one reference "
-                 "or single-dependency carrier with sufficient access in "
-                 "this instance."
-               : "The borrowed_from origin must be a reference parameter or "
-                 "single-dependency carrier with sufficient access in this "
+               ? "The result region's pack must expand to exactly one "
+                 "reference or single-dependency carrier with sufficient "
+                 "access in this instance."
+               : "The result region must be supplied by a reference parameter "
+                 "or single-dependency carrier with sufficient access in this "
                  "instance.",
            "GTI-S2017");
   }

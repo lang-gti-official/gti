@@ -2417,13 +2417,16 @@ int main() {
   expect(secondParameter.canGenerateCode(),
          "a split borrow contract names the declaration parameter position, "
          "not a matching name in the definition");
-  for (const auto &[origin, result] :
-       std::vector<std::pair<std::string, std::string>>{{"missing", "value"},
-                                                        {"input", "other"}}) {
+  // An unsupplied result region, and a definition returning the other
+  // parameter than the one its declaration's region names.
+  for (const auto &[parameters, result] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"int& input, int& unused", "value"},
+           {"int&<a> input, int& unused", "other"}}) {
     const auto invalidContract = lang::Frontend().analyze(
         "split-invalid-contract.gti",
-        "struct Relay { [[borrowed_from(" + origin +
-            ")]] static int& choose(int& input, int& unused); }; "
+        "struct Relay { static int&<a> choose<lifetime a>(" + parameters +
+            "); }; "
             "int& Relay::choose(int& value, int& other) { return " +
             result + "; } int main() { return 0; }",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});

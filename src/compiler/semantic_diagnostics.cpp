@@ -458,7 +458,7 @@ void SemanticDiagnosticReporter::reportConstraintFailure(
     if (failure.conformanceBorrowOperation) {
       diagnostic.hints.push_back(
           "Operation '" + failure.conformanceBorrowOperation->lexeme +
-          "' must preserve the concept's borrowed_from parameter contract "
+          "' must preserve the concept's result region parameter contract "
           "for its concrete reference result.");
       diagnostic.related.push_back(
           {tokenSpan(*failure.conformanceBorrowOperation),

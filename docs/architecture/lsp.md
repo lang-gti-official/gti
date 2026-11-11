@@ -376,11 +376,9 @@ invalid, misplaced and conflicting policies publish the shared `GTI-S2059`
 diagnostic. Neither CLI nor LSP offers a fix that accepts an unsafe promise.
 
 Function-declaration and selected-call signatures retain `[[noreturn]]`,
-`[[track_caller]]`, `[[discardable]]`, an explicit result region (or its
-compatibility spelling `[[borrowed_from(owner)]]` / `[[borrowed_from(this)]]`),
-and `unsafe` from the resolved `FunctionInfo`. The borrow-origin parameter name
-comes from the resolved formal parameter index, not from reparsing the attribute;
-inferred borrow origins do not invent explicit annotations. Contract
+`[[track_caller]]`, `[[discardable]]`, an explicit result region and `unsafe`
+from the resolved `FunctionInfo`; inferred borrow origins do not invent explicit
+annotations. Contract
 attributes precede the `unsafe` modifier and then `static`/`constexpr`, when
 present. Signature printers preserve that canonical order.
 The LSP publishes `GTI-S2055` and its
@@ -682,8 +680,7 @@ each binder as a `LifetimeParameter` symbol whose uses are its occurrences, so
 semantic tokens, hover (`lifetime a`), definition, references, rename and
 completion after `&<` follow the parser's resolution rather than spelling.
 Signature hovers print written binders and region arguments from the
-declaration syntax (`identity<lifetime a>(int32_t&<a> value)`); a region
-contract does not also print as `[[borrowed_from]]`.
+declaration syntax (`identity<lifetime a>(int32_t&<a> value)`).
 
 ## Document State
 

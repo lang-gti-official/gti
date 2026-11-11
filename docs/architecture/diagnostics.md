@@ -655,8 +655,7 @@ and loss of caller-location transport at a native callback boundary.
 The native, polymorphic, operator and bodyless restrictions apply to
 `[[noreturn]]`/`[[track_caller]]`, not to every function attribute.
 `[[discardable]]` may describe non-void native, polymorphic or operator results;
-A result region (`T&<a>`, or the compatibility spelling
-`[[borrowed_from(...)]]`) has its own checked GTI reference-return boundary.
+A result region (`T&<a>`) has its own checked GTI reference-return boundary.
 `[[inline]]`, `[[cold]]` and `[[noinline]]` require source-defined GTI functions,
 methods, constructors or destructors. Defaulted/deleted lifecycle declarations
 reject the annotations; other function contracts remain unsupported on lifecycle
